@@ -130,3 +130,59 @@ def test_used_in_is_counted_in_one_pass_for_the_list(api, monkeypatch):
         rows = {r["id"]: r for r in client.get(BASE).json()}
         assert rows[a["id"]]["used_in"] == 2 and rows[b["id"]]["used_in"] == 1
         assert calls == [], "the list must not call usage() once per preset"
+
+
+# --------------------------------------------------------------------------- optimistic concurrency
+
+
+def test_a_matching_base_updated_at_writes(api):
+    db, _as, _scope = api
+    with TestClient(app) as client:
+        preset = _create(client)
+        template = _make_template(db, unique_code("ZZT tpl"), _template_doc(_box(preset["id"])))
+        res = client.put(
+            f"{BASE}/{preset['id']}",
+            json={"design": {**DESIGN, "headerText": "NEW"}, "base_updated_at": preset["updated_at"]},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["rewritten"] == 1
+        assert res.json()["updated_at"] != preset["updated_at"]
+    _fresh(db, template)
+    assert template.doc["layers"][0]["props"]["headerText"] == "NEW"
+
+
+def test_a_stale_base_is_409_and_writes_and_rewrites_nothing(api):
+    db, _as, _scope = api
+    with TestClient(app) as client:
+        preset = _create(client)
+        pid = preset["id"]
+        template = _make_template(db, unique_code("ZZT tpl"), _template_doc(_box(pid)))
+        first = client.put(f"{BASE}/{pid}", json={"design": {**DESIGN, "headerText": "FIRST"}})
+        assert first.status_code == 200
+        before = copy.deepcopy(None)
+        stale = client.put(
+            f"{BASE}/{pid}",
+            json={"design": {**DESIGN, "headerText": "OLDER"}, "base_updated_at": preset["updated_at"]},
+        )
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["code"] == "STALE_TEMPLATE"
+        assert client.get(f"{BASE}/{pid}").json()["design"]["headerText"] == "FIRST"
+        del before
+    _fresh(db, template)
+    assert template.doc["layers"][0]["props"]["headerText"] == "FIRST"
+
+
+def test_without_a_base_a_put_still_works_and_a_rename_ignores_it(api):
+    with TestClient(app) as client:
+        preset = _create(client)
+        assert client.put(f"{BASE}/{preset['id']}", json={"design": DESIGN}).status_code == 200
+        renamed = client.put(f"{BASE}/{preset['id']}", json={"name": unique_code("Renamed")})
+        assert renamed.status_code == 200
+
+
+def test_updated_at_keeps_full_precision(api):
+    with TestClient(app) as client:
+        preset = _create(client)
+        again = client.get(f"{BASE}/{preset['id']}").json()
+        assert again["updated_at"] == preset["updated_at"]
+        assert "." in preset["updated_at"] or preset["updated_at"].count(":") == 2

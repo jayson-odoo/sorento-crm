@@ -262,6 +262,7 @@ import {
   accessoryDesignChanged,
   accessoryDesignSamples,
   designKey,
+  linkCorrectionPatches,
   type AccessoryDesign,
   type LayerPropsPatch,
   applyAccessoryDesign,
@@ -576,7 +577,7 @@ interface TagCanvasEditorProps {
    */
   layerPatchesRef?: MutableRefObject<((patches: LayerPropsPatch[]) => void) | null>;
   /** Called after a saved template is inserted, with the design that was used (the host's baseline). */
-  onAccessoryTemplateInserted?: (presetId: string, design: AccessoryDesign) => void;
+  onAccessoryTemplateInserted?: (presetId: string, design: AccessoryDesign, updatedAt: string) => void;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -1601,6 +1602,7 @@ export function TagCanvasEditor({
     target: CardEditTarget;
     elementId: string | null;
   } | null>(null);
+  const applyExternalLayerPropsRef = useRef<(patches: LayerPropsPatch[]) => void>(() => {});
   /** Line counts of the previewed lists, set once `accessoryFits` is computed below. */
   const accessoryLinesRef = useRef(new Map<string, number>());
   const [accessoryTemplates, setAccessoryTemplates] = useState<AccessoryTemplateRecord[]>([]);
@@ -1783,6 +1785,12 @@ export function TagCanvasEditor({
         toast.error('That accessories template no longer exists');
         return;
       }
+      // An older box of the same template already on this tag follows the fresh design, so the insert
+      // can never leave a stale box to be pushed over a newer template.
+      const followers = linkCorrectionPatches(layersRef.current, [
+        { kind: 'set', id: current.id, design: current.design },
+      ]);
+      if (followers.length > 0) applyExternalLayerPropsRef.current(followers);
       addLayer({
         ...makeBaseLayer(
           'accessories',
@@ -1791,33 +1799,48 @@ export function TagCanvasEditor({
         ),
         props: applyAccessoryDesign(defaultAccessoriesProps(), current.design, current.id),
       });
-      onAccessoryTemplateInserted?.(current.id, current.design);
+      onAccessoryTemplateInserted?.(current.id, current.design, current.updated_at);
     },
     [addLayer, makeBaseLayer, onAccessoryTemplateInserted],
   );
 
-  /** Host corrections to linked boxes: one history step, only where the box is as the host last saw it. */
+  /**
+   * Host corrections to linked boxes (follow the template, detach): applied only where the box is as the
+   * host last saw it, and with NO undo step. The correction is written into the current state and into
+   * every undo / redo snapshot, so Cmd+Z reverts the user's own edit and never a correction.
+   */
   const applyExternalLayerProps = useCallback(
     (patches: LayerPropsPatch[]) => {
       setLayers((prev) => {
-        let changed = false;
+        const applied = new Map<string, LayerPropsPatch>();
+        const withDesign = (layer: TagLayer, patch: LayerPropsPatch): TagLayer => ({
+          ...layer,
+          props: applyAccessoryDesign(
+            layer.props as AccessoriesLayerProps,
+            accessoryDesign(patch.props),
+            patch.props.presetId ?? null,
+          ) as TagLayerProps,
+        });
         const next = prev.map((layer) => {
           const patch = patches.find((candidate) => candidate.layerId === layer.id);
           if (!patch || layer.props.kind !== 'accessories') return layer;
-          const { kind: _kind, subjectSlot: _slot, subjectPart: _part, presetId: _preset, ...design } =
-            layer.props;
-          void [_kind, _slot, _part, _preset];
-          if (designKey(design) !== patch.expectedKey) return layer;
-          changed = true;
-          return { ...layer, props: patch.props as TagLayerProps };
+          if (designKey(accessoryDesign(layer.props)) !== patch.expectedKey) return layer;
+          applied.set(layer.id, patch);
+          return withDesign(layer, patch);
         });
-        if (!changed) return prev;
-        history.pushState(next);
+        if (applied.size === 0) return prev;
+        history.amend((snapshot) =>
+          snapshot.map((layer) => {
+            const patch = applied.get(layer.id);
+            return patch && layer.props.kind === 'accessories' ? withDesign(layer, patch) : layer;
+          }),
+        );
         return next;
       });
     },
     [history],
   );
+  applyExternalLayerPropsRef.current = applyExternalLayerProps;
   useEffect(() => {
     if (!layerPatchesRef) return;
     layerPatchesRef.current = applyExternalLayerProps;

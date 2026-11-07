@@ -13,6 +13,7 @@ version tables are not company owned, so each is joined to its parent. Walks bot
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import func, or_
@@ -32,6 +33,11 @@ from app.services.company_scope import build_company_predicate, get_company_scop
 from app.services.error_handler import AppException
 
 KEEP_PER_BOX = ("subjectSlot", "subjectPart")
+
+
+def _naive(value: datetime) -> datetime:
+    """The column is a naive UTC timestamp; a client may send the same instant with a zone."""
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
 def _not_found() -> AppException:
@@ -247,9 +253,19 @@ def update_preset(
     name: Optional[str] = None,
     design: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    base_updated_at: Optional[datetime] = None,
 ) -> Tuple[AccessoryBoxPreset, int]:
-    """Returns `(row, boxes rewritten)`. A new design is written into every linked box first."""
+    """Returns `(row, boxes rewritten)`. A new design is written into every linked box first.
+
+    `base_updated_at` is the version the caller's design was based on: when given and it is not the row's
+    current `updated_at`, someone saved in between and nothing is written (409 STALE_TEMPLATE)."""
     row = get_preset(db, preset_id)
+    if base_updated_at is not None and _naive(base_updated_at) != row.updated_at:
+        raise AppException(
+            status_code=409,
+            message="This accessories template was changed elsewhere.",
+            code="STALE_TEMPLATE",
+        )
     if name is not None and name.lower() != row.name.lower():
         _refuse_taken(db, name, row.company_id, except_id=row.id)
     rewritten = 0
@@ -260,6 +276,9 @@ def update_preset(
             row.design = design
             rewritten = _propagate(db, row, design)
         row.updated_by = user_id
+        # Stamped here (microseconds, wall clock), not by the database's transaction clock: it is the
+        # version marker `base_updated_at` is compared with, so every write must move it.
+        row.updated_at = datetime.utcnow()
         db.flush()
         db.commit()
     except IntegrityError as exc:

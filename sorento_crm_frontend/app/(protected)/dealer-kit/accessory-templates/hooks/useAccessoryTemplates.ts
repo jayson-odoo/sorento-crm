@@ -12,6 +12,7 @@ import {
   listAccessoryTemplates,
   updateAccessoryTemplate,
   type AccessoryTemplateInput,
+  type AccessoryTemplateUpdate,
 } from '../../services/accessoryTemplateService';
 
 export const ACCESSORY_TEMPLATES_QUERY_KEY = 'dealer-kit-accessory-templates';
@@ -75,7 +76,7 @@ export function useCreateAccessoryTemplate() {
 export function useUpdateAccessoryTemplate() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<AccessoryTemplateInput> }) =>
+    mutationFn: ({ id, input }: { id: string; input: AccessoryTemplateUpdate }) =>
       updateAccessoryTemplate(id, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [ACCESSORY_TEMPLATES_QUERY_KEY] });

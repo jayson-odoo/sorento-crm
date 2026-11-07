@@ -93,7 +93,10 @@ def update_accessory_template(
     validate_uuid_path(preset_id, resource="Accessories template")
     changes = payload.model_dump(exclude_unset=True)
     row, rewritten = service.update_preset(
-        db, preset_id, name=changes.get("name"), design=changes.get("design"), user_id=_user_id(user)
+        db, preset_id, name=changes.get("name"),
+        design=changes.get("design"),
+        user_id=_user_id(user),
+        base_updated_at=changes.get("base_updated_at"),
     )
     return _out(db, row, rewritten=rewritten)
 

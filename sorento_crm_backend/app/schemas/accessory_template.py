@@ -90,6 +90,9 @@ class AccessoryTemplateCreate(BaseModel):
 class AccessoryTemplateUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=100)
     design: Optional[Dict[str, Any]] = None
+    #: The `updated_at` of the version the client's design was based on. Given and different from the
+    #: row's current one: 409 STALE_TEMPLATE, nothing written. A rename sends none.
+    base_updated_at: Optional[datetime] = None
 
     @field_validator("name")
     @classmethod

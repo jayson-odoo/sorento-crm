@@ -4,10 +4,11 @@
  * keeps the link.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import { accessoryDesign, designKey } from '@/lib/dealer-kit/accessory-card';
 import { defaultAccessoriesProps } from '@/lib/dealer-kit/tag-template-types';
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
@@ -112,7 +113,7 @@ function docWith(...layers: TagLayer[]): TagTemplateDoc {
   return { width_mm: 148, height_mm: 105, layers };
 }
 
-function mount(layer: TagLayer, mode?: 'live' | 'detach') {
+function mount(layer: TagLayer, mode?: 'live' | 'detach', patchesRef?: { current: unknown }) {
   const state = { layers: [] as TagLayer[] };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -121,6 +122,7 @@ function mount(layer: TagLayer, mode?: 'live' | 'detach') {
         doc={docWith(layer)}
         onChange={vi.fn()}
         linkedAccessoryBoxes={mode}
+        layerPatchesRef={patchesRef as never}
         onLayersChange={(layers) => {
           state.layers = layers;
         }}
@@ -189,5 +191,45 @@ describe('box keys while a card is edited', () => {
     expect(screen.getByText(/Editing card:/)).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
     expect(screen.queryByText(/Editing card:/)).toBeNull();
+  });
+});
+
+describe('a correction from the host is never an undo step', () => {
+  it('Cmd+Z reverts the user\'s previous edit, not the correction', () => {
+    const ref: { current: ((patches: unknown[]) => void) | null } = { current: null };
+    const state = mount(accessoriesLayer('acc1', { card, presetId: 'p1', headerText: 'MINE' }), undefined, ref);
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    // The user's edit: Footer note on.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Footer note' }));
+    const edited = state.layers[0].props as unknown as Record<string, unknown> & { footer?: { show: boolean } };
+    expect(edited.footer?.show).toBe(true);
+
+    // The host's correction: the template's newer design (a different header).
+    act(() => {
+      ref.current?.([
+        {
+          layerId: 'acc1',
+          expectedKey: designKey(accessoryDesign(edited as never)),
+          props: { ...edited, headerText: 'SERVER' },
+        },
+      ]);
+    });
+    expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('SERVER');
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    const after = state.layers[0].props as unknown as { headerText: string; footer?: { show: boolean } };
+    expect(after.footer?.show ?? false).toBe(false);
+    expect(after.headerText).toBe('SERVER');
+  });
+
+  it('skips a box the user changed meanwhile', () => {
+    const ref: { current: ((patches: unknown[]) => void) | null } = { current: null };
+    const state = mount(accessoriesLayer('acc1', { card, presetId: 'p1', headerText: 'MINE' }), undefined, ref);
+    act(() => {
+      ref.current?.([
+        { layerId: 'acc1', expectedKey: 'not-the-current-design', props: { headerText: 'SERVER' } },
+      ]);
+    });
+    expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('MINE');
   });
 });

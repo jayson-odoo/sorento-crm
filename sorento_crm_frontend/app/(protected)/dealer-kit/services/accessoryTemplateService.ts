@@ -36,6 +36,17 @@ export interface AccessoryTemplateInput {
   design: AccessoryDesign;
 }
 
+/** A write that carries the `updated_at` (kept as the string the API sent) its design was based on. */
+export type AccessoryTemplateUpdate = Partial<AccessoryTemplateInput> & { base_updated_at?: string };
+
+/** The template was saved by somebody else since `base_updated_at`: nothing was written. */
+export class StaleTemplateError extends Error {
+  constructor() {
+    super('This accessories template was changed elsewhere.');
+    this.name = 'StaleTemplateError';
+  }
+}
+
 export interface AccessoryTemplateUsage {
   templates: { id: string; name: string }[];
 }
@@ -92,13 +103,17 @@ export async function createAccessoryTemplate(
 
 export async function updateAccessoryTemplate(
   id: string,
-  input: Partial<AccessoryTemplateInput>,
+  input: AccessoryTemplateUpdate,
 ): Promise<AccessoryTemplateRecord> {
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: JSON_HEADERS,
     body: JSON.stringify(input),
   });
+  if (response.status === 409) {
+    const body = (await response.clone().json().catch(() => null)) as { code?: string } | null;
+    if (body?.code === 'STALE_TEMPLATE') throw new StaleTemplateError();
+  }
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to update the accessories template'));
   }
