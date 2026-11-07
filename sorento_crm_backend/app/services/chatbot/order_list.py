@@ -159,7 +159,9 @@ def order_list_verdict(db: Session, verdict: dict[str, Any], state: Any, text: s
         open_pending = None
     else:
         open_pending = pending
-    if is_open_order_list(focus):
+    # REPORT-FILTER-ALL (owner 5 Nov): a turn whose parse carries a report object (`report_ask.from_object` kept it: a
+    # sales or outstanding report ask) is the parser's to read, never these words: no keyword clear or brand switch.
+    if is_open_order_list(focus) and not isinstance(verdict.get("report_ask"), dict):
         if clears_the_brand(text):
             state = replace(state, focus=replace(focus, outstanding_brand_ids=[]), pending=open_pending)
             return _continuation(verdict, entities=[]), state, "order_list_brand_cleared"

@@ -26,12 +26,13 @@ and document_ingest_service imports po_link_history inside a function.
 
 SELECTION. A changed path selects (backend-relative; all rules together):
   1. itself, when it is a test file (`tests/**/test_*.py`);
-  2. dependents: let R be the changed modules closed under module-level importers
-     (transitively: B imports A at module level and A is in R, so B is in R), plus every module
-     with a lazy edge into R (one hop, not propagated further); select every test file that is
-     in R or has an edge of either kind into R. A lazy import is what one function needs when it
-     is called, so its importer's own tests cover it; following it on through every
-     module-level importer reaches app/main.py and with it every API test (measured below);
+  2. dependents, two hops (crew, 5 Nov 2026): the test files that import a changed module
+     directly (either kind of edge), and those that import directly a module that imports a
+     changed one; no further. A hub is never a hop: app/main.py, a router aggregator
+     (app/api/**/__init__.py) or a conftest.py imports nearly everything, and following
+     importers through app/main.py selected 3,274 of 3,274 test files on the 5 Nov release.
+     A test file named after a changed module (test_<stem>.py, test_<stem>_*.py) runs too,
+     since a route test reaches its route through app.main;
   3. depended-by, "the tests of what the change calls": for a changed non-test module M and each
      module D that M imports directly (either kind), the test files named `test_<D>.py` or
      `test_<D>_*.py` (D's last dotted name) that import D directly. Applied to every direct
@@ -48,11 +49,12 @@ SELECTION. A changed path selects (backend-relative; all rules together):
      `app/models/` changed; any one the graph selects runs too;
   7. `tests/test_lessons_learnt_regressions.py` (the source-scanning regression guards) whenever
      any backend path changed.
-A test file counts as importing, at module level, every conftest.py in its directory and above
-(pytest imports them first), so a module a conftest loads reaches the tests under it. A changed
+A conftest.py is a hub: a module it loads does not reach every test under it (a change to a
+conftest itself runs the full suite). A changed
 package `__init__.py` counts as a change to every module of that package (Python runs it before
 any of them). `tests/scm/` is selected only through these rules, like any other directory.
-`tests/ci_excluded.txt` entries never run.
+`tests/ci_excluded.txt` entries never run, nor do `tests/nightly_only.txt` entries (the
+reorder-planning tests; the nightly full sweep runs them, CI-PARALLEL-ACTIONS 5 Nov 2026).
 
 FULL backend suite (every test file) instead, with the reason printed, when the diff changes:
 any conftest.py; test infrastructure (`tests/__init__.py`, `tests/_xdist_crash_guard.py`,
@@ -88,7 +90,6 @@ import os
 import re
 import subprocess
 import sys
-from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -326,12 +327,29 @@ class Result:
     graph_source: str = ""
 
 
-def _excluded(root: Path) -> set[str]:
+HUB_RE = re.compile(r"^(app/main\.py|app/api/(.+/)?__init__\.py|(.+/)?conftest\.py)$")
+
+
+def is_hub(rel: str) -> bool:
+    """A module that imports (nearly) everything: never a hop in the dependents rule."""
+    return bool(HUB_RE.match(rel))
+
+
+def _path_list(root: Path, name: str) -> set[str]:
     try:
-        lines = (root / "tests" / "ci_excluded.txt").read_text(encoding="utf-8").splitlines()
+        lines = (root / "tests" / name).read_text(encoding="utf-8").splitlines()
     except OSError:
         return set()
     return {line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")}
+
+
+def _excluded(root: Path) -> set[str]:
+    return _path_list(root, "ci_excluded.txt")
+
+
+def nightly_only(root: Path) -> set[str]:
+    """tests/nightly_only.txt: the nightly full sweep runs these, a release delta never does."""
+    return _path_list(root, "nightly_only.txt")
 
 
 def _frontend(changed: list[str], fe_root: Path, res: Result) -> None:
@@ -373,7 +391,8 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
     changed = sorted({p.strip() for p in changed if p.strip()})
     _frontend(changed, frontend or root.parent / FRONTEND_PREFIX.rstrip("/"), res)
 
-    excluded = _excluded(root)
+    # A nightly-only test (CI-PARALLEL-ACTIONS) is never selected, even on a full fallback.
+    excluded = _excluded(root) | nightly_only(root)
     sources = source_files(root)
     all_tests = sorted(r for r in sources if SAFE_TEST_RE.match(r) and r not in excluded)
     res.total = len(all_tests)
@@ -438,39 +457,37 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
             if own:
                 pick(rel, f"names {names[hit]}")
 
-    # Rule 2: dependents.
-    importers_top: dict[str, set[str]] = {}
-    importers_any: dict[str, set[str]] = {}
+    # Rule 2: dependents, two hops and no further (crew, 5 Nov 2026, measured on the release:
+    # following importers transitively reached app/main.py, which imports every router, and
+    # with it every API test: 3,274 of 3,274 test files on 30bbcc6a..311a6b52, 2,519 on
+    # 311a6b52..9ebae8e9). Selected: the test files that import a changed module directly, and
+    # those that import directly a module that imports a changed one. A hub (app/main.py, a
+    # router aggregator app/api/**/__init__.py, a conftest.py) is never a hop: through it
+    # everything depends on everything. A test file named after a changed module
+    # (test_<stem>.py, test_<stem>_*.py) runs too: a route test reaches its route through
+    # app.main, not by importing it.
+    importers: dict[str, set[str]] = {}
     for src, edges in graph.items():
-        for t in edges["top"]:
-            importers_top.setdefault(t, set()).add(src)
-            importers_any.setdefault(t, set()).add(src)
-        for t in edges["lazy"]:
-            importers_any.setdefault(t, set()).add(src)
-    # pytest imports every conftest.py above a test file before the test: a module-level edge.
-    for t in all_tests:
-        parts = t.split("/")[:-1]
-        for i in range(1, len(parts) + 1):
-            conftest = "/".join(parts[:i]) + "/conftest.py"
-            if conftest in sources:
-                importers_top.setdefault(conftest, set()).add(t)
-                importers_any.setdefault(conftest, set()).add(t)
-    # Module-level importers first, transitively; then one lazy hop, which does not propagate.
-    origin: dict[str, str] = {m: m for m in sorted(changed_mods)}
-    queue = deque(sorted(origin))
-    while queue:
-        cur = queue.popleft()
-        for imp in sorted(importers_top.get(cur, ())):
-            if imp not in origin:
-                origin[imp] = origin[cur]
-                queue.append(imp)
-    for mod in sorted(origin):
-        for imp in sorted(importers_any.get(mod, ())):
-            origin.setdefault(imp, origin[mod])
-    for mod in sorted(origin):
-        for t in [mod, *sorted(importers_any.get(mod, ()))]:
+        for t in edges["top"] + edges["lazy"]:
+            importers.setdefault(t, set()).add(src)
+    for mod in sorted(changed_mods):
+        hop1 = {i for i in importers.get(mod, ()) if not is_hub(i)}
+        for t in sorted(hop1):
             if is_test_file(t):
-                pick(t, "changed" if t in changed_mods else f"imports {origin[mod]}")
+                pick(t, "changed" if t in changed_mods else f"imports {mod}")
+        for dep in sorted(hop1):
+            if is_test_file(dep):
+                continue
+            for t in sorted(importers.get(dep, ())):
+                if is_test_file(t):
+                    pick(t, f"imports {dep}, which imports {mod}")
+        if not is_test_file(mod) and mod.endswith(".py"):
+            stem = Path(mod).stem
+            if stem != "__init__":
+                for t in all_tests:
+                    tstem = Path(t).stem[len("test_"):]
+                    if tstem == stem or tstem.startswith(stem + "_"):
+                        pick(t, f"named after {mod}")
 
     # Rule 3: depended-by, the tests of each direct import of a changed non-test module.
     tests_by_stem: dict[str, list[str]] = {}

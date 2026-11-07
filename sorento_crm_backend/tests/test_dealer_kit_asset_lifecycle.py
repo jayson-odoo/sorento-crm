@@ -61,9 +61,10 @@ FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.
 # real image band. So two of the three seed a background.
 PAGES_WITH_A_BANNER = 2
 
-# One original plus one thumbnail per banner. The thumbnail is a separate object
-# with its own key, which is exactly how half the bucket litter got there.
-OBJECTS_PER_BANNER = 2
+# One original plus its thumb and medium renditions per banner (IMAGE-UNIFY). Each
+# rendition is a separate object with its own key, which is exactly how half the
+# bucket litter got there.
+OBJECTS_PER_BANNER = 3
 
 def _png_bytes() -> bytes:
     """A real PNG, because store_thumbnail decodes what it is given.

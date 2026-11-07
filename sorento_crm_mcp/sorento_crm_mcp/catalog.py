@@ -932,6 +932,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
             "channel | account_type (the customer's AutoCount account type) | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "sales_person (invoiced only: one row per sales person, agent codes sharing a person merged; \"who's top this month\" = basis=invoiced group_by=sales_person) | "
             "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
             "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
             "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "

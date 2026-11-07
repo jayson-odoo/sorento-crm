@@ -1028,6 +1028,16 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SALES-LEADERBOARD: Sales > Leaderboard; granted to admin and superadmin by `slb_0001_leaderboard_perm`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.leaderboard.view",
+        "name": "View the sales leaderboard",
+        "description": "Open Sales > Leaderboard: invoiced sales ranked by sales person. Shows no commission.",
+    },
+])
+
+
 # SALES-UNIFIED (#1916): the set-apart customers the sales reports pull out of Dealer and
 # Project team. Reading the list is `sales.reports.view`; granted to admin and superadmin by
 # `sales_unified_0001`.

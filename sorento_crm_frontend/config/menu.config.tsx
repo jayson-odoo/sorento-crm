@@ -165,6 +165,12 @@ const STAFF_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Leaderboard',
+        path: '/sales/leaderboard',
+        permission: 'sales.leaderboard.view',
+        moduleKey: 'sales',
+      },
+      {
         title: 'Sales Agents',
         path: '/master-data-management/sales-agents',
         permission: 'master_data.sales_agents.view',
