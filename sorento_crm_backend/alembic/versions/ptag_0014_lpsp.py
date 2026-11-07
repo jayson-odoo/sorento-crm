@@ -179,9 +179,21 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS ix_dealer_kit_combo_tag_template_template_id "
         f"ON {dk}combo_tag_template (template_id)"
     )
+    # A database built by `create_all` after ptag_0015 holds `default_list` / `default_selling`
+    # instead of `is_default`; the index is only meaningful (and only creatable) with the column.
     op.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_dealer_kit_combo_tag_template_default "
-        f"ON {dk}combo_tag_template (combo_id) WHERE is_default"
+        f"""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('{dk}combo_tag_template')
+                AND attname = 'is_default' AND NOT attisdropped
+            ) THEN
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_dealer_kit_combo_tag_template_default
+                ON {dk}combo_tag_template (combo_id) WHERE is_default;
+            END IF;
+        END $$;
+        """
     )
     _publish_prompt()
 

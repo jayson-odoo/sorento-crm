@@ -34,7 +34,6 @@ const PAGES: Case[] = [
   ['order-inquiries/page', () => import('./order-inquiries/page') as never, {}],
   ['delivery-schedules/[versionId]/page', () => import('./delivery-schedules/[versionId]/page') as never, { versionId: 'v1' }],
   ['purchase-orders/[versionId]/page', () => import('./purchase-orders/[versionId]/page') as never, { versionId: 'v1' }],
-  ['quotations/[quotationId]/page', () => import('./quotations/[quotationId]/page') as never, { quotationId: 'q1' }],
   ['pos/[poId]/page', () => import('./pos/[poId]/page') as never, { poId: 'po1' }],
   ['sales-orders/[psoId]/page', () => import('./sales-orders/[psoId]/page') as never, { psoId: 's1' }],
   ['sales-orders/[psoId]/worksheet/page', () => import('./sales-orders/[psoId]/worksheet/page') as never, { psoId: 's1' }],

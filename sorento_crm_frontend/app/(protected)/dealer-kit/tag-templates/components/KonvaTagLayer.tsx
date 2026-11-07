@@ -17,7 +17,10 @@ import { useMemo } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
+  AccessoriesLayerProps,
+  FeatureIconsLayerProps,
   LayerPadding,
+  TagAccessory,
   TagLayer,
   TagLayerProps,
   TextLayerProps,
@@ -25,6 +28,7 @@ import type {
 import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
+import { konvaFlip } from '@/lib/dealer-kit/image-flip';
 import {
   barcodeSvg,
   barcodeSymbologyFor,
@@ -36,9 +40,30 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
-import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import {
+  canvasTextHeight,
+  LETTER_SPACING_MM_PER_UNIT,
+  runFace,
+  textFace,
+  textLayerLines,
+} from '@/lib/dealer-kit/text-layout';
+import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-text';
+import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
+import {
+  accessoryBoxLayout,
+  accessoryCardInner,
+  accessoryCardLines,
+  accessoryHeaderStyle,
+  accessoryLineCount,
+  accessoryLineStyle,
+  fitLinePt,
+  ptToMm,
+  sampleAccessories,
+  type AccessoryLineStyle,
+} from '@/lib/dealer-kit/accessory-box';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -137,9 +162,14 @@ export function KonvaTagLayer({
     // Only the left button selects. The middle one pans the view (D44) and the
     // right one is the context menu's, which resolves its own target.
     if ('button' in e.evt && e.evt.button !== 0) return;
+    const mac = isMacPlatform();
+    // macOS Ctrl+click is the system right-click: the context menu resolves its own target and
+    // must find the selection as it was (DESIGNER-RICH-TEXT owner bug).
+    if ('button' in e.evt && isMacContextClick(e.evt, mac)) return;
     e.cancelBubble = true;
-    const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
-    onSelect?.(reportId, shiftKey);
+    // Shift+click adds everywhere; Cmd+click on macOS, Ctrl+click elsewhere.
+    const additive = 'shiftKey' in e.evt ? isAdditiveClick(e.evt, mac) : false;
+    onSelect?.(reportId, additive);
   };
 
   const handleDoubleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -220,7 +250,23 @@ function LayerContent({
   display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
-    case 'text':
+    case 'text': {
+      const text = display?.text ?? props.text;
+      // A rich description is drawn run by run; plain text keeps its single Text node.
+      const blocks = display?.blocks ?? (isRich(text) ? parseRichText(text) : null);
+      if (blocks) {
+        return (
+          <RichTextContent
+            props={props}
+            w={w}
+            h={h}
+            widthMm={widthMm}
+            heightMm={heightMm}
+            scale={scale}
+            blocks={blocks}
+          />
+        );
+      }
       return (
         <TextContent
           props={props}
@@ -229,9 +275,10 @@ function LayerContent({
           widthMm={widthMm}
           heightMm={heightMm}
           scale={scale}
-          text={display?.text ?? props.text}
+          text={text}
         />
       );
+    }
 
     case 'shape':
       return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
@@ -245,6 +292,8 @@ function LayerContent({
           fit={props.fit}
           maskShape={props.maskShape ?? 'none'}
           cropRect={props.cropRect}
+          flipX={props.flipX}
+          flipY={props.flipY}
         />
       );
 
@@ -345,6 +394,32 @@ function LayerContent({
             fontStyle="bold"
           />
         </>
+      );
+
+    case 'feature_icons':
+      return (
+        <FeatureIconsContent
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
+          props={props}
+          icons={display?.icons ?? []}
+        />
+      );
+
+    case 'accessories':
+      return (
+        <AccessoriesContent
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
+          props={props}
+          accessories={display?.accessories}
+        />
       );
 
     case 'barcode':
@@ -464,6 +539,8 @@ function ImageContent({
   fit,
   maskShape,
   cropRect,
+  flipX,
+  flipY,
 }: {
   w: number;
   h: number;
@@ -471,6 +548,9 @@ function ImageContent({
   fit: 'cover' | 'contain' | 'stretch';
   maskShape: 'none' | 'circle';
   cropRect?: CropRect;
+  /** PRICETAG-DESIGNER-GAPS item 1: mirror the picture in place. */
+  flipX?: boolean;
+  flipY?: boolean;
 }) {
   const image = useHtmlImage(url);
 
@@ -509,7 +589,12 @@ function ImageContent({
   const crop = cropPixels(cropRect, image);
   const draw = fittedCropDraw(cropRect, image, fit, w, h);
 
-  const body = (
+  // Mirroring wraps ONLY the picture, inside any clip below: both clips
+  // (circle, cover's box) are symmetric about the box, so the clipped area is
+  // the same either way. No wrapper at all when unflipped, so an old document
+  // draws the exact same node tree it always did.
+  const mirror = konvaFlip({ flipX, flipY }, w, h);
+  const picture = (
     <KonvaImage
       image={image}
       crop={crop}
@@ -519,6 +604,7 @@ function ImageContent({
       height={draw.height}
     />
   );
+  const body = mirror ? <Group {...mirror}>{picture}</Group> : picture;
 
   if (maskShape === 'circle') {
     return (
@@ -612,6 +698,88 @@ function TextContent({
       letterSpacing={mm2px(face.letterSpacing_mm, scale)}
       wrap="none"
     />
+  );
+}
+
+/**
+ * A rich description (PRICETAG-COMBO-FORMAT): one Konva Text per run, in the run's own face,
+ * colour and decoration, on the lines `textLayerLines` breaks the blocks into - the SAME lines the
+ * print page prints. Family and base size stay the layer's; a heading is the layer size times its
+ * factor. A highlighted run gets a rectangle behind it. The transparent rectangle keeps the whole
+ * box clickable, as the plain Text node's full-size box does.
+ */
+function RichTextContent({
+  props,
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  blocks,
+}: {
+  props: TextLayerProps;
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  blocks: RichBlock[];
+}) {
+  const epoch = useFontsEpoch();
+  const lines = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return textLayerLines(props, blocks, widthMm, heightMm);
+  }, [props, blocks, widthMm, heightMm, epoch]);
+  const inset = paddedBox(w, h, props.padding, scale);
+
+  return (
+    <Group name="rich-text" key={epoch}>
+      <Rect width={w} height={h} fill="transparent" />
+      {lines.flatMap((line, lineIndex) =>
+        line
+          .filter((run) => run.text !== '')
+          .flatMap((run, runIndex) => {
+            const face = runFace(props, run, run.sizeFactor);
+            const x = inset.x + mm2px(run.x_mm, scale);
+            const y = inset.y + mm2px(run.y_mm, scale);
+            const decoration = [
+              (props.underline || run.underline) && 'underline',
+              (props.strikethrough || run.strike) && 'line-through',
+            ]
+              .filter(Boolean)
+              .join(' ');
+            const key = `${lineIndex}:${runIndex}`;
+            return [
+              ...(run.highlight
+                ? [
+                    <Rect
+                      key={`${key}:bg`}
+                      x={x}
+                      y={y}
+                      width={mm2px(run.width_mm, scale)}
+                      height={mm2px(face.fontSize_mm, scale)}
+                      fill={run.highlight}
+                    />,
+                  ]
+                : []),
+              <Text
+                key={key}
+                x={x}
+                y={y}
+                text={run.text}
+                fontFamily={face.fontFamily}
+                fontSize={mm2px(face.fontSize_mm, scale)}
+                fontStyle={face.fontStyle}
+                textDecoration={decoration}
+                fill={run.color || props.color}
+                lineHeight={props.lineHeight}
+                letterSpacing={mm2px(face.letterSpacing_mm, scale)}
+                wrap="none"
+              />,
+            ];
+          }),
+      )}
+    </Group>
   );
 }
 
@@ -915,6 +1083,253 @@ function badgeFontStyle(typo: PriceBadgeTypography): string {
 
 function badgeTextDecoration(typo: PriceBadgeTypography): string {
   return [typo.underline && 'underline', typo.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * One packed row of the matched icons, laid out by `featureIconRow` (the print page uses the
+ * same function), each vertically centred in the box. No icon: the dashed "Feature icons"
+ * outline, so the designer can still place and size the layer.
+ */
+function FeatureIconsContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  icons,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: FeatureIconsLayerProps;
+  icons: { id: string; url: string }[];
+}) {
+  const xs = featureIconRow(icons.length, props, widthMm);
+  if (xs.length === 0) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Text
+          width={w}
+          height={h}
+          text="Feature icons"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const size = mm2px(props.iconSize_mm, scale);
+  const y = mm2px((heightMm - props.iconSize_mm) / 2, scale);
+  return (
+    <>
+      {xs.map((x, i) => (
+        <Group key={`${icons[i].id}-${i}`} x={mm2px(x, scale)} y={y}>
+          <ImageContent w={size} h={size} url={icons[i].url} fit="contain" maskShape="none" />
+        </Group>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Accessories box (PRICETAG-ACCESSORIES)
+// ---------------------------------------------------------------------------
+
+/**
+ * The styled box with one mini-card per accessory, laid out by `accessoryBoxLayout` (the print page
+ * uses the same function). `accessories` undefined = nothing bound (the template editor with no
+ * preview): two sample cards so the box can be styled. An empty list: the dashed "Accessories"
+ * outline here, nothing on print (A7).
+ */
+function AccessoriesContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  accessories,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: AccessoriesLayerProps;
+  accessories: TagAccessory[] | undefined;
+}) {
+  const items = accessories ?? sampleAccessories();
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(
+    items.length,
+    props,
+    widthMm,
+    heightMm,
+    lineCount,
+  );
+  if (box.shown === 0) {
+    return (
+      <>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+          stroke="#3b82f6"
+          strokeWidth={1}
+          dash={[4, 4]}
+        />
+        <Text
+          width={w}
+          height={h}
+          text="Accessories"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const px = (mm: number) => mm2px(mm, scale);
+  const header = accessoryHeaderStyle(props);
+  return (
+    <>
+      {box.frame && (
+        <Rect
+          y={px(box.frame.y_mm)}
+          width={px(box.frame.width_mm)}
+          height={px(box.frame.height_mm)}
+          fill={props.fill}
+          stroke={props.stroke}
+          strokeWidth={px(props.strokeWidth_mm)}
+          cornerRadius={px(props.cornerRadius_mm)}
+        />
+      )}
+      {box.header?.onBorder && (
+        // Breaks the border behind a header that sits on it (legend style).
+        <Rect
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          fill={props.headerBackground || '#ffffff'}
+        />
+      )}
+      {box.header && (
+        <Text
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          text={props.headerText}
+          align={box.header.onBorder ? 'center' : header.align}
+          verticalAlign="middle"
+          fontStyle={konvaFontStyle(header)}
+          textDecoration={konvaDecoration(header)}
+          fontFamily={header.fontFamily ?? undefined}
+          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+          fontSize={px(ptToMm(box.header.fontSize_pt))}
+          fill={header.color}
+          wrap="none"
+        />
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
+        const texts = accessoryCardLines(item);
+        return (
+          <Group key={`${item.id}-${i}`} x={px(card.x_mm)} y={px(card.y_mm)}>
+            <Rect
+              width={px(card.width_mm)}
+              height={px(card.height_mm)}
+              fill={props.cardFill}
+              cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
+            />
+            {inner.image && (
+              <Group x={px(inner.image.x_mm)} y={px(inner.image.y_mm)}>
+                <ImageContent
+                  w={px(inner.image.width_mm)}
+                  h={px(inner.image.height_mm)}
+                  url={item.image?.url ?? null}
+                  fit="contain"
+                  maskShape="none"
+                />
+              </Group>
+            )}
+            {inner.lines.map((line, n) => {
+              if (!texts[n]) return null;
+              const style = accessoryLineStyle(props, n);
+              const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+              return (
+                <Text
+                  key={n}
+                  x={px(line.x_mm)}
+                  y={px(line.y_mm)}
+                  width={px(line.width_mm)}
+                  height={px(line.height_mm)}
+                  text={texts[n]}
+                  align={style.align}
+                  verticalAlign="middle"
+                  fontStyle={konvaFontStyle(style)}
+                  textDecoration={konvaDecoration(style)}
+                  fontFamily={style.fontFamily ?? undefined}
+                  letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+                  fontSize={px(ptToMm(fitLinePt(texts[n], line.width_mm, basePt, style.bold)))}
+                  fill={style.color}
+                  wrap="none"
+                />
+              );
+            })}
+          </Group>
+        );
+      })}
+      {box.badge && (
+        <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
+          <>
+            <Ellipse
+              x={px(box.badge.width_mm / 2)}
+              y={px(box.badge.height_mm / 2)}
+              radiusX={px(box.badge.width_mm / 2)}
+              radiusY={px(box.badge.height_mm / 2)}
+              fill={props.badgeColor}
+            />
+            <Text
+              width={px(box.badge.width_mm)}
+              height={px(box.badge.height_mm)}
+              text="+"
+              align="center"
+              verticalAlign="middle"
+              fontStyle="bold"
+              fontSize={px(box.badge.height_mm * 0.9)}
+              fill="#ffffff"
+            />
+          </>
+        </Group>
+      )}
+    </>
+  );
+}
+
+/** Konva's `fontStyle` for an accessory text role: "normal", "bold", "italic" or "italic bold". */
+function konvaFontStyle(style: AccessoryLineStyle): string {
+  return [style.italic && 'italic', style.bold && 'bold'].filter(Boolean).join(' ') || 'normal';
+}
+
+/** Konva's `textDecoration`: "underline", "line-through", both, or "". */
+function konvaDecoration(style: AccessoryLineStyle): string {
+  return [style.underline && 'underline', style.strikethrough && 'line-through']
     .filter(Boolean)
     .join(' ');
 }

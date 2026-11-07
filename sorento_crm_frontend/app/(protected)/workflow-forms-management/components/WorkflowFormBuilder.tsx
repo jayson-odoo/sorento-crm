@@ -1,5 +1,6 @@
 'use client';
 
+import { randomId } from '@/lib/id';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -121,7 +122,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
   };
 
   const addHeaderSection = () => {
-    const id = `sec_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `sec_${randomId().slice(0, 8)}`;
     setSchema((s) => {
       const base = s.header_sections?.length ? s.header_sections : emptyHeaderSections();
       const next = [...base, { id, title: 'New section', fields: [] as WorkflowHeaderField[] }];
@@ -130,13 +131,13 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
   };
 
   const addLineGroup = () => {
-    const id = `lg_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `lg_${randomId().slice(0, 8)}`;
     const g: WorkflowLineGroup = { id, name: 'Line items', fields: [] };
     setSchema((s) => ({ ...s, line_groups: [...s.line_groups, g] }));
   };
 
   const addLineField = (gi: number) => {
-    const id = `lf_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `lf_${randomId().slice(0, 8)}`;
     const f: WorkflowHeaderField = { id, type: 'text', label: 'Column', required: false };
     setSchema((s) => {
       const groups = [...s.line_groups];
@@ -171,7 +172,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
   };
 
   const addState = () => {
-    const id = `s_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `s_${randomId().slice(0, 8)}`;
     const st: WorkflowState = {
       id,
       name: 'State',
@@ -200,7 +201,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
     const from = schema.states[0]?.id ?? '';
     const to = schema.states[1]?.id ?? from;
     const t: WorkflowTransition = {
-      id: `tr_${crypto.randomUUID().slice(0, 8)}`,
+      id: `tr_${randomId().slice(0, 8)}`,
       from_state_id: from,
       to_state_id: to,
       label: 'Move',

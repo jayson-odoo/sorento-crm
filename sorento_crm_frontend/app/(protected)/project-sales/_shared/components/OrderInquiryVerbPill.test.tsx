@@ -80,12 +80,11 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
     // at all - only the VERB pill (`OrderInquiryVerbPill`, a different map, ORDER/ADVANCE/
     // ...) - so it is not one of this map's readers and is deliberately not checked here.
     const files = [
-      // Lines tab (AC-B3-1's own State column).
-      '../../order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
-      // SCM sales-order detail's "Order inquiry" cell.
-      '../../../scm/sales-orders/[id]/components/SalesOrderDetail.tsx',
       // The board's own cell-breakdown dialog - "the board chips" the plan names.
       '../../fulfilment-planning/components/BoardCellBreakdownDialog.tsx',
+      // SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): the ONE line status both the Lines tab
+      // and the SCM sales order's Order inquiry cell render (asserted below).
+      './OrderInquiryLineStatusPill.tsx',
     ];
     for (const relative of files) {
       const source = readFileSync(require.resolve(relative), 'utf8');
@@ -93,6 +92,16 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
       // `OrderInquiryLineStatePill`, which adds only the two line states and hands every
       // row state to `OrderInquiryStatePill` (asserted below).
       expect(source).toMatch(/OrderInquiry(Line)?StatePill/);
+    }
+    // SO-LINE-OI-STATUS-UNIFY: the Lines tab's State cell and the SO line's Order inquiry
+    // cell both go through the shared `OrderInquiryLineStatusPill`, never a pill of their own.
+    for (const relative of [
+      '../../order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
+      '../../../scm/sales-orders/[id]/components/SoLineOrderInquiryCell.tsx',
+    ]) {
+      const source = readFileSync(require.resolve(relative), 'utf8');
+      expect(source).toContain('<OrderInquiryLineStatusPill');
+      expect(source).not.toMatch(/STATE_LABEL\[/);
     }
   });
 });

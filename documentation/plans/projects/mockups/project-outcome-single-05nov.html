@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project outcome</title>
+<!-- PROJECT-OUTCOME-SINGLE Lavish mock. Annotated mockup, not shipped code.
+     Plan: documentation/plans/projects/PLAN-project-outcome-single-05nov.md -->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--primary:#1b84ff;--primary-soft:#e9f3ff;
+--green:#15803d;--green-soft:#f0fdf4;--red:#dc2626;--red-soft:#fef2f2;--grey-soft:#f3f4f6;--callout:#e11d74;--radius:8px;
+--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1400px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.frame{background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden;width:760px;max-width:100%}
+.content{padding:20px 24px}
+.notes{flex:1 1 340px;min-width:280px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.hdr{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500;background:var(--grey-soft);color:#374151}
+.pill.green{background:var(--green-soft);color:var(--green)}.pill.red{background:var(--red-soft);color:var(--red)}.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;font:500 13px var(--font);height:32px;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}.btn.icon{width:32px;justify-content:center;padding:0}
+.menu{background:#fff;border:1px solid var(--line);border-radius:var(--radius);width:240px;padding:6px 0;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px;margin:8px 0 0 auto}
+.menu div{padding:6px 12px}.menu .new{background:var(--primary-soft);font-weight:600}
+.dialog{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:420px;max-width:100%;box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.field{border:1px solid var(--line);border-radius:6px;padding:7px 10px;color:var(--muted);margin:6px 0 14px}
+.qa{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-width:1100px}
+.qa p{margin:0 0 10px}.rec{color:var(--green);font-weight:600}
+</style>
+</head>
+<body><div class="doc">
+<h1>Project outcome: one per project (PROJECT-OUTCOME-SINGLE)</h1>
+<p class="sub">Mock v1, 5 Nov 2026. Owner 12:28: "we only need per project outcome". The project page gains two gear items and a reason prompt on Mark lost. Areas lose their Open/Won/Lost pill everywhere. Pink numbers map to the notes.</p>
+
+<h2 class="ft">1. Project page header, project on "Quoted", gear open</h2>
+<div class="layout">
+<div class="frame"><div class="content">
+  <div class="hdr">
+    <div><span style="color:var(--muted);font-size:13px">PS26-0143</span> <span class="pill blue">Quoted</span>
+      <h2 style="margin:4px 0 0;font-size:20px">Taman Seri Alam Phase 3</h2></div>
+    <div style="display:flex;gap:8px"><span class="btn">‹ 3 / 41 ›</span><span class="btn icon" style="outline:2px solid var(--primary)">⚙</span><span class="btn primary">Tendering</span></div>
+  </div>
+  <div class="menu">
+    <div>Edit project</div><div>Reassign</div><div>Re-specify</div>
+    <div>PO received</div>
+    <div class="new">Mark won <span class="co">1</span></div>
+    <div>Mark lost <span class="co">2</span></div>
+    <div>Mark dormant</div>
+    <div style="color:var(--red);border-top:1px solid var(--line);margin-top:4px;padding-top:8px">Delete project</div>
+  </div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">1</span><div><b>Mark won (new)</b>Sets the project Won without moving its stage, for a yes that comes before any PO. "Make quotation" then unlocks. PO received and a customer accepting online also win the project.<span class="ref">ProjectDetailClient.tsx:351-393 (DetailActionsMenu), one DropdownMenuItem</span></div></li>
+<li><span class="co">2</span><div><b>Mark lost (existing status move)</b>Now opens the reason prompt (frame 2) and sets the project Lost as well as the stage.<span class="ref">existing edge, project_seed_service.py:388</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">2. Mark lost asks why</h2>
+<div class="layout">
+<div class="dialog">
+  <b style="font-size:16px">Mark lost</b>
+  <div style="margin-top:12px;font-size:13px">Reason</div>
+  <div class="field">Lost on price ▾</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn">Cancel</span><span class="btn primary">Mark lost</span></div>
+</div>
+<div class="notes"><ol>
+<li><span class="co">3</span><div><b>Reason, same list as today</b>The configurable loss-reason list the area dialog used. Stored on the project; the loss-reasons report counts projects.<span class="ref">QuotationOutcomeDialog.tsx reshaped as ProjectLossDialog; SearchableSelect; lookup set project_quotation_loss_reason</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">3. A Won project (stage still Quoted), gear open</h2>
+<div class="layout">
+<div class="frame"><div class="content">
+  <div class="hdr">
+    <div><span style="color:var(--muted);font-size:13px">PS26-0143</span> <span class="pill blue">Quoted</span> <span class="pill green">Won</span> <span class="co">4</span>
+      <h2 style="margin:4px 0 0;font-size:20px">Taman Seri Alam Phase 3</h2></div>
+    <div style="display:flex;gap:8px"><span class="btn icon" style="outline:2px solid var(--primary)">⚙</span><span class="btn primary">Tendering</span></div>
+  </div>
+  <div class="menu"><div>Edit project</div><div>PO received</div><div class="new">Re-open <span class="co">5</span></div><div>Mark lost</div></div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">4</span><div><b>Won pill, only when the stage does not already say it</b>Shown on a Won project whose stage is not PO Received. A Lost project sits on the Lost stage, so it keeps the single pill.<span class="ref">ProjectStatusPill.tsx beside it; Badge</span></div></li>
+<li><span class="co">5</span><div><b>Re-open (new)</b>On a Won or Lost project: back to Open, reason cleared. From the Lost stage it returns to the stage it was on before Lost.</div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">4. Areas: the pill goes</h2>
+<div class="qa"><p>The Open/Won/Lost pill and Record outcome leave the proposal/quotation lines (with #2194) and the area strip in the proposal form (QuotationFormClient.tsx:947). The unlinked per-area page [projectId]/quotations/[quotationId] is deleted.</p></div>
+</div></body></html>

@@ -3065,6 +3065,8 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
     const badge = row.querySelector('[data-testid^="breakdown-oi-rejected-"]') as HTMLElement;
     expect(badge).not.toBeNull();
+    // SO-LINE-OI-STATUS-UNIFY: the narrow drill-down cell keeps the pill alone; the
+    // reason is in the title and the lightbox.
     expect(badge).toHaveTextContent(/^Rejected$/);
     expect(badge.getAttribute('title')).toMatch(/^Rejected by Joey on 13\/10\/2026, 4:32\s?pm: DISCON$/i);
     expect(within(row).queryByText('To buy')).toBeNull();

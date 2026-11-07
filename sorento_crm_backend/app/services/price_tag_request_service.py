@@ -320,6 +320,7 @@ class PriceTagRequestService:
         lines: list[dict],
         *,
         carry_tags: dict[tuple, list[dict]] | None = None,
+        kept_picks: set[tuple] | None = None,
         viewer=None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
@@ -545,6 +546,14 @@ class PriceTagRequestService:
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
                         combo_id=combo_id,
+                        price_type=price_type,
+                        # AC-37: a re-sent pick equal to the one this line already stored, for
+                        # the same price type, is not re-checked.
+                        kept={
+                            template_id
+                            for (pid, cid, ptype, template_id) in (kept_picks or set())
+                            if pid == product_id and cid == combo_id and ptype == price_type
+                        },
                     ),
                 )
             )
@@ -1005,10 +1014,15 @@ Marketing's own work is not part of the form's payload, so it is captured
             ]
             for old in request.lines
         }
+        kept_picks = {
+            (old.product_id, old.combo_id, old.price_type or request.price_mode, old.tag_template_id)
+            for old in request.lines
+            if old.tag_template_id
+        }
         request.lines.clear()
         db.flush()
         PriceTagRequestService._add_lines(
-            db, request, lines, carry_tags=carry_tags, viewer=viewer
+            db, request, lines, carry_tags=carry_tags, kept_picks=kept_picks, viewer=viewer
         )
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
@@ -1671,6 +1685,67 @@ Marketing's own work is not part of the form's payload, so it is captured
         return request.status == STATUS_PROOF_READY and not request.assigned_to_id
 
     @staticmethod
+    def require_combo_prices(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval that would print a combo line with no price (K8).
+
+        A combo line prints the combo's stored price or nothing. The figure is the tag's own
+        (``resolve_tags_live``: stored or option price, typed price, marketing override), judged
+        for the line's own LP or SP. The salesperson can still escalate such a line.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        line_index = {line.id: index for index, _tag, line, _t in tag_data_service.ordered_tags(request)}
+        for row in tag_data_service.resolve_tags_live(db, request):
+            if not row.get("combo"):
+                continue
+            line = next(l for l in request.lines if l.id == row["line_id"])
+            mode = line.price_type or request.price_mode
+            figure = row["sell_price"] if mode == "selling" else row["list_price"]
+            if figure is None:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        "This combo has no "
+                        + ("selling" if mode == "selling" else "list")
+                        + " price. Type the price or escalate it to marketing."
+                    ),
+                    detail=f"line:{line_index[line.id]}",
+                    code="COMBO_PRICE_MISSING",
+                )
+
+    @staticmethod
+    def require_template_positions(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval whose line lacks what its template prints (N1).
+
+        Judged against the stored template's needs and the line's combo, not the rows present, so
+        deleting a whole choice group row cannot slip through. A line with no combo or a template
+        that reads no such position is never refused. Escalate is unaffected.
+        """
+        from app.models.dealer_kit import TagTemplate
+        from app.models.product_combo import ProductCombo
+        from app.services.dealer_kit import tag_data_service
+        from app.services.dealer_kit.template_needs import missing_positions, template_needs
+
+        for index, _tag, line, _t in tag_data_service.ordered_tags(request):
+            if not line.combo_id or not line.tag_template_id:
+                continue
+            template = db.get(TagTemplate, line.tag_template_id)
+            combo = db.get(ProductCombo, line.combo_id)
+            version = template.published_version if template is not None else None
+            if combo is None or version is None:
+                continue
+            owed = missing_positions(
+                template_needs(version.doc), combo, [(p.role, p.product_id) for p in line.parts or []]
+            )
+            if owed:
+                raise AppException(
+                    status_code=422,
+                    message=" ".join(owed),
+                    detail=f"line:{index}",
+                    code="TEMPLATE_POSITIONS_MISSING",
+                )
+
+    @staticmethod
     def self_approve(
         db: Session, request: PriceTagRequest, doc: dict | None, approver_name: str | None,
     ) -> PriceTagRequest:
@@ -1698,6 +1773,8 @@ Marketing's own work is not part of the form's payload, so it is captured
                 code="INVALID_TRANSITION",
             )
         if not request.assigned_to_id:
+            PriceTagRequestService.require_combo_prices(db, request)
+            PriceTagRequestService.require_template_positions(db, request)
             if not doc:
                 raise AppException(
                     status_code=422,

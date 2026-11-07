@@ -446,7 +446,7 @@ describe('mergeFieldCatalog', () => {
   it('offers the fixed groups plus one entry per registry key', () => {
     const groups = new Set(catalog.map((field) => field.group));
     // PS-SPEC-SHEET: the Spec sheet group joins; a price tag editor filters it out by `groups`.
-    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet']));
+    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet']));
 
     const specs = catalog.filter((field) => field.group === 'Specs');
     expect(specs.map((field) => field.token)).toEqual([

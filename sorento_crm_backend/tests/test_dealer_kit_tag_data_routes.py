@@ -362,12 +362,16 @@ def test_product_tag_data_keeps_every_field(api):
         "barcode",
         "currency",
         "combo",
+        "slots",
         # r10 S11 (5ce3bd5d8): declared on `ProductTagData` too, so the
         # template designer's own preview (bound to a bare product, not a
         # request line) can resolve `{{product.price_tag_description}}`
         # the same way the canvas already does off a line binding.
         "price_tag_description",
+        # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
+        "accessories",
     }
+    assert body["accessories"] == []
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
     assert body["dimensions"] == "800 x 500 x 220 mm"
@@ -1088,6 +1092,7 @@ def test_product_tag_data_carries_specs_on_the_wire(api):
         "label": "Diameter",
         "value": "407",
         "unit": "mm",
+        "raw": "407",
     } in specs
 
 
@@ -1211,4 +1216,5 @@ def test_print_payload_lines_carry_their_specs(api):
         # AC-S3-1 (r10): title-cased, like every other stored slug.
         "value": "Ceramic",
         "unit": None,
+        "raw": "ceramic",
     } in payload["resolvedData"][tag_id]["specs"]

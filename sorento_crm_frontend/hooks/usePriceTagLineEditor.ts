@@ -21,13 +21,19 @@ import type {
   TagItemOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { defaultOptionFor } from '@/lib/dealer-kit/template-price-type';
 import { distinctName } from '@/lib/product-display';
 import {
   emptyDraftLine,
   formatRM,
   MISSING_TAG_TEMPLATE,
   newPartKey,
+  comboOfLine,
+  insertComboRow,
   partsFromCombo,
+  pickedProductIds,
+  restoreGroupCandidates,
+  trimPicksToTemplate,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 
@@ -98,7 +104,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.key,
           l.line_type,
           l.product_id,
-          l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
+          l.parts.map((p) => [p.product_id, p.product_ids, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
           l.combo_id,
         ]),
@@ -111,9 +117,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       .map((l) => ({
         key: l.key,
         product_id: l.product_id,
-        part_product_ids: l.parts
-          .filter((p) => p.product_id)
-          .map((p) => p.product_id as string),
+        part_product_ids: pickedProductIds(l.parts),
         candidate_product_ids: l.parts.flatMap((p) =>
           p.candidates.map((c) => c.product_id),
         ),
@@ -233,7 +237,13 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
                       combo_id: lookup.combos[0].combo_id,
                       parts: partsFromCombo(lookup.combos[0]),
                     }
-                  : {}),
+                  : {
+                      // A reopened multi-pick row gets its group's options back (K5).
+                      parts: restoreGroupCandidates(
+                        l.parts,
+                        lookup.combos.find((c) => c.combo_id === l.combo_id),
+                      ),
+                    }),
               };
             }),
           );
@@ -285,9 +295,12 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
             if ((l.combo_id ?? null) !== comboId) return l;
             // PRICETAG-LPSP: a pick that is still offered stays; else the default; else the
             // only one; else none (several and no default = the salesperson picks).
+            // PRICETAG-COMBO-FORMAT: only a template that fits the line's LP / SP can stay or be
+            // the default; the pick of a line of another type starts from that type's default.
+            const lineType = l.price_type ?? priceMode;
+            // R6: a saved pick is kept even if it no longer fits; only a user change re-filters.
             const kept = options.find((o) => o.id === l.tag_template_id);
-            const fallback =
-              options.find((o) => o.is_default) ?? (options.length === 1 ? options[0] : null);
+            const fallback = defaultOptionFor(options, lineType);
             return {
               ...l,
               tag_templates: options,
@@ -302,7 +315,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       // looks like; the server's own rule still decides at Submit.
       (comboId ? lookup(productId, comboId) : lookup(productId)).then(apply).catch(() => apply([]));
     }
-  }, [lines, lookups, setLines]);
+  }, [lines, lookups, setLines, priceMode]);
 
   /** The Template select on a line whose product allows several (AC-14). */
   const chooseTemplate = useCallback(
@@ -310,14 +323,15 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       setLines((prev) =>
         prev.map((l) =>
           l.key === key
-            ? {
+            ? // AC-C4: a template that needs fewer keeps the first picks.
+              trimPicksToTemplate({
                 ...l,
                 tag_template_id: templateId || null,
                 // The row's own "pick a template" message goes once one is picked;
                 // any other message (a duplicate product) stays.
                 guard_error:
                   templateId && l.guard_error === MISSING_TAG_TEMPLATE ? null : l.guard_error,
-              }
+              })
             : l,
         ),
       );
@@ -401,7 +415,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       setLines((prev) =>
         prev.map((l) => {
           if (l.key !== key || !l.combo_id) return l;
-          const combo = l.combos.find((c) => c.combo_id === l.combo_id);
+          const combo = comboOfLine(l);
           if (!combo) return l;
           const missing = partsFromCombo(combo).filter((candidate) =>
             candidate.role
@@ -411,6 +425,14 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           return missing.length > 0 ? { ...l, parts: [...l.parts, ...missing] } : l;
         }),
       );
+    },
+    [setLines],
+  );
+
+  /** P2: put one missing combo row back (a group, the upgrade or a fixed part), at its combo position. */
+  const restorePart = useCallback(
+    (key: string, rowId: string) => {
+      setLines((prev) => prev.map((l) => (l.key === key ? { ...l, parts: insertComboRow(l, rowId) } : l)));
     },
     [setLines],
   );
@@ -429,12 +451,35 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
               const chosen = part.candidates.find(
                 (candidate) => candidate.product_id === productId,
               );
+              // A single pick replaces any multi-pick row's picks (K5), or the payload would keep them.
+              const single = { ...part, product_ids: undefined };
               return chosen
-                ? { ...part, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
-                : { ...part, product_id: null, code: '', name: '' };
+                ? { ...single, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
+                : { ...single, product_id: null, code: '', name: '' };
             }),
           };
         }),
+      );
+    },
+    [setLines],
+  );
+
+  /** A multi-pick row (K5): the ordered picks of a group the template needs 2 or more from. */
+  const resolvePicks = useCallback(
+    (key: string, partKeyToResolve: string, productIds: string[]) => {
+      setLines((prev) =>
+        prev.map((l) =>
+          l.key !== key
+            ? l
+            : {
+                ...l,
+                parts: l.parts.map((part) =>
+                  part.key === partKeyToResolve
+                    ? { ...part, product_id: null, code: '', name: '', product_ids: productIds }
+                    : part,
+                ),
+              },
+        ),
       );
     },
     [setLines],
@@ -583,7 +628,9 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     setManualSellPrice,
     removePart,
     restoreParts,
+    restorePart,
     resolvePart,
+    resolvePicks,
     addPart,
     fetchItemOptions,
     fetchPartOptions,

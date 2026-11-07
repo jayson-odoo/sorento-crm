@@ -64,7 +64,7 @@ import {
   listSeries,
   recomputeQuotationVersion,
   reviseQuotation,
-  setQuotationOutcome,
+  setProjectOutcome,
   updateQuotation,
   replaceQuotationColumns,
   replaceQuotationLines,
@@ -143,7 +143,6 @@ import type {
   MediaKind,
   QuotationLine,
   QuotationLineBulkItem,
-  QuotationOutcomeBody,
   QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
@@ -204,11 +203,12 @@ export const projectsPagerQuery = {
     listProjects(projectsListParamsFromUrl(params)),
 };
 
-export function useProjects(params: ProjectListParams) {
+export function useProjects(params: ProjectListParams, options?: { enabled?: boolean }) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: projectsListKey(params),
     queryFn: () => listProjects(params),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -373,11 +373,37 @@ export function useUpdateProject(projectId: string) {
 export function useChangeProjectStatus() {
   const invalidate = useInvalidateProjects();
   return useMutation({
-    mutationFn: ({ projectId, toStatusId }: { projectId: string; toStatusId: string }) =>
-      changeProjectStatus(projectId, toStatusId),
+    mutationFn: ({
+      projectId,
+      toStatusId,
+      lossReason,
+    }: {
+      projectId: string;
+      toStatusId: string;
+      lossReason?: string;
+    }) => changeProjectStatus(projectId, toStatusId, lossReason),
     onSuccess: (project) => {
       invalidate(project.id);
       toast.success(`${projectCodeLabel(project)} moved to ${project.status_label ?? 'a new stage'}`);
+    },
+    onError: (error: Error, variables) => {
+      invalidate(variables.projectId);
+      toast.error(error.message);
+    },
+  });
+}
+
+/** Mark won, or re-open. On a re-open from Lost the rung changes too. */
+export function useSetProjectOutcome() {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: ({ projectId, outcome }: { projectId: string; outcome: 'won' | 'open' }) =>
+      setProjectOutcome(projectId, outcome),
+    onSuccess: (project, variables) => {
+      invalidate(project.id);
+      toast.success(
+        `${projectCodeLabel(project)} ${variables.outcome === 'won' ? 'marked won' : 're-opened'}`,
+      );
     },
     onError: (error: Error, variables) => {
       invalidate(variables.projectId);
@@ -1153,16 +1179,6 @@ export function useQuotationMutations(projectId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const decide = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: QuotationOutcomeBody }) =>
-      setQuotationOutcome(id, body),
-    onSuccess: (quotation) => {
-      invalidate(quotation.id);
-      toast.success(`"${quotation.scope_label}" marked ${quotation.outcome}`);
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   // No success toast here: the only caller is a ConfirmDeleteDialog, which raises its
   // own. Toasting in both places puts two notifications on screen for one delete.
   const remove = useMutation({
@@ -1170,7 +1186,7 @@ export function useQuotationMutations(projectId: string) {
     onSuccess: () => invalidate(),
   });
 
-  return { create, update, revise, decide, remove };
+  return { create, update, revise, remove };
 }
 
 /**

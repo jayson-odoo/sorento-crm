@@ -403,12 +403,15 @@ def test_request_rejects_open_duplicate_and_wrong_state(api):
     )
     assert second.status_code == 409, second.text
 
-    wrong_verb_row = _open_row(world, verb=IV_DELAY)
-    wrong_verb = client.post(
+    # OI-RESERVE-ANY-ROW (owner, 5 Nov 2026): the verb no longer gates a request, so a DELAY
+    # row that is not Done is requestable (tests/test_oi_reserve_any_row.py owns the rule).
+    delay_row = _open_row(world, verb=IV_DELAY)
+    delay = client.post(
         REQUEST_URL(world.inquiry.id),
-        json={"rows": [{"row_id": wrong_verb_row.id, "qty_requested": "1"}]},
+        json={"rows": [{"row_id": delay_row.id, "qty_requested": "1"}]},
     )
-    assert wrong_verb.status_code == 409, wrong_verb.text
+    assert delay.status_code == 201, delay.text
+    world.db.commit()
 
     actioned_row = _open_row(world, state=INQUIRY_ACTIONED)
     wrong_state = client.post(

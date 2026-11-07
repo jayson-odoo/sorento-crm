@@ -109,6 +109,28 @@ def _std(
     return {"host": host, "mirror": mirror, "white": white, "black": black, "upgrade": upgrade, "combo": cb}
 
 
+def _free_list(db, combo, names):
+    """PRICETAG-ACCESSORIES: a combo's free items are its accessory list (owner Q5, 6 Nov)."""
+    import uuid
+
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).delete()
+    for index, name in enumerate(names):
+        item = Accessory(id=str(uuid.uuid4()), name=f"{name} {uuid.uuid4().hex[:6]}", company_id=seed.SORENTO)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+    return [
+        item.name
+        for item in db.query(Accessory)
+        .join(ProductComboAccessory, ProductComboAccessory.accessory_id == Accessory.id)
+        .filter(ProductComboAccessory.combo_id == combo.id)
+        .order_by(ProductComboAccessory.sort_order)
+    ]
+
+
 def _line_parts(s, pick=None):
     """The dealer's parts: the fixed mirror, then the pick (or the Basin group left open)."""
     parts = [{"product_id": s["mirror"].id}]
@@ -133,19 +155,20 @@ def _row(db, s, pick=None, **kwargs):
 def test_ac_2_1_a_combo_line_resolves_the_whole_combo_object(db):
     s = _std(
         db,
-        combo_fields={"description": "Cabinet, mirror, basin", "free_items": "Tap, waste"},
+        combo_fields={"description": "Cabinet, mirror, basin"},
         white_sell=D("280.00"),
         upgrade_topup=D("100.00"),
         with_upgrade=True,
     )
+    names = _free_list(db, s["combo"], ["Tap", "Waste"])
     row, _request = _row(db, s)
     combo = row["combo"]
 
-    assert set(combo) == {"id", "name", "description", "free_items", "choices", "upgrades"}
+    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "choices", "upgrades"}
     assert combo["id"] == s["combo"].id
     assert combo["name"] == "ZZT 4 in 1"
     assert combo["description"] == "Cabinet, mirror, basin"
-    assert combo["free_items"] == "Tap, waste"
+    assert combo["free_items"] == ", ".join(names)
 
     assert [group["role"] for group in combo["choices"]] == ["Basin"]
     options = combo["choices"][0]["options"]
@@ -215,16 +238,22 @@ def test_ac_2_2_a_picked_upgrade_is_marked_picked(db):
 # --------------------------------------------------------------------------- AC-2.3
 
 
-def test_ac_2_3_the_lines_own_accessories_text_wins(db):
-    s = _std(db, combo_fields={"free_items": "Combo tap"})
+# PRICETAG-ACCESSORIES (owner Q5, 6 Nov): one source. The line's old free text is never read;
+# the slot text is built from the combo's accessory list.
+
+
+def test_ac_2_3_the_lines_old_text_is_no_longer_read(db):
+    s = _std(db)
+    names = _free_list(db, s["combo"], ["Combo tap"])
     row, _ = _row(db, s, pick=s["white"], included_accessories="Line tap")
-    assert row["included_accessories"] == "Line tap"
+    assert row["included_accessories"] == names[0]
 
 
-def test_ac_2_3_a_blank_line_text_falls_back_to_the_combos_free_items(db):
-    s = _std(db, combo_fields={"free_items": "Combo tap, waste"})
+def test_ac_2_3_the_slot_text_is_the_combos_list(db):
+    s = _std(db)
+    names = _free_list(db, s["combo"], ["Combo tap", "Waste"])
     row, _ = _row(db, s, pick=s["white"])
-    assert row["included_accessories"] == "Combo tap, waste"
+    assert row["included_accessories"] == ", ".join(names)
 
 
 def test_ac_2_3_no_free_items_and_no_line_text_stays_empty(db):
@@ -236,25 +265,26 @@ def test_ac_2_3_no_free_items_and_no_line_text_stays_empty(db):
 # --------------------------------------------------------------------------- AC-2.4
 
 
-def test_ac_2_4_with_no_combo_price_it_is_todays_sum(db):
+def test_ac_2_4_with_no_combo_price_nothing_prints_never_the_sum(db):
+    # PRICETAG-COMBO-RENDER K8: the part sum is never used on a combo line.
     s = _std(db)
     row, _ = _row(db, s, pick=s["white"])
-    assert row["list_price"] == D("1500.00")
-    assert row["sell_price"] == D("1500.00")
+    assert row["list_price"] is None
+    assert row["sell_price"] is None
 
 
 def test_ac_2_4_the_combo_list_price_replaces_the_summed_list_price_only(db):
     s = _std(db, combo_fields={"list_price": D("2000.00")})
     row, _ = _row(db, s, pick=s["white"])
     assert row["list_price"] == D("2000.00")
-    assert row["sell_price"] == D("1500.00"), "no sell price set: today's sum"
+    assert row["sell_price"] is None, "no sell price set: nothing, never the sum"
 
 
 def test_ac_2_4_the_combo_sell_price_replaces_the_summed_sell_price(db):
     s = _std(db, combo_fields={"sell_price": D("1800.00")})
     row, _ = _row(db, s, pick=s["white"])
     assert row["sell_price"] == D("1800.00")
-    assert row["list_price"] == D("1500.00"), "no list price set: today's sum"
+    assert row["list_price"] is None, "no list price set: nothing, never the sum"
 
 
 def test_ac_2_4_the_picked_options_sell_price_beats_the_combo_sell_price(db):
@@ -290,8 +320,8 @@ def test_ac_2_4_a_picked_upgrade_with_a_zero_topup_prints_the_price_alone(db):
 def test_ac_2_4_a_picked_upgrade_on_a_combo_with_no_sell_price_is_todays_sum(db):
     s = _std(db, upgrade_topup=D("100.00"), with_upgrade=True)
     row, _ = _row(db, s, pick=s["upgrade"])
-    # 1000 host + 200 mirror + 500 upgrade, counted like any resolved part; the top-up is not added.
-    assert row["sell_price"] == D("1700.00")
+    # No stored price to add the top-up to: nothing prints (never the part sum).
+    assert row["sell_price"] is None
 
 
 def test_ac_2_4_the_line_manual_price_beats_the_combo_price(db):
@@ -426,46 +456,6 @@ def test_ac_2_6_a_line_without_combo_id_prices_as_today(db):
 # --------------------------------------------------------------------------- AC-2.7
 
 
-def _promoted_row(db, s, offers):
-    promo = seed.promotion(db, offers)
-    request = seed.submit_one(
-        db,
-        s["host"],
-        s["combo"],
-        _line_parts(s, s["white"]),
-        price_mode="selling",
-        promotion_id=promo.id,
-    )
-    db.flush()
-    return seed.rows(db, request)[0]
-
-
-def test_ac_2_7_a_part_at_rm_0_in_the_promotion_adds_rm_0(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00"), (s["mirror"], "0.00")])
-    # 800 host offer + 0 free mirror + 300 white (no row: list).
-    assert row["sell_price"] == D("1100.00")
-
-
-def test_ac_2_7_a_part_with_no_row_in_the_promotion_adds_its_list_price(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00")])
-    assert row["sell_price"] == D("1300.00")  # 800 + 200 + 300
-
-
-def test_ac_2_7_a_positive_offer_on_a_part_behaves_as_today(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00"), (s["mirror"], "150.00")])
-    assert row["sell_price"] == D("1250.00")  # 800 + 150 + 300
-
-
-def test_ac_2_7_a_host_listed_at_rm_0_is_not_free(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "0.00"), (s["mirror"], "0.00")])
-    # Host charged at its list price 1000 as today, free mirror 0, white at list 300.
-    assert row["sell_price"] == D("1300.00")
-
-
 # --------------------------------------------------------------------------- AC-2.8
 
 
@@ -511,11 +501,11 @@ def _fixed_combo(db):
         "ZZT pair",
         parts=[{"product": mirror}],
         description="Old text",
-        free_items="Old free",
         list_price=D("2000.00"),
         sell_price=D("1500.00"),
     )
-    return {"host": host, "mirror": mirror, "combo": cb}
+    (old_free,) = _free_list(db, cb, ["Old free"])
+    return {"host": host, "mirror": mirror, "combo": cb, "old_free": old_free}
 
 
 def _pinned_tag(db, request):
@@ -531,7 +521,7 @@ def test_ac_2_8_a_designing_tag_picks_up_changed_combo_text_and_price(crm):
     assert tag.pinned_tag_data["combo"]["description"] == "Old text"
 
     s["combo"].description = "New text"
-    s["combo"].free_items = "New free"
+    (new_free,) = _free_list(db, s["combo"], ["New free"])
     s["combo"].sell_price = D("1400.00")
     db.commit()
 
@@ -541,7 +531,7 @@ def test_ac_2_8_a_designing_tag_picks_up_changed_combo_text_and_price(crm):
     tag = _pinned_tag(db, request)
     assert tag.data_updated_at is not None
     assert tag.pinned_tag_data["combo"]["description"] == "New text"
-    assert tag.pinned_tag_data["combo"]["free_items"] == "New free"
+    assert tag.pinned_tag_data["combo"]["free_items"] == new_free
     assert D(str(tag.pinned_tag_data["sell_price"])) == D("1400.00")
     labels = " ".join(str(change) for change in (tag.data_update_changes or [])).lower()
     assert "description" in labels, "the change note names the combo description"
@@ -557,7 +547,7 @@ def test_ac_2_8_an_approved_pinned_tag_keeps_its_text_and_figures(crm):
     db.commit()
 
     s["combo"].description = "New text"
-    s["combo"].free_items = "New free"
+    (new_free,) = _free_list(db, s["combo"], ["New free"])
     s["combo"].sell_price = D("1400.00")
     db.commit()
 
@@ -565,9 +555,10 @@ def test_ac_2_8_an_approved_pinned_tag_keeps_its_text_and_figures(crm):
     db.expire_all()
     (row,) = seed.rows(db, request)
     assert row["combo"]["description"] == "Old text"
-    assert row["combo"]["free_items"] == "Old free"
+    assert row["combo"]["free_items"] == s["old_free"]
     assert row["sell_price"] == old_sell == D("1500.00")
-    assert row["included_accessories"] == "Old free", "a blank line text reads the pinned free items"
+    assert row["included_accessories"] == s["old_free"], "the pinned list, not today's"
+    assert [item["name"] for item in row["accessories"]] == [s["old_free"]]
     assert _pinned_tag(db, request).data_updated_at is None
 
 
@@ -616,7 +607,8 @@ def test_ac_2_9_the_export_payload_carries_the_combo(crm):
     assert combo is not None, "ResolvedLineData must declare `combo` or the PDF drops it"
     assert combo["name"] == "ZZT pair"
     assert combo["description"] == "Old text"
-    assert combo["free_items"] == "Old free"
+    assert combo["free_items"] == s["old_free"]
+    assert [item["name"] for item in payload["resolvedData"][tag.id]["accessories"]] == [s["old_free"]]
 
 
 # --------------------------------------------------------------------------- sell above list
@@ -662,18 +654,31 @@ def test_ac_2_8_a_description_only_edit_reaches_a_designing_tag_with_its_change_
     assert "combo description" in labels
 
 
-def test_ac_2_7_line_pricing_under_the_promotion_agrees_with_the_tag(db):
+def test_ac_2_7_a_promotion_option_on_a_combo_line_is_the_combos_figure_never_a_sum(db):
     from app.services.dealer_kit import tag_data_service
     from app.services.dealer_kit.pricing import line_pricing
 
-    s = _std(db)
-    promo = seed.promotion(db, [(s["host"], "800.00"), (s["mirror"], "0.00")])
+    viewer = tag_data_service.staff_viewer()
+    promo_lines = lambda s: [(s["host"], "800.00"), (s["mirror"], "0.00")]  # noqa: E731
+
+    s = _std(db, combo_fields={"sell_price": D("1800.00")})
+    promo = seed.promotion(db, promo_lines(s))
     line = {**_pricing_line(s, [s["mirror"].id, s["white"].id]), "promotion_id": promo.id}
-    (priced,) = line_pricing(db, lines=[line], viewer=tag_data_service.staff_viewer(), auto_pick=False)
-    assert D(str(priced["sell_price"])) == D("1100.00"), "800 host + 0 free mirror + 300 white"
-    # Without the combo the free part would add its list price.
-    plain = {k: v for k, v in line.items() if k != "combo_id"}
-    (unpriced,) = line_pricing(db, lines=[plain], viewer=tag_data_service.staff_viewer(), auto_pick=False)
+    (priced,) = line_pricing(db, lines=[line], viewer=viewer, auto_pick=False)
+    assert [o["sell_price"] for o in priced["promotion_options"]] == [D("1800.00")]
+    assert D(str(priced["sell_price"])) == D("1800.00")
+
+    # No stored combo price: the option has no figure either (K8), and nothing is summed.
+    s2 = _std(db)
+    promo2 = seed.promotion(db, promo_lines(s2))
+    line2 = {**_pricing_line(s2, [s2["mirror"].id, s2["white"].id]), "promotion_id": promo2.id}
+    (priced2,) = line_pricing(db, lines=[line2], viewer=viewer, auto_pick=False)
+    assert [o["sell_price"] for o in priced2["promotion_options"]] == [None]
+    assert priced2["sell_price"] is None
+
+    # Without the combo the same promotion still sums per part, as before.
+    plain = {k: v for k, v in line2.items() if k != "combo_id"}
+    (unpriced,) = line_pricing(db, lines=[plain], viewer=viewer, auto_pick=False)
     assert D(str(unpriced["sell_price"])) == D("1300.00")
 
 
@@ -724,3 +729,19 @@ def test_the_request_design_route_answers_200_with_the_combo_on_a_combo_line(crm
     assert response.status_code == 200, response.text
     (line,) = response.json()["lines"]
     assert line["combo"]["name"] == "ZZT pair"
+
+
+def test_ac_2_7_the_cheaper_covering_promotion_is_auto_picked_on_a_combo_line(db):
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.pricing import line_pricing
+
+    s = _std(db, combo_fields={"sell_price": D("1800.00")})
+    dear = seed.promotion(db, [(s["host"], "900.00")], description="AAA first alphabetically")
+    cheap = seed.promotion(db, [(s["host"], "700.00")], description="ZZZ last alphabetically")
+    (priced,) = line_pricing(
+        db, lines=[_pricing_line(s, [s["mirror"].id, s["white"].id])], viewer=tag_data_service.staff_viewer()
+    )
+    # Every option SHOWS the combo's figure; the order still follows what each promotion would total.
+    assert {o["sell_price"] for o in priced["promotion_options"]} == {D("1800.00")}
+    assert priced["auto_promotion_id"] == cheap.id
+    assert [o["id"] for o in priced["promotion_options"]] == [cheap.id, dear.id]

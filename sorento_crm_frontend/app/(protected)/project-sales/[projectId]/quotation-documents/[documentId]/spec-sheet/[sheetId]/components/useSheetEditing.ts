@@ -167,7 +167,18 @@ export function useSheetEditing(
   /** A canvas reports the layers it now holds. `base` is what it started from. */
   const report = React.useCallback(
     (key: string, base: TagLayer[], layers: TagLayer[]) => {
-      const history = histories.current.get(key) ?? { stack: [base], index: 0 };
+      const prior = histories.current.get(key);
+      // A canvas that started over from a document this page's history does not hold (the sheet
+      // switched templates, so the page is drawn again from the server) echoes that document
+      // first. It is the page's new starting point, not an edit: nothing is saved, and the old
+      // template's undo steps go.
+      if (prior && layers === base && layers !== prior.stack[prior.index]) {
+        histories.current.set(key, { stack: [base], index: 0 });
+        drafts.current.delete(key);
+        bump((n) => n + 1);
+        return;
+      }
+      const history = prior ?? { stack: [base], index: 0 };
       histories.current.set(key, history);
       // The same array again (the canvas echoing what the host gave it, or no change at all).
       if (layers === history.stack[history.index]) return;

@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combo price tags</title>
+<!--
+  PRICETAG-COMBO-RENDER mock v5 (owner Lavish note on v4, 4 Nov: "kitchen sink only? ... make this more flexible and
+  general"). Nothing here is sink- or tap-specific: a combo record names its own groups, a template points at
+  positions in the combo, its needs are read from its layers. Every combo shape in the reference PDF goes through
+  the SAME existing screens, redrawn from their source (not screenshots):
+    - Combos card on the product page: app/(protected)/master-data-management/products/[id]/components/
+      ProductCombosSection.tsx (part rows :180-300) + ComboTemplatesPicker.tsx (template multi-select)
+    - Template designer: app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx (Preview combo bar
+      :4671-4690) + InspectorPanel.tsx (Product section = SubjectInspector :1485-1547)
+    - New Price Tag Request: app/(auth)/portal/components/PriceTagRequestForm.tsx + components/dealer-kit/
+      PriceTagLinesTable.tsx (LineRow :337-777, PartRow :235-331), eye-icon lightbox PriceTagLivePreview.tsx
+  Amber dashed outline = what changes. Exact system codes (crew PDF tally 4 Nov). Prices other than the PDF's
+  RM 849 / RM 2,099, the pictures and the descriptions are placeholders.
+-->
+<style>
+  :root { --bg:#f9fafb; --card:#fff; --fg:#0a0a0a; --muted:#71717a; --line:#e4e4e7; --mutedbg:#f4f4f5; --primary:#1b84ff; --destructive:#dc2626; --warn:#b45309; --warnbg:#fffbeb; --okbg:#ecfdf5; --ok:#047857; --delta:#f59e0b; --sel:#eff6ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --line:#27272a; --mutedbg:#18181b; --warnbg:#2b2110; --okbg:#0f2a20; --sel:#172033; } }
+  :root[data-theme="dark"] { --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --line:#27272a; --mutedbg:#18181b; --warnbg:#2b2110; --okbg:#0f2a20; --sel:#172033; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 Inter, system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  h4 { margin:0 0 8px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .muted { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:1180px; }
+  .wrap { overflow-x:auto; }
+  .delta { outline:2px dashed var(--delta); outline-offset:2px; border-radius:6px; position:relative; }
+  .dtag { position:absolute; top:-10px; right:-6px; background:var(--delta); color:#111; font-size:10px; font-weight:700; border-radius:999px; padding:0 6px; line-height:16px; z-index:1; }
+  table { border-collapse:collapse; }
+  .grid { width:100%; font-size:13px; }
+  .grid th, .grid td { text-align:left; padding:6px; border-top:1px solid var(--line); vertical-align:top; }
+  .grid th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  code { font-size:12px; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; white-space:nowrap; }
+  .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.ok { background:var(--okbg); color:var(--ok); } .pill.info { background:var(--sel); color:var(--primary); } .pill.err { background:#fef2f2; color:var(--destructive); }
+  .tabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:12px; }
+  .tabs button { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:6px; padding:4px 10px; font-size:13px; cursor:pointer; }
+  .tabs button.on { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+  .sel { display:flex; align-items:center; justify-content:space-between; gap:6px; border:1px solid var(--line); border-radius:6px; background:var(--card); height:32px; padding:0 10px; font-size:13px; min-width:0; }
+  .sel .ph { color:var(--muted); } .sel .c { color:var(--muted); font-size:10px; flex:none; }
+  .input { border:1px solid var(--line); border-radius:6px; height:32px; padding:0 10px; display:flex; align-items:center; color:var(--muted); font-size:13px; background:var(--card); }
+  .chips { display:flex; gap:4px; flex-wrap:wrap; min-width:0; }
+  .chip { background:var(--mutedbg); border-radius:4px; padding:0 6px; font-size:12px; white-space:nowrap; }
+  .pop { border:1px solid var(--line); border-radius:8px; background:var(--card); box-shadow:0 8px 24px rgba(0,0,0,.08); padding:4px; margin-top:4px; }
+  .pop .opt { display:flex; gap:8px; align-items:flex-start; padding:6px 8px; border-radius:6px; font-size:13px; }
+  .pop .opt.on { background:var(--sel); } .pop .opt.dis { opacity:.5; }
+  .pop .opt .box { width:16px; height:16px; border:1px solid var(--line); border-radius:4px; flex:none; margin-top:2px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#fff; }
+  .pop .opt.on .box { background:var(--primary); border-color:var(--primary); }
+  .pop .d { color:var(--muted); font-size:12px; }
+  .pop .grp { font-size:11px; color:var(--muted); padding:6px 8px 2px; }
+  .toggle { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; font-size:12px; }
+  .toggle span { padding:3px 8px; color:var(--muted); } .toggle span.on { background:var(--primary); color:#fff; }
+  .btn { display:inline-flex; align-items:center; gap:4px; height:36px; padding:0 14px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); font-size:14px; font-weight:500; }
+  .btn.primary { background:var(--primary); border-color:var(--primary); color:#fff; } .btn[disabled] { opacity:.5; }
+
+  .lines { width:100%; min-width:960px; table-layout:fixed; font-size:13px; }
+  .lines thead { background:var(--mutedbg); color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .lines th { text-align:left; padding:8px; font-weight:500; }
+  .lines td { padding:8px; vertical-align:top; }
+  .lines tr.top { border-top:1px solid var(--line); }
+  .sub td { padding:0 8px 8px 36px; }
+  .branch { border-left:2px solid var(--line); padding-left:12px; display:flex; gap:8px; align-items:flex-start; }
+  .branch .grow { flex:1; max-width:440px; }
+  .role { color:var(--muted); font-size:12px; margin-top:7px; white-space:nowrap; }
+
+  .designer { display:grid; grid-template-columns:200px 1fr 280px; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--card); min-width:900px; }
+  .designer .bar { grid-column:1 / -1; border-bottom:1px solid var(--line); padding:6px 12px; display:flex; gap:8px; align-items:center; }
+  .designer .left, .designer .right { padding:10px; font-size:13px; }
+  .designer .left { border-right:1px solid var(--line); } .designer .right { border-left:1px solid var(--line); }
+  .designer .stage { background:var(--mutedbg); display:flex; align-items:center; justify-content:center; padding:16px; }
+  .layer { padding:3px 6px; border-radius:4px; display:flex; justify-content:space-between; gap:6px; }
+  .layer.on { background:var(--sel); } .layer .suf { color:var(--muted); font-size:11px; text-align:right; }
+
+  .tags { display:flex; flex-wrap:wrap; gap:12px; }
+  .tag { width:231px; height:326px; background:#fff; color:#111; border:1px solid #d1d5db; padding:9px; display:flex; flex-direction:column; gap:5px; font-family:"DM Sans", system-ui, sans-serif; flex:none; }
+  .tag .brand { height:13px; background:#231f20; color:#fff; font-size:7px; letter-spacing:.2em; display:flex; align-items:center; padding:0 6px; flex:none; }
+  .tag .title { font-size:10px; font-weight:700; }
+  .tag .codes { font-size:6.5px; color:#444; word-break:break-all; }
+  .tag .main { display:flex; gap:6px; }
+  .pic { background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:6px; color:#6b7280; text-align:center; }
+  .tag .main .pic { width:78px; height:54px; flex:none; }
+  .tag .tiles { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:4px; }
+  .tile { border:1px solid #eee; border-radius:2px; padding:2px; display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .tile .pic { height:34px; } .tile .cc { font-size:6.5px; font-weight:700; word-break:break-all; } .tile .cd { font-size:5.5px; color:#555; } .tile .lp { font-size:6.5px; color:#333; }
+  .tile .gl { font-size:5.5px; color:#8c7355; font-weight:700; text-transform:uppercase; }
+  .tile.empty { border:1px dashed #94a3b8; }
+  .tag .asset { display:flex; gap:4px; align-items:center; font-size:6px; }
+  .tag .asset .pic { width:40px; height:30px; }
+  .tag .asset .lab { background:#16a34a; color:#fff; padding:1px 4px; border-radius:2px; font-weight:700; }
+  .tag .topup { font-size:7px; font-weight:700; background:#fef3c7; padding:2px 4px; }
+  .tag .price { margin-top:auto; display:flex; justify-content:space-between; align-items:flex-end; border-top:1px solid #e5e7eb; padding-top:4px; }
+  .tag .price .sp { font-size:20px; font-weight:800; color:#8c7355; line-height:1; } .tag .price .sp small { font-size:8px; }
+  .tag .price .blank { font-size:9px; color:#9ca3af; }
+</style>
+</head>
+<body>
+<h1>Combo price tags: every combo shape, on the existing screens</h1>
+<p class="muted">Mock v5, 04/11/2026. Static. Amber dashed outline = what changes; the rest is today's screens redrawn from their source. There is no combo "type" anywhere: the combo record names its own groups, and a template points at positions in the combo.</p>
+
+<h2>How it fits together (one picture, no types)</h2>
+<div class="card">
+  <ol style="margin:0; padding-left:18px">
+    <li><b>The combo record says what the combo is made of</b> (existing Combos card on the product page): a main product, fixed parts, choice groups that the combo names itself ("Kitchen tap", "Tap colour"), and upgrades with a top-up.</li>
+    <li><b>A template points at positions</b> (existing "Product" select in the designer): Main product, Fixed part n, "group n, pick k", Upgrade n. Its needs are read from its layers, for example "3 from choice group 1".</li>
+    <li><b>The system checks fit, people see it in words</b>: the combo's template picker says "Needs 3 from Kitchen tap" in that combo's own names, and greys out a template the combo cannot fill, with the reason.</li>
+    <li><b>The salesperson picks per group, exactly what the template needs</b>: one row per group, labelled with the group's name ("Kitchen tap: pick 3"). Fixed parts need nothing.</li>
+    <li><b>How we get the combos</b>: the flyer re-seed reads each current flyer, proposes every combo with its groups and names, and writes nothing until you approve its report (section 1).</li>
+  </ol>
+</div>
+
+<h2>What changes, and the existing component it extends</h2>
+<div class="card wrap">
+  <table class="grid">
+    <thead><tr><th>#</th><th>Changed element</th><th>Existing component (repo path)</th><th>What changes</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Combo's template picker</td><td><code>ComboTemplatesPicker.tsx</code> (SearchableMultiSelect options)</td><td>Each option's description adds its needs in this combo's names; a template the combo cannot fill is a disabled option with the reason (existing option <code>disabled</code> + <code>badgeText</code>).</td></tr>
+      <tr><td>2</td><td>Designer "Product" select</td><td><code>InspectorPanel.tsx</code> SubjectInspector :1485-1547 (gate :333)</td><td>Also shows in the template editor. Options: Main product, Fixed part n, "group n, pick k", Upgrade n, labelled with the previewed combo's names and codes; "Choice group 1" when nothing is previewed. Layers panel suffix shows the same words (existing suffix).</td></tr>
+      <tr><td>3</td><td>Choice group row on a request line</td><td><code>PriceTagLinesTable.tsx</code> PartRow :235-331 + <code>SearchableMultiSelect.tsx</code></td><td>Needs 1: today's single select. Needs k &ge; 2: the existing multi-select with one new prop <code>max</code> (hides "Select all", disables the rest at k). Placeholder "Pick 3". Fixed-part rows and the Upgrade row unchanged.</td></tr>
+      <tr><td>4</td><td>Hint row + Template select description</td><td>same file :711-723, :652-676</td><td>"Kitchen tap: pick 1 more."; template option reads "105 x 148 mm. Needs 3 from Kitchen tap".</td></tr>
+      <tr><td>5</td><td>List price / Selling price cells</td><td>same file :425-439, :467-507</td><td>No sum of parts: no combo LP shows "-"; no combo SP shows today's "Type a price" box.</td></tr>
+      <tr><td>6</td><td>Reason beside Approve</td><td><code>PriceTagRequestForm.tsx</code> <code>approveBlockedReason</code> :1485</td><td>Adds "Line 1: Kitchen tap: pick 1 more." and "No combo list price for line 3. Escalate it to marketing."</td></tr>
+      <tr><td>7</td><td>Tiles on the tag</td><td>existing image / text layers; <code>subjectOf</code> in <code>lib/dealer-kit/product-block.ts:200-227</code></td><td>A layer's position resolves to that product's picture, code, description and own LP; an unfilled position prints an empty tile, never the main product.</td></tr>
+      <tr><td>8</td><td>Flyer re-seed + report</td><td><code>scripts/import_product_combos.py</code> (loads through <code>ProductComboService</code>)</td><td>Gains a front end that reads the current flyers into the seed it already loads; prices and group names included; report for your approval.</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Brand-new components: none. New props: one (<code>max</code> on <code>SearchableMultiSelect</code>, row 3).</p>
+</div>
+
+<h2>1. How we get those combos: flyer re-seed review report</h2>
+<div class="card wrap delta"><span class="dtag">8</span>
+  <table class="grid" id="report"></table>
+  <p class="muted">Nothing is written until you approve this report. A group's name comes from the flyer's own wording; you can rename it on the Combos card afterwards. Cabana prices are never loaded. Rows are illustrative until the real flyer read runs.</p>
+</div>
+
+<h2>2. The combo record: existing Combos card on the product page</h2>
+<div class="card">
+  <div class="tabs" id="comboTabs"></div>
+  <div class="wrap"><table class="grid" id="comboParts"></table></div>
+  <div style="margin-top:14px; max-width:520px">
+    <span class="muted" style="display:block; margin-bottom:4px">Price tag templates</span>
+    <div class="delta"><span class="dtag">1</span>
+      <div class="sel"><span class="chips" id="linkedChips"></span><span class="c">&#x25BE;</span></div>
+      <div class="pop" id="tplPop"></div>
+    </div>
+  </div>
+</div>
+
+<h2>3. Template designer: the same template works for any combo that fits</h2>
+<div class="wrap">
+  <div class="designer">
+    <div class="bar"><span class="muted">Toolbar (unchanged)</span></div>
+    <div class="bar"><div class="sel" style="max-width:340px; flex:1"><span id="dCombo"></span><span class="c">&#x25BE;</span></div><span class="muted">Preview combo (unchanged; switch it with the tabs in section 2)</span><span class="muted" id="dTpl" style="margin-left:auto"></span></div>
+    <div class="left"><h4>Layers</h4><div id="dLayers"></div><p class="muted">Suffix = the existing subject suffix, now in the previewed combo's words.</p></div>
+    <div class="stage" id="dStage"></div>
+    <div class="right">
+      <div style="margin-bottom:16px"><h4>Position</h4><div class="input">X 39 &nbsp; Y 64 &nbsp; W 22 &nbsp; H 16</div></div>
+      <div class="delta"><span class="dtag">2</span>
+        <h4>Product</h4>
+        <div class="sel"><span id="dPicked"></span><span class="c">&#x25BE;</span></div>
+        <div class="pop" id="dPop"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>4. New Price Tag Request: one line per combo shape</h2>
+<div class="card">
+  <span style="font-size:14px; font-weight:500; display:block; margin-bottom:6px">Lines</span>
+  <div class="wrap">
+    <table class="lines">
+      <colgroup><col style="width:28px"><col style="width:26%"><col style="width:7%"><col style="width:9%"><col style="width:11%"><col style="width:13%"><col style="width:11%"><col style="width:11%"><col style="width:64px"></colgroup>
+      <thead><tr><th>#</th><th>Item</th><th>Qty (tags)</th><th>Price</th><th>List price</th><th>Promotion</th><th>Selling price</th><th>Remarks</th><th></th></tr></thead>
+      <tbody id="lines"></tbody>
+    </table>
+  </div>
+  <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; margin-top:24px">
+    <span class="btn">Save Draft</span><span class="btn">&#x27A4; Escalate to marketing</span><button class="btn primary" id="approve" disabled>&#x2713; Approve</button>
+  </div>
+  <div style="text-align:right; margin-top:8px"><p class="muted delta" style="display:inline-block; font-size:14px; margin:0; padding:2px 6px"><span class="dtag">6</span><span id="why"></span></p></div>
+</div>
+
+<h2>5. Eye icon: the existing preview lightbox, one tag per line</h2>
+<div class="card" style="background:#3f3f46; border-color:#3f3f46"><div class="tags" id="tags"></div></div>
+
+<script>
+  // ---- Data: exact system codes; descriptions, LPs and most prices are placeholders. ----
+  var P = {
+    'SRTKS7061': ['Undermount sink, 700 x 450', 'RM 789', 'sink'],
+    'SRTKT1862SS': ['Pull-out kitchen tap', 'RM 459', 'tap'],
+    'SRTKT1863SS': ['Kitchen tap with side spray', 'RM 499', 'tap'],
+    'SRTKT1871SS': ['Gooseneck kitchen tap', 'RM 529', 'tap'],
+    'SRTKT1880SS': ['Dual-function kitchen tap', 'RM 559', 'tap'],
+    'SRTKT1892SS': ['Filter kitchen tap, 3-way', 'RM 619', 'tap'],
+    'SRTKT71SS': ['Sensor kitchen tap', 'RM 650', 'tap'],
+    'SRTWB1419-BL': ['Art basin, matt black, 410 x 410', 'RM 590', 'basin'],
+    'SRTWT7449-BL': ['Basin mixer, matt black', 'RM 479', 'tap'],
+    'SRTWT7449-RG': ['Basin mixer, rose gold', 'RM 499', 'tap'],
+    'SRTBF11829': ['Bathroom cabinet, 800', 'RM 1,690', 'cabinet'],
+    'SRTMCB8083-BL': ['Mirror cabinet, black', 'RM 690', 'mirror'],
+    'SRTWT6203-GM': ['Basin mixer, gun metal', 'RM 335', 'tap']
+  };
+  var combos = [
+    { key:'sink', label:'Sink + taps', name:'Kitchen sink combo', main:'SRTKS7061', fixed:[], groups:[{ name:'Kitchen tap', opts:['SRTKT1862SS','SRTKT1863SS','SRTKT1871SS','SRTKT1880SS','SRTKT1892SS'] }], upgrades:[['SRTKT71SS', 150]], lp:'1,288', sp:'849', linked:[0,1,2,3,4], edit:2 },
+    { key:'basin', label:'Basin + tap + free item', name:'Wash basin combo', main:'SRTWB1419-BL', fixed:['SRTWT7449-BL'], groups:[], upgrades:[], lp:'1,069', sp:'699', freeAsset:true, linked:[5], edit:5 },
+    { key:'colour', label:'Colour choice', name:'Basin + tap colour', main:'SRTWB1419-BL', fixed:[], groups:[{ name:'Tap colour', opts:['SRTWT7449-BL','SRTWT7449-RG'] }], upgrades:[], lp:null, sp:'699', linked:[6,7], edit:7 },
+    { key:'set', label:'Bathroom furniture set', name:'Bathroom furniture set', main:'SRTBF11829', fixed:['SRTMCB8083-BL','SRTWT6203-GM'], groups:[], upgrades:[], lp:'2,715', sp:'2,099', linked:[8], edit:8 },
+    { key:'topup', label:'Top-up upgrade', name:'Kitchen sink combo', main:'SRTKS7061', fixed:[], groups:[{ name:'Kitchen tap', opts:['SRTKT1862SS','SRTKT1863SS','SRTKT1871SS','SRTKT1880SS','SRTKT1892SS'] }], upgrades:[['SRTKT71SS', 150]], lp:'1,288', sp:'849', linked:[0,1,2,3,4], edit:0 }
+  ];
+  // A template's needs = what its layers point at (read from the layers, never typed).
+  var templates = [
+    { name:'Sink + 1 tap', fixed:0, groups:[1], upgrade:1 },
+    { name:'Sink + 2 taps', fixed:0, groups:[2], upgrade:1 },
+    { name:'Sink + 3 taps', fixed:0, groups:[3], upgrade:1 },
+    { name:'Sink + 4 taps', fixed:0, groups:[4], upgrade:1 },
+    { name:'Sink + 5 taps', fixed:0, groups:[5], upgrade:1 },
+    { name:'Basin + tap', fixed:1, groups:[], upgrade:0, freeAsset:true },
+    { name:'Basin + tap, 1 colour', fixed:0, groups:[1], upgrade:0 },
+    { name:'Basin + tap, 2 colours', fixed:0, groups:[2], upgrade:0 },
+    { name:'Furniture set, 3 parts', fixed:2, groups:[], upgrade:0 }
+  ];
+  // Request lines: one per shape.
+  var lines = [
+    { c:0, t:2, picks:[[0,2]], up:null, mode:'SP' },
+    { c:1, t:5, picks:[], up:null, mode:'SP' },
+    { c:2, t:7, picks:[[0,1]], up:null, mode:'LP' },
+    { c:3, t:8, picks:[], up:null, mode:'SP' },
+    { c:4, t:0, picks:[[3]], up:0, mode:'SP' }
+  ];
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function fit(t, c) {
+    if (t.fixed > c.fixed.length) return 'Needs ' + t.fixed + ' fixed part' + (t.fixed > 1 ? 's' : '') + '; this combo has ' + c.fixed.length;
+    for (var g = 0; g < t.groups.length; g++) {
+      var grp = c.groups[g];
+      if (!grp) return 'Needs choice group ' + (g + 1) + '; this combo has ' + c.groups.length;
+      if (t.groups[g] > grp.opts.length) return 'Needs ' + t.groups[g] + ' from choice group ' + (g + 1) + '; ' + grp.name + ' has ' + grp.opts.length;
+    }
+    return null;
+  }
+  function needs(t, c) {
+    var out = [];
+    if (t.fixed) out.push(t.fixed === 1 ? '1 fixed part' : t.fixed + ' fixed parts');
+    t.groups.forEach(function (k, g) { out.push(k + ' from ' + (c && c.groups[g] ? c.groups[g].name : 'choice group ' + (g + 1))); });
+    if (t.upgrade) out.push('upgrade');
+    return out.length ? 'Needs ' + out.join(', ') : 'Needs the main product only';
+  }
+
+  // ---- 1. Re-seed report ----
+  (function () {
+    var rows = [
+      ['Kitchen flyer, p 4', combos[0], 'differs', 'Set SP 849; SRTKT71SS moved from an option to an upgrade (top-up RM 150)'],
+      ['Bathroom flyer, p 2', combos[1], 'new', 'Create combo; the free pop-up waste goes on the template as a picture'],
+      ['Bathroom flyer, p 2', combos[2], 'new', 'Create combo; group named "Tap colour" from the flyer (same code, two finishes)'],
+      ['Bathroom flyer, p 7', combos[3], 'matches', 'Set SP 2,099'],
+      ['Cabana flyer, p 3', { name:'Cabana sink combo', main:'CKS7306', fixed:['CB1520SS-DIY'], groups:[], upgrades:[] }, 'new', 'Create combo; flyer price not loaded (Cabana has no selling price)'],
+      ['Kitchen flyer, p 8', { name:'(unsure)', main:'SRTWB2380', fixed:[], groups:[], upgrades:[] }, 'unsure', 'SRTWB2380 is discontinued; not loaded, you decide']
+    ];
+    var tb = document.getElementById('report');
+    tb.innerHTML = '<thead><tr><th>Flyer, page</th><th>Main product</th><th>Fixed parts</th><th>Choice groups (name: options)</th><th>Upgrades</th><th>Status</th><th>On approval</th></tr></thead>';
+    var body = el('tbody');
+    rows.forEach(function (r) {
+      var c = r[1], tr = el('tr');
+      tr.appendChild(el('td', null, r[0]));
+      tr.appendChild(el('td', null, c.main));
+      tr.appendChild(el('td', null, c.fixed.join(', ') || '-'));
+      tr.appendChild(el('td', null, c.groups.map(function (g) { return g.name + ': ' + g.opts.join(' / '); }).join('; ') || '-'));
+      tr.appendChild(el('td', null, c.upgrades.map(function (u) { return u[0] + ' +RM ' + u[1]; }).join(', ') || '-'));
+      var td = el('td'); td.appendChild(el('span', 'pill ' + ({ differs:'warn', new:'info', matches:'ok', unsure:'err' })[r[2]], r[2])); tr.appendChild(td);
+      tr.appendChild(el('td', null, r[3]));
+      body.appendChild(tr);
+    });
+    tb.appendChild(body);
+  })();
+
+  // ---- 2 + 3. Combos card and designer, driven by the chosen combo ----
+  var cur = 0;
+  function drawCombo() {
+    var c = combos[cur];
+    var tabs = document.getElementById('comboTabs'); tabs.innerHTML = '';
+    combos.forEach(function (cc, i) {
+      var b = el('button', i === cur ? 'on' : '', cc.label + ' (' + cc.main + ')');
+      b.addEventListener('click', function () { cur = i; drawCombo(); });
+      tabs.appendChild(b);
+    });
+    var tb = document.getElementById('comboParts');
+    tb.innerHTML = '<thead><tr><th>Part</th><th>Choice group</th><th>Sell price if picked</th><th>Upgrade</th><th>Top-up</th></tr></thead>';
+    var body = el('tbody');
+    function row(code, group, upgrade, topup) {
+      var tr = el('tr');
+      tr.appendChild(el('td', null, code + '  ' + P[code][0]));
+      var td = el('td'); var s = el('div', 'sel'); s.appendChild(el('span', group ? null : 'ph', group || 'Fixed part')); s.appendChild(el('span', 'c', '▾')); td.appendChild(s); tr.appendChild(td);
+      var tp = el('td'); tp.appendChild(el('div', 'input', group ? 'blank' : '-')); tr.appendChild(tp);
+      tr.appendChild(el('td', null, upgrade ? '☑' : '☐'));
+      tr.appendChild(el('td', null, topup ? 'RM ' + topup : '-'));
+      body.appendChild(tr);
+    }
+    c.fixed.forEach(function (code) { row(code, null); });
+    c.groups.forEach(function (g) { g.opts.forEach(function (code) { row(code, g.name); }); });
+    c.upgrades.forEach(function (u) { row(u[0], null, true, u[1]); });
+    if (!c.fixed.length && !c.groups.length && !c.upgrades.length) body.appendChild(el('tr'));
+    tb.appendChild(body);
+
+    // Linking stays marketing's choice (existing picker); "fits" only decides what CAN be ticked.
+    var linked = c.linked;
+    var chips = document.getElementById('linkedChips'); chips.innerHTML = '';
+    linked.forEach(function (i) { chips.appendChild(el('span', 'chip', templates[i].name + ' ✕')); });
+    var pop = document.getElementById('tplPop'); pop.innerHTML = '';
+    pop.appendChild(el('div', 'input', 'Search...'));
+    templates.forEach(function (t, i) {
+      var why = fit(t, c), on = linked.indexOf(i) >= 0;
+      var o = el('div', 'opt' + (on ? ' on' : '') + (why ? ' dis' : ''));
+      o.appendChild(el('span', 'box', on ? '✓' : ''));
+      var tx = el('div'); tx.appendChild(el('div', null, t.name));
+      tx.appendChild(el('div', 'd', '105 x 148 mm. ' + (why ? 'Does not fit: ' + why : needs(t, c))));
+      if (why) o.title = 'This combo cannot fill this template';
+      o.appendChild(tx); pop.appendChild(o);
+    });
+    drawDesigner();
+  }
+  function subjects(t, c) {
+    var out = [['Main product', c.main]];
+    for (var f = 0; f < t.fixed; f++) out.push(['Fixed part ' + (f + 1), c.fixed[f]]);
+    t.groups.forEach(function (k, g) { for (var p = 0; p < k; p++) out.push([(c.groups[g] ? c.groups[g].name : 'Choice group ' + (g + 1)) + ', pick ' + (p + 1), c.groups[g] ? c.groups[g].opts[p] : '']); });
+    if (t.upgrade && c.upgrades.length) out.push(['Upgrade 1', c.upgrades[0][0]]);
+    return out;
+  }
+  function drawDesigner() {
+    // The template being edited; the preview combo only fills it.
+    var c = combos[cur], ti = c.edit, t = templates[ti];
+    document.getElementById('dCombo').textContent = c.name + ' (' + c.main + ')';
+    document.getElementById('dTpl').textContent = 'Editing template: ' + t.name + '. ' + needs(t, c) + '.';
+    var subs = subjects(t, c);
+    var selIdx = Math.min(2, subs.length - 1);
+    var L = document.getElementById('dLayers'); L.innerHTML = '';
+    L.appendChild(el('div', 'layer', 'combo-name'));
+    subs.forEach(function (s, i) {
+      ['image', 'code', 'lp'].forEach(function (k, j) {
+        if (j > 0 && i !== selIdx) return;
+        var r = el('div', 'layer' + (i === selIdx && k === 'image' ? ' on' : ''));
+        r.appendChild(el('span', null, 'slot-' + (i + 1) + '-' + k)); r.appendChild(el('span', 'suf', s[0]));
+        L.appendChild(r);
+      });
+    });
+    L.appendChild(el('div', 'layer', 'price'));
+    document.getElementById('dPicked').textContent = subs[selIdx][0] + ': ' + subs[selIdx][1];
+    var pop = document.getElementById('dPop'); pop.innerHTML = '';
+    var last = null;
+    // The options a layer can point at: every position the PREVIEWED combo has, grouped.
+    var all = [['', 'Main product', c.main]];
+    c.fixed.forEach(function (code, f) { all.push(['Fixed parts', 'Fixed part ' + (f + 1), code]); });
+    c.groups.forEach(function (g) { g.opts.forEach(function (code, p) { all.push([g.name, g.name + ', pick ' + (p + 1), code]); }); });
+    c.upgrades.forEach(function (u, n) { all.push(['Upgrades', 'Upgrade ' + (n + 1), u[0]]); });
+    all.forEach(function (a) {
+      if (a[0] && a[0] !== last) pop.appendChild(el('div', 'grp', a[0]));
+      last = a[0];
+      var o = el('div', 'opt' + (a[1] === subs[selIdx][0] ? ' on' : ''));
+      var tx = el('div'); tx.appendChild(el('div', null, a[1])); tx.appendChild(el('div', 'd', a[2])); o.appendChild(tx);
+      pop.appendChild(o);
+    });
+    var st = document.getElementById('dStage'); st.innerHTML = '';
+    st.appendChild(tagFor(c, t, defaultPicks(t), null, selIdx));
+  }
+  function defaultPicks(t) { return t.groups.map(function (k) { var a = []; for (var i = 0; i < k; i++) a.push(i); return a; }); }
+
+  // ---- The tag, from (combo, template, picks): the same function for designer and lightbox. ----
+  function tile(code, label, cls) {
+    var d = el('div', 'tile' + (cls || ''));
+    if (label) d.appendChild(el('div', 'gl', label));
+    d.appendChild(el('div', 'pic', code ? P[code][2] : 'empty'));
+    d.appendChild(el('div', 'cc', code || ''));
+    d.appendChild(el('div', 'cd', code ? P[code][0] : ''));
+    d.appendChild(el('div', 'lp', code ? 'LP ' + P[code][1] : ''));
+    return d;
+  }
+  function tagFor(c, t, picks, up, hi, lpMode) {
+    var g = el('div', 'tag');
+    g.appendChild(el('div', 'brand', 'SORENTO'));
+    g.appendChild(el('div', 'title', c.name));
+    var codes = [c.main].concat(c.fixed.slice(0, t.fixed));
+    t.groups.forEach(function (k, gi) { (picks[gi] || []).forEach(function (p) { codes.push(c.groups[gi].opts[p]); }); });
+    g.appendChild(el('div', 'codes', codes.join('+')));
+    var m = el('div', 'main'); m.appendChild(el('div', 'pic', P[c.main][2]));
+    var mt = el('div'); var mc = el('div', null, c.main); mc.style.cssText = 'font-weight:700; font-size:8.5px'; mt.appendChild(mc);
+    var md = el('div', null, P[c.main][0]); md.style.cssText = 'font-size:6.5px; color:#555'; mt.appendChild(md);
+    m.appendChild(mt); g.appendChild(m);
+    var tiles = el('div', 'tiles'); var n = 1;
+    for (var f = 0; f < t.fixed; f++) { n++; tiles.appendChild(tile(c.fixed[f], null, n - 1 === hi ? ' delta' : '')); }
+    t.groups.forEach(function (k, gi) {
+      for (var p = 0; p < k; p++) { n++; var idx = (picks[gi] || [])[p]; tiles.appendChild(tile(idx == null ? null : c.groups[gi].opts[idx], k > 1 ? c.groups[gi].name : null, (idx == null ? ' empty' : '') + (n - 1 === hi ? ' delta' : ''))); }
+    });
+    if (tiles.children.length) g.appendChild(tiles);
+    if (t.freeAsset || c.freeAsset) { var a = el('div', 'asset'); a.appendChild(el('div', 'pic', 'waste')); a.appendChild(el('span', 'lab', 'FREE pop-up waste')); a.appendChild(el('div', 'pic', 'logo')); g.appendChild(a); }
+    if (t.upgrade && c.upgrades.length) {
+      var u = c.upgrades[0];
+      g.appendChild(el('div', 'topup', up != null ? 'UPGRADED TO ' + u[0] + ' (TOP UP RM ' + u[1] + ')' : 'TOP UP RM ' + u[1] + ', UPGRADE TO ' + u[0]));
+    }
+    var pr = el('div', 'price');
+    if (lpMode) {
+      pr.appendChild(el('span', null, ''));
+      pr.appendChild(c.lp ? el('span', 'sp', 'RM ' + c.lp) : el('span', 'blank', 'No combo list price'));
+    } else {
+      pr.appendChild(el('span', null, c.lp ? 'LP RM ' + c.lp : '')); pr.firstChild.style.fontSize = '7px';
+      var sp = el('span', 'sp', 'RM ' + (up != null ? (849 + c.upgrades[0][1]).toLocaleString() : c.sp) + ' '); sp.appendChild(el('small', null, 'NETT')); pr.appendChild(sp);
+    }
+    g.appendChild(pr);
+    return g;
+  }
+
+  // ---- 4 + 5. Request lines and their tags ----
+  function drawLines() {
+    var tb = document.getElementById('lines'); tb.innerHTML = '';
+    var reasons = [];
+    lines.forEach(function (ln, li) {
+      var c = combos[ln.c], t = templates[ln.t];
+      var tr = el('tr', 'top');
+      tr.appendChild(el('td', 'muted', String(li + 1)));
+      var it = el('td'); var s = el('div', 'sel'); s.appendChild(el('span', null, c.main + ' ' + P[c.main][0])); s.appendChild(el('span', 'c', '✕')); it.appendChild(s); tr.appendChild(it);
+      var qty = el('td'); qty.appendChild(el('div', 'input', '1')); tr.appendChild(qty);
+      var tg = el('td'); var tgl = el('span', 'toggle'); tgl.appendChild(el('span', ln.mode === 'LP' ? 'on' : '', 'LP')); tgl.appendChild(el('span', ln.mode === 'SP' ? 'on' : '', 'SP')); tg.appendChild(tgl); tr.appendChild(tg);
+      var lp = el('td'); lp.appendChild(el('span', null, c.lp ? 'RM ' + c.lp : '-')); if (!c.lp) { lp.firstChild.className = 'delta'; lp.firstChild.style.padding = '0 4px'; } tr.appendChild(lp);
+      var pm = el('td'); if (ln.mode === 'SP') { var ps = el('div', 'sel'); ps.appendChild(el('span', 'ph', 'No covering promotion')); ps.appendChild(el('span', 'c', '▾')); pm.appendChild(ps); } tr.appendChild(pm);
+      var spc = el('td'); if (ln.mode === 'SP') spc.appendChild(el('div', 'input', 'RM ' + c.sp)); tr.appendChild(spc);
+      var rm = el('td'); rm.appendChild(el('div', 'input', 'Note...')); tr.appendChild(rm);
+      tr.appendChild(el('td', 'muted', '👁 🗑'));
+      tb.appendChild(tr);
+      function sub(node) { var r = el('tr', 'sub'); var td = el('td'); td.colSpan = 9; td.appendChild(node); r.appendChild(td); tb.appendChild(r); }
+      // Template select (existing sub-row), description = needs (delta 4).
+      var b1 = el('div', 'branch'); var g1 = el('div', 'grow delta'); var ts = el('div', 'sel'); var tl = el('span'); tl.appendChild(document.createTextNode(t.name + ' ')); tl.appendChild(el('span', 'muted', '105 x 148 mm. ' + needs(t, c))); ts.appendChild(tl); ts.appendChild(el('span', 'c', '✕')); g1.appendChild(ts); b1.appendChild(g1); sub(b1);
+      // Fixed parts: plain rows, as today.
+      c.fixed.forEach(function (code) { var b = el('div', 'branch'); var g = el('div', 'grow'); g.appendChild(el('div', null, P[code][0])); g.appendChild(el('div', 'muted', code)); b.appendChild(g); b.appendChild(el('span', 'role', '')); sub(b); });
+      // One row per choice group, labelled with the combo's own group name.
+      c.groups.forEach(function (grp, gi) {
+        var k = t.groups[gi] || 1, picked = ln.picks[gi] || [];
+        var b = el('div', 'branch'); var g = el('div', 'grow' + (k > 1 ? ' delta' : ''));
+        var s2 = el('div', 'sel');
+        if (k > 1) {
+          var ch = el('span', 'chips'); picked.forEach(function (p) { ch.appendChild(el('span', 'chip', grp.opts[p] + ' ✕')); });
+          if (!picked.length) ch.appendChild(el('span', 'ph', 'Pick ' + k));
+          s2.appendChild(ch); s2.appendChild(el('span', 'c', '▾')); g.appendChild(s2);
+          if (li === 0) {
+            var pop = el('div', 'pop');
+            grp.opts.forEach(function (code, oi) {
+              var on = picked.indexOf(oi) >= 0, dis = !on && picked.length >= k;
+              var o = el('div', 'opt' + (on ? ' on' : '') + (dis ? ' dis' : ''));
+              o.appendChild(el('span', 'box', on ? '✓' : ''));
+              var tx = el('div'); tx.appendChild(el('div', null, code + '  ' + P[code][1])); tx.appendChild(el('div', 'd', P[code][0])); o.appendChild(tx);
+              o.style.cursor = dis ? 'not-allowed' : 'pointer';
+              o.addEventListener('click', function () { var pos = picked.indexOf(oi); if (pos >= 0) picked.splice(pos, 1); else if (!dis) picked.push(oi); ln.picks[gi] = picked; drawLines(); });
+              pop.appendChild(o);
+            });
+            g.appendChild(pop);
+          }
+          var dt = el('span', 'dtag', '3'); g.appendChild(dt);
+        } else {
+          s2.appendChild(el('span', picked.length ? null : 'ph', picked.length ? grp.opts[picked[0]] : 'Not sure, any of ' + grp.opts.length));
+          s2.appendChild(el('span', 'c', picked.length ? '✕' : '▾')); g.appendChild(s2);
+        }
+        b.appendChild(g); b.appendChild(el('span', 'role', grp.name)); sub(b);
+        var left = k - picked.length;
+        if (k > 1) {
+          var h = el('p', 'branch muted'); h.style.margin = '0';
+          var hs = el('span', 'delta', left > 0 ? grp.name + ': pick ' + left + ' more.' : grp.name + ': the tag shows these ' + k + ', in this order.'); hs.style.padding = '0 4px';
+          h.appendChild(hs); sub(h);
+        }
+        if (left > 0) reasons.push('Line ' + (li + 1) + ': ' + grp.name + ': pick ' + left + ' more.');
+      });
+      // Upgrade row, as today.
+      if (c.upgrades.length) { var b3 = el('div', 'branch'); var g3 = el('div', 'grow'); var s3 = el('div', 'sel'); s3.appendChild(el('span', ln.up == null ? 'ph' : null, ln.up == null ? 'No upgrade' : c.upgrades[0][0] + '  +RM ' + c.upgrades[0][1])); s3.appendChild(el('span', 'c', '▾')); g3.appendChild(s3); b3.appendChild(g3); b3.appendChild(el('span', 'role', 'Upgrade')); sub(b3); }
+      if (ln.mode === 'LP' && !c.lp) reasons.push('No combo list price for line ' + (li + 1) + '. Escalate it to marketing.');
+    });
+    document.getElementById('approve').disabled = reasons.length > 0;
+    document.getElementById('why').textContent = reasons.join(' ');
+    var T = document.getElementById('tags'); T.innerHTML = '';
+    lines.forEach(function (ln) { T.appendChild(tagFor(combos[ln.c], templates[ln.t], ln.picks, ln.up, -1, ln.mode === 'LP')); });
+  }
+  drawCombo();
+  drawLines();
+</script>
+</body>
+</html>

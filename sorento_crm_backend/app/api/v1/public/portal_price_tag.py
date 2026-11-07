@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
@@ -593,6 +593,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             # Read-only: the same checks the approval runs, so a bad sheet or a
             # line with no template is refused while it is still a draft.
             PriceTagRequestService._server_sheet(db, req, payload.doc)
+            PriceTagRequestService.require_combo_prices(db, req)
         _submit_in_place(db, req)
         with company_scope(db, frozenset({req.company_id})):
             result = PriceTagRequestService.self_approve(
@@ -905,6 +906,10 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
                                 "choice_group": part.choice_group,
                                 "is_upgrade": bool(part.is_upgrade),
                                 "topup_amount": part.topup_amount,
+                                "is_discontinued": bool(
+                                    part.part_product is not None
+                                    and part.part_product.is_discontinued
+                                ),
                             }
                             for part in parts
                         ],
@@ -927,6 +932,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     def portal_lookup_product_tag_templates(
         product_id: str,
         combo_id: Optional[str] = Query(None),
+        price_type: Optional[Literal["list", "selling"]] = Query(None),
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
@@ -941,7 +947,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             return [
                 ProductTagTemplateItem(**item)
                 for item in product_tag_template_service.published_items(
-                    db, product_id, combo_id
+                    db, product_id, combo_id, price_type
                 )
             ]
 
@@ -970,6 +976,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
                 assets=result["assets"],
                 images=result["images"],
                 fonts=result["fonts"],
+                feature_icons=result["feature_icons"],
             )
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             result = product_tag_template_service.preview(
@@ -984,6 +991,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             assets=result["assets"],
             images=result["images"],
             fonts=result["fonts"],
+            feature_icons=result["feature_icons"],
         )
 
 

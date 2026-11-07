@@ -34,7 +34,7 @@
  *    parts are added one at a time below.
  *
  *  PATCH  /api/v1/master-data/product-combos/{combo_id}
- *    body { name?, sort_order?, description?, free_items?, list_price?, sell_price? }
+ *    body { name?, sort_order?, description?, list_price?, sell_price? }
  *    -> ProductComboRow. Omitted = left alone, null = cleared; a negative price is 422.
  *    The Combos card saves the four PRICETAG-COMBO fields through it.
  *
@@ -79,6 +79,11 @@
  *  DELETE /api/v1/master-data/product-combos/{combo_id}/image -> 204
  *    Clears the picture. Immediate - not a deferred action (the combo itself
  *    still is); AC-S5-5 gives the block its own Clear button, no confirm.
+ *
+ * ── PRICETAG-ACCESSORIES ────────────────────────────────────────────────────
+ *  ProductComboRow carries `accessories` (ordered) and no longer `free_items`;
+ *  PATCH no longer accepts `free_items`. The list is edited through
+ *  `PUT /product-combos/{id}/accessories` (see accessories/services/accessoryService.ts).
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
