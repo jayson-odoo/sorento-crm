@@ -9,12 +9,17 @@ so the line is recognised by an EXACT rule, never a fuzzy one. A line is a subto
    quantity, unit price, from-doc or sales order line;
 2. at least one counted line comes before it in the document; and
 3. its net amount equals, to the cent, the sum of the counted lines above it, either since the
-   start of the document or since the previous subtotal line.
+   start of the document or since the previous subtotal line; and
+4. the document's lines do NOT already add up to its header `net_total` (a document that
+   balances double counts nothing, so a charge line that happens to equal the lines above it,
+   e.g. item 50.00 + freight 50.00, stays a sale).
 
 "Counted" is every line that is not a subtotal line, so a freight charge line above a subtotal is
 part of it. Lines are read in `line_no` order (no number last), then by `source_ref` (byte order,
 the SQL backfill's `COLLATE "C"`). The migration `sbt_0001_billing_subtotal_lines` backfills with
-the same rule as a recursive SQL walk; a test holds the two together.
+the same rule as a recursive SQL walk, copied there and into
+`documentation/plans/sales/SQL-sales-subtotal-reconcile.sql`; `tests/test_billing_subtotal_lines.py`
+R4 holds the migration's copy to this one.
 
 The line is kept and shown on the document; only line-based sales sums skip it
 (`invoiced_sales.counted_line()`).
@@ -22,7 +27,7 @@ The line is kept and shown on the document; only line-based sales sums skip it
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Iterable, Mapping, MutableMapping
+from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 #: Every field that must be empty for a line to have the shape of a subtotal line.
 _EMPTY_FIELDS = (
@@ -54,16 +59,24 @@ def _order_key(line: Mapping[str, Any]) -> tuple:
     return (line_no is None, line_no or 0, str(line.get("source_ref") or "").encode())
 
 
-def mark_subtotal_lines(lines: Iterable[MutableMapping[str, Any]]) -> None:
+def mark_subtotal_lines(
+    lines: Iterable[MutableMapping[str, Any]], net_total: Optional[Decimal]
+) -> None:
     """Set `is_subtotal` on each of one document's line value dicts (the ingest's
-    `_line_values` shape), deciding the whole document at once."""
+    `_line_values` shape), deciding the whole document at once against its header
+    `net_total` (rule 4)."""
+    lines = list(lines)
+    balanced = net_total is not None and sum(
+        (Decimal(x["net_amount"]) for x in lines if x.get("net_amount") is not None), Decimal("0")
+    ) == Decimal(net_total)
     since_start = Decimal("0")
     since_previous = Decimal("0")
     counted = 0
     for line in sorted(lines, key=_order_key):
         net = line.get("net_amount")
         is_subtotal = (
-            counted > 0
+            not balanced
+            and counted > 0
             and has_subtotal_shape(line)
             and Decimal(net) in (since_start, since_previous)
         )
@@ -76,47 +89,3 @@ def mark_subtotal_lines(lines: Iterable[MutableMapping[str, Any]]) -> None:
         since_start += amount
         since_previous += amount
 
-
-#: The same rule over stored rows, as SQL: one row per line with its verdict. `{scope}` is a
-#: WHERE fragment over `billing_document_lines l` (e.g. `TRUE`, or `l.document_id = :doc`).
-#: Read-only; the migration's backfill and the reconciliation query use this walk.
-SUBTOTAL_WALK_SQL = """
-WITH RECURSIVE ordered AS (
-    SELECT l.id, l.document_id, l.net_amount,
-           (l.net_amount IS NOT NULL
-            AND NULLIF(BTRIM(l.item_code), '') IS NULL AND l.product_id IS NULL
-            AND NULLIF(BTRIM(l.uom), '') IS NULL AND l.quantity IS NULL AND l.unit_price IS NULL
-            AND NULLIF(BTRIM(l.from_doc_type), '') IS NULL
-            AND NULLIF(BTRIM(l.from_doc_no), '') IS NULL
-            AND NULLIF(BTRIM(l.from_line_ref), '') IS NULL
-            AND l.sales_order_line_id IS NULL) AS shape,
-           ROW_NUMBER() OVER (
-               PARTITION BY l.document_id
-               ORDER BY l.line_no NULLS LAST, l.source_ref COLLATE "C"
-           ) AS rn
-    FROM finance.billing_document_lines l
-    WHERE {scope}
-),
-walk AS (
-    SELECT o.id, o.document_id, o.rn, FALSE AS is_subtotal,
-           COALESCE(o.net_amount, 0) AS since_start,
-           COALESCE(o.net_amount, 0) AS since_previous,
-           1 AS counted
-    FROM ordered o
-    WHERE o.rn = 1
-    UNION ALL
-    SELECT o.id, o.document_id, o.rn, v.is_subtotal,
-           CASE WHEN v.is_subtotal THEN w.since_start
-                ELSE w.since_start + COALESCE(o.net_amount, 0) END,
-           CASE WHEN v.is_subtotal THEN 0
-                ELSE w.since_previous + COALESCE(o.net_amount, 0) END,
-           w.counted + CASE WHEN v.is_subtotal THEN 0 ELSE 1 END
-    FROM walk w
-    JOIN ordered o ON o.document_id = w.document_id AND o.rn = w.rn + 1
-    CROSS JOIN LATERAL (
-        SELECT (w.counted > 0 AND o.shape
-                AND o.net_amount IN (w.since_start, w.since_previous)) AS is_subtotal
-    ) v
-)
-SELECT id, document_id, is_subtotal FROM walk
-"""

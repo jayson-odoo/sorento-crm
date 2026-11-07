@@ -5,9 +5,9 @@ AutoCount invoices carry a blank-item line whose amount is the running subtotal 
 it, and the line sum counted it as a sale (line sum > header `local_net_total`).
 
 1. `finance.billing_document_lines.is_subtotal boolean NOT NULL DEFAULT false`.
-2. Backfill: the exact rule of `app/services/finance/billing_subtotal_lines.py` as a recursive
+2. Backfill: the exact rule (header guard included) of `app/services/finance/billing_subtotal_lines.py` as a recursive
    walk over each document that has a line of subtotal shape (copied here so the migration stays
-   frozen; `tests/finance/test_billing_subtotal_lines.py` runs this copy against the ingest's).
+   frozen; `tests/test_billing_subtotal_lines.py` runs this copy against the ingest's).
 
 Idempotent (`IF NOT EXISTS`; the backfill sets the same verdict on a rerun). Additive only; the
 downgrade drops the column.
@@ -38,7 +38,15 @@ CANDIDATE_SCOPE = """l.document_id IN (
     )"""
 
 WALK_SQL = """
-WITH RECURSIVE ordered AS (
+WITH RECURSIVE balanced AS (
+    -- A document whose lines already add up to its header has nothing to undo (review R1).
+    SELECT b.document_id
+    FROM finance.billing_document_lines b
+    JOIN finance.billing_documents d ON d.id = b.document_id
+    GROUP BY b.document_id, d.net_total
+    HAVING SUM(COALESCE(b.net_amount, 0)) = d.net_total
+),
+ordered AS (
     SELECT l.id, l.document_id, l.net_amount,
            (l.net_amount IS NOT NULL
             AND NULLIF(BTRIM(l.item_code), '') IS NULL AND l.product_id IS NULL
@@ -46,7 +54,8 @@ WITH RECURSIVE ordered AS (
             AND NULLIF(BTRIM(l.from_doc_type), '') IS NULL
             AND NULLIF(BTRIM(l.from_doc_no), '') IS NULL
             AND NULLIF(BTRIM(l.from_line_ref), '') IS NULL
-            AND l.sales_order_line_id IS NULL) AS shape,
+            AND l.sales_order_line_id IS NULL
+            AND l.document_id NOT IN (SELECT document_id FROM balanced)) AS shape,
            ROW_NUMBER() OVER (
                PARTITION BY l.document_id
                ORDER BY l.line_no NULLS LAST, l.source_ref COLLATE "C"

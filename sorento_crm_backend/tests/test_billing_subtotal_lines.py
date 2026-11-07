@@ -29,7 +29,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.finance.billing_subtotal_lines import mark_subtotal_lines
 from tests._mc_lookup_seed import product
 from tests._pg_fixture import blank_session
-from tests._sales_unified_seed import doc, grand, line, run
+from tests._sales_unified_seed import doc, grand, line, run, so
 from tests.test_ingest_billing_documents import _minimal, _outcomes, env  # noqa: F401  (fixture)
 
 D = Decimal
@@ -37,9 +37,10 @@ JAN15 = date(2026, 1, 15)
 
 
 def _item(net, n, **over):
+    amount = None if net is None else D(net)
     values = {
         "source_ref": f"L{n}", "line_no": n, "item_code": f"ITEM{n}", "product_id": None,
-        "uom": "PCS", "quantity": D("1"), "unit_price": D(net), "net_amount": D(net),
+        "uom": "PCS", "quantity": D("1"), "unit_price": amount, "net_amount": amount,
         "from_doc_type": None, "from_doc_no": None, "from_line_ref": None,
         "sales_order_line_id": None,
     }
@@ -52,9 +53,10 @@ def _blank(net, n, **over):
     return _item(net, n, **{**blank, **over})
 
 
-def _verdicts(lines):
-    mark_subtotal_lines(lines)
-    return [line["is_subtotal"] for line in sorted(lines, key=lambda x: x["line_no"])]
+def _verdicts(lines, net_total=None):
+    """Verdicts in the order the lines were given. `net_total` None: no header to check."""
+    mark_subtotal_lines(lines, None if net_total is None else D(net_total))
+    return [line["is_subtotal"] for line in lines]
 
 
 # ------------------------------------------------------------------------------ R1
@@ -62,7 +64,7 @@ def _verdicts(lines):
 
 def test_r1_a_blank_line_equal_to_the_lines_above_is_a_subtotal():
     lines = [_item("100000.00", 1), _item("44604.00", 2), _blank("144604.00", 3)]
-    assert _verdicts(lines) == [False, False, True]
+    assert _verdicts(lines, "144604.00") == [False, False, True]
 
 
 def test_r1_a_subtotal_per_section_and_a_cumulative_one_are_both_subtotals():
@@ -71,13 +73,21 @@ def test_r1_a_subtotal_per_section_and_a_cumulative_one_are_both_subtotals():
         _item("5.00", 4), _blank("5.00", 5),                        # section 2 (since previous)
         _item("1.00", 6), _blank("36.00", 7),                       # since the start
     ]
-    assert _verdicts(lines) == [False, False, True, False, True, False, True]
+    assert _verdicts(lines, "36.00") == [False, False, True, False, True, False, True]
 
 
 def test_r1_a_freight_charge_line_with_no_qty_is_counted_and_part_of_the_subtotal():
     freight = _blank("50.00", 2, description="Freight")
     lines = [_item("100.00", 1), freight, _blank("150.00", 3)]
-    assert _verdicts(lines) == [False, False, True]
+    assert _verdicts(lines, "150.00") == [False, False, True]
+
+
+def test_r1_a_charge_equal_to_the_lines_above_stays_a_sale_when_the_lines_match_the_header():
+    # Review R1: item 50 + freight 50 on a 100.00 invoice balances; nothing is a subtotal.
+    lines = [_item("50.00", 1), _blank("50.00", 2, description="Freight")]
+    assert _verdicts(lines, "100.00") == [False, False]
+    # The same lines on a 50.00 header: the line sum overstates it, the blank line is a subtotal.
+    assert _verdicts(lines, "50.00") == [False, True]
 
 
 def test_r1_a_blank_line_that_misses_the_sum_by_a_cent_is_a_sale():
@@ -86,7 +96,9 @@ def test_r1_a_blank_line_that_misses_the_sum_by_a_cent_is_a_sale():
 
 @pytest.mark.parametrize("field,value", [
     ("item_code", "X1"), ("uom", "PCS"), ("quantity", D("1")), ("unit_price", D("100.00")),
-    ("from_doc_no", "DO-1"), ("from_doc_type", "DO"), ("product_id", "5b8b9c10-9999-4222-8333-4444555566aa"),
+    ("from_doc_no", "DO-1"), ("from_doc_type", "DO"), ("from_line_ref", "SRT_DB:SO:1:1"),
+    ("product_id", "5b8b9c10-9999-4222-8333-4444555566aa"),
+    ("sales_order_line_id", "5b8b9c10-9999-4222-8333-4444555566ab"),
 ])
 def test_r1_a_line_naming_anything_is_never_a_subtotal(field, value):
     lines = [_item("100.00", 1), _blank("100.00", 2, **{field: value})]
@@ -95,6 +107,21 @@ def test_r1_a_line_naming_anything_is_never_a_subtotal(field, value):
 
 def test_r1_a_blank_first_line_is_never_a_subtotal_and_order_is_line_no():
     lines = [_blank("0.00", 1), _blank("70.00", 3), _item("70.00", 2)]
+    assert _verdicts(lines) == [False, True, False]
+
+
+def test_r1_line_no_orders_before_source_ref_and_no_line_no_reads_last():
+    # source_ref order (L10 < L2 < L3) runs against line_no order (2, 10, none).
+    total = _blank("80.00", 10, source_ref="L2")
+    lines = [_item("80.00", 2, source_ref="L10"), total, _item("5.00", None, source_ref="L3")]
+    assert _verdicts(lines) == [False, True, False]
+    # Read by source_ref the subtotal would come first and be a sale.
+    late = _blank("5.00", None, source_ref="L0")
+    assert _verdicts([_item("5.00", 1, source_ref="L9"), late]) == [False, True]
+
+
+def test_r1_a_blank_line_with_no_amount_is_a_text_line_and_never_breaks_the_walk():
+    lines = [_item("12.00", 1), _blank(None, 2, description="Note"), _blank("12.00", 3)]
     assert _verdicts(lines) == [False, False, True]
 
 
@@ -171,28 +198,46 @@ def _migration():
     return module
 
 
-def test_r4_the_migration_backfill_agrees_with_the_ingest_rule(db):
-    rng = random.Random(7)
-    expected = {}
-    for _ in range(30):
-        header = doc(db, "invoice", "1.00", JAN15)
-        specs, running, section = [], D("0"), D("0")
-        for n in range(1, rng.randint(2, 7) + 1):
-            roll = rng.random()
-            if roll < 0.25 and specs:
-                net = rng.choice([running, section, running + D("0.01")])
-                values = _blank(str(net), n)
-            elif roll < 0.35:
-                values = _blank(str(D(rng.randint(1, 500))), n, description="Freight")
-            else:
-                values = _item(str(D(rng.randint(1, 9999)) / 100), n)
-            specs.append(values)
-            mark_subtotal_lines(specs)
-            running = sum((x["net_amount"] for x in specs if not x["is_subtotal"]), D("0"))
+def _random_lines(rng, so_line_id):
+    """One document's lines: items, freight-style charges, text lines with no amount, blank-item
+    lines that do or do not equal the lines above, blank strings, missing line numbers, and
+    source refs whose order runs against the line numbers."""
+    specs = []
+    for n in range(1, rng.randint(2, 8) + 1):
+        line_no = None if rng.random() < 0.1 else n
+        ref = {"source_ref": f"R{rng.randint(0, 99)}-{n}"}
+        roll = rng.random()
+        if roll < 0.3 and specs:
+            mark_subtotal_lines(specs, None)
+            running = sum((x["net_amount"] or D("0") for x in specs if not x["is_subtotal"]), D("0"))
             section = D("0")
             for x in specs:
-                section = D("0") if x["is_subtotal"] else section + x["net_amount"]
-        mark_subtotal_lines(specs)
+                section = D("0") if x["is_subtotal"] else section + (x["net_amount"] or D("0"))
+            net = rng.choice([running, section, running + D("0.01")])
+            extra = rng.choice([{}, {"item_code": "  "}, {"uom": ""}, {"from_line_ref": "SRT_DB:SO:1:1"},
+                                {"sales_order_line_id": so_line_id}, {}])
+            values = _blank(str(net), line_no, **ref, **extra)
+        elif roll < 0.4:
+            values = _blank(str(D(rng.randint(1, 500))), line_no, description="Freight", **ref)
+        elif roll < 0.45:
+            values = _blank(None, line_no, description="Note", **ref)
+        else:
+            values = _item(str(D(rng.randint(1, 9999)) / 100), line_no, **ref)
+        specs.append(values)
+    return specs
+
+
+def test_r4_the_migration_backfill_agrees_with_the_ingest_rule(db):
+    rng = random.Random(7)
+    _, (so_line,) = so(db)
+    expected = {}
+    for _ in range(60):
+        specs = _random_lines(rng, so_line.id)
+        lines_sum = sum((x["net_amount"] or D("0") for x in specs), D("0"))
+        # Half the headers equal the line sum (the guard), half differ from it.
+        net_total = lines_sum if rng.random() < 0.5 else lines_sum + D("1.00")
+        header = doc(db, "invoice", str(net_total), JAN15)
+        mark_subtotal_lines(specs, net_total)
         for values in specs:
             row = BillingDocumentLine(
                 id=str(uuid.uuid4()), document_id=header.id, company_id=DEFAULT_COMPANY_ID,

@@ -1,6 +1,6 @@
 # PLAN: AutoCount subtotal lines excluded from line-based sales sums (SALES-SUBTOTAL-LINES)
 
-Status: in progress (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026)
+Status: in review (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026, PR #2230)
 
 ## Problem
 
@@ -32,7 +32,10 @@ A line is a subtotal line when ALL hold:
    as null);
 2. at least one counted line precedes it in the document (by `line_no`, then `source_ref`);
 3. its `net_amount` equals EXACTLY the sum of the counted lines above it, either since the start of
-   the document or since the previous subtotal line.
+   the document or since the previous subtotal line;
+4. the document's lines do NOT already add up to its header `net_total` (review round 1: a
+   document that balances double counts nothing, so a charge line that happens to equal the lines
+   above it, e.g. item 50.00 + freight 50.00 on a 100.00 invoice, stays a sale).
 
 "Counted" = every line that is not a subtotal line (so a freight charge line above a subtotal is
 part of it). Evaluated top to bottom.
@@ -43,7 +46,9 @@ part of it). Evaluated top to bottom.
   billing ingest on every push from the whole document (the ingest replaces the lines whole), and
   backfilled by the migration with the same rule as a recursive SQL walk.
 - `invoiced_sales.counted_line()` is the one predicate; `billing_document_lines._base` applies it.
-- The document view keeps showing every line (nothing is deleted).
+- The document view keeps showing every line (nothing is deleted). The invoiced report's
+  "Billing document lines" detail table reads the same `_base`, so a subtotal line is left out of
+  that table too: intended, it is a sales listing, and the document page shows the line.
 - Read-only reconciliation SQL: `documentation/plans/sales/SQL-sales-subtotal-reconcile.sql`.
 
 ## Tests

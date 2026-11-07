@@ -320,7 +320,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         warnings: list[str] = []
         header = self._header_values(payload, existing, warnings)
         lines = [self._line_values(line, warnings) for line in payload.lines]
-        mark_subtotal_lines(lines)
+        mark_subtotal_lines(lines, header["net_total"])
         header["demand_class"] = self._demand_class(header, lines)
 
         if existing is None:

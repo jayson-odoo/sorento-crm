@@ -9,7 +9,15 @@
 --
 -- Query 1: the company-month table. Query 2: the documents still off after the fix, with the
 -- likely reason (no lines; footer charge or rounding = header-only money, REF gotcha 5).
-WITH RECURSIVE ordered AS (
+WITH RECURSIVE balanced AS (
+    -- A document whose lines already add up to its header has nothing to undo (review R1).
+    SELECT b.document_id
+    FROM finance.billing_document_lines b
+    JOIN finance.billing_documents d ON d.id = b.document_id
+    GROUP BY b.document_id, d.net_total
+    HAVING SUM(COALESCE(b.net_amount, 0)) = d.net_total
+),
+ordered AS (
     SELECT l.id, l.document_id, l.net_amount,
            (l.net_amount IS NOT NULL
             AND NULLIF(BTRIM(l.item_code), '') IS NULL AND l.product_id IS NULL
@@ -17,7 +25,8 @@ WITH RECURSIVE ordered AS (
             AND NULLIF(BTRIM(l.from_doc_type), '') IS NULL
             AND NULLIF(BTRIM(l.from_doc_no), '') IS NULL
             AND NULLIF(BTRIM(l.from_line_ref), '') IS NULL
-            AND l.sales_order_line_id IS NULL) AS shape,
+            AND l.sales_order_line_id IS NULL
+            AND l.document_id NOT IN (SELECT document_id FROM balanced)) AS shape,
            ROW_NUMBER() OVER (
                PARTITION BY l.document_id
                ORDER BY l.line_no NULLS LAST, l.source_ref COLLATE "C"
