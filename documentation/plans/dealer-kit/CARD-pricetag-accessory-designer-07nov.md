@@ -50,6 +50,28 @@ V5. **Management page** `/dealer-kit/accessory-templates` (Dealer Kit sidebar, b
     the design is always edited in the Tag Template designer. Permission `dealer_kit.tag_templates.view`
     / `.manage`, as Tag Sizes.
 
+### Rules v3 (owner on mock v2: "some got the dot, some don't have, some product / combo has 2, some have 3")
+
+Mock v3: `pricetag-accessory-designer-mock-v3.html`.
+
+V6. **One card layout per box, applied to EVERY accessory** in whatever list prints there (the
+    tag's product list or combo list, `accessoriesOf`). You never design "the colander card": you
+    design one card of slots, and each slot is bound to a field: Picture, Name, Code, Spec lines,
+    Remark, Price (LP) or Colour dots (or fixed text).
+V7. **A slot whose field is empty for that accessory does not print** (chopping board: no spec, no
+    colours, so no spec lines and no dots; colander: everything). A slot directly under it in the
+    same column moves up into its space, so no hole is left. No grey placeholder ever prints.
+V8. **The box flows 1, 2, 3 or N cards by itself**: stack or row, then shrink together to 70%, then
+    whole cards only + the warning (V3, Q2). The same template prints SRTKS7846 (3 cards) and the
+    SRTKS7061-BL combo with 1 tap (2 cards) with nothing redesigned.
+V9. **Per-accessory own layout: not now** (proposed). Different wording or picture for one product
+    is the list-entry pencil (P1); an empty field already hides its slot. Built when the first real
+    tag needs one accessory to look different.
+
+Open (v3 crew-ask): Q-v3-1 card height when one accessory shows less: (a) **every card in a box the
+same height** (recommended, rows line up) / (b) each card as tall as its own content (vertical
+only). Q-v3-2 per-accessory own layout: (a) **not now** (recommended) / (b) build now.
+
 ## Owner asks (verbatim intent)
 
 - The printed Dealer Kit look: "INCLUDED:" / "ACCESSORIES INCLUDED" / "FREE" box, header on the
