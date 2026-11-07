@@ -1,6 +1,6 @@
 # CARD: SALES-LEADERBOARD (who sold most, this month)
 
-Status: Asked (crew-ask on PR #2227, 7 Nov). Build waits for the owner's answers. Track: full (size L, new screen).
+Status: Asked (crew-ask on PR #2227, 7 Nov); round 2 on dev evidence (comment 6704175660). Build waits for the owner's answers. Track: full (size L, new screen).
 Mockup: `mockups/sales-leaderboard-07nov.html`. Plan: `PLAN-sales-leaderboard-07nov.md`.
 
 ## The ask in one line
@@ -51,16 +51,68 @@ The board ranks on the **line** sum (`run_ask`); Targets "achieved" uses the **d
 (`achievement_service.py:657-658`). They can differ by rounding / header-level discounts. Recommendation: show
 target % from the Targets service as is (so it matches the Targets screen) and add a reconciliation test on dev data.
 
-## Real October case (dev copy)
+## Real October case (dev copy `sorento_prod_1104`, prod copy of 4 Nov; crew run, PR #2227 comment 6704175660)
 
-This cloud sandbox has no copy of the dev database (crew rule: no shared DB). The mockup marks its figures
-"placeholder". Crew: run `evidence/sales-leaderboard-oct-dev.sql` (read only, `BEGIN READ ONLY ... ROLLBACK`) on the
-dev copy and paste the output on the PR; the mockup is redrawn with those agent codes and October figures.
+162 agent-code x month rows (Sep + Oct 2026, SRT + MCH). Grouped by `person_label`: 41 persons, 40 with October sales.
+October total RM 16,514,407.26 (line sum), +2.9% vs September RM 16,041,861.96; no agent RM 1,210.32.
+Top 3: LCL RM 1,856,856.61 (SRT 1,798,043.09 + MCH 58,813.52, so #1 only because of the person grouping),
+SEAN RM 1,276,644.96 (SEAN I + III + IV), JUSTIN RM 1,156,644.97. Mockup redrawn with these.
+
+What the evidence changes:
+- **Target % dropped from v1.** Only 3 agent targets cover October: TGT-000002..4 (FANNY I / III / IV), yearly 2026,
+  `basis = ordered`. None is invoiced, so a target % beside an invoiced month would compare different things.
+  Trigger: the first invoiced agent target. (Q4 recommendation updated.)
+- **House codes rank.** ACC (no `person_label`, falls back to its code), C/S and SAMPLE are agent codes in AutoCount;
+  they rank at #37, #39, #40. Simplest is to rank them as sent; an exclude list waits for the owner to ask.
+- **Change % is blank when last period was zero or negative** (SAMPLE Sep RM -1,206.10 would read -136%).
+
+## Line sum vs header total (2 of 162 rows differ)
+
+| Person, month | Line sum (engine) | Header total (Targets) | Gap | Effect |
+|---|---|---|---|---|
+| ERIC NG, Oct | 949,652.34 | 805,048.34 | +144,604.00 | rank #7 either way (FANNY 949,878.00 is above, WT 684,012.74 below); vs Sep -1.7% on lines, -16.7% on headers |
+| JENNIFER, Sep | 375,705.75 | 228,388.15 | +147,317.60 | her October change flips: -22.4% on lines, +27.6% on headers |
+
+Where the two numbers come from:
+- Line sum: `signed_line_amount()` = `net_amount * currency_rate` (`services/sales/invoiced_sales.py:96-99`), what
+  `run_ask` invoiced sums (`services/reports/datasets/billing_document_lines.py:66`), so Sales & outstanding and the
+  chatbot.
+- Header: `signed_amount()` = `local_net_total` (`invoiced_sales.py:91-93`), what Targets sums for an all-products
+  amount target (`achievement_service.py:657-658`). The model calls it "what the invoiced basis sums"
+  (`models/finance.py`, `local_net_total` comment, ruling Q12).
+- Nothing ties them: ingest checks only `total = net_total + tax_total` (`schemas/canonical_documents.py:642`); lines
+  are stored as sent (`services/finance/billing_document_ingest_service.py:473-494`).
+
+Ruled out from code: duplicated lines (unique `(document_id, source_ref)`, `models/finance.py` line table, and a
+duplicate `source_ref` in one push is refused, `canonical_documents.py:636-641`); stale lines after a re-push (a push
+replaces the whole line set, `billing_document_ingest_service.py:390-418`); a missing header total (`local_net_total`
+is required, `canonical_documents.py:519`). Lines exceed the header, so the money is on the lines only.
+
+Candidates, all named in `documentation/plans/finance/REF-autocount-billing-schema.md`:
+1. **Footer discount**: header-only money (REF section 5 item 5) lowers `NetTotal` but no line. Q2 shows no
+   discount line and Q1 shows `sum_line_net` > `net_total` on an MYR document.
+2. **Package parent + children both carrying money** (REF section 3, "must not double count"; the backfill runbook
+   says children carry no money on AED_SORENTO, but these may be a later shape). Q2 shows a parent line whose amount
+   equals the sum of following lines.
+3. **Currency**: a non-MYR document whose lines are already local (Q1 `currency_code` <> MYR, `gap = sum_line_net *
+   (rate - 1)`).
+4. **Stale line set in AutoCount terms**: a line-only edit in AutoCount does not bump `LastModified` (REF item 9), so
+   the CRM may hold lines from before an edit while the header was re-sent. Q1 `last_synced_at` vs the line
+   `updated_at` in Q2.
+
+Read-only query for crew: `evidence/sales-leaderboard-line-vs-doc-dev.sql` (Q1 the documents off, Q2 their lines,
+Q3 how widespread across 2026).
+
+Recommendation (pending Q1-Q3): the board stays on `run_ask` (one engine, same as Sales & outstanding and the
+chatbot), and the fix goes where the cause is. If it is candidate 1 (header-only money), the engine's invoiced
+total must use the header when no line-level filter or grouping is asked, which changes the shared engine for every
+consumer: an owner ruling, not a leaderboard decision. If it is 2, 3 or 4 the lines are wrong and the fix is at
+ingest / the shared service; the board needs no change.
 
 ## Questions (max 5)
 
 1. Ranked unit: (a) person, codes grouped by `person_label` / (b) agent code as AutoCount sends it. Rec (a).
 2. Team board: (a) person board only in v1, team later / (b) person + team tab now. Rec (a).
 3. Salesperson visibility: (a) full board, own row pinned / (b) top 5 + own rank only / (c) own row only. Rec (a).
-4. Columns: (a) RM rank + vs last period + target % + customers / (b) also new customers (new measure). Rec (a).
+4. Columns: (a) RM rank + vs last period + customers, no target % in v1 (no invoiced agent target exists) / (b) also new customers (new measure). Rec (a).
 5. Assistant: (a) reuse `crm_report_ask` with the person grouping / (b) a separate leaderboard tool. Rec (a).

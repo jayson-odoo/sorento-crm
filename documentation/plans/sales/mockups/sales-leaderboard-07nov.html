@@ -66,6 +66,7 @@ tr.me td{background:var(--primary-soft)}
 .badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px}
 .b-g{background:var(--green-soft);color:var(--green)}.b-a{background:var(--amber-soft);color:var(--amber)}.b-r{background:var(--red-soft);color:var(--red)}
 .foot{color:var(--muted);font-size:12px;margin-top:8px}
+.flag{color:var(--amber);font-size:11px;display:block;white-space:normal}
 .gap td{text-align:center;color:var(--muted);font-size:12px}
 /* 375 */
 .m-main{padding:14px 16px}
@@ -79,11 +80,11 @@ tr.me td{background:var(--primary-soft)}
 </head>
 <body>
 <div class="doc">
-<h1>Sales leaderboard (SALES-LEADERBOARD, 7 Nov)</h1>
-<p class="sub">Sales &gt; Leaderboard. One row per sales person, ranked by invoiced net sales (IV + CS + DN - CN, by DocDate, posted only) from the REPORT-UNIFY engine (<code>services/reports/ask.run_ask</code>, basis <code>invoiced</code>). Pink numbers map to the components on the right. Drawn to the card's recommendations; changes with the owner's answers.</p>
-<div class="warn"><b>Placeholder figures.</b> The cloud sandbox has no dev copy. Names, codes and RM below are illustrative. Crew runs <code>evidence/sales-leaderboard-oct-dev.sql</code> on the dev copy; the mockup is redrawn with the real October agent codes and figures before build.</div>
+<h1>Sales leaderboard (SALES-LEADERBOARD, 7 Nov), round 2: real October</h1>
+<p class="sub">Sales &gt; Leaderboard. One row per sales person (agent codes grouped by <code>person_label</code>), ranked by invoiced net sales (IV + CS + DN - CN, by DocDate, posted only) from the REPORT-UNIFY engine (<code>services/reports/ask.run_ask</code>, basis <code>invoiced</code>). Pink numbers map to the components on the right.</p>
+<div class="warn"><b>Real figures, October 2026</b>, from the dev copy <code>sorento_prod_1104</code> (prod copy of 4 Nov, so October is complete; crew run of <code>evidence/sales-leaderboard-oct-dev.sql</code>, PR #2227 comment 6704175660). RM = the engine's line sum. Two persons differ on the header total (ERIC NG Oct, JENNIFER Sep); cause under check with <code>evidence/sales-leaderboard-line-vs-doc-dev.sql</code>. "Customers" for a person with several codes is the per-code sum (&le;); the built board counts distinct customers.</div>
 
-<h2 class="frame-title">Desktop 1280, This month = Oct 2026 (as the board would show on 31 Oct)</h2>
+<h2 class="frame-title">Desktop 1280, Last month = Oct 2026, all companies</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280">
 <div class="shell">
@@ -94,60 +95,66 @@ tr.me td{background:var(--primary-soft)}
     <a>Yearly comparison</a><a>Top selling items</a><a>Sales &amp; outstanding</a>
   </div>
   <div class="main">
-    <span class="co pin" style="left:196px;top:16px">1</span>
+    <span class="co pin" style="left:186px;top:16px">1</span>
     <div class="ph"><h3>Sales leaderboard</h3></div>
-    <div class="asof">Data as of 31/10/2026 23:40 (last AutoCount push)</div>
+    <div class="asof">Data as of 04/11/2026 (last AutoCount push)</div>
 
-    <span class="co pin" style="left:196px;top:84px">2</span>
+    <span class="co pin" style="left:186px;top:84px">2</span>
     <div class="filters">
-      <span class="chip on">This month</span><span class="chip">Last month</span><span class="chip">This quarter</span><span class="chip">YTD</span><span class="chip">Custom</span>
-      <span class="sel"><span>Company</span> All (SRT, SBS)</span>
+      <span class="chip">This month</span><span class="chip on">Last month</span><span class="chip">This quarter</span><span class="chip">YTD</span><span class="chip">Custom</span>
+      <span class="sel"><span>Company</span> All (SRT, MCH)</span>
       <span class="sel"><span>Brand</span> Any</span>
       <span class="sel"><span>Category</span> Any</span>
     </div>
 
-    <span class="co pin" style="left:196px;top:130px">3</span>
+    <span class="co pin" style="left:186px;top:130px">3</span>
     <div class="kpis">
-      <div class="kpi"><div class="l">Total invoiced</div><div class="v">RM 2,184,350.20</div><div class="d up">+6.4% vs Sep</div></div>
-      <div class="kpi"><div class="l">Sellers ranked</div><div class="v">14</div><div class="d" style="color:var(--muted)">plus RM 12,410.00 with no agent</div></div>
-      <div class="kpi"><div class="l">Your rank</div><div class="v">#5</div><div class="d up">up 2 vs Sep</div></div>
+      <div class="kpi"><div class="l">Total invoiced</div><div class="v">RM 16,514,407.26</div><div class="d up">+2.9% vs Sep (RM 16,041,861.96)</div></div>
+      <div class="kpi"><div class="l">Sales persons ranked</div><div class="v">40</div><div class="d" style="color:var(--muted)">plus RM 1,210.32 with no agent</div></div>
+      <div class="kpi"><div class="l">Your rank (signed in as JENNIFER)</div><div class="v">#20</div><div class="d down">RM 291,522.87, -22.4% vs Sep</div></div>
     </div>
 
-    <span class="co pin" style="left:196px;top:236px">4</span>
+    <span class="co pin" style="left:186px;top:236px">4</span>
     <div class="podium">
-      <div class="pod"><div class="medal m2">2</div><div class="n">Lee Chee Leong</div><div class="c">LCL</div><div class="rm">RM 318,902.10</div><div class="d down" style="font-size:12px">-3.1% vs Sep</div><div class="bar"><i style="width:92%"></i></div><div class="c">Target 92%</div></div>
-      <div class="pod p1"><div class="medal m1">1</div><div class="n">Sean Tan</div><div class="c">SEAN, SEAN-SBS</div><div class="rm">RM 402,118.55</div><div class="d up" style="font-size:12px">+14.2% vs Sep</div><div class="bar"><i style="width:100%"></i></div><div class="c">Target 108%</div></div>
-      <div class="pod"><div class="medal m3">3</div><div class="n">Andy Lim</div><div class="c">AND</div><div class="rm">RM 276,440.00</div><div class="d up" style="font-size:12px">+1.0% vs Sep</div><div class="bar"><i style="width:0"></i></div><div class="c">No target</div></div>
+      <div class="pod"><div class="medal m2">2</div><div class="n">SEAN</div><div class="c">SEAN I, SEAN III, SEAN IV</div><div class="rm">RM 1,276,644.96</div><div class="d down" style="font-size:12px">-10.4% vs Sep</div></div>
+      <div class="pod p1"><div class="medal m1">1</div><div class="n">LCL</div><div class="c">LCL (SRT + MCH)</div><div class="rm">RM 1,856,856.61</div><div class="d up" style="font-size:12px">+63.6% vs Sep</div></div>
+      <div class="pod"><div class="medal m3">3</div><div class="n">JUSTIN</div><div class="c">JUSTIN</div><div class="rm">RM 1,156,644.97</div><div class="d up" style="font-size:12px">+62.8% vs Sep</div></div>
     </div>
 
-    <span class="co pin" style="left:196px;top:430px">5</span>
+    <span class="co pin" style="left:186px;top:400px">5</span>
     <table>
-      <colgroup><col style="width:60px"><col style="width:240px"><col style="width:160px"><col style="width:170px"><col style="width:130px"><col style="width:140px"><col style="width:110px"></colgroup>
-      <thead><tr><th>Rank</th><th>Sales person</th><th>Codes</th><th class="r">Invoiced net (RM)</th><th class="r">vs last period</th><th class="r">Target achieved</th><th class="r">Customers</th></tr></thead>
+      <colgroup><col style="width:60px"><col style="width:200px"><col style="width:260px"><col style="width:250px"><col style="width:140px"><col style="width:110px"></colgroup>
+      <thead><tr><th>Rank</th><th>Sales person</th><th>Codes</th><th class="r">Invoiced net (RM)</th><th class="r">vs last period</th><th class="r">Customers</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Sean Tan</td><td>SEAN, SEAN-SBS</td><td class="r">402,118.55</td><td class="r up">+14.2%</td><td class="r"><span class="badge b-g">108%</span></td><td class="r">63</td></tr>
-        <tr><td>2</td><td>Lee Chee Leong</td><td>LCL</td><td class="r">318,902.10</td><td class="r down">-3.1%</td><td class="r"><span class="badge b-a">92%</span></td><td class="r">48</td></tr>
-        <tr><td>3</td><td>Andy Lim</td><td>AND</td><td class="r">276,440.00</td><td class="r up">+1.0%</td><td class="r" style="color:var(--muted)">-</td><td class="r">41</td></tr>
-        <tr><td>4</td><td>Agent D</td><td>AGD</td><td class="r">231,005.75</td><td class="r up">+22.8%</td><td class="r"><span class="badge b-a">77%</span></td><td class="r">37</td></tr>
-        <tr class="me"><td>5</td><td>You (Agent E)</td><td>AGE</td><td class="r">198,760.30</td><td class="r up">+9.5%</td><td class="r"><span class="badge b-r">61%</span></td><td class="r">30</td></tr>
-        <tr><td>6</td><td>Agent F</td><td>AGF</td><td class="r">170,212.00</td><td class="r down">-11.4%</td><td class="r" style="color:var(--muted)">-</td><td class="r">26</td></tr>
-        <tr class="gap"><td colspan="7">8 more rows (DataGrid, paged)</td></tr>
+<tr><td>1</td><td>LCL</td><td title="LCL (SRT + MCH)">LCL (SRT + MCH)</td><td class="r">1,856,856.61</td><td class="r up">+63.6%</td><td class="r">24</td></tr>
+<tr><td>2</td><td>SEAN</td><td title="SEAN I, SEAN III, SEAN IV">SEAN I, SEAN III, SEAN IV</td><td class="r">1,276,644.96</td><td class="r down">-10.4%</td><td class="r">&le; 98</td></tr>
+<tr><td>3</td><td>JUSTIN</td><td title="JUSTIN">JUSTIN</td><td class="r">1,156,644.97</td><td class="r up">+62.8%</td><td class="r">20</td></tr>
+<tr><td>4</td><td>JIMMY</td><td title="JIMMY - I, - II, - III (MCH)">JIMMY - I, - II, - III (MCH)</td><td class="r">1,094,512.87</td><td class="r up">+24.4%</td><td class="r">&le; 76</td></tr>
+<tr><td>5</td><td>LONG</td><td title="LONG I, LONG III, LONG IV">LONG I, LONG III, LONG IV</td><td class="r">982,956.94</td><td class="r up">+17.1%</td><td class="r">&le; 56</td></tr>
+<tr><td>6</td><td>FANNY</td><td title="FANNY I, FANNY III, FANNY IV">FANNY I, FANNY III, FANNY IV</td><td class="r">949,878.00</td><td class="r down">-26.3%</td><td class="r">&le; 28</td></tr>
+<tr><td>7</td><td>ERIC NG</td><td title="ERIC NG">ERIC NG</td><td class="r">949,652.34<span class="flag">header total 805,048.34 (lines +144,604.00), under check</span></td><td class="r down">-1.7%</td><td class="r">16</td></tr>
+<tr><td>8</td><td>WT</td><td title="WT I, WT III, WT IV">WT I, WT III, WT IV</td><td class="r">684,012.74</td><td class="r up">+0.6%</td><td class="r">&le; 57</td></tr>
+<tr><td>9</td><td>ACT</td><td title="ACT">ACT</td><td class="r">627,020.93</td><td class="r down">-23.5%</td><td class="r">15</td></tr>
+<tr><td>10</td><td>KENT</td><td title="KENT - I, - II, - III (MCH)">KENT - I, - II, - III (MCH)</td><td class="r">594,403.18</td><td class="r up">+16.1%</td><td class="r">&le; 41</td></tr>
+        <tr class="gap"><td colspan="6">rows 11 to 19 (DataGrid, paged)</td></tr>
+        <tr class="me"><td>20</td><td>JENNIFER (you)</td><td>JENNIFER</td><td class="r">291,522.87<span class="flag">Sep header 228,388.15: on headers this is +27.6%</span></td><td class="r down">-22.4%</td><td class="r">28</td></tr>
+        <tr class="gap"><td colspan="6">rows 21 to 40</td></tr>
       </tbody>
     </table>
-    <span class="co pin" style="left:196px;top:690px">6</span>
-    <div class="foot">Sales with no agent: RM 12,410.00 (not ranked). Commission is never shown here; see Targets.</div>
+    <span class="co pin" style="left:186px;top:925px">6</span>
+    <div class="foot">Sales with no agent: RM 1,210.32 (not ranked). House codes ACC (#37), C/S (#39) and SAMPLE (#40) rank like any code. A change % is blank when last period was zero or negative (SAMPLE Sep: RM -1,206.10). Commission is never shown here; see Targets.</div>
   </div>
 </div>
 </div></div>
 
 <div class="notes"><ol>
   <li><span class="co">1</span><div><b>Page header + data-as-of line</b> No subtitle, no CTA (read-only screen). As-of = latest billing document push time.<span class="ref">sorento_crm_frontend/components/common/PageHeader.tsx; menu entry config/menu.config.tsx (Sales group, after Sales Teams)</span></div></li>
-  <li><span class="co">2</span><div><b>Period chips + filters</b> Default This month. Company / Brand / Category are clearable SearchableSelects.<span class="ref">components/reports/ReportFilterBar.tsx (period chips); components/ui/date-range-picker.tsx (Custom); SearchableSelect</span></div></li>
-  <li><span class="co">3</span><div><b>KPI row</b> Total invoiced (sum of the same run, so it equals the Sales &amp; outstanding Invoiced total), sellers ranked, your rank (only for a user linked to an agent).<span class="ref">components/scm/StatCard.tsx</span></div></li>
-  <li><span class="co">4</span><div><b>Podium, top 3</b> New small component (none exists). Gold / silver / bronze medal, RM, change vs last period, target bar.<span class="ref">new: app/(protected)/sales/leaderboard/components/LeaderboardPodium.tsx; components/ui/progress.tsx; components/ui/badge.tsx</span></div></li>
-  <li><span class="co">5</span><div><b>Ranking grid</b> All ranks, fixed layout, resizable, explicit sizes; own row highlighted. Target % badge: green &ge;100, amber 70-99, red &lt;70; "-" when the person has no agent target in the period.<span class="ref">components/ui/data-grid.tsx + data-grid-table.tsx (tableLayout fixed, columnsResizable)</span></div></li>
+  <li><span class="co">2</span><div><b>Period chips + filters</b> Default This month (shown here on Last month, the last complete month in the copy). Company / Brand / Category are clearable SearchableSelects.<span class="ref">components/reports/ReportFilterBar.tsx (period chips); components/ui/date-range-picker.tsx (Custom); SearchableSelect</span></div></li>
+  <li><span class="co">3</span><div><b>KPI row</b> Total invoiced (sum of the same run, so it equals the Sales &amp; outstanding Invoiced total), persons ranked, your rank (only for a user linked to an agent).<span class="ref">components/scm/StatCard.tsx</span></div></li>
+  <li><span class="co">4</span><div><b>Podium, top 3</b> New small component (none exists). Gold / silver / bronze medal, RM, change vs last period. LCL is #1 only because SRT and MCH are one row (RM 1,798,043.09 + 58,813.52).<span class="ref">new: app/(protected)/sales/leaderboard/components/LeaderboardPodium.tsx; components/ui/badge.tsx</span></div></li>
+  <li><span class="co">5</span><div><b>Ranking grid</b> All ranks, fixed layout, resizable, explicit sizes, codes truncated with title; own row highlighted. No target column in v1: only 3 agent targets cover October (FANNY I / III / IV, TGT-000002..4, yearly, ordered basis), none invoiced.<span class="ref">components/ui/data-grid.tsx + data-grid-table.tsx (tableLayout fixed, columnsResizable)</span></div></li>
   <li><span class="co">6</span><div><b>No-agent footer</b> The "(no agent)" row from run_ask is shown, never ranked, so the total still adds up.<span class="ref">backend: services/sales/invoiced_sales.py:46 NO_AGENT</span></div></li>
-  <li><span class="co">B</span><div><b>Backend</b> <code>GET /api/v1/sales/leaderboard?date_from&amp;date_to&amp;company&amp;brand&amp;category</code> calls <code>run_ask(basis=invoiced, group_by=sales_person, compare_to=previous_period, measures amount + customers)</code>, then joins target % from <code>achievement_service</code>. Permission <code>sales.leaderboard.view</code>. No second calculation.<span class="ref">sorento_crm_backend/app/services/reports/ask.py:231; services/reports/datasets/billing_document_lines.py (new sales_person dimension over person_label); services/sales/achievement_service.py:898</span></div></li>
+  <li><span class="co">B</span><div><b>Backend</b> <code>GET /api/v1/sales/leaderboard?date_from&amp;date_to&amp;company&amp;brand&amp;category</code> calls <code>run_ask(basis=invoiced, group_by=sales_person, compare_to=previous_period)</code>. Permission <code>sales.leaderboard.view</code>. No second calculation.<span class="ref">sorento_crm_backend/app/services/reports/ask.py:231; services/reports/datasets/billing_document_lines.py (new sales_person dimension over person_label)</span></div></li>
 </ol></div>
 </div>
 
@@ -156,22 +163,24 @@ tr.me td{background:var(--primary-soft)}
 <div class="frame w375">
   <div class="m-main">
     <div style="font-weight:700;font-size:18px">Sales leaderboard</div>
-    <div class="asof">Data as of 31/10/2026 23:40</div>
-    <div class="filters"><span class="chip on">This month</span><span class="chip">Last month</span><span class="chip">Quarter</span><span class="chip">YTD</span><span class="sel">Filters</span></div>
-    <div class="kpi" style="margin-bottom:10px"><div class="l">Total invoiced</div><div class="v" style="font-size:18px">RM 2,184,350.20</div><div class="d up">+6.4% vs Sep</div></div>
+    <div class="asof">Data as of 04/11/2026</div>
+    <div class="filters"><span class="chip">This month</span><span class="chip on">Last month</span><span class="chip">Quarter</span><span class="chip">YTD</span><span class="sel">Filters</span></div>
+    <div class="kpi" style="margin-bottom:10px"><div class="l">Total invoiced</div><div class="v" style="font-size:18px">RM 16,514,407.26</div><div class="d up">+2.9% vs Sep</div></div>
     <div class="m-podium">
-      <div class="m-pod"><div class="medal m2" style="width:22px;height:22px">2</div><div>Lee C.L.</div><div class="rm">318.9k</div></div>
-      <div class="m-pod" style="border-color:var(--gold)"><div class="medal m1" style="width:22px;height:22px">1</div><div>Sean Tan</div><div class="rm">402.1k</div></div>
-      <div class="m-pod"><div class="medal m3" style="width:22px;height:22px">3</div><div>Andy Lim</div><div class="rm">276.4k</div></div>
+      <div class="m-pod"><div class="medal m2" style="width:22px;height:22px">2</div><div>SEAN</div><div class="rm">1.28m</div></div>
+      <div class="m-pod" style="border-color:var(--gold)"><div class="medal m1" style="width:22px;height:22px">1</div><div>LCL</div><div class="rm">1.86m</div></div>
+      <div class="m-pod"><div class="medal m3" style="width:22px;height:22px">3</div><div>JUSTIN</div><div class="rm">1.16m</div></div>
     </div>
-    <div class="m-row"><div><b>4</b> Agent D<div class="sub">+22.8% vs Sep, target 77%</div></div><div>231,005.75</div></div>
-    <div class="m-row me"><div><b>5</b> You (Agent E)<div class="sub">+9.5% vs Sep, target 61%</div></div><div>198,760.30</div></div>
-    <div class="m-row"><div><b>6</b> Agent F<div class="sub">-11.4% vs Sep</div></div><div>170,212.00</div></div>
-    <div class="foot">8 more</div>
+    <div class="m-row"><div><b>4</b> JIMMY<div class="sub">+24.4% vs Sep</div></div><div>1,094,512.87</div></div>
+    <div class="m-row"><div><b>5</b> LONG<div class="sub">+17.1% vs Sep</div></div><div>982,956.94</div></div>
+    <div class="m-row"><div><b>6</b> FANNY<div class="sub">-26.3% vs Sep</div></div><div>949,878.00</div></div>
+    <div class="foot">...</div>
+    <div class="m-row me"><div><b>20</b> JENNIFER (you)<div class="sub">-22.4% vs Sep</div></div><div>291,522.87</div></div>
+    <div class="foot">20 more</div>
   </div>
 </div>
 <div class="notes"><ol>
-  <li><span class="co">M</span><div><b>375px</b> Podium is one row of 3 compact cards (RM in k); the grid keeps Rank, Name, RM; change and target move under the name. Filters other than period sit behind one Filters button.<span class="ref">same components; DataGrid mobile card rows as other listings</span></div></li>
+  <li><span class="co">M</span><div><b>375px</b> Podium is one row of 3 compact cards (RM in m/k); the list keeps Rank, Name, RM; change moves under the name. Filters other than period sit behind one Filters button.<span class="ref">same components; DataGrid mobile card rows as other listings</span></div></li>
 </ol></div>
 </div>
 </div>
