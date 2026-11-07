@@ -8,9 +8,9 @@ under three path roots, like `product_combos.py`.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,9 +18,12 @@ from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.accessory import (
     AccessoryCreate,
     AccessoryItemsIn,
+    AccessoryImageOrderIn,
     AccessoryImageOut,
+    AccessoryImagePatch,
     AccessoryListOut,
     AccessoryOut,
+    AccessoryPictureOut,
     AccessoryUpdate,
 )
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
@@ -97,7 +100,69 @@ def delete_accessory(
     return None
 
 
-@router.post("/accessories/{accessory_id}/image", response_model=AccessoryImageOut)
+@router.post(
+    "/accessories/{accessory_id}/images",
+    response_model=AccessoryImageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_accessory_image(
+    accessory_id: str,
+    file: UploadFile = File(...),
+    colour_name: Optional[str] = Form(None),
+    colour_hex: Optional[str] = Form(None),
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(accessory_id, resource="Accessory")
+    content = file.file.read(MAX_IMAGE_BYTES + 1)
+    return AccessoryService(db).add_image(
+        accessory_id,
+        content=content,
+        filename=file.filename or "accessory",
+        user_id=current_user.get("id"),
+        colour_name=colour_name,
+        colour_hex=colour_hex,
+    )
+
+
+@router.put("/accessories/{accessory_id}/images/order", response_model=List[AccessoryImageOut])
+def order_accessory_images(
+    accessory_id: str,
+    payload: AccessoryImageOrderIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(accessory_id, resource="Accessory")
+    return AccessoryService(db).order_images(accessory_id, payload.ids)
+
+
+@router.patch("/accessories/{accessory_id}/images/{image_id}", response_model=AccessoryImageOut)
+def patch_accessory_image(
+    accessory_id: str,
+    image_id: str,
+    payload: AccessoryImagePatch,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(accessory_id, resource="Accessory")
+    validate_uuid_path(image_id, resource="Image")
+    return AccessoryService(db).patch_image(accessory_id, image_id, payload.model_dump(exclude_unset=True))
+
+
+@router.delete("/accessories/{accessory_id}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_accessory_picture(
+    accessory_id: str,
+    image_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(accessory_id, resource="Accessory")
+    validate_uuid_path(image_id, resource="Image")
+    AccessoryService(db).delete_picture(accessory_id, image_id)
+    return None
+
+
+@router.post("/accessories/{accessory_id}/image", response_model=AccessoryPictureOut)
 def upload_accessory_image(
     accessory_id: str,
     file: UploadFile = File(...),

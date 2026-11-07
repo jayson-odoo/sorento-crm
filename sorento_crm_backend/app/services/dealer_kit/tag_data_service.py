@@ -1875,7 +1875,26 @@ def _resign_accessories(db: Session, accessories: list) -> list:
     for item in accessories:
         image = item.get("image") or None
         fresh = image_of(db, image.get("attachment_id")) if image else None
-        out.append({**item, "image": fresh})
+        images = []
+        for picture in item.get("images") or []:
+            signed = image_of(db, picture.get("attachment_id"))
+            if signed is not None:
+                images.append(
+                    {
+                        **signed,
+                        "colour_name": picture.get("colour_name"),
+                        "colour_hex": picture.get("colour_hex"),
+                    }
+                )
+        out.append(
+            {
+                **item,
+                "remark": item.get("remark"),
+                "image": fresh,
+                "images": images,
+                "colours": item.get("colours") or [],
+            }
+        )
     return out
 
 

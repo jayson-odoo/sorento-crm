@@ -322,11 +322,13 @@ def test_a3_product_tag_data_carries_the_products_list(db, signed):
     assert data["accessories"] == [
         {
             "kind": "accessory", "id": drainer.id, "name": drainer.name,
-            "spec": "390x300x140, Depth: 160mm", "image": None, "code": None, "list_price": None,
+            "spec": "390x300x140, Depth: 160mm", "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
         {
             "kind": "accessory", "id": board.id, "name": board.name,
-            "spec": None, "image": None, "code": None, "list_price": None,
+            "spec": None, "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
     ]
 

@@ -44,6 +44,7 @@ from app.models.certificate import Certificate
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
 from app.models.country import Country
 from app.models.dealer_kit import (
+    AccessoryBoxPreset,
     Asset,
     Bundle,
     Collection,
@@ -381,6 +382,7 @@ _PARK_SCOPED_MODELS: dict = {
     "saved_view.delete": SavedView,
     "scm_sales_order.delete": SalesOrder,
     "supplier_code_alias.forget": SupplierProductCodeAlias,
+    "accessory_box_preset.delete": AccessoryBoxPreset,
     "tag_size_preset.delete": TagSizePreset,
     "tag_template.delete": TagTemplate,
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the template the products are

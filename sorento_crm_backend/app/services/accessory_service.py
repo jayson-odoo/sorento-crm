@@ -14,16 +14,23 @@ documentation/plans/dealer-kit/PLAN-pricetag-accessories-06nov.md.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.accessory import Accessory, ProductAccessory, ProductComboAccessory
+from app.models.accessory import (
+    Accessory,
+    AccessoryImage,
+    ProductAccessory,
+    ProductComboAccessory,
+)
 from app.models.product import Product
 from app.models.product_combo import ProductCombo
 from app.models.resources import Attachment, AttachmentType
+from app.utils.tag_rich_text import sanitise_tag_html
 from app.services.error_handler import AppException, handle_not_found
 from app.services.storage_router import (
     cdn_base_url,
@@ -35,6 +42,10 @@ from app.services.storage_router import (
 
 IMAGE_TYPE_CODE = "accessory_image"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGES = 12
+MAX_SPEC_CHARS = 4000
+MAX_REMARK_CHARS = 1000
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 STORAGE_PREFIX = "accessory_image"
 _IMAGE_MIME_BY_EXT = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 
@@ -56,11 +67,46 @@ def _clean_name(value: Any) -> str:
     return cleaned
 
 
+def _clean_rich(value: Any, *, limit: int, label: str) -> Optional[str]:
+    """Plain text or rich HTML through the tag sanitiser (script, style, on* attributes and links
+    stripped); blank = None. Plain text keeps its old one-line collapse."""
+    raw = str(value or "")
+    if not raw.strip():
+        return None
+    cleaned = sanitise_tag_html(raw)
+    if cleaned is None:
+        return None
+    if "<" not in cleaned:
+        cleaned = " ".join(cleaned.split())
+    if len(cleaned) > limit:
+        raise AppException(status_code=422, message=f"The {label} is longer than {limit} characters")
+    return cleaned or None
+
+
 def _clean_spec(value: Any) -> Optional[str]:
+    return _clean_rich(value, limit=MAX_SPEC_CHARS, label="spec")
+
+
+def _clean_remark(value: Any) -> Optional[str]:
+    return _clean_rich(value, limit=MAX_REMARK_CHARS, label="remark")
+
+
+def _clean_override_name(value: Any) -> Optional[str]:
     cleaned = " ".join(str(value or "").split())
     if len(cleaned) > 200:
-        raise AppException(status_code=422, message="The spec is longer than 200 characters")
+        raise AppException(status_code=422, message="The name is longer than 200 characters")
     return cleaned or None
+
+
+def _clean_colour(name: Any, hex_value: Any) -> tuple:
+    """`(colour_name, colour_hex)`: blank = None, a hex must be `#rrggbb` (stored lower case)."""
+    clean_name = " ".join(str(name or "").split()) or None
+    if clean_name and len(clean_name) > 40:
+        raise AppException(status_code=422, message="The colour name is longer than 40 characters")
+    clean_hex = str(hex_value).strip() if hex_value is not None else ""
+    if clean_hex and not _HEX_RE.match(clean_hex):
+        raise AppException(status_code=422, message="The colour must look like #1f2937")
+    return clean_name, (clean_hex.lower() or None)
 
 
 def image_of(db: Session, attachment_id: Optional[str]) -> Optional[Dict[str, str]]:
@@ -81,22 +127,87 @@ def image_of(db: Session, attachment_id: Optional[str]) -> Optional[Dict[str, st
     return {"attachment_id": attachment.id, "url": url}
 
 
-def tag_accessory(db: Session, accessory: Accessory) -> Dict[str, Any]:
-    """One library accessory as a price tag carries it."""
+def _picture_rows(db: Session, accessory_id: str) -> List[Dict[str, Any]]:
+    """The accessory's pictures in order, each with a fresh signed link (an unsignable one is left
+    out rather than shipped as a link that 403s)."""
+    rows = (
+        db.query(AccessoryImage)
+        .filter(AccessoryImage.accessory_id == accessory_id)
+        .order_by(AccessoryImage.sort_order, AccessoryImage.created_at, AccessoryImage.id)
+        .all()
+    )
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        picture = image_of(db, row.attachment_id)
+        if picture is None:
+            continue
+        out.append(
+            {
+                "id": row.id,
+                **picture,
+                "colour_name": row.colour_name,
+                "colour_hex": row.colour_hex,
+            }
+        )
+    return out
+
+
+def _colours_of(pictures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Distinct `{name, hex}` of the pictures that carry a colour, in picture order."""
+    seen: set = set()
+    out: List[Dict[str, Any]] = []
+    for picture in pictures:
+        hex_value = picture.get("colour_hex")
+        if not hex_value or hex_value.lower() in seen:
+            continue
+        seen.add(hex_value.lower())
+        out.append({"name": picture.get("colour_name"), "hex": hex_value})
+    return out
+
+
+def _tag_images(pictures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {key: picture[key] for key in ("attachment_id", "url", "colour_name", "colour_hex")}
+        for picture in pictures
+    ]
+
+
+def _first_non_blank(*values: Optional[str]) -> Optional[str]:
+    for value in values:
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
+def tag_accessory(
+    db: Session, accessory: Accessory, link=None, pictures: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """One library accessory as a price tag carries it. `link` (a list row) supplies the per-row
+    picture choice and the name / spec / remark overrides, each used only when non-blank."""
+    if pictures is None:
+        pictures = _picture_rows(db, accessory.id)
+    chosen = None
+    if link is not None and link.image_id:
+        chosen = next((picture for picture in pictures if picture["id"] == link.image_id), None)
+    lead = chosen or (pictures[0] if pictures else None)
     return {
         "kind": "accessory",
         "id": accessory.id,
-        "name": accessory.name,
-        "spec": accessory.spec,
-        "image": image_of(db, accessory.image_attachment_id),
+        "name": _first_non_blank(getattr(link, "name_override", None), accessory.name),
+        "spec": _first_non_blank(getattr(link, "spec_override", None), accessory.spec),
+        "remark": _first_non_blank(getattr(link, "remark_override", None), accessory.remark),
+        "image": {"attachment_id": lead["attachment_id"], "url": lead["url"]} if lead else None,
+        "images": _tag_images(pictures),
+        "colours": _colours_of(pictures),
         "code": None,
         "list_price": None,
     }
 
 
-def tag_product_entry(db: Session, product: Product, viewer=None) -> Dict[str, Any]:
+def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> Dict[str, Any]:
     """A catalogue product listed as a free item (owner, 6 Nov ~10:45): its code, description
-    (else name), lead photo and list price, all read live for this viewer."""
+    (else name), lead photo and list price, all read live for this viewer. `spec` is the product's
+    price tag description unless the list row overrides it."""
     from app.services.dealer_kit.pricing import resolve_prices
     from app.services.dealer_kit.product_images import gallery_images
     from app.services.dealer_kit.tag_data_service import staff_viewer
@@ -105,12 +216,19 @@ def tag_product_entry(db: Session, product: Product, viewer=None) -> Dict[str, A
     prices = resolve_prices(db, [product], viewer, None).get(product.id)
     images = gallery_images(db, product, viewer)
     lead = next((image for image in images if image.get("is_primary")), images[0] if images else None)
+    picture = {"attachment_id": lead["attachment_id"], "url": lead["url"]} if lead else None
     return {
         "kind": "product",
         "id": product.id,
-        "name": (product.description or "").strip() or product.product_name or product.product_code,
-        "spec": None,
-        "image": {"attachment_id": lead["attachment_id"], "url": lead["url"]} if lead else None,
+        "name": _first_non_blank(
+            getattr(link, "name_override", None),
+            (product.description or "").strip() or product.product_name or product.product_code,
+        ),
+        "spec": _first_non_blank(getattr(link, "spec_override", None), product.price_tag_description),
+        "remark": _first_non_blank(getattr(link, "remark_override", None)),
+        "image": picture,
+        "images": [{**picture, "colour_name": None, "colour_hex": None}] if picture else [],
+        "colours": [],
         "code": product.product_code,
         "list_price": prices.list_price if prices else None,
     }
@@ -121,9 +239,9 @@ def _tag_entries(db: Session, links, viewer=None) -> List[Dict[str, Any]]:
     for link in links:
         if link.item_product_id:
             if link.item_product is not None:
-                out.append(tag_product_entry(db, link.item_product, viewer))
+                out.append(tag_product_entry(db, link.item_product, viewer, link))
         elif link.accessory is not None:
-            out.append(tag_accessory(db, link.accessory))
+            out.append(tag_accessory(db, link.accessory, link))
     return out
 
 
@@ -173,14 +291,30 @@ class AccessoryService:
 
     # ------------------------------------------------------------------ library
 
-    def serialize(self, accessory: Accessory, counts: Optional[Dict[str, tuple]] = None) -> Dict[str, Any]:
+    def serialize(self, accessory: Accessory, counts: Optional[Dict[str, tuple]] = None, link=None) -> Dict[str, Any]:
+        """The library row as the master data screen reads it (its OWN text; a list row's overrides
+        ride in `entry`, never merged in)."""
         if counts is None:
             counts = self._counts([accessory.id])
         product_count, combo_count = counts.get(accessory.id, (0, 0))
-        return {
-            **tag_accessory(self.db, accessory),
+        pictures = _picture_rows(self.db, accessory.id)
+        out = {
+            **tag_accessory(self.db, accessory, None, pictures),
+            "images": pictures,
             "product_count": product_count,
             "combo_count": combo_count,
+        }
+        if link is not None:
+            out["entry"] = self._entry_of(link)
+        return out
+
+    @staticmethod
+    def _entry_of(link) -> Dict[str, Any]:
+        return {
+            "image_id": link.image_id,
+            "name": link.name_override,
+            "spec": link.spec_override,
+            "remark": link.remark_override,
         }
 
     def list(self, *, page: int = 1, limit: int = 50, query: Optional[str] = None) -> Dict[str, Any]:
@@ -208,7 +342,12 @@ class AccessoryService:
     def create(self, payload: Dict[str, Any], *, created_by: Optional[str]) -> Dict[str, Any]:
         name = _clean_name(payload.get("name"))
         self._refuse_taken(name)
-        row = Accessory(name=name, spec=_clean_spec(payload.get("spec")), created_by=created_by)
+        row = Accessory(
+            name=name,
+            spec=_clean_spec(payload.get("spec")),
+            remark=_clean_remark(payload.get("remark")),
+            created_by=created_by,
+        )
         self.db.add(row)
         self.db.commit()
         return self.serialize(self._or_404(row.id))
@@ -221,6 +360,8 @@ class AccessoryService:
             row.name = name
         if "spec" in payload:
             row.spec = _clean_spec(payload["spec"])
+        if "remark" in payload:
+            row.remark = _clean_remark(payload["remark"])
         self.db.commit()
         return self.serialize(self._or_404(row.id))
 
@@ -237,26 +378,29 @@ class AccessoryService:
                 ),
                 code="ACCESSORY_IN_USE",
             )
-        attachment_id = row.image_attachment_id
+        attachment_ids = [
+            value
+            for (value,) in self.db.query(AccessoryImage.attachment_id)
+            .filter(AccessoryImage.accessory_id == row.id)
+            .all()
+        ]
+        if row.image_attachment_id and row.image_attachment_id not in attachment_ids:
+            attachment_ids.append(row.image_attachment_id)
         self.db.delete(row)
         self.db.flush()
-        sweep = self._drop_attachment(attachment_id) if attachment_id else None
+        sweeps = [self._drop_attachment(value) for value in attachment_ids]
         self.db.commit()
-        if sweep:
-            delete_object_best_effort(*sweep)
+        for sweep in sweeps:
+            if sweep:
+                delete_object_best_effort(*sweep)
 
-    # ------------------------------------------------------------------ picture
+    # ------------------------------------------------------------------ pictures
 
-    def upload_image(
-        self,
-        accessory_id: str,
-        *,
-        content: bytes,
-        filename: str,
-        content_type: Optional[str],
-        user_id: Optional[str],
-    ) -> Dict[str, str]:
-        row = self._or_404(accessory_id)
+    def _store(
+        self, row: Accessory, *, content: bytes, filename: str, user_id: Optional[str]
+    ) -> tuple:
+        """Validate, upload and record the attachment. Returns `(attachment_id, provider, key)`; the
+        caller attaches it to a picture row and commits (and removes the object if that fails)."""
         if not content:
             raise AppException(status_code=422, message="The uploaded file is empty.")
         if len(content) > MAX_IMAGE_BYTES:
@@ -273,7 +417,6 @@ class AccessoryService:
         stored_key, _url = get_backend(provider).upload_file(
             file_content=content, file_path=key, content_type=mime
         )
-        sweep = None
         try:
             self.db.add(
                 Attachment(
@@ -293,13 +436,140 @@ class AccessoryService:
                 )
             )
             self.db.flush()
-            previous = row.image_attachment_id
-            row.image_attachment_id = attachment_id
-            self.db.flush()
-            if previous and previous != attachment_id:
-                sweep = self._drop_attachment(previous)
+        except Exception:
+            delete_object_best_effort(provider, stored_key)
+            raise
+        return attachment_id, provider, stored_key
+
+    def _images(self, accessory_id: str) -> List[AccessoryImage]:
+        return (
+            self.db.query(AccessoryImage)
+            .filter(AccessoryImage.accessory_id == accessory_id)
+            .order_by(AccessoryImage.sort_order, AccessoryImage.created_at, AccessoryImage.id)
+            .all()
+        )
+
+    def _image_out(self, image: AccessoryImage) -> Dict[str, Any]:
+        picture = image_of(self.db, image.attachment_id)
+        if picture is None:
+            raise AppException(
+                status_code=502, message="The image was stored but a preview URL could not be produced."
+            )
+        return {"id": image.id, **picture, "colour_name": image.colour_name, "colour_hex": image.colour_hex}
+
+    def _image_or_404(self, accessory_id: str, image_id: str) -> AccessoryImage:
+        image = (
+            self.db.query(AccessoryImage)
+            .filter(AccessoryImage.id == image_id, AccessoryImage.accessory_id == accessory_id)
+            .first()
+        )
+        if image is None:
+            raise handle_not_found("Image", image_id)
+        return image
+
+    def add_image(
+        self,
+        accessory_id: str,
+        *,
+        content: bytes,
+        filename: str,
+        user_id: Optional[str],
+        colour_name: Optional[str] = None,
+        colour_hex: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Append a picture (last in order), with an optional colour."""
+        row = self._or_404(accessory_id)
+        name, hex_value = _clean_colour(colour_name, colour_hex)
+        existing = self._images(row.id)
+        if len(existing) >= MAX_IMAGES:
+            raise AppException(
+                status_code=422, message=f"An accessory holds at most {MAX_IMAGES} pictures."
+            )
+        attachment_id, provider, stored_key = self._store(
+            row, content=content, filename=filename, user_id=user_id
+        )
+        try:
+            image = AccessoryImage(
+                accessory_id=row.id,
+                attachment_id=attachment_id,
+                colour_name=name,
+                colour_hex=hex_value,
+                sort_order=(max(item.sort_order for item in existing) + 1) if existing else 0,
+            )
+            self.db.add(image)
             self.db.commit()
         except Exception:
+            self.db.rollback()
+            delete_object_best_effort(provider, stored_key)
+            raise
+        return self._image_out(image)
+
+    def patch_image(self, accessory_id: str, image_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+        self._or_404(accessory_id)
+        image = self._image_or_404(accessory_id, image_id)
+        name, hex_value = _clean_colour(
+            changes.get("colour_name", image.colour_name), changes.get("colour_hex", image.colour_hex)
+        )
+        if "colour_name" in changes:
+            image.colour_name = name
+        if "colour_hex" in changes:
+            image.colour_hex = hex_value
+        self.db.commit()
+        return self._image_out(image)
+
+    def delete_picture(self, accessory_id: str, image_id: str) -> None:
+        """Remove one picture; list rows that chose it fall back to the first (FK SET NULL)."""
+        self._or_404(accessory_id)
+        image = self._image_or_404(accessory_id, image_id)
+        attachment_id = image.attachment_id
+        self.db.delete(image)
+        self.db.flush()
+        sweep = self._drop_attachment(attachment_id)
+        self.db.commit()
+        if sweep:
+            delete_object_best_effort(*sweep)
+
+    def order_images(self, accessory_id: str, ids: List[str]) -> List[Dict[str, Any]]:
+        self._or_404(accessory_id)
+        images = {image.id: image for image in self._images(accessory_id)}
+        if len(set(ids)) != len(ids) or set(ids) != set(images):
+            raise AppException(status_code=422, message="The order must name every picture exactly once.")
+        for index, image_id in enumerate(ids):
+            images[image_id].sort_order = index
+        self.db.commit()
+        return [self._image_out(images[image_id]) for image_id in ids]
+
+    # Old single-picture routes: image 1 (kept so an open old tab does not 404).
+
+    def upload_image(
+        self,
+        accessory_id: str,
+        *,
+        content: bytes,
+        filename: str,
+        content_type: Optional[str],
+        user_id: Optional[str],
+    ) -> Dict[str, str]:
+        """Replace picture 1, or create it."""
+        row = self._or_404(accessory_id)
+        attachment_id, provider, stored_key = self._store(
+            row, content=content, filename=filename, user_id=user_id
+        )
+        sweep = None
+        try:
+            existing = self._images(row.id)
+            if existing:
+                first = existing[0]
+                previous = first.attachment_id
+                first.attachment_id = attachment_id
+                self.db.flush()
+                if previous != attachment_id:
+                    sweep = self._drop_attachment(previous)
+            else:
+                self.db.add(AccessoryImage(accessory_id=row.id, attachment_id=attachment_id, sort_order=0))
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
             delete_object_best_effort(provider, stored_key)
             raise
         if sweep:
@@ -313,14 +583,12 @@ class AccessoryService:
         return image
 
     def delete_image(self, accessory_id: str) -> None:
+        """Remove picture 1 (the old route)."""
         row = self._or_404(accessory_id)
-        attachment_id = row.image_attachment_id
-        row.image_attachment_id = None
-        self.db.flush()
-        sweep = self._drop_attachment(attachment_id) if attachment_id else None
-        self.db.commit()
-        if sweep:
-            delete_object_best_effort(*sweep)
+        existing = self._images(row.id)
+        if not existing:
+            return
+        self.delete_picture(row.id, existing[0].id)
 
     # ------------------------------------------------------------------ lists
 
@@ -335,13 +603,14 @@ class AccessoryService:
             synchronize_session=False
         )
         self.db.flush()
-        for index, (kind, row) in enumerate(resolved):
+        for index, (kind, row, overrides) in enumerate(resolved):
             self.db.add(
                 ProductAccessory(
                     product_id=product_id,
                     accessory_id=row.id if kind == "accessory" else None,
                     item_product_id=row.id if kind == "product" else None,
                     sort_order=index,
+                    **overrides,
                 )
             )
         self.db.commit()
@@ -368,13 +637,14 @@ class AccessoryService:
             synchronize_session=False
         )
         self.db.flush()
-        for index, (kind, row) in enumerate(resolved):
+        for index, (kind, row, overrides) in enumerate(resolved):
             self.db.add(
                 ProductComboAccessory(
                     combo_id=combo_id,
                     accessory_id=row.id if kind == "accessory" else None,
                     item_product_id=row.id if kind == "product" else None,
                     sort_order=index,
+                    **overrides,
                 )
             )
         self.db.commit()
@@ -403,16 +673,24 @@ class AccessoryService:
         for link in links:
             if link.item_product_id:
                 if link.item_product is not None:
-                    out.append({**tag_product_entry(self.db, link.item_product), "product_count": 0, "combo_count": 0})
+                    out.append(
+                        {
+                            **tag_product_entry(self.db, link.item_product),
+                            "product_count": 0,
+                            "combo_count": 0,
+                            "entry": self._entry_of(link),
+                        }
+                    )
             elif link.accessory is not None:
-                out.append(self.serialize(link.accessory, counts))
+                out.append(self.serialize(link.accessory, counts, link))
         return out
 
     def _resolve_items(
         self, items: List[Dict[str, Any]], company_id: Optional[str], *, refused: Dict[str, str]
     ) -> List[tuple]:
-        """`[("accessory", Accessory) | ("product", Product)]` in order, each named once, each of
-        the list owner's company (another company's id reads exactly like a missing one)."""
+        """`[("accessory", Accessory) | ("product", Product), overrides]` in order, each named once,
+        each of the list owner's company (another company's id reads exactly like a missing one).
+        `overrides` are the row's columns: a picture of THAT accessory, and cleaned text."""
         wanted: List[tuple] = []
         for item in items or []:
             accessory_id, product_id = item.get("accessory_id"), item.get("product_id")
@@ -435,14 +713,37 @@ class AccessoryService:
             else {}
         )
         out: List[tuple] = []
-        for kind, value in wanted:
+        for (kind, value), item in zip(wanted, items or []):
             row = (accessories if kind == "accessory" else products).get(value)
             if row is None or (company_id is not None and row.company_id not in (None, company_id)):
                 raise handle_not_found("Accessory" if kind == "accessory" else "Product", value)
             if kind == "product" and value in refused:
                 raise AppException(status_code=422, message=refused[value])
-            out.append((kind, row))
+            out.append((kind, row, self._overrides(kind, row, item)))
         return out
+
+    def _overrides(self, kind: str, row, item: Dict[str, Any]) -> Dict[str, Any]:
+        image_id = str(item.get("image_id") or "").strip() or None
+        if image_id is not None:
+            if kind == "product":
+                raise AppException(status_code=422, message="A product entry has no picture to choose")
+            try:
+                uuid.UUID(image_id)
+            except ValueError:
+                raise AppException(status_code=422, message="That picture does not belong to this accessory")
+            owned = (
+                self.db.query(AccessoryImage.id)
+                .filter(AccessoryImage.id == image_id, AccessoryImage.accessory_id == row.id)
+                .first()
+            )
+            if owned is None:
+                raise AppException(status_code=422, message="That picture does not belong to this accessory")
+        return {
+            "image_id": image_id,
+            "name_override": _clean_override_name(item.get("name")),
+            "spec_override": _clean_spec(item.get("spec")),
+            "remark_override": _clean_remark(item.get("remark")),
+        }
 
     def _counts(self, ids: List[str]) -> Dict[str, tuple]:
         if not ids:

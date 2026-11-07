@@ -1819,6 +1819,26 @@ register(
 )
 
 
+def _delete_accessory_box_preset(db: Session, payload: dict):
+    """A saved accessories box design: the same service call as the immediate DELETE, which first
+    detaches every box linked to it (each keeps its current design)."""
+    from app.services.dealer_kit import accessory_template_service
+
+    return accessory_template_service.delete_preset(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="accessory_box_preset.delete",
+        entity_types=("accessory_box_preset",),
+        execute=_delete_accessory_box_preset,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Delete accessories template",
+    )
+)
+
+
 def _delete_dealer_kit_asset(db: Session, payload: dict):
     """A library asset: artwork or a brand font (PLAN-brand-font-manage.md).
 
