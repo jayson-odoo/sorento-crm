@@ -42,6 +42,14 @@ be picked. "discontineud should still be able to choose".
    line's own package options but nothing on the line, and say so in a toast. It prices nothing on
    the line, so no price changes (a combo line's price is the combo's, AC-D1). Every other refusal
    stays a 422.
+   - Upgrades are excluded: the tag prices every upgrade of the package under the line's promotion
+     (`tag_data_service._line_slots`), so an upgrade-only promotion is not inert and stays a 422
+     (reviewer round 3).
+   - The same rule also drops a stored promotion whose coverage marketing narrowed after the save
+     (it covers only an unpicked option now); revise shows the same note.
+   - Why on the server rather than only in the form: the save is the one place every path (Save
+     Draft, Approve, Escalate, revise, an old draft reopened) passes, and it already holds the
+     covering rule; a form-side fix would leave reopened drafts failing the same way.
 
 ## Out of scope
 

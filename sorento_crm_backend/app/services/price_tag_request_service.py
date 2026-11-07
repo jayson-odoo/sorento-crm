@@ -903,13 +903,21 @@ class PriceTagRequestService:
 
     @staticmethod
     def _combo_part_ids(db: Session, combo_id: str) -> list[str]:
-        """Every product the package offers (fixed parts, group options, upgrades)."""
+        """The package's fixed parts and group options, never its upgrades.
+
+        Upgrades are left out on purpose: the tag prices every upgrade of the package under the
+        line's promotion, picked or not (`tag_data_service._line_slots`), so a promotion on an
+        upgrade is NOT inert and must not be dropped.
+        """
         from app.models.product_combo import ProductComboPart
 
         return [
             pid
             for (pid,) in db.query(ProductComboPart.part_product_id)
-            .filter(ProductComboPart.combo_id == combo_id)
+            .filter(
+                ProductComboPart.combo_id == combo_id,
+                ProductComboPart.is_upgrade.isnot(True),
+            )
             .all()
             if pid
         ]

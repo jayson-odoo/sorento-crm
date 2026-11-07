@@ -1313,6 +1313,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (numbersInvalid()) return;
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
+      const revisedLines = payloadLines();
       await revise({
         reason: reviseReason.trim(),
         expectedRevisionNo: request?.revision_no ?? 0,
@@ -1327,7 +1328,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           // silently dropped who prints it.
           print_by: printBy,
         },
-        products: payloadLines(),
+        products: revisedLines,
       });
       // Review round 3: a file added while composing the revision sat in
       // `pendingFiles` with nowhere to flush to (the request already exists,
@@ -1339,6 +1340,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
+        const dropped = droppedPromotionNote(revisedLines, fresh.lines);
+        if (dropped) toast.info(dropped);
       }
       // Review round 3: the lineage and the policy the header/gear read both
       // changed under this revision - reload the one GET that changed

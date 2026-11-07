@@ -18,5 +18,6 @@ Plan: `PLAN-pricetag-discontinued-pick-07nov.md`. Supersedes AC-C6 (disabled opt
   the pick shows on the line and the request saves.
 - AC-7. A line whose pre-filled promotion covers only an option NOT picked saves (no 422): the
   promotion is stored as none, no price on the tag changes, and the form says "Promotion removed
-  from line i: it does not cover the option picked." A promotion that covers nothing in the line's
-  package, or that this viewer cannot see, is still refused with PROMOTION_NOT_AVAILABLE.
+  from line i: it does not cover the option picked." (after Save Draft, Approve, Escalate and
+  revise). A promotion that covers nothing in the line's package, only one of its upgrades, or that
+  this viewer cannot see, is still refused with PROMOTION_NOT_AVAILABLE.
