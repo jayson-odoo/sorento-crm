@@ -304,3 +304,83 @@ colours (the repo template does not, `sorento_crm/docker-compose.yml`). Either w
 migrates: the release waits for the replicated head first, so `alembic upgrade head` finds
 nothing to do, and any DDL on a replica would fail the new colour's health check, leaving the
 old colour serving.
+
+## 8. Section 5 results (owner, 7 Nov about 11:20) and what they change
+
+Facts (addresses and hostnames left out on purpose):
+- **Node A.** Deploy dir `/opt/sorento-crm2`, `COMPOSE_FILE` unset (plain compose).
+  - Postgres: 17.9 on `pgvector/pgvector:pg17`, the same base as our template (`templates/postgres/Dockerfile:4`).
+  - Settings: `wal_level=replica`, `wal_log_hints=off`, `data_checksums=off`, `archive_mode=off` (an `archive_command` is set but never runs), `synchronous_commit=on` with an empty `synchronous_standby_names` (so: async), `wal_sender_timeout=60s`, `max_slot_wal_keep_size=-1`, `wal_keep_size=0`.
+  - One standby: `application_name=sorento_crm_replica`, streaming, async, write/flush/replay lag 0.86 / 1.42 / 1.63 ms, 0 bytes behind. Physical slot `sorento_crm_replica_slot`, active.
+  - Running: blue colour, workers on `61e9d217`, pgbouncer, redis 7. Disk 58% of 193G. NTP synced.
+- **Node B.** Deploy dir `/opt/sorento-crm2`, `COMPOSE_FILE` unset. The compose `db` service is not running there, so the replica runs somewhere else. No WireGuard interface: replication runs over `eth0`. `.active_color` blue. The B3 loop printed nothing. Disk 30% of 387G. NTP synced.
+
+New and changed gaps:
+- **G8 No WAL archive.** `archive_mode=off`, so nothing has ever been archived to R2.
+  - The PITR copy assumed in the 4 Nov plan (section 2 row 2) does not exist. Recovery today relies on the dumps (`scripts/ops/backup-db.sh`) only.
+  - Q5's alternative (b) ("replay the R2 archive") was never available. Q5 (a) stands.
+  - The R2 sync record (section 3b, Q4) does not depend on the archive. It needs only an R2 bucket and a key on both nodes.
+  - Fix: `archive_mode=on` with WAL-G. That needs a restart, so it goes in the same window as G2.
+- **G2 confirmed.** `wal_log_hints` and `data_checksums` are both off, so `pg_rewind` cannot run. Until a restart turns `wal_log_hints` on, every rejoin of an old primary is a full re-seed (about 54 GB; fast over a link with under 1 ms RTT).
+- **G9 A dead standby can fill A's disk.** `max_slot_wal_keep_size=-1` lets the slot keep WAL without limit while B is down. Fix: set it to 20GB. That is a reload, no restart.
+- **G10 Sync drop stall.** `wal_sender_timeout=60s`: with sync on, a cut link would stall saves for about 75 s before P4 drops B. Fix: set 10s (reload, no restart; `compose.ha.yml:48` value).
+- **G11 Names.** The adapter derives the slot from the node name (`ha-pg.sh:55-58`), but B uses `application_name` `sorento_crm_replica` and slot `sorento_crm_replica_slot`.
+  - Adopting B (Q1 (a)) needs separate `PEER_APP_NAME` / `PEER_SLOT` config values.
+  - Small adapter change plus tests, in the section 3 PR.
+- **G12 Security: `host ... trust` lines in A's pg_hba.** Two `host all trust` rows match replication.
+  - The `postgres` image ships two such rows for loopback only (`127.0.0.1/32`, `::1/128`). If these are those two, they are reachable only from inside A's db container: low risk.
+  - If either has any other CIDR, anyone in that range can copy the whole database without a password. Then it is a blocker to fix before anything else (8c checks it).
+- **G13 Replication over eth0, no WireGuard.** The scram rows for `replicator` work over the provider or public network. Two things are unknown:
+  - whether the stream uses TLS (8c checks it);
+  - whether A's 5432 is reachable from the internet (8c checks it).
+  WireGuard (the template's design) or TLS plus a firewall rule limited to B is needed before the controller runs: the controller also sends peer queries over this path.
+- **G14 B's database is not the compose `db`.** Step 1 impact:
+  - `--role` on B reads `single` (psql fails), so `ha_release.sh` refuses the whole release ("not an HA node", nothing deployed).
+  - **Do not add `SSH_HOST_B` until B answers `standby`.** If the replica is a compose service under another name, `DB_SERVICE=<name>` in B's `.deploy.env` is enough (`blue_green_deploy.sh:107`). If it is a host install, step 1 needs a small extra change.
+  - 5b finds out which, and also how B's app connects (B3 printed nothing).
+- **Q3 resolved by the measurement.** A write_lag of 0.86 ms means the RTT is under 1 ms, so `synchronous_commit=on` per Q3 (a). 8c's ping confirms it.
+
+### 8b. Next READ-ONLY block, node B (finds the replica and the app's connections)
+
+```bash
+# READ-ONLY: nothing below changes prod. Passwords are masked before printing.
+cd /opt/sorento-crm2
+docker compose ls
+docker compose config --services
+docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+ss -ltnp 2>/dev/null | grep -E ':(5432|6432|6379)\b'
+systemctl list-units --type=service --all 2>/dev/null | grep -iE 'postgres|pgbouncer|redis'
+ps -eo user,args | grep -E '[p]ostgres .*-D|[p]ostmaster' | cut -c1-200
+# Every container whose image looks like Postgres: role and version.
+for c in $(docker ps --format '{{.Names}} {{.Image}}' | awk '$2 ~ /postgres|pgvector|postgis/ {print $1}'); do
+  echo "== $c"; docker exec "$c" sh -c 'psql -U "${POSTGRES_USER:-postgres}" -d postgres -Atc "select pg_is_in_recovery(), version(), current_setting(\$\$primary_slot_name\$\$), current_setting(\$\$hot_standby_feedback\$\$)"' 2>&1 | head -3
+done
+# How every running container reaches Postgres and Redis (scheme, host, port, db; no password).
+for c in $(docker ps --format '{{.Names}}'); do
+  docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" \
+    | grep -E '^(DATABASE_URL|DIRECT_URL|REDIS_URL)=' \
+    | sed -E 's#://[^@/]*@#://***@#' | sed "s#^#$c #"
+done
+```
+
+### 8c. Next READ-ONLY block, node A (pg_hba with addresses, link, exposure, ping)
+
+```bash
+# READ-ONLY: nothing below changes prod.
+cd /opt/sorento-crm2
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "
+select line_number, type, database, user_name, address, netmask, auth_method
+from pg_hba_file_rules order by line_number;"'
+# Is the stream encrypted, and from which kind of address (paste only private/public, not the address)?
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "
+select r.application_name, r.client_addr, s.ssl, s.version
+from pg_stat_replication r left join pg_stat_ssl s using (pid);"'
+# Is 5432 published on a public interface?
+docker compose port db 5432 2>/dev/null; ss -ltn 2>/dev/null | grep -E ':5432\b'
+sudo nft list ruleset 2>/dev/null | grep -nE '5432' | head; sudo ufw status 2>/dev/null | grep -E '5432' 
+# Round trip to B (use the address B replicates from, as client_addr above shows).
+ping -c 100 -i 0.2 -q <B address> | tail -2
+```
+
+When pasting: replace every address with `<A>`, `<B>` or `private` / `public`, and every CIDR
+with `loopback`, `docker net`, `private` or `public`.
