@@ -14,7 +14,7 @@ Every statement is idempotent (`IF NOT EXISTS`), because the shared dev database
 `create_all` and may already hold these objects. Additive only.
 
 Revision ID: ptag_0017_acc_designer
-Revises: sfam_0001_supplier_ledger_family
+Revises: sales_0007_targets_view_own
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ptag_0017_acc_designer"
-down_revision = "sfam_0001_supplier_ledger_family"
+down_revision = "sales_0007_targets_view_own"
 branch_labels = None
 depends_on = None
 
