@@ -26,6 +26,8 @@ import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlTab } from '@/hooks/useUrlTab';
@@ -133,34 +135,32 @@ type Asking =
   | { kind: 'reject' }
   | { kind: 'revise' }
   | { kind: 'cancel' }
-  | { kind: 'close'; lineId: string };
+  | { kind: 'close' };
 
-/** The "Opened as" cell: the outcome of a line, or the two purchasing buttons. */
-function OpenedAs({
-  line,
-  applicationStatus,
+/** The NEW PRODUCT CODE row: the outcome, or the three purchasing controls on an Approved record. */
+function NewCodeField({
+  application: r,
   canOpen,
   busy,
   onLink,
   onClose,
   onUndo,
 }: {
-  line: Line;
-  applicationStatus: Detail['status'];
+  application: Detail;
   canOpen: boolean;
   busy: boolean;
-  onLink: (lineId: string, productId: string) => void;
-  onClose: (lineId: string) => void;
-  onUndo: (lineId: string) => void;
+  onLink: (productId: string) => void;
+  onClose: () => void;
+  onUndo: () => void;
 }) {
   const [searching, setSearching] = useState(false);
   // A code purchasing chose with "Use": it fills the picker, and Link is still pressed by a person.
   const [pending, setPending] = useState<{ id: string; code: string } | null>(
     null,
   );
-  const earlier = line.suggestions?.[0];
   // The search text the server last answered with nothing for; the empty message names it.
   const [missed, setMissed] = useState('');
+  const earlier = r.suggestions?.[0];
 
   const fetchProducts = async (q: string) => {
     if (!q.trim()) return [];
@@ -169,22 +169,22 @@ function OpenedAs({
     return hits;
   };
 
-  const undo = canOpen &&
-    ['approved', 'completed'].includes(applicationStatus) && (
-      <button
-        type="button"
-        className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
-        disabled={busy}
-        onClick={() => onUndo(line.id)}
-      >
-        Undo
-      </button>
-    );
+  const undo = canOpen && ['approved', 'completed'].includes(r.status) && (
+    <button
+      type="button"
+      className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
+      disabled={busy}
+      onClick={onUndo}
+    >
+      Undo
+    </button>
+  );
+  const who = [r.new_code_by_name, day(r.new_code_at)]
+    .filter(Boolean)
+    .join(', ');
 
-  if (line.opened_product_id) {
-    const who = [line.resolved_by_name, day(line.resolved_at)]
-      .filter(Boolean)
-      .join(', ');
+  if (r.new_product_id) {
+    const label = codeWithName(r.new_product_code, r.new_product_name);
     return (
       <div className="min-w-0 space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -194,16 +194,13 @@ function OpenedAs({
             Opened
           </span>
           <Link
-            href={`/master-data-management/products/${line.opened_product_id}`}
+            href={`/master-data-management/products/${r.new_product_id}`}
             className="truncate font-medium text-primary hover:underline"
-            title={codeWithName(
-              line.opened_product_code,
-              line.opened_product_name,
-            )}
+            title={label}
           >
-            {codeWithName(line.opened_product_code, line.opened_product_name)}
+            {label}
           </Link>
-          {line.opened_product_active === false && (
+          {r.new_product_active === false && (
             <Badge variant="secondary">Inactive</Badge>
           )}
         </div>
@@ -214,10 +211,7 @@ function OpenedAs({
     );
   }
 
-  if (line.closed_reason) {
-    const who = [line.resolved_by_name, day(line.resolved_at)]
-      .filter(Boolean)
-      .join(', ');
+  if (r.new_code_closed_reason) {
     return (
       <div className="min-w-0 space-y-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -226,9 +220,7 @@ function OpenedAs({
           >
             Not opening
           </span>
-          <span className="truncate" title={line.closed_reason}>
-            {line.closed_reason}
-          </span>
+          <span className="break-words">{r.new_code_closed_reason}</span>
         </div>
         <p className="text-xs text-muted-foreground">
           {who} {undo}
@@ -237,14 +229,14 @@ function OpenedAs({
     );
   }
 
-  if (!canOpen || applicationStatus !== 'approved') {
-    return <span className="text-muted-foreground">-</span>;
+  if (!canOpen || r.status !== 'approved') {
+    return <NewProductApplicationNewCodeValue />;
   }
 
   return (
     <div className="min-w-0 space-y-2">
       {earlier && (
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
           <span className="min-w-0 break-words">
             Created before: <b>{earlier.product_code}</b>
             {earlier.application_no ? ` (${earlier.application_no})` : ''}
@@ -277,19 +269,14 @@ function OpenedAs({
         >
           Link product
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() => onClose(line.id)}
-        >
+        <Button size="sm" variant="outline" disabled={busy} onClick={onClose}>
           Not opening
         </Button>
       </div>
       {searching && (
         <>
           <AsyncCombobox<NewProductApplicationProductHit>
-            ariaLabel={`Product for line ${line.line_no}`}
+            ariaLabel="New product code"
             value={pending?.id ?? ''}
             displayValue={pending?.code}
             allowFreeText={false}
@@ -303,7 +290,7 @@ function OpenedAs({
               setMissed('');
               setSearching(false);
               setPending(null);
-              onLink(line.id, v);
+              onLink(v);
             }}
           />
           {pending && (
@@ -312,7 +299,7 @@ function OpenedAs({
               disabled={busy}
               onClick={() => {
                 setSearching(false);
-                onLink(line.id, pending.id);
+                onLink(pending.id);
                 setPending(null);
               }}
             >
@@ -370,9 +357,9 @@ function StaffNewProductApplicationDetail({
     reject,
     revise,
     cancel,
-    link,
-    close,
-    undo,
+    linkNewCode,
+    closeNewCode,
+    undoNewCode,
     feedback,
   } = useNewProductApplicationMutations();
   const canCreate = useHasPermission(
@@ -421,9 +408,9 @@ function StaffNewProductApplicationDetail({
     reject.isPending ||
     revise.isPending ||
     cancel.isPending ||
-    link.isPending ||
-    close.isPending ||
-    undo.isPending;
+    linkNewCode.isPending ||
+    closeNewCode.isPending ||
+    undoNewCode.isPending;
 
   if (isLoading) {
     return (
@@ -448,7 +435,9 @@ function StaffNewProductApplicationDetail({
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
   const locked = isAwaitingReview(r.status) || r.status === 'approved';
-  const anyResolved = r.lines.some(isResolved);
+  const anyResolved =
+    Boolean(r.new_product_id || r.new_code_closed_reason) ||
+    r.lines.some(isResolved);
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
@@ -503,16 +492,6 @@ function StaffNewProductApplicationDetail({
     }
   };
 
-  const fromAutoCount = (l: Line) =>
-    [
-      l.opened_category_name,
-      l.opened_base_uom_name,
-      l.opened_list_price == null ? null : `MYR ${l.opened_list_price}`,
-      l.opened_supplier_name,
-    ]
-      .filter(Boolean)
-      .join(', ');
-
   const confirmAsk = async (value: string) => {
     if (!asking) return;
     try {
@@ -522,12 +501,7 @@ function StaffNewProductApplicationDetail({
         await revise.mutateAsync({ id: r.id, reason: value });
       else if (asking.kind === 'cancel')
         await cancel.mutateAsync({ id: r.id, reason: value || undefined });
-      else
-        await close.mutateAsync({
-          id: r.id,
-          lineId: asking.lineId,
-          reason: value,
-        });
+      else await closeNewCode.mutateAsync({ id: r.id, reason: value });
       setAsking(null);
     } catch {
       // the mutation's own onError toast names the refusal
@@ -786,6 +760,26 @@ function StaffNewProductApplicationDetail({
                         'None'
                       )
                     }
+                    productCodesField={
+                      <NewProductApplicationProductCodes
+                        value={sheetState}
+                        onChange={() => {}}
+                        products={NO_PRODUCTS}
+                        readOnly
+                      />
+                    }
+                    newCodeField={
+                      <NewCodeField
+                        application={r}
+                        canOpen={canOpen}
+                        busy={busy}
+                        onLink={(productId) =>
+                          linkNewCode.mutate({ id: r.id, productId })
+                        }
+                        onClose={() => setAsking({ kind: 'close' })}
+                        onUndo={() => undoNewCode.mutate(r.id)}
+                      />
+                    }
                     customerField={
                       <span className="flex flex-wrap items-center gap-2">
                         {[r.customer_code, r.customer_name]
@@ -809,38 +803,9 @@ function StaffNewProductApplicationDetail({
                         }))
                       }
                       brands={NO_BRANDS}
-                      products={NO_PRODUCTS}
                       readOnly
                       showCost
                       costEditable={canFeedback}
-                      renderOpenedAs={(draftLine) => {
-                        const l = r.lines.find((x) => x.id === draftLine.id);
-                        if (!l) return null;
-                        return (
-                          <div className="min-w-0 space-y-1.5">
-                            <OpenedAs
-                              line={l}
-                              applicationStatus={r.status}
-                              canOpen={canOpen}
-                              busy={busy}
-                              onLink={(lineId, productId) =>
-                                link.mutate({ id: r.id, lineId, productId })
-                              }
-                              onClose={(lineId) =>
-                                setAsking({ kind: 'close', lineId })
-                              }
-                              onUndo={(lineId) =>
-                                undo.mutate({ id: r.id, lineId })
-                              }
-                            />
-                            {l.opened_product_id && (
-                              <p className="text-xs text-muted-foreground">
-                                From AutoCount: {fromAutoCount(l) || '-'}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      }}
                     />
                   </div>
                 </>

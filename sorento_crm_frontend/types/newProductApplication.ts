@@ -29,8 +29,6 @@ export interface NewProductApplicationLineWrite {
   brand_id?: string | null;
   /** Numbers travel as strings or numbers; null clears, never 0. */
   expected_qty?: string | number | null;
-  /** The CURRENT codes (NPA-FROM-SI): left out keeps the saved codes, [] clears. */
-  current_product_ids?: string[];
 }
 
 /** The write payload, staff and portal alike. `needed_by` is YYYY-MM-DD. */
@@ -41,6 +39,8 @@ export interface NewProductApplicationWrite {
   project_name?: string | null;
   needed_by?: string | null;
   remark?: string | null;
+  /** The PRODUCT CODES this application is based on (header): left out keeps, [] clears. */
+  current_product_ids?: string[];
   lines?: NewProductApplicationLineWrite[];
 }
 
@@ -52,18 +52,11 @@ export interface NewProductApplicationCurrentProduct {
   is_active?: boolean;
 }
 
-/** The prefill's line: Write-shaped, plus the picked current codes the inquiry's code text matched. */
-export interface NewProductApplicationPrefillLine extends NewProductApplicationLineWrite {
-  current_products?: NewProductApplicationCurrentProduct[];
-}
-
 /** GET /prefill: a Write-shaped body copied as text, plus the inquiry's number. */
-export interface NewProductApplicationPrefill extends Omit<
-  NewProductApplicationWrite,
-  'lines'
-> {
+export interface NewProductApplicationPrefill extends NewProductApplicationWrite {
   stock_inquiry_number: string | null;
-  lines?: NewProductApplicationPrefillLine[];
+  /** The product codes the inquiry's code text matched exactly (none when it did not). */
+  current_products?: NewProductApplicationCurrentProduct[];
 }
 
 /** A code already created from exactly the same current codes (information only). */
@@ -142,8 +135,6 @@ export interface NewProductApplicationLine extends NewProductApplicationLineWrit
   resolved_by: string | null;
   resolved_by_name: string | null;
   resolved_at: string | null;
-  current_products?: NewProductApplicationCurrentProduct[];
-  suggestions?: NewProductApplicationSuggestion[];
 }
 
 /** The stock inquiry an application was raised from (detail only). */
@@ -178,6 +169,16 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   updated_at: string | null;
   lines: NewProductApplicationLine[];
   stock_inquiry?: NewProductApplicationStockInquiry | null;
+  current_products?: NewProductApplicationCurrentProduct[];
+  suggestions?: NewProductApplicationSuggestion[];
+  /** The ONE new product code purchasing links (or the reason it is not opening). */
+  new_product_id?: string | null;
+  new_product_code?: string | null;
+  new_product_name?: string | null;
+  new_product_active?: boolean | null;
+  new_code_closed_reason?: string | null;
+  new_code_by_name?: string | null;
+  new_code_at?: string | null;
 }
 
 export interface NewProductApplicationPage {
@@ -203,7 +204,6 @@ export interface NewProductApplicationProductHit {
 
 /** One row of a product's lineage (GET /lineage). The last three are for NPA view-all only. */
 export interface NewProductApplicationLineageRow {
-  line_id: string;
   application_no: string | null;
   product_id: string;
   product_code: string;

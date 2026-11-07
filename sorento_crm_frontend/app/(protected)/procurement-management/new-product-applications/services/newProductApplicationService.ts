@@ -185,6 +185,15 @@ export const closeNewProductApplicationLine = (
 export const undoNewProductApplicationLine = (id: string, lineId: string) =>
   post(`${at(id)}/lines/${at(lineId)}/undo`, 'Failed to undo the line');
 
+export const linkNewProductApplicationNewCode = (id: string, productId: string) =>
+  post(`${at(id)}/new-code/link`, 'Failed to link the product', {
+    product_id: productId,
+  });
+export const closeNewProductApplicationNewCode = (id: string, reason: string) =>
+  post(`${at(id)}/new-code/close`, 'Failed to save the reason', { reason });
+export const undoNewProductApplicationNewCode = (id: string) =>
+  post(`${at(id)}/new-code/undo`, 'Failed to undo the code');
+
 /** Lists matches only (dashes, spaces and case ignored); a person picks one. */
 export async function searchNewProductApplicationProducts(
   q: string,

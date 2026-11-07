@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   userId: 'u-owner',
   data: undefined as unknown,
   link: vi.fn(),
+  closeCode: vi.fn(),
+  undoCode: vi.fn(),
   search: vi.fn(),
   feedback: vi.fn(),
   download: vi.fn(),
@@ -103,9 +105,13 @@ vi.mock('../hooks/useNewProductApplications', () => ({
       reject: idle(),
       revise: idle(),
       cancel: idle(),
-      link: { mutate: state.link, mutateAsync: state.link, isPending: false },
-      close: idle(),
-      undo: idle(),
+      linkNewCode: { mutate: state.link, mutateAsync: state.link, isPending: false },
+      closeNewCode: {
+        mutate: state.closeCode,
+        mutateAsync: state.closeCode,
+        isPending: false,
+      },
+      undoNewCode: { mutate: state.undoCode, mutateAsync: state.undoCode, isPending: false },
       feedback: {
         mutate: state.feedback,
         mutateAsync: state.feedback,
@@ -357,11 +363,9 @@ describe('Link product', () => {
 
   it('says the code is not in the product list yet, and picks nothing', async () => {
     render(<Page />);
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /^link product$/i })[1],
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^link product$/i }));
     const box = await screen.findByRole('combobox', {
-      name: /product for line 2/i,
+      name: /new product code/i,
     });
     fireEvent.focus(box);
     fireEvent.change(box, { target: { value: 'srtks2406' } });
@@ -384,11 +388,9 @@ describe('Link product', () => {
       },
     ]);
     render(<Page />);
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /^link product$/i })[1],
-    );
+    fireEvent.click(screen.getByRole('button', { name: /^link product$/i }));
     const box = await screen.findByRole('combobox', {
-      name: /product for line 2/i,
+      name: /new product code/i,
     });
     fireEvent.focus(box);
     fireEvent.change(box, { target: { value: 'srtks2406' } });
@@ -401,7 +403,6 @@ describe('Link product', () => {
     await waitFor(() =>
       expect(state.link).toHaveBeenCalledWith({
         id: 'a-1',
-        lineId: 'l-2',
         productId: 'p-9',
       }),
     );
@@ -424,10 +425,12 @@ describe('the table form', () => {
       'DATE:',
       'SALES PERSON:',
       'STOCK INQUIRY:',
+      'PRODUCT CODES:',
       'CUSTOMER:',
       'PROJECT:',
       'TARGET DELIVERY:',
       'REMARK:',
+      'NEW PRODUCT CODE:',
       'LEADTIME:',
     ]) {
       const i = text.indexOf(l, at + 1);
@@ -436,8 +439,9 @@ describe('the table form', () => {
     }
     expect(screen.getByText('NPA-000001')).toBeInTheDocument();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
-    for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i, /opened as/i])
+    for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i])
       expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
     expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -491,39 +495,6 @@ describe('PURCHASING FEEDBACK', () => {
     expect(
       screen.getByText('Purchasing fills this after approval.'),
     ).toBeInTheDocument();
-  });
-});
-
-describe('From AutoCount', () => {
-  it('shows the linked product item group, base UOM, list price and supplier read-only', () => {
-    state.userId = 'u-buyer';
-    state.perms = new Set([OPEN]);
-    state.data = approved({
-      lines: [
-        line({
-          opened_product_id: 'p-1',
-          opened_product_code: 'XY-1234-MB',
-          opened_product_name: 'Example kitchen sink',
-          opened_product_active: true,
-          opened_category_name: 'Example Group',
-          opened_base_uom_name: 'Example UOM',
-          opened_list_price: '185.00',
-          opened_supplier_name: 'Example Supplier Co',
-        } as never),
-      ],
-    });
-    render(<Page />);
-    expect(screen.getByText(/From AutoCount/)).toBeInTheDocument();
-    expect(screen.getByText(/Example Group/)).toBeInTheDocument();
-    expect(screen.getByText(/Example UOM/)).toBeInTheDocument();
-    expect(screen.getByText(/185\.00/)).toBeInTheDocument();
-    expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
-  });
-
-  it('shows no From AutoCount block before a product is linked', () => {
-    state.data = approved();
-    render(<Page />);
-    expect(screen.queryByText(/From AutoCount/)).toBeNull();
   });
 });
 
@@ -649,7 +620,7 @@ describe('attachments list is the shared PanelDataGrid', () => {
   });
 });
 
-describe('Created before (reuse suggestion, purchasing)', () => {
+describe('NEW PRODUCT CODE (header)', () => {
   const earlier = {
     product_id: 'p-69',
     product_code: 'XY-1234-MB-69',
@@ -663,45 +634,90 @@ describe('Created before (reuse suggestion, purchasing)', () => {
 
   beforeEach(() => {
     state.data = approved({
-      lines: [
-        line({
-          current_products: [
-            { id: 'p-1', product_code: 'XY-1234-MB', product_name: 'Sink' },
-          ],
-          suggestions: [earlier],
-        }),
+      current_products: [
+        { id: 'p-1', product_code: 'XY-1234-MB', product_name: 'Sink' },
       ],
-      lines_total: 1,
+      suggestions: [earlier],
     });
     state.userId = 'u-buyer';
     state.perms = new Set([OPEN]);
   });
 
+  it('has no Opened as column and the table keeps its paper columns', () => {
+    render(<Page />);
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: /cost \(myr\)/i })).toBeInTheDocument();
+  });
+
   it('names the earlier code and application, and Use <code> fills the picker without linking', async () => {
     render(<Page />);
-    expect(
-      screen.getByText(/Created before:/).textContent,
-    ).toContain('XY-1234-MB-69 (NPA-000123)');
-
+    expect(screen.getByText(/Created before:/).textContent).toContain(
+      'XY-1234-MB-69 (NPA-000123)',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Use XY-1234-MB-69' }));
     const box = (await screen.findByRole('combobox', {
-      name: /product for line 1/i,
+      name: /new product code/i,
     })) as HTMLInputElement;
     expect(box.value).toBe('XY-1234-MB-69');
     expect(state.link).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /^link$/i }));
-    expect(state.link).toHaveBeenCalledWith({
-      id: 'a-1',
-      lineId: 'l-1',
-      productId: 'p-69',
-    });
+    expect(state.link).toHaveBeenCalledWith({ id: 'a-1', productId: 'p-69' });
   });
 
-  it('shows no Use button to someone who cannot open codes', () => {
+  it('Not opening asks for a reason before closing', async () => {
+    render(<Page />);
+    fireEvent.click(screen.getByRole('button', { name: /^not opening$/i }));
+    const confirm = await screen.findByRole('button', { name: /^not opening$/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/reason/i), {
+      target: { value: 'Customer walked away' },
+    });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(state.closeCode).toHaveBeenCalledWith({
+        id: 'a-1',
+        reason: 'Customer walked away',
+      }),
+    );
+  });
+
+  it('shows no Link, Use or Not opening to someone who cannot open codes', () => {
     state.perms = new Set();
     render(<Page />);
     expect(button(/^use /i)).toBeNull();
+    expect(button(/^link product$/i)).toBeNull();
+    expect(button(/^not opening$/i)).toBeNull();
+    expect(
+      screen.getByText('Purchasing fills this in when the code is created.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the linked code with Undo for open_code on an Approved record', () => {
+    state.data = approved({
+      new_product_id: 'p-69',
+      new_product_code: 'XY-1234-MB-69',
+      new_product_name: 'Example sink 69',
+      new_product_active: false,
+      new_code_by_name: 'Buyer',
+      new_code_at: '2026-11-03T02:00:00',
+    });
+    render(<Page />);
+    expect(screen.getByRole('link', { name: /XY-1234-MB-69/ })).toHaveAttribute(
+      'href',
+      '/master-data-management/products/p-69',
+    );
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(state.undoCode).toHaveBeenCalledWith('a-1');
+  });
+
+  it('shows the reason when it is not opening, and no Undo to a viewer without open_code', () => {
+    state.perms = new Set();
+    state.data = approved({ new_code_closed_reason: 'Customer walked away' });
+    render(<Page />);
+    expect(screen.getByText('Customer walked away')).toBeInTheDocument();
+    expect(button(/^undo$/i)).toBeNull();
   });
 });
 

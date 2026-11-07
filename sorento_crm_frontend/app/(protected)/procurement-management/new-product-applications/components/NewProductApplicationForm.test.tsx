@@ -140,7 +140,7 @@ beforeEach(() => {
 });
 
 describe('pre-fill from a responded stock inquiry', () => {
-  it('keeps the unmatched code text read-only, sends no current codes, and customer_id null', async () => {
+  it('keeps the unmatched code text as a hint, sends no product codes, and customer_id null', async () => {
     mock.prefill = PREFILL;
     renderForm({ stockInquiryId: 'si-1' });
 
@@ -158,8 +158,10 @@ describe('pre-fill from a responded stock inquiry', () => {
     expect(body.customer_name).toBe('EXAMPLE DEVELOPER SDN BHD');
     expect(body.stock_inquiry_id).toBe('si-1');
     expect(body.lines).toHaveLength(1);
-    expect(body.lines[0].current_product_ids).toEqual([]);
-    expect(body.lines[0]).not.toHaveProperty('proposed_code');
+    expect(body.current_product_ids).toEqual([]);
+    // the line keeps today's Product code text
+    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
+    expect(body.lines[0]).not.toHaveProperty('current_product_ids');
     for (const k of [
       'category_id',
       'base_uom_id',
@@ -174,13 +176,13 @@ describe('pre-fill from a responded stock inquiry', () => {
 });
 
 describe('pre-fill with a matched current code', () => {
-  it('shows the code picked and writes its id', async () => {
+  it('shows the code picked in the header and writes its id', async () => {
     mock.prefill = {
       ...PREFILL,
+      current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
       lines: [
         {
           proposed_code: 'XY-1234-MB',
-          current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
           description: 'Example sinks',
           expected_qty: '55',
         },
@@ -193,7 +195,7 @@ describe('pre-fill with a matched current code', () => {
 
     saveDraft();
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
-    expect(lastBody().lines[0].current_product_ids).toEqual(['p-1']);
+    expect(lastBody().current_product_ids).toEqual(['p-1']);
   });
 });
 
@@ -270,6 +272,7 @@ describe('paper layout', () => {
     await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
     const body = lastBody();
     expect(Object.keys(body).sort()).toEqual([
+      'current_product_ids',
       'customer_id',
       'customer_name',
       'lines',

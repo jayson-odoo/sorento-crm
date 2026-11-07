@@ -10,10 +10,8 @@ import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type {
-  LookupFetcher,
-  ProductFetcher,
-} from '@/components/common/NewProductApplicationLines';
+import type { LookupFetcher } from '@/components/common/NewProductApplicationLines';
+import type { ProductFetcher } from '@/components/common/NewProductApplicationProductCodes';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import type {
   NewProductApplicationFeedbackWrite,
@@ -32,6 +30,9 @@ import {
   searchNewProductApplicationProducts,
   getStockInquiryApplications,
   linkNewProductApplicationLine,
+  linkNewProductApplicationNewCode,
+  closeNewProductApplicationNewCode,
+  undoNewProductApplicationNewCode,
   rejectNewProductApplication,
   reviseNewProductApplication,
   saveNewProductApplicationFeedback,
@@ -297,6 +298,24 @@ export function useNewProductApplicationMutations() {
     }) => closeNewProductApplicationLine(id, lineId, reason),
     ...move('Failed to close the line'),
   });
+  const linkNewCode = useMutation({
+    mutationFn: ({ id, productId }: { id: string; productId: string }) =>
+      linkNewProductApplicationNewCode(id, productId),
+    ...move('Failed to link the product', 'Product linked'),
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to link the product');
+      refresh();
+    },
+  });
+  const closeNewCode = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      closeNewProductApplicationNewCode(id, reason),
+    ...move('Failed to save the reason'),
+  });
+  const undoNewCode = useMutation({
+    mutationFn: (id: string) => undoNewProductApplicationNewCode(id),
+    ...move('Failed to undo the code'),
+  });
   const feedback = useMutation({
     mutationFn: ({
       id,
@@ -325,5 +344,8 @@ export function useNewProductApplicationMutations() {
     close,
     undo,
     feedback,
+    linkNewCode,
+    closeNewCode,
+    undoNewCode,
   };
 }

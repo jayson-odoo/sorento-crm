@@ -34,6 +34,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -577,6 +579,22 @@ export default function NewProductApplicationForm({
                 <span>{application.stock_inquiry_number || '-'}</span>
               )
             }
+            productCodesField={
+              <NewProductApplicationProductCodes
+                value={state}
+                onChange={setState}
+                products={products}
+                reuse={reuse}
+                readOnly={readOnly}
+              />
+            }
+            newCodeField={
+              <NewProductApplicationNewCodeValue
+                code={application?.new_product_code}
+                active={application?.new_product_active}
+                closedReason={application?.new_code_closed_reason}
+              />
+            }
             customerField={
               <>
                 {readOnly ? (
@@ -614,8 +632,6 @@ export default function NewProductApplicationForm({
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
               brands={brands}
-              products={products}
-              reuse={reuse}
               errors={errors}
               readOnly={readOnly}
               showCost={Boolean(application)}

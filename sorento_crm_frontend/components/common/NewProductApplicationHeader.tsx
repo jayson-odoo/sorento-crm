@@ -30,6 +30,10 @@ export interface NewProductApplicationHeaderProps {
   readOnly?: boolean;
   stockInquiryField: ReactNode;
   customerField: ReactNode;
+  /** PRODUCT CODES, directly under STOCK INQUIRY. */
+  productCodesField: ReactNode;
+  /** NEW PRODUCT CODE, directly under REMARK. */
+  newCodeField: ReactNode;
   feedback?: { editable: boolean; onSave?: () => void; saving?: boolean };
 }
 
@@ -42,6 +46,8 @@ export function NewProductApplicationHeader({
   readOnly,
   stockInquiryField,
   customerField,
+  productCodesField,
+  newCodeField,
   feedback,
 }: NewProductApplicationHeaderProps) {
   const patch = (next: Partial<FormState>) => onChange({ ...value, ...next });
@@ -64,6 +70,12 @@ export function NewProductApplicationHeader({
       )}
       <InquiryFormTableRow label="STOCK INQUIRY:">
         {stockInquiryField}
+      </InquiryFormTableRow>
+      <InquiryFormTableRow
+        label="PRODUCT CODES:"
+        labelClassName="items-start pt-3"
+      >
+        {productCodesField}
       </InquiryFormTableRow>
       <InquiryFormTableRow label="CUSTOMER:">
         {customerField}
@@ -104,6 +116,12 @@ export function NewProductApplicationHeader({
             onChange={(e) => patch({ remark: e.target.value })}
           />
         )}
+      </InquiryFormTableRow>
+      <InquiryFormTableRow
+        label="NEW PRODUCT CODE:"
+        labelClassName="items-start pt-3"
+      >
+        {newCodeField}
       </InquiryFormTableRow>
       <InquiryFormTableRow label="LEADTIME:">
         {editableFeedback ? (

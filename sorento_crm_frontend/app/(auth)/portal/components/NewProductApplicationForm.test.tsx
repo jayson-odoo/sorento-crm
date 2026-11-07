@@ -235,8 +235,9 @@ describe('new application', () => {
     const body = asMock(createNewProductApplication).mock.calls[0][0];
     expect(body.customer_id).toBeNull();
     expect(body.stock_inquiry_id).toBe('si-1');
-    expect(body.lines[0].current_product_ids).toEqual([]);
-    expect(body.lines[0]).not.toHaveProperty('proposed_code');
+    expect(body.current_product_ids).toEqual([]);
+    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
+    expect(body.lines[0]).not.toHaveProperty('current_product_ids');
   });
 
   it('has no item group, base UOM or selling price, and no cost box to write', async () => {
@@ -405,25 +406,21 @@ describe('portal: stock inquiry tab and earlier codes (NPA-FROM-SI)', () => {
       detail({
         status: 'submitted',
         status_label: 'Submitted',
-        lines: [
-          line({
-            current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
-            suggestions: [
-              {
-                product_id: 'p-9',
-                product_code: 'XY-1234-MB-69',
-                product_name: null,
-                is_active: true,
-                description: 'no tap hole',
-                created_at: '2026-11-03T02:00:00',
-              },
-            ],
-          }),
+        current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
+        suggestions: [
+          {
+            product_id: 'p-9',
+            product_code: 'XY-1234-MB-69',
+            product_name: null,
+            is_active: true,
+            description: 'no tap hole',
+            created_at: '2026-11-03T02:00:00',
+          },
         ],
       }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    const row = await screen.findByTestId('npa-line-suggestions');
+    const row = await screen.findByTestId('npa-suggestions');
     expect(row.textContent).toContain(
       'A code was already created from XY-1234-MB: XY-1234-MB-69 (03/11/2026, "no tap hole")',
     );
@@ -590,5 +587,43 @@ describe('an application that is not this contact\'s', () => {
     expect(screen.queryByLabelText('Product type')).toBeNull();
     expect(screen.queryByText('REFF:')).toBeNull();
     expect(screen.queryByText('PRODUCT TYPE:')).toBeNull();
+  });
+});
+
+describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
+  const submitted = (over: Partial<NewProductApplicationDetail> = {}) =>
+    detail({ status: 'submitted', status_label: 'Submitted', ...over });
+
+  it('shows the codes as comma text and the waiting line for the new code', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({
+        current_products: [
+          { id: 'p-1', product_code: 'A-1' },
+          { id: 'p-2', product_code: 'B-2' },
+        ],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('A-1, B-2')).toBeInTheDocument();
+    expect(
+      screen.getByText('Purchasing fills this in when the code is created.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the new code with an Inactive badge when it is inactive', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({ new_product_id: 'p-9', new_product_code: 'A-1-69', new_product_active: false }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('A-1-69')).toBeInTheDocument();
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  it('shows Not opening with the reason', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({ new_code_closed_reason: 'Customer walked away' }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('Not opening: Customer walked away')).toBeInTheDocument();
   });
 });

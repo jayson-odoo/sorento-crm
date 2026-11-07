@@ -17,6 +17,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
@@ -248,6 +250,15 @@ function StaffNewProductApplicationForm({
                 }
               />
             }
+            productCodesField={
+              <NewProductApplicationProductCodes
+                value={state}
+                onChange={setState}
+                products={lookups.products}
+                reuse={lookups.reuse}
+              />
+            }
+            newCodeField={<NewProductApplicationNewCodeValue />}
             customerField={
               <>
                 <AsyncCombobox<CustomerLookupItem>
@@ -279,8 +290,6 @@ function StaffNewProductApplicationForm({
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
               brands={lookups.brands}
-              products={lookups.products}
-              reuse={lookups.reuse}
               errors={errors}
             />
           </div>

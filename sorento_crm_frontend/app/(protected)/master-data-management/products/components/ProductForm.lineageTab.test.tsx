@@ -104,7 +104,6 @@ vi.mock('@/components/common/ListPager', () => ({
 import ProductForm from './ProductForm';
 
 const row = (over: Record<string, unknown> = {}) => ({
-  line_id: 'l-1',
   application_no: 'NPA-000123',
   product_id: 'p-69',
   product_code: 'SRTWB893',
@@ -154,7 +153,6 @@ describe('Lineage tab', () => {
         created_from: [row({ application_id: 'a-1', customer_name: 'EXAMPLE DEVELOPER', project_name: 'TOWER B' })],
         made_from_this: [
           row({
-            line_id: 'l-2',
             application_no: 'NPA-000200',
             product_id: 'p-70',
             product_code: 'SRTWB894',

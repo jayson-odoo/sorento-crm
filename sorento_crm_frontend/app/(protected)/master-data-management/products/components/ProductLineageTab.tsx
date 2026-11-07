@@ -46,7 +46,7 @@ function LineageTable({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.line_id} className="border-t">
+                <tr key={`${row.application_no}-${row.product_id}`} className="border-t">
                   {showNewCode && (
                     <td className={TD}>
                       <Link
