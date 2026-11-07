@@ -1,5 +1,5 @@
 import type { LeaderboardBasis, LeaderboardBy, LeaderboardParams } from '@/services/salesLeaderboardService';
-import { periodRange, type PeriodKind } from './leaderboardFormat';
+import { chipForRange, periodRange, type PeriodKind } from './leaderboardFormat';
 
 /** SALES-INSIGHTS-P2: the whole board setup lives in the URL (basis, by, period, filters, drill chips). */
 export type Period = PeriodKind | 'all_open';
@@ -39,9 +39,13 @@ export interface Setup {
   product: string[];
   customerLabel: string;
   productLabel: string;
+  /** The dated period the user had before Undelivered's "All open", kept in the URL so Back and a reload keep it. */
+  backPeriod: string;
+  backFrom: string;
+  backTo: string;
 }
 
-const KEYS = ['basis', 'by', 'period', 'from', 'to', 'sort', 'dir', 'company', 'brand', 'category', 'channel', 'person', 'customer', 'product'];
+const KEYS = ['basis', 'by', 'period', 'from', 'to', 'sort', 'dir', 'back_period', 'company', 'brand', 'category', 'channel', 'person', 'customer', 'product'];
 
 export const hasSetupKeys = (sp: URLSearchParams) => KEYS.some((key) => sp.has(key));
 
@@ -51,7 +55,9 @@ export function parseSetup(sp: URLSearchParams): Setup {
   const basis = BASES.find((b) => b.value === sp.get('basis'))?.value ?? 'invoiced';
   const by = VIEWS.find((v) => v.value === sp.get('by'))?.value ?? 'person';
   const asked = PERIODS.find((p) => p === sp.get('period'));
-  const period = !asked || (asked === 'all_open' && basis !== 'outstanding') ? defaultPeriod(basis) : asked;
+  let period = !asked || (asked === 'all_open' && basis !== 'outstanding') ? defaultPeriod(basis) : asked;
+  // A custom range that is exactly a chip's own range reads as that chip.
+  if (period === 'custom') period = chipForRange(sp.get('from') ?? '', sp.get('to') ?? '') ?? 'custom';
   return {
     basis,
     by,
@@ -69,6 +75,9 @@ export function parseSetup(sp: URLSearchParams): Setup {
     product: sp.getAll('product'),
     customerLabel: sp.get('customer_label') ?? '',
     productLabel: sp.get('product_label') ?? '',
+    backPeriod: PERIODS.find((p) => p === sp.get('back_period') && p !== 'all_open') ?? '',
+    backFrom: sp.get('back_from') ?? '',
+    backTo: sp.get('back_to') ?? '',
   };
 }
 
@@ -84,6 +93,13 @@ export function serializeSetup(s: Setup): string {
   }
   for (const key of ['company', 'brand', 'category', 'channel', 'person', 'customer', 'product'] as const) {
     for (const value of s[key]) sp.append(key, value);
+  }
+  if (s.period === 'all_open' && s.backPeriod) {
+    sp.set('back_period', s.backPeriod);
+    if (s.backPeriod === 'custom') {
+      if (s.backFrom) sp.set('back_from', s.backFrom);
+      if (s.backTo) sp.set('back_to', s.backTo);
+    }
   }
   if (s.customer.length && s.customerLabel) sp.set('customer_label', s.customerLabel);
   if (s.product.length && s.productLabel) sp.set('product_label', s.productLabel);

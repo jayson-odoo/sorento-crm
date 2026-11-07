@@ -54,6 +54,16 @@ export function periodRange(kind: Exclude<PeriodKind, 'custom'>, now: Date = new
   };
 }
 
+/** The chip whose range for `now` is exactly `from`..`to` (a custom range typed or linked to the same dates), else null. */
+export function chipForRange(from: string, to: string, now: Date = new Date()): Exclude<PeriodKind, 'custom'> | null {
+  if (!from || !to) return null;
+  const kinds: Exclude<PeriodKind, 'custom'>[] = ['this_month', 'last_month', 'this_quarter', 'ytd'];
+  return kinds.find((kind) => {
+    const range = periodRange(kind, now);
+    return range.from === from && range.to === to;
+  }) ?? null;
+}
+
 const nf = new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** `RM 1,856,856.61` */

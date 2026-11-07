@@ -741,3 +741,76 @@ describe('fix round 2', () => {
     expect(screen.queryByTestId('leaderboard-blank')).toBeNull();
   });
 });
+
+describe('fix round 3', () => {
+  const header = (name: string) =>
+    within(document.querySelector('thead') as HTMLElement).getByRole('button', { name });
+  const sortOf = () => [lastUrl().searchParams.get('sort'), lastUrl().searchParams.get('dir')];
+
+  it.each([
+    ['', 'Rank', 'rank'],
+    ['?by=customer', '#', 'rank'],
+    ['', 'Sales person', 'name'],
+    ['?by=customer', 'Customer', 'name'],
+    ['?by=customer', 'Companies', 'companies'],
+    ['?by=product', 'Item', 'name'],
+    ['?by=product', 'Brand', 'brand'],
+    ['?by=product', 'Category', 'category'],
+    ['?by=brand', 'Brand', 'name'],
+    ['?by=channel', 'Channel', 'name'],
+  ])('7: %s the %s header sorts by %s on the server and toggles the direction', (search, title, key) => {
+    nav.set(search);
+    render(<LeaderboardView />);
+    fireEvent.click(header(title));
+    // The default order is rank ascending, so its own header's first click is descending.
+    const first = key === 'rank' ? 'desc' : 'asc';
+    expect(sortOf()).toEqual([key, first]);
+    fireEvent.click(header(title));
+    // Rank's second click is its way back to the default order (rank ascending, no URL param).
+    expect(sortOf()).toEqual(key === 'rank' ? [null, null] : [key, 'desc']);
+  });
+
+  it('7: the person Codes header sorts by codes', () => {
+    state.respond = () => board('person', [personRow(1, 'LCL', { codes: ['LCL', 'LCL2'] })]);
+    render(<LeaderboardView />);
+    fireEvent.click(header('Codes'));
+    expect(sortOf()).toEqual(['codes', 'asc']);
+  });
+
+  it('3: Undelivered carries the last dated period in the URL, and Invoiced reads it back', () => {
+    nav.set('?basis=outstanding&period=all_open&back_period=last_month');
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Invoiced' }));
+    expect(lastUrl().searchParams.get('period')).toBe('last_month');
+    expect(lastUrl().searchParams.has('back_period')).toBe(false);
+  });
+
+  it('3: Last month -> Undelivered -> remount from that URL -> Invoiced is still Last month', () => {
+    const first = render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undelivered orders' }));
+    const url = lastUrl();
+    expect(url.searchParams.get('back_period')).toBe('last_month');
+    first.unmount();
+    nav.set(url.search);
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Invoiced' }));
+    expect(lastUrl().searchParams.get('period')).toBe('last_month');
+  });
+
+  it('3: a custom range is carried as back_from / back_to', () => {
+    nav.set('?period=custom&from=2026-10-01&to=2026-10-15');
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undelivered orders' }));
+    const sp = lastUrl().searchParams;
+    expect([sp.get('back_period'), sp.get('back_from'), sp.get('back_to')]).toEqual(['custom', '2026-10-01', '2026-10-15']);
+  });
+
+  it('minor: a custom range equal to a chip\'s own range selects that chip', () => {
+    const r = periodRange('last_month');
+    nav.set(`?period=custom&from=${r.from}&to=${r.to}`);
+    render(<LeaderboardView />);
+    expect(screen.getByRole('button', { name: 'Last month' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Custom' }).getAttribute('aria-pressed')).toBe('false');
+  });
+});

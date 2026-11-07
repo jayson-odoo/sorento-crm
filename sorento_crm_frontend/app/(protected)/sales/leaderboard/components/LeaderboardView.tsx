@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -147,8 +147,6 @@ export default function LeaderboardView() {
     localStore.setItem(STORAGE_KEY, rememberable(setup));
   }, [urlHasState, setup]);
 
-  // The last dated period the user had (Undelivered's "All open" has none), for the way back from Undelivered.
-  const lastDated = useRef<Pick<Setup, 'period' | 'from' | 'to'> | null>(null);
   const navigate = useCallback(
     (patch: Partial<Setup>) => {
       let next: Setup = { ...setup, ...patch };
@@ -157,22 +155,27 @@ export default function LeaderboardView() {
       if (patch.basis && patch.basis !== setup.basis) {
         if (patch.basis === 'outstanding') next.period = 'all_open';
         else if (next.period === 'all_open') {
-          // Leaving Undelivered: back to the last dated period chosen, else the default one.
-          const back = lastDated.current;
-          next = back ? { ...next, ...back } : { ...next, period: defaultPeriod(patch.basis) };
+          // Leaving Undelivered: back to the dated period it carries in the URL, else the default one.
+          next = setup.backPeriod
+            ? { ...next, period: setup.backPeriod as Period, from: setup.backFrom, to: setup.backTo }
+            : { ...next, period: defaultPeriod(patch.basis) };
         }
         const valid = options?.channels?.[patch.basis]?.map((o) => o.value);
         if (valid) next = { ...next, channel: next.channel.filter((c) => valid.includes(c)) };
+      }
+      // "All open" remembers the dated period it came from (in the URL state); any dated period forgets it.
+      if (next.period === 'all_open') {
+        if (setup.period !== 'all_open') {
+          next = { ...next, backPeriod: setup.period, backFrom: setup.from, backTo: setup.to };
+        }
+      } else {
+        next = { ...next, backPeriod: '', backFrom: '', backTo: '' };
       }
       setLocal(next);
       router.push(`${pathname}?${serializeSetup(next)}`);
     },
     [setup, options, router, pathname],
   );
-
-  useEffect(() => {
-    if (setup.period !== 'all_open') lastDated.current = { period: setup.period, from: setup.from, to: setup.to };
-  }, [setup.period, setup.from, setup.to]);
 
   const runnable = isRunnable(setup);
   const { data, isLoading, isFetching, isError, error, isPlaceholderData } = useSalesLeaderboardQuery(
@@ -221,6 +224,7 @@ export default function LeaderboardView() {
     };
     const name: ColumnDef<LeaderboardRow> = {
       id: 'name',
+      accessorFn: (r) => r.person ?? r.name,
       header: ({ column }) => <DataGridColumnHeader title={NAME_TITLE[dataBy]} column={column} />,
       cell: ({ row }) => {
         const label = row.original.person ?? row.original.name;
@@ -243,6 +247,7 @@ export default function LeaderboardView() {
     };
     const text = (id: string, title: string, size: number, read: (r: LeaderboardRow) => string): ColumnDef<LeaderboardRow> => ({
       id,
+      accessorFn: read,
       header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
       cell: ({ row }) => {
         const value = read(row.original);
@@ -303,6 +308,7 @@ export default function LeaderboardView() {
           ? [
               {
                 id: 'target',
+                accessorFn: (r: LeaderboardRow) => r.target?.achieved_pct ?? null,
                 header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
                 cell: ({ row }) => {
                   const target = row.original.target;
@@ -353,7 +359,7 @@ export default function LeaderboardView() {
 
   // The server orders the rows (every column sorts there); the grid only shows the arrow.
   const sorting = useMemo<SortingState>(
-    () => (setup.sort === 'rank' && setup.dir === 'asc' ? [] : [{ id: setup.sort, desc: setup.dir === 'desc' }]),
+    () => [{ id: setup.sort, desc: setup.dir === 'desc' }],
     [setup.sort, setup.dir],
   );
 
