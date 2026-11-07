@@ -526,7 +526,11 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
 
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
-    """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
+    """(numbers in the text no tool result backs, not-found claims no tool call backs).
+
+    `user_text` is what the user said: this turn, or for a dealer their verbatim messages of the thread plus this
+    turn (`portal_writes.dealer_words`, never the model-written summary), so a DO the dealer gave one message back
+    may be repeated (crew queue after 05562ce7)."""
     text, _figures_unused, not_found, _ = _answer_parts(args)
     # A number is backed when any ok result of this turn holds it, or it is the total of a column
     # of returned rows. The figures' citations are informational.
@@ -1441,7 +1445,7 @@ def _run(
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             nonlocal forced_args
             args = forced_args = answer_of(res)
-            bad_numbers, bad_nf = verify_answer(args, ledger, text)
+            bad_numbers, bad_nf = verify_answer(args, ledger, dealer_words or text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
@@ -1597,7 +1601,7 @@ def _run(
             if answer_idx is not None:
                 args = calls[answer_idx].get("arguments")
                 args = scrub(args if isinstance(args, dict) else {})
-                bad_numbers, bad_nf = verify_answer(args, ledger, text)
+                bad_numbers, bad_nf = verify_answer(args, ledger, dealer_words or text)
                 empty_text = not _answer_parts(args)[0]
                 trace.add(
                     "agent_answer",
@@ -1634,7 +1638,7 @@ def _run(
                 break
 
         if final_args is not None:
-            bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
+            bad_numbers, bad_nf = verify_answer(final_args, ledger, dealer_words or text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
         gaps = no_tool_items(final_args if final_args is not None else forced_args)
         if gaps:

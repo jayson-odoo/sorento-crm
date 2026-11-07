@@ -207,3 +207,15 @@ Fixes 1-3 passed. Step 14 wording: when the agent asks about the warranty first,
 earlier message, so on the answer turn the number was redacted. A number a tool states in its own refusal now backs the
 answer (`loop.verify_answer`). Hand-test step 3 aligned with C-7 ("want to claim warranty" may read as within warranty
 Yes).
+
+### Crew queue after 05562ce7 (redone 7 Nov after the relaunch)
+
+The two commits held in the parked session (never pushed) are redone on the relaunch branch, red-first:
+
+1. A number the dealer gave in an earlier message (the DO, asked about the warranty first) was redacted when the
+   agent repeated it in a question with no tool call that turn ("For DO (not verified)-(not verified) ..."). For a
+   dealer, `loop.verify_answer` now reads `dealer_words` (the verbatim customer messages of the thread plus this
+   turn, never the model-written summary) as the user's text. A number only the model wrote is still redacted.
+   Tests `t5_*`.
+2. Hand-test script: step 5 shows `<your choice, or the set default>` for the three dropdowns, Setup says how to
+   pick DO, CODE and OTHER_DO.
