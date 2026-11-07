@@ -884,3 +884,38 @@ def test_fp_email_one_trigger_an_unmarked_retire_of_linked_rows_emails_nobody(en
         if c["trigger_type"] in ("order_inquiry_handover", "order_inquiry_changed_with_links")
     ]
     assert oi_mail == [], oi_mail
+
+
+def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_board_confirm(
+    env, monkeypatch
+):
+    """Crew, 7 Nov (review of 7a12f9ae): with Q1 (a) the push no longer retires a removed SO
+    line's rows, so `flag_rows_for_cancelled_lines` met LIVE rows and acknowledged them by the
+    system: a buy purchasing still had open read Done, with no email and nothing changed on the
+    board. A REMOVED line is left out of that flag: the row keeps its state and ack until CS's
+    board Confirm retires it (and emails the CANCEL)."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services import planning_change_service
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+    record, header, line_x, y = _push_so(env)
+    row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
+
+    _remove_so_line_x(env, record, y)
+
+    snap = _row_snapshot(env, row_id)
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
+
+    batch_id = (
+        env.db.query(PlanningChangeRow.batch_id)
+        .filter(PlanningChangeRow.core_line_id == str(line_x["id"]))
+        .scalar()
+    )
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+    mark_purchasing_email_trigger(env.db)
+    planning_change_service.apply(env.db, str(batch_id), _USER_ID)
+    env.db.commit()
+
+    assert _row_snapshot(env, row_id)["state"] == INQUIRY_CANCELLED
+    assert len(_handover_calls(calls)) == 1, [c["trigger_type"] for c in calls]

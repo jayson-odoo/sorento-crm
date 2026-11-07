@@ -1710,7 +1710,16 @@ class DocumentIngestService(MasterRefResolver):
                 # to be here too, not just at the matched-by-ref site above - an
                 # unconditional append would re-flag a row purchasing already
                 # re-confirmed on every later push of the same reduced document.
-                if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
+                # FP-EMAIL-ONE-TRIGGER (crew, 7 Nov): a line AutoCount REMOVED (a header this
+                # push does not cancel) is not flagged either. Its rows are still live (Q1 (a)
+                # left them for the board) and the flag would acknowledge them by the system;
+                # they keep their state and ack until CS's Confirm retires them.
+                removed_so_line = id(row) in removed_ids and header.status != CANCELLED
+                if (
+                    spec.entity_type == "sales_orders"
+                    and prior_line_status != CANCELLED
+                    and not removed_so_line
+                ):
                     newly_cancelled_so_line_ids.append(row.id)
                 # Only a PO line's removal acts here (its links are released below); a removed
                 # SO line waits on the board (FP-EMAIL-ONE-TRIGGER Q1 (a)).
