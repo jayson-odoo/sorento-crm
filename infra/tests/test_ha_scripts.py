@@ -103,6 +103,7 @@ def env(tmp_path):
         "ROLE_CMD": str(bindir / "fake-role"),
         "OBSERVE_CMD": str(bindir / "fake-observe"),
         "CLOCK_CMD": str(bindir / "fake-clock"),
+        "ROLE_WATCHER_ARMED": "yes",  # disarmed by default (section 11c); the watcher tests arm it
     }
     return e, log, tmp_path
 
@@ -171,6 +172,26 @@ def test_watcher_flapping_reading_never_acts(env):
     (tmp / "codes").write_text("200\n503\n200\n503\n")
     run(WATCHER, e, MAX_TICKS=4, FAKE_RUNNING="a")
     assert not any("up -d" in c or " stop " in c for c in calls(log))
+
+
+@pytest.mark.parametrize("armed", [None, "", "no", "true", "YES", "1"])
+def test_watcher_not_armed_exits_3_and_calls_nothing(env, armed):
+    e, log, tmp = env
+    e = dict(e)
+    e.pop("ROLE_WATCHER_ARMED")
+    extra = {} if armed is None else {"ROLE_WATCHER_ARMED": armed}
+    r = run(WATCHER, e, MAX_TICKS=3, FAKE_HTTP_CODE=200, FAKE_RUNNING="a b", **extra)
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "not armed" in (r.stdout + r.stderr) and "ROLE_WATCHER_ARMED=yes" in (r.stdout + r.stderr)
+    assert not any(c.startswith("docker") for c in calls(log)), calls(log)
+    assert not any(c.startswith("role") for c in calls(log)), "a disarmed watcher must not even read the role"
+
+
+def test_watcher_armed_still_runs(env):
+    e, log, _ = env
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(_stops(log)) == 1
 
 
 # ---------------------------------------------------------------- role-watcher, H4b deploy path
@@ -537,3 +558,439 @@ def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, p
     r = subprocess.run(["bash", str(ADAPTER), "observe"], env=e, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert want in r.stdout.splitlines(), r.stdout
+
+
+# ---------------------------------------------------------------- ha-pg.sh names (G11, section 11a)
+
+TEMPLATES = SCRIPTS.parent / "templates"
+
+FAKE_EXEC = r"""#!/usr/bin/env bash
+# Stands in for `docker exec db`: logs the SQL (last argument of psql -c) and answers by keyword.
+sql="${@: -1}"
+printf '%s\n---\n' "$sql" >> "$FAKE_DIR/sql.log"
+if [ "$sql" = "SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END" ]; then
+  echo "${FAKE_ROLE:-primary}"
+elif [[ "$sql" == *pg_promote* ]]; then
+  echo t
+elif [[ "$sql" == *pg_stat_replication* ]]; then
+  echo "primary|100|t||t"
+else
+  echo ok
+fi
+"""
+
+FAKE_OFFLINE = r"""#!/usr/bin/env bash
+printf '%s\n---\n' "$1" >> "$FAKE_DIR/offline.log"
+exit 0
+"""
+
+FAKE_PEER_PSQL = r"""#!/usr/bin/env bash
+printf '%s\n---\n' "$*" >> "$FAKE_DIR/peer.log"
+echo "primary|100"
+"""
+
+
+def adapter_env(tmp, **extra):
+    bindir = tmp / "abin"
+    bindir.mkdir(exist_ok=True)
+    for name, body in (("fake-exec", FAKE_EXEC), ("fake-offline", FAKE_OFFLINE), ("fake-peer-psql", FAKE_PEER_PSQL)):
+        f = bindir / name
+        f.write_text(body)
+        f.chmod(0o755)
+    e = {
+        "PATH": os.environ["PATH"], "HOME": str(tmp), "FAKE_DIR": str(tmp),
+        "NODE_NAME": "crm-a", "PEER_NAME": "crm-b", "PEER_HOST": "peer", "PGDATA": "/v/pgdata",
+        "PG_EXEC": str(bindir / "fake-exec"), "PG_RUNNING": "false", "PG_START": "true", "PG_STOP": "true",
+        "PG_OFFLINE_SH": str(bindir / "fake-offline"), "PEER_PSQL": str(bindir / "fake-peer-psql"),
+    }
+    e.update({k: str(v) for k, v in extra.items()})
+    return e
+
+
+def adapter(e, *args, timeout=30):
+    return subprocess.run(["bash", str(ADAPTER), *args], env=e, capture_output=True, text=True, timeout=timeout)
+
+
+def sql_log(tmp):
+    p = tmp / "sql.log"
+    return p.read_text() if p.exists() else ""
+
+
+ADOPTED = dict(SELF_APP_NAME="sorento_crm_replica", SELF_SLOT="sorento_crm_replica_slot",
+               PEER_APP_NAME="sorento_crm_peer_app", PEER_SLOT="sorento_crm_peer_slot")
+
+
+def test_observe_sql_uses_the_adopted_peer_names(tmp_path):
+    r = adapter(adapter_env(tmp_path, PG_RUNNING="true", **ADOPTED), "observe")
+    assert r.returncode == 0, r.stderr
+    sql = sql_log(tmp_path)
+    assert "application_name = 'sorento_crm_peer_app'" in sql
+    assert "slot_name = 'sorento_crm_peer_slot'" in sql
+    assert "'crm-b'" not in sql and "'crm_b'" not in sql
+
+
+def test_observe_sql_defaults_to_the_node_names(tmp_path):
+    r = adapter(adapter_env(tmp_path, PG_RUNNING="true"), "observe")
+    assert r.returncode == 0, r.stderr
+    sql = sql_log(tmp_path)
+    assert "application_name = 'crm-b'" in sql
+    assert "slot_name = 'crm_b'" in sql
+
+
+def test_ensure_slot_creates_the_adopted_peer_slot(tmp_path):
+    r = adapter(adapter_env(tmp_path, **ADOPTED), "ensure-slot")
+    assert r.returncode == 0, r.stderr
+    sql = sql_log(tmp_path)
+    assert "pg_create_physical_replication_slot('sorento_crm_peer_slot'" in sql
+    assert "slot_name = 'sorento_crm_peer_slot'" in sql
+    assert "crm_b" not in sql
+
+
+def test_ensure_slot_defaults_to_the_peer_name_with_underscores(tmp_path):
+    adapter(adapter_env(tmp_path), "ensure-slot")
+    assert "pg_create_physical_replication_slot('crm_b'" in sql_log(tmp_path)
+
+
+def test_promote_creates_the_adopted_peer_slot_and_drops_both_stale_ones(tmp_path):
+    r = adapter(adapter_env(tmp_path, FAKE_ROLE="standby", **ADOPTED), "promote")
+    assert r.returncode == 0, r.stderr
+    sql = sql_log(tmp_path)
+    assert "IN ('sorento_crm_peer_slot', 'sorento_crm_replica_slot')" in sql
+    assert "pg_create_physical_replication_slot('sorento_crm_peer_slot'" in sql
+    assert "'crm_b'" not in sql and "'crm_a'" not in sql
+
+
+def test_promote_defaults_to_the_node_names_with_underscores(tmp_path):
+    r = adapter(adapter_env(tmp_path, FAKE_ROLE="standby"), "promote")
+    assert r.returncode == 0, r.stderr
+    sql = sql_log(tmp_path)
+    assert "IN ('crm_b', 'crm_a')" in sql
+    assert "pg_create_physical_replication_slot('crm_b'" in sql
+
+
+def _standby_conf(tmp):
+    scripts = (tmp / "offline.log").read_text().split("\n---\n")
+    conf = [x for x in scripts if "postgresql.auto.conf" in x]
+    assert conf, scripts
+    return conf[0]
+
+
+def test_rejoin_writes_the_adopted_self_names_into_the_standby_conf(tmp_path):
+    r = adapter(adapter_env(tmp_path, **ADOPTED), "rejoin")
+    assert r.returncode == 0, r.stderr
+    conf = _standby_conf(tmp_path)
+    assert "application_name=sorento_crm_replica " in conf
+    assert "primary_slot_name = 'sorento_crm_replica_slot'" in conf
+    assert "application_name=crm-a" not in conf and "'crm_a'" not in conf
+
+
+def test_rejoin_defaults_to_the_node_names(tmp_path):
+    r = adapter(adapter_env(tmp_path), "rejoin")
+    assert r.returncode == 0, r.stderr
+    conf = _standby_conf(tmp_path)
+    assert "application_name=crm-a " in conf
+    assert "primary_slot_name = 'crm_a'" in conf
+
+
+@pytest.mark.parametrize("key, bad", [
+    ("SELF_APP_NAME", "UPPER"), ("SELF_APP_NAME", "has space"), ("SELF_APP_NAME", "x" * 33), ("SELF_APP_NAME", "a'b"),
+    ("PEER_APP_NAME", "UPPER"), ("PEER_APP_NAME", "semi;colon"), ("PEER_APP_NAME", "x" * 33), ("PEER_APP_NAME", "a.b"),
+    ("SELF_SLOT", "with-dash"), ("SELF_SLOT", "UPPER"), ("SELF_SLOT", "x" * 64), ("SELF_SLOT", "a'b"),
+    ("PEER_SLOT", "with-dash"), ("PEER_SLOT", "has space"), ("PEER_SLOT", "x" * 64), ("PEER_SLOT", "a;b"),
+])
+def test_invalid_names_exit_2(tmp_path, key, bad):
+    r = adapter(adapter_env(tmp_path, **{key: bad}), "role")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert not (tmp_path / "sql.log").exists(), "a bad name must be refused before anything runs"
+
+
+@pytest.mark.parametrize("key, good", [
+    ("SELF_APP_NAME", "x" * 32), ("PEER_APP_NAME", "a-b_c9"), ("SELF_SLOT", "x" * 63), ("PEER_SLOT", "a_b9"),
+])
+def test_valid_boundary_names_are_accepted(tmp_path, key, good):
+    r = adapter(adapter_env(tmp_path, **{key: good}), "role")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+# ---------------------------------------------------------------- ha-pg.sh sync-record (section 11b)
+
+import json  # noqa: E402
+import shutil  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+
+REAL_CURL = shutil.which("curl")
+
+
+def _curl_has_sigv4():
+    if not REAL_CURL:
+        return False
+    out = subprocess.run([REAL_CURL, "--help", "all"], capture_output=True, text=True).stdout
+    return "aws-sigv4" in out
+
+
+needs_sigv4 = pytest.mark.skipif(not _curl_has_sigv4(), reason="the installed curl has no --aws-sigv4 (needs curl 7.75+)")
+
+SECRET = "wJalrXUtnFEMI-K7MDENG-bPxRfiCYEXAMPLEKEY"
+KEY_ID = "AKIDEXAMPLE0123456789"
+GOOD_BODY = {"mode": "sync", "primary": "crm-b", "since": 1700000000}
+
+
+@pytest.fixture
+def s3():
+    """A fake S3 on 127.0.0.1: one object, every request recorded."""
+    st = {"body": json.dumps(GOOD_BODY).encode(), "get_status": 200, "put_status": 200, "delay": 0, "reqs": []}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _rec(self, body=b""):
+            st["reqs"].append({"method": self.command, "path": self.path, "body": body,
+                               "auth": self.headers.get("Authorization", "")})
+            if st["delay"]:
+                time.sleep(st["delay"])
+
+        def do_GET(self):
+            self._rec()
+            self.send_response(st["get_status"])
+            self.send_header("Content-Length", str(len(st["body"])))
+            self.end_headers()
+            try:
+                self.wfile.write(st["body"])
+            except OSError:
+                pass
+
+        def do_PUT(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self._rec(raw)
+            if st["put_status"] == 200:
+                st["body"] = raw
+            self.send_response(st["put_status"])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    st["url"] = f"http://127.0.0.1:{srv.server_address[1]}"
+    yield st
+    srv.shutdown()
+
+
+def r2_adapter_env(tmp, s3, **extra):
+    """Adapter env with R2 settings and a logging curl wrapper that then runs the real one."""
+    bindir = tmp / "cbin"
+    bindir.mkdir(exist_ok=True)
+    wrapper = bindir / "curl"
+    wrapper.write_text(f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{tmp}/curl.argv"\nexec {REAL_CURL} "$@"\n')
+    wrapper.chmod(0o755)
+    creds = tmp / "r2.creds"
+    creds.write_text(f"AWS_ACCESS_KEY_ID={KEY_ID}\nAWS_SECRET_ACCESS_KEY={SECRET}\n")
+    creds.chmod(0o600)
+    e = adapter_env(tmp, R2_ENDPOINT=s3["url"], R2_BUCKET="bkt", R2_CREDENTIALS_FILE=creds, **extra)
+    e["PATH"] = f"{bindir}:{e['PATH']}"
+    return e
+
+
+def baseline_ok(e, *verb):
+    """The same call works with good settings: a negative test below fails for the right reason
+    (the failure it names), not because the verb does not exist yet (usage exits 2 too)."""
+    r = adapter(e, "sync-record", *verb)
+    assert r.returncode == 0, ("baseline sync-record call failed", r.stdout, r.stderr)
+    assert "usage" not in r.stderr
+
+
+def _kv(out):
+    return dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+
+
+@needs_sigv4
+def test_sync_record_get_prints_the_record(tmp_path, s3):
+    r = adapter(r2_adapter_env(tmp_path, s3), "sync-record", "get")
+    assert r.returncode == 0, r.stderr
+    assert _kv(r.stdout) == {"rec_mode": "sync", "rec_primary": "crm-b", "rec_since": "1700000000"}
+    req = s3["reqs"][0]
+    assert req["method"] == "GET" and req["path"] == "/bkt/ha/sync-state.json"
+    assert req["auth"].startswith("AWS4-HMAC-SHA256"), "the request must be SigV4 signed"
+    assert KEY_ID in req["auth"] and SECRET not in req["auth"]
+
+
+@needs_sigv4
+def test_sync_record_key_is_overridable(tmp_path, s3):
+    r = adapter(r2_adapter_env(tmp_path, s3, SYNC_RECORD_KEY="ha/other.json"), "sync-record", "get")
+    assert r.returncode == 0, r.stderr
+    assert s3["reqs"][0]["path"] == "/bkt/ha/other.json"
+
+
+@needs_sigv4
+@pytest.mark.parametrize("status", [404, 403, 500])
+def test_sync_record_get_http_errors_are_nonzero(tmp_path, s3, status):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    s3["get_status"] = status
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode != 0
+    assert "rec_mode" not in r.stdout
+
+
+@needs_sigv4
+@pytest.mark.parametrize("body", [
+    b"",
+    b"not json",
+    b"[]",
+    b'{"mode": "maybe", "primary": "crm-b", "since": 1}',
+    b'{"mode": "sync", "since": 1}',
+    b'{"mode": "sync", "primary": "crm-b"}',
+    b'{"mode": "sync", "primary": "crm-b", "since": "yesterday"}',
+    b'{"mode": "sync", "primary": "crm-b", "since": 1.5}',
+    b'{"mode": "sync", "primary": "crm-b", "since": true}',
+    b'{"mode": "sync", "primary": "crm-b", "since": -5}',
+    b'{"mode": "sync", "primary": "Bad Name", "since": 1}',
+    b'{"mode": "sync", "primary": "crm-b\\nrec_mode=sync", "since": 1}',   # line injection into the output
+    b'{"mode": null, "primary": null, "since": null}',
+])
+def test_sync_record_get_a_bad_body_is_nonzero(tmp_path, s3, body):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    s3["body"] = body
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode != 0, r.stdout
+    assert "rec_mode" not in r.stdout
+
+
+@needs_sigv4
+def test_sync_record_get_gives_up_on_a_stalled_server(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    s3["delay"] = 9
+    t0 = time.time()
+    r = adapter(e, "sync-record", "get", timeout=30)
+    assert r.returncode != 0
+    assert time.time() - t0 < 8, "curl -m 5 must bound the call"
+
+
+@needs_sigv4
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_sync_record_put_writes_the_record(tmp_path, s3, mode):
+    before = int(time.time())
+    r = adapter(r2_adapter_env(tmp_path, s3), "sync-record", "put", mode)
+    assert r.returncode == 0, r.stderr
+    req = s3["reqs"][0]
+    assert req["method"] == "PUT" and req["path"] == "/bkt/ha/sync-state.json"
+    assert req["auth"].startswith("AWS4-HMAC-SHA256")
+    body = json.loads(req["body"])
+    assert set(body) == {"mode", "primary", "since"}
+    assert body["mode"] == mode and body["primary"] == "crm-a"
+    assert isinstance(body["since"], int) and before - 2 <= body["since"] <= int(time.time()) + 2
+
+
+@needs_sigv4
+def test_sync_record_put_then_get_round_trips(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    assert adapter(e, "sync-record", "put", "async").returncode == 0
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode == 0, r.stderr
+    kv = _kv(r.stdout)
+    assert kv["rec_mode"] == "async" and kv["rec_primary"] == "crm-a" and kv["rec_since"].isdigit()
+
+
+@needs_sigv4
+@pytest.mark.parametrize("status", [403, 500, 204, 201])
+def test_sync_record_put_succeeds_only_on_http_200(tmp_path, s3, status):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "put", "sync")
+    s3["put_status"] = status
+    r = adapter(e, "sync-record", "put", "sync")
+    assert r.returncode != 0
+
+
+@needs_sigv4
+@pytest.mark.parametrize("mode", ["maybe", "", "SYNC", "sync async"])
+def test_sync_record_put_refuses_a_bad_mode_without_a_request(tmp_path, s3, mode):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "put", "async")
+    s3["reqs"].clear()
+    r = adapter(e, "sync-record", "put", mode)
+    assert r.returncode != 0
+    assert s3["reqs"] == []
+
+
+@needs_sigv4
+def test_sync_record_put_without_a_mode_is_refused(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "put", "sync")
+    s3["reqs"].clear()
+    r = adapter(e, "sync-record", "put")
+    assert r.returncode != 0 and s3["reqs"] == []
+
+
+@needs_sigv4
+@pytest.mark.parametrize("verb", [("get",), ("put", "sync")])
+def test_sync_record_credentials_never_appear_on_argv_or_in_output(tmp_path, s3, verb):
+    r = adapter(r2_adapter_env(tmp_path, s3), "sync-record", *verb)
+    assert r.returncode == 0, r.stderr
+    argv = (tmp_path / "curl.argv").read_text()
+    assert argv.strip(), "the fake curl was not used"
+    for secret in (SECRET, KEY_ID):
+        assert secret not in argv, "credentials must reach curl on stdin (-K -), never argv"
+        assert secret not in r.stdout + r.stderr
+    assert "--aws-sigv4" in argv and "aws:amz:auto:s3" in argv
+    assert "-K" in argv.split()
+
+
+@needs_sigv4
+def test_sync_record_a_failed_call_does_not_print_credentials_either(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    s3["get_status"] = 500
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode != 0
+    assert SECRET not in r.stdout + r.stderr and KEY_ID not in r.stdout + r.stderr
+
+
+@needs_sigv4
+@pytest.mark.parametrize("missing", ["R2_ENDPOINT", "R2_BUCKET", "R2_CREDENTIALS_FILE"])
+@pytest.mark.parametrize("verb", [("get",), ("put", "sync")])
+def test_sync_record_missing_settings_exit_2(tmp_path, s3, missing, verb):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, *verb)
+    (tmp_path / "curl.argv").unlink()
+    e.pop(missing)
+    r = adapter(e, "sync-record", *verb)
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "usage" not in r.stderr
+    assert not (tmp_path / "curl.argv").exists(), "no request without complete settings"
+
+
+@needs_sigv4
+@pytest.mark.parametrize("endpoint", ["http://example.com", "ftp://r2.example", "r2.example", "http://127.0.0.1.evil.example"])
+def test_sync_record_refuses_a_non_https_endpoint(tmp_path, s3, endpoint):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    (tmp_path / "curl.argv").unlink()
+    e["R2_ENDPOINT"] = endpoint
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode != 0 and "usage" not in r.stderr
+    assert not (tmp_path / "curl.argv").exists(), "the credentials must never be sent to a non-https endpoint"
+
+
+# ---------------------------------------------------------------- section 11c: shipped templates
+
+
+def test_services_do_not_restart_after_exit_3():
+    for unit in ("cf-failover.service", "role-watcher.service"):
+        text = (TEMPLATES / "systemd" / unit).read_text()
+        assert "RestartPreventExitStatus=3" in text, unit
+
+
+def test_env_example_ships_disarmed_and_lists_the_new_keys():
+    text = (TEMPLATES / "ha-pg.env.example").read_text()
+    lines = [l.split(" #")[0].strip() if not l.lstrip().startswith("#") else l.strip() for l in text.splitlines()]
+    assert "CONTROLLER_ARMED=no" in lines
+    assert "ROLE_WATCHER_ARMED=no" in lines
+    for key in ("SELF_APP_NAME", "SELF_SLOT", "PEER_APP_NAME", "PEER_SLOT",
+                "R2_ENDPOINT", "R2_BUCKET", "R2_CREDENTIALS_FILE"):
+        assert any(l.lstrip("# ").startswith(key + "=") for l in lines), key
+    assert not any(l.startswith("SYNC_MODE=on_commit") for l in lines), "on_commit stays commented until the drill"
+    assert any(l.startswith("#") and "SYNC_MODE=on_commit" in l for l in lines)
