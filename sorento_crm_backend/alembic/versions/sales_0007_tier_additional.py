@@ -6,7 +6,7 @@ before until `scripts/fold_tier_additionals.py --apply` (owner-approved) moves t
 tier. Downgrade drops the column.
 
 Revision ID: sales_0007_tier_additional
-Revises: ptag_0016_accessories
+Revises: slb_0001_leaderboard_perm
 Create Date: 2026-11-05
 """
 import sqlalchemy as sa
@@ -15,7 +15,7 @@ from alembic import op
 from app.models.sales import translated_schema
 
 revision = "sales_0007_tier_additional"
-down_revision = "ptag_0016_accessories"
+down_revision = "slb_0001_leaderboard_perm"
 branch_labels = None
 depends_on = None
 
