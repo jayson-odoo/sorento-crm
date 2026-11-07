@@ -249,7 +249,7 @@ def report_ask(
     ),
     group_by: Optional[str] = Query(
         None,
-        description="customer | product | brand | category | sales_agent | location | channel | account_type | month | spec:<key>. "
+        description="customer | product | brand | category | sales_agent | sales_person (invoiced only) | location | channel | account_type | month | spec:<key>. "
         "Absent = one total.",
     ),
     top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
