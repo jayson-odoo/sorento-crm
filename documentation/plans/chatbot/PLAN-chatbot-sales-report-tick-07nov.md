@@ -26,8 +26,16 @@ Narrowing (noted for the owner): a contact WITHOUT the tick used to get invoiced
 the act-as user held the slug (e.g. a salesperson on its own book). It now gets the 403, as asked
 ("unticked keeps today's reply").
 
-Not changed: `sales/analysis.py` and `sales/target_progress.py` gate the whole route on
-`sales.reports.view` on the act-as user, then the contact's tick. They do not call this gate.
+Owner 7 Nov 18:50 ("strict", option a): confirmed as built, and the same rule applies to the sales
+target route. The helper is generic, `invoiced_sales.contact_tick_or_slug(grant=, slug=)`:
+- invoiced: grant `sales_orders.sales_report`, slug `sales.reports.view`;
+- target progress (`sales/target_progress.py`, `crm_sales_target_progress`): grant
+  `sales.sales_target` (`contact_field_reveal_service.py:84`; staff slug `sales.targets.view`,
+  line 108), slug `sales.reports.view`. The route-level `require_permission_with_api_key` gate is
+  replaced by the helper, so a chatbot call naming a contact needs only the contact's tick.
+
+Not changed: `sales/analysis.py` gates the whole route on `sales.reports.view` on the act-as
+user; no chat path calls `crm_sales_analysis` any more (`sales_basis_ask.py:13`).
 
 ## Tests
 

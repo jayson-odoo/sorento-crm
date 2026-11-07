@@ -1,10 +1,12 @@
 """`GET /api/v1/sales/target-progress`: the chatbot's sales target answer (SALES-TARGET-CHAT).
 
 Reuses the target engine (`target_service.period_progress`); who sees which target is
-`target_chat_scope`. Gates, in order: `sales.reports.view` on the act-as principal (the route
-dependency, the sibling sales analysis route's gate), the `sales` module (router guard), both
-contact ids (422 `contact_identity_required`), then the CONTACT's own `sales.sales_target`
-reveal key (403 `sales_target_not_enabled`).
+`target_chat_scope`. Gates, in order: the `sales` module (router guard), both contact ids (422
+`contact_identity_required`), then `invoiced_sales.contact_tick_or_slug` (CHATBOT-SALES-REPORT-TICK,
+owner 7 Nov, "strict"): a chatbot call naming a contact needs ONLY the CONTACT's own
+`sales.sales_target` reveal key (403 `sales_target_not_enabled`), whatever the act-as user holds;
+any other caller needs `sales.reports.view` (403), then the reveal key or the staff member's
+permissions below.
 
 API key only, for the reason `analysis.py` gives: the figures are the CONTACT's, which says
 nothing about a Bearer caller's own grant.
@@ -17,16 +19,18 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import get_current_user_or_api_key
 from app.services.error_handler import AppException
+from app.services.sales.invoiced_sales import chatbot_contact_call, contact_tick_or_slug
 
 router = APIRouter()
 
-_GATE = require_permission_with_api_key("sales.reports.view")
+#: The slug every caller but a chatbot contact call needs (the sibling sales analysis route's gate).
+SLUG = "sales.reports.view"
 
 GRANT = "sales.sales_target"
 
@@ -40,7 +44,7 @@ def get_target_progress(
     date_to: Optional[date] = Query(None),
     customer_ids: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(_GATE),
+    current_user: dict = Depends(get_current_user_or_api_key),
 ):
     from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys_for
     from app.services.user_service import gate_user_ids
@@ -58,6 +62,15 @@ def get_target_progress(
         )
     if date_from and date_to and date_from > date_to:
         raise AppException(status_code=422, message="date_from is after date_to", code="date_range_inverted")
+    api_key = request.headers.get("X-API-Key")
+    if not contact_tick_or_slug(
+        db, current_user, grant=GRANT, slug=SLUG, api_key=api_key, contact_id=contact_id, space_id=space_id
+    ):
+        if chatbot_contact_call(current_user, api_key, contact_id, space_id):
+            raise AppException(
+                status_code=403, message="Sales target is not enabled for your account.", code="sales_target_not_enabled"
+            )
+        raise HTTPException(status_code=403, detail=f"Permission required: {SLUG}")
     if staff_read:
         if GRANT not in staff_reveal_keys_for(db, gate_user_ids(current_user)):
             raise AppException(
