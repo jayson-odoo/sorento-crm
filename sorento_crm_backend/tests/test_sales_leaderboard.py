@@ -349,6 +349,52 @@ def test_l6_1_an_unlinked_user_has_no_me_and_no_highlighted_row(db):
     assert not any(r["is_me"] for r in body["rows"])
 
 
+def test_l6_1_a_user_linked_to_agents_of_several_persons_gets_the_best_ranked_one(db):
+    world = _world(db)
+    contact = RespondContact(id=str(uuid.uuid4()), respond_io_id=unique_code("C"),
+                             phone_number=f"+6010{uuid.uuid4().hex[:7]}", name="ZZT Both")
+    db.add(contact)
+    db.flush()
+    # B1 (rank 3) sorts before G1 (rank 2) by code, so "first agent by code" would be the wrong answer.
+    world.b1.contact_id = contact.id
+    world.g1.contact_id = contact.id
+    db.flush()
+    with make_client(db, contact=contact) as client:
+        body = _board(client)
+    assert body["me"] == {"person": world.gamma, "rank": 2}
+    assert _by_person(body)[world.gamma]["is_me"] is True
+
+
+def test_explicit_previous_window_is_echoed_and_drives_prev_amounts_and_change(db):
+    world = _world(db)
+    # Aug 31 is inside the default window (Aug 31 to Sep 30) but outside an explicit Sep 1 to Sep 30.
+    _sale(db, "invoice", "100.00", date(2026, 8, 31), agent=world.g1, customer=cust(db))
+    db.commit()
+    with make_client(db) as client:
+        default = _board(client)
+        body = _board(client, previous_from="2026-09-01", previous_to="2026-09-30")
+    assert (default["previous_from"], default["previous_to"]) == ("2026-08-31", "2026-09-30")
+    assert _money(_by_person(default)[world.gamma]["prev_amount"]) == D("100.00")
+    assert (body["previous_from"], body["previous_to"]) == ("2026-09-01", "2026-09-30")
+    rows = _by_person(body)
+    assert _money(rows[world.alpha]["prev_amount"]) == D("800.00")
+    assert rows[world.alpha]["change_pct"] == 100.1
+    assert _money(rows[world.gamma]["prev_amount"]) == D("0")
+    assert rows[world.gamma]["change_pct"] is None
+    assert _money(body["total"]["prev_amount"]) == D("1650.00")
+    assert body["total"]["change_pct"] == 189.7
+
+
+@pytest.mark.parametrize("extra", [
+    {"previous_from": "2026-09-01"},
+    {"previous_to": "2026-09-30"},
+    {"previous_from": "2026-09-30", "previous_to": "2026-09-01"},
+])
+def test_previous_window_needs_both_dates_in_order_else_422(db, extra):
+    with make_client(db) as client:
+        assert _get(client, **extra).status_code == 422
+
+
 # ========================================================== L1 access, grants, validation
 
 
