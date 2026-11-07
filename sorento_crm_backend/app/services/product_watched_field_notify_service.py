@@ -430,6 +430,72 @@ class ListPriceChange(NamedTuple):
     old: Decimal
     new: Decimal
     currency: str
+    changed_by: Optional[str]  # "AutoCount sync" / staff name from the audit trail, else None
+
+
+#: What a list-price change made by an integration (the AutoCount push) is credited to.
+SYNC_SOURCE_LABEL = "AutoCount sync"
+
+
+def _list_price_sources(db: Session, rows: list) -> dict[str, str]:
+    """Who changed each product's list price to the value being reported, from the audit
+    trail (owner decision on #2228). Never from ``products.updated_by``: the ordinary
+    AutoCount push leaves that column untouched, so it would name a stale UI editor.
+
+    Per product, the latest ``product`` UPDATE audit row whose ``new_values`` carries
+    ``list_price``. It counts only when it set the price being reported AND is newer than the
+    last report; anything else (no row, e.g. a bulk Excel import that writes one coarse job
+    row, or a row that predates the change) leaves the source out rather than guess.
+    Integration -> ``SYNC_SOURCE_LABEL``; a staff user -> their name; other actors -> none.
+    Raw SQL on purpose: filtered by the product ids already loaded, one round trip.
+    """
+    from sqlalchemy import bindparam, text
+
+    if not rows:
+        return {}
+    by_id = {str(p.id): p for p in rows}
+    audit_rows = db.execute(
+        text(
+            "SELECT DISTINCT ON (entity_id) entity_id, actor_type, user_id, "
+            "new_values ->> 'list_price' AS new_price, changed_at "
+            "FROM audit_logs "
+            "WHERE entity_type = 'product' AND action = 'UPDATE' "
+            "AND entity_id IN :ids AND new_values ->> 'list_price' IS NOT NULL "
+            "ORDER BY entity_id, changed_at DESC"
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": list(by_id)},
+    ).all()
+
+    sources: dict[str, str] = {}
+    staff: dict[str, str] = {}
+    for entity_id, actor_type, user_id, new_price, changed_at in audit_rows:
+        p = by_id.get(str(entity_id))
+        if p is None:
+            continue
+        try:
+            if Decimal(str(new_price)) != Decimal(p.list_price):
+                continue
+        except Exception:  # noqa: BLE001 - an unparsable audit value is no source
+            continue
+        notified_at = getattr(p, "list_price_notified_at", None)
+        if notified_at is not None and changed_at is not None and changed_at <= notified_at:
+            continue
+        if actor_type == "integration":
+            sources[str(entity_id)] = SYNC_SOURCE_LABEL
+        elif actor_type == "user" and user_id:
+            staff[str(entity_id)] = str(user_id)
+
+    if staff:
+        names = {
+            str(uid): (name or email)
+            for uid, name, email in db.query(User.id, User.name, User.email)
+            .filter(User.id.in_(set(staff.values())))
+            .all()
+        }
+        for pid, uid in staff.items():
+            if names.get(uid):
+                sources[pid] = names[uid]
+    return sources
 
 
 def _list_price_prepare(db: Session) -> None:
@@ -460,6 +526,7 @@ def _list_price_pending(db: Session) -> list:
 
 
 def _list_price_snapshot(db: Session, rows: list) -> list:
+    sources = _list_price_sources(db, rows)
     return [
         ListPriceChange(
             brand_id=str(p.brand_id) if getattr(p, "brand_id", None) is not None else None,
@@ -468,6 +535,7 @@ def _list_price_snapshot(db: Session, rows: list) -> list:
             old=Decimal(p.list_price_notified),
             new=Decimal(p.list_price),
             currency=p.currency or "MYR",
+            changed_by=sources.get(str(p.id)),
         )
         for p in rows
     ]
@@ -493,12 +561,13 @@ def _pct(old: Decimal, new: Decimal) -> str:
 
 
 def list_price_line(c: ListPriceChange) -> str:
-    # No "by <editor>": products.updated_by is not touched by the ordinary AutoCount
-    # push (master_ingest_service), so it would name the wrong person (owner ask on #2228).
-    return (
+    line = (
         f"{c.code} {c.name}: {_money(c.currency, c.old)} -> {_money(c.currency, c.new)} "
         f"({_pct(c.old, c.new)})"
     )
+    if c.changed_by:
+        line += f", by {c.changed_by}"
+    return line
 
 
 def _list_price_message(ctx: MessageContext) -> Message:

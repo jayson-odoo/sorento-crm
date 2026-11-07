@@ -384,3 +384,106 @@ def test_list_price_baseline_respects_task_company_scope(db):
     rows = {p.product_code: p.list_price_notified for p in db.query(Product).all()}
     assert rows["NEW-SRT"] == Decimal("10.00")
     assert rows["NEW-MCH"] is None
+
+
+# --------------------------------------------------------------------------- source (audit trail)
+
+
+def _audit(db, product, *, new_price, actor_type, user_id=None, changed_at=None):
+    from app.models.audit import AuditLog
+
+    row = AuditLog(
+        id=str(uuid.uuid4()),
+        entity_type="product",
+        entity_id=str(product.id),
+        action="UPDATE",
+        old_values={"list_price": "100.00"},
+        new_values={"list_price": new_price},
+        actor_type=actor_type,
+        user_id=user_id,
+    )
+    if changed_at is not None:
+        row.changed_at = changed_at
+    db.add(row)
+    return row
+
+
+def _line_for(db, code):
+    n = db.query(Notification).one()
+    return next(l for l in n.body.splitlines() if l.startswith(f"- {code} "))
+
+
+def test_source_sync_change_credits_autocount_not_stale_ui_editor(db):
+    """Crew decision on #2228: a price changed by the AutoCount push must never be credited
+    to whoever last edited the product in the UI (``updated_by`` is stale after a push)."""
+    stale_editor = _user(db, email="stale.editor@x.com", scope=False)
+    db.flush()
+    p = _product(db, code="SYNC", price="110.00", notified="100.00", updated_by=stale_editor.id)
+    db.flush()
+    _audit(db, p, new_price="110.00", actor_type="integration", user_id=stale_editor.id)
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    _lp_run(db)
+    line = _line_for(db, "SYNC")
+    assert line.endswith(", by AutoCount sync")
+    assert "stale.editor" not in line
+
+
+def test_source_staff_change_credits_the_staff_name(db):
+    staff = _user(db, email="pricer@x.com", scope=False)
+    db.flush()
+    p = _product(db, code="UI", price="110.00", notified="100.00")
+    db.flush()
+    _audit(db, p, new_price="110.00", actor_type="user", user_id=staff.id)
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    _lp_run(db)
+    assert _line_for(db, "UI").endswith(", by pricer")
+
+
+def test_source_omitted_without_an_audit_row_even_with_updated_by(db):
+    editor = _user(db, email="editor@x.com", scope=False)
+    db.flush()
+    _product(db, code="NOAUD", price="110.00", notified="100.00", updated_by=editor.id)
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    _lp_run(db)
+    line = _line_for(db, "NOAUD")
+    assert line == "- NOAUD Name NOAUD: RM 100.00 -> RM 110.00 (+10.0%)"
+
+
+def test_source_omitted_when_audit_row_set_a_different_price(db):
+    """The latest audited change is not the one being reported (a later unaudited bulk
+    import moved the price again): no source rather than a wrong one."""
+    staff = _user(db, email="pricer@x.com", scope=False)
+    db.flush()
+    p = _product(db, code="MOVED", price="120.00", notified="100.00")
+    db.flush()
+    _audit(db, p, new_price="110.00", actor_type="user", user_id=staff.id)
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    _lp_run(db)
+    assert "by" not in _line_for(db, "MOVED")
+
+
+def test_source_omitted_when_audit_row_predates_last_report(db):
+    from datetime import datetime, timedelta
+
+    staff = _user(db, email="pricer@x.com", scope=False)
+    db.flush()
+    p = _product(db, code="OLD", price="110.00", notified="100.00")
+    p.list_price_notified_at = datetime.utcnow()
+    db.flush()
+    _audit(
+        db, p, new_price="110.00", actor_type="user", user_id=staff.id,
+        changed_at=datetime.utcnow() - timedelta(days=30),
+    )
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    _lp_run(db)
+    assert "by" not in _line_for(db, "OLD")
