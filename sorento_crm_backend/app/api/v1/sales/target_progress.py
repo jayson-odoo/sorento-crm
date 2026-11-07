@@ -51,7 +51,8 @@ def get_target_progress(
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.sales import target_chat_scope
 
-    if not request.headers.get("X-API-Key"):
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
         raise AppException(status_code=403, message="This route is for the chatbot only", code="api_key_required")
     contact_id = (contact_id or "").strip()
     space_id = (space_id or "").strip()
@@ -62,7 +63,6 @@ def get_target_progress(
         )
     if date_from and date_to and date_from > date_to:
         raise AppException(status_code=422, message="date_from is after date_to", code="date_range_inverted")
-    api_key = request.headers.get("X-API-Key")
     if not contact_tick_or_slug(
         db, current_user, grant=GRANT, slug=SLUG, api_key=api_key, contact_id=contact_id, space_id=space_id
     ):
