@@ -130,7 +130,7 @@ def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]
                 "more": len(found) > MAX_CHOICES,
             })
             continue
-        elsewhere = contains.all()
+        elsewhere = contains.with_entities(Customer.company_id).distinct().all()
         if elsewhere:
             where = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in elsewhere}))
             problems.append(f"\"{name}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
@@ -139,13 +139,18 @@ def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]
     return list(out.values()), problems, choices
 
 
+def _fits(choice: dict) -> str:
+    n = len(choice["candidates"])
+    count = "more than 10 accounts" if choice.get("more") else f"{n} account{'' if n == 1 else 's'}"
+    return f"\"{choice['written']}\" fits {count}"
+
+
 class NeedsChoice(AppException):
     """A row whose only problem is that a written customer name fits several accounts: the batch tool asks the user
     to pick. `choices` = [{"written", "company", "candidates": [{"code", "name"}], "more"}]."""
 
     def __init__(self, choices: list[dict]):
-        names = ", ".join(f"\"{c['written']}\"" for c in choices)
-        super().__init__(status_code=409, message=f"Which account? {names} fits several accounts.", code="NEEDS_CHOICE")
+        super().__init__(status_code=409, message="Which account? " + "; ".join(_fits(c) for c in choices), code="NEEDS_CHOICE")
         self.choices = choices
 
 
@@ -209,7 +214,7 @@ def plan(db, user: dict, args: dict) -> dict:
             customers, found, choices = _customers(db, args, companies, company_ids)
             problems += found
     if problems:
-        problems += [f"\"{c['written']}\" fits {'more than 10' if c['more'] else len(c['candidates'])} accounts" for c in choices]
+        problems += [_fits(c) for c in choices]
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     if choices:
         raise NeedsChoice(choices)

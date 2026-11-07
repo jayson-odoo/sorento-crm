@@ -589,10 +589,15 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return False
     low = _fold_text(what)
     if entry["name"] == batch.BATCH and isinstance(entry.get("data"), dict):
-        # A row the batch skipped for an unknown customer name backs "not found" for that written name.
-        return bool(low) and any(
-            f'"{low}"' in _fold_text(str(s.get("reason") or "")) for s in entry["data"].get("skipped") or []
-        )
+        # Only a skipped row's "No customer ..." part backs the claim, for exactly the term it quotes.
+        prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "')
+        for item in entry["data"].get("skipped") or []:
+            for part in str(item.get("reason") or "").split("; "):
+                for prefix in prefixes:
+                    if part.startswith(prefix) and '"' in part[len(prefix):]:
+                        if _fold_text(part[len(prefix):].split('"', 1)[0]) == low:
+                            return True
+        return False
     if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
         for r in entry["data"].get("results") or []:
             term = _fold_text(str(r.get("term") or ""))
@@ -1816,6 +1821,13 @@ def _run(
     if status != "failed" and not steps and (batch_skipped or batch_waiting):
         # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
         reply = f"{reply}\n\n{batch.preview_block([], batch_skipped, batch_waiting)}"
+        try:
+            # The old confirm card no longer matches what the user was just shown.
+            actions.expire_previous(db, ctx, [], test=is_test)
+            db.commit()
+        except Exception:  # noqa: BLE001 - the turn still closes
+            logger.warning("agent: expiring the previous proposal failed", exc_info=True)
+            db.rollback()
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
         try:

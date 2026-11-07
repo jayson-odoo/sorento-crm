@@ -92,6 +92,8 @@ def propose_rows(
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
                 waiting += [{"row": n, "cells": _cells(definition, args, None), **c} for c in choices]
+                if key is not None:
+                    keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
             skipped.append({"row": n, "reason": reason, "cells": _cells(definition, args, None)})
