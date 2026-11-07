@@ -1,6 +1,6 @@
 # PLAN: Agent bulk actions v2, make #2226 work well (AGENT-BULK-V2)
 
-Status: Plan (STEP 1 done; behaviour card posted as crew-ask on PR #2241, 8 Nov; build waits on the owner's
+Status: Build (crew answered Q1 a, Q3 a, Q5 a; Q4 pending data; Q2 with the owner). Track: full (agent write path).
 answers). Track: named after the card (expected full: writes + permissions).
 
 Follow-up to merged #2226 (`PLAN-agent-bulk-actions-7nov.md`). Owner beta feedback 7-8 Nov: "it didn't really work
