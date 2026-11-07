@@ -182,7 +182,9 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
             if len(owners) == 1 and None not in owners and next(iter(owners)) in agents else None
         )
         names = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
-        return row["subject"], "dealer", {"agent": owner, "team": None, "_names": {"owner": names}}
+        return row["subject"], "dealer", {
+            "agent": owner, "team": None, "_names": {"owner": names, "agent": [person[owner]] if owner in person else []},
+        }
 
     per: dict[tuple, dict] = {}
     for row in periods:
@@ -194,6 +196,9 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
             "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
             "_zero": set(), "_replaced": set(), "_has_commission": False,
         })
+        if out["agent"] != extra["agent"]:
+            # Dealer targets of one name whose accounts different agents own: no single owning agent.
+            out["agent"] = None
         for key, values in extra["_names"].items():
             out["_names"][key].update(values)
         out["periods"] += 1
@@ -243,16 +248,21 @@ def _norm(value) -> str:
     return " ".join(str(value or "").split()).lower()
 
 
+def _some(names: list[str], most: int = 5) -> str:
+    shown = ", ".join(names[:most])
+    return f"{shown} and {len(names) - most} more" if len(names) > most else shown
+
+
 def _summary_note(rows: list[dict]) -> str | None:
     """What the answer must say about the rows it shows (owner C3, Q5): which targets of 0 were left out of target
     and achieved, whose payout is empty because no commission is set (never "RM 0"), and a replaced dealer period."""
     parts = []
     zero = [no for r in rows for no in r["_zero"]]
     if zero:
-        parts.append(f"Left out of target and achieved (a target of 0): {', '.join(zero[:5])}.")
+        parts.append(f"Left out of target and achieved (a target of 0): {_some(zero)}.")
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
-        parts.append(f"No commission is set on the targets of {', '.join(unset[:5])}: payout is empty, not RM 0.")
+        parts.append(f"No commission is set on the targets of {_some(unset)}: payout is empty, not RM 0.")
     for r in rows:
         for no, by in r["_replaced"]:
             parts.append(
@@ -405,8 +415,9 @@ register(
             "owner_kind": FieldDef("Kind", kind="text", note="agent, team or dealer."),
             "agent": FieldDef(
                 "Agent", kind="text", agent_id=True,
-                note="The agent itself on an agent row; on a dealer row the agent who owns every counted account "
-                     "(dealers of Agent A: agent eq A and owner_kind eq dealer).",
+                note="The agent itself on an agent row; on a dealer row the agent who owns every counted account. "
+                     "agent eq A also returns A's dealers: A's own payout is agent=A (or owner_kind eq agent), A's "
+                     "dealers are agent eq A with owner_kind eq dealer.",
             ),
             "team": FieldDef(
                 "Agent's team", kind="text",

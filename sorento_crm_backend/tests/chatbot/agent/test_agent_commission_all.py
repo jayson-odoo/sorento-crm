@@ -270,3 +270,31 @@ def test_E3_no_commission_set_is_said_never_shown_as_rm_0(targets):
     [row] = out["rows"]
     assert row["payout"] is None and row["commission"] is None
     assert "No commission is set" in out["scope_note"] and c.sales_agent in out["scope_note"]
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def test_R1_dealers_of_a_person_match_by_the_person_behind_the_owning_agent(targets):
+    db, _c, t = targets
+    t["a"].person_label = "Alpha"
+    _dealer_account(db, t).sales_agent_id = t["a"].id
+    db.flush()
+    out = run(db, {"entity": ENTITY, "period": Q3, "fields": ["payout"], "filters": [
+        {"field": "agent", "op": "eq", "value": "Alpha"}, {"field": "owner_kind", "op": "eq", "value": "dealer"}]})
+    assert [r["label"] for r in out["rows"]] == ["ZZT DEALER W2"]
+    assert out["scope_note"].startswith("Agent:")
+
+
+def test_R2_the_agent_field_note_warns_it_also_returns_the_agents_dealers():
+    from app.services.assistant_registry import ENTITIES
+
+    note = ENTITIES[ENTITY].fields["agent"].note
+    assert "also returns" in note and "owner_kind eq agent" in note
+
+
+def test_R3_a_note_naming_more_rows_than_it_lists_says_how_many_more():
+    from app.services.assistant_registry.sales import _summary_note
+
+    rows = [{"owner": f"A{i}", "_zero": [], "_has_commission": False, "_replaced": []} for i in range(7)]
+    assert "A0, A1, A2, A3, A4 and 2 more" in _summary_note(rows)

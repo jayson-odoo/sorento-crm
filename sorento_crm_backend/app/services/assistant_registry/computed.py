@@ -374,7 +374,8 @@ def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[
             continue
         tests[index] = lambda row, path=name, want=value: names_exact(row, path, want)
         taken.extend(sorted({str(r.get(name)) for r in hits}))
-        agents_only = agents_only and all(r.get("owner_kind", "agent") == "agent" for r in hits)
+        # The `agent` field always holds an agent, whatever kind of row carries it.
+        agents_only = agents_only and (name == "agent" or all(r.get("owner_kind", "agent") == "agent" for r in hits))
     if not taken:
         return tests, None
     shown = list(dict.fromkeys(taken))
