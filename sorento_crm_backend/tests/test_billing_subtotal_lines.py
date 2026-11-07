@@ -463,6 +463,11 @@ def _seed(db, net_total, specs):
 def test_r6_the_reconciliation_lists_no_document_once_the_rules_apply(db):
     """The shipped read-only SQL over the crew round 2 shapes: Query 2 (documents still off)
     is empty, Query 1 counts the marks and the overstatement."""
+    # Contract v2.13: the same package with its children naming the parent (review round 3).
+    _seed(db, "5593.00", [
+        _package_parent("17", "329", "5593.00", 16, _PARENT),
+        _named_child("IBKS8050-BL", "17", "329", "5593.00", 16, "AED_V2_MOCHA:IV:20448970:20448973"),
+        _named_child("IBKT7823SS-BL", "17", "0", "0.00", 32, "AED_V2_MOCHA:IV:20448970:20448975")])
     _seed(db, "3240.00", [
         _child("IBKS7548-BL", "8", "405", "3240.00", 16, "IV:20488321:20488328"),
         _package_parent("8", "405", "3240.00", 48, "IV:20488321:20488326"),
@@ -484,7 +489,7 @@ def test_r6_the_reconciliation_lists_no_document_once_the_rules_apply(db):
     assert db.execute(text(query2)).all() == []
     rows = [r._mapping for r in db.execute(text(query1)).all()]
     mine = [r for r in rows if r["month"] == "2026-01"]
-    assert sum(r["package_copies"] for r in mine) >= 1 and sum(r["subtotal_lines"] for r in mine) >= 1
+    assert sum(r["package_copies"] for r in mine) == 2 and sum(r["subtotal_lines"] for r in mine) == 1
     assert all(r["diff_after"] == 0 for r in mine)
 
 
@@ -540,3 +545,41 @@ def test_r7_the_ingest_accepts_and_echoes_the_v2_13_keys(env):  # noqa: F811
     read = env.read([ref]).json()
     echoed = {x["source_ref"]: x["parent_line_ref"] for x in read["records"][0]["lines"]}
     assert echoed == {f"{ref}:1": None, f"{ref}:2": f"{ref}:1"}
+
+
+def test_r7_fixed_explicit_shapes_get_the_same_verdict_from_the_backfill(db):
+    """Review round 3: R4's random parents rarely balance, so the backfill's explicit-parent mark
+    is pinned here on fixed shapes, each with its expected verdict."""
+    cases = {
+        # M2601-0858 with refs: the parent is the copy.
+        "mch": ("5593.00", [_package_parent("17", "329", "5593.00", 16, "P1"),
+                            _named_child("C1", "17", "329", "5593.00", 16, "P1c1", parent="P1"),
+                            _named_child("C2", "17", "0", "0.00", 32, "P1c2", parent="P1")], "D--"),
+        # A 0.00 parent named by 0.00 children on an off document: nothing to drop, kept.
+        "zero": ("10.00", [_item("0.00", 1, source_ref="Z", item_code=None, uom=None),
+                           _named_child("C1", "1", "0", "0.00", 1, "Zc1", parent="Z"),
+                           _item("5.00", 2, source_ref="other")], "---"),
+        # A line naming itself is not a package: its money stays.
+        "self": ("10.00", [_item("20.00", 1, source_ref="S", parent_line_ref="S")], "-"),
+    }
+    expected = {}
+    for name, (net_total, specs, marks) in cases.items():
+        assert _marks([dict(x) for x in specs], net_total)[0] == marks, name
+        header = _seed(db, net_total, specs)
+        by_ref = {x["source_ref"]: x for x in specs}
+        mark_uncounted_lines(specs, D(net_total))
+        for row in db.query(BillingDocumentLine).filter_by(document_id=header.id):
+            expected[str(row.id)] = (by_ref[row.source_ref]["is_subtotal"], by_ref[row.source_ref]["is_duplicate"])
+
+    finance = db.execute(text("SELECT current_schema()")).scalar() + "_finance"
+    db.execute(text(_migration().BACKFILL.replace("finance.", f'"{finance}".')))
+    got = {
+        row[0]: (row[1], row[2])
+        for row in db.execute(
+            text(f'SELECT id::text, is_subtotal, is_duplicate FROM "{finance}".billing_document_lines '
+                 "WHERE id::text = ANY(:ids)"),
+            {"ids": list(expected)},
+        ).all()
+    }
+    assert got == expected
+    assert sum(v[1] for v in got.values()) == 1

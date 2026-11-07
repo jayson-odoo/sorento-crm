@@ -9,7 +9,7 @@ money; the line sum counted both as sales (line sum > header `local_net_total`).
    `.parent_line_ref` and `.line_type` (contract v2.13, SS-PACKAGE-LINES), nullable, as sent.
 2. Backfill: the exact rules (header guard included) of
    `app/services/finance/billing_subtotal_lines.py` in SQL, over each document that has a line
-   naming no item (copied here so the migration stays frozen;
+   naming no item or a line naming a package parent (copied here so the migration stays frozen;
    `tests/test_billing_subtotal_lines.py` R4 runs this copy against the ingest's).
 
 Idempotent (`IF NOT EXISTS`; the backfill sets the same verdict on a rerun and writes only rows
@@ -68,6 +68,7 @@ explicit_parents AS (
     FROM scoped p
     JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
           FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+                            AND parent_line_ref <> source_ref
           GROUP BY document_id, parent_line_ref) k
       ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
     WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount

@@ -33,6 +33,7 @@ explicit_parents AS (
     FROM scoped p
     JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
           FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+                            AND parent_line_ref <> source_ref
           GROUP BY document_id, parent_line_ref) k
       ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
     WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount
@@ -186,6 +187,7 @@ explicit_parents AS (
     FROM scoped p
     JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
           FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+                            AND parent_line_ref <> source_ref
           GROUP BY document_id, parent_line_ref) k
       ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
     WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount

@@ -13,8 +13,8 @@ parent row ("... SET PACKAGE ...": no item code, no product, no UOM, but a quant
 price) whose package child, a line that names an item, repeats its quantity, unit price,
 discount and net amount exactly. On `AED_V2_MOCHA` the first child carries the package's money as
 well, so both rows count it. The copies are taken only when the document's lines less the copies
-equal its header `net_total` exactly; otherwise none is. The parent's `line_no` need not be the child's (M2601-1517: 48 and 16),
-so it is not compared. One real line excuses one copy (copies paired in `source_ref` byte order).
+equal its header `net_total` exactly; otherwise none is. The parent's `line_no` need not be the
+child's (M2601-1517: 48 and 16), so it is not compared. One real line excuses one copy (copies paired in `source_ref` byte order).
 
 **Package parent, explicit** (`is_duplicate`; contract v2.13): once the shared service sends
 `parent_line_ref` on a document's child lines, the parent is any line a child names, and it is
@@ -116,7 +116,8 @@ def _mark_explicit_parents(lines: list) -> None:
     children: dict[str, Decimal] = {}
     for line in lines:
         ref = line.get("parent_line_ref")
-        if not _is_empty(ref):
+        # A line naming itself is no package (review round 3): never its own child.
+        if not _is_empty(ref) and ref != line.get("source_ref"):
             net = line.get("net_amount")
             children[ref] = children.get(ref, Decimal("0")) + (Decimal(net) if net is not None else Decimal("0"))
     for line in lines:
