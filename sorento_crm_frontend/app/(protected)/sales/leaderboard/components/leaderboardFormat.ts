@@ -1,0 +1,60 @@
+import { getMalaysiaDateKey } from '@/lib/helpers';
+
+export type PeriodKind = 'this_month' | 'last_month' | 'this_quarter' | 'ytd' | 'custom';
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const iso = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
+const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+/** date_from / date_to (YYYY-MM-DD) for a chip, with "today" taken in Asia/Kuala_Lumpur. */
+export function periodRange(kind: Exclude<PeriodKind, 'custom'>, now: Date = new Date()) {
+  const [y, m, d] = getMalaysiaDateKey(now).split('-').map(Number);
+  const today = iso(y, m, d);
+  if (kind === 'this_month') return { from: iso(y, m, 1), to: today };
+  if (kind === 'ytd') return { from: iso(y, 1, 1), to: today };
+  if (kind === 'this_quarter') return { from: iso(y, Math.floor((m - 1) / 3) * 3 + 1, 1), to: today };
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  return { from: iso(py, pm, 1), to: iso(py, pm, lastDay(py, pm)) };
+}
+
+const nf = new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** `RM 1,856,856.61` */
+export function formatRm(amount: number): string {
+  return `RM ${nf.format(amount)}`;
+}
+
+/** `1,856,856.61` (the grid column header already says RM). */
+export function formatAmount(amount: number): string {
+  return nf.format(amount);
+}
+
+/** `1.86m`, `291k`: the phone podium. */
+export function formatCompactRm(amount: number): string {
+  const abs = Math.abs(amount);
+  if (abs >= 1_000_000) return `${(amount / 1_000_000).toFixed(2)}m`;
+  if (abs >= 1_000) return `${Math.round(amount / 1_000)}k`;
+  return amount.toFixed(0);
+}
+
+/** `+63.6%` / `-10.4%`, `-` when there is no figure. */
+export function formatChange(pct: number | null): string {
+  if (pct === null || pct === undefined) return '-';
+  return `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+export function changeTone(pct: number | null): string {
+  if (pct === null || pct === undefined || pct === 0) return 'text-muted-foreground';
+  return pct > 0 ? 'text-emerald-600' : 'text-destructive';
+}
+
+/** `Sep` when the previous window is one whole calendar month, else `previous period`. */
+export function previousLabel(previousFrom: string, previousTo: string): string {
+  if (previousFrom.slice(0, 7) === previousTo.slice(0, 7)) {
+    return MONTH_NAMES[Number(previousFrom.slice(5, 7)) - 1] ?? 'previous period';
+  }
+  return 'previous period';
+}
