@@ -270,9 +270,11 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         want = "sync" if desired else "async"
         if o.sync_names != desired:
             if desired:
-                # The record says sync only after the standby has caught up to this position.
+                # No mark yet: until the reload takes effect A still acknowledges commits without
+                # waiting. The first tick that sees the standby listed takes the mark (below), and
+                # the record says sync only once the standby has flushed past it.
                 acts.append(("set_sync", desired))
-                s["sync_from_lsn"] = o.self_lsn
+                s["sync_from_lsn"] = None
             else:
                 acts.append(("sync_record", "async")); acts.append(("set_sync", ""))
                 s["sync_from_lsn"] = None
@@ -281,7 +283,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             if o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name):
                 acts.append(("sync_record", want))
         else:
-            if s["sync_from_lsn"] is None:  # restart or an old state file
+            if s["sync_from_lsn"] is None:  # first tick after the add, a restart, or an old state file
                 s["sync_from_lsn"] = o.self_lsn
             if (o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name)
                     and o.peer_flush_lsn is not None and s["sync_from_lsn"] is not None
@@ -294,6 +296,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
     s["fencing"] = False
     s["cf_self_unhealthy_since"] = None
     s["two_primaries_alerted"] = False
+    s["sync_from_lsn"] = None  # only a primary holds a mark
 
     def rejoin():
         s["last_rejoin_at"] = now

@@ -443,18 +443,31 @@ def test_p4_drop_still_writes_the_record_when_the_record_is_unreadable():
 def test_p4_add_sets_the_standby_and_writes_the_sync_record_only_after_a_confirmed_catch_up():
     c = cfg(SYNC_MODE="on_commit")
     rec = dict(rec_mode="async", rec_primary="crm-a", rec_since=1)
-    # tick 1: set_sync ONLY, even if the standby already reports a position
+    # tick 1: set_sync ONLY, even if the standby already reports a position. No mark yet: A keeps
+    # acknowledging commits without waiting until the reload has taken effect (re-review S1).
     s, a = decide(initial_state(), prim(**SYNC_TICK, self_lsn=1000, peer_flush_lsn=1000, **rec), 0, c)
     assert a == [("set_sync", "crm-b")]
-    assert s["sync_from_lsn"] == 1000
-    # later tick, standby still behind the position at set_sync time: no record
+    assert s["sync_from_lsn"] is None
+    # first tick that SEES the standby listed takes the mark (1500), after the reload
     s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=999, **rec), 15, c)
+    assert a == [] and s["sync_from_lsn"] == 1500
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1600, peer_flush_lsn=None, **rec), 30, c)
     assert a == []
-    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=None, **rec), 30, c)
+    # caught up to the position at set_sync time but NOT to the mark: still no record
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1600, peer_flush_lsn=1000, **rec), 45, c)
     assert a == []
-    # caught up to that position: the record goes up
-    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=1000, **rec), 45, c)
+    # caught up to the mark: the record goes up
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1700, peer_flush_lsn=1500, **rec), 60, c)
     assert a == [("sync_record", "sync")]
+
+
+def test_p4_sync_from_lsn_is_cleared_when_the_node_stops_being_primary():
+    c = cfg(SYNC_MODE="on_commit")
+    rec = dict(rec_mode="async", rec_primary="crm-a", rec_since=1)
+    s, _ = decide(initial_state(), prim(**SYNC_TICK, sync_names="crm-b", self_lsn=2000, peer_flush_lsn=1900, **rec), 0, c)
+    assert s["sync_from_lsn"] == 2000
+    s, _ = decide(s, obs(self_pg="standby", self_streaming=True, peer_pg="primary", peer_lsn=3000), 15, c)
+    assert s["sync_from_lsn"] is None
 
 
 def test_p4_sync_from_lsn_is_taken_in_steady_state_after_a_restart_and_cleared_on_drop():

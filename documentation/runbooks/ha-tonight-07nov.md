@@ -80,6 +80,7 @@ any SSH restriction: hPanel console, then remove the rule in the firewall panel.
 
 | Step | Node | Changes | App downtime |
 |---|---|---|---|
+| S0 | A, then B | SSH: keys only, root by key only (found 7 Nov: password login open to the internet) | none |
 | S1 | A | host firewall: Postgres 5432 from B only (provider already enforces it; defence in depth, run after S2) | none |
 | S2 | A + B | WireGuard tunnel, replication moves onto it | none (B re-connects in seconds) |
 | S3 | B | host firewall: n8n stores and pgbouncer (provider already enforces it; defence in depth, run after S2) | none (n8n untouched if the check passes) |
@@ -106,6 +107,43 @@ curl -s -o /dev/null -w 'health %{http_code}\n' http://127.0.0.1:$P/api/v1/healt
 
 Expected: `sorento_crm_replica|streaming|async|0` (the last number may be a few thousand bytes
 under load, never growing), then `health 200`.
+
+---
+
+## S0. SSH: keys only (do this FIRST; one node at a time, A then B)
+
+Found 7 Nov: `permitrootlogin yes` and `passwordauthentication yes` on both nodes with 22 open to
+any. Releases log in with a KEY (`deploy.yml`: `appleboy/ssh-action` with `secrets.SSH_USER` +
+`secrets.SSH_PRIVATE_KEY`; `scripts/ha_release.sh` the same), so they are unaffected;
+`prohibit-password` still lets root in with a key.
+
+1. From your Mac: `ssh -o PasswordAuthentication=no -o PreferredAuthentications=publickey <user>@<A_PUBLIC_IP> 'echo KEY-OK'`
+   prints `KEY-OK`. If not, `ssh-copy-id <user>@<A_PUBLIC_IP>` first, then repeat. Stop until it works.
+2. Keep a SECOND session open on the node until step 4 passes; check the hPanel browser terminal
+   gives a shell (rollback path, it bypasses SSH and the firewall).
+3. Paste (THIS CHANGES PROD, no restart):
+
+```bash
+sudo tee /etc/ssh/sshd_config.d/00-sorento-hardening.conf >/dev/null <<'CONF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+CONF
+sudo sshd -t && echo CONFIG-OK
+grep -n '^Include' /etc/ssh/sshd_config
+sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin|pubkeyauthentication)'
+sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
+```
+
+   Expected: `CONFIG-OK`; an `Include /etc/ssh/sshd_config.d/*.conf` line near the top;
+   `passwordauthentication no`, `kbdinteractiveauthentication no`, `permitrootlogin without-password`,
+   `pubkeyauthentication yes`. (`00-` sorts first: sshd keeps the FIRST value it reads, so it beats
+   `50-cloud-init.conf`.)
+4. Check from the Mac: the key login prints `KEY-OK`; `ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password <user>@<A_PUBLIC_IP> true`
+   prints `Permission denied (publickey).` Then close the second session and repeat on B.
+
+**Rollback** (open session or hPanel terminal): `sudo rm /etc/ssh/sshd_config.d/00-sorento-hardening.conf && sudo sshd -t && (sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd)`.
 
 ---
 
@@ -217,6 +255,12 @@ header: run S3's block afterwards, which rewrites it whole and includes the 5182
 
 **Stop if:** no handshake after 2 minutes (check the hPanel rule and the public keys).
 
+**Also check on B (7 Nov lesson):** `ip -br addr show wg0` prints `10.77.0.2/32` and
+`ip route get 10.77.0.1` prints `10.77.0.1 dev wg0`, NOT `local 10.77.0.1`. If B carries A's
+address, B's own Docker DNAT sends the replica's connection to n8n's Postgres 15 on B (published
+on `0.0.0.0:5432`), which answers `pg_isready` and then refuses `replicator` from `172.18.0.1`:
+the S2.3 failure seen on 7 Nov.
+
 ### S2.2 A: allow B's tunnel address to replicate (pg_hba reload, keeps a backup)
 
 ```bash
@@ -243,7 +287,9 @@ line (`-c ...`; owner check 7 Nov: `pg_settings.source = command line`), so `alt
 change them. The container is recreated with the same image id, volume, ports, env and args, and
 only `host=` changed to `10.77.0.1`. A is untouched; the slot holds WAL while the replica is down.
 
-**0. Prerequisite (READ-ONLY, B):** `sudo wg show wg0 latest-handshakes` fresh;
+**0. Prerequisite (READ-ONLY, B and A):** on A note `sudo iptables -t nat -L DOCKER -v -n | grep 'dpt:5432'`
+(the pkts count), run B's `pg_isready` below, read the count again: it must have grown by 1
+(proof the connection reached A, not B's own n8n Postgres). On B: `sudo wg show wg0 latest-handshakes` fresh;
 `ping -c 5 -q 10.77.0.1` 0% loss; `docker exec sorento_crm_replica pg_isready -h 10.77.0.1 -p 5432`
 prints `accepting connections` (the container reaches A through the tunnel, NATed to 10.77.0.2,
 the address S2.2 allowed). Stop if not.
