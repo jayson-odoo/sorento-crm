@@ -375,31 +375,42 @@ INVOICED_CONTACT_GRANT = "sales_orders.sales_report"
 _KEY_AUTH_METHODS = frozenset({"api_key", "integration_api_key"})
 
 
-def _contact_call(current_user: dict, contact_id: Optional[str], space_id: Optional[str]) -> bool:
-    """A chatbot call: an API key (not an identity read, whose `key_user_id` marks it) naming a contact."""
+def _contact_call(
+    current_user: dict, api_key: Optional[str], contact_id: Optional[str], space_id: Optional[str]
+) -> bool:
+    """A chatbot call: the chatbot's own shared key (the one key whose calls are scoped by the contact,
+    `company_scope_resolver._resolve_api_key_scope`), not an identity read (`key_user_id`), naming a
+    contact. Any other integration key keeps the slug (security review S1)."""
+    from app.services.company_scope_resolver import _api_key_valid
+
     return bool(
-        (contact_id or "").strip()
-        and (space_id or "").strip()
+        contact_id
+        and space_id
         and current_user.get("auth_method") in _KEY_AUTH_METHODS
         and not current_user.get("key_user_id")
+        and _api_key_valid(api_key)
     )
 
 
 def may_read_invoiced(
-    db: Any, current_user: dict, *, contact_id: Optional[str] = None, space_id: Optional[str] = None
+    db: Any,
+    current_user: dict,
+    *,
+    api_key: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
 ) -> bool:
     """THE invoiced gate (CHATBOT-SALES-REPORT-TICK, owner 7 Nov). A chatbot call naming a contact
     follows that contact's Sales report tick, whoever the key acts as; the contact's scope still
     narrows the figures in the route. Everyone else (a session user, an identity read, a key with no
     contact) needs `sales.reports.view`, and on an identity read both users must hold it
     (AGENTIC-UNIFY AC-7). A contact the CRM cannot resolve holds nothing (fail closed)."""
-    if _contact_call(current_user, contact_id, space_id):
+    if _contact_call(current_user, api_key, contact_id, space_id):
         from app.services.contact_field_reveal_service import granted_keys
         from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
-        resolved = resolve_contact_with_null_workspace_fallback(
-            db, contact_id=str(contact_id).strip(), space_id=str(space_id).strip()
-        )
+        # The ids exactly as the route resolves them, so the gate and the route read one contact.
+        resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
         return bool(resolved) and INVOICED_CONTACT_GRANT in granted_keys(db, resolved)
     from app.services.user_service import holds_permission
 
@@ -408,11 +419,16 @@ def may_read_invoiced(
 
 
 def require_invoiced_access(
-    db: Any, current_user: dict, *, contact_id: Optional[str] = None, space_id: Optional[str] = None
+    db: Any,
+    current_user: dict,
+    *,
+    api_key: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
 ) -> None:
     """403 `invoiced_needs_sales_reports` unless `may_read_invoiced`. Every route that answers
-    invoiced figures calls this, with the contact pair when it has one."""
-    if not may_read_invoiced(db, current_user, contact_id=contact_id, space_id=space_id):
+    invoiced figures calls this, with the request's `X-API-Key` and contact pair when it has them."""
+    if not may_read_invoiced(db, current_user, api_key=api_key, contact_id=contact_id, space_id=space_id):
         raise AppException(
             status_code=403,
             message="Invoiced sales need the sales reports permission; ask delivered or ordered sales",

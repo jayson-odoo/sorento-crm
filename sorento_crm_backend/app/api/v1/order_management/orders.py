@@ -2119,6 +2119,7 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
 @sales_report_router.get("/top-selling", response_model=TopSellingResponse)
 @heavy
 def get_top_selling(
+    request: Request,
     rank_by: Optional[str] = Query(
         None,
         description=(
@@ -2252,7 +2253,9 @@ def get_top_selling(
         # contact's call that contact's Sales report tick (CHATBOT-SALES-REPORT-TICK).
         from app.services.sales.invoiced_sales import require_invoiced_access
 
-        require_invoiced_access(db, current_user, contact_id=contact_id, space_id=space_id)
+        require_invoiced_access(
+            db, current_user, api_key=request.headers.get("X-API-Key"), contact_id=contact_id, space_id=space_id
+        )
         for value, name, code in (
             (group_norm == "category", "group=category", "group_needs_order_basis"),
             ((customer_query or "").strip(), "customer_query", "customer_query_needs_order_basis"),

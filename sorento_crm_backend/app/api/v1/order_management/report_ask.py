@@ -392,7 +392,9 @@ def report_ask(
         # contact's call, else the reports' own slug (CHATBOT-SALES-REPORT-TICK).
         from app.services.sales.invoiced_sales import require_invoiced_access
 
-        require_invoiced_access(db, current_user, contact_id=contact_id, space_id=space_id)
+        require_invoiced_access(
+            db, current_user, api_key=request.headers.get("X-API-Key"), contact_id=contact_id, space_id=space_id
+        )
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(
