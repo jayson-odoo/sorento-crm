@@ -558,6 +558,12 @@ interface TagCanvasEditorProps {
    * popover renders with no Done button.
    */
   onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>;
+  /**
+   * What editing a box linked to a saved accessories template does. `live` (default, the template
+   * editor): the link stays and the host pushes the design to the template. `detach` (the request
+   * designer): the box is detached first, so a request never edits a template other tags follow.
+   */
+  linkedAccessoryBoxes?: 'live' | 'detach';
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -621,6 +627,7 @@ export function TagCanvasEditor({
   reviewPins,
   onReviewPinResolve,
   specSheet = false,
+  linkedAccessoryBoxes = 'live',
 }: TagCanvasEditorProps) {
   // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
   const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
@@ -1612,7 +1619,13 @@ export function TagCanvasEditor({
     (layerId: string, target: CardEditTarget) => {
       const layer = layers.find((l) => l.id === layerId);
       if (!layer || layer.props.kind !== 'accessories') return;
-      if (layer.props.card) {
+      const detach = linkedAccessoryBoxes === 'detach' && Boolean(layer.props.presetId);
+      if (layer.props.card && detach) {
+        commit(
+          layers.map((l) => (l.id === layerId ? { ...l, props: { ...l.props, presetId: null } as TagLayerProps } : l)),
+          new Set([layerId]),
+        );
+      } else if (layer.props.card) {
         setSelectedIds(new Set([layerId]));
       } else {
         // A box with no designed card gets one built from its legacy settings: one undo step.
@@ -1622,13 +1635,17 @@ export function TagCanvasEditor({
           layer.width_mm,
         );
         commit(
-          layers.map((l) => (l.id === layerId ? { ...l, props: { ...l.props, card } as TagLayerProps } : l)),
+          layers.map((l) =>
+            l.id === layerId
+              ? { ...l, props: { ...l.props, card, ...(detach ? { presetId: null } : {}) } as TagLayerProps }
+              : l,
+          ),
           new Set([layerId]),
         );
       }
       setAccessoryEdit({ layerId, target, elementId: null });
     },
-    [layers, commit],
+    [layers, commit, linkedAccessoryBoxes],
   );
 
   const addAccessoryElement = useCallback(
@@ -1679,6 +1696,24 @@ export function TagCanvasEditor({
     [accessoryEdit, patchAccessoryProps],
   );
 
+  /** Arrow keys while a card is edited move the selected element, in card millimetres. */
+  const nudgeAccessoryElement = useCallback(
+    (dx: number, dy: number) => {
+      if (!accessoryEdit?.elementId) return;
+      const layer = layers.find((l) => l.id === accessoryEdit.layerId);
+      if (!layer || layer.props.kind !== 'accessories') return;
+      const elements =
+        accessoryEdit.target === 'card' ? layer.props.card?.elements : layer.props.footer?.elements;
+      const element = elements?.find((el) => el.id === accessoryEdit.elementId);
+      if (!element) return;
+      updateAccessoryElement(element.id, {
+        x_mm: Math.round((element.x_mm + dx) * 100) / 100,
+        y_mm: Math.round((element.y_mm + dy) * 100) / 100,
+      });
+    },
+    [accessoryEdit, layers, updateAccessoryElement],
+  );
+
   const deleteAccessoryElement = useCallback(() => {
     if (!accessoryEdit?.elementId) return;
     const { target, layerId, elementId } = accessoryEdit;
@@ -1696,10 +1731,13 @@ export function TagCanvasEditor({
   // Leaving: Done, Escape, or the selection moving off the box (a click outside it).
   useEffect(() => {
     if (!accessoryEdit) return;
+    const edited = layers.find((l) => l.id === accessoryEdit.layerId);
+    // Also over when the box is gone or lost its card (an undo of the conversion).
     const stillThere =
       selectedIds.size === 1 &&
       selectedIds.has(accessoryEdit.layerId) &&
-      layers.some((l) => l.id === accessoryEdit.layerId);
+      edited?.props.kind === 'accessories' &&
+      Boolean(edited.props.card);
     if (!stillThere) setAccessoryEdit(null);
   }, [accessoryEdit, selectedIds, layers]);
 
@@ -1727,6 +1765,19 @@ export function TagCanvasEditor({
     },
     [accessoryTemplates],
   );
+
+  /** Inspector edits of a box: in the request designer a change to a linked box's design detaches it first. */
+  const updateLayerPropsLinked = (id: string, changes: Partial<TagLayerProps>) => {
+    const layer = layers.find((l) => l.id === id);
+    const linked = layer?.props.kind === 'accessories' ? layer.props.presetId : null;
+    // The inspector sends the whole props; only a change that leaves `presetId` as it is is a design edit.
+    const keepsLink = !('presetId' in changes) || (changes as { presetId?: unknown }).presetId === linked;
+    if (linkedAccessoryBoxes === 'detach' && linked && keepsLink) {
+      updateLayerProps(id, { ...changes, presetId: null } as Partial<TagLayerProps>);
+    } else {
+      updateLayerProps(id, changes);
+    }
+  };
 
   /** What the canvas draws for a layer: the box under edit shows full sample data (and the footer). */
   const displayFor = (layer: TagLayer) => {
@@ -3370,11 +3421,27 @@ export function TagCanvasEditor({
         setAccessoryEdit(null);
         return;
       }
-      // Delete removes the selected element of the card being edited, never the box itself.
-      if ((e.key === 'Delete' || e.key === 'Backspace') && accessoryEdit?.elementId) {
-        e.preventDefault();
-        deleteAccessoryElement();
-        return;
+      // While a card is edited, box-level keys never reach the box: Delete removes the selected
+      // element (or nothing), arrows nudge it, duplicate and cut do nothing.
+      if (accessoryEdit) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          if (accessoryEdit.elementId) deleteAccessoryElement();
+          return;
+        }
+        if (modifier && (e.key === 'd' || e.key === 'D' || e.key === 'x' || e.key === 'X')) {
+          e.preventDefault();
+          return;
+        }
+        const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+          e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+        ];
+        if (arrow) {
+          e.preventDefault();
+          const step = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
+          nudgeAccessoryElement(arrow[0] * step, arrow[1] * step);
+          return;
+        }
       }
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -3562,6 +3629,7 @@ export function TagCanvasEditor({
     commitCrop,
     accessoryEdit,
     deleteAccessoryElement,
+    nudgeAccessoryElement,
     enterAccessoryEdit,
     specSheet,
     layers,
@@ -5074,7 +5142,7 @@ export function TagCanvasEditor({
       )}
 
       {/* Editing a linked box edits the saved template for every tag template using it. */}
-      {accessoryEdit &&
+      {accessoryEdit && linkedAccessoryBoxes === 'live' &&
         (() => {
           const editedLayer = layers.find((l) => l.id === accessoryEdit.layerId);
           const linked = accessoryTemplateOf(editedLayer);
@@ -5278,7 +5346,7 @@ export function TagCanvasEditor({
             <InspectorPanel
               layer={selectedLayer}
               onUpdate={updateLayer}
-              onUpdateProps={updateLayerProps}
+              onUpdateProps={updateLayerPropsLinked}
               layers={layers}
               resolvedText={selectedResolvedText}
               bindingLabel={selectedBindingLabel}

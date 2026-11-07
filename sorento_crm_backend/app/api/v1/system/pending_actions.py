@@ -324,6 +324,13 @@ def _assert_entity_visible(
         validate_uuid_path(entity_id, resource="Tag")
         if price_tag_request_tag_in_scope(db, entity_id) is None:
             raise handle_not_found("Tag", entity_id)
+    elif action_key == "accessory_image.delete":
+        # A picture has no company column: it is scoped through its accessory.
+        from app.services.accessory_service import AccessoryService
+
+        validate_uuid_path(entity_id, resource="Picture")
+        if AccessoryService(db).picture_in_scope(entity_id) is None:
+            raise handle_not_found("Picture", entity_id)
     model = _PARK_SCOPED_MODELS.get(action_key)
     if model is not None:
         # Every other key on a company-owned record: read it under the caller's scope, so
@@ -398,6 +405,7 @@ _PARK_SCOPED_MODELS: dict = {
 # Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "accessory_image.delete",
     "combo.unlink_tag_templates",
     "contact_customer_link.unlink",
     "customer.remove_from_group",

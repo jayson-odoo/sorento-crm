@@ -28,6 +28,7 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { formatCurrency } from '@/lib/helpers';
+import { richOneLine } from '@/lib/dealer-kit/rich-text';
 import { codeWithName } from '@/lib/product-display';
 import { getProducts } from '../../services/productService';
 import { searchAccessories } from '../../../accessories/services/accessoryService';
@@ -78,9 +79,9 @@ function AccessoryText({ accessory }: { accessory: AccessoryEntry }) {
           LP: {formatCurrency(accessory.list_price)}
         </p>
       ) : null}
-      {accessory.spec ? (
-        <p className="truncate text-xs text-muted-foreground" title={accessory.spec}>
-          {accessory.spec}
+      {richOneLine(accessory.spec) ? (
+        <p className="truncate text-xs text-muted-foreground" title={richOneLine(accessory.spec)}>
+          {richOneLine(accessory.spec)}
         </p>
       ) : null}
     </div>
@@ -194,7 +195,7 @@ export function AccessoryListField({
       .filter((a) => !has(`accessory:${a.id}`))
       .map((a) => {
         known.current.set(`accessory:${a.id}`, { ...a, kind: 'accessory', code: null, list_price: null });
-        return { value: a.id, label: a.name, description: a.spec ?? undefined };
+        return { value: a.id, label: a.name, description: richOneLine(a.spec) || undefined };
       });
   };
 

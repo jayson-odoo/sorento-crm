@@ -60,7 +60,7 @@ function declarations(el: Element): Record<string, string> {
   return out;
 }
 
-function validColour(value: string | undefined): string | null {
+export function validColour(value: string | undefined): string | null {
   return value && COLOUR.test(value) ? value : null;
 }
 
@@ -241,6 +241,24 @@ export function richPlainText(value: string | null | undefined): string {
   if (!value) return '';
   if (!isRich(value)) return value;
   return blocksPlainText(parseRichText(value));
+}
+
+/** A colour safe to put in a `style` value: a hex or rgb() colour, else `fallback`. */
+export function safeColour(value: string | null | undefined, fallback = 'transparent'): string {
+  return validColour(value ?? undefined) ?? fallback;
+}
+
+/**
+ * A value as ONE line of plain text for a place that cannot draw runs (a legacy card line, a list
+ * row): paragraphs joined by a space, no markup. Plain text is returned as typed.
+ */
+export function richOneLine(value: string | null | undefined): string {
+  if (!value) return '';
+  if (!isRich(value)) return value;
+  return parseRichText(value)
+    .map((block) => runsText(block.runs).trim())
+    .filter(Boolean)
+    .join(' ');
 }
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };

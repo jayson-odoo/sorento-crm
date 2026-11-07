@@ -88,44 +88,47 @@ def _linked_boxes(doc: Optional[dict], preset_id: str) -> List[dict]:
     return out
 
 
-def _doc_rows(db: Session, preset_id: str) -> List[Tuple[Any, str]]:
-    """Every row whose document might link `preset_id`, as `(row, attribute holding the doc)`."""
-    shapes = _shapes(preset_id)
+def _doc_rows(db: Session, preset: AccessoryBoxPreset) -> List[Tuple[Any, str]]:
+    """Every row of the PRESET'S OWN company whose document might link it, as `(row, attribute holding the
+    doc)`. The company is filtered explicitly (versions through their template, page versions through
+    their page), so an all-company session scope can never reach another company's document."""
+    shapes = _shapes(preset.id)
+    company = preset.company_id
 
     def has(column):
         return or_(*[column.contains(shape) for shape in shapes])
 
+    def mine(model):
+        return model.company_id == company if company is not None else model.company_id.is_(None)
+
     rows: List[Tuple[Any, str]] = []
-    for row in _scoped(db, TagTemplate).filter(has(TagTemplate.doc)).all():
+    for row in _scoped(db, TagTemplate).filter(mine(TagTemplate), has(TagTemplate.doc)).all():
         rows.append((row, "doc"))
     versions = (
-        _scope_filter(
-            db.query(TagTemplateVersion).join(TagTemplate, TagTemplateVersion.template_id == TagTemplate.id),
-            TagTemplate,
-            db,
-        )
-        .filter(has(TagTemplateVersion.doc))
+        db.query(TagTemplateVersion)
+        .join(TagTemplate, TagTemplateVersion.template_id == TagTemplate.id)
+        .filter(mine(TagTemplate), has(TagTemplateVersion.doc))
         .all()
     )
     rows.extend((row, "doc") for row in versions)
-    for row in _scoped(db, Page).filter(has(Page.draft_doc)).all():
+    for row in _scoped(db, Page).filter(mine(Page), has(Page.draft_doc)).all():
         rows.append((row, "draft_doc"))
     page_versions = (
-        _scope_filter(
-            db.query(PageVersion).join(Page, PageVersion.page_id == Page.id), Page, db
-        )
-        .filter(has(PageVersion.doc))
+        db.query(PageVersion)
+        .join(Page, PageVersion.page_id == Page.id)
+        .filter(mine(Page), has(PageVersion.doc))
         .all()
     )
     rows.extend((row, "doc") for row in page_versions)
     return rows
 
 
-def _propagate(db: Session, preset_id: str, design: Optional[Dict[str, Any]]) -> int:
+def _propagate(db: Session, preset: AccessoryBoxPreset, design: Optional[Dict[str, Any]]) -> int:
     """Write `design` into every linked box (or, with `design=None`, drop their link). Flushes only.
     Returns the number of boxes touched."""
     touched = 0
-    for row, attribute in _doc_rows(db, preset_id):
+    preset_id = preset.id
+    for row, attribute in _doc_rows(db, preset):
         boxes = _linked_boxes(getattr(row, attribute), preset_id)
         if not boxes:
             continue
@@ -146,16 +149,45 @@ def _propagate(db: Session, preset_id: str, design: Optional[Dict[str, Any]]) ->
     return touched
 
 
-def usage(db: Session, preset_id: str) -> List[Dict[str, str]]:
-    """Tag templates (their draft) with a box linked to `preset_id`; archived ones are hidden."""
-    rows = (
+def _live_templates(db: Session, preset_ids: List[str]) -> List[TagTemplate]:
+    """Non-archived tag templates (in scope) whose draft might link any of `preset_ids`: ONE query."""
+    if not preset_ids:
+        return []
+    return (
         _scoped(db, TagTemplate)
         .filter(TagTemplate.archived_at.is_(None))
-        .filter(or_(*[TagTemplate.doc.contains(shape) for shape in _shapes(preset_id)]))
+        .filter(or_(*[TagTemplate.doc.contains(shape) for pid in preset_ids for shape in _shapes(pid)]))
         .order_by(TagTemplate.name)
         .all()
     )
-    return [{"id": row.id, "name": row.name} for row in rows if _linked_boxes(row.doc, preset_id)]
+
+
+def usage(db: Session, preset_id: str) -> List[Dict[str, str]]:
+    """Tag templates (their draft) with a box linked to `preset_id`; archived ones are hidden."""
+    return [
+        {"id": row.id, "name": row.name}
+        for row in _live_templates(db, [preset_id])
+        if _linked_boxes(row.doc, preset_id)
+    ]
+
+
+def usage_counts(db: Session, preset_ids: List[str]) -> Dict[str, int]:
+    """`{preset_id: number of tag templates linking it}` for all of them in one pass."""
+    wanted = set(preset_ids)
+    counts: Dict[str, int] = {pid: 0 for pid in wanted}
+    for row in _live_templates(db, list(wanted)):
+        found = {
+            layer["props"]["presetId"]
+            for layers in _layer_lists(row.doc)
+            for layer in layers
+            if isinstance(layer, dict)
+            and layer.get("type") == "accessories"
+            and isinstance(layer.get("props"), dict)
+            and layer["props"].get("presetId") in wanted
+        }
+        for pid in found:
+            counts[pid] += 1
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +258,7 @@ def update_preset(
             row.name = name
         if design is not None:
             row.design = design
-            rewritten = _propagate(db, row.id, design)
+            rewritten = _propagate(db, row, design)
         row.updated_by = user_id
         db.flush()
         db.commit()
@@ -241,7 +273,7 @@ def delete_preset(db: Session, preset_id: str) -> dict:
     """The immediate delete; the deferred `accessory_box_preset.delete` calls this same function.
     Every linked box loses its `presetId` and keeps its current design."""
     row = get_preset(db, preset_id)
-    detached = _propagate(db, row.id, None)
+    detached = _propagate(db, row, None)
     db.delete(row)
     db.commit()
     return {"deleted": 1, "detached": detached}

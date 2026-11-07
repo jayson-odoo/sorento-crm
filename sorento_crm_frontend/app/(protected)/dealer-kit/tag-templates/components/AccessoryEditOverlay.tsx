@@ -50,11 +50,11 @@ export function AccessoryEditOverlay({
     tr.getLayer()?.batchDraw();
   }, [elementId, props.card, props.footer, target]);
 
-  // The footer is laid out even while hidden, so the first element lands somewhere visible.
-  const shown: AccessoriesLayerProps = {
-    ...props,
-    footer: { show: true, height_mm: 6, elements: [], ...props.footer },
-  };
+  // Editing the footer lays it out even while hidden (as the canvas draws it); editing the card does not.
+  const shown: AccessoriesLayerProps =
+    target === 'footer'
+      ? { ...props, footer: { height_mm: 6, elements: [], ...props.footer, show: true } }
+      : props;
   const box = cardBoxLayout(2, shown, layer.width_mm, layer.height_mm);
   const origin = target === 'card' ? box.cards[0] : box.footer;
   const elements = target === 'card' ? props.card?.elements : props.footer?.elements;

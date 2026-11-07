@@ -480,6 +480,8 @@ class AccessoryService:
         """Append a picture (last in order), with an optional colour."""
         row = self._or_404(accessory_id)
         name, hex_value = _clean_colour(colour_name, colour_hex)
+        # Serialise concurrent adds so the cap below cannot be passed by two requests at once.
+        self.db.query(Accessory.id).filter(Accessory.id == row.id).with_for_update().first()
         existing = self._images(row.id)
         if len(existing) >= MAX_IMAGES:
             raise AppException(
@@ -528,6 +530,22 @@ class AccessoryService:
         self.db.commit()
         if sweep:
             delete_object_best_effort(*sweep)
+
+    def picture_in_scope(self, image_id: str) -> Optional[AccessoryImage]:
+        """The picture when its accessory is visible to the caller's company scope, else None."""
+        return (
+            self.db.query(AccessoryImage)
+            .join(Accessory, Accessory.id == AccessoryImage.accessory_id)
+            .filter(AccessoryImage.id == image_id)
+            .first()
+        )
+
+    def delete_picture_by_id(self, image_id: str) -> None:
+        """The deferred `accessory_image.delete`: the same removal as the route, found by picture id."""
+        image = self.picture_in_scope(image_id)
+        if image is None:
+            raise handle_not_found("Image", image_id)
+        self.delete_picture(image.accessory_id, image.id)
 
     def order_images(self, accessory_id: str, ids: List[str]) -> List[Dict[str, Any]]:
         self._or_404(accessory_id)

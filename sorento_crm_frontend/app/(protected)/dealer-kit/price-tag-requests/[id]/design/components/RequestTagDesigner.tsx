@@ -1808,6 +1808,7 @@ export function RequestTagDesigner({
                   selectedRequestTagId && setPickerLineId(selectedRequestTagId)
                 }
                 hideSaveBar
+                linkedAccessoryBoxes="detach"
                 docId={selectedTag.id}
                 toolbarTrailing={toolbarTrailing}
                 reviewPins={canvasPins}

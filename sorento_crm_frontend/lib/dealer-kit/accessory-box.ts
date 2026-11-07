@@ -8,6 +8,7 @@
  * Everything is in millimetres inside the layer's own box; (0, 0) is its top-left corner.
  */
 import { formatTagPrice } from './price-badge';
+import { richOneLine } from './rich-text';
 import type {
   AccessoriesLayerProps,
   AccessoryTextStyle,
@@ -268,7 +269,8 @@ export function accessoryCardLines(item: TagAccessory): string[] {
     if (item.list_price != null) lines.push(`LP: ${formatTagPrice(item.list_price)}`);
     return lines;
   }
-  return [item.name, item.spec ?? ''].filter((line) => line && line.trim());
+  // A rich spec (the designed card reads the markup) prints as one plain line on the legacy card.
+  return [item.name, richOneLine(item.spec)].filter((line) => line && line.trim());
 }
 
 /** How many text lines every card in a box reserves: 3 once a product is listed, else 2. */

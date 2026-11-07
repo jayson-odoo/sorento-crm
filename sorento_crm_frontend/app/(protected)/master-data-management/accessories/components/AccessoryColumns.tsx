@@ -1,6 +1,6 @@
 'use client';
 
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { richOneLine } from '@/lib/dealer-kit/rich-text';
 import { Trash2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -53,7 +53,7 @@ export function buildAccessoryColumns(handlers: {
     },
     {
       id: 'spec',
-      accessorFn: (row) => richPlainText(row.spec),
+      accessorFn: (row) => richOneLine(row.spec),
       header: ({ column }) => <DataGridColumnHeader title="Spec" column={column} />,
       size: 280,
       enableSorting: false,
@@ -61,9 +61,9 @@ export function buildAccessoryColumns(handlers: {
       cell: ({ row }) => (
         <span
           className="block truncate text-muted-foreground"
-          title={richPlainText(row.original.spec) || undefined}
+          title={richOneLine(row.original.spec) || undefined}
         >
-          {richPlainText(row.original.spec) || '-'}
+          {richOneLine(row.original.spec) || '-'}
         </span>
       ),
     },

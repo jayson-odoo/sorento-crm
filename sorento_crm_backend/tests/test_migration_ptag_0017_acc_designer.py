@@ -114,7 +114,11 @@ def test_revision_is_additive_and_chains_onto_one_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
-    assert script.get_heads() == ["ptag_0017_acc_designer"]
+    # One head, with this revision in its ancestry: later revisions chain on top of it.
+    heads = script.get_heads()
+    assert len(heads) == 1, f"expected one alembic head, found {heads}"
+    ancestry = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
+    assert "ptag_0017_acc_designer" in ancestry
 
 
 def test_the_revision_declares_every_new_column_and_the_preset_table():

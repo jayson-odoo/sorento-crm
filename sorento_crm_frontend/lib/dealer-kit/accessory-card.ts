@@ -11,6 +11,7 @@
  */
 import {
   ACCESSORY_BOX_PAD_MM,
+  ACCESSORY_CARD_PAD_MM,
   accessoryCardInner,
   accessoryChrome,
   accessoryHeaderHeight,
@@ -460,7 +461,9 @@ export function cardFromLegacy(
     elements.push(text('name', 'name', rows[0], nameStyle, props.nameFontSize));
     if (rows[1]) elements.push(text('spec', 'spec', rows[1], specStyle, props.specFontSize));
   }
-  return { width_mm: w, height_mm: height, elements };
+  // Never shorter than the lowest row plus the card's inner margin, whatever the font sizes.
+  const lowest = Math.max(0, ...elements.map((element) => element.y_mm + element.height_mm));
+  return { width_mm: w, height_mm: Math.max(height, lowest + ACCESSORY_CARD_PAD_MM), elements };
 }
 
 /** The per-box keys: they live on the box in a tag template, never in a shared design. */
@@ -646,4 +649,61 @@ export function snapElement(
   if (sx) guides.push({ orientation: 'vertical', position_mm: sx.guide });
   if (sy) guides.push({ orientation: 'horizontal', position_mm: sy.guide });
   return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
+}
+
+// ---------------------------------------------------------------------------
+// Live link between boxes and a saved template
+// ---------------------------------------------------------------------------
+
+type LinkLayer = { id: string; props: { kind: string } };
+
+function boxProps(layer: LinkLayer | undefined): AccessoriesLayerProps | null {
+  const props = layer?.props as unknown as AccessoriesLayerProps | undefined;
+  return props && props.kind === 'accessories' ? props : null;
+}
+
+/** Preset ids linked by at least one box. */
+export function linkedPresetIds(layers: readonly LinkLayer[] | null | undefined): string[] {
+  const ids = new Set<string>();
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (props?.presetId) ids.add(props.presetId);
+  }
+  return [...ids];
+}
+
+/** The design of the LAST box linked to `presetId` whose design differs from `baselineKey`, else null. */
+export function changedLinkedDesign(
+  layers: readonly LinkLayer[] | null | undefined,
+  presetId: string,
+  baselineKey: string | undefined,
+): AccessoryDesign | null {
+  let changed: AccessoryDesign | null = null;
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (!props || props.presetId !== presetId) continue;
+    const design = accessoryDesign(props);
+    if (baselineKey === undefined || designKey(design) !== baselineKey) changed = design;
+  }
+  return changed;
+}
+
+/** Every box linked to `presetId` takes `design` (its own position, size and "Reads from" kept). */
+export function setLinkedDesign<T extends LinkLayer>(layers: readonly T[], presetId: string, design: AccessoryDesign): T[] {
+  return layers.map((layer) => {
+    const props = boxProps(layer);
+    return props?.presetId === presetId
+      ? ({ ...layer, props: applyAccessoryDesign(props, design, presetId) } as unknown as T)
+      : layer;
+  });
+}
+
+/** Every box linked to `presetId` loses the link and keeps its design. */
+export function detachLinked<T extends LinkLayer>(layers: readonly T[], presetId: string): T[] {
+  return layers.map((layer) => {
+    const props = boxProps(layer);
+    return props?.presetId === presetId
+      ? ({ ...layer, props: { ...props, presetId: null } } as unknown as T)
+      : layer;
+  });
 }

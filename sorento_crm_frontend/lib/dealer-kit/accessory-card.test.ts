@@ -400,7 +400,23 @@ describe('cardFromLegacy', () => {
     const legacy = accessoryBoxLayout(1, props, 200, 200, 3).cards[0];
     // One spec line taller than the legacy card, so a description never overlaps the price.
     const specLine = (props.specFontSize * 0.3528 * 1.2);
-    expect(layout.height_mm).toBeCloseTo(legacy.height_mm + specLine);
+    expect(layout.height_mm).toBeGreaterThanOrEqual(legacy.height_mm + specLine - 1e-6);
+  });
+
+  it('keeps every row inside the card at 9pt / 5pt, picture above text', () => {
+    const props = {
+      ...defaultAccessoriesProps(),
+      direction: 'horizontal',
+      itemLayout: 'stacked',
+      nameFontSize: 9,
+      specFontSize: 5,
+    } as AccessoriesLayerProps;
+    for (const lines of [2, 3]) {
+      const layout = cardFromLegacy(props, lines);
+      for (const element of layout.elements) {
+        expect(element.y_mm + element.height_mm).toBeLessThanOrEqual(layout.height_mm - 0.8 + 1e-6);
+      }
+    }
   });
 
   it('prints a product with a description as code, name, LP, description without overlap', () => {

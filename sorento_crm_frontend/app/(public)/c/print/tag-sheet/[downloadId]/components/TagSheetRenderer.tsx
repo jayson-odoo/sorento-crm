@@ -83,7 +83,7 @@ import {
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
-import { isRich, parseRichText } from '@/lib/dealer-kit/rich-text';
+import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
 import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
@@ -1399,7 +1399,7 @@ function renderAccessoriesLayer(
             width: `${box.frame.width_mm}mm`,
             height: `${box.frame.height_mm}mm`,
             boxSizing: 'border-box',
-            background: props.fill,
+            backgroundColor: props.fill,
             border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
             borderRadius: `${props.cornerRadius_mm}mm`,
           }}
@@ -1416,7 +1416,7 @@ function renderAccessoriesLayer(
             height: `${box.header.height_mm}mm`,
             lineHeight: `${box.header.height_mm}mm`,
             // On the border: the header background breaks the border behind the text (legend).
-            background: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+            backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
             ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
             // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
@@ -1443,7 +1443,7 @@ function renderAccessoriesLayer(
               top: `${card.y_mm}mm`,
               width: `${card.width_mm}mm`,
               height: `${card.height_mm}mm`,
-              background: props.cardFill,
+              backgroundColor: props.cardFill,
               borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
             }}
           >
@@ -1499,7 +1499,7 @@ function renderAccessoriesLayer(
             height: `${box.badge.height_mm}mm`,
             lineHeight: `${box.badge.height_mm}mm`,
             borderRadius: '50%',
-            background: props.badgeColor,
+            backgroundColor: props.badgeColor,
             color: '#ffffff',
             textAlign: 'center',
             fontWeight: 900,
@@ -1549,8 +1549,8 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             width: `${box.frame.width_mm}mm`,
             height: `${box.frame.height_mm}mm`,
             boxSizing: 'border-box',
-            background: props.fill,
-            border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
+            backgroundColor: safeColour(props.fill),
+            border: `${props.strokeWidth_mm}mm solid ${safeColour(props.stroke)}`,
             borderRadius: `${props.cornerRadius_mm}mm`,
           }}
           data-testid="accessories-frame"
@@ -1565,7 +1565,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             width: `${box.header.width_mm}mm`,
             height: `${box.header.height_mm}mm`,
             lineHeight: `${box.header.height_mm}mm`,
-            background: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+            backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
             ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
             whiteSpace: 'nowrap',
@@ -1586,7 +1586,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
               top: `${card.y_mm}mm`,
               width: `${card.width_mm}mm`,
               height: `${card.height_mm}mm`,
-              background: props.cardFill,
+              backgroundColor: safeColour(props.cardFill),
               borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
             }}
             data-testid="accessories-card"
@@ -1641,7 +1641,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             height: `${box.badge.height_mm}mm`,
             lineHeight: `${box.badge.height_mm}mm`,
             borderRadius: '50%',
-            background: props.badgeColor,
+            backgroundColor: safeColour(props.badgeColor),
             color: '#ffffff',
             textAlign: 'center',
             fontWeight: 900,
@@ -1704,8 +1704,8 @@ function CardElementView({
                 height: `${dot.d_mm}mm`,
                 borderRadius: '50%',
                 boxSizing: 'border-box',
-                background: colours[i],
-                border: `${0.15 * factor}mm solid ${element.dotOutline || DEFAULT_DOT_OUTLINE}`,
+                backgroundColor: safeColour(colours[i]),
+                border: `${0.15 * factor}mm solid ${safeColour(element.dotOutline || DEFAULT_DOT_OUTLINE)}`,
               }}
             />
           ))}
@@ -1725,7 +1725,7 @@ function CardElementView({
               ...(horizontal
                 ? { top: `${element.y_mm * factor + (element.height_mm * factor - thick) / 2}mm`, height: `${thick}mm` }
                 : { width: `${thick}mm` }),
-              background: element.stroke || element.fill || '#111827',
+              backgroundColor: safeColour(element.stroke || element.fill || '#111827'),
             }}
           />
         );
@@ -1735,8 +1735,8 @@ function CardElementView({
           style={{
             ...frame,
             boxSizing: 'border-box',
-            background: element.fill || undefined,
-            border: stroke ? `${strokeWidth}mm solid ${stroke}` : undefined,
+            backgroundColor: element.fill ? safeColour(element.fill) : undefined,
+            border: stroke ? `${strokeWidth}mm solid ${safeColour(stroke)}` : undefined,
             borderRadius:
               element.shape === 'ellipse'
                 ? '50%'
@@ -1790,7 +1790,7 @@ function CardTextBlock({
         fontWeight: props.fontWeight,
         fontStyle: props.italic ? 'italic' : 'normal',
         textDecoration: props.underline ? 'underline' : 'none',
-        color: props.color,
+        color: safeColour(props.color, '#111827'),
         textAlign: props.align,
         lineHeight: props.lineHeight,
         boxSizing: 'border-box',
@@ -1822,6 +1822,6 @@ function accessoryTextCss(
     letterSpacing: style.letterSpacing
       ? `${style.letterSpacing * LETTER_SPACING_MM_PER_UNIT}mm`
       : undefined,
-    color: style.color,
+    color: safeColour(style.color, 'inherit'),
   };
 }
