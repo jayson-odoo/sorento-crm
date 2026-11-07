@@ -19,7 +19,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-import { defaultAccessoriesProps, type TagLayer, type TagSlots } from '@/lib/dealer-kit/tag-template-types';
+import { defaultAccessoriesProps, defaultPriceBadgeProps, type TagLayer, type TagSlots } from '@/lib/dealer-kit/tag-template-types';
 import { InspectorPanel } from './InspectorPanel';
 
 const layer = {
@@ -50,13 +50,21 @@ function subjectSelect() {
 }
 
 describe('Accessories box: which list it reads', () => {
-  it('offers "This tag\'s list" first and selects it by default', () => {
+  it('offers "This tag\'s list (combo or product)" first and selects it by default', () => {
     captured.selects.length = 0;
     render(<InspectorPanel layer={layer} onUpdate={vi.fn()} onUpdateProps={vi.fn()} subjectSlots={slots} />);
     const select = subjectSelect();
     expect(select).toBeDefined();
-    expect(select!.options[0]).toEqual({ value: 'default', label: "This tag's list" });
+    expect(select!.options[0]).toEqual({ value: 'default', label: "This tag's list (combo or product)" });
     expect(select!.value).toBe('default');
+  });
+
+  it('names every position as a product list (owner 7 Nov), values unchanged', () => {
+    captured.selects.length = 0;
+    render(<InspectorPanel layer={layer} onUpdate={vi.fn()} onUpdateProps={vi.fn()} subjectSlots={slots} />);
+    const options = subjectSelect()!.options;
+    expect(options.find((o) => o.value === 'slot:main')?.label).toBe("Main product's list");
+    expect(options.find((o) => o.value === 'slot:fixed:0')?.label).toBe("Fixed part 1 product's list");
   });
 
   it('picking a combo position writes that position', () => {
@@ -80,5 +88,20 @@ describe('Accessories box: which list it reads', () => {
       'acc1',
       expect.objectContaining({ subjectSlot: undefined, subjectPart: undefined }),
     );
+  });
+
+  it('leaves the price badge picker as it was: "Tag total", "Main product", no list wording', () => {
+    captured.selects.length = 0;
+    const badge = {
+      ...layer,
+      id: 'badge1',
+      type: 'price_badge',
+      props: { ...defaultPriceBadgeProps() },
+    } as TagLayer;
+    render(<InspectorPanel layer={badge} onUpdate={vi.fn()} onUpdateProps={vi.fn()} subjectSlots={slots} />);
+    const options = subjectSelect()!.options;
+    expect(options.find((o) => o.value === 'default')?.label).toBe('Tag total');
+    expect(options.find((o) => o.value === 'slot:main')?.label).toBe('Main product');
+    expect(options.some((o) => /'s list/.test(o.label))).toBe(false);
   });
 });

@@ -1650,8 +1650,11 @@ function SubjectInspector({
   const defaultLabel = isPriceBadge
     ? 'Tag total'
     : props.kind === 'accessories'
-      ? "This tag's list"
+      ? "This tag's list (combo or product)"
       : null;
+  // An accessories box names each choice as a LIST ("Main product's list"), so a pinned box is
+  // not read as "the combo's list for this slot" (owner, 7 Nov). Wording only: values unchanged.
+  const listOf = props.kind === 'accessories' ? accessoryListLabel : (label: string) => label;
   // Two inspectors can be mounted at once (a template editor beside the
   // request designer), and a hard-coded id makes the second `<label>` point
   // at the first one's select.
@@ -1670,19 +1673,19 @@ function SubjectInspector({
   const options: SearchableSelectOption[] = parts
     ? [
         ...(defaultLabel ? [{ value: 'default', label: defaultLabel }] : []),
-        { value: '-1', label: parentCode || 'Parent' },
+        { value: '-1', label: listOf(parentCode || 'Parent') },
         ...parts.map((part, index) => ({
           value: String(index),
-          label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
+          label: `${listOf(part.code || part.name)}${part.chosen ? ' (this tag)' : ''}`,
           ...(grouped && part.role ? { group: part.role } : {}),
         })),
       ]
     : [
         // A layer saved with a part number keeps showing it, so it stays visible and replaceable.
         ...(!subjectSlot && subjectPart !== undefined
-          ? [{ value: String(subjectPart), label: `Part ${subjectPart + 1}` }]
+          ? [{ value: String(subjectPart), label: listOf(`Part ${subjectPart + 1}`) }]
           : []),
-        ...slotOptions(slots, defaultLabel),
+        ...slotOptions(slots, defaultLabel, listOf),
       ];
   const value = parts
     ? subjectPart === undefined
@@ -1751,16 +1754,25 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
   return undefined;
 }
 
+/**
+ * An accessories box's option for one product: "Main product" reads "Main product's list", any
+ * other name "<name> product's list" ("Fixed part 1 product's list", "SRTW5000 product's list").
+ */
+export function accessoryListLabel(label: string): string {
+  return /\bproduct$/i.test(label) ? `${label}'s list` : `${label} product's list`;
+}
+
 /** The positions a layer may read: the previewed combo's own, else the generic set. */
 function slotOptions(
   slots: TagSlots | null | undefined,
   defaultLabel: string | null,
+  listOf: (label: string) => string = (label) => label,
 ): SearchableSelectOption[] {
   const out: SearchableSelectOption[] = [];
   const add = (slot: SubjectSlot, code?: string, group?: string) =>
     out.push({
       value: slotValue(slot),
-      label: slotLabel(slot, slots),
+      label: listOf(slotLabel(slot, slots)),
       ...(code ? { description: code } : {}),
       ...(group ? { group } : {}),
     });
