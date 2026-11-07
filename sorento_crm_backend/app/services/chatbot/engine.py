@@ -588,7 +588,7 @@ def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: A
         turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
         verdict = picked_side
     _with_party_readings(verdict, prep)
-    verdict = _side_suppliers(verdict, prep, turn_trace)
+    verdict = _side_suppliers(verdict, prep, turn_trace, owned)
     with_spans = _with_span_suppliers(verdict, prep)
     if owned and with_spans is not verdict:
         with_spans = _owned_names_kept(verdict, with_spans, owned)
@@ -627,7 +627,9 @@ def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: A
     return verdict
 
 
-def _side_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None", turn_trace: Any) -> dict[str, Any]:
+def _side_suppliers(
+    verdict: dict[str, Any], prep: "_SpanPrep | None", turn_trace: Any, owned: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """SUPPLIER-PARTY-SIDE (crew live re-run at 8b26ef80, 7 Nov: "PO for hanlim", "outstanding PO hanlim" with
     party_side supplier and the word hinted customer, `apply.reconciled` empty on all 6 turns): HANLIM is 7 customer
     ledgers and 2 supplier records, so the untyped party read of "hanlim" over both lists placed no single row and
@@ -644,7 +646,10 @@ def _side_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None", turn_trac
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         held = jsc.nullish_str(e.get("canonical_code")).strip() if isinstance(e, dict) else ""
         party = isinstance(e, dict) and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
-        if not (party and text and _typed_here(text, prep)) or (e.get("hint") == "supplier" and held in prep.supplier_groups):
+        # A name the kept report object holds is that object's, never a supplier (REPORT-FILTER-ALL, review S1).
+        if not (party and text and _typed_here(text, prep)) or text.casefold() in owned or (
+            e.get("hint") == "supplier" and held in prep.supplier_groups
+        ):
             out.append(e)
             continue
         res = next(iter(list_resolver.resolve([list_resolver.Span(text, "supplier")], suppliers, embed=None)), None)
@@ -655,7 +660,9 @@ def _side_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None", turn_trac
             bound.append(text)
             continue
         for key, _line in group:
-            prep.supplier_groups[key] = group
+            # Merged, never replaced: the span pass's own close rows for a key stay beside these (review S2).
+            kept = prep.supplier_groups.setdefault(key, [])
+            kept.extend(g for g in group if g not in kept)
         out.append({k: v for k, v in {**e, "hint": "supplier", "canonical_code": group[0][0]}.items() if k != "party_customers"})
         bound.append(text)
     if not bound:

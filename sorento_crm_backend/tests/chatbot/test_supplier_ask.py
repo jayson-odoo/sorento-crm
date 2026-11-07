@@ -2687,3 +2687,44 @@ def test_a_named_party_scopes_the_po_book_alone():
     fetch_mod.entity_ids_transformer({**trigger, "tool": "crm_outstanding_report"}, space_id=None)  # customer side runs
     assert _supplier_scope(state, state, {"entities": []}, ["purchase_order"], True) is None
     assert _supplier_scope(state, state, verdict, ["purchase_order"], False) is None
+
+
+def test_a_named_party_scopes_the_po_book_on_a_report_ask_turn_too():
+    """Review S3 (#2120): a turn that also carries a report object keeps the PO book's guard."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _supplier_scope
+
+    verdict = {
+        "report_ask": {"company": None},
+        "entities": [{"raw": "hanlim", "hint": "customer", "current_message": True}],
+    }
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    scope = _supplier_scope(state, state, verdict, ["purchase_order"], True)
+    assert scope is not None and scope["tools"] == [PO_TOOL], scope
+
+
+def test_the_supplier_side_never_binds_a_name_the_report_object_holds():
+    """Review S1 (#2120): REPORT-FILTER-ALL's rule holds on a supplier-side turn: a name the kept report object holds
+    is never bound as a supplier."""
+    from app.services.chatbot.engine import _SpanPrep, _side_suppliers
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    prep = _SpanPrep.__new__(_SpanPrep)
+    prep.supplier_ids, prep.message = True, "sorento PO"
+    prep.rows = [LookupRow("supplier", "s2", "SORENTO KITCHEN SUPPLY", ("sorento kitchen supply",))]
+    prep.supplier_groups = {"s9": [("s9", "NEAR (S9)")]}
+    entity = {"raw": "Sorento", "hint": "customer", "canonical_code": None, "current_message": True}
+    trace = SimpleNamespaceTrace()
+    out = _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace, frozenset({"sorento"}))
+    assert out["entities"][0] == entity, out
+    kept = _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace)
+    assert kept["entities"][0]["hint"] == "supplier" and kept["entities"][0]["canonical_code"] == "s2", kept
+    prep.supplier_groups["s2"] = [("s2", "SORENTO KITCHEN SUPPLY (X)"), ("s7", "SORENTA (Y)")]
+    _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace)
+    assert ("s7", "SORENTA (Y)") in prep.supplier_groups["s2"], "the span pass's close rows are merged, never dropped"
+
+
+class SimpleNamespaceTrace:
+    def add(self, *_args, **_kwargs) -> None:
+        return None
