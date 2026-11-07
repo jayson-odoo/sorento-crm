@@ -452,6 +452,7 @@ _HANDOVER_VERB_ORDER = (
     IV_CHANGE_SO,
     IV_CANCEL_BALANCE,
     "CHANGE_ITEM_CODE",
+    "CHANGE_LOCATION",
     "QTY_CHANGE",
     "USE_OWN",
     "USE",
@@ -473,6 +474,8 @@ _HANDOVER_VERB_LABEL = {
     # the email's headline would otherwise print blank. Worded as REMARK words it
     # (OI-EMAIL-PRINT, owner 9 Oct).
     "CHANGE_ITEM_CODE": "NEW ITEM CODE",
+    # SPLIT-SHEET-LOCATION (owner, 7 Nov 2026): AutoCount moved the line's location.
+    "CHANGE_LOCATION": "NEW LOCATION",
     # EMAIL-SO-CHANGES (crew decision, 12 Oct): the headline is never empty. A line whose
     # quantity or date moved but that asks purchasing for nothing (landed stock meets a
     # rise; a date set where none was) reads QTY CHANGE.
@@ -930,6 +933,23 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
         ),
         _own_remark(snapshot),
     )
+
+
+def _location_moved_from(
+    before: Optional[Mapping[str, Any]], now: Mapping[str, Any]
+) -> Optional[str]:
+    """SPLIT-SHEET-LOCATION (owner, 7 Nov 2026, Q3): the location a saved line was confirmed
+    at before, when AutoCount has since moved the line (its snapshot `location` is the core
+    warehouse, `ProjectSupplyService._snapshot`); None when it did not move. Any move counts,
+    within the pool or not (Q4)."""
+    was = (before or {}).get("location") or None
+    now_location = now.get("location") or None
+    return was if was and now_location and was != now_location else None
+
+
+def _new_location_remark(was: str) -> str:
+    """REMARK's words for a moved line: the new code already prints in LOCATION."""
+    return f"NEW LOCATION (was {was})"
 
 
 def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -4965,8 +4985,11 @@ class ProjectOrderInquiryService:
             no_record = before is None or not _decision_words(before)
             # Only a Buy line: a mixed decision (Use BRW and Buy) reads in full, and a
             # Borrow's own hole row is not the line's decision.
-            if (unchanged and row_lines) or (
-                buy_words and (same_kind or no_record) and len(row_lines) == 1
+            # A moved line is told from its snapshots (`_queue_saved_line`), at its new
+            # location with NEW LOCATION: its rows' own lines read the old one.
+            if _location_moved_from(before, now) is None and (
+                (unchanged and row_lines)
+                or (buy_words and (same_kind or no_record) and len(row_lines) == 1)
             ):
                 # The rows already told this line in the one-line form purchasing works
                 # from (QTY = what they held, QTY CHANGE TO = the new need, EMAIL-HANDOVER-
@@ -5535,6 +5558,7 @@ class ProjectOrderInquiryService:
                     now,
                 )
                 keys = keys + ["CHANGED"]
+        moved_from = _location_moved_from(before, now)
         if before is not None:
             qty_before = _dec(before.get("open_qty"))
             date_before, date_now = before.get("required_date"), now.get("required_date")
@@ -5646,7 +5670,7 @@ class ProjectOrderInquiryService:
                     # donor is named beside any date or quantity word
                     # (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
                     not same_kinds
-                    or not pieces
+                    or (not pieces and not moved_from)
                     or _borrow_donors(before) != _borrow_donors(now)
                 ):
                     pieces.append(remark)
@@ -5654,10 +5678,20 @@ class ProjectOrderInquiryService:
                     # What the customer's cut takes off what purchasing holds.
                     pieces.append(f"CANCEL {_qty_str(taken_back)}")
                     keys.append(IV_CANCEL_BALANCE)
+                if moved_from:
+                    # SPLIT-SHEET-LOCATION (owner Q3): only the move is stated; purchasing
+                    # decides what to do with what they hold at the old location.
+                    pieces.append(_new_location_remark(moved_from))
+                    keys.append("CHANGE_LOCATION")
                 remark = ", ".join(piece for piece in pieces if piece)
                 if not remark:
                     # Nothing of purchasing's moved: no line.
                     return
+            elif moved_from:
+                remark = ", ".join(
+                    piece for piece in (remark, _new_location_remark(moved_from)) if piece
+                )
+                keys.append("CHANGE_LOCATION")
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")
                 keys.append("CHANGE_ITEM_CODE")

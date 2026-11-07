@@ -812,9 +812,15 @@ class LineSplitService:
         out: Dict[str, LineFacts] = {}
         for line, core in rows:
             product_id = line.product_id or (core.product_id if core is not None else None)
-            location = line.stock_location or (
-                warehouses.get(str(core.warehouse_id)) if core is not None else None
-            )
+            # SPLIT-SHEET-LOCATION (owner, 6 Nov 2026): the line's own AutoCount location
+            # (the core warehouse), what the board reads (`fact.own_code`). `stock_location`
+            # is where it was last planned, or a CS draft's pool code (SO429664 read BRW
+            # here while the board read BRW-BB), so it is only the fallback.
+            location = (
+                warehouses.get(str(core.warehouse_id))
+                if core is not None and core.warehouse_id
+                else None
+            ) or line.stock_location
             delivered = _dec(getattr(core, "qty_delivered", None))
             ordered = _dec(line.qty if line.qty is not None else getattr(core, "qty_ordered", None))
             out[str(line.id)] = LineFacts(

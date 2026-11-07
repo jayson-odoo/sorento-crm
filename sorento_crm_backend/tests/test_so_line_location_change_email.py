@@ -8,7 +8,7 @@ trigger, FP-EMAIL-ONE-TRIGGER). Every row is seeded here.
 """
 from __future__ import annotations
 
-from app.models.order_inquiry import OrderInquiryRow
+from app.models.project_so import OrderInquiryRow
 
 from .test_oi_saved_line_email import _lines, _order, _post, emails  # noqa: F401
 from .test_planning_change_apply_on_board import api, world  # noqa: F401

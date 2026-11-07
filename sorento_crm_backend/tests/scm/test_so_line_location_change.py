@@ -131,3 +131,12 @@ def test_an_idempotent_re_push_does_not_differ_from_the_older_row():
     assert not _entry_differs_from_older_row(
         _one(_line("BRW-BB", qty=10), _line("BRW-BB", qty=8)), older
     )
+
+
+def test_the_history_phrase_names_a_location_only_move():
+    from app.services.planning_change_service import change_text
+
+    from_, to_ = _from_to(_one(_line("BRW-IB"), _line("BRW-BB")))
+    row = SimpleNamespace(kind="location_changed", from_json=from_, to_json=to_)
+
+    assert change_text(row) == "Location BRW-IB -> BRW-BB"
