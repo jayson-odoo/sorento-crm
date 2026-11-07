@@ -35,17 +35,19 @@ Repro traces: crew/state/handtest/2156/prod-v72-repro/ (copy at 30bbcc6a7c, v202
 - Layer: backend only, staff chatbot report-ask lane (`app/services/chatbot/lanes/business/report_ask.py`), the new
   report-ask object path behind `REPORT_ASK_LINE`. No route, schema, MCP or FE change.
 - Mechanism:
-  - Fix 1 (carry): when the parse itself widens (`broaden_to` "all" for any axis, `entity_op` "clear", or
-    `topic_reset`), a kind whose list the object emptied is not carried back from the held report. The object is the
-    report after this message. Parser fields only; when the parse marks no widen, `_carry` is unchanged (C6-2's
-    protection against an object that dropped a held list stays). Coder deviation (7 Nov): the company is not a list;
-    it is dropped only on the parser's clear of every axis (`entity_op` "clear", WR-4). One kind's widen ("all sale
-    agents") keeps the held company, as the HF-2 lock (test_report_totals_filters.py:728, owner Q3) requires.
-  - Fix 2 (re-ask): a word whose name the held report already settled is not asked again while this message leaves the
-    kind unsaid (said_as null or absent); the held kinds stay. "Settled" = the held brands contain it. A word the
-    message types with a kind still decides as today. Coder deviation (7 Nov): a name held only as the company is still
-    asked brand, account type or company when it is a brand and an account type too (the R5-1c lock,
-    test_report_semantic_carry.py:1468); CP-5 already covers a held company with no account type.
+  - Fix 1 (carry): when the parse itself widens the lists (`entity_op` "clear", or `broaden_to` "all" on the axis
+    "all", none, or a product-filter kind: brand, category, account type; review round 1, WR-10), a list the object
+    emptied is not carried back from the held report; a customer, sales agent or date widen keeps the held lists.
+    `topic_reset` carries nothing already. The object is the report after this message. Parser fields only; when the
+    parse marks no widen, `_carry` is unchanged (C6-2's protection against an object that dropped a held list stays).
+    The company is dropped only on `entity_op` "clear" (WR-4); one kind's widen ("all sale agents") keeps the held
+    company (HF-2, test_report_totals_filters.py:728, owner Q3).
+  - Fix 2 (re-ask): a word left unsure (the kind question would ask it) whose name the held report already settled is
+    not asked again; it is the brand. "Settled" = the held report has the name as its company AND among its brands
+    (the prod T4 shape, review round 1); a brand or a company held alone still asks (WR-11, R5-1c). The rule runs after
+    the C6-1 company reading (WR-9) and never settles a word the open question owes or the object put in
+    `company_or_brand`; on a widen, a `company_or_brand` word equal to the object's own company is that company (WR-1,
+    WR-2). A word the message types with a kind still decides as today.
 - Classes / functions touched: `_carry`, and `_word_kinds` with its caller in `from_object` (the step that hands the
   kind question its unsure word). `turn/decide.widened_kinds` is shared with the open which-one customer pick, so it is not changed;
   the report-ask path reads the widen fields itself.

@@ -3376,16 +3376,17 @@ def _word_kinds(
     code, as `_company_or_brand` reads them), named as an entity whose `said_as` is not null, is that slot (HT1: company,
     brand or both; `from_object` applies it to the company), and for any other word `said_as` is not read (with
     `said_as_text`, a prompt text that defines that key, a `said_as` counts only beside a non-empty `said_as_text`, the
-    word the message typed for it: said or not, never compared with the message, HT1-13); a brand of the held report
-    (`held_ask`, the report this one carries) that this message leaves unsaid (no `said_as` decided it, `kind_said` not
-    said) and the open question does not owe is that brand, never asked again (WR-5; a name held only as the company is
-    still asked brand, account type or company when it is both, R5-1c); a word this message names
+    word the message typed for it: said or not, never compared with the message, HT1-13); a word this message names
     as an entity is that entity's kind when `kind_said` says it; with `kind_said` null, a word the object put in its
     brands or account types, whose entity the parser bound to no candidate (`canonical_code` null), that is also the
     object's own `company` (`company`) is the company (C6-1: the model read "company" and wrote the word twice), else
     unsure; a word the open question still owes is unsure (asked again), except that the object's brands answer the
     company-or-brand question (M2, `kind_both`); a word left in `brand_or_account_type` or `company_or_brand` is unsure
-    (`company_or_brand` read first and whatever `kind_said` says: the slots decide, the data settles it); any other
+    (`company_or_brand` read first and whatever `kind_said` says: the slots decide, the data settles it), except that on
+    a widen (`_widens`) a `company_or_brand` word equal to the object's own `company` is that company (WR-1, WR-2); a
+    word left unsure that the held report (`held_ask`, the report this one carries) settled, its company and one of its
+    brands (the prod T4 shape), and that neither the open question owes nor `company_or_brand` holds, is that brand,
+    never asked again (WR-5; a brand or a company held alone still asks, WR-11, R5-1c); any other
     word, carried from the held report, keeps its list and is never asked. `kind_said` is read as said or not, never
     by its words."""
     def fold(value: Any) -> str:
@@ -3399,7 +3400,9 @@ def _word_kinds(
     owed = {fold(w) for w in (*owed_words, *(jsc.array(extras.get("kind_match")) if owed_words else ()))}
     both_open = bool(owed_words) and bool(extras.get("kind_both"))  # M2: the company-or-brand question is open
     either = {fold(w) for w in jsc.array(ask.get("company_or_brand"))} - {""}
-    held_brands = {fold(b) for b in jsc.array(_dict(held_ask).get("brands"))} - {""}
+    held = _dict(held_ask)
+    settled = {fold(b) for b in jsc.array(held.get("brands"))} & {fold(held.get("company") or "")} - {""}
+    widens = _widens(verdict)
     named: dict[str, dict[str, Any]] = {}
     for e in jsc.array(verdict.get("entities")):
         if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type"):
@@ -3428,7 +3431,6 @@ def _word_kinds(
             continue
         entity = named.get(key)
         said_as = (entity or {}).get("said_as") if {key, fold((entity or {}).get("raw"))} & own else None
-        forms = {key, fold((entity or {}).get("raw") or "")}
         typed = jsc.js_string((entity or {}).get("said_as_text") or "").strip()
         if said_as_text and not typed:
             said_as = None  # HT1-13: no word of the message says it, so it is not said (the HT1-5 / ON-16 rules ask)
@@ -3436,10 +3438,10 @@ def _word_kinds(
             how = picked
         elif said_as in SAID_AS:
             how = said_as  # HT1: a non-null `said_as` on one of the contact's companies is the parser's own slot for it
-        elif forms & held_brands and key not in owed and not kind_was_said((entity or {}).get("kind_said")):
-            how = "brand"  # WR-5: a brand the held report settled, its kind unsaid here: the brand, not asked again
         elif key in either:
-            how = "unsure"  # M2: a `company_or_brand` name is the data's to settle (`_company_or_brand`), asked when both
+            # M2: a `company_or_brand` name is the data's to settle (`_company_or_brand`), asked when both; on a widen the
+            # one that is the object's own company is that company (WR-1, WR-2).
+            how = "company" if widens and key == fold(company or "") else "unsure"
         elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
             how = jsc.js_string(entity.get("hint")).strip().lower()
         elif entity is not None and "kind_said" in entity:
@@ -3451,6 +3453,8 @@ def _word_kinds(
             how = "unsure"
         else:
             how = default  # M2: an owed name the object moved to its brands answers the company-or-brand question
+        if how == "unsure" and key in settled and key not in owed | either:
+            how = "brand"  # WR-5: the held report's own company and brand, its kind unsaid here: not asked again
         out.append((word, how, entity, how if said_as in SAID_AS and how == said_as else None))
     return out
 
@@ -3688,6 +3692,18 @@ def from_object(
     return out
 
 
+#: WR-10: the `broaden_axis` values whose widen widens the held lists too: every axis ("all", or none named) and a
+#: product filter's own kind; a customer, sales agent or date widen keeps them.
+_LIST_WIDEN_AXES = frozenset({"", "all", "brand", "category", "account_type"})
+
+
+def _widens(verdict: dict[str, Any]) -> bool:
+    """Does this parse widen the held lists: `entity_op` "clear", or `broaden_to` "all", on an axis of
+    `_LIST_WIDEN_AXES` (WR-1..3, WR-10, WR-12). Parser fields only."""
+    axis = jsc.js_string(verdict.get("broaden_axis") or "").strip().lower()
+    return (verdict.get("entity_op") == "clear" or verdict.get("broaden_to") == "all") and axis in _LIST_WIDEN_AXES
+
+
 def _carry(
     ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None, *, answering: bool = False
 ) -> None:
@@ -3696,11 +3712,11 @@ def _carry(
     word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
     widens is not carried (`turn.decide.widened_kinds`, the reader the open which-one customer pick shares: `broaden_axis`
     with `broaden_to` "all" naming one of the kind's hints, and for the customer a global drill or "my ..."). A parse that
-    widens at all (`broaden_to` "all" on any axis or none, or `entity_op` "clear"; a `topic_reset` carries nothing, the
-    caller's `carrying`) carries back no list the object left empty: the object is the report after it ("all", "for all
-    brands and categories", WR-1..3); the company only on the parser's clear of every axis (`entity_op` "clear", "clear
-    all", WR-4): one kind's widen keeps the held company (HF-2, owner Q3). The axis's own slot is not carried: a
-    breakdown ranks across it (`_AXIS_FILTERS`). `answering` (a clarification is open, crew
+    widens the lists (`_widens`; a `topic_reset` carries nothing, the caller's `carrying`) carries back no list the
+    object left empty: the object is the report after it ("all", "for all brands and categories", WR-1..3, WR-12); the
+    company only on the parser's clear of every axis (`entity_op` "clear", "clear all", WR-4): one kind's widen keeps
+    the held company (HF-2, owner Q3). The axis's own slot is not carried: a breakdown ranks across it
+    (`_AXIS_FILTERS`). `answering` (a clarification is open, crew
     console pass CP-1, owner 3 Nov): the held channel is carried too, unless the parse widens it or splits by it."""
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
@@ -3711,8 +3727,8 @@ def _carry(
 
     # R-P3-09: the kinds the parse widens, read as each kind's own hint (brand and account type clear together).
     widened = widened_kinds(verdict)
-    cleared = verdict.get("entity_op") == "clear"
-    widens = cleared or verdict.get("broaden_to") == "all"
+    widens = _widens(verdict)
+    cleared = widens and verdict.get("entity_op") == "clear"
     for keys, hints in _CARRY_KINDS:
         if (cleared if "company" in keys else widens) or named & hints or hints & widened or any(ask.get(k) for k in keys):
             continue
