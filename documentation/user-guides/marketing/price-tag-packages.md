@@ -70,7 +70,7 @@ Do this once per shape of package (for example a sink with three taps); every co
 
 1. Open **[Dealer Kit → Room Designer → Tag Templates](/dealer-kit/tag-templates)** and open a template. Bathroom furniture and kitchen sink products pick their family's template on a new design.
 2. Use **Preview combo** above the canvas to pick a real combo. The canvas now shows that combo's picture, text and options while you design.
-3. Select a layer, and in the Inspector's field list choose from the **Combo** group: **Combo Photo**, **Combo Name**, **Combo Description**, **Combo Choices**, **Combo Top-ups**. Free items print through the existing **Accessories** field, and prices through **List Price** and **Sell Price**.
+3. Select a layer, and in the Inspector's field list choose from the **Combo** group: **Combo Photo**, **Combo Name**, **Combo Description**, **Combo Choices**, **Combo Top-ups**. Free items print through the existing **Accessories** field (how to design its box: [Designing the Accessories box](price-tag-accessories.md)), and prices through **List Price** and **Sell Price**.
 4. In a text layer, **Insert field** offers the same content in its Combo group: combo name, combo description and free items.
 5. To draw each product of the combo separately, set the layer's **Product** select to a position: **Main product**, **Fixed part n**, a group pick such as **Kitchen tap, pick 2**, or **Upgrade n**. Preview a combo first and the select shows that combo's own names and codes.
 6. A template needs whatever positions its layers use: a template with layers on **Kitchen tap, pick 1** to **pick 3** needs 3 from that group. You do not set this anywhere; it is read from the layers and shown on the combo's **Price tag templates** picker and on the request line.
@@ -109,5 +109,6 @@ There is no import screen. The technical team can load combos from the printed c
 ## See also
 
 * [Project Sales Rep - Submit via portal](../project-sales-rep/submit-via-portal.md#packages-and-parts-on-a-line) - the salesperson's side of the same package.
+* [Designing the Accessories box on a price tag](price-tag-accessories.md) - the card, footer, saved accessories templates and per-list overrides.
 * [Product Management - Manage products](../product/manage-products.md) - the rest of the product detail page.
 * [Configure Portal Revisions](../user-management/configure-portal-revisions.md) - letting a salesperson revise a submitted price tag request.

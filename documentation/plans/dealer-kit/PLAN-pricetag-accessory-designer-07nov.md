@@ -1,6 +1,6 @@
 # PLAN: price tag accessory card layout, designed inside the Tag Template designer (PRICETAG-ACCESSORY-DESIGNER, 07/11/2026)
 
-Status: Build (owner OK on mock v3 07/11/2026 22:18; v3 Q1/Q2 = (a)). Track: full (migration + new table + new page).
+Status: PR+CI (build, review READY, security review fixed, cloud browser PASS 8/8, hand test pending; owner OK on mock v3 07/11/2026 22:18). Track: full (migration + new table + new page).
 
 Behaviour card: `CARD-pricetag-accessory-designer-07nov.md` (rules D1-D5, A1-A4, P1, F1-F3, V1-V9; v1 rulings
 win where they differ). UAC: `pricetag-accessory-designer-acceptance-criteria.md`. Mocks: v1, v2 (click by click),
