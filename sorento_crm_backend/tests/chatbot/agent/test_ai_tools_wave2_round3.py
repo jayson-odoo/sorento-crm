@@ -132,12 +132,13 @@ def test_A1_active_customers_of_an_agent_use_the_customers_lists_active_filter(a
     by_agent = {"field": "agent", "op": "contains", "value": "active agent"}
     out = run(db, {"entity": "customer", "filters": [by_agent], "aggregates": [{"fn": "count"}]})
     assert out["groups"] == [{"count": 2}]
-    assert out["scope_note"] == "Inactive customers excluded."
+    # Round 8: the answer also names the agent the filter took.
+    assert out["scope_note"] == f"Agent: {agent.sales_agent} - Active Agent. Inactive customers excluded."
     by_code = {"field": "agent", "op": "contains", "value": agent.sales_agent}
     assert run(db, {"entity": "customer", "filters": [by_code], "aggregates": [{"fn": "count"}]})["groups"] == [{"count": 2}]
     every = run(db, {"entity": "customer", "filters": [by_agent, {"field": "is_active", "op": "in", "value": [True, False]}],
                      "aggregates": [{"fn": "count"}]})
-    assert every["groups"] == [{"count": 3}] and every["scope_note"] is None
+    assert every["groups"] == [{"count": 3}] and every["scope_note"] == f"Agent: {agent.sales_agent} - Active Agent."
 
 
 # ------------------------------------------------------------------ (3) the index and the cap
