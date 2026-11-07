@@ -11,7 +11,8 @@ One dataset, two readers, so an item figure is computed once:
 
 Every figure and attribution is `app/services/sales/invoiced_sales.py`'s: the line's net of tax
 times the document's rate, negative on a credit note; the agent, debtor type and sales type of
-the line's document. A line whose item code is not a CRM product still counts, under its code.
+the line's document. A line whose item code is not a CRM product still counts, under its code;
+an AutoCount subtotal line does not (`inv.counted_line()`), or its document counts twice.
 """
 from __future__ import annotations
 
@@ -49,7 +50,7 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         # The sales type once per document, not per line (unread, it is never computed).
         .outerjoin(_DOC_TYPE, sa.true())
-        .where(inv.posted())
+        .where(inv.posted(), inv.counted_line())
     )
 
 
