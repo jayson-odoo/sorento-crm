@@ -643,3 +643,51 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
 
     assert len(result.pending_action["lines"]) == 1
     assert b.phone_number in result.pending_action["lines"][0]
+
+
+# ------------------------------------------------------------------ 7. security review round 1
+
+
+def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
+    """B1: a superadmin linked user, an operator holding only the contacts slug: no company, stock or agents."""
+    import dataclasses
+
+    from app.models.access import ContactAgentAccess, StockVisibilityPolicy
+    from app.services.chatbot.agent import actions, batch
+
+    w = make_world(db)  # the linked user: superadmin with the agents and stock slugs
+    operator = seed_user(db, contact_pk=None, slugs=(EDIT,))
+    for company_id in (w.srt, w.mch):
+        db.add(UserCompany(user_id=operator, company_id=company_id))
+    db.commit()
+    person = dealer(db, w, companies=())
+    ctx = dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
+
+    steps, skipped = batch.propose_rows(db, ctx, GRANT, [row_(person.phone_number, codes=[w.cust_a.customer_code])], seen_ids=set())
+    assert skipped == [] and "not applied" in steps[0]["summary"].lower()
+    action = store(db, w, steps)
+    outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
+
+    assert outcome.status == "executed", outcome.steps
+    after = state(db, person.phone_number)
+    assert after["companies"] == []
+    assert after["links"] == [str(w.cust_a.id)]
+    with company_scope(db, None):
+        assert db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == person.id).count() == 0
+        assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == person.id).count() == 0
+
+
+def test_07_more_than_ten_customers_on_a_row_is_refused(db):
+    w = make_world(db)
+    steps, skipped = propose_rows(db, w, [row_(fake_phone(), codes=[f"ZZT-{i}" for i in range(11)])])
+    assert steps == []
+    assert "more than 10" in reason_of(skipped, 1)
+
+
+def test_07_a_cell_cannot_carry_a_markdown_link_or_a_pipe(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    steps, skipped = propose_rows(db, w, [row_("[click](http://evil.example) | x", name="A|B")])
+    block = batch.preview_block(steps, skipped)
+    assert "](" not in block and "A/B" in block

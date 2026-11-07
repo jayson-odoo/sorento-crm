@@ -152,7 +152,9 @@ def plan(db, user: dict, args: dict) -> dict:
 
     customers = _customers(db, args, companies, company_ids)
     contact = _find_contact(db, phone)
-    skip = facets_to_skip(db, uid)
+    # Only what everyone acting may set on screen: the linked user and the console operator (security review B1).
+    acting = dict.fromkeys(i for i in (uid, user.get("operator_user_id")) if i)
+    skip = frozenset().union(*(facets_to_skip(db, i) for i in acting))
     world = sheet._world(db, set(companies))
     if contact is not None:
         cid = str(contact.id)
@@ -299,7 +301,8 @@ def _changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
     return out + [{"record": record, **c} for c in after.get("changes") or []]
 
 
-_TEXT_LIST = {"type": "array", "items": {"type": "string"}}
+MAX_CUSTOMERS = 10
+_TEXT_LIST = {"type": "array", "items": {"type": "string"}, "maxItems": MAX_CUSTOMERS}
 
 writes.WRITES[GRANT] = writes.WriteDef(
     name=GRANT,
@@ -325,7 +328,8 @@ writes.WRITES[GRANT] = writes.WriteDef(
                         "description": "owner = Business owner / Owner / Pemilik / Tauke; employee = Employee / Staff / Pekerja.",
                     },
                     "companies": {
-                        **_TEXT_LIST, "description": "SRT for Sorento, MCH for Mocha (one or both).",
+                        "type": "array", "items": {"type": "string"}, "maxItems": 2,
+                        "description": "SRT for Sorento, MCH for Mocha (one or both).",
                     },
                     "customer_codes": {**_TEXT_LIST, "description": "Customer codes as written in the table."},
                     "customer_names": {

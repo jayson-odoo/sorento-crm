@@ -164,6 +164,9 @@ def run_as_user(
     if user is None:
         raise AppException(status_code=403, message="The user is no longer available.", code="USER_GONE")
     user["linked_user_id"] = str(ctx.user_id)
+    # The console operator acting for the linked user (None on the user's own turn): a write that limits itself to
+    # what the person may set on screen limits itself to what BOTH may set (AGENT-BULK-ACTIONS).
+    user["operator_user_id"] = str(getattr(ctx, "operator_user_id", None) or "") or None
     previous = get_company_scope(db)
     actor = AuditActor(
         actor_type="user",
@@ -538,6 +541,8 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
             return f"`{key}` must be one of: {', '.join(spec['enum'])}."
         if "maxLength" in spec and isinstance(value, str) and len(value) > spec["maxLength"]:
             return f"`{key}` is too long."
+        if "maxItems" in spec and isinstance(value, list) and len(value) > spec["maxItems"]:
+            return f"`{key}` has more than {spec['maxItems']} values."
     return None
 
 

@@ -100,7 +100,8 @@ def propose(
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
     write, rows = args.get("write"), args.get("rows")
     definition = writes.WRITES.get(write) if isinstance(write, str) else None
-    if definition is None or not definition.batchable:
+    # A batched row gets no loop-set arguments (`_is_test`, `_user_text`), so a write that needs them never batches.
+    if definition is None or not definition.batchable or definition.runs_as != "user" or write == writes.CREATE_IDEA:
         return ToolResult("invalid", message=f"{write} cannot be proposed for a table.")
     if definition.name not in {d.name for d in batchable_writes(db, ctx)}:
         return ToolResult("denied", message=f"{write} is outside this user's access.")
@@ -132,8 +133,13 @@ def propose(
     )
 
 
+MAX_CELL_CHARS = 200
+
+
 def _cell(value: Any) -> str:
-    return writes._line(value).replace("|", "/") or " "
+    """A table cell: one line, no pipe, no markdown link brackets (a cell may hold the model's copy of the paste)."""
+    text = writes._line(value).replace("|", "/").replace("[", "(").replace("]", ")")
+    return (text if len(text) <= MAX_CELL_CHARS else f"{text[:MAX_CELL_CHARS]}...") or " "
 
 
 def _table(headers: list[str], rows: list[list[Any]]) -> str:

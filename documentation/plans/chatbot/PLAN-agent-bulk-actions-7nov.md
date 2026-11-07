@@ -1,6 +1,6 @@
 # PLAN: Agent bulk actions from a pasted table (AGENT-BULK-ACTIONS)
 
-Status: Plan, behaviour card posted to the owner (7 Nov 2026). Track: full (L: writes + permissions).
+Status: Build (owner accepted all five card recommendations, "2226 ok", 7 Nov ~16:15). Track: full (L: writes + permissions).
 
 ## Journey
 
@@ -77,4 +77,4 @@ Permission rule: only a user holding `user_management.contacts.edit` (the slug o
 upload and contact create) is offered the tool; facets the user could not set on the screen (companies: superadmin;
 stock / agents: their own slugs) are shown as "not applied" for that row, as the sheet upload does today.
 
-Questions (recommendations in brackets): see the PR comment.
+Answers (owner, 7 Nov): (1) the full Respond-sheet template through the same engine; (2) a phone not in the CRM is created, marked new in the preview; (3) Malay and English access words accepted, anything else skips the row; (4) each row all or nothing, the other rows still apply, failures listed; (5) up to 50 rows per Confirm.
