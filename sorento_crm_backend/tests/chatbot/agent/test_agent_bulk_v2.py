@@ -17,6 +17,8 @@ Pinned shapes:
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.models.base import company_scope
@@ -377,3 +379,175 @@ def test_09_a_not_found_reply_after_a_skipped_batch_row_is_accepted_without_a_re
     assert len(provider.seen) == 2, "the not-found claim needed a repair round"
     assert result.rounds == 2
     assert "I could not confirm" not in result.reply_text
+
+
+# ------------------------------------------------------------------ fix round 1: guards (G1 to G3)
+
+
+def test_g1_a_name_held_only_by_an_account_of_an_ungranted_company_is_no_customer_named(db):
+    w = make_world(db, superadmin=False)
+    account(db, "ZZT Quiet Shop", "ZHID-01", w.hidden)
+    person = dealer(db, w)
+
+    steps, skipped, waiting = propose_rows(db, w, [row_(person.phone_number, names=["ZZT Quiet Shop"])])
+
+    assert steps == [] and waiting == []
+    reason = skipped[0]["reason"]
+    assert 'No customer named "ZZT Quiet Shop" in your companies' in reason
+    assert "ZZT Hidden Co" not in reason and "ZHID-01" not in reason
+
+
+def test_g2_an_exact_full_name_of_a_mocha_account_on_a_sorento_row_is_refused_and_links_nothing(db):
+    w = make_world(db)
+    person = dealer(db, w)
+
+    steps, skipped, waiting = propose_rows(
+        db, w, [row_(person.phone_number, companies=["SRT"], names=[w.cust_b.customer_name])]
+    )
+
+    assert steps == [] and waiting == []
+    assert "is a Mocha customer" in skipped[0]["reason"]
+    assert state(db, person.phone_number)["links"] == []
+
+
+def test_g3_one_row_with_two_ambiguous_names_is_one_waiting_row_with_two_choices(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    dealer_h(db, w.mch, count=2)
+    for i in (1, 2):
+        account(db, f"ZZT DEALER K BRANCH {i}", f"ZK-{i:02d}", w.mch)
+    person = dealer(db, w, companies=(w.mch,))
+
+    out = batch.propose(
+        db, ctx_of(db, w),
+        {"write": GRANT, "rows": [waiting_row(w, person, customer_names=[WRITTEN, "ZZT Dealer K"])]},
+        [], seen_ids=set(),
+    )
+
+    assert out.data["rows_waiting"] == 1
+    assert len(out.data["needs_choice"]) == 2
+
+
+# ------------------------------------------------------------------ fix round 1: R4 not-found wording is exact
+
+
+def _backed(what: str, reason: str) -> bool:
+    from app.services.chatbot.agent import batch
+    from app.services.chatbot.agent.loop import _not_found_backed
+
+    ledger = {"b1": {"name": batch.BATCH, "status": "invalid", "args": {}, "data": {"skipped": [{"row": 1, "reason": reason}]}}}
+    return _not_found_backed(what, "b1", ledger, set())
+
+
+def test_r4_only_a_no_customer_part_backs_a_not_found_claim_for_exactly_that_term():
+    phone_and_fit = 'Phone "12345" is not a Malaysian mobile number; "ZZT Dealer H" fits 3 accounts.'
+    assert _backed("ZZT Dealer H", phone_and_fit) is False
+    assert _backed("12345", phone_and_fit) is False
+    assert _backed("Dealer K", '"Dealer K" is a Mocha customer, but the row\'s company is Sorento.') is False
+    assert _backed("ACME", 'More than one customer has the code "ACME"; give its customer code.') is False
+    assert _backed("C1", 'Phone "P1" is not a Malaysian mobile number; No customer with the code "C1" in your companies.') is True
+    assert _backed("zzt  nowhere STORES", 'No customer named "ZZT Nowhere Stores" in your companies.') is True
+    assert _backed("N1", 'No customer with the name "N1" in your companies.') is True
+    assert _backed("Other", 'No customer named "ZZT Nowhere Stores" in your companies.') is False
+
+
+# ------------------------------------------------------------------ fix round 1: R5 a repeated phone beside a waiting row
+
+
+def test_r5_a_row_repeating_the_phone_of_a_waiting_row_is_skipped_as_same_as_it(db):
+    w = make_world(db)
+    dealer_h(db, w.mch)
+    shared, other = dealer(db, w, companies=(w.mch,)), dealer(db, w)
+
+    steps, skipped, waiting = propose_rows(db, w, [
+        waiting_row(w, shared),
+        row_(other.phone_number, codes=[w.cust_a.customer_code]),
+        row_(shared.phone_number, companies=["MCH"], codes=[w.cust_b.customer_code]),
+    ])
+
+    assert [s["row"] for s in steps] == [2] and [x["row"] for x in waiting] == [1]
+    assert [s["row"] for s in skipped] == [3]
+    assert "Same as row 1." in skipped[0]["reason"]
+
+
+def test_r5_two_waiting_rows_with_one_phone_make_the_second_skipped(db):
+    w = make_world(db)
+    dealer_h(db, w.mch)
+    shared = dealer(db, w, companies=(w.mch,))
+
+    steps, skipped, waiting = propose_rows(db, w, [waiting_row(w, shared), waiting_row(w, shared)])
+
+    assert steps == [] and [x["row"] for x in waiting] == [1]
+    assert [s["row"] for s in skipped] == [2] and "Same as row 1." in skipped[0]["reason"]
+
+
+# ------------------------------------------------------------------ fix round 1: R6 a not-ready table expires the old card
+
+
+def test_r6_a_table_with_no_ready_row_expires_the_previous_confirm_card(db):
+    w = make_world(db)
+    dealer_h(db, w.mch)
+    ready, waits = dealer(db, w), dealer(db, w, companies=(w.mch,))
+    first = [row_(ready.phone_number, codes=[w.cust_a.customer_code])]
+    run_turn(db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": first}, "b1")), answer_("Ready.")], text_="grant access")
+    assert [a.status for a in action_rows(db, w.respond_id)] == ["proposed"]
+
+    second = [waiting_row(w, waits)]
+    result, _ = run_turn(
+        db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": second}, "b2")), answer_("Pick one.")], text_="grant access"
+    )
+
+    assert result.pending_action is None
+    assert [a.status for a in action_rows(db, w.respond_id)] == ["expired"]
+
+
+# ------------------------------------------------------------------ fix round 1: R7 plural words and the recheck prefix
+
+
+def _choice(written: str, count: int) -> list[dict]:
+    return [{"written": written, "company": "MCH", "more": False,
+             "candidates": [{"code": f"ZH-{i}", "name": f"ZZT DEALER H {i}"} for i in range(count)]}]
+
+
+def test_r7_the_needs_choice_message_counts_the_candidates():
+    from app.services.chatbot.agent.contact_grant import NeedsChoice
+
+    assert '"X" fits 1 account' in NeedsChoice(_choice("X", 1)).message
+    assert '"X" fits 1 accounts' not in NeedsChoice(_choice("X", 1)).message
+    assert '"X" fits 3 accounts' in NeedsChoice(_choice("X", 3)).message
+
+
+def test_r7_a_hard_problem_with_one_candidate_reads_fits_one_account(db):
+    w = make_world(db)
+    dealer_h(db, w.mch, count=1)
+    person = dealer(db, w, companies=(w.mch,))
+
+    steps, skipped, waiting = propose_rows(db, w, [waiting_row(w, person, phone="12345")])
+
+    assert waiting == []
+    assert f'"{WRITTEN}" fits 1 account' in skipped[0]["reason"]
+    assert "fits 1 accounts" not in skipped[0]["reason"]
+
+
+def test_r7_a_recheck_that_now_needs_a_choice_gets_the_changed_since_prefix(db):
+    from sqlalchemy import text
+
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    person = dealer(db, w)
+    said = w.cust_a.customer_name
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, names=[said])])
+    action = actions.store_proposal(
+        db, ctx_of(db, w), conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=steps,
+    )
+    with company_scope(db, None):
+        db.execute(text("UPDATE customers SET customer_name = customer_name || ' OLD' WHERE id = :i"), {"i": w.cust_a.id})
+    db.commit()
+
+    outcome = actions.confirm(db, w.respond_id, str(action.id), via="console")
+
+    assert outcome.steps[0]["status"] == "failed"
+    assert outcome.steps[0]["error"].startswith("This changed since it was proposed: ")
+    assert state(db, person.phone_number)["links"] == []
