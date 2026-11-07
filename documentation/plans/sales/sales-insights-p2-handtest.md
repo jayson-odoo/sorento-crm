@@ -4,7 +4,7 @@ crew test copy
 ## Setup
 - Sign in as an admin (holds sales.leaderboard.view, sales.reports.view and order_management.orders.view).
 - Shared dev DB, no migration. A worker is not needed.
-- Until SALES-SUBTOTAL-LINES (#2230) is on this branch, Invoiced figures carry the doubled subtotal lines (October total RM 16,514,407.26 instead of RM 16,369,803.26; only ERIC NG October and JENNIFER September differ). Delivered / Ordered / Undelivered are not affected.
+- SALES-SUBTOTAL-LINES (#2230) is merged into this branch: Invoiced figures skip AutoCount subtotal lines (the dev DB carries its flags).
 
 ## Steps
 1. From `/`, open Sales > Leaderboard in the sidebar.
@@ -27,11 +27,11 @@ crew test copy
 18. Narrow the browser to 375px wide and repeat steps 4 and 8.
 
 ## Expected
-- Step 2: total RM 16,514,407.26 (RM 16,369,803.26 after #2230); LCL #1 RM 1,856,856.61, SEAN #2 RM 1,276,644.96, JUSTIN #3 RM 1,156,644.97. No Target column (every agent target on dev is RM 0.00).
+- Step 2: total RM 16,369,803.26; LCL #1 RM 1,856,856.61, SEAN #2 RM 1,276,644.96, JUSTIN #3 RM 1,156,644.97. No Target column (every agent target on dev is RM 0.00).
 - Step 5: LCL invoiced RM 1,856,856.61, 24 customers; first row is customer code 304-R015, RM 845,188.21, with the customer's real name above the code.
-- Step 6: 684 items and the pager counts 684; first row AC-EXP-006, RM 735,826.08; lines with no item code show as a "(no product)" footer line (RM 38,000.00), not a ranked row.
+- Step 6: 684 items and the pager counts 684 (on the full unfiltered Product view too, Items equals the pager); first row AC-EXP-006, RM 735,826.08; lines with no item code show as a "(no product)" footer line (RM 38,000.00), not a ranked row.
 - Step 7: back on the full Sales person board (Sales person view, no chip).
-- Step 8: Channel rows Dealer, Project team, No sales order, Sales order type not set; the rows add up to the total (after #2230: Dealer RM 9,665,663.40, Project team RM 5,532,136.98, No sales order RM 1,136,680.81, Sales order type not set RM 35,322.07).
+- Step 8: Channel rows Dealer, Project team, No sales order, Sales order type not set; the rows add up to the total (Dealer RM 9,665,663.40, Project team RM 5,532,136.98, No sales order RM 1,136,680.81, Sales order type not set RM 35,322.07).
 - Step 9: Delivered total RM 10,797,078.52, vs last period -21.2%; Channel rows Dealer RM 7,919,006.98, Project team RM 2,810,160.30, Sales order type not set RM 67,911.24. The period stays Last month.
 - Step 10: Delivered #1 SEAN RM 1,181,097.92, #2 FANNY RM 894,180.38, #3 LONG RM 766,582.12.
 - Step 11: Ordered total RM 14,697,054.39 (-10.2%); #1 SEAN RM 1,398,504.30, #2 FANNY RM 1,149,295.56.

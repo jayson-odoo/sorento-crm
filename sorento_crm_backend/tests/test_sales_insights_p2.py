@@ -1126,3 +1126,25 @@ def test_r2_7c_every_sales_report_declares_a_clearable_multi_company_param():
     for name, definition in _definitions().items():
         param = next(p for p in definition.params if p.key == "company")
         assert param.multi and param.clearable, name
+
+
+# ====================================================================== crew rerun round 3, item 11
+
+
+def test_r3_11_items_and_customers_kpis_equal_the_ranked_rows_when_a_sale_nets_to_zero(db):
+    """Crew (d1fbf0ea): the full October Product view said Items 3024 while the pager said 3017. An item (or a
+    customer) whose invoice is cancelled out by a credit note has lines with a figure, so the distinct count counted
+    it, but its row nets to zero and the engine drops it. The view's own KPI counts the rows it ranks."""
+    world = _world(db)
+    netted = product(db, company_id=DEFAULT_COMPANY_ID)
+    buyer = cust(db)
+    _iv(db, "invoice", "500.00", date(2026, 10, 12), agent=world.a1, customer=buyer, prod=netted, qty="2")
+    _iv(db, "credit_note", "500.00", date(2026, 10, 13), agent=world.a1, customer=buyer, prod=netted, qty="2")
+    db.commit()
+    with make_client(db, allow=ALL3) as client:
+        products = _ok(client, basis="invoiced", by="product")
+        customers = _ok(client, basis="invoiced", by="customer")
+    assert netted.product_code not in {r["name"] for r in products["rows"]}
+    assert products["total"]["products"] == len(products["rows"])
+    assert buyer.customer_name not in {r["name"] for r in customers["rows"]}
+    assert customers["total"]["customers"] == len(customers["rows"])

@@ -69,6 +69,8 @@ Response:
 ```
 - `date_*` / `previous_*`: null when absent (outstanding all dates; previous always null on outstanding).
 - `total`: `run_ask` total of the whole query (filters applied), `prev_amount` / `change_pct` null on outstanding;
+  on `by=customer` / `by=product`, `total.customers` / `total.products` = the number of ranked rows (a sale netting to
+  zero has no row; crew round 3);
   `customers` / `products` distinct counts (`also`).
 - `rows`: `run_ask(group_by=<by>)` rows with a non-zero figure, ranked by amount desc then name, dense 1..n. `name`
   is the engine's row value; `keys` = `run_ask` row keys (customer / product / brand / category ids; `[]` for

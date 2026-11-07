@@ -426,6 +426,14 @@ def build(
 
     rows = _sorted(rows, sort, direction)
     total = now["total"]
+    customers_total = int(total.get("customers") or 0)
+    products_total = int(total.get("products") or 0)
+    # The view's own count is the rows it ranks: a customer or item whose sales net to zero (an invoice and its credit
+    # note) has lines with a figure, so the distinct count holds it, but its row nets to nothing (crew, round 3).
+    if by == "customer":
+        customers_total = len(rows)
+    elif by == "product":
+        products_total = len(rows)
     return {
         "basis": basis,
         "by": by,
@@ -439,8 +447,8 @@ def build(
             "qty": int(total.get("qty") or 0),
             "prev_amount": None if before is None else _money(before["total"]["amount"]),
             "change_pct": None if before is None else _change(total["amount"], before["total"]["amount"]),
-            "customers": int(total.get("customers") or 0),
-            "products": int(total.get("products") or 0),
+            "customers": customers_total,
+            "products": products_total,
         },
         "no_agent_amount": no_agent,
         "rows": rows,
