@@ -129,3 +129,58 @@ def test_build_batch_maps_the_three_diff_kinds_the_same_for_every_trigger(api):
     assert product_changed_row.from_json["item_code"] == old_product.product_code
     assert product_changed_row.to_json["item_code"] == new_product.product_code
     assert product_changed_row.item_code == new_product.product_code
+
+
+def test_a_location_move_on_a_held_line_raises_one_location_changed_row(api):
+    """SPLIT-SHEET-LOCATION: AutoCount moves a held line BRW-IB -> BRW-BB, nothing else. The
+    real diff (line_id pairing, as the ESB and manual-edit triggers build it) raises one
+    `location_changed` row carrying both locations, and the board feed serves it."""
+    from app.services.scm.outstanding_diff import diff_lines
+
+    from tests.test_planning_changes import BASE, _warehouse
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                      required_date=OLD)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ]})
+    sibling = _warehouse(db, f"{world.own_wh.warehouse_code}X", segment="project",
+                         pool_warehouse_id=world.pool_wh.id)
+    db.commit()
+
+    def side(code):
+        return Line(doc_number=core_so.so_number, item_code=world.product.product_code,
+                    location=code, qty=10.0, required_date=OLD, row_ref=str(core.id),
+                    line_id=str(core.id))
+
+    diff = diff_lines([side(world.own_wh.warehouse_code)], [side(sibling.warehouse_code)])
+    batch = planning_change_service.build_batch(
+        db, diff,
+        applied_line_ids={id(c): str(core.id) for c in diff.changes},
+        order_ids={core_so.so_number: str(core_so.id)},
+        actor=world.actor, import_job_id=None, file_name=None,
+    )
+    db.commit()
+
+    assert batch is not None
+    (row,) = (
+        db.query(planning_change_service.PlanningChangeRow).filter_by(batch_id=batch.id).all()
+    )
+    assert row.kind == "location_changed"
+    assert row.from_json["location"] == world.own_wh.warehouse_code
+    assert row.to_json["location"] == sibling.warehouse_code
+
+    detail = client.get(f"{BASE}/planning-changes/{batch.id}")
+    assert detail.status_code == 200, detail.text
+    (served,) = [
+        r for o in detail.json()["orders"] for r in o["rows"] if r["id"] == str(row.id)
+    ]
+    assert served["kind"] == "location_changed"
+    assert (served["from"]["location"], served["to"]["location"]) == (
+        world.own_wh.warehouse_code, sibling.warehouse_code,
+    )

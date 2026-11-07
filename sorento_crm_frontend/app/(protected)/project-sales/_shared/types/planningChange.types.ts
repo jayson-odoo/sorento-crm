@@ -33,7 +33,9 @@ export type PlanningChangeKind =
   | 'qty_down'
   | 'cancelled'
   | 'added'
-  | 'product_changed';
+  | 'product_changed'
+  /** SPLIT-SHEET-LOCATION: AutoCount moved the line's location, nothing else. */
+  | 'location_changed';
 
 /**
  * What the diff did to ONE component of the plan (Slice C, rule 3).
@@ -133,6 +135,8 @@ export interface PlanningChangeFromTo {
   status?: string | null;
   /** The old/new product on a `product_changed` row only. `null` on every other kind. */
   item_code?: string | null;
+  /** The old/new AutoCount line location when it moved, on any kind; `null` otherwise. */
+  location?: string | null;
 }
 
 /** One warehouse holding a Reserve for this line today. */
