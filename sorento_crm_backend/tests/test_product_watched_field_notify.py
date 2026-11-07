@@ -1,0 +1,289 @@
+"""Shared "watched product field changed" notifier (PRODUCT-FIELD-CHANGE-NOTIFY).
+
+Two halves:
+
+* A golden lock on the discontinued message (title, body, WhatsApp text, context vars),
+  written against the pre-refactor service so the shared runner cannot drift its copy.
+* List price as the second watched field: level-triggered on
+  ``list_price IS DISTINCT FROM list_price_notified``, own per-user toggles, the same
+  company/brand scope rows, one digest per company per run listing each product as
+  ``code name: RM old -> RM new (+x.x%)``.
+"""
+from __future__ import annotations
+
+import uuid
+from decimal import Decimal
+
+import pytest
+
+from app.models.notification import Notification
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.user import User, UserProductDiscontinuedScope
+import app.services.product_discontinued_notify_service as disc_svc
+from tests._pg_fixture import blank_session
+
+
+@pytest.fixture
+def db():
+    with blank_session() as session:
+        yield session
+
+
+@pytest.fixture(autouse=True)
+def _frontend(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "frontend_base_url", "https://crm.example", raising=False)
+
+
+def _refs(db):
+    if not hasattr(db, "_refs"):
+        category_id, uom_id = str(uuid.uuid4()), str(uuid.uuid4())
+        db.add(ProductCategory(id=category_id, category_code="CAT1", category_name="Category One"))
+        db.add(UnitOfMeasure(id=uom_id, uom_code="EA", uom_name="Each"))
+        db.flush()
+        db._refs = (category_id, uom_id)
+    return db._refs
+
+
+def _product(db, *, code, price="100.00", notified="100.00", discontinued=False, updated_by=None):
+    category_id, uom_id = _refs(db)
+    p = Product(
+        id=str(uuid.uuid4()),
+        product_code=code,
+        product_name=f"Name {code}",
+        description="**** EOL" if discontinued else "active",
+        category_id=category_id,
+        base_uom_id=uom_id,
+        list_price=Decimal(price),
+        list_price_notified=Decimal(notified) if notified is not None else None,
+        is_active=True,
+        is_discontinued=discontinued,
+        updated_by=updated_by,
+    )
+    db.add(p)
+    return p
+
+
+def _user(db, *, email, disc_email=False, lp_email=False, lp_wa=False, scope=True):
+    u = User(
+        id=str(uuid.uuid4()),
+        email=email,
+        name=email.split("@")[0],
+        status="ACTIVE",
+        notify_email_on_product_discontinued=disc_email,
+        notify_email_on_product_list_price=lp_email,
+        notify_whatsapp_on_product_list_price=lp_wa,
+    )
+    db.add(u)
+    if scope:
+        db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=u.id))
+    return u
+
+
+def _lp_run(db):
+    from app.services.product_watched_field_notify_service import (
+        LIST_PRICE,
+        run_watched_field_check,
+    )
+
+    return run_watched_field_check(db, LIST_PRICE)
+
+
+# --------------------------------------------------------------------------- discontinued
+
+
+def test_discontinued_message_golden(db):
+    """Byte-for-byte lock of today's discontinued copy (single company, one product)."""
+    _product(db, code="D1", discontinued=True)
+    sub = _user(db, email="sub@x.com", disc_email=True)
+    db.commit()
+
+    out = disc_svc.run_product_discontinued_check(db)
+    batch = out["batch_id"]
+    link = f"https://crm.example/master-data-management/products?discontinued_batch_id={batch}"
+
+    n = db.query(Notification).one()
+    assert n.user_id == sub.id
+    assert n.type == "product_discontinued"
+    assert n.event_type == "discontinued"
+    assert n.source_entity_type == "product_discontinued_batch"
+    assert n.title == "1 product discontinued"
+    assert n.body == f"1 product was newly marked as discontinued. View the list: {link}"
+    data = n.data
+    assert data["discontinued_count"] == 1
+    assert data["discontinued_batch_id"] == batch
+    assert data["discontinued_link"] == link
+    assert data["whatsapp_use_case"] == "product_discontinued"
+    assert data["whatsapp_text"] == f"1 product discontinued. View the list: {link}"
+    ctx = data["whatsapp_context_vars"]
+    assert ctx["discontinued_count"] == "1"
+    assert ctx["discontinued_link"] == link
+    assert ctx["portal_url"] == link
+    assert ctx["system_url"] == "https://crm.example"
+    assert ctx["contact_name"] == "sub"
+    assert ctx["message"] == data["whatsapp_text"]
+    assert set(ctx) == {
+        "discontinued_count", "discontinued_link", "company_name", "today_date",
+        "system_url", "portal_url", "message", "contact_name",
+    }
+
+
+def test_discontinued_ignores_list_price_subscribers(db):
+    _product(db, code="D1", discontinued=True)
+    _user(db, email="lp@x.com", lp_email=True)
+    db.commit()
+    out = disc_svc.run_product_discontinued_check(db)
+    assert out["notified_users"] == 0
+    assert db.query(Notification).count() == 0
+
+
+# --------------------------------------------------------------------------- list price
+
+
+def test_list_price_change_notifies_digest(db):
+    editor = _user(db, email="editor@x.com", scope=False)
+    _product(db, code="P1", price="110.00", notified="100.00", updated_by=editor.id)
+    _product(db, code="P2", price="80.00", notified="100.00")
+    _product(db, code="SAME", price="50.00", notified="50.00")
+    sub = _user(db, email="sub@x.com", lp_email=True)
+    _user(db, email="disc@x.com", disc_email=True)  # discontinued-only: not a recipient
+    db.commit()
+
+    out = _lp_run(db)
+
+    assert out["pending"] == 2
+    assert out["notified_users"] == 1
+    batch = out["batch_id"]
+    n = db.query(Notification).one()
+    assert n.user_id == sub.id
+    assert n.type == "product_list_price_changed"
+    assert n.source_entity_type == "product_list_price_batch"
+    assert n.source_entity_id == batch
+    assert n.title == "List price changed for 2 products"
+    assert "P1 Name P1: RM 100.00 -> RM 110.00 (+10.0%), by editor" in n.body
+    assert "P2 Name P2: RM 100.00 -> RM 80.00 (-20.0%)" in n.body
+    assert "SAME" not in n.body
+    link = f"https://crm.example/master-data-management/products?list_price_batch_id={batch}"
+    assert link in n.body
+    assert n.data["whatsapp_use_case"] == "product_list_price_changed"
+    assert n.data["list_price_link"] == link
+    ctx = n.data["whatsapp_context_vars"]
+    assert ctx["list_price_count"] == "2"
+    assert ctx["list_price_link"] == link
+    # dd/mm/yyyy
+    import re
+
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4}", ctx["today_date"])
+    assert ctx["today_date"] in n.body
+
+
+def test_list_price_stamps_baseline_and_is_reported_once(db):
+    _product(db, code="P1", price="120.00", notified="100.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    first = _lp_run(db)
+    p = db.query(Product).filter(Product.product_code == "P1").one()
+    assert p.list_price_notified == Decimal("120.00")
+    assert p.list_price_notified_at is not None
+    assert p.list_price_notify_batch_id == first["batch_id"]
+
+    second = _lp_run(db)
+    assert second["pending"] == 0
+    assert db.query(Notification).count() == 1
+
+
+def test_list_price_revert_before_tick_not_reported(db):
+    _product(db, code="P1", price="100.00", notified="100.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+    assert _lp_run(db)["pending"] == 0
+    assert db.query(Notification).count() == 0
+
+
+def test_new_product_adopts_baseline_silently(db):
+    """A product with no baseline yet (new insert) is not a price change."""
+    _product(db, code="NEW", price="99.00", notified=None)
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+    out = _lp_run(db)
+    assert out["pending"] == 0
+    assert db.query(Notification).count() == 0
+    p = db.query(Product).filter(Product.product_code == "NEW").one()
+    assert p.list_price_notified == Decimal("99.00")
+    # A later change IS reported.
+    p.list_price = Decimal("109.00")
+    db.commit()
+    assert _lp_run(db)["pending"] == 1
+
+
+def test_list_price_from_zero_has_no_percentage(db):
+    _product(db, code="Z", price="10.00", notified="0.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+    _lp_run(db)
+    n = db.query(Notification).one()
+    assert "Z Name Z: RM 0.00 -> RM 10.00 (new price)" in n.body
+
+
+def test_list_price_digest_caps_lines(db):
+    for i in range(55):
+        _product(db, code=f"C{i:02d}", price="101.00", notified="100.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+    _lp_run(db)
+    n = db.query(Notification).one()
+    assert n.title == "List price changed for 55 products"
+    assert n.body.count("RM 100.00 -> RM 101.00") == 50
+    assert "and 5 more" in n.body
+
+
+def test_list_price_respects_brand_scope(db):
+    from app.models.product import Brand
+
+    b1, b2 = str(uuid.uuid4()), str(uuid.uuid4())
+    db.add(Brand(id=b1, brand_code="B1", brand_name="Brand 1"))
+    db.add(Brand(id=b2, brand_code="B2", brand_name="Brand 2"))
+    db.flush()
+    p1 = _product(db, code="IN", price="110.00", notified="100.00")
+    p1.brand_id = b1
+    p2 = _product(db, code="OUT", price="110.00", notified="100.00")
+    p2.brand_id = b2
+    u = _user(db, email="sub@x.com", lp_email=True, scope=False)
+    db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=u.id, brand_id=b1))
+    db.commit()
+
+    _lp_run(db)
+    n = db.query(Notification).one()
+    assert "IN Name IN" in n.body
+    assert "OUT Name OUT" not in n.body
+    assert n.title == "List price changed for 1 product"
+
+
+def test_list_price_batch_filter_on_product_list(db):
+    from app.services.product_service import ProductService
+
+    _product(db, code="P1", price="110.00", notified="100.00")
+    _product(db, code="P2", price="100.00", notified="100.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+    batch = _lp_run(db)["batch_id"]
+
+    q = ProductService(db)._build_list_query(list_price_batch_id=batch)
+    assert {p.product_code for p in q.all()} == {"P1"}
+
+
+def test_list_price_scheduler_handler_registered():
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services.scheduled_task_service import TASK_HANDLERS
+
+    register_task_handlers()
+    assert "product_list_price_check" in TASK_HANDLERS
+
+
+def test_list_price_whatsapp_use_case_registered():
+    from app.models import respond_template
+
+    src = open(respond_template.__file__).read()
+    assert '"product_list_price_changed"' in src
