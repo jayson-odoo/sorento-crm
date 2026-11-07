@@ -554,15 +554,20 @@ def _side_of_the_picked_party(verdict: dict[str, Any], pending: Any) -> dict[str
 
 
 def _report_owned_names(verdict: dict[str, Any]) -> frozenset[str]:
-    """REPORT-FILTER-ALL: the names (casefolded) the kept report object holds in its company and name lists. The object
-    is final, so such a name is the object's company, brand, agent or customer and never a supplier word. ALL is no
-    name. Empty when the turn carries no report object."""
+    """REPORT-FILTER-ALL: the names (casefolded) the kept report object holds as its company and its non-party lists
+    (brands, agents, categories, account types, products). The object is final, so such a name is never a supplier
+    word. ALL is no name. Empty when the turn carries no report object.
+
+    Its `customers` are not held here (crew live x3 step 19, "outstanding for supplier LASHIQI" ran the customer list):
+    the object has no supplier slot, so a supplier lands in `customers`, and a party word's side is its entity kind
+    (owner, 2 Nov), never the slot the object found for it."""
     ask = verdict.get("report_ask")
     if not isinstance(ask, dict):
         return frozenset()
     from app.services.chatbot.head.parser import REPORT_ALL, REPORT_ASK_LISTS
 
-    values = [ask.get("company"), *(v for key in REPORT_ASK_LISTS for v in jsc.array(ask.get(key)))]
+    lists = [key for key in REPORT_ASK_LISTS if key != "customers"]
+    values = [ask.get("company"), *(v for key in lists for v in jsc.array(ask.get(key)))]
     return frozenset(
         v.strip().casefold() for v in values if isinstance(v, str) and v.strip() and v.strip().upper() != REPORT_ALL
     )

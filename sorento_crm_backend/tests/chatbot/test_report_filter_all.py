@@ -31,6 +31,7 @@ from tests._mc_lookup_seed import MOCHA_ID
 from tests.chatbot.test_chat_state_parser_input import _fresh_prompt_cache  # noqa: F401 - fixture
 from tests.chatbot.test_report_ask_lane import console_no_grant  # noqa: F401 - fixture
 from tests.chatbot.test_report_semantic_carry import _ent, _pick_of, _ran, _v, rbot, world  # noqa: F401 - fixtures + helpers
+from tests.chatbot.test_report_semantic_carry import AGENT_1
 from tests.chatbot.test_report_totals_filters import (  # noqa: F401 - fixtures + helpers
     _HELD_WORDS,
     _KINDS,
@@ -777,9 +778,12 @@ def test_g5c_a_supplier_word_the_report_object_does_not_hold_still_reads_the_ope
     named = {**v, "entities": [{**supplier, "canonical_code": None}]}
     line = (engine._supplier_scope(state, state, named, ["order"], True, _span_prep()) or {}).get("line", "")
     assert "Acme" in line, line
-    # A supplier-hinted word the object holds does not swap.
+    # Live x3 step 19 (7 Nov): the object has no supplier slot, so a supplier it names lands in `customers`; that is
+    # still the supplier (the entity kind decides the side, owner 2 Nov). A brand the object holds is never one (G5b).
     held = {**v, "report_ask": _ra2(None, kind="outstanding", customers=["Acme"])}
-    assert engine._supplier_side(held, _span_prep(), None, _Trace())["domain_hint"] == "order"
+    assert engine._supplier_side(held, _span_prep(), None, _Trace())["domain_hint"] == "purchase_order"
+    branded = {**v, "report_ask": _ra2(None, kind="outstanding", brands=["Acme"])}
+    assert engine._supplier_side(branded, _span_prep(), None, _Trace())["domain_hint"] == "order"
 
 
 @pytest.mark.parametrize("status", [None, "pending_delivery"], ids=["no-status", "order-list-status"])
@@ -798,3 +802,85 @@ def test_n1_all_in_an_open_reading_list_is_no_word() -> None:
     ask = {"brands": [ALL], "brand_or_account_type": [ALL, "Sorento"], "company_or_brand": [ALL]}
     assert report_ask._read_all(ask) == {"brands"}
     assert ask == {"brands": [], "brand_or_account_type": ["Sorento"], "company_or_brand": []}
+
+
+# ------------------------------------------------------------------------------------------ live x3, 7 Nov (round 8)
+# Crew ran the hand test LIVE x3 on 2a8e6f7c (Gemini flash-lite). Steps 2-18 passed 3/3; these are the code-side
+# failures, replayed with the parse shapes crew described (the raw objects stayed on the crew machine).
+
+STEP1 = "Total sale delivered September 2026 Sorento company, Sorento brand, show dealer and project"
+
+
+def test_l1_unit_a_company_label_names_that_company() -> None:
+    """Live x3 step 1 run 2: the parse echoed the lookup label "SORENTO (SRT)" (name and code) and the turn answered
+    "You do not have access to that company.". A label names the company its name or code names; two parts naming two
+    companies name none."""
+    own = [("c1", "SRT", "Sorento"), ("c2", "MCH", "Mocha")]
+    assert report_ask._own_company_named("sorento (srt)", own)[0] == "c1"
+    assert report_ask._own_company_named("srt", own)[0] == "c1"
+    assert report_ask._own_company_named("unknown (srt)", own)[0] == "c1"
+    assert report_ask._own_company_named("mocha (srt)", own) is None, "two companies: none"
+    assert report_ask._own_company_named("zzz (yyy)", own) is None
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize("where", ["object", "said_as"])
+def test_l1_a_company_label_echo_runs_that_company_never_no_access(rbot, world, where) -> None:
+    """Live x3 step 1 run 2 through the engine: the company written as the label "<NAME> (<code>)" in the object (or
+    reaching the company through the name's own slot) runs Sorento's Dealer / Project breakdown."""
+    sorento, _m = world
+    label = f"{sorento.upper()} (SRT)"
+    ent = _ent("sorento", "brand", "SORENTO", "brand")
+    company = label if where == "object" else sorento
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", company=company, brands=["SORENTO"], **SEP)
+    v = _v("sales_report", ra, ent, basis="delivered", group_by="channel", sales_company=label, domain_in_message=True,
+           **SEPF)
+    text, calls = rbot.say(v, STEP1)
+    assert FORBIDDEN not in text, text
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("group_by") == "channel", args
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize(
+    "noise", [{"rank_by": "amount"}, {"rank_direction": "top"}, {"top_n": 1}], ids=["rank_by", "direction", "top_n"]
+)
+@pytest.mark.parametrize("frame", ["breakdown", "ranking", None], ids=["breakdown", "ranking", "null"])
+def test_l10_one_named_agent_is_a_filter_never_an_agent_axis(rbot, world, frame, noise) -> None:
+    """Live x3 step 10 (runs 1, 2): "sales agent <name>" over a held total added group_by sales_agent. The object wrote
+    the agent's own axis beside that ONE agent; only the noisy top-level rank fields lifted the one-value rule (C6-2).
+    One agent is a filter on the held total: no axis, no count."""
+    sorento, _m = world
+    held = _ra2("total", basis="delivered", company=sorento, brands=["SORENTO"], **SEP)
+    brand = _ent("sorento", "brand", "SORENTO", "brand")
+    rbot.say(_v("sales_report", held, brand, basis="delivered", sales_company=sorento, domain_in_message=True, **SEPF),
+             "Sorento company, Sorento brand total delivered Sep 2026")
+    ra = _ra2(frame, basis="delivered", group_by="sales_agent", company=sorento, brands=["SORENTO"],
+              sales_agents=[AGENT_1], **SEP)
+    v = _v("sales_report", ra, _ent(AGENT_1, "sales_agent", AGENT_1, None), basis="delivered", group_by="sales_agent",
+           sales_company=sorento, **SEPF, **noise)
+    text, calls = rbot.say(v, f"sales agent {AGENT_1}")
+    args = _args(calls)
+    assert not args.get("group_by") and not args.get("top_n") and args.get("sales_agent_ids"), args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_l10_lock_the_objects_own_count_still_ranks_agents(rbot, world) -> None:
+    """Lock: the object's own count on the agent axis (top 3 agents) ranks, one agent named or not (AF-7)."""
+    sorento, _m = world
+    ra = _ra2("ranking", basis="delivered", group_by="sales_agent", top_n=3, company=sorento, **SEP)
+    v = _v("sales_ranking", ra, basis="delivered", group_by="sales_agent", top_n=3, sales_company=sorento,
+           domain_in_message=True, **SEPF)
+    _text, calls = rbot.say(v, "top 3 sales agents delivered September 2026 Sorento company")
+    args = _args(calls)
+    assert args.get("group_by") == "sales_agent" and args.get("top_n") == 3, args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_l20_lock_a_bare_sales_ask_still_asks_its_basis(rbot, world) -> None:
+    """Owner 7 Nov ~14:00 (overrides crew's FAIL C): "Sorento brand sales September 2026" asking "Invoiced, delivered,
+    ordered or outstanding?" is right. Nothing in this lane defaults a basis."""
+    ra = _ra2(None, basis=None, brands=["Sorento"], **SEP)
+    v = _v("sales_report", ra, _ent("Sorento", "brand", "SORENTO", "brand"), domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "Sorento brand sales September 2026")
+    assert not _ran(calls) and "Invoiced, delivered, ordered or outstanding?" in text, text

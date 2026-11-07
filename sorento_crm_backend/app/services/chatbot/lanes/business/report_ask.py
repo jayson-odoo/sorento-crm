@@ -1122,12 +1122,11 @@ def kind_edits(
         args = swapped["args"]
         if args.get("group_by") != old_axis and old_axis in (None, *TREND_AXES):
             values = _settled_by_its_axis(values, old_axis)  # the new axis owes its own count and metric
-    said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
-    if said and not dealer:
-        named = next((c for c in own if said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
-        if named is None:
-            return None, COMPANY_FORBIDDEN_LINE
+    own = _own_companies(companies)
+    named, foreign = _company_said(parse_output, own)
+    if foreign and not dealer:
+        return None, COMPANY_FORBIDDEN_LINE
+    if named is not None and not dealer:
         args["company"] = str(named[0])
     new_extras = {**extras, "args": args, "top_n": top_n}
     reply = _dict(parse_output.get("report_ask_kind_reply"))
@@ -1669,9 +1668,9 @@ def _account_plan(
             how = "account"
         decided.append((how, hint, word, kind))
     ids = [str(c[0]) for c in own]
-    said_company = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-    if said_company:  # a named company narrows the book to that company
-        ids = [str(c[0]) for c in own if said_company in (str(c[1]).casefold(), str(c[2]).casefold())] or ids
+    said_company, _foreign = _company_said(parse_output, own)
+    if said_company is not None:  # a named company narrows the book to that company
+        ids = [str(said_company[0])]
     elif held_company and str(held_company) in ids:
         ids = [str(held_company)]  # a refine reads the company the held ask ran for
     per_company: dict[str, set] = {}
@@ -2602,8 +2601,26 @@ def _company_said(parse_output: dict[str, Any], own: list[Any]) -> tuple[Any, bo
     """The contact's own company the message names (the parser's `sales_company`, by name or code), and whether it named one
     the contact does not hold."""
     said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-    named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+    named = _own_company_named(said, own)
     return named, bool(said) and named is None
+
+
+def _own_company_named(said: str, own: list[Any]) -> Any:
+    """The contact's own company `said` (casefolded) names: by name or code, or as the label the parser echoes off the
+    lookup block or the held report, "<name> (<code>)" (REPORT-FILTER-ALL live x3 step 1, "SORENTO (SRT)" answered
+    "You do not have access to that company."). A label whose two parts name two different companies names none."""
+    if not said:
+        return None
+
+    def of(word: str) -> Any:
+        return next((c for c in own if word and word in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+
+    named = of(said)
+    cut = said.rfind("(")
+    if named is None and said.endswith(")") and cut > 0:
+        outer, inner = of(said[:cut].strip()), of(said[cut + 1:-1].strip())
+        named = outer if inner is None or (outer is not None and outer[0] == inner[0]) else inner if outer is None else None
+    return named
 
 
 def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
@@ -3636,7 +3653,15 @@ def from_object(
         if GROUP_BY.get(axis, axis) != held_group:
             axis = _PARSER_AXIS.get(held_group, held_group) if held_group in GROUP_BY.values() else None
     slot_of_axis = _AXIS_SLOTS.get(axis or "")
-    if slot_of_axis and not typed and (
+    # REPORT-FILTER-ALL live x3 step 10 ("sales agent <name>" added group_by sales_agent): the object is final, so what
+    # lifts the one-value rule is this message's own axis words or the object's own count. The parse's top-level
+    # `top_n` / `rank_direction` / `rank_by` are the old flat fields, filled as noise beside an object (`_v`'s defaults
+    # mirror the live parser), and are not read here.
+    own_n = ask.get("top_n")
+    own_typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or (
+        isinstance(own_n, int) and not isinstance(own_n, bool) and own_n > 0
+    )
+    if slot_of_axis and not own_typed and (
         len(names(slot_of_axis)) == 1 if slot_of_axis != "channel" else ask.get("channel") in ("dealer", "project")
     ):
         # C6-2 (turn 23d6cb50): an axis this message does not type, over a slot the ask filters to ONE value, is one
