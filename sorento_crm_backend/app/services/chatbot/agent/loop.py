@@ -27,6 +27,7 @@ from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, batch, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
+from app.services.chatbot.agent.query_tools import mixed_basis_refusal, money_basis
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
     ANSWER,
@@ -77,6 +78,104 @@ CATALOG_TTL_SECONDS = 300
 #: After a failed refresh, the last catalogue is served this long before the next try.
 CATALOG_RETRY_SECONDS = 30
 _CATALOG_LOCK = threading.Lock()
+
+
+#: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
+#: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
+QUERY_TOOLS = ("crm_query", "crm_describe")
+MAX_QUERY_CALLS = 3
+
+
+#: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
+#: resent all ~21k tokens of tool schemas (the MCP catalogue alone ~17k), which made 4 to 7 calls 107k to 173k.
+REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
+
+
+#: Kept beside the registry tools after a round that only named a sales agent: the report takes agent ids.
+AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
+
+
+def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict], *, plan_parts: int = 0) -> list[dict]:
+    """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
+    the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
+    other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
+    registry calls were all refused, leaves the schemas as they are.
+
+    Crew live x3 on 3c6924bf: the model resolved the agent's name with crm_resolve first, a round that resent every
+    schema (~20k). A round whose crm_resolve calls found only sales agents narrows the same way (plus the report,
+    which takes the agent's id): what follows is a figure for that agent."""
+    names = {str(c.get("name") or "") for c in calls}
+    if not names:
+        return schemas
+    # `plan` and `answer` are not in `done` (run.tool_calls): line up with this round's other calls only.
+    ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
+    answered = done[-ran:] if ran else []
+    if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
+        if plan_parts > 1:
+            # A question in several parts may need another tool after the agent's figure (review round 9).
+            return schemas
+        resolved = [c for c in answered if c.get("name") == "crm_resolve"]
+        if resolved and all(c.get("status") == "ok" and c.get("agents_only") for c in resolved):
+            return [s for s in schemas if s.get("function", {}).get("name") in AFTER_AGENT_RESOLVE]
+        return schemas
+    if not names <= REGISTRY_ROUND_TOOLS:
+        return schemas
+    if not any(c.get("name") in QUERY_TOOLS and c.get("status") == "ok" for c in answered):
+        return schemas
+    return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
+
+
+#: Said in crm_resolve's description when crm_query is offered too (crew live rerun on 53908030).
+RESOLVE_AGENT_LINE = (
+    " A sales agent's name or code needs no id and no crm_resolve: pass it as crm_query's `agent` (an agent's "
+    "customers, sales, targets, commission)."
+)
+
+
+def resolve_beside_query(schemas: list[dict]) -> list[dict]:
+    """crm_resolve's schema says that crm_query takes an agent by name, when both are offered."""
+    if not any(s.get("function", {}).get("name") == "crm_query" for s in schemas):
+        return schemas
+    out = []
+    for schema in schemas:
+        if schema.get("function", {}).get("name") == "crm_resolve":
+            schema = copy.deepcopy(schema)
+            schema["function"]["description"] = schema["function"]["description"].rstrip() + RESOLVE_AGENT_LINE
+        out.append(schema)
+    return out
+
+
+def found_agents(data) -> list[str]:
+    """The sales agents a `crm_resolve` result named, as "CODE - Name", when every term named one: found with only
+    sales agents, or among look-alikes (customers whose names contain it) a sales agent whose code or name IS the
+    term (crew live rerun on 53908030: "active customers of LONG I" resolved LONG I among customers and took a
+    third call). [] when any term names no agent."""
+    from app.services.assistant_registry.query import agent_exact
+
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        return []
+    labels: list[str] = []
+    for row in results:
+        matches = row.get("matches") if isinstance(row, dict) else None
+        if not isinstance(matches, list) or not matches:
+            return []
+        agents = []
+        for m in matches:
+            if not isinstance(m, dict) or m.get("kind") != "sales_agent":
+                continue
+            code, name = str(m.get("code") or "").strip(), str(m.get("name") or "").strip()
+            agents.append(f"{code} - {name}" if code and name else code or name)
+        only_agents = row.get("status") == "found" and len(agents) == len(matches)
+        exact = [label for label in agents if agent_exact(label, row.get("term"))]
+        if any(m.get("kind") != "sales_agent" and agent_exact(m.get("name"), row.get("term")) for m in matches
+               if isinstance(m, dict)):
+            exact = []  # a customer named exactly the same: the term may mean either (review round 10)
+        named = agents if only_agents else exact
+        if not named:
+            return []
+        labels.extend(named)
+    return [label for label in dict.fromkeys(labels) if label]
 
 
 @dataclass
@@ -1351,6 +1450,7 @@ def _run(
         schemas += [w.schema for w in write_tools]
         if batch_schema is not None:
             schemas.append(batch_schema)
+        schemas = resolve_beside_query(schemas)
         if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
             schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
@@ -1405,6 +1505,8 @@ def _run(
                 return reply_text
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
+        # The sales basis this answer's money totals are on (`query_tools.money_basis`); one per turn.
+        turn_basis: list[str] = []
         while True:
             if run.rounds >= 1:
                 # Confirming acts on the user's own message only: from the second round on, tool
@@ -1474,6 +1576,20 @@ def _run(
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
+                if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
+                    # Crew pass on d430fe3c (5 Nov): turns of 7 query calls ran to 161-173k prompt tokens.
+                    replies[idx] = ToolResult(
+                        "denied",
+                        message=f"At most {MAX_QUERY_CALLS} crm_query/crm_describe calls per question; answer with "
+                                "the results you have and say what is missing.",
+                    ).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
+                basis = money_basis(args, name)
+                if basis and turn_basis and basis != turn_basis[0]:
+                    replies[idx] = mixed_basis_refusal(turn_basis[0], basis).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
                 if tool_index >= budgets.calls_per_round:
                     # A Gemini continuation must be replayed with a reply for every call it
                     # contains, so each extra call gets one; the digest and trace carry one note.
@@ -1519,6 +1635,12 @@ def _run(
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
                         catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
                     )
+                agents = found_agents(out.data) if name == "crm_resolve" and out.status == "ok" else []
+                if agents and any(sc.get("function", {}).get("name") == "crm_query" for sc in schemas):
+                    out.message = (
+                        "crm_query takes the agent by name, no id needed: "
+                        + "; ".join(f"agent={label!r}" for label in agents) + "."
+                    )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)
                 if out.status in ("ok", "empty"):
@@ -1532,7 +1654,9 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
+                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, **({"agents_only": True} if agents else {})})
+                if basis and out.status == "ok" and not turn_basis:
+                    turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
                 trace.add(
                     "agent_tool",
@@ -1580,6 +1704,7 @@ def _run(
                 )
             if accepted:
                 break
+            schemas = narrow_after_query(schemas, calls, run.tool_calls, plan_parts=len(plan_parts))
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"

@@ -2342,6 +2342,86 @@ def _reached(rung: dict, achieved: Decimal, target: SalesTarget, period: SalesTa
     return achieved >= rung["threshold_rm"]
 
 
+def period_figures(
+    db: Session,
+    targets: List[SalesTarget],
+    *,
+    date_from: date,
+    date_to: date,
+) -> List[Tuple[SalesTarget, SalesTargetPeriod, dict]]:
+    """Each period of `targets` overlapping the window with the target page's own figures
+    (`target_detail.period_out`: target, achieved, %, tier reached, commission, bonus, the
+    "replaced by its dealer" zeroing), batched over many targets for the assistant's
+    `crm_query` (AI-TOOLS-WAVE2). The same calls as the page, in the same order:
+    `_achieved_by_account` (per company, dealers apart, as `period_progress` batches it),
+    `period_payout`, `_replacing_reached`. No figure is computed here that the page does not.
+    `tests/chatbot/agent/test_ai_tools_wave2.py` holds every figure equal to `target_detail`."""
+    if not targets:
+        return []
+    by_target: Dict[str, List[SalesTargetPeriod]] = {}
+    for period in (
+        db.query(SalesTargetPeriod)
+        .filter(
+            SalesTargetPeriod.target_id.in_([t.id for t in targets]),
+            SalesTargetPeriod.period_start <= date_to,
+            SalesTargetPeriod.period_end >= date_from,
+        )
+        .order_by(SalesTargetPeriod.period_start)
+    ):
+        by_target.setdefault(period.target_id, []).append(period)
+    pairs = [(t, p) for t in targets for p in by_target.get(t.id, [])]
+    if not pairs:
+        return []
+    by_account: Dict[str, Dict[Optional[str], Decimal]] = {}
+    for company_id in {t.company_id for t, _ in pairs}:
+        for dealer in (True, False):
+            chunk = [
+                (t, p)
+                for t, p in pairs
+                if t.company_id == company_id and (t.subject_kind == "dealer") == dealer
+            ]
+            if chunk:
+                by_account.update(_achieved_by_account(db, company_id, chunk))
+    tiers_by = _tiers_by_target(db, [t.id for t, _ in pairs])
+    rates = _tier_rates(db, [x.id for rows in tiers_by.values() for x in rows])
+    ratios = point_ratios(db) if any(t.threshold_unit == "points" for t, _ in pairs) else []
+    replacing_cache: dict = {}
+    replaced: Dict[str, bool] = {}
+    for target in {t.id: t for t, _ in pairs}.values():
+        replaced.update(_replacing_reached(db, target, by_target[target.id], replacing_cache))
+
+    out: List[Tuple[SalesTarget, SalesTargetPeriod, dict]] = []
+    for target, p in pairs:
+        tiers = tiers_by.get(target.id, [])
+        mine = [r for r in ratios if r.company_id == target.company_id]
+        payout = period_payout(
+            target, p, _engine_tiers(tiers, rates), [t.period_start for t in tiers],
+            by_account.get(p.id, {}), mine,
+        )
+        if replaced.get(p.id):
+            payout = _ZERO_PAYOUT
+        ratio = ratio_on(mine, p.period_end) if target.threshold_unit == "points" else None
+        value = sum(by_account.get(p.id, {}).values(), Decimal("0"))
+        figure = p.target_value * ratio if ratio is not None else p.target_value
+        out.append(
+            (
+                target,
+                p,
+                {
+                    "target_value": float(figure),
+                    "achieved_value": float(value),
+                    "achieved_pct": ach.achieved_pct(value, figure),
+                    "tier_reached": payout.tier_reached,
+                    "commission_earned": _num(payout.commission),
+                    "bonus_earned": _num(payout.bonus),
+                    "replaced": bool(replaced.get(p.id)),
+                    "ratio_missing": payout.ratio_missing,
+                },
+            )
+        )
+    return out
+
+
 def period_progress(
     db: Session,
     targets: List[SalesTarget],

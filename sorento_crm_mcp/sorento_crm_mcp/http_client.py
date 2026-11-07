@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
-from sorento_crm_mcp.scope import CRM_STAFF_HEADER, forwarded_staff_id
+from sorento_crm_mcp.scope import CRM_STAFF_HEADER, CRM_STAFF_PROOF_HEADER, forwarded_staff_id, forwarded_staff_proof
 from sorento_crm_mcp.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,9 @@ class CRMClient:
         staff_id = forwarded_staff_id()
         if staff_id:
             call_headers[CRM_STAFF_HEADER] = staff_id
+            proof = forwarded_staff_proof()
+            if proof:
+                call_headers[CRM_STAFF_PROOF_HEADER] = proof
 
         started = time.perf_counter()
         logger.info(

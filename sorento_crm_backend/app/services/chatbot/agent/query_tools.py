@@ -114,6 +114,8 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
     lines = [heading]
     totals = data.get("totals") or {}
     if panel:
+        # A blank line before and after the table, or markdown renders it as raw "|" text (crew pass, 5 Nov).
+        lines.append("")
         lines.append("| " + " | ".join(c["label"] for c in columns) + " |")
         lines.append("|" + "|".join("---" for _ in columns) + "|")
         for item in items:
@@ -122,6 +124,7 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             cells = [_cell(totals[c["key"]]) if c["key"] in totals else "" for c in columns]
             cells[0] = cells[0] or "Total"
             lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
     else:
         first, rest = (columns[0], columns[1:]) if columns else ({"key": ""}, [])
         for item in items:
@@ -174,6 +177,69 @@ def _describe(db, ctx, args: dict) -> ToolResult:
 # Every array names its items and every object its properties: Gemini refuses a schema that does not (400),
 # and the turn then fails as a whole (`tests/chatbot/agent/test_agent_tool_schemas_gemini.py`).
 _TEXT = {"type": "string"}
+
+#: Money fields per entity whose total is a SALES figure on that entity's basis (crew pass on 74b6b751).
+MONEY_FIELDS = {
+    "billing_document": {"sales_amount", "net_total", "total"},
+    "order": {"subtotal_amount", "total_amount"},
+}
+#: The sales basis each source counts: `crm_query` entities and `crm_report_ask`'s own `basis` values.
+ENTITY_BASIS = {"billing_document": "invoiced", "order": "delivered"}
+REPORT_BASES = frozenset({"invoiced", "delivered", "ordered"})
+BASIS_LABELS = {
+    "invoiced": "invoiced (billing documents)", "delivered": "delivered (delivery orders)", "ordered": "ordered (sales orders)",
+}
+
+
+def money_basis(args: Any, name: str = QUERY) -> str | None:
+    """The sales basis a call's money figures are on: a `crm_query` sum / avg / min / max of a money field
+    (invoiced on billing documents, delivered on delivery orders), or a `crm_report_ask` on a sales basis.
+    None for anything else (counts, targets, outstanding)."""
+    if not isinstance(args, dict):
+        return None
+    if name == "crm_report_ask":
+        basis = str(args.get("basis") or "").strip().lower()
+        dataset = str(args.get("dataset") or "").strip().lower()
+        return basis if basis in REPORT_BASES and dataset != "chat" else None
+    if name != QUERY or args.get("entity") not in MONEY_FIELDS:
+        return None
+    money = MONEY_FIELDS[args["entity"]]
+    for item in args.get("aggregates") or []:
+        if isinstance(item, dict) and item.get("fn") in ("sum", "avg", "min", "max") and item.get("field") in money:
+            return ENTITY_BASIS[args["entity"]]
+    return None
+
+
+def mixed_basis_refusal(first: str, now: str) -> ToolResult:
+    """One answer, one sales basis: the turn already has sales on `first` (crew pass on ffdd7f87: "sales last
+    month per agent" came back on invoiced, delivered and ordered at once)."""
+    return ToolResult(
+        "denied",
+        message=(
+            f"This answer's sales figures are already on the {BASIS_LABELS[first]} basis; {BASIS_LABELS[now]} "
+            "figures would mix two bases in one answer. Answer from the first result only, and offer the other "
+            "basis in one line if the user may want it."
+        ),
+    )
+
+
+def entity_index() -> str:
+    """The compact index in `crm_query`'s description: each queryable entity's hint, fields and relations, so most
+    questions are one `crm_query` call with no `crm_describe` round first (crew pass on d430fe3c, 5 Nov: the extra
+    round took list turns from ~49k to ~77k prompt tokens). Notes stay in `crm_describe`."""
+    lines = []
+    for e in ENTITIES.values():
+        if e.view_permission is None or not e.in_index:
+            continue
+        # A relation shows the fields it is named by (all a lookup may read; crm_describe lists the rest).
+        rel = [
+            f"{name}.{{{','.join(ENTITIES[target].name_by or tuple(ENTITIES[target].fields))}}}"
+            for name, (target, _fk) in e.relations.items()
+        ]
+        lines.append(f"{e.key} ({e.hint}): {','.join([*e.fields, *rel])}")
+    return "\n".join(lines)
+
+
 _SCALARS = [_TEXT, {"type": "number"}, {"type": "boolean"}]
 
 QUERY_SCHEMA = {
@@ -181,21 +247,32 @@ QUERY_SCHEMA = {
     "function": {
         "name": QUERY,
         "description": (
-            "Read CRM records as their screens show them: rows, or totals with group_by. Delivery order counts "
-            "and totals per agent, customer or month are this tool on entity order, not the sales report. "
-            "Entity keys and fields come from crm_describe, whose notes say which field a list column is; a field "
-            "may go through a relation (supplier.name). In the reply, show each row by its label exactly and "
-            "say the result's period_display and scope_note. "
+            "Read CRM records as their screens show them: rows, or totals with group_by. SALES with no basis named "
+            "are invoiced: billing_document, one query for the table and its total (owner rule: invoiced first; if "
+            "the user's basis is unclear, ask). Delivery order (DO) counts and totals per agent, customer or month are "
+            "entity order, not the sales report, and only when DOs are asked, never as sales; never mix the two in "
+            "one answer. "
+            "Call it directly with the entities and fields below (a relation field is customer.code); call "
+            "crm_describe only when a field's meaning is unclear. In the reply, show each row by its label exactly "
+            "and say the result's period_display and scope_note. "
             "filters: [{field, op, value}], op one of eq ne in not_in lt lte gt gte between contains starts_with "
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
             f"sorts by its key or an aggregate alias such as sum_total_amount). At most {MAX_ROWS} rows or "
-            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy."
+            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy. "
+            "A person or agent named by the user: pass it as `agent` exactly as said (no crm_resolve, no ids). "
+            "A time window: `period` (no crm_describe needed); a date filter may also name its window.\n"
+            "Entities:\n" + entity_index()
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "entity": _TEXT,
+                "agent": {"type": "string", "description": "Sales agent code or name as the user said it; matched "
+                          "exactly first, inside the tool."},
+                "period": {"anyOf": [_TEXT, {"type": "array", "items": _TEXT}], "description": "last_month, "
+                           "this_month, this_quarter, last_quarter, this_year, 2026-10, Q3 2026, 2026, or [from, to] "
+                           "where to may be today (since July = [2026-07, today])."},
                 "fields": {"type": "array", "items": _TEXT},
                 "filters": {"type": "array", "items": {
                     "type": "object",
@@ -264,12 +341,20 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
-    # A code-rendered table (`as_card`): the model's first line, then the turn's LAST table verbatim (a later
-    # query corrected an earlier one), as `report_state.with_cards` does for the report card.
-    cards = [e.get("display") for e in (ledger or {}).values() if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display")]
-    if cards:
-        card = cards[-1]
-        if card not in text:
+    # A code-rendered table (`as_card`): the model's first line, then the tables verbatim, as
+    # `report_state.with_cards` does for the report card. One table per entity, in the order first asked: a later
+    # query on the same entity corrected the earlier one, so the last stands; a query on another entity is a table of
+    # its own, which never replaces the first (crew live x3 on 3c6924bf: "who is below
+    # target" lost its target table and its "Not reached = ..." note to a later payout query).
+    per_entity: dict[str, str] = {}
+    for e in (ledger or {}).values():
+        if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display"):
+            entity = str((e.get("data") or {}).get("entity") or (e.get("args") or {}).get("entity") or "")
+            per_entity[entity] = e["display"]
+    if per_entity:
+        cards = list(per_entity.values())
+        card = "\n\n".join(cards)
+        if not all(c in text for c in cards):
             line = next((part.strip() for part in text.splitlines() if part.strip()), "")
             text = f"{line[:MAX_LINE_CHARS]}\n\n{card}".strip() if line else card
         return _ISO_DATE.sub(_dmy, text)

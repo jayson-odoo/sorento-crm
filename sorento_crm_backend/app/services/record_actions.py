@@ -264,8 +264,12 @@ def _delete_sales_opportunity(db: Session, payload: dict):
 
 
 def _delete_sales_target(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import target_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_target.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return target_service.delete_target_by_id(db, _entity_id(payload))
 
 

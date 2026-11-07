@@ -60,12 +60,100 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
+/** A GFM table's separator row: `|---|:--:|` (crew pass, 5 Nov: agent tables printed as raw "|" text). */
+const TABLE_SEPARATOR = /^\|(\s*:?-{3,}:?\s*\|)+\s*$/;
+
+function cells(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+}
+
+type Piece = { kind: 'text'; text: string } | { kind: 'table'; header: string[]; rows: string[][] };
+
+/**
+ * The reply cut into text and tables. A table is a `| a | b |` header line followed by its separator line, then
+ * every following line that starts with `|`. Anything else, a lone `|` line included, stays text.
+ */
+export function splitTables(text: string): Piece[] {
+  const lines = text.split('\n');
+  const pieces: Piece[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length > 0) pieces.push({ kind: 'text', text: run.join('\n') });
+    run = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim().startsWith('|') && TABLE_SEPARATOR.test((lines[i + 1] ?? '').trim())) {
+      const header = cells(line);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(cells(lines[i++]));
+      i -= 1;
+      flush();
+      pieces.push({ kind: 'table', header, rows });
+      continue;
+    }
+    run.push(line);
+  }
+  flush();
+  return pieces;
+}
+
+function Table({ header, rows }: { header: string[]; rows: string[][] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="my-1 w-full border-collapse text-xs">
+        <thead>
+          <tr>
+            {header.map((cell, i) => (
+              <th key={i} className="border border-border px-1.5 py-1 text-left font-semibold">
+                <InlineText text={cell} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => (
+            <tr key={r}>
+              {header.map((_, c) => (
+                <td key={c} className="border border-border px-1.5 py-1">
+                  <InlineText text={row[c] ?? ''} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * A reply on the panel: text and lists as `TextBlocks`, and markdown tables (the agent's code-rendered result
+ * tables, `query_tools.render_card`) as real tables.
+ */
+export function WhatsAppBlocks({ text }: { text: string }) {
+  const pieces = splitTables(text ?? '');
+  if (pieces.length === 1 && pieces[0].kind === 'text') return <TextBlocks text={pieces[0].text} />;
+  return (
+    <div className="space-y-1.5">
+      {pieces.map((piece, i) =>
+        piece.kind === 'table' ? (
+          <Table key={i} header={piece.header} rows={piece.rows} />
+        ) : (
+          <TextBlocks key={i} text={piece.text} />
+        ),
+      )}
+    </div>
+  );
+}
+
 /**
  * A brain reply on the panel: WhatsApp text with real lists. Text runs keep their line breaks, list
  * items hang under their marker, and every line goes through `WhatsAppText` (so markup, links and
  * literal HTML behave as they do in the console and the inbox).
  */
-export function WhatsAppBlocks({ text }: { text: string }) {
+function TextBlocks({ text }: { text: string }) {
   const blocks = parseWhatsAppBlocks(text);
   if (blocks.length === 0) return null;
   return (
