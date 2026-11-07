@@ -70,3 +70,14 @@ suggestions portal-shaped, SI ask + own applications only, created codes, prefil
 vitest (FE slice): multi-select product code cell sends `current_product_ids`, read-only chips, "Inquiry asked"
 hint, suggestion row text per surface, "Use <code>" fills the link picker without linking, SI checkbox sends
 `npa_requested`, portal SI banner + CTA only while asked and no live NPA, tabs + empty states, product Lineage tab.
+
+## Decisions after the mock OK (7 Nov)
+
+- Owner: mock v3 approved ("ok to start"), Brand column removed from the product table (screens only; the BE still
+  accepts `brand_id`, the column stays).
+- Crew B (a): SI attachments on the NPA are OUT of scope, follow-up lane (link-only copy, own security pass).
+- Crew C (a): the per-row link / close / undo routes stay; pre-v3 applications show their per-row result read-only
+  (staff keep Undo); removal follows a production count.
+- A (Excel BRAND row) is with the owner; built as (a): the row stays, empty on new applications.
+- Exemption: the two embedded read-only lists (SI "New product applications", product Lineage) are plain bordered
+  tables like `SampleRequestLines`, not DataGrids (a few rows, no search / sort / pagination).
