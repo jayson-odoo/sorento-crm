@@ -168,6 +168,9 @@ def found_agents(data) -> list[str]:
             agents.append(f"{code} - {name}" if code and name else code or name)
         only_agents = row.get("status") == "found" and len(agents) == len(matches)
         exact = [label for label in agents if agent_exact(label, row.get("term"))]
+        if any(m.get("kind") != "sales_agent" and agent_exact(m.get("name"), row.get("term")) for m in matches
+               if isinstance(m, dict)):
+            exact = []  # a customer named exactly the same: the term may mean either (review round 10)
         named = agents if only_agents else exact
         if not named:
             return []

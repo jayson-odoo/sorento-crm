@@ -21,6 +21,8 @@ def test_F2_a_term_that_is_not_the_agents_own_name_or_code_names_no_agent():
 
     assert found_agents({"results": [{"term": "LONG", "status": "ambiguous", "matches": [LOOK_ALIKE, AGENT]}]}) == []
     assert found_agents({"results": [{"term": "LONG I", "status": "found", "matches": [LOOK_ALIKE]}]}) == []
+    twin = {**LOOK_ALIKE, "name": "LONG I"}
+    assert found_agents({"results": [{"term": "LONG I", "status": "ambiguous", "matches": [twin, AGENT]}]}) == []
     # Every term must name an agent: a customer term beside it keeps the full tool set.
     two = {"results": [{"term": "LONG I", "status": "found", "matches": [AGENT]},
                        {"term": "LONG I TRADING", "status": "found", "matches": [LOOK_ALIKE]}]}
