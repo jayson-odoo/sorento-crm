@@ -3,7 +3,7 @@
 Status: Asked (crew-ask on PR #2231, 7 Nov, comment 6705350934). Evidence round 1 back (comment 6705369461), mockup
 drawn on it; round 2 (comment 6705387753, #2230 counted-line flags) returns identical figures. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
 Plan: `PLAN-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-oct-dev.sql`.
-Mockup: `mockups/sales-insights-p2-07nov.html` (real October figures, evidence round 1).
+Mockup: `mockups/sales-insights-p2-07nov.html` (real October figures; panels "Self-service" and "Components reused" answer the owner's two mockup questions).
 
 ## The ask in one line
 
