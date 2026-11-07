@@ -57,9 +57,14 @@ ASK = "/api/v1/order-management/report-ask"
 OCT = ("2026-10-01", "2026-10-31")
 SEP = ("2026-09-01", "2026-09-30")
 NO_AGENT = "(no agent)"
-ROW_KEYS = {"rank", "person", "codes", "amount", "prev_amount", "change_pct", "customers", "is_me"}
+# SALES-INSIGHTS-P2 (owner ruling 7 Nov) supersedes the #2227 shape: the plan's new Contract.
+ROW_KEYS = {
+    "rank", "name", "keys", "person", "codes", "amount", "qty", "prev_amount", "change_pct", "customers",
+    "products", "is_me", "target",
+}
 TOP_KEYS = {
-    "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount", "rows", "me",
+    "basis", "by", "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount",
+    "rows", "me", "can_drill_others",
 }
 
 
@@ -456,7 +461,7 @@ def test_every_contract_field_is_in_the_response(db):
         narrow = None
     assert set(body) == TOP_KEYS
     assert (body["date_from"], body["date_to"]) == OCT
-    assert set(body["total"]) == {"amount", "prev_amount", "change_pct"}
+    assert set(body["total"]) == {"amount", "qty", "prev_amount", "change_pct", "customers", "products"}
     assert all(set(r) == ROW_KEYS for r in body["rows"])
     assert isinstance(body["rows"][0]["codes"], list) and isinstance(body["rows"][0]["customers"], int)
     assert body["as_of"].startswith("2026-11-05T09:00:00")  # max last_synced_at over both granted companies

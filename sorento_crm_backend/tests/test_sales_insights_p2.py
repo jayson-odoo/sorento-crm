@@ -553,7 +553,11 @@ def test_p1_1_brand_and_category_views_group_by_their_names_and_filters_narrow(d
         narrowed = _ok(client, by="customer", brand=world.brand.id)
     assert _by_name(brands)[world.brand.brand_name] == D("1000.00")
     assert _by_name(categories)[world.category.category_name] == D("1000.00")
-    assert brands["rows"][0]["keys"] == [world.brand.id]
+    real = next(r for r in brands["rows"] if r["name"] == world.brand.brand_name)
+    assert real["keys"] == [world.brand.id]
+    blank = next(r for r in brands["rows"] if r["name"] == "(no brand)")
+    assert blank["keys"] == [] and _money(blank["amount"]) == D("1020.00")
+    assert sum(_money(r["amount"]) for r in brands["rows"]) == _money(brands["total"]["amount"])
     assert _by_name(narrowed) == {world.c1.customer_name: D("1000.00")}
 
 

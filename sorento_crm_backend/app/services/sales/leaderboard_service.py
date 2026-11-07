@@ -36,6 +36,11 @@ _CHANNEL_KEYS = {**{label: value for value, label in inv.SALES_TYPES}}
 _ORDER_CHANNELS = (("dealer", "Dealer"), ("project", "Project team"), ("other", "Other"))
 
 
+#: The engine's "(blank)" row, named for the view it sits in; kept so a view's rows add up to its total.
+_BLANK_NAMES = {"customer": "(no customer)", "product": "(no product)", "brand": "(no brand)",
+                "category": "(no category)", "channel": "(none)"}
+
+
 def channel_options() -> dict[str, list[dict[str, str]]]:
     order = [{"value": v, "label": label} for v, label in _ORDER_CHANNELS]
     return {"invoiced": [{"value": v, "label": label} for v, label in inv.SALES_TYPES],
@@ -288,10 +293,9 @@ def build(
             continue
         if _money(r["amount"]) == 0:
             continue
-        if by in ("brand", "category") and r["name"] == engine.BLANK_VALUE:
-            continue  # no row for "nobody", as the chat axes (`ask.CHAT_NAMED_AXES`)
         ranked.append(r)
-    ranked.sort(key=lambda r: (-Decimal(str(r["amount"])), r["name"]))
+    shown = {r["name"]: _BLANK_NAMES.get(by, r["name"]) if r["name"] == engine.BLANK_VALUE else r["name"] for r in ranked}
+    ranked.sort(key=lambda r: (-Decimal(str(r["amount"])), shown[r["name"]]))
 
     codes = {}
     if by == "person":
@@ -304,7 +308,7 @@ def build(
         prev = prev_by_name.get(r["name"], 0)
         row: dict[str, Any] = {
             "rank": rank,
-            "name": r["name"],
+            "name": shown[r["name"]],
             "keys": list(r["keys"]) if by != "person" else [],
             "amount": _money(r["amount"]),
             "qty": int(r.get("qty") or 0),
@@ -323,7 +327,7 @@ def build(
             brand, category = product_info.get(r["keys"][0], (None, None)) if r["keys"] else (None, None)
             row.update(brand=brand, category=category)
         elif by == "channel":
-            row["key"] = _CHANNEL_KEYS.get(r["name"])
+            row["key"] = _CHANNEL_KEYS.get(r["name"])  # the "(blank)" row has no key
         rows.append(row)
 
     me = None
