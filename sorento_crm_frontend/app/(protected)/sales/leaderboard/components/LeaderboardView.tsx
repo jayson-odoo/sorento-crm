@@ -63,7 +63,7 @@ export default function LeaderboardView() {
   const runnable = Boolean(range.from && range.to && range.to >= range.from);
 
   const options = useSalesLeaderboardOptionsQuery().data ?? NO_OPTIONS;
-  const { data, isLoading, isFetching, isError, error } = useSalesLeaderboardQuery(
+  const { data, isLoading, isFetching, isError, error, isPlaceholderData } = useSalesLeaderboardQuery(
     {
       date_from: range.from,
       date_to: range.to,
@@ -250,7 +250,7 @@ export default function LeaderboardView() {
             {refreshing ? (
               <span role="status" data-testid="leaderboard-loading" className="flex h-7 items-center gap-1.5 text-xs text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" />
-                Loading
+                Updating board
               </span>
             ) : null}
             <div className="hidden flex-wrap items-end gap-3 md:flex">{filterControls('lb')}</div>
@@ -393,6 +393,7 @@ export default function LeaderboardView() {
                   table={table}
                   recordCount={rows.length}
                   isLoading={isLoading}
+                  isPlaceholderData={isPlaceholderData}
                   listingKey="sales.leaderboard.view"
                   tableLayout={{ width: 'fixed', columnsResizable: true }}
                   rowClassName={(row) => (row.is_me ? 'bg-primary/5' : undefined)}

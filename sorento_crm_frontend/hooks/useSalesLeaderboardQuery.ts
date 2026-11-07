@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getLeaderboard,
   getLeaderboardOptions,
@@ -11,11 +12,12 @@ export const SALES_LEADERBOARD_OPTIONS_KEY = ['sales-leaderboard-options'] as co
 /** `enabled` is false while a Custom range is still half picked. */
 export function useSalesLeaderboardQuery(params: LeaderboardParams, enabled = true) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...SALES_LEADERBOARD_KEY, params],
     queryFn: () => getLeaderboard(params),
     enabled,
     // Keep the last board while the next one loads, but never behind a disabled (half-picked) range.
-    placeholderData: enabled ? (previous) => previous : undefined,
+    placeholderData: enabled ? LIST_QUERY_OPTIONS.placeholderData : undefined,
     retry: 1,
   });
 }

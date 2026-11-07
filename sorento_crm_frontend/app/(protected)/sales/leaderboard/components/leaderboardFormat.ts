@@ -2,6 +2,7 @@ import { getMalaysiaDateKey } from '@/lib/helpers';
 
 export type PeriodKind = 'this_month' | 'last_month' | 'this_quarter' | 'ytd' | 'custom';
 
+// date-format-ok: short month names label the comparison window ("vs Sep"), no date is rendered from them.
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const pad = (n: number) => String(n).padStart(2, '0');

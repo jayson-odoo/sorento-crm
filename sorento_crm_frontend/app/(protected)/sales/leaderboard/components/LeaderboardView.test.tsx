@@ -109,14 +109,14 @@ describe('LeaderboardView', () => {
     expect(screen.queryByText('No sales in this period')).toBeNull();
   });
 
-  it('dims the old board and shows Loading while a new period is fetching behind it', () => {
+  it('dims the old board and shows Updating board while a new period is fetching behind it', () => {
     state.data = response([row(1, 'LCL', 900)], null);
     state.isFetching = true;
     render(<LeaderboardView />);
     const board = screen.getByTestId('leaderboard-board');
     expect(board.getAttribute('aria-busy')).toBe('true');
     expect(board.className).toContain('opacity-50');
-    expect(screen.getByTestId('leaderboard-loading').textContent).toContain('Loading');
+    expect(screen.getByTestId('leaderboard-loading').textContent).toContain('Updating board');
   });
 
   it('is not dimmed and shows no Loading when idle', () => {
