@@ -16,3 +16,7 @@ Plan: `PLAN-pricetag-discontinued-pick-07nov.md`. Supersedes AC-C6 (disabled opt
   pick reads back on the line.
 - AC-6. Hand test: SRTKS7061-BL, template KS_1TAP_SP, pick SRTWT5831-BL in "Not sure, any of 5";
   the pick shows on the line and the request saves.
+- AC-7. A line whose pre-filled promotion covers only an option NOT picked saves (no 422): the
+  promotion is stored as none, no price on the tag changes, and the form says "Promotion removed
+  from line i: it does not cover the option picked." A promotion that covers nothing in the line's
+  package, or that this viewer cannot see, is still refused with PROMOTION_NOT_AVAILABLE.

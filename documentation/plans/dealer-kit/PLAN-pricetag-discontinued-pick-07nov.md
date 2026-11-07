@@ -34,6 +34,15 @@ be picked. "discontineud should still be able to choose".
 3. Backend: a pytest pinning that save accepts a discontinued candidate pick, so a future reject
    cannot land silently.
 
+4. Round 3 (crew pass on 07667140): Save Draft answered 422 PROMOTION_NOT_AVAILABLE after any pick
+   the line's pre-filled promotion does not cover (pre-existing, not about discontinued). The form's
+   pricing lookup still sends a resolved row's candidates (`usePriceTagLineEditor.ts:121-123`), so
+   the promotion still looks offered; the save validates only open rows' candidates
+   (`price_tag_request_service.py`). Chosen: drop the promotion on save when it covers one of the
+   line's own package options but nothing on the line, and say so in a toast. It prices nothing on
+   the line, so no price changes (a combo line's price is the combo's, AC-D1). Every other refusal
+   stays a 422.
+
 ## Out of scope
 
 Every other place in the price tag / Dealer Kit flow that blocks a discontinued product is listed
