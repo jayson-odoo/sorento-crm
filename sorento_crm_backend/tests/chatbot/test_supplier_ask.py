@@ -2479,3 +2479,93 @@ def test_a_weak_lone_supplier_offers_each_row_once():
         {k: v for k, v in meaning.items() if k[1] < 2},
     )
     assert alone.status == "unresolved", alone
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live check (7 Nov 2026, db7ec534, parser v74 md5 d29c1983): HANLIM TRADING SDN BHD is a
+# customer AND two supplier records (403-H007, 400-H018). "PO for hanlim" read party_side=supplier and then asked
+# "Which one do you mean?" over the two supplier records of one name. Records of one name are one supplier, as ledgers
+# of one trading name are one customer (`chatbot_entity_kinds.family_grouping`, migration
+# `sfam_0001_supplier_ledger_family`): the PO list runs for both, never asked.
+# --------------------------------------------------------------------------- #
+
+HANLIM_TRADING = "HANLIM TRADING SDN BHD"
+
+
+def _hanlim_trading_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["hl_customer"] = _seed_customer(session_factory, HANLIM_TRADING)
+    ids["hl_sup_a"] = _seed_named(session_factory, HANLIM_TRADING, "403-H007")
+    ids["hl_sup_b"] = _seed_named(session_factory, HANLIM_TRADING, "400-H018")
+    return ids
+
+
+def _hanlim_trading_turn(session_factory, monkeypatch, text: str, hint: str, **parse):
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim", HANLIM_TRADING.casefold()},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+_PO_ASK = dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"])
+_OUTSTANDING_PO_AS_ORDER = dict(domain_hint="order", intent_hint="check_order", order_status="outstanding", document=[])
+
+
+@pytest.mark.parametrize(
+    "text,hint,parse",
+    [
+        ("PO for hanlim", "supplier", _PO_ASK),
+        ("PO for hanlim", "customer", _PO_ASK),
+        # Live run 3: party_side supplier, the entity hinted customer, the order domain's outstanding read.
+        ("outstanding PO hanlim", "customer", _OUTSTANDING_PO_AS_ORDER),
+        ("outstanding PO hanlim", "supplier", {**_PO_ASK, "order_status": "outstanding"}),
+    ],
+)
+def test_po_for_a_supplier_of_two_records_of_one_name_lists_both_never_asked(
+    session_factory, monkeypatch, text, hint, parse
+):
+    ids = _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(session_factory, monkeypatch, text, hint, party_side="supplier", **parse)
+    assert "Which one do you mean?" not in reply and "(customer)" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+    assert not calls[0].get("customer_ids"), calls
+
+
+def test_delivery_to_hanlim_trading_is_the_customer_never_asked(session_factory, monkeypatch):
+    ids = _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(
+        session_factory, monkeypatch, "delivery to hanlim", "customer", party_side="customer",
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"],
+    )
+    assert "Which one do you mean?" not in reply and "(supplier)" not in reply, reply
+    assert HANLIM_TRADING in reply, reply
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and n_party(a)]
+    assert all(a.get("customer_ids") == [ids["hl_customer"]] for a in party), (reply, captured)
+
+
+@pytest.mark.parametrize("said", ["unclear", None])
+def test_bare_hanlim_trading_is_asked_customer_or_supplier_once(session_factory, monkeypatch, said):
+    """Owner, 5 Nov: ask only when nothing in the message names a side. A bare name names none."""
+    _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(
+        session_factory, monkeypatch, "hanlim", "customer", party_side=said,
+        domain_hint="order", intent_hint="check_order", order_status=None,
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert reply.count("(supplier)") == 1, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+def test_the_supplier_kind_groups_records_of_one_name():
+    """The seed fallback and the migration agree: supplier records of one name are one family."""
+    from app.services.chatbot.turn import policy_rows
+
+    assert policy_rows.SUPPLIER_KIND_ROW["family_grouping"] == "ledger_family"
