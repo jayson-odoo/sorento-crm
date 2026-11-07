@@ -1179,3 +1179,77 @@ describe('TargetRecord: owner markup 5 Nov 11:40 (lane TARGET-TIER-ADDITIONAL)',
     expect(within(customer).queryByText('BEAUFORT HOMES SDN BHD 2026 quarterly')).toBeNull();
   });
 });
+
+describe('TargetRecord: crew browser pass on 1104 (lane TARGET-TIER-ADDITIONAL)', () => {
+  /** TGT-000008 as imported: one account, every tier's rate held per account (target_tier_rates). */
+  function imported() {
+    const base = tgt8();
+    const tier = (threshold: number, rate: number, start: string, add: number | null = null) => ({
+      threshold, rate: null, bonus_amount: null, additional_rate: add, is_additional: false,
+      period_start: start, account_rates: [{ customer_id: A1, rate }],
+    });
+    return {
+      ...base,
+      commission_method: 'retroactive',
+      threshold_unit: 'amount',
+      tiers_per_period: true,
+      tiers: [
+        tier(60000, 5, '2026-01-01'), tier(75000, 6, '2026-01-01'),
+        tier(60000, 5, '2026-04-01'), tier(75000, 6, '2026-04-01'),
+      ],
+    };
+  }
+
+  it('Save keeps each tier’s per-account rate; it does not collapse them into the tier rate', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: imported(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    fireEvent.change(screen.getByLabelText('Tier 1 additional'), { target: { value: '1' } });
+    fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalled());
+    const sent = patchHeader.mutateAsync.mock.calls[0][0];
+    expect(sent.tiers.map((t: { account_rates: unknown }) => t.account_rates)).toEqual([
+      [{ customer_id: A1, rate: 5 }], [{ customer_id: A1, rate: 6 }],
+      [{ customer_id: A1, rate: 5 }], [{ customer_id: A1, rate: 6 }],
+    ]);
+    expect(sent.tiers[0].additional_rate).toBe(1);
+  });
+
+  it('a tier saved with one rate for every account still saves as one rate', async () => {
+    const data = imported();
+    data.tiers = data.tiers.map((t) => ({ ...t, rate: t.account_rates[0].rate, account_rates: null })) as never;
+    hooks.useSalesTarget.mockReturnValue({ data, isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    fireEvent.change(screen.getByLabelText('Tier 1 additional'), { target: { value: '1' } });
+    fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalled());
+    const sent = patchHeader.mutateAsync.mock.calls[0][0];
+    expect(sent.tiers.map((t: { rate: number; account_rates: unknown }) => [t.rate, t.account_rates])).toEqual([
+      [5, null], [6, null], [5, null], [6, null],
+    ]);
+  });
+
+  it('Pays to names the account label once when the account name already carries it', () => {
+    const account = { customer_id: A1, code: '300-A077', name: 'A CRAFT IDEA SDN BHD (A/C I)', label: 'A/C I' };
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8({ payout_account: account }), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    const summary = screen.getByRole('region', { name: 'Commission summary' });
+    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('(A/C I) (A/C I)');
+  });
+
+  it('the Commission Period filter keeps its pick through Edit and Cancel', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: imported(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    let filter = screen.getByRole('group', { name: 'Period' });
+    fireEvent.click(within(filter).getByLabelText('01/01/2026 - 31/03/2026'));
+    openEdit();
+    fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Cancel' }));
+    filter = screen.getByRole('group', { name: 'Period' });
+    expect((within(filter).getByLabelText('01/01/2026 - 31/03/2026') as HTMLInputElement).checked).toBe(true);
+  });
+});

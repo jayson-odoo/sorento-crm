@@ -165,6 +165,10 @@ interface TierDraft {
   period: string;
   /** Dealer targets: the rate typed for each counted account; empty = earns nothing. */
   accountRates: Record<string, string>;
+  /** Saved with per-account rates (`target_tier_rates`, as the import writes them): Save keeps
+   * them per account rather than collapsing equal rates into the tier rate, so a Save never
+   * rewrites the rates of tiers nobody touched (crew browser pass, 7 Nov). */
+  perAccount: boolean;
 }
 
 let nextTierKey = 0;
@@ -189,6 +193,7 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
     additional: !!tier?.is_additional,
     period: tier?.period_start ?? '',
     accountRates,
+    perAccount: !!tier?.account_rates,
   };
 }
 
@@ -307,10 +312,11 @@ function savedFigures(target: SalesTargetDetail): Record<string, string> {
 }
 
 /** A dealer tier's rates: one `rate` when every counted account has the same one, else the
- * accounts given a rate (only they earn on the tier). */
+ * accounts given a rate (only they earn on the tier). A tier saved per account stays per
+ * account. */
 function dealerRates(t: TierDraft, accountIds: string[]): Pick<CommissionTier, 'rate' | 'account_rates'> {
   const typed = accountIds.map((id) => (t.accountRates[id] ?? '').trim());
-  if (typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
+  if (!t.perAccount && typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
     return { rate: Number(typed[0]), account_rates: null };
   }
   return {
@@ -1393,10 +1399,16 @@ function payoutShort(target: SalesTargetDetail): string {
   return a ? `${a.code} (${a.label})` : '-';
 }
 
+/** `A CRAFT IDEA SDN BHD (A/C I)`: the label in brackets once, also when the account's own
+ * name already ends with it. */
+function nameWithLabel(a: { name: string; label: string }): string {
+  return a.name.endsWith(`(${a.label})`) ? a.name : `${a.name} (${a.label})`;
+}
+
 /** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */
 function payoutText(target: SalesTargetDetail): string {
   const a = target.payout_account;
-  return a ? `${a.code} - ${a.name} (${a.label})` : '-';
+  return a ? `${a.code} - ${nameWithLabel(a)}` : '-';
 }
 
 /** Above the tabs: what the target has earned so far and where it is paid (owner, 4 Nov:
@@ -1968,7 +1980,7 @@ function DealerAccounts({
               wrapOptions
             />
           ) : target?.payout_account ? (
-            `${target.payout_account.code} - ${target.payout_account.name} (${target.payout_account.label})`
+            payoutText(target)
           ) : (
             '-'
           )}
@@ -2010,6 +2022,8 @@ function CommissionTiers({
 }) {
   const rateUnit = metric === 'quantity' ? 'RM per unit' : '% of RM';
   const dealer = (draft?.kind ?? target?.subject_kind) === 'dealer';
+  // Held here, not in the grid: Edit swaps the grid for inputs, and the pick must survive it.
+  const [periodPick, setPeriodPick] = useState<string[]>([]);
   const periodLabel = (start: string) => {
     const p = periodStarts.find((x) => x.start === start);
     return p ? dateRange(p.start, p.end) : start ? shortDate(start) : '-';
@@ -2050,7 +2064,7 @@ function CommissionTiers({
               rows={tierRows(target, tiers)}
               accounts={accounts}
               listingKey="sales.targets.view::tiers"
-              periodFilter
+              periodFilter={{ value: periodPick, onChange: setPeriodPick }}
             />
           </div>
         ) : null}
@@ -2343,7 +2357,7 @@ function TiersGrid({
   accounts,
   listingKey,
   reached = null,
-  periodFilter = false,
+  periodFilter,
 }: {
   target: SalesTargetDetail;
   rows: TierRow[];
@@ -2351,14 +2365,15 @@ function TiersGrid({
   listingKey: string | null;
   /** The lightbox: the main tier number to highlight. */
   reached?: number | null;
-  periodFilter?: boolean;
+  /** The Commission tab's Period filter, its pick owned by the caller. */
+  periodFilter?: { value: string[]; onChange: (v: string[]) => void };
 }) {
   const unit = target.threshold_unit ?? 'pct';
   const perPeriod = !!target.tiers_per_period;
   const dealer = target.subject_kind === 'dealer';
   const legacy = rows.some((r) => r.tier.is_additional);
   const rateUnit = target.metric === 'quantity' ? 'RM per unit' : '% of RM';
-  const [periods, setPeriods] = useState<string[]>([]);
+  const periods = periodFilter?.value ?? [];
   const periodOptions = target.periods.map((p) => ({ value: p.period_start, label: periodRange(p.period_start, p.period_end) }));
   const labelOf = (start: string | null | undefined) =>
     periodOptions.find((o) => o.value === start)?.label ?? (start ? shortDate(start) : '-');
@@ -2445,7 +2460,7 @@ function TiersGrid({
               <SearchableMultiSelect
                 id="target-tier-period-filter"
                 value={periods}
-                onChange={setPeriods}
+                onChange={periodFilter.onChange}
                 options={periodOptions}
                 placeholder="Every period"
                 clearable
