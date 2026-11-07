@@ -385,8 +385,8 @@ export function fitCardTextProps(
  * styles. Used when somebody first edits a box that has no `card`. `boxWidth_mm` sizes a vertical
  * box's card to the box (the legacy card spans the box); absent, the set `cardWidth_mm` is used.
  *
- * Three lines: code (name style), name (name style), spec, price. A library accessory has no code
- * or price and a product normally no spec, so the empty rows drop and the rest move up.
+ * Three lines: code, name (name style), price, spec. The card is one spec line taller than the
+ * legacy one, so the spec never overlaps the price.
  */
 export function cardFromLegacy(
   props: AccessoriesLayerProps,
@@ -440,22 +440,27 @@ export function cardFromLegacy(
     });
   }
   const rows = inner.lines;
+  let height = h;
   if (lines >= 3 && rows.length >= 3) {
     const first = rows[0];
     const rest = rows[2];
-    // Every row below the code is spaced by the name row, so a library accessory (no code) shifts
-    // up by exactly one name row and lands where the legacy card put it.
+    // Rows: code, name (both name size), price, spec (spec size). A library accessory has no code
+    // or price, a product normally no description: the empty rows drop and the rest move up, so a
+    // library card prints name then spec, a product code, name, LP (and its description under it).
     const nameTop = first.y_mm + first.height_mm;
-    const specTop = nameTop + first.height_mm;
+    const priceTop = nameTop + first.height_mm;
+    const specTop = priceTop + rest.height_mm;
     elements.push(text('code', 'code', first, nameStyle, props.nameFontSize));
     elements.push(text('name', 'name', first, nameStyle, props.nameFontSize, { y_mm: nameTop }));
+    elements.push(text('price', 'price', rest, specStyle, props.specFontSize, { y_mm: priceTop }));
     elements.push(text('spec', 'spec', rest, specStyle, props.specFontSize, { y_mm: specTop }));
-    elements.push(text('price', 'price', rest, specStyle, props.specFontSize, { y_mm: specTop }));
+    // One more spec line than the legacy card holds, so the description never overlaps the price.
+    height = h + rest.height_mm;
   } else {
     elements.push(text('name', 'name', rows[0], nameStyle, props.nameFontSize));
     if (rows[1]) elements.push(text('spec', 'spec', rows[1], specStyle, props.specFontSize));
   }
-  return { width_mm: w, height_mm: h, elements };
+  return { width_mm: w, height_mm: height, elements };
 }
 
 /** The per-box keys: they live on the box in a tag template, never in a shared design. */

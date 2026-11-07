@@ -398,7 +398,38 @@ describe('cardFromLegacy', () => {
     const layout = cardFromLegacy(props, 3) as unknown as { height_mm: number; elements: El[] };
     expect(fieldsOf(layout)).toContain('price');
     const legacy = accessoryBoxLayout(1, props, 200, 200, 3).cards[0];
-    expect(layout.height_mm).toBeCloseTo(legacy.height_mm);
+    // One spec line taller than the legacy card, so a description never overlaps the price.
+    const specLine = (props.specFontSize * 0.3528 * 1.2);
+    expect(layout.height_mm).toBeCloseTo(legacy.height_mm + specLine);
+  });
+
+  it('prints a product with a description as code, name, LP, description without overlap', () => {
+    const props = { ...defaultAccessoriesProps(), direction: 'horizontal' } as AccessoriesLayerProps;
+    const layout = cardFromLegacy(props, 3);
+    const product = {
+      ...WASTE,
+      spec: 'Brass, w/o overflow',
+    } as unknown as TagAccessory;
+    const out = cardElementsFor(product, layout) as unknown as El[];
+    const text = out.filter((e) => e.kind === 'text');
+    expect(text.map((e) => e.field)).toEqual(['code', 'name', 'price', 'spec']);
+    for (let i = 1; i < text.length; i += 1) {
+      const prev = text[i - 1];
+      expect(text[i].y_mm as number).toBeGreaterThanOrEqual(
+        (prev.y_mm as number) + (prev.height_mm as number) - 1e-6,
+      );
+    }
+    const last = text[text.length - 1];
+    expect((last.y_mm as number) + (last.height_mm as number)).toBeLessThanOrEqual(layout.height_mm + 1e-6);
+  });
+
+  it('prints a product without a description as code, name, LP and a library accessory as name, spec', () => {
+    const props = { ...defaultAccessoriesProps(), direction: 'horizontal' } as AccessoriesLayerProps;
+    const layout = cardFromLegacy(props, 3);
+    const fields = (item: TagAccessory) =>
+      (cardElementsFor(item, layout) as unknown as El[]).filter((e) => e.kind === 'text').map((e) => e.field);
+    expect(fields(WASTE)).toEqual(['code', 'name', 'price']);
+    expect(fields(COLANDER)).toEqual(['name', 'spec']);
   });
 
   it('gives every element a unique id', () => {
