@@ -28,7 +28,9 @@ export interface Setup {
   period: Period;
   from: string;
   to: string;
-  company: string;
+  company: string[];
+  sort: string;
+  dir: 'asc' | 'desc';
   brand: string[];
   category: string[];
   channel: string[];
@@ -39,7 +41,7 @@ export interface Setup {
   productLabel: string;
 }
 
-const KEYS = ['basis', 'by', 'period', 'from', 'to', 'company', 'brand', 'category', 'channel', 'person', 'customer', 'product'];
+const KEYS = ['basis', 'by', 'period', 'from', 'to', 'sort', 'dir', 'company', 'brand', 'category', 'channel', 'person', 'customer', 'product'];
 
 export const hasSetupKeys = (sp: URLSearchParams) => KEYS.some((key) => sp.has(key));
 
@@ -56,7 +58,9 @@ export function parseSetup(sp: URLSearchParams): Setup {
     period,
     from: sp.get('from') ?? '',
     to: sp.get('to') ?? '',
-    company: sp.get('company') ?? '',
+    company: sp.getAll('company'),
+    sort: sp.get('sort') ?? 'rank',
+    dir: sp.get('dir') === 'desc' ? 'desc' : 'asc',
     brand: sp.getAll('brand'),
     category: sp.getAll('category'),
     channel: sp.getAll('channel'),
@@ -74,8 +78,11 @@ export function serializeSetup(s: Setup): string {
     if (s.from) sp.set('from', s.from);
     if (s.to) sp.set('to', s.to);
   }
-  if (s.company) sp.set('company', s.company);
-  for (const key of ['brand', 'category', 'channel', 'person', 'customer', 'product'] as const) {
+  if (s.sort !== 'rank' || s.dir !== 'asc') {
+    sp.set('sort', s.sort);
+    sp.set('dir', s.dir);
+  }
+  for (const key of ['company', 'brand', 'category', 'channel', 'person', 'customer', 'product'] as const) {
     for (const value of s[key]) sp.append(key, value);
   }
   if (s.customer.length && s.customerLabel) sp.set('customer_label', s.customerLabel);
@@ -114,7 +121,9 @@ export function queryParams(s: Setup): LeaderboardParams {
     // No compare on Undelivered; the backend ignores it there.
     previous_from: s.basis === 'outstanding' ? undefined : w.previousFrom,
     previous_to: s.basis === 'outstanding' ? undefined : w.previousTo,
-    company: s.company || undefined,
+    company: s.company,
+    sort: s.sort,
+    dir: s.dir,
     brand: s.brand,
     category: s.category,
     channel: s.channel,
@@ -139,7 +148,7 @@ const REPORT_TAB: Record<LeaderboardBasis, string> = {
   outstanding: 'undelivered',
 };
 
-function seedParams(s: Setup, keys: Array<'brand' | 'category' | 'channel' | 'person' | 'customer' | 'product'>) {
+function seedParams(s: Setup, keys: Array<'company' | 'brand' | 'category' | 'channel' | 'person' | 'customer' | 'product'>) {
   const params: Record<string, unknown> = {};
   const w = windowOf(s);
   if (w.from && w.to) params.period = { kind: 'custom', from: w.from, to: w.to };
@@ -152,7 +161,7 @@ function seedParams(s: Setup, keys: Array<'brand' | 'category' | 'channel' | 'pe
 /** Sales & outstanding on the basis's tab, the board's grouping as the pivot rows and every filter as a param. */
 export function reportHref(s: Setup): string {
   const seed = {
-    params: seedParams(s, ['brand', 'category', 'channel', 'person', 'customer', 'product']),
+    params: seedParams(s, ['company', 'brand', 'category', 'channel', 'person', 'customer', 'product']),
     pivot: { rows: PIVOT_ROWS[s.by], cols: 'all', measures: ['amount', 'qty'] },
   };
   return `/sales/sales-and-outstanding?tab=${REPORT_TAB[s.basis]}&seed=${encodeURIComponent(JSON.stringify(seed))}`;
@@ -160,6 +169,6 @@ export function reportHref(s: Setup): string {
 
 /** Top selling items on the same period, brand and category (Invoiced, Product view only). */
 export function topSellingHref(s: Setup): string {
-  const seed = { params: seedParams(s, ['brand', 'category']) };
+  const seed = { params: seedParams(s, ['company', 'brand', 'category']) };
   return `/sales/top-selling-items?seed=${encodeURIComponent(JSON.stringify(seed))}`;
 }
