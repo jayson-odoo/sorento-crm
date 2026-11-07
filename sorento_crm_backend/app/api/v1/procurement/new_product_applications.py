@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, require_any_permission, require_permission
 from app.schemas.new_product_application import (
     FeedbackIn,
     AttachmentLinkIn,
@@ -28,6 +28,9 @@ from app.services.error_handler import AppException
 from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+
+#: The product page's own view slug: its Lineage tab reads this route.
+PRODUCTS_VIEW = "master_data.products.view"
 
 router = APIRouter()
 
@@ -92,10 +95,40 @@ def prefill(
 @router.get("/products")
 def search_products(
     q: str = Query(""),
-    _user: dict = Depends(require_permission(svc.OPEN_CODE)),
+    # The applicant picks current codes here too (NPA-FROM-SI rule 4), purchasing the new code.
+    _user: dict = Depends(require_any_permission([svc.CREATE, svc.OPEN_CODE])),
     db: Session = Depends(get_db),
 ):
     return svc.search_products(db, q)
+
+
+def _id_list(raw: str) -> list:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()][:20]
+
+
+@router.get("/reuse-suggestions")
+def reuse_suggestions(
+    product_ids: str = Query(""),
+    _user: dict = Depends(
+        require_any_permission([svc.CREATE, svc.VIEW, svc.APPROVE, svc.OPEN_CODE])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 6: codes created before from exactly these current codes (a suggestion)."""
+    return svc.reuse_suggestions(db, _id_list(product_ids))
+
+
+@router.get("/lineage")
+def product_lineage(
+    product_id: str = Query(...),
+    user: dict = Depends(
+        require_any_permission([svc.VIEW, svc.APPROVE, svc.OPEN_CODE, PRODUCTS_VIEW])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 5: a product's lineage. Application links only for NPA viewers."""
+    actor = svc.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+    return svc.lineage(db, product_id, can_view_applications=actor.can_view_all)
 
 
 @router.get("")

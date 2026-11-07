@@ -173,6 +173,13 @@ class NewProductApplicationLine(Base):
     resolved_at = Column(DateTime(timezone=False), nullable=True)
 
     application = relationship("NewProductApplication", back_populates="lines")
+    #: NPA-FROM-SI: the CURRENT product codes this new code is based on (one or many, picked).
+    sources = relationship(
+        "NewProductApplicationLineSource",
+        back_populates="line",
+        cascade="all, delete-orphan",
+        order_by="NewProductApplicationLineSource.position",
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -191,6 +198,39 @@ class NewProductApplicationLine(Base):
         ),
         Index("ix_new_product_application_lines_application", "application_id"),
         Index("ix_new_product_application_lines_product", "opened_product_id"),
+    )
+
+
+class NewProductApplicationLineSource(Base):
+    """NPA-FROM-SI lineage: one current product a line's new code is built from.
+
+    The line's `opened_product_id` is the new code; together they are "current codes -> new code",
+    and the application is the why. Scoped through its line (no company_id of its own).
+    Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md.
+    """
+
+    __tablename__ = "new_product_application_line_sources"
+    __audit_entity_type__ = "new_product_application_line_source"
+    __audit_track__ = True
+    #: Company chain and history through the line (-> application), never through the product.
+    __audit_parent__ = "line_id"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("new_product_application_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    position = Column(Integer, nullable=False, default=1, server_default="1")
+
+    line = relationship("NewProductApplicationLine", back_populates="sources")
+
+    __table_args__ = (
+        UniqueConstraint("line_id", "product_id", name="uq_npa_line_sources_line_product"),
+        Index("ix_npa_line_sources_product", "product_id"),
     )
 
 
