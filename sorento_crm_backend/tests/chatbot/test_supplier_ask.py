@@ -2728,3 +2728,50 @@ def test_the_supplier_side_never_binds_a_name_the_report_object_holds():
 class SimpleNamespaceTrace:
     def add(self, *_args, **_kwargs) -> None:
         return None
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live re-run 2 at 73e1c41a (7 Nov): whenever the parser hinted the word customer, the supplier
+# never bound. (2) runs 2+3 "Could not find purchase order for customer hanlim"; (3) x3 stayed on the order domain
+# ("Sales order or delivery order?"). Reproduced here with the span pass giving no supplier rows (`supplier_ids=False`):
+# the side is the parser's top-level party_side (A2), a purchase order ask on the supplier side is the purchase_order
+# domain whatever domain_hint says (A3), and a supplier-side miss never says "customer" (A4). Parser fields only.
+# --------------------------------------------------------------------------- #
+
+
+def _round2_turn(session_factory, monkeypatch, text: str, word: str, *, supplier_ids: bool, **parse):
+    qf = _parser_output(
+        entities=[{"raw": word, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        party_side="supplier", **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span(word, "customer"), {word},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True, supplier_ids=supplier_ids,
+    )
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize(
+    "text,parse",
+    [("PO for hanlim", _LIVE_PO), ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO), ("PO for hanlim", _LIVE_OUTSTANDING_PO)],
+)
+def test_party_side_supplier_binds_the_supplier_whatever_the_hint(session_factory, monkeypatch, text, parse, supplier_ids):
+    ids = _live_hanlim_world(session_factory)
+    reply, captured, _seen = _round2_turn(session_factory, monkeypatch, text, "hanlim", supplier_ids=supplier_ids, **parse)
+    assert "customer" not in reply.lower() and "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize("parse", [_LIVE_PO, _LIVE_OUTSTANDING_PO])
+def test_a_supplier_side_miss_names_a_supplier_never_a_customer(session_factory, monkeypatch, parse, supplier_ids):
+    _live_hanlim_world(session_factory)
+    _seed_customer(session_factory, "ZZT QQCUST SDN BHD")
+    reply, captured, _seen = _round2_turn(
+        session_factory, monkeypatch, "outstanding PO qqcust", "qqcust", supplier_ids=supplier_ids, **parse
+    )
+    assert reply == 'Sorry, I couldn\'t find a supplier called "qqcust".', reply
+    assert not [n for n, _a in captured], captured

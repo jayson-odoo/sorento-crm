@@ -1946,6 +1946,12 @@ def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any
     }
     if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
         return verdict
+    return as_purchase_orders(verdict)
+
+
+def as_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any]:
+    """An order-side verdict read as the purchase_order domain (`supplier_ask_reads_purchase_orders`, and the engine's
+    supplier-side PO ask, SUPPLIER-PARTY-SIDE). Returns a new verdict; the one passed in is not changed."""
     out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
     # Fix round 6: the order-side status set aside, so a "customer or supplier?" pick of the customer answers the same
     # outstanding ask on the sales side (`turn/apply._reconcile_step`).

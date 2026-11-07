@@ -589,6 +589,11 @@ def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: A
         verdict = picked_side
     _with_party_readings(verdict, prep)
     verdict = _side_suppliers(verdict, prep, turn_trace, owned)
+    if _supplier_side_po_ask(verdict):
+        from app.services.chatbot.lanes.business.resolve_gate import as_purchase_orders
+
+        turn_trace.add("party_side_po", {"from_domain": verdict.get("domain_hint")})
+        verdict = as_purchase_orders(verdict)
     with_spans = _with_span_suppliers(verdict, prep)
     if owned and with_spans is not verdict:
         with_spans = _owned_names_kept(verdict, with_spans, owned)
@@ -630,45 +635,53 @@ def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: A
 def _side_suppliers(
     verdict: dict[str, Any], prep: "_SpanPrep | None", turn_trace: Any, owned: frozenset[str] = frozenset()
 ) -> dict[str, Any]:
-    """SUPPLIER-PARTY-SIDE (crew live re-run at 8b26ef80, 7 Nov: "PO for hanlim", "outstanding PO hanlim" with
-    party_side supplier and the word hinted customer, `apply.reconciled` empty on all 6 turns): HANLIM is 7 customer
-    ledgers and 2 supplier records, so the untyped party read of "hanlim" over both lists placed no single row and
-    nothing bound a supplier. When the parser read the supplier side, each party word this message typed is read
-    against the SUPPLIER rows alone and binds what they place (one record or a family of one name; several names are
-    asked downstream). A word no supplier row places is a supplier with no id, answered "couldn't find a supplier".
-    Returns a new verdict, or `verdict` unchanged."""
-    if verdict.get("party_side") != "supplier" or prep is None or not prep.supplier_ids or not prep.rows:
+    """SUPPLIER-PARTY-SIDE (crew live re-runs at 8b26ef80 and 73e1c41a, 7 Nov: "PO for hanlim" / "outstanding PO
+    hanlim" with party_side supplier and the word hinted customer, `apply.reconciled` empty): the parser's top-level
+    `party_side` decides the side of every party word this message names, never the word's hint. On the supplier side
+    each such word is read against the SUPPLIER rows alone and binds what they place (one record, or a family of one
+    name; several names are asked downstream). A word no supplier row places, or one the span prep cannot read, is a
+    supplier with no id: "couldn't find a supplier", never the customer's wording. A name the kept report object holds
+    is left as it is (REPORT-FILTER-ALL). Returns a new verdict, or `verdict` unchanged."""
+    if verdict.get("party_side") != "supplier":
         return verdict
-    suppliers = [r for r in prep.rows if r.list_name == "supplier"]
+    groups = prep.supplier_groups if prep is not None else {}
+    usable = prep is not None and bool(prep.supplier_ids) and bool(prep.rows)
+    suppliers = [r for r in prep.rows if r.list_name == "supplier"] if usable else []
     out: list[Any] = []
-    bound: list[str] = []
+    seen: list[dict[str, Any]] = []
     for e in jsc.array(verdict.get("entities")):
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         held = jsc.nullish_str(e.get("canonical_code")).strip() if isinstance(e, dict) else ""
         party = isinstance(e, dict) and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
-        # A name the kept report object holds is that object's, never a supplier (REPORT-FILTER-ALL, review S1).
-        if not (party and text and _typed_here(text, prep)) or text.casefold() in owned or (
-            e.get("hint") == "supplier" and held in prep.supplier_groups
-        ):
+        if not (party and text) or text.casefold() in owned or (e.get("hint") == "supplier" and held in groups):
             out.append(e)
             continue
-        res = next(iter(list_resolver.resolve([list_resolver.Span(text, "supplier")], suppliers, embed=None)), None)
+        res = (
+            next(iter(list_resolver.resolve([list_resolver.Span(text, "supplier")], suppliers, embed=None)), None)
+            if usable and _typed_here(text, prep) else None
+        )
         group = [(str(c.row.key), _supplier_line(c.row)) for c in res.candidates] if res and _names_rows(res) else []
-        if not group:
-            # The supplier side names a supplier no row places: "couldn't find a supplier", never the customer's.
-            out.append({k: v for k, v in {**e, "hint": "supplier", "canonical_code": None}.items() if k != "party_customers"})
-            bound.append(text)
-            continue
         for key, _line in group:
             # Merged, never replaced: the span pass's own close rows for a key stay beside these (review S2).
-            kept = prep.supplier_groups.setdefault(key, [])
+            kept = groups.setdefault(key, [])
             kept.extend(g for g in group if g not in kept)
-        out.append({k: v for k, v in {**e, "hint": "supplier", "canonical_code": group[0][0]}.items() if k != "party_customers"})
-        bound.append(text)
-    if not bound:
+        entity = {**e, "hint": "supplier", "canonical_code": group[0][0] if group else None}
+        out.append({k: v for k, v in entity.items() if k != "party_customers"})
+        seen.append({"word": text, "was": e.get("hint"), "suppliers": len(group), "prep": usable})
+    if not seen:
         return verdict
-    turn_trace.add("party_side_suppliers", {"words": bound})
+    turn_trace.add("party_side_suppliers", {"words": seen})
     return {**verdict, "entities": out}
+
+
+def _supplier_side_po_ask(verdict: dict[str, Any]) -> bool:
+    """SUPPLIER-PARTY-SIDE A3 (crew live re-run at 73e1c41a: "outstanding PO hanlim" parsed domain order, intent
+    check_po, document [PO], party_side supplier, stayed on the sales side): the parser read the supplier side and a
+    purchase order ask (its intent or its document), on an order-side domain. Parser fields only."""
+    from app.services.chatbot.lanes.business.resolve_gate import SUPPLIER_SWITCH_DOMAINS
+
+    po = verdict.get("intent_hint") == "check_po" or "PO" in jsc.array(verdict.get("document"))
+    return verdict.get("party_side") == "supplier" and po and verdict.get("domain_hint") in SUPPLIER_SWITCH_DOMAINS
 
 
 def _owned_supplier(entity: dict[str, Any], owned: frozenset[str]) -> bool:
