@@ -86,7 +86,7 @@ def test_r1_a_blank_line_that_misses_the_sum_by_a_cent_is_a_sale():
 
 @pytest.mark.parametrize("field,value", [
     ("item_code", "X1"), ("uom", "PCS"), ("quantity", D("1")), ("unit_price", D("100.00")),
-    ("from_doc_no", "DO-1"), ("from_doc_type", "DO"), ("product_id", str(uuid.uuid4())),
+    ("from_doc_no", "DO-1"), ("from_doc_type", "DO"), ("product_id", "5b8b9c10-9999-4222-8333-4444555566aa"),
 ])
 def test_r1_a_line_naming_anything_is_never_a_subtotal(field, value):
     lines = [_item("100.00", 1), _blank("100.00", 2, **{field: value})]
