@@ -154,3 +154,42 @@ def test_live_step20_a_bare_sales_ask_asks_its_basis(rbot, world, head, run) -> 
 
 def test_live_fixture_holds_all_156_turns_of_the_six_runs() -> None:
     assert len(ROWS) == 156 and len(RUNS) == 6, (len(ROWS), RUNS)
+
+
+# Step 10 on b986bbd5 (crew-note 6704987181, chatbot.turns.trace): two of three runs' parser verdicts carried a
+# breakdown on the agent axis beside ONE agent; the route args, the reply and the held state carried none. The model's
+# axis is dropped by the one-value rule (L10, `report_ask.from_object` `own_typed`); these are those verdicts as recorded
+# (agent ACT mapped to AGENT A; turn ids 62ae4d15 run 1, f00775d7 run 2).
+_STEP10_B986 = {
+    "62ae4d15-run1": dict(entities=True, continuation=True, scope_intent=None, person_mention=None),
+    "f00775d7-run2": dict(entities=False, continuation=False, scope_intent="specific", person_mention="AGENT A"),
+}
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize("turn", list(_STEP10_B986))
+def test_live_step10_b986_a_model_agent_axis_beside_one_agent_never_reaches_the_report(rbot, world, turn) -> None:
+    from tests.chatbot.test_report_semantic_carry import _ent, _held_line
+
+    shape = _STEP10_B986[turn]
+    rows = _rows("4c1b310a", "2")
+    for step in FILTERS[: FILTERS.index("10")]:
+        rbot.say(_verdict(rows[step]["report_ask"]), rows[step]["text"])
+    ra = {
+        "kind": "sales", "basis": "delivered", "frame": "breakdown", "brands": ["SORENTO"], "company": "Sorento",
+        "date_from": "2026-09-01", "date_to": "2026-09-30", "group_by": "sales_agent", "sales_agents": ["AGENT A"],
+    }
+    ents = (_ent("AGENT A", "sales_agent", None, None),) if shape["entities"] else ()
+    v = _verdict(
+        ra, *ents, order_status="sales_analysis", sales_basis="delivered", domain_hint="order", intent_hint="check_order",
+        entity_op="replace_combine", continuation=shape["continuation"], scope_intent=shape["scope_intent"],
+        person_mention=shape["person_mention"], group_by="sales_agent", date_filter_start=None, date_filter_end=None,
+    )
+    text, calls = rbot.say(v, "sales agent AGENT A")
+    args = _ran(calls)[-1] if _ran(calls) else {}
+    assert args.get("sales_agent_ids") and not args.get("group_by"), f"{turn}: {text!r} {args}"
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), args
+    r11 = rows["11"]
+    rbot.say(_verdict(r11["report_ask"]), r11["text"])
+    held = _held_line(rbot.blocks[-1])[1]
+    assert held.get("group_by") is None, f"{turn}: the held report kept the model's axis: {held}"
