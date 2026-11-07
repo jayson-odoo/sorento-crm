@@ -833,3 +833,15 @@ Controller (`decide()` stays pure; the record arrives in `Obs`):
   never on argv (fake curl logs argv), bad body = non-zero, missing settings = exit 2; the four
   names reach observe SQL, `ensure-slot`, `promote` and the standby conf; invalid names exit 2;
   role watcher not armed exits 3.
+
+## 12. Follow-ups found during HA-TONIGHT (owner runs, 7-8 Nov)
+
+- **SECURITY:** both prod compose files carry a plain-text `POSTGRES_PASSWORD` fallback default.
+  Rotate the app role's password, change the compose to `${POSTGRES_PASSWORD:?}` with no default,
+  keep the value only in `.env` (mode 600). Not done on 8 Nov.
+- **SECURITY:** SSH allowed root and password login on both nodes with 22 open to any. Fixed on A
+  8 Nov (runbook S0); B pending at the time of writing.
+- The Hostinger firewall is one rule set shared by A and B; 27017 rule to remove; 5432 rule to remove
+  with S2.4; 6432 / 8765 to move onto the tunnel when n8n's CRM calls do.
+- S4 adds `env_file: /etc/sorento-ha/walg.env` to the `db` service: with one compose file on both
+  nodes, B needs that file too (or every compose command on B fails).

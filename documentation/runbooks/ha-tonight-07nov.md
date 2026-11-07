@@ -596,8 +596,19 @@ Needs the branch's `scripts/blue_green_deploy.sh` (#2166, `DB_CONTAINER` support
 `git fetch origin claude/ha-cf-failover-wz466v && git show FETCH_HEAD:scripts/blue_green_deploy.sh > /tmp/bgd.sh`,
 then `scp /tmp/bgd.sh <B>:/opt/sorento-crm2/scripts/blue_green_deploy.sh`.
 
-**Order: S5.1 -> S5.5 -> S5.2 -> S5.3 -> S5.4 -> S5.6 -> S5.7 -> S5.8** (S5.5 creates the
-compose network S5.2 needs).
+**Order (8 Nov, after the compose diff):** S5.1a fetch tools -> S5.1b A's compose URLs made
+overridable (A proven unchanged) -> S5.1c copy A's compose to B -> S5.3 B `.env` + check -> S5.1
+env-hash parity -> S5.5 -> S5.2 -> S5.4 -> S5.6 -> S5.7 -> S5.8. The exact blocks are PR #2166
+comment 6711198201; the summary is below.
+
+**Why (owner diff, 8 Nov):** prod's compose puts LITERAL `DATABASE_URL` (`@pgbouncer:5432`) and
+`DIRECT_URL` (`@db:5432`) in the `x-backend-env` anchor, which beats `.env`. B's old compose pointed
+B's app at A's PUBLIC database and Redis, and had no db, pgbouncer, redis or worker services.
+`infra/scripts/compose-ha-urls.py` rewrites the two literals to `'${HA_DATABASE_URL:-<literal>}'` /
+`'${HA_DIRECT_URL:-<literal>}'`. Only B sets `HA_*` (written by `infra/scripts/ha-env-for-replica.py`,
+host swapped to `sorento_crm_replica:5432`), so A resolves byte-identical values (proved with
+`infra/scripts/compose-env-hash.py` before/after) and both nodes run ONE identical compose file.
+`REDIS_URL` is already `${REDIS_URL:-redis://redis:6379/0}`; B's `.env` sets it to its own Redis.
 
 **Why B's app sends nothing while it is a standby** (code read 8 Nov): APScheduler starts only with
 `ENABLE_SCHEDULER=true` (`app/main.py:438`), set only on the `worker` service, and S5 starts no
@@ -611,17 +622,18 @@ promoted. Its mutex is in Redis and B has its own Redis, so at a real failover B
 in-flight rows: unsent rows are answered, rows caught mid-send are flagged for staff, never resent
 (`should_resend`, `:709`).
 
-**S5.1 Parity (read-only, both nodes):**
+**S5.1 Parity (read-only, from the MacBook, after S5.1c and S5.3):** compare what compose RESOLVES
+for every CRM service, as hashes (the secrets are not plain `KEY=` lines in `.env` on A, 8 Nov):
 
 ```bash
-cd /opt/sorento-crm2
-sha256sum docker-compose.yml
-grep -vE '^(DATABASE_URL|DIRECT_URL|REDIS_URL)=' .env | sort | sha256sum
-for k in FIELD_ENCRYPTION_KEY JWT_SECRET NEXTAUTH_SECRET; do printf '%s ' $k; grep "^$k=" .env | sha256sum | cut -c1-12; done
+P='cd /opt/sorento-crm2 && docker compose --profile blue --profile green --profile promoted config --format json | python3 -I /root/compose-env-hash.py'
+diff <(ssh root@<A_PUBLIC_IP> "$P") <(ssh root@<B_PUBLIC_IP> "$P") && echo ENV-IDENTICAL
+ssh root@<A_PUBLIC_IP> "$P" | grep -E ' (JWT_SECRET|FIELD_ENCRYPTION_KEY|NEXTAUTH_SECRET|AUTH_SECRET|EXTERNAL_API_KEY) '
 ```
 
-**Expected:** both lines and the three short hashes identical on A and B. **Stop if** not: copy
-A's file to B (`scp`), never edit secrets by hand.
+**Expected:** `ENV-IDENTICAL`; the secret lines show hashes other than `e3b0c44298fc` (empty).
+A different `JWT_SECRET` / `NEXTAUTH_SECRET` signs everyone out after a failover; a different
+`FIELD_ENCRYPTION_KEY` leaves stored integration secrets unreadable on B.
 
 **S5.2 Recreate the replica container on B's compose network, with a tunnel-only port for A
 (replica restarts for a few seconds; it resumes from its slot).** Run **S5.5 first** (it starts
@@ -658,10 +670,20 @@ is not up yet.)
 **Rollback:** `docker rm -f sorento_crm_replica && docker rename sorento_crm_replica_old sorento_crm_replica && docker update --restart unless-stopped sorento_crm_replica && docker start sorento_crm_replica`.
 Afterwards `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh`.
 
-**S5.3 B's `.env` (backup first: `cp .env .env.bak-07nov`):**
-- `DATABASE_URL` and `DIRECT_URL`: same user, password and database as A, host `sorento_crm_replica`, port `5432`.
-- `REDIS_URL=redis://redis:6379/0` (B's own compose Redis).
-- Recommended on both nodes (keeps compose identical): add `SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-0}` to the backend colours' `environment:`. A's behaviour does not change.
+**S5.3 B's `.env` (backup first):** comment out the old `DATABASE_URL` / `DIRECT_URL` / `REDIS_URL`
+lines (they pointed at A), then append the generated lines:
+
+```bash
+cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov
+sed -i -E 's/^(DATABASE_URL|DIRECT_URL|REDIS_URL)=/#&/' .env
+grep -c '^HA_' .env      # 0
+docker compose --profile blue --profile green config --format json | python3 -I /root/ha-env-for-replica.py >> .env
+```
+
+Check (masked): every `DATABASE_URL` / `DIRECT_URL` resolves to `***@sorento_crm_replica:5432/<db>`,
+every `REDIS_URL` to `redis://redis:6379/0`, `ENABLE_SCHEDULER true` only on `worker`, and
+`docker compose config | grep -c '<A_PUBLIC_IP>'` prints `0`. Never set `HA_*` on A.
+Rollback: `cp -p .env.bak-08nov .env && cp -p docker-compose.yml.bak-08nov docker-compose.yml`.
 
 **S5.4 B's `.deploy.env`:**
 
