@@ -1,6 +1,6 @@
 # PLAN: SALES-LEADERBOARD (sales leaderboard screen)
 
-Status: Build (owner 7 Nov ~16:15 "2227 ok": Q1-Q5 all (a)). Phase 1 FE against mocks + Phase 2 tester red tests. Track: full (size L, new screen; new permission slug = migration).
+Status: Review (owner 7 Nov ~16:15 "2227 ok": Q1-Q5 all (a)). Phase 1 FE + Phase 2 done: 30 pytest green, 32 vitest green; reviewer + security-reviewer next, then crew browser pass and owner hand test. Track: full (size L, new screen; new permission slug = migration).
 code until the owner answers. Track: full (size L, new screen; new permission slug = migration).
 Card: `CARD-sales-leaderboard-07nov.md`. UAC: `sales-leaderboard-07nov-acceptance-criteria.md`.
 Mockup: `mockups/sales-leaderboard-07nov.html` (real October figures, dev copy `sorento_prod_1104`).
@@ -67,7 +67,7 @@ on other bases, unchanged).
 
 Permission `sales.leaderboard.view` ("View the sales leaderboard", "Open Sales > Leaderboard: invoiced sales ranked
 by sales person. Shows no commission."): registry entry + insert-only guarded migration granting it to admin and
-superadmin (precedent `alembic/versions/sales_s1_reports_module.py`).
+superadmin (precedent `alembic/versions/sales_s1_reports_module.py`; this supersedes "granted to no role" in Design).
 
 ## Design (on the recommended options; paths under `sorento_crm_backend/app/` unless marked)
 
@@ -114,3 +114,11 @@ superadmin (precedent `alembic/versions/sales_s1_reports_module.py`).
 - New customers column: owner asks (no measure today).
 - House-code exclude list: owner asks.
 - Daily snapshot / history of ranks: owner asks for rank movement over time.
+
+## Assistant eval (L7-2), as built
+`scripts/eval_assistant_routing.py` reads questions from `docs/user-guides/*/data-analysis.md`; that tree no longer
+exists (guides moved to `documentation/user-guides/`), so `--check` finds no questions and the harness is dormant.
+No eval line could be added there. The assistant path is pinned by pytest instead (`tests/test_sales_leaderboard.py`
+L7-1: `run_ask` and `crm_report_ask` grouped by `sales_person` return the board's rows). The WhatsApp chatbot
+parser's `group_by` enum is not extended (staff assistant reaches it through the MCP `crm_report_ask` description).
+Trigger for the parser: the owner asks the WhatsApp bot "who's top".
