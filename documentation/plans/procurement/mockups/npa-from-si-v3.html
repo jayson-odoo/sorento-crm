@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NPA from SI v3</title>
+<!-- NPA-FROM-SI mock v3 (7 Nov). Owner on v2: "The product code field should be below here [STOCK INQUIRY], just select
+product codes" / "Then just one new product code field below here [REMARK], why we need so many columns, original form got?".
+So: header PRODUCT CODES (one SearchableMultiSelect of catalogue codes = the CURRENT codes) directly under STOCK INQUIRY,
+ONE NEW PRODUCT CODE under REMARK (purchasing fills it), and the product table EXACTLY as today's form
+(components/common/NewProductApplicationLines.tsx:92-102, unchanged). Case = dev SI26-0193 (CBM111-BL, mirror 600 x 900,
+qty 270); the new code CBM111-BL-69 is invented; customer and people are placeholders (public repo). -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;--bg:#f4f4f5;--card:#fff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--fg:#fafafa;--muted:#a1a1aa;--border:#3f3f46;--muted-bg:#27272a;--bg:#18181b;--card:#09090b;--decbg:#2e1065}}
+:root[data-theme="dark"]{--fg:#fafafa;--muted:#a1a1aa;--border:#3f3f46;--muted-bg:#27272a;--bg:#18181b;--card:#09090b;--decbg:#2e1065}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1360px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:36px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.frame{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 24px;max-width:1280px;overflow-x:auto}
+.note{font-size:12px;color:var(--muted);margin:8px 0 0;font-family:ui-monospace,Menlo,monospace}
+.co{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;border-radius:50%;background:var(--callout);color:#fff;font-size:11px;font-weight:700;margin-left:6px}
+.dtag{display:inline-flex;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:6px}
+.phdr{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}.phdr b{font-size:19px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:6px 14px;font:500 13px var(--font)}
+.btn.out{background:transparent;color:var(--fg);border-color:var(--border)}.btn.sm{padding:3px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:9px 12px;margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.banner.info{border-color:#fde68a;background:#fffbeb;color:#78350f}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);margin:6px 0 14px;font-size:14px}
+.tabs span{padding:8px 0;color:var(--muted)}.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:600}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid var(--border);padding:7px 9px;text-align:left;vertical-align:top;font-size:13px}
+th{background:var(--muted-bg);font-weight:600}
+table.kv th{width:210px;text-align:right}
+.chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin:1px 3px 1px 0;font-size:12px;background:var(--muted-bg)}
+.inp{border:1px solid var(--border);border-radius:6px;padding:5px 8px;min-height:32px;background:var(--card)}
+.muted{color:var(--muted)}.xs{font-size:12px}
+.modal{max-width:460px;border:1px solid var(--border);border-radius:10px;padding:18px;background:var(--card);box-shadow:0 6px 24px rgba(0,0,0,.12)}
+.chk{display:flex;gap:8px;align-items:flex-start;margin-top:12px}.box{width:16px;height:16px;border-radius:4px;background:var(--primary);flex:none;margin-top:2px}
+.empty{padding:28px;text-align:center}.empty b{display:block}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>NPA from Stock Inquiry, with code lineage (v3)</h1>
+<p class="sub">Lane NPA-FROM-SI, issue #2200. Case (dev data, masked): SI26-0193 asks for CBM111-BL "client want the mirror size 600 mm x 900 mm"; purchasing opens a new code (invented here: CBM111-BL-69). v3: one PRODUCT CODES multi-select under STOCK INQUIRY, one NEW PRODUCT CODE under REMARK, the product table as today (owner, v2 notes). Card: <code>CARD-npa-from-si-07nov.md</code>. Purple tags = card questions drawn with the recommended answer.</p>
+
+<h2 class="ft">1. Staff: purchasing replies and asks for an NPA</h2>
+<div class="frame">
+  <div class="modal">
+    <b>Edit purchasing response</b>
+    <p class="muted xs">Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.</p>
+    <div class="xs b">Purchasing response</div>
+    <div class="inp" style="min-height:70px">Supplier can cut 600 x 900. Need a new code: please apply. Selling price RM [masked].</div>
+    <div class="chk"><div class="box"></div><div><b>Salesperson must create a New Product Application</b><span class="co">1</span><span class="dtag">Q2 (a) non-blocking</span><div class="muted xs">Adds: "Next step: please create a New Product Application for this inquiry."</div></div></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><span class="btn out">Save</span><span class="btn">Update &amp; Reply</span></div>
+  </div>
+  <p class="note">1 = Checkbox in the existing dialog, StockInquiryDetail.tsx:970; BE procurement_service.py:6900 update_and_reply; new column stock_inquiries.npa_requested (+ _by, _at)</p>
+</div>
+
+<h2 class="ft">2. Portal: the salesperson's stock inquiry shows the next step</h2>
+<div class="frame">
+  <div class="phdr"><div><span class="muted xs">Stock Inquiry</span><br><b>SI26-0193</b> <span class="pill ok">Responded</span></div><span class="btn">Create new product application<span class="co">2</span></span></div>
+  <div class="banner">Purchasing asks you to create a New Product Application.</div>
+  <div class="tabs"><span class="on">Details</span><span>Comments (2)</span><span>New product applications (0)<span class="co">3</span><span class="dtag">Q5 (a) tabs</span></span></div>
+  <table class="kv">
+    <tr><th>PRODUCT CODE</th><td>CBM111-BL</td></tr>
+    <tr><th>ITEM DESCRIPTION</th><td>Client want the mirror size with 600 mm x 900 mm</td></tr>
+    <tr><th>PROJECT / CUSTOMER</th><td>[Customer withheld]</td></tr>
+    <tr><th>QUANTITY</th><td>270</td></tr>
+    <tr><th>PURCHASING RESPONSE</th><td>Supplier can cut 600 x 900. Need a new code: please apply. Selling price RM [masked].</td></tr>
+  </table>
+  <p class="note">2 = the page's one primary CTA while npa_requested and no live NPA; links to portal/new_product_application/new?stock_inquiry_id= (NewProductApplicationForm startFromInquiryId, :153). 3 = SubmissionForm.tsx tab strip :2486 (portal) and a new line-tab strip on StockInquiryDetail.tsx (staff)</p>
+  <div style="margin-top:18px" class="tabs"><span>Details</span><span>Comments (2)</span><span class="on">New product applications (1)</span></div>
+  <div class="banner ok">New code CBM111-BL-69 created on 3 Nov 2026 (NPA-000123).</div>
+  <table><tr><th>Application</th><th>Status</th><th>Current codes -&gt; new code</th><th>Date</th></tr>
+  <tr><td><a>NPA-000123</a></td><td><span class="pill ok">Completed</span></td><td>CBM111-BL -&gt; <b>CBM111-BL-69</b></td><td>21 Oct 2026</td></tr></table>
+  <div style="margin-top:14px;border:1px solid var(--border);border-radius:8px" class="empty"><b>No new product applications</b><span class="muted xs">Applications created from this inquiry show here.</span></div>
+  <p class="note">Empty state (no button: the CTA is in the header). Banner turns green from line.opened_product_id + resolved_at; no second flag.</p>
+</div>
+
+<h2 class="ft">3. NPA form (today's form), prefilled from the SI: PRODUCT CODES under STOCK INQUIRY, one NEW PRODUCT CODE under REMARK</h2>
+<div class="frame">
+  <div class="phdr"><b>New Product Application</b><span><span class="btn out">Save draft</span> <span class="btn">Submit</span></span></div>
+  <table class="kv">
+    <tr><th>STOCK INQUIRY</th><td>SI26-0193 - CBM111-BL <span class="muted xs">(preset)</span></td></tr>
+    <tr><th>PRODUCT CODES<span class="co">4</span></th><td><span class="chip">CBM111-BL ×</span><span class="inp xs muted" style="display:inline-block;min-width:180px">Search product code</span><span class="dtag">Q3 (a) exact prefill</span>
+      <div class="banner info" style="margin:8px 0 0">A code was already created from CBM111-BL: <b>CBM111-BL-69</b> (NPA-000123, 3 Nov 2026, "mirror size 600 mm x 900 mm").<span class="co">5</span><span class="dtag">Q4 (a) portal: no NPA no.</span></div></td></tr>
+    <tr><th>CUSTOMER</th><td>[Customer withheld] <span class="muted xs">No debtor code</span></td></tr>
+    <tr><th>PROJECT</th><td>(from the SI)</td></tr>
+    <tr><th>TARGET DELIVERY</th><td>(from the SI)</td></tr>
+    <tr><th>REMARK</th><td>Copied from the SI remark</td></tr>
+    <tr><th>NEW PRODUCT CODE<span class="co">6</span></th><td class="muted">Purchasing fills this in when the code is created.</td></tr>
+  </table>
+  <div style="height:12px"></div>
+  <table>
+    <tr><th>No.</th><th>Product code</th><th>Product type *</th><th>Dimension</th><th>Material</th><th>Thickness</th><th>Packing</th><th>Brand</th><th>Qty</th><th></th></tr>
+    <tr><td>1</td><td><div class="inp xs">CBM111-BL</div></td><td>Mirror, size 600 mm x 900 mm</td><td>600 x 900 mm</td><td></td><td></td><td></td><td>SORENTO</td><td>270</td><td class="muted">🗑</td></tr>
+  </table>
+  <div style="margin-top:8px"><span class="btn out sm">+ Add product</span></div>
+  <p class="note">Product table = today's form, unchanged (components/common/NewProductApplicationLines.tsx:92-102: No., Product code, Product type *, Dimension, Material, Thickness, Packing, Brand, Qty). 4 = one components/common/SearchableMultiSelect.tsx in the header row layout (stock-inquiries/components/ProductInquiryFormLayout.tsx InquiryFormTableRow), catalogue codes only; empty = brand-new item. 5 = exact SET match against earlier applications whose NEW PRODUCT CODE is set; newest first, max 3; information only. 6 = one per application; read-only for the applicant.</p>
+</div>
+
+<h2 class="ft">4. Staff NPA detail: purchasing fills the ONE new product code (suggestion = one click to fill, never auto)</h2>
+<div class="frame">
+  <div class="phdr"><div><b>NPA-000140</b> <span class="pill blue">Approved</span></div><span class="btn out">Revise</span></div>
+  <div class="tabs"><span class="on">Details</span><span>Stock inquiry</span><span>Attachments (1)</span><span>History</span></div>
+  <table class="kv">
+    <tr><th>STOCK INQUIRY</th><td><a>SI26-0193</a></td></tr>
+    <tr><th>PRODUCT CODES</th><td>CBM111-BL</td></tr>
+    <tr><th>REMARK</th><td>-</td></tr>
+    <tr><th>NEW PRODUCT CODE</th><td>
+      <div class="xs">Created before: <b>CBM111-BL-69</b> (NPA-000123) <span class="btn sm out">Use CBM111-BL-69</span><span class="co">7</span></div>
+      <div class="inp xs muted" style="margin-top:6px;max-width:320px">Search product code</div><div style="margin-top:6px"><span class="btn sm">Link product</span> <span class="btn sm out">Not opening</span></div></td></tr>
+    <tr><th>LEADTIME</th><td>8 weeks</td></tr>
+  </table>
+  <div style="height:12px"></div>
+  <table>
+    <tr><th>No.</th><th>Product code</th><th>Product type</th><th>Dimension</th><th>Brand</th><th>Qty</th><th>Cost (MYR)</th></tr>
+    <tr><td>1</td><td>CBM111-BL</td><td>Mirror, size 600 mm x 900 mm</td><td>600 x 900 mm</td><td>SORENTO</td><td>270</td><td>[masked]</td></tr>
+  </table>
+  <p class="note">7 = fills the Link product picker (today's OpenedAs search, NewProductApplicationDetail.tsx:133, moved to the one NEW PRODUCT CODE row); purchasing still presses Link. Linking it completes the application (Q1). Cost stays today's per-row purchasing feedback.</p>
+</div>
+
+<h2 class="ft">5. Product page: Lineage tab (staff)</h2>
+<div class="frame">
+  <div class="phdr"><b>CBM111-BL-69</b></div>
+  <div class="tabs"><span>Basic</span><span>Pricing</span><span>Specifications</span><span>Suppliers</span><span>Attachments</span><span class="on">Lineage<span class="co">7</span></span></div>
+  <div class="xs b" style="margin-bottom:6px">Created from</div>
+  <table><tr><th>From product codes</th><th>Why</th><th>Application</th><th>Customer / project</th><th>Qty</th><th>Created</th></tr>
+  <tr><td><span class="chip">CBM111-BL</span></td><td>Wall hung basin, mirror size 600 mm x 900 mm</td><td><a>NPA-000123</a></td><td>[withheld]</td><td>270</td><td>3 Nov 2026</td></tr></table>
+  <div class="xs b" style="margin:14px 0 6px">New codes made from this product</div>
+  <div style="border:1px solid var(--border);border-radius:8px" class="empty"><b>No lineage</b><span class="muted xs">Codes created through a New Product Application show here.</span></div>
+  <p class="note">7 = new tab in ProductForm.tsx:322 (read-only), GET /procurement/new-product-applications/lineage?product_id= ; NPA link only for NPA viewers.</p>
+</div>
+</div>
+</body>
+</html>

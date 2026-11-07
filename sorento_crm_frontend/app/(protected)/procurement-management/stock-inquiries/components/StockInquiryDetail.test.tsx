@@ -274,7 +274,7 @@ describe('StockInquiryDetail - Edit purchasing response popup', () => {
     await waitFor(() =>
       expect(updateInquiryMutateAsync).toHaveBeenCalledWith({
         id: 'si-1',
-        data: { purchasing_response: 'In stock, 20 units.' },
+        data: { purchasing_response: 'In stock, 20 units.', npa_requested: false },
       }),
     );
   });

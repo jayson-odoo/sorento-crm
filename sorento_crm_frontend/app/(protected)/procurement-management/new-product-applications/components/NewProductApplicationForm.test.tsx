@@ -45,7 +45,11 @@ vi.mock('../hooks/useNewProductApplications', () => ({
     isError: Boolean(mock.prefillError),
     error: mock.prefillError,
   }),
-  useNewProductApplicationLookups: () => ({ brands: async () => [] }),
+  useNewProductApplicationLookups: () => ({
+    brands: async () => [],
+    products: async () => [],
+    reuse: async () => [],
+  }),
 }));
 vi.mock('../services/newProductApplicationService', () => ({
   searchStockInquiryOptions: vi.fn(async () => []),
@@ -136,12 +140,13 @@ beforeEach(() => {
 });
 
 describe('pre-fill from a responded stock inquiry', () => {
-  it('puts the code text in line 1 and sends customer_id null', async () => {
+  it('keeps the unmatched code text read-only, sends no current codes, and customer_id null', async () => {
     mock.prefill = PREFILL;
     renderForm({ stockInquiryId: 'si-1' });
 
-    const code = await screen.findByLabelText('Product code');
-    expect((code as HTMLInputElement).value).toBe('XY-1234-MB & XY-1234-BG');
+    expect(
+      await screen.findByText('Inquiry asked: "XY-1234-MB & XY-1234-BG"'),
+    ).toBeInTheDocument();
     expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe(
       'EXAMPLE DEVELOPER SDN BHD',
     );
@@ -153,7 +158,8 @@ describe('pre-fill from a responded stock inquiry', () => {
     expect(body.customer_name).toBe('EXAMPLE DEVELOPER SDN BHD');
     expect(body.stock_inquiry_id).toBe('si-1');
     expect(body.lines).toHaveLength(1);
-    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
+    expect(body.lines[0].current_product_ids).toEqual([]);
+    expect(body.lines[0]).not.toHaveProperty('proposed_code');
     for (const k of [
       'category_id',
       'base_uom_id',
@@ -164,6 +170,30 @@ describe('pre-fill from a responded stock inquiry', () => {
       'further_description',
     ])
       expect(body.lines[0]).not.toHaveProperty(k);
+  });
+});
+
+describe('pre-fill with a matched current code', () => {
+  it('shows the code picked and writes its id', async () => {
+    mock.prefill = {
+      ...PREFILL,
+      lines: [
+        {
+          proposed_code: 'XY-1234-MB',
+          current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
+          description: 'Example sinks',
+          expected_qty: '55',
+        },
+      ],
+    };
+    renderForm({ stockInquiryId: 'si-1' });
+
+    expect(await screen.findByText('XY-1234-MB')).toBeInTheDocument();
+    expect(screen.queryByText(/Inquiry asked/)).toBeNull();
+
+    saveDraft();
+    await waitFor(() => expect(mock.createAsync).toHaveBeenCalledTimes(1));
+    expect(lastBody().lines[0].current_product_ids).toEqual(['p-1']);
   });
 });
 

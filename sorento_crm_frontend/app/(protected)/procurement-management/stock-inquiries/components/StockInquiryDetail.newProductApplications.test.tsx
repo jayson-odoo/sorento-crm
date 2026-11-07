@@ -180,6 +180,14 @@ function renderPage() {
   );
 }
 
+function renderPageWithUnmount() {
+  return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <StockInquiryDetail inquiryId="si-1" />
+    </QueryClientProvider>,
+  );
+}
+
 async function openGearMenu() {
   const trigger = await screen.findByRole('button', { name: 'Stock inquiry actions' });
   fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
@@ -241,15 +249,24 @@ describe('StockInquiryDetail - Create new product application gear item', () => 
   });
 });
 
-describe('StockInquiryDetail - New product applications row', () => {
-  it('says "None yet" when nothing was raised from the inquiry', async () => {
+const openTab = (name: RegExp) =>
+  fireEvent.mouseDown(screen.getByRole('tab', { name }));
+
+describe('StockInquiryDetail - New product applications tab', () => {
+  it('shows the empty state when nothing was raised from the inquiry', async () => {
     permissionMap = { [VIEW]: true };
     renderPage();
-    expect(await screen.findByText('New product applications')).toBeInTheDocument();
-    expect(screen.getByText('None yet')).toBeInTheDocument();
+    await screen.findByText('Stock inquiry number');
+    openTab(/new product applications \(0\)/i);
+    expect(await screen.findByText('No new product applications')).toBeInTheDocument();
+    expect(
+      screen.getByText('Applications created from this inquiry show here.'),
+    ).toBeInTheDocument();
+    // the form is the other tab
+    expect(screen.queryByText('Stock inquiry number')).toBeNull();
   });
 
-  it('lists each application number with its status and opened codes', async () => {
+  it('lists number (link), status, current codes -> new code and date', async () => {
     permissionMap = { [VIEW]: true };
     applications.data = [
       {
@@ -257,19 +274,141 @@ describe('StockInquiryDetail - New product applications row', () => {
         application_no: 'NPA-000001',
         status: 'completed',
         status_label: 'Completed',
-        opened_codes: ['XY-1234-MB', 'XY-1234-BG'],
+        created_at: '2026-11-03T02:00:00',
+        opened_codes: ['XY-1234-MB-69'],
+        created_codes: [
+          { product_code: 'XY-1234-MB-69', current_codes: ['XY-1234-MB'], created_at: '2026-11-03T02:00:00' },
+        ],
       },
     ];
     renderPage();
+    openTab(/new product applications \(1\)/i);
     const link = await screen.findByRole('link', { name: 'NPA-000001' });
     expect(link).toHaveAttribute('href', '/procurement-management/new-product-applications/a-1');
-    expect(screen.getByText('Completed')).toBeInTheDocument();
-    expect(screen.getByText(/XY-1234-MB, XY-1234-BG/)).toBeInTheDocument();
+    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
+    expect(screen.getByText('XY-1234-MB -> XY-1234-MB-69')).toBeInTheDocument();
+    expect(screen.getByText('03/11/2026')).toBeInTheDocument();
   });
 
   it('is hidden for a user with no new product application permission', async () => {
     renderPage();
     await screen.findByText('Stock inquiry number');
-    expect(screen.queryByText('New product applications')).toBeNull();
+    expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+  });
+});
+
+describe('StockInquiryDetail - next-step banners', () => {
+  const ASK = 'Purchasing asks the salesperson to create a New Product Application.';
+
+  it('asks while purchasing asked and no live application exists', async () => {
+    permissionMap = { [VIEW]: true };
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({ npa_requested: true }),
+      isLoading: false,
+    });
+    applications.data = [
+      { id: 'a-0', application_no: 'NPA-000000', status: 'cancelled', status_label: 'Cancelled', created_codes: [] },
+    ];
+    renderPage();
+    expect(await screen.findByText(ASK)).toBeInTheDocument();
+  });
+
+  it('does not ask once a live application exists, nor when nobody asked', async () => {
+    permissionMap = { [VIEW]: true };
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({ npa_requested: true }),
+      isLoading: false,
+    });
+    applications.data = [
+      { id: 'a-1', application_no: 'NPA-000001', status: 'submitted', status_label: 'Submitted', created_codes: [] },
+    ];
+    const { unmount } = renderPageWithUnmount();
+    await screen.findByText('Stock inquiry number');
+    expect(screen.queryByText(ASK)).toBeNull();
+    unmount();
+
+    useStockInquiryMock.mockReturnValue({ data: inquiry({ npa_requested: false }), isLoading: false });
+    applications.data = [];
+    renderPage();
+    await screen.findByText('Stock inquiry number');
+    expect(screen.queryByText(ASK)).toBeNull();
+  });
+
+  it('turns green with the new code, date and application number', async () => {
+    permissionMap = { [VIEW]: true };
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({ npa_requested: true }),
+      isLoading: false,
+    });
+    applications.data = [
+      {
+        id: 'a-1',
+        application_no: 'NPA-000001',
+        status: 'completed',
+        status_label: 'Completed',
+        created_codes: [
+          { product_code: 'XY-1234-MB-69', current_codes: ['XY-1234-MB'], created_at: '2026-11-03T02:00:00' },
+        ],
+      },
+    ];
+    renderPage();
+    expect(
+      await screen.findByText('New code XY-1234-MB-69 created on 03/11/2026 (NPA-000001).'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(ASK)).toBeNull();
+  });
+});
+
+describe('StockInquiryDetail - Salesperson must create a New Product Application', () => {
+  const BOX = 'Salesperson must create a New Product Application';
+
+  async function openDialog() {
+    const edit = await waitFor(() => {
+      const el = document.querySelector(
+        '[data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"]',
+      );
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    fireEvent.click(edit);
+    return screen.findByRole('checkbox', { name: BOX });
+  }
+
+  it('starts from the saved flag and Save only sends it', async () => {
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({ npa_requested: true, purchasing_response: 'ok' }),
+      isLoading: false,
+    });
+    renderPage();
+    const box = await openDialog();
+    expect(box).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Save only' }));
+    await waitFor(() =>
+      expect(updateInquiryMutateAsync).toHaveBeenCalledWith({
+        id: 'si-1',
+        data: { purchasing_response: 'ok', npa_requested: false },
+      }),
+    );
+  });
+
+  it('Update & Reply carries the ticked box on both writes', async () => {
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({
+        npa_requested: false,
+        purchasing_response: 'ok',
+        respond_inbox_url: 'https://inbox.example/1',
+      }),
+      isLoading: false,
+    });
+    renderPage();
+    const box = await openDialog();
+    expect(box).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: /update & reply/i }));
+    await waitFor(() => expect(updateAndReplyMutateAsync).toHaveBeenCalled());
+    const want = { purchasing_response: 'ok', npa_requested: true };
+    expect(updateInquiryMutateAsync).toHaveBeenCalledWith({ id: 'si-1', data: want });
+    expect(updateAndReplyMutateAsync).toHaveBeenCalledWith({ id: 'si-1', data: want });
   });
 });

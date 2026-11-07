@@ -89,6 +89,7 @@ import {
 import {
   portalDetailPath,
   portalDuplicatePath,
+  portalNewPath,
   portalHomePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -116,6 +117,12 @@ import {
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 import { complaintStatusLabel } from '@/lib/complaint-status';
+import {
+  InquiryApplicationsList,
+  NewProductApplicationBanners,
+  npaStillToCreate,
+  type InquiryApplicationRow,
+} from '@/components/common/NewProductApplicationBanners';
 
 type ProductLine = {
   item_code?: string;
@@ -1820,10 +1827,28 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   // Tabs the client adds after these (a CRM complaint's fulfilment DOs, L3), on a saved form only.
   // The portal's client adds none.
   const extraTabs = submissionId ? clientExtraTabs(client) : [];
-  const tabbed = revisionsTabbed || commentsTabbed || extraTabs.length > 0;
+  // A submitted stock inquiry lists the new product applications raised from it (NPA-FROM-SI).
+  const inquiryApplications: InquiryApplicationRow[] =
+    kind === 'stock_inquiry' && Array.isArray(detail?.new_product_applications)
+      ? (detail.new_product_applications as InquiryApplicationRow[])
+      : [];
+  const applicationsTabbed = Boolean(
+    kind === 'stock_inquiry' &&
+      submissionId &&
+      detail &&
+      !detail.is_draft &&
+      Array.isArray(detail.new_product_applications),
+  );
+  const canCreateApplication =
+    kind === 'stock_inquiry' &&
+    detail?.status === 'responded' &&
+    npaStillToCreate(detail.npa_requested as boolean | undefined, inquiryApplications);
+  const tabbed =
+    revisionsTabbed || commentsTabbed || applicationsTabbed || extraTabs.length > 0;
   const shownTabs = [
     'details',
     ...(commentsTabbed ? ['comments'] : []),
+    ...(applicationsTabbed ? ['applications'] : []),
     ...(revisionsTabbed ? ['revisions'] : []),
     ...extraTabs.map((t) => t.value),
   ];
@@ -2463,6 +2488,19 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               )}
             </DetailActionsMenu>
           )}
+          {canCreateApplication && detail && (
+            <Button size="sm" asChild className="shrink-0">
+              <Link
+                href={`${
+                  paths
+                    ? paths.new('new_product_application')
+                    : portalNewPath('new_product_application', slug)
+                }?stock_inquiry_id=${encodeURIComponent(detail.id)}`}
+              >
+                Create new product application
+              </Link>
+            </Button>
+          )}
           {embedded && neighbours && (
             <RecordNavigation
               index={neighbours.position}
@@ -2477,6 +2515,14 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
           )}
         </div>
       </div>
+
+      {kind === 'stock_inquiry' && detail && !detail.is_draft && (
+        <NewProductApplicationBanners
+          requested={detail.npa_requested as boolean | undefined}
+          applications={inquiryApplications}
+          audience="portal"
+        />
+      )}
 
       {tabbed ? (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -2495,6 +2541,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               >
                 <MessageSquare />
                 <span>Comments ({commentsCount})</span>
+              </TabsTrigger>
+            )}
+            {applicationsTabbed && (
+              <TabsTrigger value="applications">
+                <span>New product applications ({inquiryApplications.length})</span>
               </TabsTrigger>
             )}
             {revisionsTabbed && (
@@ -2521,6 +2572,25 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
                 authorName={contact?.name ?? ''}
                 readOnly={detail?.status === 'voided'}
                 thread={commentsThread}
+              />
+            </TabsContent>
+          )}
+          {applicationsTabbed && (
+            <TabsContent value="applications" className="m-0">
+              <InquiryApplicationsList
+                applications={inquiryApplications}
+                renderNumber={(a) => (
+                  <Link
+                    href={
+                      paths
+                        ? paths.detail('new_product_application', a.id)
+                        : portalDetailPath('new_product_application', a.id, slug)
+                    }
+                    className="text-primary hover:underline"
+                  >
+                    {a.application_no}
+                  </Link>
+                )}
               />
             </TabsContent>
           )}

@@ -648,3 +648,95 @@ describe('attachments list is the shared PanelDataGrid', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('Created before (reuse suggestion, purchasing)', () => {
+  const earlier = {
+    product_id: 'p-69',
+    product_code: 'XY-1234-MB-69',
+    product_name: 'Example sink 69',
+    is_active: true,
+    description: 'no tap hole',
+    created_at: '2026-11-03T02:00:00',
+    application_id: 'a-0',
+    application_no: 'NPA-000123',
+  };
+
+  beforeEach(() => {
+    state.data = approved({
+      lines: [
+        line({
+          current_products: [
+            { id: 'p-1', product_code: 'XY-1234-MB', product_name: 'Sink' },
+          ],
+          suggestions: [earlier],
+        }),
+      ],
+      lines_total: 1,
+    });
+    state.userId = 'u-buyer';
+    state.perms = new Set([OPEN]);
+  });
+
+  it('names the earlier code and application, and Use <code> fills the picker without linking', async () => {
+    render(<Page />);
+    expect(
+      screen.getByText(/Created before:/).textContent,
+    ).toContain('XY-1234-MB-69 (NPA-000123)');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use XY-1234-MB-69' }));
+    const box = (await screen.findByRole('combobox', {
+      name: /product for line 1/i,
+    })) as HTMLInputElement;
+    expect(box.value).toBe('XY-1234-MB-69');
+    expect(state.link).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /^link$/i }));
+    expect(state.link).toHaveBeenCalledWith({
+      id: 'a-1',
+      lineId: 'l-1',
+      productId: 'p-69',
+    });
+  });
+
+  it('shows no Use button to someone who cannot open codes', () => {
+    state.perms = new Set();
+    render(<Page />);
+    expect(button(/^use /i)).toBeNull();
+  });
+});
+
+describe('Stock inquiry tab', () => {
+  it('shows the inquiry with a link to it, its status, response and qty', () => {
+    state.data = detail({
+      stock_inquiry: {
+        id: 'si-1',
+        inquiry_number: 'SI26-0412',
+        product_code: 'XY-1234-MB',
+        status: 'responded',
+        item_description: 'Kitchen sink',
+        purchasing_response: 'Supplier can do it',
+        quantity: '55',
+      },
+    });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    const link = screen.getByRole('link', { name: 'SI26-0412' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/procurement-management/stock-inquiries/si-1',
+    );
+    expect(screen.getByText('Responded')).toBeInTheDocument();
+    expect(screen.getByText('Supplier can do it')).toBeInTheDocument();
+    expect(screen.getByText('Kitchen sink')).toBeInTheDocument();
+  });
+
+  it('says there is none for an application raised from the list', () => {
+    state.data = detail({ stock_inquiry: null });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(screen.getByText('No stock inquiry')).toBeInTheDocument();
+    expect(
+      screen.getByText('Applications raised from a stock inquiry show it here.'),
+    ).toBeInTheDocument();
+  });
+});

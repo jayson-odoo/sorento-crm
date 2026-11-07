@@ -40,6 +40,8 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 vi.mock('../lib/new-product-application-service', () => ({
   listMyRespondedInquiries: vi.fn(),
   getNewProductApplicationPrefill: vi.fn(),
+  searchNewProductApplicationProducts: vi.fn(async () => []),
+  getNewProductApplicationReuseSuggestions: vi.fn(async () => []),
   lookupNewProductApplication: vi.fn(async () => []),
   lookupNewProductApplicationCustomers: vi.fn(async () => []),
   downloadNewProductApplicationExcel: vi.fn(),
@@ -216,11 +218,9 @@ describe('new application', () => {
     fireEvent.mouseDown(hit);
     fireEvent.click(hit);
 
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText('Product code') as HTMLInputElement).value,
-      ).toBe('XY-1234-MB & XY-1234-BG'),
-    );
+    expect(
+      await screen.findByText('Inquiry asked: "XY-1234-MB & XY-1234-BG"'),
+    ).toBeInTheDocument();
     expect(getNewProductApplicationPrefill).toHaveBeenCalledWith('si-1');
     await waitFor(() =>
       expect(
@@ -235,7 +235,8 @@ describe('new application', () => {
     const body = asMock(createNewProductApplication).mock.calls[0][0];
     expect(body.customer_id).toBeNull();
     expect(body.stock_inquiry_id).toBe('si-1');
-    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
+    expect(body.lines[0].current_product_ids).toEqual([]);
+    expect(body.lines[0]).not.toHaveProperty('proposed_code');
   });
 
   it('has no item group, base UOM or selling price, and no cost box to write', async () => {
@@ -363,6 +364,69 @@ describe('an existing application', () => {
       await screen.findByRole('button', { name: /^appeal$/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
+  });
+});
+
+describe('portal: stock inquiry tab and earlier codes (NPA-FROM-SI)', () => {
+  const SI = {
+    id: 'si-1',
+    inquiry_number: 'SI26-0412',
+    product_code: 'XY-1234-MB',
+    status: 'responded',
+    item_description: 'Kitchen sink',
+    purchasing_response: 'Please apply for a new code.',
+    quantity: '55',
+  };
+
+  it('shows the inquiry as plain text (no link) on its own tab', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: SI }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('Example kitchen sink');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(await screen.findByText('SI26-0412')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'SI26-0412' })).toBeNull();
+    expect(screen.getByText('Please apply for a new code.')).toBeInTheDocument();
+  });
+
+  it('says there is no stock inquiry for an application without one', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: null }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('Example kitchen sink');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    expect(await screen.findByText('No stock inquiry')).toBeInTheDocument();
+  });
+
+  it('shows the earlier code without an application number', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        lines: [
+          line({
+            current_products: [{ id: 'p-1', product_code: 'XY-1234-MB' }],
+            suggestions: [
+              {
+                product_id: 'p-9',
+                product_code: 'XY-1234-MB-69',
+                product_name: null,
+                is_active: true,
+                description: 'no tap hole',
+                created_at: '2026-11-03T02:00:00',
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    const row = await screen.findByTestId('npa-line-suggestions');
+    expect(row.textContent).toContain(
+      'A code was already created from XY-1234-MB: XY-1234-MB-69 (03/11/2026, "no tap hole")',
+    );
   });
 });
 
