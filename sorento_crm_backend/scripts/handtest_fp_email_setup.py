@@ -591,6 +591,7 @@ def apply(
     saved = json.loads(path.read_text()) if path.exists() else {}
     if RAISER_KEY in saved:
         raiser = saved[RAISER_KEY]
+        print("re-run: keeping the first --apply's raiser (--raiser-email is not re-read)")
     else:
         handover_rows = (
             db.query(Automation)

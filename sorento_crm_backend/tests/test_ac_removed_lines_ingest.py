@@ -570,17 +570,34 @@ def test_fp_email_one_trigger_s1_a_removed_so_line_emails_purchasing_nothing(
     assert oi_mail == [], oi_mail
 
 
-def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_only_flagged(env):
-    """Actioned rows are only flagged (`ack_state = changed`), as today; not cancelled."""
+def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_left_for_the_board(env):
+    """An actioned row on a removed SO line is neither cancelled nor acknowledged by the push
+    (FP-EMAIL-ONE-TRIGGER, crew 7 Nov: a removed line is left out of the cancelled-line flag);
+    it keeps its state and ack until CS's board Confirm."""
     record, header, line_x, y = _push_so(env)
-    actioned, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_ACTIONED)
+    actioned, _ = _so_mirror_row(
+        env, header, line_x, state=INQUIRY_ACTIONED, ack=ACK_AWAITING
+    )
 
     _remove_so_line_x(env, record, y)
 
     snap = _row_snapshot(env, actioned)
-    assert snap["state"] == INQUIRY_ACTIONED, snap
-    # ruling (c): the mirror row holds no live link, nothing to order on a cancelled line
-    assert snap["ack_state"] == ACK_ACKNOWLEDGED, snap
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_ACTIONED, ACK_AWAITING), snap
+
+
+def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged(env):
+    """Guard of the removed-line exclusion: a push that cancels the HEADER (the line left out
+    too) is a cancelled order, not a removed line, so its live rows are flagged done
+    (`flag_rows_for_cancelled_lines` -> acknowledged) as before."""
+    record, header, line_x, y = _push_so(env)
+    row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
+
+    res = env.post(INGEST_SO, [dict(record, status="cancelled", lines=[y])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    snap = _row_snapshot(env, row_id)
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_ACKNOWLEDGED), snap
 
 
 # ============================================================== guards (AC-RL-30..34)

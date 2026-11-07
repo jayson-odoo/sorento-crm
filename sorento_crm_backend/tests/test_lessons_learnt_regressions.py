@@ -164,6 +164,7 @@ _PURCHASING_EMAIL_GUARDS = {
     "tests/test_ac_removed_lines_ingest.py": (
         "test_fp_email_one_trigger_s1_a_removed_so_line_emails_purchasing_nothing",
         "test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_board_confirm",
+        "test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged",
     ),
     "tests/scm/test_purchasing_email_one_trigger.py": (
         "test_structural_a_handover_queued_outside_a_trigger_is_dropped_and_logged",
@@ -214,98 +215,117 @@ def test_the_purchasing_email_guards_still_cover_every_integration_path():
         assert not missing, f"{relative} no longer covers {missing}"
 
 
-def _functions_with_calls(name_of_call):
-    """(file, enclosing function, call node, function node) for every call named
-    `name_of_call` under app/."""
+@__import__("functools").lru_cache(maxsize=1)
+def _app_nodes():
+    """(file, enclosing def or class or "<module>", node, enclosing node) for every AST node
+    under app/, in one pass (cached: the structural test asks three questions of it)."""
     import ast
 
-    out = []
+    found = []
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     for path in sorted((_BACKEND / "app").rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        parents = {}
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                parents[child] = node
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if name != name_of_call:
-                continue
-            owner = node
-            while owner in parents and not isinstance(
-                owner, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
-                owner = parents[owner]
-            out.append((
-                str(path.relative_to(_BACKEND)), getattr(owner, "name", "<module>"), node, owner,
-            ))
-    return out
+        file = str(path.relative_to(_BACKEND))
+        stack = [(ast.parse(path.read_text(), filename=str(path)), None)]
+        while stack:
+            node, owner = stack.pop()
+            found.append((file, getattr(owner, "name", "<module>"), node, owner))
+            inner = node if isinstance(node, scopes) else owner
+            stack.extend((child, inner) for child in ast.iter_child_nodes(node))
+    return tuple(found)
+
+
+def _calls_named(name_of_call):
+    import ast
+
+    return [
+        (file, func, node, owner)
+        for file, func, node, owner in _app_nodes()
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "id", None) or getattr(node.func, "attr", None)) == name_of_call
+    ]
 
 
 def _guarded_by(function, call, test_source):
-    """True when `function` holds `if <test_source>: ... return` above `call`."""
+    """True when a statement directly in `function`'s body, above `call`, is
+    `if <test_source>: ... return` (another branch's early return does not count)."""
     import ast
 
-    for node in ast.walk(function):
-        if (
-            isinstance(node, ast.If)
-            and ast.unparse(node.test) == test_source
-            and node.body
-            and isinstance(node.body[-1], ast.Return)
-            and node.lineno < call.lineno
-        ):
-            return True
-    return False
+    return any(
+        isinstance(node, ast.If)
+        and ast.unparse(node.test) == test_source
+        and node.body
+        and isinstance(node.body[-1], ast.Return)
+        and node.lineno < call.lineno
+        for node in function.body
+    )
 
 
 _POI = "app/services/project_order_inquiry_service.py"
-_PURCHASING_TRIGGERS = ("order_inquiry_handover", "order_inquiry_changed_with_links")
+
+#: Every place under app/ that may spell a purchasing email's trigger (or the changed-with-links
+#: queue key). A literal anywhere else (a new dispatch_event, positional or `trigger_type=`, a
+#: module constant fed to a generic drainer) is a new way to email purchasing: red until it is
+#: reviewed against the one-trigger rule and listed here.
+_PURCHASING_TRIGGER_SPELLINGS = {
+    "order_inquiry_handover": {
+        ("app/services/automation_triggers.py", "<module>"),  # the trigger registry entry
+        ("app/services/oi_handover_resend.py", "<module>"),  # "Send to purchasing" (Q3)
+        ("app/services/planning_history_service.py", "_emails"),  # reads past runs only
+        (_POI, "handover_route_groups"),  # reads rows to group lines, sends nothing
+        (_POI, "send_handover_groups"),  # THE dispatch, called only from the gated drain
+        (_POI, "_fire_pending_handover"),  # the gated drain
+    },
+    "order_inquiry_changed_with_links": {
+        ("app/services/automation_triggers.py", "<module>"),
+        (_POI, "_fire_pending_changed_with_links"),  # the drain of the gated queue
+    },
+    "oi_changed_with_links_pending": {(_POI, "<module>")},
+}
 
 
 def test_structural_every_purchasing_dispatch_sits_behind_the_one_gate():
     """LESSON 122, the structural gate, Postgres-free (the heavy twin is
-    `tests/scm/test_purchasing_email_one_trigger.py::test_structural_...`). A purchasing email
-    leaves the app in exactly these places, each behind the gate, so a new path that emails
+    `tests/scm/test_purchasing_email_one_trigger.py::test_structural_...`). The handover and
+    changed-with-links emails leave the app only behind the gate, so a new path that emails
     purchasing without the board Confirm's mark is red here:
-    - `order_inquiry_handover` is dispatched only by `send_handover_groups`, whose one caller
-      is the post-commit drain `_fire_pending_handover`, after `if not was_trigger: return`;
-    - `order_inquiry_changed_with_links` is dispatched only by its drain, and its queue is
-      filled only by `_dispatch_changed_with_links`, after
-      `if not _may_email_purchasing(self.db): return`;
+    - each trigger is spelled only in the places listed in `_PURCHASING_TRIGGER_SPELLINGS`;
+    - `send_handover_groups` has one caller, the post-commit drain `_fire_pending_handover`,
+      after `if not was_trigger: return`;
+    - the changed-with-links queue is touched only by `_dispatch_changed_with_links` (after
+      `if not _may_email_purchasing(self.db): return`), its drain and its rollback discard;
     - `send_match` (sends even with the automation off) only in `oi_handover_resend`, the
-      owner's "Send to purchasing" button (Q3 exception)."""
+      owner's "Send to purchasing" button (Q3 exception).
+    Deliberately outside: `order_inquiry_undone`, the board Undo email (owner Q5, kept); it
+    only retracts what a board Confirm already sent."""
     import ast
 
-    literal = {}
-    for file, func, call, _ in _functions_with_calls("dispatch_event"):
-        first = call.args[0] if call.args else None
-        if isinstance(first, ast.Constant) and first.value in _PURCHASING_TRIGGERS:
-            literal.setdefault(first.value, set()).add((file, func))
-        elif isinstance(first, ast.Name) and first.id in _PURCHASING_TRIGGERS:
-            literal.setdefault(first.id, set()).add((file, func))
-    assert literal == {
-        "order_inquiry_handover": {(_POI, "send_handover_groups")},
-        "order_inquiry_changed_with_links": {(_POI, "_fire_pending_changed_with_links")},
-    }, literal
+    spelled = {}
+    for file, func, node, _ in _app_nodes():
+        if isinstance(node, ast.Constant) and node.value in _PURCHASING_TRIGGER_SPELLINGS:
+            spelled.setdefault(node.value, set()).add((file, func))
+    assert spelled == _PURCHASING_TRIGGER_SPELLINGS, spelled
 
-    senders = _functions_with_calls("send_handover_groups")
+    senders = _calls_named("send_handover_groups")
     assert [(f, fn) for f, fn, _, _ in senders] == [(_POI, "_fire_pending_handover")], senders
     _, _, call, function = senders[0]
     assert _guarded_by(function, call, "not was_trigger"), (
         "_fire_pending_handover sends the handover without the was_trigger gate"
     )
 
-    queued = [
-        (file, func, call, function)
-        for file, func, call, function in _functions_with_calls("append")
-        if "_CHANGED_WITH_LINKS_PENDING_KEY" in ast.unparse(call.func)
-    ]
-    assert [(f, fn) for f, fn, _, _ in queued] == [(_POI, "_dispatch_changed_with_links")], queued
-    _, _, call, function = queued[0]
-    assert _guarded_by(function, call, "not _may_email_purchasing(self.db)"), (
-        "_dispatch_changed_with_links queues without the purchasing trigger gate"
-    )
+    queue_users = {}
+    for file, func, node, owner in _app_nodes():
+        if isinstance(node, ast.Name) and node.id == "_CHANGED_WITH_LINKS_PENDING_KEY":
+            queue_users.setdefault((file, func), []).append((node, owner))
+    assert set(queue_users) == {
+        (_POI, "<module>"),
+        (_POI, "_dispatch_changed_with_links"),
+        (_POI, "_fire_pending_changed_with_links"),
+        (_POI, "_discard_pending_changed_with_links"),
+    }, set(queue_users)
+    for node, owner in queue_users[(_POI, "_dispatch_changed_with_links")]:
+        assert _guarded_by(owner, node, "not _may_email_purchasing(self.db)"), (
+            "_dispatch_changed_with_links queues without the purchasing trigger gate"
+        )
 
-    manual = {(f, fn) for f, fn, _, _ in _functions_with_calls("send_match")}
-    assert {f for f, _ in manual} == {"app/services/oi_handover_resend.py"}, manual
+    manual = {f for f, _, _, _ in _calls_named("send_match")}
+    assert manual == {"app/services/oi_handover_resend.py"}, manual
