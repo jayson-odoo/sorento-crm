@@ -1,7 +1,7 @@
 # CARD: SALES-INSIGHTS-P2 (leaderboard phase 2: drilldown, perspectives, targets, customisable)
 
 Status: Asked (crew-ask on PR #2231, 7 Nov, comment 6705350934). Evidence round 1 back (comment 6705369461), mockup
-drawn on it; round 2 (#2230 counted-line flags, dealer targets, ACCOUNT items) with crew. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
+drawn on it; round 2 (comment 6705387753, #2230 counted-line flags) returns identical figures. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
 Plan: `PLAN-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-oct-dev.sql`.
 Mockup: `mockups/sales-insights-p2-07nov.html` (real October figures, evidence round 1).
 
@@ -90,13 +90,20 @@ by reusing the reporting tooling we already have.
   quarterly). So a person Target column is blank for every row today. Q3 recommendation now: build the column but hide
   it when no row has a target (as #2227 hides Codes); it lights up when amounts are entered. Dealer targets belong to
   the Customer view if anywhere; round 2 Q7 measures how they map to customers (a dealer target can cover several
-  accounts), so no dealer-target column is proposed until that is known.
+  accounts). Round 2 Q7: 157 dealer target periods hold 31 Oct; 95 of them cover 2-3 accounts, 210 customers in all,
+  only 9 of October's top 50 customers. A dealer target is a group of accounts, not a customer, so no dealer-target
+  column on the Customer view in this lane. Trigger: the owner asks to see dealer targets on the board.
 - **Customisation is barely used.** One saved report view in the whole system (`sponsorship`), zero sidebar pins on
   `/sales/*`. More reason to reuse saved views (Q4 a) than to build a dashboard.
 - **Drill tells a story the board cannot.** LCL's #1 (RM 1,856,856.61) is 24 customers / 684 items, but one customer
   (304-R015) is RM 845,188.21 and three ACCOUNT category items (AC-EXP-006 / -027 / -022, no brand) are
   RM 1,123,963.15 of it; AC-EXP-006 alone RM 735,826.08 to that one customer. ACCOUNT is RM 1,135,248.96 of October
-  overall. Round 2 Q8 asks what these items are. Not a question yet: they rank like any item unless the owner says.
+  overall. Round 2 Q8: the three items are "FOR ACCOUNT DEPARTMENT ONLY (DISBURSEMENT)" (213 Oct lines),
+  "(REIMBURSEMENT)" (80) and "(OTHERS)" (12). **Finding for the owner, outside this lane:** disbursements and
+  reimbursements look like pass-through charges, yet they sit inside the one sales number (SALES-UNIFIED: every
+  posted IV + CS + DN - CN line), so they lift LCL to #1 on the board, Targets and the assistant alike. Excluding
+  them is a change to the shared definition (its own lane, every reader inherits it), not a board filter. This
+  lane ranks them like any item until the owner rules.
 - **Customer view.** 1,075 customers invoiced in October; the top 12 hold 24.1%. 300-O024 bought from 8 sales persons.
 - **Brand view.** SORENTO RM 8,880,157.22; "(no brand)" RM 4,328,777.30 (ACCOUNT items and unbranded lines); BRAVAT Sep
   was negative, so its change is blank (the #2227 rule).
