@@ -417,6 +417,12 @@ Warnings vocabulary added: `category_created`, `uom_created`, `brand_created`,
 `supplier_ambiguous`. `retryable` no longer answers a missing product ref (the line is dropped
 instead, counted under `lines.dropped`).
 
+Warnings vocabulary added (INGEST-DROP-WARN-CRM, 4 Nov 2026): `line_product_unresolved`, a
+PREFIX. Each dropped document line adds one entry
+`line_product_unresolved:doc=<so/po number>:line_ref=<line source_ref>:line_no=<Seq>:product_code=<code>`
+(blank values stay blank), in the verdict and in the `ingest.record` log line. `lines.dropped`
+is unchanged. Plan: `PLAN-ingest-drop-warn-crm-04nov.md`.
+
 Retirement (AC-P4-1), same slice: the SO/PO history importers (`so_history_service.py`,
 `po_history_service.py`, the `/purchase-history/*` and `/sales-history/*` routes, the RQ tasks
 `process_sales_history_import` / `process_po_history_import`) were deleted outright. Closed

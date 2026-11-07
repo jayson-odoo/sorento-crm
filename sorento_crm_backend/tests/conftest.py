@@ -455,6 +455,14 @@ def _reset_global_state():
         clear_signed_url_cache()
     except Exception:
         pass
+    try:
+        # IMAGE-UNIFY: the rendition service remembers which renditions exist (and which could
+        # not be made) per process; a later test's fake storage must not inherit that.
+        from app.services.image_thumbnailer import reset_rendition_memo
+
+        reset_rendition_memo()
+    except Exception:
+        pass
 
 
 # The sqlite type-affinity shims (`@compiles(JSONB|ARRAY, "sqlite")`) and the

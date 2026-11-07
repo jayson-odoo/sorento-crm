@@ -107,10 +107,9 @@ def _thumbnail_or_original(backend, row) -> bytes:
 
 
 def _first_image(db: Session, app: NewProductApplication) -> Optional[Tuple[str, Optional[bytes]]]:
-    """(file name, thumbnail PNG bytes or None) of the application's first image attachment."""
-    from PIL import Image
-
+    """(file name, thumbnail JPEG bytes or None) of the application's first image attachment."""
     from app.services import storage_router
+    from app.services.image_thumbnailer import downscale
 
     row = (
         db.query(Attachment)
@@ -128,14 +127,15 @@ def _first_image(db: Session, app: NewProductApplication) -> Optional[Tuple[str,
     try:
         provider = row.storage_provider or storage_router.default_provider()
         data = _thumbnail_or_original(storage_router.get_backend(provider), row)
-        with Image.open(io.BytesIO(data), formats=("JPEG", "PNG", "WEBP")) as image:
-            if image.width * image.height > MAX_IMAGE_PIXELS:
-                return row.original_filename, None
-            image.load()
-            image.thumbnail((_THUMB_PX, _THUMB_PX))
-            out = io.BytesIO()
-            image.convert("RGB").save(out, format="PNG")
-        return row.original_filename, out.getvalue()
+        # The one resize routine (IMAGE-UNIFY): upright, white behind transparency, JPEG out.
+        made = downscale(
+            data,
+            _THUMB_PX,
+            formats=("JPEG", "PNG", "WEBP"),
+            max_pixels=MAX_IMAGE_PIXELS,
+            label=row.id,
+        )
+        return row.original_filename, (made.data if made is not None else None)
     except Exception:  # noqa: BLE001 - an unreadable image shows its name, never fails the download
         return row.original_filename, None
 
