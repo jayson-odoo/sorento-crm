@@ -1,8 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Loader2, SlidersHorizontal } from 'lucide-react';
+import { Loader2, SlidersHorizontal, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -12,6 +15,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -19,22 +23,38 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { StatCard } from '@/components/scm/StatCard';
 import { useSalesLeaderboardOptionsQuery, useSalesLeaderboardQuery } from '@/hooks/useSalesLeaderboardQuery';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { localStore } from '@/lib/storage';
 import { cn } from '@/lib/utils';
-import type { LeaderboardOptions, LeaderboardRow } from '@/services/salesLeaderboardService';
+import type { LeaderboardBasis, LeaderboardBy, LeaderboardRow } from '@/services/salesLeaderboardService';
 import { LeaderboardPodium } from './LeaderboardPodium';
 import {
   COLUMN_SIZES,
+  VIEW_SIZES,
   changeTone,
   codesText,
   formatAmount,
   formatChange,
   formatRm,
-  periodRange,
   previousLabel,
-  type PeriodKind,
+  targetText,
 } from './leaderboardFormat';
+import {
+  BASES,
+  VIEWS,
+  hasSetupKeys,
+  isRunnable,
+  parseSetup,
+  queryParams,
+  rememberable,
+  reportHref,
+  serializeSetup,
+  topSellingHref,
+  defaultPeriod,
+  type Period,
+  type Setup,
+} from './leaderboardState';
 
-const PERIOD_CHIPS: { kind: PeriodKind; label: string }[] = [
+const PERIOD_CHIPS: { kind: Period; label: string }[] = [
   { kind: 'this_month', label: 'This month' },
   { kind: 'last_month', label: 'Last month' },
   { kind: 'this_quarter', label: 'This quarter' },
@@ -42,131 +62,268 @@ const PERIOD_CHIPS: { kind: PeriodKind; label: string }[] = [
   { kind: 'custom', label: 'Custom' },
 ];
 
-const NO_OPTIONS: LeaderboardOptions = { companies: [], brands: [], categories: [] };
+const BASIS_WORD: Record<LeaderboardBasis, string> = {
+  invoiced: 'invoiced',
+  delivered: 'delivered',
+  ordered: 'ordered',
+  outstanding: 'undelivered',
+};
+const AMOUNT_TITLE: Record<LeaderboardBasis, string> = {
+  invoiced: 'Invoiced net (RM)',
+  delivered: 'Delivered (RM)',
+  ordered: 'Ordered (RM)',
+  outstanding: 'Undelivered (RM)',
+};
+const NAME_TITLE: Record<LeaderboardBy, string> = {
+  person: 'Sales person',
+  customer: 'Customer',
+  product: 'Item',
+  brand: 'Brand',
+  category: 'Category',
+  channel: 'Channel',
+};
+
+const STORAGE_KEY = 'sales-leaderboard-setup';
+
+const NO_CHANNELS = { invoiced: [], delivered: [], ordered: [], outstanding: [] };
+const NO_CAN = { invoiced: false, delivered: false, ordered: false, outstanding: false };
+
+const numberCell = (value: number) => <span className="tabular-nums">{value}</span>;
+const rightAligned = (title: string, skeleton: string) => ({
+  headerTitle: title,
+  headerClassName: 'text-end',
+  cellClassName: 'text-end',
+  skeleton: <Skeleton className={cn('h-4', skeleton)} />,
+});
 
 /**
- * Sales > Leaderboard (PLAN-sales-leaderboard-07nov, UAC L1-L6). Read-only: no CTA, no subtitle.
- * Invoiced sales ranked by sales person; no target and no commission is shown here.
+ * Sales > Leaderboard (PLAN-sales-leaderboard-07nov + PLAN-sales-insights-p2-07nov). Read-only: no CTA, no subtitle.
+ * One screen, one engine: a basis, a View by, filters and drill chips, all held in the URL.
  */
 export default function LeaderboardView() {
-  const [period, setPeriod] = useState<PeriodKind>('this_month');
-  const [custom, setCustom] = useState<{ from: string; to: string }>({ from: '', to: '' });
-  const [company, setCompany] = useState('');
-  const [brand, setBrand] = useState<string[]>([]);
-  const [category, setCategory] = useState<string[]>([]);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams?.toString() ?? '';
+  const urlHasState = hasSetupKeys(new URLSearchParams(urlQuery));
 
-  // Custom sends no previous window: the backend reads the same number of days just before.
-  const range = useMemo<{ from: string; to: string; previousFrom?: string; previousTo?: string }>(
-    () => (period === 'custom' ? custom : periodRange(period)),
-    [period, custom],
-  );
-  const runnable = Boolean(range.from && range.to && range.to >= range.from);
+  // Option A: with no state in the URL the last setup of this browser opens (read after mount, never on the server).
+  const [stored, setStored] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    // `localStore` never throws (a refusing browser falls back to memory).
+    setStored(localStore.getItem(STORAGE_KEY));
+  }, []);
+  const restoring = !urlHasState && stored === undefined;
+  const effectiveQuery = urlHasState ? urlQuery : (stored ?? '');
 
-  const options = useSalesLeaderboardOptionsQuery().data ?? NO_OPTIONS;
-  const { data, isLoading, isFetching, isError, error, isPlaceholderData } = useSalesLeaderboardQuery(
-    {
-      date_from: range.from,
-      date_to: range.to,
-      previous_from: range.previousFrom,
-      previous_to: range.previousTo,
-      company: company || undefined,
-      brand,
-      category,
+  const optionsQuery = useSalesLeaderboardOptionsQuery();
+  const options = optionsQuery.data;
+  const can = options?.can ?? NO_CAN;
+
+  // What the user just chose shows at once; the URL (Back, a shared link) takes over when it moves.
+  const [local, setLocal] = useState<Setup | null>(null);
+  useEffect(() => setLocal(null), [effectiveQuery]);
+
+  const setup = useMemo<Setup>(() => {
+    const parsed = local ?? parseSetup(new URLSearchParams(effectiveQuery));
+    // A view the caller may not open (a shared link) shows the board instead of a refusal.
+    if (options && parsed.by !== 'person' && !can[parsed.basis] && parsed.person.length === 0) {
+      return { ...parsed, by: 'person' };
+    }
+    return parsed;
+  }, [local, effectiveQuery, options, can]);
+
+  useEffect(() => {
+    if (!urlHasState) return;
+    localStore.setItem(STORAGE_KEY, rememberable(setup));
+  }, [urlHasState, setup]);
+
+  const navigate = useCallback(
+    (patch: Partial<Setup>) => {
+      let next: Setup = { ...setup, ...patch };
+      if (patch.basis && patch.basis !== setup.basis) {
+        if (patch.basis === 'outstanding') next.period = 'all_open';
+        else if (next.period === 'all_open') next.period = defaultPeriod(patch.basis);
+        const valid = options?.channels?.[patch.basis]?.map((o) => o.value);
+        if (valid) next = { ...next, channel: next.channel.filter((c) => valid.includes(c)) };
+      }
+      setLocal(next);
+      router.push(`${pathname}?${serializeSetup(next)}`);
     },
-    runnable,
+    [setup, options, router, pathname],
+  );
+
+  const runnable = isRunnable(setup);
+  const { data, isLoading, isFetching, isError, error, isPlaceholderData } = useSalesLeaderboardQuery(
+    queryParams(setup),
+    runnable && !restoring,
   );
 
   const rows = useMemo<LeaderboardRow[]>(() => data?.rows ?? [], [data]);
+  // The grid follows the answer on screen (the old board stays behind a new request), not the request.
+  const dataBy: LeaderboardBy = data?.by ?? setup.by;
+  const dataBasis: LeaderboardBasis = data?.basis ?? setup.basis;
+  const outstanding = dataBasis === 'outstanding';
   const versus = data ? previousLabel(data.previous_from, data.previous_to) : 'previous period';
   const myRow = rows.find((row) => row.is_me);
-  const activeFilters = (company ? 1 : 0) + (brand.length ? 1 : 0) + (category.length ? 1 : 0);
+  const activeFilters =
+    (setup.company ? 1 : 0) + (setup.brand.length ? 1 : 0) + (setup.category.length ? 1 : 0) + (setup.channel.length ? 1 : 0);
+  const canOpenRows = Boolean(data?.can_drill_others) || setup.person.length > 0;
 
-  const columns = useMemo<ColumnDef<LeaderboardRow>[]>(
-    () => [
-      {
-        accessorKey: 'rank',
-        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.rank}</span>,
-        size: COLUMN_SIZES.rank,
-        meta: { headerTitle: 'Rank', skeleton: <Skeleton className="h-4 w-6" /> },
-      },
-      {
-        accessorKey: 'person',
-        header: ({ column }) => <DataGridColumnHeader title="Sales person" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate font-medium" title={row.original.person}>
-            {row.original.person}
-            {row.original.is_me ? ' (you)' : ''}
-          </span>
-        ),
-        size: COLUMN_SIZES.person,
-        meta: { headerTitle: 'Sales person', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        id: 'codes',
-        header: ({ column }) => <DataGridColumnHeader title="Codes" column={column} />,
-        cell: ({ row }) => {
-          const text = codesText(row.original.person, row.original.codes);
-          return (
-            <span className="block truncate text-muted-foreground" title={text}>
-              {text}
+  const drillOf = useCallback(
+    (row: LeaderboardRow): Partial<Setup> | null => {
+      if (dataBy === 'person') {
+        if (!(data?.can_drill_others || row.is_me)) return null;
+        return { by: 'customer', person: [row.person ?? row.name] };
+      }
+      if (!canOpenRows) return null;
+      if (dataBy === 'channel') return row.key ? { by: 'customer', channel: [row.key] } : null;
+      if (row.keys.length === 0) return null; // the "(no brand)" style row stands for nothing to open
+      if (dataBy === 'customer') return { by: 'product', customer: row.keys, customerLabel: row.name };
+      if (dataBy === 'product') return { by: 'customer', product: row.keys, productLabel: row.name };
+      if (dataBy === 'brand') return { by: 'customer', brand: row.keys };
+      return { by: 'customer', category: row.keys };
+    },
+    [dataBy, data?.can_drill_others, canOpenRows],
+  );
+
+  const showTarget = dataBy === 'person' && rows.some((row) => row.target);
+  const showCodes = dataBy === 'person' && rows.some((row) => codesText(row.person ?? row.name, row.codes ?? []) !== '');
+
+  const columns = useMemo<ColumnDef<LeaderboardRow>[]>(() => {
+    const rank: ColumnDef<LeaderboardRow> = {
+      accessorKey: 'rank',
+      header: ({ column }) => <DataGridColumnHeader title={dataBy === 'person' ? 'Rank' : '#'} column={column} />,
+      cell: ({ row }) => <span className="tabular-nums">{row.original.rank}</span>,
+      size: COLUMN_SIZES.rank,
+      meta: { headerTitle: 'Rank', skeleton: <Skeleton className="h-4 w-6" /> },
+    };
+    const name: ColumnDef<LeaderboardRow> = {
+      id: 'name',
+      header: ({ column }) => <DataGridColumnHeader title={NAME_TITLE[dataBy]} column={column} />,
+      cell: ({ row }) => {
+        const label = row.original.person ?? row.original.name;
+        return (
+          <span className="block min-w-0">
+            <span className="block truncate font-medium" title={label}>
+              {label}
+              {row.original.is_me ? ' (you)' : ''}
             </span>
-          );
-        },
-        size: COLUMN_SIZES.codes,
-        meta: { headerTitle: 'Codes', skeleton: <Skeleton className="h-4 w-32" /> },
+            {dataBy === 'customer' && row.original.code ? (
+              <span className="block truncate text-xs text-muted-foreground" title={row.original.code}>
+                {row.original.code}
+              </span>
+            ) : null}
+          </span>
+        );
       },
-      {
-        accessorKey: 'amount',
-        header: ({ column }) => <DataGridColumnHeader title="Invoiced net (RM)" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{formatAmount(row.original.amount)}</span>,
-        size: COLUMN_SIZES.amount,
-        meta: {
-          headerTitle: 'Invoiced net (RM)',
-          headerClassName: 'text-end',
-          cellClassName: 'text-end',
-          skeleton: <Skeleton className="h-4 w-24" />,
-        },
+      size: dataBy === 'customer' ? VIEW_SIZES.customerName : dataBy === 'person' ? COLUMN_SIZES.person : VIEW_SIZES.name,
+      meta: { headerTitle: NAME_TITLE[dataBy], skeleton: <Skeleton className="h-4 w-24" /> },
+    };
+    const text = (id: string, title: string, size: number, read: (r: LeaderboardRow) => string): ColumnDef<LeaderboardRow> => ({
+      id,
+      header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
+      cell: ({ row }) => {
+        const value = read(row.original);
+        return (
+          <span className="block truncate text-muted-foreground" title={value}>
+            {value}
+          </span>
+        );
       },
-      {
-        accessorKey: 'change_pct',
-        header: ({ column }) => <DataGridColumnHeader title="vs last period" column={column} />,
-        cell: ({ row }) => (
+      size,
+      meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-20" /> },
+    });
+    const amount: ColumnDef<LeaderboardRow> = {
+      accessorKey: 'amount',
+      header: ({ column }) => <DataGridColumnHeader title={AMOUNT_TITLE[dataBasis]} column={column} />,
+      cell: ({ row }) => <span className="tabular-nums">{formatAmount(row.original.amount)}</span>,
+      size: COLUMN_SIZES.amount,
+      meta: rightAligned(AMOUNT_TITLE[dataBasis], 'w-24'),
+    };
+    const change: ColumnDef<LeaderboardRow> = {
+      accessorKey: 'change_pct',
+      header: ({ column }) => <DataGridColumnHeader title="vs last period" column={column} />,
+      cell: ({ row }) =>
+        outstanding ? null : (
           <span className={cn('tabular-nums', changeTone(row.original.change_pct))}>
             {formatChange(row.original.change_pct)}
           </span>
         ),
-        size: COLUMN_SIZES.change,
-        meta: {
-          headerTitle: 'vs last period',
-          headerClassName: 'text-end',
-          cellClassName: 'text-end',
-          skeleton: <Skeleton className="h-4 w-12" />,
-        },
-      },
-      {
-        accessorKey: 'customers',
-        header: ({ column }) => <DataGridColumnHeader title="Customers" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{row.original.customers}</span>,
-        size: COLUMN_SIZES.customers,
-        meta: {
-          headerTitle: 'Customers',
-          headerClassName: 'text-end',
-          cellClassName: 'text-end',
-          skeleton: <Skeleton className="h-4 w-8" />,
-        },
-      },
-    ],
-    [],
-  );
+      size: COLUMN_SIZES.change,
+      meta: rightAligned('vs last period', 'w-12'),
+    };
+    const count = (id: 'customers' | 'products', title: string): ColumnDef<LeaderboardRow> => ({
+      accessorKey: id,
+      header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
+      cell: ({ row }) => numberCell(row.original[id]),
+      size: COLUMN_SIZES.customers,
+      meta: rightAligned(title, 'w-8'),
+    });
+    const qty: ColumnDef<LeaderboardRow> = {
+      accessorKey: 'qty',
+      header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+      cell: ({ row }) => numberCell(row.original.qty),
+      size: VIEW_SIZES.qty,
+      meta: rightAligned('Qty', 'w-8'),
+    };
 
-  // The Codes column only earns its width when some row has codes worth showing.
-  const showCodes = rows.some((row) => codesText(row.person, row.codes) !== '');
+    if (dataBy === 'person') {
+      return [
+        rank,
+        name,
+        ...(showCodes
+          ? [text('codes', 'Codes', showTarget ? VIEW_SIZES.codesNarrow : COLUMN_SIZES.codes, (r) => codesText(r.person ?? r.name, r.codes ?? []))]
+          : []),
+        amount,
+        change,
+        count('customers', 'Customers'),
+        ...(showTarget
+          ? [
+              {
+                id: 'target',
+                header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
+                cell: ({ row }) => {
+                  const target = row.original.target;
+                  if (!target) return null;
+                  const shown = targetText(target);
+                  return (
+                    <span
+                      className="block truncate tabular-nums"
+                      title={`Target ${formatRm(target.target_amount)}, achieved ${formatRm(target.achieved_amount)}`}
+                    >
+                      {shown}
+                    </span>
+                  );
+                },
+                size: VIEW_SIZES.target,
+                meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-24" /> },
+              } as ColumnDef<LeaderboardRow>,
+            ]
+          : []),
+      ];
+    }
+    if (dataBy === 'customer') {
+      return [rank, name, text('companies', 'Companies', VIEW_SIZES.companies, (r) => (r.companies ?? []).join(', ')), amount, change, count('products', 'Items')];
+    }
+    if (dataBy === 'product') {
+      return [
+        rank,
+        name,
+        text('brand', 'Brand', VIEW_SIZES.brand, (r) => r.brand ?? ''),
+        text('category', 'Category', VIEW_SIZES.brand, (r) => r.category ?? ''),
+        qty,
+        amount,
+        change,
+        count('customers', 'Customers'),
+      ];
+    }
+    return [rank, name, amount, change, count('customers', 'Customers'), ...(dataBy === 'channel' ? [] : [count('products', 'Items')])];
+  }, [dataBy, dataBasis, outstanding, showCodes, showTarget]);
 
   const table = useReactTable({
     columns,
     data: rows,
-    state: { columnVisibility: { codes: showCodes } },
     getRowId: (row) => String(row.rank),
     getCoreRowModel: getCoreRowModel(),
     // The server returns the ranking; the order is the point.
@@ -181,9 +338,9 @@ export default function LeaderboardView() {
         <Label htmlFor={`${idPrefix}-company`}>Company</Label>
         <SearchableSelect
           id={`${idPrefix}-company`}
-          value={company}
-          onChange={setCompany}
-          options={options.companies}
+          value={setup.company}
+          onChange={(company: string) => navigate({ company })}
+          options={options?.companies ?? []}
           placeholder="All"
           triggerClassName="mt-1 w-full"
           clearable
@@ -193,9 +350,9 @@ export default function LeaderboardView() {
         <Label htmlFor={`${idPrefix}-brand`}>Brand</Label>
         <SearchableMultiSelect
           id={`${idPrefix}-brand`}
-          value={brand}
-          onChange={setBrand}
-          options={options.brands}
+          value={setup.brand}
+          onChange={(brand: string[]) => navigate({ brand })}
+          options={options?.brands ?? []}
           placeholder="Any"
           triggerClassName="mt-1 w-full"
         />
@@ -204,9 +361,20 @@ export default function LeaderboardView() {
         <Label htmlFor={`${idPrefix}-category`}>Category</Label>
         <SearchableMultiSelect
           id={`${idPrefix}-category`}
-          value={category}
-          onChange={setCategory}
-          options={options.categories}
+          value={setup.category}
+          onChange={(category: string[]) => navigate({ category })}
+          options={options?.categories ?? []}
+          placeholder="Any"
+          triggerClassName="mt-1 w-full"
+        />
+      </div>
+      <div className="w-full sm:w-56">
+        <Label htmlFor={`${idPrefix}-channel`}>Channel</Label>
+        <SearchableMultiSelect
+          id={`${idPrefix}-channel`}
+          value={setup.channel}
+          onChange={(channel: string[]) => navigate({ channel })}
+          options={(options?.channels ?? NO_CHANNELS)[setup.basis] ?? []}
           placeholder="Any"
           triggerClassName="mt-1 w-full"
         />
@@ -216,8 +384,41 @@ export default function LeaderboardView() {
 
   // A new period or filter is loading behind the old board (kept as placeholder data).
   const refreshing = isFetching && Boolean(data);
-  const firstLoad = runnable && !data && !isError && (isLoading || isFetching);
-  const empty = runnable && !isLoading && !isError && rows.length === 0;
+  const firstLoad = (restoring || runnable) && !data && !isError && (restoring || isLoading || isFetching);
+  const empty = runnable && !restoring && !isLoading && !isError && rows.length === 0;
+
+  const visibleViews = VIEWS.filter((v) => v.value === 'person' || v.value === setup.by || can[setup.basis]);
+  const periodChips = setup.basis === 'outstanding' ? [{ kind: 'all_open' as Period, label: 'All open' }, ...PERIOD_CHIPS] : PERIOD_CHIPS;
+
+  const chips: { id: string; text: string; remove: () => void }[] = [
+    ...setup.person.map((label) => ({
+      id: `person:${label}`,
+      text: `Sales person: ${label}`,
+      remove: () => navigate({ person: setup.person.filter((p) => p !== label) }),
+    })),
+    ...(setup.customer.length
+      ? [{
+          id: 'customer',
+          text: setup.customerLabel ? `Customer: ${setup.customerLabel}` : 'Customer',
+          remove: () => navigate({ customer: [], customerLabel: '' }),
+        }]
+      : []),
+    ...(setup.product.length
+      ? [{
+          id: 'product',
+          text: setup.productLabel ? `Product: ${setup.productLabel}` : 'Product',
+          remove: () => navigate({ product: [], productLabel: '' }),
+        }]
+      : []),
+  ];
+
+  const openRow = (row: LeaderboardRow) => {
+    const patch = drillOf(row);
+    if (patch) navigate(patch);
+  };
+
+  const mobileRows = dataBy === 'person' ? rows.slice(3) : rows;
+  const showReportLinks = Boolean(data) || runnable;
 
   return (
     <>
@@ -231,17 +432,47 @@ export default function LeaderboardView() {
       </Container>
       <Container>
         <div className="space-y-4 pb-20 md:pb-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Basis">
+              {BASES.map((b) => (
+                <Button
+                  key={b.value}
+                  type="button"
+                  size="sm"
+                  variant={setup.basis === b.value ? 'primary' : 'outline'}
+                  aria-pressed={setup.basis === b.value}
+                  className="h-7 px-2.5"
+                  onClick={() => navigate({ basis: b.value })}
+                >
+                  {b.label}
+                </Button>
+              ))}
+            </div>
+            {showReportLinks ? (
+              <div className="flex items-center gap-3 text-sm">
+                {setup.basis === 'invoiced' && setup.by === 'product' ? (
+                  <Link href={topSellingHref(setup)} className="text-primary hover:underline">
+                    Open in Top selling items
+                  </Link>
+                ) : null}
+                <Link href={reportHref(setup)} className="text-primary hover:underline">
+                  Open as report
+                </Link>
+              </div>
+            ) : null}
+          </div>
+
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Period">
-              {PERIOD_CHIPS.map((chip) => (
+              {periodChips.map((chip) => (
                 <Button
                   key={chip.kind}
                   type="button"
                   size="sm"
-                  variant={period === chip.kind ? 'primary' : 'outline'}
-                  aria-pressed={period === chip.kind}
+                  variant={setup.period === chip.kind ? 'primary' : 'outline'}
+                  aria-pressed={setup.period === chip.kind}
                   className="h-7 px-2.5"
-                  onClick={() => setPeriod(chip.kind)}
+                  onClick={() => navigate({ period: chip.kind })}
                 >
                   {chip.label}
                 </Button>
@@ -269,17 +500,45 @@ export default function LeaderboardView() {
             </div>
           </div>
 
-          {period === 'custom' ? (
+          {setup.period === 'custom' ? (
             <div className="w-full sm:w-72">
               <Label htmlFor="lb-range">Dates</Label>
               <DateRangePicker
                 id="lb-range"
                 aria-label="Custom date range"
-                from={custom.from}
-                to={custom.to}
-                onChange={(next) => setCustom({ from: next.from ?? '', to: next.to ?? '' })}
+                from={setup.from}
+                to={setup.to}
+                onChange={(next) => navigate({ from: next.from ?? '', to: next.to ?? '' })}
                 className="mt-1"
               />
+            </div>
+          ) : null}
+
+          <Tabs value={setup.by} onValueChange={(by) => navigate({ by: by as LeaderboardBy })}>
+            <TabsList variant="line">
+              {visibleViews.map((v) => (
+                <TabsTrigger key={v.value} value={v.value}>
+                  {v.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          {chips.length ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {chips.map((chip) => (
+                <Badge key={chip.id} variant="secondary" appearance="light" className="gap-1">
+                  <span>{chip.text}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${chip.text}`}
+                    className="rounded-sm opacity-60 hover:opacity-100"
+                    onClick={chip.remove}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
             </div>
           ) : null}
 
@@ -289,7 +548,7 @@ export default function LeaderboardView() {
             </div>
           ) : null}
 
-          {period === 'custom' && !runnable ? (
+          {setup.period === 'custom' && !runnable ? (
             <div
               data-testid="leaderboard-pick-range"
               className="flex flex-col items-center gap-1 rounded-lg border border-border py-10 text-center"
@@ -319,33 +578,40 @@ export default function LeaderboardView() {
           {data ? (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="leaderboard-kpis">
               <StatCard
-                label="Total invoiced"
+                label={`Total ${BASIS_WORD[dataBasis]}`}
                 value={formatRm(data.total.amount)}
                 sub={
-                  data.total.change_pct === null ? undefined : (
+                  data.total.change_pct === null || data.total.change_pct === undefined ? undefined : (
                     <span className={changeTone(data.total.change_pct)}>
-                      {formatChange(data.total.change_pct)} vs {versus} ({formatRm(data.total.prev_amount)})
+                      {formatChange(data.total.change_pct)} vs {versus} ({formatRm(data.total.prev_amount ?? 0)})
                     </span>
                   )
                 }
               />
-              <StatCard
-                label="Sales persons ranked"
-                value={rows.length}
-                sub={`plus ${formatRm(data.no_agent_amount)} with no agent`}
-              />
-              {data.me ? (
+              {dataBy === 'person' ? (
+                <StatCard
+                  label="Sales persons ranked"
+                  value={rows.length}
+                  sub={`plus ${formatRm(data.no_agent_amount)} with no agent`}
+                />
+              ) : (
+                <StatCard label="Customers" value={data.total.customers ?? 0} />
+              )}
+              {dataBy === 'person' && data.me ? (
                 <StatCard
                   label="Your rank"
                   value={`#${data.me.rank}`}
                   sub={
                     myRow ? (
                       <span className={changeTone(myRow.change_pct)}>
-                        {formatRm(myRow.amount)}, {formatChange(myRow.change_pct)} vs {versus}
+                        {formatRm(myRow.amount)}
+                        {outstanding ? '' : `, ${formatChange(myRow.change_pct)} vs ${versus}`}
                       </span>
                     ) : undefined
                   }
                 />
+              ) : dataBy !== 'person' ? (
+                <StatCard label="Items" value={data.total.products ?? 0} />
               ) : null}
             </div>
           ) : null}
@@ -360,32 +626,44 @@ export default function LeaderboardView() {
             </div>
           ) : (
             <>
-              <LeaderboardPodium rows={rows} versus={versus} />
+              {dataBy === 'person' ? <LeaderboardPodium rows={rows} versus={versus} showChange={!outstanding} /> : null}
 
               <div className="md:hidden" data-testid="leaderboard-list">
-                {rows.slice(3).map((row) => (
-                  <div
-                    key={row.rank}
-                    className={cn(
-                      'flex items-start justify-between gap-3 border-b border-border py-2 text-sm',
-                      row.is_me && 'bg-primary/5 -mx-4 px-4',
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate">
-                        <b className="tabular-nums">{row.rank}</b> {row.person}
-                        {row.is_me ? ' (you)' : ''}
-                      </p>
-                      {codesText(row.person, row.codes) ? (
-                        <p className="truncate text-xs text-muted-foreground">{codesText(row.person, row.codes)}</p>
-                      ) : null}
-                      <p className={cn('text-xs', changeTone(row.change_pct))}>
-                        {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
-                      </p>
-                    </div>
-                    <span className="shrink-0 tabular-nums">{formatAmount(row.amount)}</span>
-                  </div>
-                ))}
+                {mobileRows.map((row) => {
+                  const label = row.person ?? row.name;
+                  const drill = drillOf(row);
+                  const codes = dataBy === 'person' ? codesText(label, row.codes ?? []) : '';
+                  const sub = dataBy === 'customer' ? [row.code, (row.companies ?? []).join(', ')].filter(Boolean).join(', ') : codes;
+                  const Row = drill ? 'button' : 'div';
+                  return (
+                    <Row
+                      key={row.rank}
+                      {...(drill ? { type: 'button' as const, onClick: () => navigate(drill) } : {})}
+                      className={cn(
+                        'flex w-full items-start justify-between gap-3 border-b border-border py-2 text-start text-sm',
+                        row.is_me && 'bg-primary/5 -mx-4 px-4',
+                        drill && 'cursor-pointer',
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate">
+                          <b className="tabular-nums">{row.rank}</b> {label}
+                          {row.is_me ? ' (you)' : ''}
+                        </p>
+                        {sub ? <p className="truncate text-xs text-muted-foreground">{sub}</p> : null}
+                        {!outstanding ? (
+                          <p className={cn('text-xs', changeTone(row.change_pct))}>
+                            {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
+                          </p>
+                        ) : null}
+                        {dataBy === 'person' && row.target ? (
+                          <p className="truncate text-xs text-muted-foreground">{targetText(row.target)}</p>
+                        ) : null}
+                      </div>
+                      <span className="shrink-0 tabular-nums">{formatAmount(row.amount)}</span>
+                    </Row>
+                  );
+                })}
               </div>
 
               <div className="hidden md:block">
@@ -396,8 +674,12 @@ export default function LeaderboardView() {
                   isPlaceholderData={isPlaceholderData}
                   listingKey="sales.leaderboard.view"
                   tableLayout={{ width: 'fixed', columnsResizable: true }}
+                  onRowClick={openRow}
                   rowClassName={(row) => (row.is_me ? 'bg-primary/5' : undefined)}
-                  rowAttributes={(row) => ({ 'data-me': row.is_me ? 'true' : undefined })}
+                  rowAttributes={(row) => ({
+                    'data-me': row.is_me ? 'true' : undefined,
+                    'data-drill': drillOf(row) ? 'true' : undefined,
+                  })}
                 >
                   <Card>
                     <CardTable>
@@ -411,7 +693,7 @@ export default function LeaderboardView() {
 
           </div>
 
-          {data ? (
+          {data && dataBy === 'person' ? (
             <p className="text-xs text-muted-foreground" data-testid="leaderboard-no-agent">
               Sales with no agent: {formatRm(data.no_agent_amount)} (not ranked)
             </p>

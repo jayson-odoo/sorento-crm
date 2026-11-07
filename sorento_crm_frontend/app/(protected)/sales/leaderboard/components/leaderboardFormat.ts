@@ -1,4 +1,4 @@
-import { getMalaysiaDateKey } from '@/lib/helpers';
+import { formatDateSafe, getMalaysiaDateKey } from '@/lib/helpers';
 
 export type PeriodKind = 'this_month' | 'last_month' | 'this_quarter' | 'ytd' | 'custom';
 
@@ -86,7 +86,8 @@ export function changeTone(pct: number | null): string {
 }
 
 /** `Sep` when the previous window is one whole calendar month (first day to last day), else `previous period`. */
-export function previousLabel(previousFrom: string, previousTo: string): string {
+export function previousLabel(previousFrom: string | null, previousTo: string | null): string {
+  if (!previousFrom || !previousTo) return 'previous period';
   const [fy, fm, fd] = previousFrom.split('-').map(Number);
   const [ty, tm, td] = previousTo.split('-').map(Number);
   if (fy === ty && fm === tm && fd === 1 && td === lastDay(ty, tm)) {
@@ -95,8 +96,32 @@ export function previousLabel(previousFrom: string, previousTo: string): string 
   return 'previous period';
 }
 
+/**
+ * What a target's period reads as: `2026` for a calendar year, `Oct 2026` for one month, else the two dates.
+ */
+export function targetPeriodLabel(from: string, to: string): string {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  if (fy === ty && fm === 1 && fd === 1 && tm === 12 && td === 31) return String(fy);
+  if (fy === ty && fm === tm && fd === 1 && td === lastDay(ty, tm)) return `${MONTH_NAMES[fm - 1]} ${fy}`;
+  return `${formatDateSafe(from)} to ${formatDateSafe(to)}`;
+}
+
+/** `72.0% of 2026, ordered`, or the bare `85.5%` when the target is read on the board's own basis and window. */
+export function targetText(target: { basis: string; period_from: string; period_to: string; achieved_pct: number | null; like_for_like: boolean }): string {
+  if (target.achieved_pct === null || target.achieved_pct === undefined) return '';
+  const pct = `${target.achieved_pct.toFixed(1)}%`;
+  if (target.like_for_like) return pct;
+  return `${pct} of ${targetPeriodLabel(target.period_from, target.period_to)}, ${target.basis}`;
+}
+
 /** Column sizes (px) of the ranking grid; they sum to what fits at 1280px with the sidebar open (about 940). */
 export const COLUMN_SIZES = { rank: 60, person: 170, codes: 250, amount: 170, change: 140, customers: 110 } as const;
+
+/** The other views' own columns (SALES-INSIGHTS-P2); each view's set fits the same width. */
+export const VIEW_SIZES = {
+  name: 200, customerName: 260, companies: 130, brand: 120, qty: 80, target: 220, codesNarrow: 150,
+} as const;
 
 /** The codes line, only where it says something the name does not: two or more codes, or one that differs. */
 export function codesText(person: string, codes: string[]): string {

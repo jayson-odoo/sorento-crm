@@ -128,9 +128,13 @@ def location_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return SalesOrderLine.warehouse_id.in_(values)
 
 
+#: The leaderboard's "Open as report" seed names the sales type (`dealer`); the dataset holds the demand class.
+_CLASS_OF = {"dealer": "retail"}
+
+
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     """Values are demand classes (`retail` / `project`), as `SalesOrder.demand_class` holds them."""
-    return SalesOrder.demand_class.in_(values)
+    return SalesOrder.demand_class.in_([_CLASS_OF.get(v, v) for v in values])
 
 
 # ------------------------------------------------------------------------ catalog
