@@ -102,6 +102,7 @@ import {
   templateAfterFlip,
   lineToDraft,
   EMPTY_LINE,
+  droppedPromotionNote,
   lineProblemsOf,
   pruneGuardError,
   MISSING_TAG_TEMPLATE,
@@ -1273,6 +1274,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       if (!effectiveId) setCreatedRequestId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved');
+      const dropped = droppedPromotionNote(payload.lines, saved.lines);
+      if (dropped) toast.info(dropped);
       router.push(homePath);
     } catch (e) {
       // S4 (code review): the same `line:<index>` -> row mapping Submit uses
@@ -1497,6 +1500,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
+      const dropped = droppedPromotionNote(payload.lines, created.lines);
+      if (dropped) toast.info(dropped);
       if (action.kind === 'escalate') {
         await service().submitAndEscalate(created.id, action.note);
         toast.success('Sent to marketing');

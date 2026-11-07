@@ -538,6 +538,23 @@ export function partsPayload(parts: DraftPart[]) {
   );
 }
 
+/**
+ * The note after a save that dropped a line's promotion: the server drops one a narrowed pick no
+ * longer touches (PRICETAG-DISCONTINUED-PICK, it prices nothing there). Null when none was dropped.
+ */
+export function droppedPromotionNote(
+  sent: Array<{ promotion_id: string | null }>,
+  saved: Array<{ promotion_id?: string | null; sort_order: number }> | undefined,
+): string | null {
+  if (!saved) return null;
+  const ordered = [...saved].sort((a, b) => a.sort_order - b.sort_order);
+  const lines = sent.flatMap((line, index) =>
+    line.promotion_id && ordered[index] && !ordered[index].promotion_id ? [index + 1] : [],
+  );
+  if (lines.length === 0) return null;
+  return `Promotion removed from ${lines.length === 1 ? 'line' : 'lines'} ${lines.join(', ')}: it does not cover the option picked.`;
+}
+
 /** Every product the parts have resolved so far, picks included. */
 export function pickedProductIds(parts: DraftPart[]): string[] {
   return parts.flatMap((p) => (p.product_ids?.length ? p.product_ids : p.product_id ? [p.product_id] : []));
