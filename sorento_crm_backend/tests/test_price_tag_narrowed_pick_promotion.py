@@ -73,14 +73,46 @@ def test_a_pick_outside_the_promotion_saves_and_drops_it(db):
     assert [p.product_id for p in line.parts] == [taps[0].id]
 
 
-def test_dropping_it_moves_no_price_on_the_tag(db):
+def _row_without_ids(row):
+    """The tag row with the ids that differ between two requests taken out."""
+    skip = {"line_id", "tag_id", "request_id", "id", "promotion_id", "promotion_name", "promotion_expired_on"}
+    if isinstance(row, dict):
+        return {k: _row_without_ids(v) for k, v in row.items() if k not in skip}
+    if isinstance(row, list):
+        return [_row_without_ids(v) for v in row]
+    return row
+
+
+def test_a_promotion_on_an_unpicked_option_moves_nothing_on_the_tag(db):
+    """Why dropping it is safe: a line that really CARRIES the promotion (written straight onto
+    it, past the save) prints exactly what the same line with none prints."""
     host, cb, taps, promo = _sink_with_taps(db, combo_sell="1500.00")
-    with_promo = seed.submit_one(db, host, cb, _picked(taps, 0), promotion_id=promo.id, price_type="selling")
-    without = seed.submit_one(db, host, cb, _picked(taps, 0), price_type="selling")
+    carried = seed.submit_one(db, host, cb, _picked(taps, 0), price_type="selling")
+    plain = seed.submit_one(db, host, cb, _picked(taps, 0), price_type="selling")
+    carried.lines[0].promotion_id = promo.id
     db.flush()
-    (a,) = seed.rows(db, with_promo)
-    (b,) = seed.rows(db, without)
-    assert (a["list_price"], a["sell_price"]) == (b["list_price"], b["sell_price"])
+    (a,) = seed.rows(db, carried)
+    (b,) = seed.rows(db, plain)
+    assert _row_without_ids(a) == _row_without_ids(b)
+
+
+def test_a_promotion_on_an_upgrade_is_still_refused_when_the_upgrade_is_not_on_the_line(db):
+    """Reviewer round 3: the tag prices every upgrade of the package under the line's promotion
+    (`tag_data_service._line_slots`), so dropping an upgrade's promotion WOULD move a price.
+    That stays the 422 it was on main."""
+    host = seed.product(db, "ZZNUHOST", list_price="1000.00")
+    taps = [seed.product(db, f"ZZNUT{i}", list_price="270.00") for i in range(2)]
+    upgrade = seed.product(db, "ZZNUUP", list_price="500.00")
+    cb = seed.combo(
+        db,
+        host,
+        "ZZT sink + tap + upgrade",
+        parts=[{"product": p, "group": "Tap"} for p in taps] + [{"product": upgrade, "is_upgrade": True}],
+    )
+    promo = seed.promotion(db, [(upgrade, "350.00")])
+    with pytest.raises(AppException) as refused:
+        seed.submit_one(db, host, cb, _picked(taps, 0), promotion_id=promo.id)
+    assert refused.value.code == "PROMOTION_NOT_AVAILABLE"
 
 
 def test_a_pick_the_promotion_covers_keeps_it(db):
