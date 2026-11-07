@@ -1400,9 +1400,10 @@ function payoutShort(target: SalesTargetDetail): string {
 }
 
 /** `A CRAFT IDEA SDN BHD (A/C I)`: the label in brackets once, also when the account's own
- * name already ends with it. */
+ * name already ends with it in round or square brackets (`... [A/C I]`, as on prod). */
 function nameWithLabel(a: { name: string; label: string }): string {
-  return a.name.endsWith(`(${a.label})`) ? a.name : `${a.name} (${a.label})`;
+  const name = a.name.trimEnd();
+  return name.endsWith(`(${a.label})`) || name.endsWith(`[${a.label}]`) ? a.name : `${a.name} (${a.label})`;
 }
 
 /** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */

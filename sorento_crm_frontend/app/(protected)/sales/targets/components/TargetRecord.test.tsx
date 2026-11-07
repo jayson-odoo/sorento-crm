@@ -1241,6 +1241,15 @@ describe('TargetRecord: crew browser pass on 1104 (lane TARGET-TIER-ADDITIONAL)'
     expect(document.body.textContent).not.toContain('(A/C I) (A/C I)');
   });
 
+  it('Pays to names the label once when the account name carries it in square brackets (1104)', () => {
+    const account = { customer_id: A1, code: '300-A077', name: 'A CRAFT IDEA SDN BHD [A/C I]', label: 'A/C I' };
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8({ payout_account: account }), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    const summary = screen.getByRole('region', { name: 'Commission summary' });
+    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD [A/C I]')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('[A/C I] (A/C I)');
+  });
+
   it('the Commission Period filter keeps its pick through Edit and Cancel', () => {
     hooks.useSalesTarget.mockReturnValue({ data: imported(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
