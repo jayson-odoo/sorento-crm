@@ -308,3 +308,10 @@ def test_W21_an_aggregate_on_a_next_tier_field_counts_as_asked(targets):
     out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT,
                    "aggregates": [{"fn": "min", "field": "to_next_tier"}]})
     assert "Next tier" in out["scope_note"]
+
+
+def test_W22_a_window_running_past_today_answers_todays_period_not_a_future_one(targets):
+    db, _c, _t = targets
+    row, out = _one(db, "Agent A", ["01/10/2026", "30/11/2026"])
+    assert (row["next_tier"], row["to_next_tier"]) == (2, 1000.0)
+    assert "01/10/2026 to 31/10/2026" in out["scope_note"] and "01/11/2026" not in out["scope_note"]
