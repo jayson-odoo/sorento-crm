@@ -1,6 +1,6 @@
 # PLAN - NPA from Stock Inquiry with product code lineage (NPA-FROM-SI)
 
-Lane NPA-FROM-SI, size L, issue #2200. Status: Build (owner OK on mock v3 7 Nov, "ok to start", with Brand removed from the product table; Q1' and Q2-Q5 as drawn on the approved mock = the recommended (a) answers).
+Lane NPA-FROM-SI, size L, issue #2200. Status: PR ready (#2233; reviewer READY, security CLEAN; crew browser pass + owner hand test next). Owner OK on mock v3 7 Nov ("ok to start", Brand removed); Q1' and Q2-Q5 = the recommended (a) answers drawn on the approved mock.
 Track: full (additive migration, portal surface, security-reviewer for portal access).
 
 Builds on NEW-PRODUCT-APP (#1769, `PLAN-new-product-application-17oct.md`).
