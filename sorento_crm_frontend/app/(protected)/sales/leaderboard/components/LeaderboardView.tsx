@@ -335,7 +335,8 @@ export default function LeaderboardView() {
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setMobileShown(MOBILE_PAGE);
-  }, [data]);
+    // Keyed on what identifies an answer, not the object (a refetch of the same board keeps your page).
+  }, [data?.basis, data?.by, data?.total.amount, data?.rows.length]);
 
   const table = useReactTable({
     columns,
