@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COLUMN_SIZES,
   changeTone,
+  codesText,
   formatChange,
   formatCompactRm,
   formatRm,
@@ -89,5 +91,20 @@ describe('formatting', () => {
     expect(previousLabel('2026-10-01', '2026-10-07')).toBe('previous period'); // part of a month
     expect(previousLabel('2026-10-02', '2026-10-31')).toBe('previous period');
     expect(previousLabel('2026-02-01', '2026-02-28')).toBe('Feb');
+  });
+});
+
+describe('grid fit and codes', () => {
+  it('column sizes fit the ~940px usable at 1280 with the sidebar open', () => {
+    const total = Object.values(COLUMN_SIZES).reduce((a, b) => a + b, 0);
+    expect(total).toBeLessThanOrEqual(940);
+  });
+
+  it('shows codes only when they say more than the name', () => {
+    expect(codesText('LCL', ['LCL'])).toBe('');
+    expect(codesText('LCL', [])).toBe('');
+    expect(codesText('SEAN', ['SEAN I', 'SEAN III'])).toBe('SEAN I, SEAN III');
+    expect(codesText('JIMMY', ['JIM-1'])).toBe('JIM-1');
+    expect(codesText('A', ['A', 'A2'])).toBe('A, A2');
   });
 });

@@ -40,4 +40,14 @@ describe('LeaderboardPodium', () => {
     const { container } = render(<LeaderboardPodium rows={[]} versus="Sep" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('leaves the codes line out when the single code is the name', () => {
+    render(<LeaderboardPodium rows={[{ ...row(1, 'LCL', 100), codes: ['LCL'] }]} versus="Sep" />);
+    expect(screen.getByTestId('leaderboard-podium-1').querySelectorAll('p[title]').length).toBe(1); // the name only
+  });
+
+  it('shows the codes line for several codes', () => {
+    render(<LeaderboardPodium rows={[{ ...row(1, 'SEAN', 100), codes: ['SEAN I', 'SEAN III'] }]} versus="Sep" />);
+    expect(screen.getByTitle('SEAN I, SEAN III')).toBeTruthy();
+  });
 });

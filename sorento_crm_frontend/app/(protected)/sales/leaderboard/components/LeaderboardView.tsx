@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { SlidersHorizontal } from 'lucide-react';
+import { Loader2, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -23,7 +23,9 @@ import { cn } from '@/lib/utils';
 import type { LeaderboardOptions, LeaderboardRow } from '@/services/salesLeaderboardService';
 import { LeaderboardPodium } from './LeaderboardPodium';
 import {
+  COLUMN_SIZES,
   changeTone,
+  codesText,
   formatAmount,
   formatChange,
   formatRm,
@@ -61,7 +63,7 @@ export default function LeaderboardView() {
   const runnable = Boolean(range.from && range.to && range.to >= range.from);
 
   const options = useSalesLeaderboardOptionsQuery().data ?? NO_OPTIONS;
-  const { data, isLoading, isError, error } = useSalesLeaderboardQuery(
+  const { data, isLoading, isFetching, isError, error } = useSalesLeaderboardQuery(
     {
       date_from: range.from,
       date_to: range.to,
@@ -85,7 +87,7 @@ export default function LeaderboardView() {
         accessorKey: 'rank',
         header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{row.original.rank}</span>,
-        size: 70,
+        size: COLUMN_SIZES.rank,
         meta: { headerTitle: 'Rank', skeleton: <Skeleton className="h-4 w-6" /> },
       },
       {
@@ -97,28 +99,28 @@ export default function LeaderboardView() {
             {row.original.is_me ? ' (you)' : ''}
           </span>
         ),
-        size: 200,
+        size: COLUMN_SIZES.person,
         meta: { headerTitle: 'Sales person', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'codes',
         header: ({ column }) => <DataGridColumnHeader title="Codes" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.codes.join(', ');
+          const text = codesText(row.original.person, row.original.codes);
           return (
             <span className="block truncate text-muted-foreground" title={text}>
               {text}
             </span>
           );
         },
-        size: 280,
+        size: COLUMN_SIZES.codes,
         meta: { headerTitle: 'Codes', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'amount',
         header: ({ column }) => <DataGridColumnHeader title="Invoiced net (RM)" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{formatAmount(row.original.amount)}</span>,
-        size: 180,
+        size: COLUMN_SIZES.amount,
         meta: {
           headerTitle: 'Invoiced net (RM)',
           headerClassName: 'text-end',
@@ -134,7 +136,7 @@ export default function LeaderboardView() {
             {formatChange(row.original.change_pct)}
           </span>
         ),
-        size: 140,
+        size: COLUMN_SIZES.change,
         meta: {
           headerTitle: 'vs last period',
           headerClassName: 'text-end',
@@ -146,7 +148,7 @@ export default function LeaderboardView() {
         accessorKey: 'customers',
         header: ({ column }) => <DataGridColumnHeader title="Customers" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{row.original.customers}</span>,
-        size: 110,
+        size: COLUMN_SIZES.customers,
         meta: {
           headerTitle: 'Customers',
           headerClassName: 'text-end',
@@ -208,6 +210,9 @@ export default function LeaderboardView() {
     </>
   );
 
+  // A new period or filter is loading behind the old board (kept as placeholder data).
+  const refreshing = isFetching && Boolean(data);
+  const firstLoad = runnable && !data && !isError && (isLoading || isFetching);
   const empty = runnable && !isLoading && !isError && rows.length === 0;
 
   return (
@@ -221,7 +226,7 @@ export default function LeaderboardView() {
         ) : null}
       </Container>
       <Container>
-        <div className="space-y-4">
+        <div className="space-y-4 pb-20 md:pb-0">
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Period">
               {PERIOD_CHIPS.map((chip) => (
@@ -238,6 +243,12 @@ export default function LeaderboardView() {
                 </Button>
               ))}
             </div>
+            {refreshing ? (
+              <span role="status" data-testid="leaderboard-loading" className="flex h-7 items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                Loading
+              </span>
+            ) : null}
             <div className="hidden flex-wrap items-end gap-3 md:flex">{filterControls('lb')}</div>
             <div className="md:hidden">
               <Popover>
@@ -274,6 +285,33 @@ export default function LeaderboardView() {
             </div>
           ) : null}
 
+          {period === 'custom' && !runnable ? (
+            <div
+              data-testid="leaderboard-pick-range"
+              className="flex flex-col items-center gap-1 rounded-lg border border-border py-10 text-center"
+            >
+              <span className="text-sm font-medium">Pick a date range</span>
+              <span className="text-sm text-muted-foreground">Choose a start and an end date.</span>
+            </div>
+          ) : null}
+
+          {firstLoad ? (
+            <div className="space-y-4" data-testid="leaderboard-skeleton" aria-busy="true">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-20 w-full" />
+                ))}
+              </div>
+              <Skeleton className="h-28 w-full" />
+              <Skeleton className="h-64 w-full" />
+            </div>
+          ) : null}
+
+          <div
+            data-testid="leaderboard-board"
+            aria-busy={refreshing}
+            className={cn('space-y-4', refreshing && 'opacity-50 transition-opacity')}
+          >
           {data ? (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="leaderboard-kpis">
               <StatCard
@@ -308,7 +346,7 @@ export default function LeaderboardView() {
             </div>
           ) : null}
 
-          {!runnable || isError ? null : empty ? (
+          {!runnable || isError || firstLoad ? null : empty ? (
             <div
               data-testid="leaderboard-empty"
               className="flex flex-col items-center gap-1 rounded-lg border border-border py-10 text-center"
@@ -334,6 +372,9 @@ export default function LeaderboardView() {
                         <b className="tabular-nums">{row.rank}</b> {row.person}
                         {row.is_me ? ' (you)' : ''}
                       </p>
+                      {codesText(row.person, row.codes) ? (
+                        <p className="truncate text-xs text-muted-foreground">{codesText(row.person, row.codes)}</p>
+                      ) : null}
                       <p className={cn('text-xs', changeTone(row.change_pct))}>
                         {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
                       </p>
@@ -362,6 +403,8 @@ export default function LeaderboardView() {
               </div>
             </>
           )}
+
+          </div>
 
           {data ? (
             <p className="text-xs text-muted-foreground" data-testid="leaderboard-no-agent">

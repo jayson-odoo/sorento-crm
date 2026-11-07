@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import type { LeaderboardRow } from '@/services/salesLeaderboardService';
-import { changeTone, formatChange, formatCompactRm, formatRm } from './leaderboardFormat';
+import { changeTone, codesText, formatChange, formatCompactRm, formatRm } from './leaderboardFormat';
 
 const MEDAL: Record<number, string> = {
   1: 'bg-amber-500',
@@ -54,12 +54,14 @@ export function LeaderboardPodium({
           <p className="truncate text-xs font-semibold md:text-sm" title={row.person}>
             {row.person}
           </p>
-          <p
-            className="hidden truncate text-xs text-muted-foreground md:block"
-            title={row.codes.join(', ')}
-          >
-            {row.codes.join(', ')}
-          </p>
+          {codesText(row.person, row.codes) ? (
+            <p
+              className="hidden truncate text-xs text-muted-foreground md:block"
+              title={codesText(row.person, row.codes)}
+            >
+              {codesText(row.person, row.codes)}
+            </p>
+          ) : null}
           <p className="mt-1 text-sm font-bold tabular-nums md:text-xl">
             <span className="md:hidden">{formatCompactRm(row.amount)}</span>
             <span className="hidden md:inline">{formatRm(row.amount)}</span>

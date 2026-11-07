@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { LeaderboardResponse, LeaderboardRow } from '@/services/salesLeaderboardService';
 
 class ResizeObserverStub {
@@ -25,13 +25,14 @@ vi.mock('@/components/common/PageHeader', () => ({
   PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
 
-const state = vi.hoisted(() => ({ data: undefined as unknown, calls: [] as unknown[], isError: false }));
+const state = vi.hoisted(() => ({ data: undefined as unknown, calls: [] as unknown[], isError: false, isFetching: false, isLoading: false }));
 vi.mock('@/hooks/useSalesLeaderboardQuery', () => ({
   useSalesLeaderboardQuery: (params: unknown) => {
     state.calls.push(params);
     return {
       data: state.data,
-      isLoading: false,
+      isLoading: state.isLoading,
+      isFetching: state.isFetching,
       isError: state.isError,
       error: state.isError ? new Error('Failed to load the leaderboard') : null,
     };
@@ -57,6 +58,8 @@ function response(rows: LeaderboardRow[], me: LeaderboardResponse['me']): Leader
 beforeEach(() => {
   state.calls = [];
   state.isError = false;
+  state.isFetching = false;
+  state.isLoading = false;
 });
 
 describe('LeaderboardView', () => {
@@ -104,6 +107,59 @@ describe('LeaderboardView', () => {
     expect(screen.getByText('Failed to load the leaderboard')).toBeTruthy();
     expect(screen.queryByTestId('leaderboard-empty')).toBeNull();
     expect(screen.queryByText('No sales in this period')).toBeNull();
+  });
+
+  it('dims the old board and shows Loading while a new period is fetching behind it', () => {
+    state.data = response([row(1, 'LCL', 900)], null);
+    state.isFetching = true;
+    render(<LeaderboardView />);
+    const board = screen.getByTestId('leaderboard-board');
+    expect(board.getAttribute('aria-busy')).toBe('true');
+    expect(board.className).toContain('opacity-50');
+    expect(screen.getByTestId('leaderboard-loading').textContent).toContain('Loading');
+  });
+
+  it('is not dimmed and shows no Loading when idle', () => {
+    state.data = response([row(1, 'LCL', 900)], null);
+    render(<LeaderboardView />);
+    expect(screen.getByTestId('leaderboard-board').getAttribute('aria-busy')).toBe('false');
+    expect(screen.queryByTestId('leaderboard-loading')).toBeNull();
+  });
+
+  it('shows skeletons on the first load, with no board and no empty state', () => {
+    state.data = undefined;
+    state.isLoading = true;
+    state.isFetching = true;
+    render(<LeaderboardView />);
+    expect(screen.getByTestId('leaderboard-skeleton')).toBeTruthy();
+    expect(screen.queryByTestId('leaderboard-empty')).toBeNull();
+  });
+
+  it('shows Pick a date range when Custom has no range yet', () => {
+    state.data = undefined;
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+    const hint = screen.getByTestId('leaderboard-pick-range');
+    expect(within(hint).getByText('Pick a date range')).toBeTruthy();
+    expect(within(hint).queryByRole('button')).toBeNull();
+    expect(screen.queryByTestId('leaderboard-empty')).toBeNull();
+  });
+
+  it('repeats no code under a name: blank for a single code equal to the person, shown otherwise', () => {
+    state.data = response(
+      [
+        { ...row(1, 'LCL', 900), codes: ['LCL'] },
+        { ...row(2, 'SEAN', 800), codes: ['SEAN I', 'SEAN III'] },
+        { ...row(3, 'JUSTIN', 700), codes: ['JUSTIN'] },
+        { ...row(4, 'JIMMY', 600), codes: ['JIM-1'] },
+      ],
+      null,
+    );
+    const { container } = render(<LeaderboardView />);
+    const cells = [...container.querySelectorAll('td span[title]')].map((el) => el.getAttribute('title'));
+    expect(cells).not.toContain('LCL, LCL');
+    expect(container.querySelector('td span[title="SEAN I, SEAN III"]')).toBeTruthy();
+    expect(container.querySelector('td span[title="JIM-1"]')).toBeTruthy();
   });
 
   it('asks for This month with its previous window by default', () => {

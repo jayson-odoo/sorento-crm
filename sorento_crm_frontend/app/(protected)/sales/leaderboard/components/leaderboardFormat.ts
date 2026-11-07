@@ -93,3 +93,13 @@ export function previousLabel(previousFrom: string, previousTo: string): string 
   }
   return 'previous period';
 }
+
+/** Column sizes (px) of the ranking grid; they sum to what fits at 1280px with the sidebar open (about 940). */
+export const COLUMN_SIZES = { rank: 60, person: 170, codes: 250, amount: 170, change: 140, customers: 110 } as const;
+
+/** The codes line, only where it says something the name does not: two or more codes, or one that differs. */
+export function codesText(person: string, codes: string[]): string {
+  if (codes.length === 0) return '';
+  if (codes.length === 1 && codes[0] === person) return '';
+  return codes.join(', ');
+}
