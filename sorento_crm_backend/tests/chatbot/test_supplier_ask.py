@@ -773,19 +773,19 @@ def test_a_customer_typed_span_resolves_to_a_supplier_row_when_only_the_supplier
     )
 
 
-def test_two_suppliers_with_one_name_are_two_lines_each_with_its_code(session_factory, monkeypatch):
-    """Console pass 3 note a: "CO.,LTD" and "CO., LTD." were two companies on two lines nobody could tell apart, and
-    two suppliers with the very same name shared one line. Every supplier is its own line, named with its code."""
+def test_two_suppliers_with_one_name_are_one_supplier_never_asked(session_factory, monkeypatch):
+    """Console pass 3 note a showed two suppliers of the very same name as one line nobody could pick from. Crew live
+    check on #2120 (7 Nov, HANLIM TRADING SDN BHD 403-H007 + 400-H018): records of one name are one supplier (the
+    `ledger_family` rule customers already have), so the PO list runs for both and nothing is asked."""
     ids = _staff_world(session_factory)
     same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
     span = list_resolver.Span("taiyang", "supplier")
     reply, captured, _seen = _span_turn(
         session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", SUPPLIER}
     )
-    lines = [ln.split(". ", 1)[1] for ln in reply.splitlines() if ln[:1].isdigit()]
-    assert sorted(lines) == sorted([f"{SUPPLIER} (ZZTSUP-TY01)", f"{SUPPLIER} (ZZTSUP-TY09)"]), reply
-    assert not _po_calls(captured), captured
-    assert same != ids["ours"]
+    assert "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["ours"], same]), (reply, captured)
 
 
 
