@@ -1,7 +1,7 @@
 # PLAN: agent answers commission payout for dealer and team (AGENT-COMMISSION-ALL)
 
-Status: Step 2 (behaviour card posted as crew-ask, waiting on owner). Track: small fix expected
-(registry only, no migration, no new permission; under ~300 lines). Size M.
+Status: Build done (owner answered Q1-Q5 8 Nov ~02:35 MYT, all recommendation (a)); Phase 3 review in progress.
+Track: small fix (registry only, no migration, no new permission). Size M.
 
 Follow-up to #2210 (AI-TOOLS-WAVE2). Owner, 8 Nov: asking the AI agent about commission
 payout finds only AGENT (salesperson) commission, not DEALER or TEAM commission.
@@ -84,10 +84,31 @@ Posted on PR as `crew-ask` (owner answers drive the build). Summary of the propo
 - Permissions: exactly the screens. `view`: all three. `view_own`: own agent targets only; a dealer or team
   question answers "not visible to you", as the empty tabs do.
 
-## Next waves (one PR each, same single crm_query)
+## Built (as answered)
 
-See the card; kept here once the owner confirms the order.
+- `agent_target_summary` (`assistant_registry/sales.py` `_summary_rows`): one row per subject, `owner_kind`
+  agent / team / dealer; `agent` (agent itself, or the owner of every account of a dealer) and `team` (an agent's
+  team today) as filter fields; `replaced_by`. Dealer targets with one label are one dealer row.
+- Matching (`computed.names_exact`): "CODE - Name" as before, plus names a row carries in `_names`: the agent's
+  `person_label` (owner evidence C3: one person, three codes, the 3-call cap), a team with or without "Team", a
+  dealer's account codes and names.
+- Notes (`EntityDef.row_note`, `own_note`): targets of 0 left out of target/achieved/% (owner C3: 1,396.8%),
+  "No commission is set ... payout is empty, not RM 0", "X is replaced by Y ...", and for view_own "team and dealer
+  payouts are not visible to you".
+- Owner evidence: `sales_target` hidden by ddd978ef; the per-dealer question now runs on the summary (one entity
+  per question kind kept).
 
-## Tests (red first, Phase 2)
+## Next waves (one PR each, same single crm_query; crew starts the next without waiting)
 
-To be listed after the owner answers.
+- W-A distance to the next tier and what it would pay (`tier_ladder`, `agent_progress`).
+- W-B invoices behind an achievement / commission (`commission_statements`).
+- W-C earned to date vs current period (`_earned`); teams and members as entities.
+- W-D opportunities and quotations (own rules `opportunity_clause`, `project_clause`).
+- W-E AR outstanding per dealer / agent; point ratios.
+
+## Tests
+
+`tests/chatbot/agent/test_agent_commission_all.py`: C1-C3 dealer by name, account code, per dealer; C4 agent own
+only + dealers of an agent; C5 order and totals; C6 team with or without "Team"; C7 team members; C8 replaced;
+C9-C10 view_own note; C11 index hint; C12 every row = target page payouts; E1 person label; E2 target of 0;
+E3 no commission set. `test_ai_tools_wave2_round6.py` S1/S5 updated to the Q1 ruling.
