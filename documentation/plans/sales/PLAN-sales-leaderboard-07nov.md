@@ -1,6 +1,6 @@
 # PLAN: SALES-LEADERBOARD (sales leaderboard screen)
 
-Status: Review, fix round 1 (owner 7 Nov ~16:15 "2227 ok": Q1-Q5 all (a)). Reviewer READY with 3 should-fixes, security CLEAN (2 test gaps); then crew browser pass and owner hand test. Track: full (size L, new screen; new permission slug = migration).
+Status: Merge-ready pending the owner's hand test (7 Nov). Reviewer READY, security CLEAN, crew browser pass PASS after 2 fix rounds; crew-tests green on 99acbbf9. Merge after SALES-SUBTOTAL-LINES (#2230). Track: full (size L, new screen; new permission slug = migration).
 Card: `CARD-sales-leaderboard-07nov.md`. UAC: `sales-leaderboard-07nov-acceptance-criteria.md`.
 Mockup: `mockups/sales-leaderboard-07nov.html` (real October figures, dev copy `sorento_prod_1104`).
 Evidence SQL: `evidence/sales-leaderboard-oct-dev.sql` (run), `evidence/sales-leaderboard-line-vs-doc-dev.sql` (run).
