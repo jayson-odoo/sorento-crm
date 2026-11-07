@@ -922,6 +922,11 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
 
     snap = _row_snapshot(env, row_id)
     assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
+    # Crew, 7 Nov: and the OI Documents list (purchasing's view) still reads it Outstanding.
+    from app.services.order_inquiry_header_service import OrderInquiryHeaderService
+
+    inquiry_id = _so_mirror_row.last[1]
+    assert OrderInquiryHeaderService(env.db).get(str(inquiry_id)).status == "outstanding"
 
     batch_id = (
         env.db.query(PlanningChangeRow.batch_id)
