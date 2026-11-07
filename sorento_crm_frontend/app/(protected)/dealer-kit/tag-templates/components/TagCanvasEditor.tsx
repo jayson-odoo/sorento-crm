@@ -4820,11 +4820,12 @@ export function TagCanvasEditor({
       )}
 
       {/* PRICETAG-ACC-LABELS (owner 7 Nov): the same standing warning the request preview shows,
-          while the previewed data has more icons or accessories than a box draws. Template editor
-          only: the request designer draws its own above the canvas. */}
+          while a previewed product or combo has more accessories than a box draws. Only boxes
+          with previewed data count (never the sample cards), so it cannot show in the request
+          designer, which draws its own above the canvas. Feature icons keep their toast. */}
       {!boundData && !embedded && (
         <FeatureIconDropWarning
-          drops={featureIconFits.dropped > 0 ? [{ tagLabel: '', dropped: featureIconFits.dropped }] : []}
+          drops={[]}
           accessoryDrops={
             accessoryFits.dropped > 0 ? [{ tagLabel: '', dropped: accessoryFits.dropped }] : []
           }

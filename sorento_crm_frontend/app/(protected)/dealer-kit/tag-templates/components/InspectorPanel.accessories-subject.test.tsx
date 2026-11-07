@@ -19,7 +19,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-import { defaultAccessoriesProps, type TagLayer, type TagSlots } from '@/lib/dealer-kit/tag-template-types';
+import { defaultAccessoriesProps, defaultPriceBadgeProps, type TagLayer, type TagSlots } from '@/lib/dealer-kit/tag-template-types';
 import { InspectorPanel } from './InspectorPanel';
 
 const layer = {
@@ -88,5 +88,20 @@ describe('Accessories box: which list it reads', () => {
       'acc1',
       expect.objectContaining({ subjectSlot: undefined, subjectPart: undefined }),
     );
+  });
+
+  it('leaves the price badge picker as it was: "Tag total", "Main product", no list wording', () => {
+    captured.selects.length = 0;
+    const badge = {
+      ...layer,
+      id: 'badge1',
+      type: 'price_badge',
+      props: { ...defaultPriceBadgeProps() },
+    } as TagLayer;
+    render(<InspectorPanel layer={badge} onUpdate={vi.fn()} onUpdateProps={vi.fn()} subjectSlots={slots} />);
+    const options = subjectSelect()!.options;
+    expect(options.find((o) => o.value === 'default')?.label).toBe('Tag total');
+    expect(options.find((o) => o.value === 'slot:main')?.label).toBe('Main product');
+    expect(options.some((o) => /'s list/.test(o.label))).toBe(false);
   });
 });

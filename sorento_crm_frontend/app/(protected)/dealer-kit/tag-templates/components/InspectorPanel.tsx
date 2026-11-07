@@ -1754,7 +1754,6 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
   return undefined;
 }
 
-/** The positions a layer may read: the previewed combo's own, else the generic set. */
 /**
  * An accessories box's option for one product: "Main product" reads "Main product's list", any
  * other name "<name> product's list" ("Fixed part 1 product's list", "SRTW5000 product's list").
@@ -1763,6 +1762,7 @@ export function accessoryListLabel(label: string): string {
   return /\bproduct$/i.test(label) ? `${label}'s list` : `${label} product's list`;
 }
 
+/** The positions a layer may read: the previewed combo's own, else the generic set. */
 function slotOptions(
   slots: TagSlots | null | undefined,
   defaultLabel: string | null,

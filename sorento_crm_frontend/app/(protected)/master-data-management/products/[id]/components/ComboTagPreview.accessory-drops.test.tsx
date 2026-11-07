@@ -65,7 +65,7 @@ const layer = (subjectSlot?: { kind: 'main' }) => ({
   props: { ...box.props, ...(subjectSlot ? { subjectSlot } : {}) },
 });
 
-const state = vi.hoisted(() => ({ pinned: false }));
+const state = vi.hoisted(() => ({ pinned: false, mainItems: [] as unknown[], comboItems: [] as unknown[] }));
 const previewTags = vi.hoisted(() => vi.fn());
 vi.mock('@/app/(protected)/dealer-kit/services/tagDataService', async (original) => ({
   ...(await original<Record<string, unknown>>()),
@@ -91,15 +91,16 @@ beforeEach(() => {
         parts: [],
         specs: [],
         open_groups: [],
-        // The tag's list on a combo line is the combo's; the main product keeps its own.
-        accessories: ITEMS,
+        // The tag's list on a combo line is the combo's; the main product keeps its own. The two
+        // lists differ per case, so a box that ignored its pin would report the wrong one.
+        accessories: state.comboItems,
         slots: {
-          main: { product_id: 'p-basin', code: 'SRTWB7065', name: 'Basin', images: [], accessories: ITEMS },
+          main: { product_id: 'p-basin', code: 'SRTWB7065', name: 'Basin', images: [], accessories: state.mainItems },
           fixed: [{ product_id: 'p-tap', code: 'SRTWT7202', name: 'Tap', images: [] }],
           groups: [],
           upgrades: [],
         },
-        combo: { id: 'combo-1', name: 'Basin with tap', description: '', free_items: null, accessories: ITEMS, choices: [], upgrades: [] },
+        combo: { id: 'combo-1', name: 'Basin with tap', description: '', free_items: null, accessories: state.comboItems, choices: [], upgrades: [] },
       },
     ],
     templates: {
@@ -150,13 +151,23 @@ describe('Combo tag preview: accessories drop warning', () => {
     expect(expected).toBeGreaterThan(0);
   });
 
-  it('a default box on the combo tag reports its drops under the tag label', async () => {
-    state.pinned = false;
+  it('a default box on the combo tag reports the combo list\'s drops under the tag label', async () => {
+    Object.assign(state, { pinned: false, comboItems: ITEMS, mainItems: [] });
     expect(await dropsDrawn()).toEqual([{ tagLabel: '1a', dropped: expected }]);
   });
 
+  it('a default box ignores the main product\'s own list', async () => {
+    Object.assign(state, { pinned: false, comboItems: [], mainItems: ITEMS });
+    expect(await dropsDrawn()).toEqual([]);
+  });
+
   it('a Main-pinned box reports drops from the main product\'s own list', async () => {
-    state.pinned = true;
+    Object.assign(state, { pinned: true, comboItems: [], mainItems: ITEMS });
     expect(await dropsDrawn()).toEqual([{ tagLabel: '1a', dropped: expected }]);
+  });
+
+  it('a Main-pinned box never reports the combo list\'s drops (lists stay independent)', async () => {
+    Object.assign(state, { pinned: true, comboItems: ITEMS, mainItems: [] });
+    expect(await dropsDrawn()).toEqual([]);
   });
 });
