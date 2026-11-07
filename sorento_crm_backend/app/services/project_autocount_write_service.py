@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
@@ -128,14 +128,17 @@ def _iso_date(value: Any) -> Optional[str]:
 
 
 def _since(stored: Optional[str]) -> str:
-    """The stored last-modified as dd/mm/yyyy in Malaysia time (a stamp with no zone is UTC)."""
+    """The stored last-modified as dd/mm/yyyy in Malaysia time.
+
+    AutoCount stamps carry no zone and are Malaysia local time (ruling V1, as
+    `autocount_doc_ingest_service.MALAYSIA`); a stamp with a zone is converted."""
     text = (stored or "").strip()
     try:
         moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return text[:10] or "the last read"
     if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=timezone.utc)
+        moment = moment.replace(tzinfo=_MYT)
     return moment.astimezone(_MYT).strftime("%d/%m/%Y")
 
 
@@ -438,7 +441,9 @@ class ProjectAutocountWriteService:
             )
         if code == "DOC_STALE":
             return self._blank(
-                "refused", f"Changed in AutoCount since {_since(stale_since)}, open Compare first."
+                "refused",
+                f"Changed in AutoCount since {_since(stale_since)}. Nothing was changed; "
+                "check it in AutoCount, then press Update again.",
             )
         if outcome == "refused" or outcome is None:
             return self._blank(
@@ -450,6 +455,15 @@ class ProjectAutocountWriteService:
             str(outcome),
             f"AutoCount answered: {_trim_sentence(answer.get('message')) or str(outcome)}.",
         )
+
+    @staticmethod
+    def _is_stale(answer: Dict[str, Any]) -> bool:
+        return answer.get("outcome") == "refused" and answer.get("errorCode") == "DOC_STALE"
+
+    @staticmethod
+    def _held_last_modified(held: Optional[dict]) -> Optional[str]:
+        stamp = ((held or {}).get("document") or held or {}).get("LastModified")
+        return str(stamp)[:64] if stamp else None
 
     @staticmethod
     def _is_done(answer: Dict[str, Any]) -> bool:
@@ -693,6 +707,17 @@ class ProjectAutocountWriteService:
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
             refused["waiting"] = waiting
+            if self._is_stale(answer):
+                # B10: keep AutoCount's own stamp, so the next press (after a person checked
+                # AutoCount) is not refused for good. A failed read keeps the old one.
+                try:
+                    held = self._gateway().read_document("sales-orders", doc_key, company)
+                except FoundryxPullError:
+                    held = None
+                stamp = self._held_last_modified(held)
+                if stamp:
+                    order.autocount_last_modified = stamp
+                    self.db.flush()
             return refused
         final = self._interpret(answer, verb="updated")
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
@@ -1051,6 +1076,8 @@ class ProjectAutocountWriteService:
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
                 refused["waiting"] = waiting
+                if self._is_stale(answer):
+                    self._keep_held_stamp(document, held_doc)
                 return refused
             document.autocount_edit_issue_id = issue.id
             document.autocount_last_modified = (
@@ -1073,6 +1100,9 @@ class ProjectAutocountWriteService:
             )
             if not self._is_done(add_answer):
                 refused = self._interpret(add_answer, verb="updated", stale_since=stale_since)
+                if self._is_stale(add_answer) and last is None:
+                    # Nothing was written this press, so the read before it is the newest stamp.
+                    self._keep_held_stamp(document, held_doc)
                 if edit_done and refused["outcome"] == "refused":
                     refused["message"] = (
                         f"{'Quantity and price changes were made' if patched else 'The quotation header was updated'}. "
@@ -1092,6 +1122,13 @@ class ProjectAutocountWriteService:
             )
             last = add_answer
         return finish(last)
+
+    def _keep_held_stamp(self, document, held_doc: Optional[dict]) -> None:
+        """B10: after DOC_STALE keep the stamp read just before the write (one read, no second)."""
+        stamp = self._held_last_modified(held_doc)
+        if stamp:
+            document.autocount_last_modified = stamp
+            self.db.flush()
 
     @staticmethod
     def _reason_of(answer: Dict[str, Any]) -> str:

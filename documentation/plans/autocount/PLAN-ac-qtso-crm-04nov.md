@@ -53,7 +53,7 @@ the intent (order id + amendment id / revision no), so a double press replays SS
 
 - Already in AutoCount (`autocount_doc_no` set, or keyed by hand from the import file and adopted): Create is not offered; the number shows instead.
 - Edited in AutoCount after our last read-back: Update first reads the document; if it differs from what we last read, refuse
-  "Changed in AutoCount since <dd/mm/yyyy>; open Compare first" (the existing divergence screen).
+  "Changed in AutoCount since <dd/mm/yyyy>. Nothing was changed; check it in AutoCount, then press Update again." The refusal stores AutoCount's own LastModified from a GET read-back (B10), so the next press goes through.
 - Partially delivered SO cancel: see Q4.
 - Order with an unacknowledged hard finding: Create disabled with the existing `so_export_blocked` message.
 
@@ -96,8 +96,9 @@ Quotation lines: rate-only lines are skipped and product sets go as their compon
 
 Edit (`PATCH`): header ref, description, remark1-4, displayTerm, salesAgent, yourPONo; lines qty, unitPrice, discount, location,
 description, deliveryDate. Anything else answers 422 FIELD_NOT_EDITABLE. Always sends `docDate` (DOC_DATE_REQUIRED) and
-`expectedLastModified` from the last read-back; a change in AutoCount answers DOC_STALE -> "Changed in AutoCount since dd/mm/yyyy,
-open Compare first". Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
+`expectedLastModified` from the last read-back; a change in AutoCount answers DOC_STALE -> "Changed in AutoCount since dd/mm/yyyy.
+Nothing was changed; check it in AutoCount, then press Update again." (B10: the refusal stores AutoCount's own LastModified from
+a GET read-back, so the next press is not refused for good. A zone-less LastModified is Malaysia time, ruling V1, F12.) Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
 Amendment verbs (the delta service's own, `project_so_delta_service.py:65-70`; fix round 1):
 
 | Verb | AutoCount |
@@ -165,7 +166,7 @@ Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount
 - Capability shape `{"sales_orders": {op: {enabled, reason}}, "quotations": {...}}`, ops `create_doc, edit_doc, add_line, delete_line, cancel_doc`. Reasons: VENDOR_UNSUPPORTED (and any unknown) "Waiting for AutoCount"; WRITE_DISABLED / WRITE_NOT_ALLOWED / WRITE_COMPANY_NOT_TEST "Changes to AutoCount are switched off here"; SS unreachable -> every op "Could not reach AutoCount". companyCode = `companies.code` of the record's `company_id`, never from the request (U19).
 - Idempotency-Key: `crm-pso-{pso_id}-create`, `crm-amd-{amendment_id}-update`, `crm-qt-{document_id}-{issue_id}-create|update`, `crm-pso-{pso_id}-cancel`, `crm-qt-{document_id}-cancel`.
 - Result: `{outcome, message, doc_no, lines[{line_no, item_code, description, qty, unit_price, location, delivery_date}], warnings[], skipped[], exploded[], waiting[]}`. `lines` from `document.Details` (AutoCount field names ItemCode, Description, Qty, UnitPrice, Location, DeliveryDate). Only `outcome == done` writes to the CRM (`autocount_doc_no`, `autocount_doc_key`, `autocount_last_modified` = `document.LastModified`, QT also `autocount_issue_id`) (U8, U9).
-- Update SO (U10-U13): rows of the published amendment's AutoCount change list. ORDER / RESERVE & ORDER -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; CHANGE SO NO and CANCEL BALANCE -> `waiting` (no call), see the verb table. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`; dtlKey = last `:` segment of the core SO line's `source_ref`. DOC_STALE -> message "Changed in AutoCount since dd/mm/yyyy, open Compare first." (date from the stored last-modified).
+- Update SO (U10-U13): rows of the published amendment's AutoCount change list. ORDER / RESERVE & ORDER -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; CHANGE SO NO and CANCEL BALANCE -> `waiting` (no call), see the verb table. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`; dtlKey = last `:` segment of the core SO line's `source_ref`. DOC_STALE -> message "Changed in AutoCount since dd/mm/yyyy. Nothing was changed; check it in AutoCount, then press Update again." (date from the stored last-modified, read as Malaysia time); the refusal then stores the LastModified read back from AutoCount (B10).
 - Cancel (U14): reads capabilities; `cancel_doc` off -> 409 `ac_waiting` "Waiting for AutoCount" with no write call.
 
 ### Routes (`app/api/v1/projects/project_autocount_write.py`, `projects.autocount.write`)

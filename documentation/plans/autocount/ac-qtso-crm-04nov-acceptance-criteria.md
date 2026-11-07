@@ -18,7 +18,7 @@ Plan: `PLAN-ac-qtso-crm-04nov.md`. Mock: `ac-qtso-crm-04nov-mockup.html`. Ruling
 ## Sales order update (R3)
 - U10. Update in AutoCount only on a published amendment of an order already in AutoCount.
 - U11. Qty change and date moves go as PATCH line edits; added lines as POST lines; remove line / balance cancel / repoint / model change show "Waiting for AutoCount" while the feed says delete_line / cancel_doc off.
-- U12. PATCH always carries docDate and expectedLastModified; DOC_STALE shows "Changed in AutoCount since dd/mm/yyyy, open Compare first."
+- U12. PATCH always carries docDate and expectedLastModified; DOC_STALE shows "Changed in AutoCount since dd/mm/yyyy. Nothing was changed; check it in AutoCount, then press Update again." and stores the LastModified read back from AutoCount, so the next press sends it (B10).
 - U13. QTY_BELOW_TRANSFERRED shows as AutoCount's refusal; nothing changes in the CRM.
 
 ## Cancel (R4)
