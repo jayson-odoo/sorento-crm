@@ -23,7 +23,6 @@ const HEADER_KEYS = [
   'stock_inquiry_id',
 ];
 const LINE_KEYS = [
-  'brand_id',
   'description',
   'dimension',
   'expected_qty',
@@ -89,7 +88,6 @@ describe('payloadFromState (v4)', () => {
       material: 'Steel',
       thickness: '1.2mm',
       packing: 'Carton',
-      brand_id: 'b-1',
       expected_qty: '55',
     });
     expect(body.lines[1].id ?? null).toBeNull();
@@ -111,7 +109,15 @@ describe('payloadFromState (v4)', () => {
     const line = body.lines?.[0] as unknown as Record<string, unknown>;
     expect(line.expected_qty).toBeNull();
     expect(line.dimension).toBeNull();
-    expect(line.brand_id).toBeNull();
+    expect(line).not.toHaveProperty('brand_id');
+  });
+
+  it('never sends brand_id on a line, even when the draft still carries one (Brand column removed)', () => {
+    const body = payloadFromState({
+      ...EMPTY_FORM,
+      lines: [{ ...blankLine(), description: 'Sink', brand_id: 'b-1', brand_label: 'Example Brand' }],
+    });
+    expect(body.lines?.[0]).not.toHaveProperty('brand_id');
   });
 });
 

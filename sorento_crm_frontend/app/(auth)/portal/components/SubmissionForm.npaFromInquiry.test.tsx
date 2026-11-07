@@ -62,6 +62,7 @@ const responded = (over: Record<string, unknown> = {}) =>
     is_draft: false,
     is_editable: false,
     npa_requested: true,
+    npa_form_visible: true,
     new_product_applications: [],
     ...over,
   });
@@ -188,6 +189,55 @@ describe('portal stock inquiry: New product applications tab', () => {
     renderKind('complaint', CMP_DETAIL({ status: 'submitted', is_draft: false, is_editable: false }));
     await screen.findByRole('tab', { name: /^Revisions/ });
     expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: CTA })).toBeNull();
+  });
+});
+
+describe('portal stock inquiry: npa_form_visible (the contact holds the NPA form)', () => {
+  const created = [
+    {
+      id: 'a-1',
+      application_no: 'NPA-000001',
+      status: 'completed',
+      status_label: 'Completed',
+      created_at: '2026-11-03T02:00:00',
+      created_codes: [
+        { product_code: 'XY-1-69', current_codes: ['XY-1'], created_at: '2026-11-03T02:00:00' },
+      ],
+    },
+  ];
+
+  it('false: no Create button, no tab and no ask banner even while asked', async () => {
+    renderKind('stock_inquiry', responded({ npa_form_visible: false, npa_requested: true }));
+    await screen.findByRole('tab', { name: /^Revisions/ });
+    expect(screen.queryByRole('link', { name: CTA })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+    expect(screen.queryByText(ASK)).toBeNull();
+  });
+
+  it('false: no green created banner either', async () => {
+    renderKind(
+      'stock_inquiry',
+      responded({ npa_form_visible: false, new_product_applications: created }),
+    );
+    await screen.findByRole('tab', { name: /^Revisions/ });
+    expect(screen.queryByText(/New code XY-1-69 created/)).toBeNull();
+    expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+  });
+
+  it('true: the ask, the button and the tab are there as before', async () => {
+    renderKind('stock_inquiry', responded({ npa_form_visible: true }));
+    expect(await screen.findByText(ASK)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: CTA })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /new product applications \(0\)/i })).toBeInTheDocument();
+  });
+
+  it('true: still no button before the inquiry is responded', async () => {
+    renderKind(
+      'stock_inquiry',
+      responded({ npa_form_visible: true, status: 'pending_purchasing' }),
+    );
+    await screen.findByRole('tab', { name: /new product applications/i });
     expect(screen.queryByRole('link', { name: CTA })).toBeNull();
   });
 });

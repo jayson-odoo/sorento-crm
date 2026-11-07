@@ -155,3 +155,21 @@ describe('reuse suggestions', () => {
     }
   });
 });
+
+describe('a code with no product_code (NPA-FROM-SI)', () => {
+  const ID = '3f9c2a64-7b1e-4d58-9a0c-5e2d8b7f1a10';
+  const nameless = (): FormState => ({
+    ...EMPTY_FORM,
+    current_products: [{ id: ID, product_code: '' }],
+  });
+
+  it('read-only shows no raw id', () => {
+    render(<Harness initial={nameless()} readOnly />);
+    expect(document.body.textContent ?? '').not.toContain(ID);
+  });
+
+  it('the picker chip shows no raw id', () => {
+    render(<Harness initial={nameless()} />);
+    expect(document.body.textContent ?? '').not.toContain(ID);
+  });
+});

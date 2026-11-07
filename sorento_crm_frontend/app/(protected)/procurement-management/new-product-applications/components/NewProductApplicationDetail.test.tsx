@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   link: vi.fn(),
   closeCode: vi.fn(),
   undoCode: vi.fn(),
+  undoLine: vi.fn(),
   search: vi.fn(),
   feedback: vi.fn(),
   download: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
         mutateAsync: state.closeCode,
         isPending: false,
       },
+      undo: { mutate: state.undoLine, mutateAsync: state.undoLine, isPending: false },
       undoNewCode: { mutate: state.undoCode, mutateAsync: state.undoCode, isPending: false },
       feedback: {
         mutate: state.feedback,
@@ -785,5 +787,92 @@ describe('Stock inquiry tab', () => {
     expect(
       screen.getByText('Applications raised from a stock inquiry show it here.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('older applications worked row by row (NPA-FROM-SI v3)', () => {
+  const opened = () =>
+    approved({
+      lines_done: 2,
+      lines: [
+        line({
+          opened_product_id: 'p-9',
+          opened_product_code: 'XY-1234-MB-9',
+          opened_product_name: 'Example sink 9',
+          opened_product_active: true,
+        }),
+        line({
+          id: 'l-2',
+          line_no: 2,
+          proposed_code: 'XY-1234-BG',
+          closed_reason: 'Customer walked away',
+        }),
+        line({ id: 'l-3', line_no: 3, proposed_code: 'XY-1234-ZZ' }),
+      ],
+    });
+
+  it('shows the Opened as column with the opened code and the Not opening reason per row', () => {
+    state.data = opened();
+    state.perms = new Set([OPEN]);
+    render(<Page />);
+    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
+    const rows = screen.getAllByTestId('npa-line');
+    expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
+    expect(within(rows[1]).getByText(/Not opening: Customer walked away/)).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/Not opening/)).toBeNull();
+    expect(within(rows[2]).queryByText(/XY-1234-MB-9/)).toBeNull();
+  });
+
+  it('keeps Undo on a resolved row for open_code, and it undoes that row', () => {
+    state.data = opened();
+    state.perms = new Set([OPEN]);
+    render(<Page />);
+    const rows = screen.getAllByTestId('npa-line');
+    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Undo' }));
+    expect(state.undoLine).toHaveBeenCalledWith({ id: 'a-1', lineId: 'l-1' });
+    expect(within(rows[2]).queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('shows the column but no Undo to a viewer without open_code', () => {
+    state.data = opened();
+    state.perms = new Set();
+    render(<Page />);
+    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('shows no Opened as column when no line is resolved', () => {
+    state.data = approved();
+    state.perms = new Set([OPEN]);
+    render(<Page />);
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
+  });
+
+  it('has no Brand column', () => {
+    state.data = opened();
+    render(<Page />);
+    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
+  });
+});
+
+describe('Stock inquiry tab status is a Badge (NPA-FROM-SI)', () => {
+  it('draws the inquiry status through the Badge component', () => {
+    state.data = detail({
+      stock_inquiry: {
+        id: 'si-1',
+        inquiry_number: 'SI26-0412',
+        product_code: 'XY-1234-MB',
+        status: 'responded',
+        item_description: 'Kitchen sink',
+        purchasing_response: 'ok',
+        quantity: '55',
+      },
+    });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
+    const pill = screen.getByText('Responded');
+    const badge = pill.closest('[data-slot="badge"]');
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain('Responded');
   });
 });

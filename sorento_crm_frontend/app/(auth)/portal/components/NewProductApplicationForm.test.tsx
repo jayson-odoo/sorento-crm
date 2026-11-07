@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { toast } from '@/lib/toast';
 import type {
   NewProductApplicationDetail,
@@ -634,5 +634,65 @@ describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
     expect(await screen.findByText('Not opening: Customer walked away')).toBeInTheDocument();
+  });
+});
+
+describe('portal: Brand column gone, per-row Opened as for older applications (NPA-FROM-SI v3)', () => {
+  it('draws no Brand header or picker on a new form', async () => {
+    render(<NewProductApplicationForm slug="acme" />);
+    await screen.findByLabelText('Product code');
+    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
+    expect(screen.queryByLabelText(/brand/i)).toBeNull();
+  });
+
+  it('draws no Brand header or text in the read-only view', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        lines: [line({ brand_name: 'Example Brand' })],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('Example kitchen sink');
+    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
+    expect(screen.queryByText('Example Brand')).toBeNull();
+  });
+
+  it('shows the Opened as column with the opened code and the Not opening reason per row', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'approved',
+        status_label: 'Approved',
+        lines_total: 3,
+        lines_done: 2,
+        lines: [
+          line({
+            opened_product_id: 'p-9',
+            opened_product_code: 'XY-1234-MB-9',
+            opened_product_name: 'Example sink 9',
+            opened_product_active: true,
+          }),
+          line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG', closed_reason: 'Customer walked away' }),
+          line({ id: 'l-3', line_no: 3, proposed_code: 'XY-1234-ZZ' }),
+        ],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
+    const rows = screen.getAllByTestId('npa-line');
+    expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
+    expect(within(rows[1]).getByText(/Not opening: Customer walked away/)).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/Not opening/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('shows no Opened as column when no line is resolved', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'approved', status_label: 'Approved' }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('Example kitchen sink');
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
   });
 });

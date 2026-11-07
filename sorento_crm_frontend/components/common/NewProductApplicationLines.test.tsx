@@ -57,7 +57,6 @@ describe('the line table', () => {
       /^Material/i,
       /^Thickness/i,
       /^Packing/i,
-      /^Brand/i,
       /^Qty/i,
     ];
     let at = -1;
@@ -123,6 +122,53 @@ describe('the line table', () => {
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /add row/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^remove row/i })).toBeNull();
+  });
+});
+
+describe('Brand column is gone (NPA-FROM-SI, owner OK 7 Nov)', () => {
+  const heads = () =>
+    screen
+      .getAllByRole('columnheader')
+      .map((h) => (h.textContent ?? '').trim())
+      .filter((n) => n && n !== 'Remove');
+
+  it('edit mode has exactly the seven paper columns and no brand picker', () => {
+    render(<Harness initial={two()} />);
+    expect(heads()).toEqual([
+      'No.',
+      'Product code',
+      'Product type *',
+      'Dimension',
+      'Material',
+      'Thickness',
+      'Packing',
+      'Qty',
+    ]);
+    expect(screen.queryByLabelText(/brand/i)).toBeNull();
+    expect(screen.queryByText(/search brand/i)).toBeNull();
+  });
+
+  it('read-only mode has the same columns and no brand text', () => {
+    const row = { ...blankLine(), id: 'l-1', brand_id: 'b-1', brand_label: 'Example Brand' };
+    render(<Harness initial={[row]} readOnly />);
+    expect(heads()).toEqual([
+      'No.',
+      'Product code',
+      'Product type *',
+      'Dimension',
+      'Material',
+      'Thickness',
+      'Packing',
+      'Qty',
+    ]);
+    expect(screen.queryByText('Example Brand')).toBeNull();
+  });
+
+  it('read-only with cost adds only Cost (MYR)', () => {
+    render(<Harness initial={[blankLine()]} readOnly showCost />);
+    expect(heads().at(-1)).toBe('Cost (MYR)');
+    expect(heads()).not.toContain('Brand');
+    expect(heads()).toHaveLength(9);
   });
 });
 

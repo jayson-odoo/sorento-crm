@@ -9,7 +9,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const push = vi.hoisted(() => vi.fn());
-const applications = vi.hoisted(() => ({ data: [] as unknown[] }));
+const applications = vi.hoisted(() => ({ data: [] as unknown[], loading: false }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
   // Back, and the delete that lands where Back lands, read the list state the
@@ -152,8 +152,8 @@ vi.mock('../hooks/useStockInquiries', () => ({
 
 vi.mock('../../new-product-applications/hooks/useNewProductApplications', () => ({
   useStockInquiryApplicationsQuery: (_id: string | null, enabled: boolean) => ({
-    data: enabled ? applications.data : undefined,
-    isLoading: false,
+    data: enabled && !applications.loading ? applications.data : undefined,
+    isLoading: enabled && applications.loading,
   }),
 }));
 
@@ -203,6 +203,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissionMap = {};
   applications.data = [];
+  applications.loading = false;
   handlingLockState = {
     state: 'not_escalated',
     businessCtasEnabled: true,
@@ -356,6 +357,49 @@ describe('StockInquiryDetail - next-step banners', () => {
       await screen.findByText('New code XY-1234-MB-69 created on 03/11/2026 (NPA-000001).'),
     ).toBeInTheDocument();
     expect(screen.queryByText(ASK)).toBeNull();
+  });
+});
+
+describe('StockInquiryDetail - banners only with NPA access and loaded data (NPA-FROM-SI)', () => {
+  const ASK = 'Purchasing asks the salesperson to create a New Product Application.';
+  const CREATED = /New code XY-1234-MB-69 created on 03\/11\/2026 \(NPA-000001\)\./;
+  const done = [
+    {
+      id: 'a-1',
+      application_no: 'NPA-000001',
+      status: 'completed',
+      status_label: 'Completed',
+      created_codes: [
+        { product_code: 'XY-1234-MB-69', current_codes: ['XY-1234-MB'], created_at: '2026-11-03T02:00:00' },
+      ],
+    },
+  ];
+
+  it('shows neither banner to a user with no application permission, even when asked', async () => {
+    useStockInquiryMock.mockReturnValue({ data: inquiry({ npa_requested: true }), isLoading: false });
+    applications.data = done;
+    renderPage();
+    await screen.findByText('Stock inquiry number');
+    expect(screen.queryByText(ASK)).toBeNull();
+    expect(screen.queryByText(CREATED)).toBeNull();
+  });
+
+  it('shows no ask while the applications are still loading', async () => {
+    permissionMap = { [VIEW]: true };
+    useStockInquiryMock.mockReturnValue({ data: inquiry({ npa_requested: true }), isLoading: false });
+    applications.loading = true;
+    renderPage();
+    await screen.findByText('Stock inquiry number');
+    expect(screen.queryByText(ASK)).toBeNull();
+    expect(screen.queryByText(CREATED)).toBeNull();
+  });
+
+  it('shows the ask once the applications have loaded empty', async () => {
+    permissionMap = { [VIEW]: true };
+    useStockInquiryMock.mockReturnValue({ data: inquiry({ npa_requested: true }), isLoading: false });
+    applications.data = [];
+    renderPage();
+    expect(await screen.findByText(ASK)).toBeInTheDocument();
   });
 });
 
