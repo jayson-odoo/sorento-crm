@@ -28,14 +28,21 @@ export default function StockInquiryDetailTabs({
     useHasPermission('procurement.new_product_applications.approve'),
     useHasPermission('procurement.new_product_applications.open_code'),
   ].some(Boolean);
-  const { data: applications } = useStockInquiryApplicationsQuery(inquiryId, canSeeApplications);
+  const { data: applications, isError } = useStockInquiryApplicationsQuery(inquiryId, canSeeApplications);
 
   const extraTabs: FormDetailExtraTab[] = canSeeApplications
     ? [
         {
           value: 'applications',
-          label: `New product applications (${(applications ?? []).length})`,
-          content: (
+          // A failed read says so: never "(0)" and the empty state, which would read as "none".
+          label: isError
+            ? 'New product applications'
+            : `New product applications (${(applications ?? []).length})`,
+          content: isError ? (
+            <p role="alert" className="py-6 text-center text-sm text-destructive">
+              Could not load the new product applications.
+            </p>
+          ) : (
             <InquiryApplicationsList
               applications={applications ?? []}
               renderNumber={(a) => (

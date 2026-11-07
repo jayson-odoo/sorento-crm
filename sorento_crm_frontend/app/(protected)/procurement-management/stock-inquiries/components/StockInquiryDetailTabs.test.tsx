@@ -37,10 +37,11 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => permissionMap[slug] ?? false,
 }));
 
-const applications: { data: unknown[] | undefined } = { data: [] };
+const applications: { data: unknown[] | undefined; isError: boolean } = { data: [], isError: false };
 vi.mock('../../new-product-applications/hooks/useNewProductApplications', () => ({
   useStockInquiryApplicationsQuery: (_id: string | null, enabled: boolean) => ({
-    data: enabled ? applications.data : undefined,
+    data: enabled && !applications.isError ? applications.data : undefined,
+    isError: enabled && applications.isError,
   }),
 }));
 
@@ -59,6 +60,7 @@ describe('StockInquiryDetailTabs', () => {
   beforeEach(() => {
     permissionMap = {};
     applications.data = [];
+    applications.isError = false;
     captured.extraTabs = undefined;
   });
 
@@ -106,5 +108,16 @@ describe('StockInquiryDetailTabs', () => {
     renderTabs();
     expect(captured.extraTabs).toEqual([]);
     expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+  });
+
+  it('a failed list shows an error in the tab, not (0) and the empty state', () => {
+    permissionMap = { [VIEW]: true };
+    applications.isError = true;
+    renderTabs();
+    expect(screen.getByRole('tab', { name: 'New product applications' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /\(0\)/ })).toBeNull();
+    const panel = screen.getByTestId('panel-applications');
+    expect(panel).toHaveTextContent('Could not load the new product applications.');
+    expect(panel).not.toHaveTextContent('No new product applications');
   });
 });
