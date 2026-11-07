@@ -422,3 +422,46 @@ describe('product table on the staff detail', () => {
     expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
   });
 });
+
+describe('reviewer round 4: typed earlier code, No answer yet, no prose', () => {
+  const typedEarlier = { ...earlier, product_id: null, product_code: 'XY-TYPED-9' };
+
+  it('Use on a typed earlier code (no product id) pre-selects New product code with the code filled, never Link', async () => {
+    state.data = app({ suggestions: [typedEarlier] });
+    render(<Page />);
+    const dialog = await openDialog();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Use XY-TYPED-9' }));
+    expect(within(dialog).getByRole('radio', { name: /^new product code$/i })).toBeChecked();
+    expect(
+      (within(dialog).getByRole('textbox', { name: /new product code/i }) as HTMLInputElement).value,
+    ).toBe('XY-TYPED-9');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const body = puts()[0].body as Record<string, unknown>;
+    expect(body).toMatchObject({ outcome: 'new', new_code: 'XY-TYPED-9' });
+    expect(body).not.toHaveProperty('product_id');
+  });
+
+  it('offers No answer yet only when the application has an answer, and saving it sends outcome null', async () => {
+    state.data = app({ status: 'completed', status_label: 'Completed', new_code_text: 'XY-TYPED-7', new_product_code: 'XY-TYPED-7' });
+    render(<Page />);
+    const dialog = await openDialog();
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^no answer yet$/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const body = puts()[0].body as Record<string, unknown>;
+    expect(body).toHaveProperty('outcome', null);
+  });
+
+  it('has no No answer yet radio while the application is unanswered', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(within(dialog).queryByRole('radio', { name: /no answer yet/i })).toBeNull();
+  });
+
+  it('shows no explanation prose in the dialog', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(within(dialog).queryByText(/Save records the new product code/i)).toBeNull();
+  });
+});

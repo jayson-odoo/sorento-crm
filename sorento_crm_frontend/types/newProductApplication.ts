@@ -61,7 +61,8 @@ export interface NewProductApplicationPrefill extends NewProductApplicationWrite
 
 /** A code already created from exactly the same current codes (information only). */
 export interface NewProductApplicationSuggestion {
-  product_id: string;
+  /** Null for a typed code AutoCount has not sent yet. */
+  product_id: string | null;
   product_code: string;
   product_name: string | null;
   is_active: boolean;
@@ -227,7 +228,8 @@ export interface NewProductApplicationProductHit {
 /** One row of a product's lineage (GET /lineage). The last three are for NPA view-all only. */
 export interface NewProductApplicationLineageRow {
   application_no: string | null;
-  product_id: string;
+  /** Null for a typed code AutoCount has not sent yet. */
+  product_id: string | null;
   product_code: string;
   product_name: string | null;
   is_active: boolean;

@@ -33,7 +33,7 @@ import type {
 import { useNewProductApplicationMutations } from '../hooks/useNewProductApplications';
 import { searchNewProductApplicationProducts } from '../services/newProductApplicationService';
 
-type Outcome = 'link' | 'new' | 'not_opening';
+type Outcome = 'link' | 'new' | 'not_opening' | 'none';
 
 const figure = (v: string | number | null | undefined) =>
   v === null || v === undefined ? '' : String(v);
@@ -131,6 +131,7 @@ export default function NewProductApplicationPurchasingDialog({
       body.outcome = 'not_opening';
       body.reason = reason.trim();
     }
+    if (outcome === 'none') body.outcome = null;
     setError(null);
     try {
       await purchasingResponse.mutateAsync({ id: r.id, data: body });
@@ -147,9 +148,8 @@ export default function NewProductApplicationPurchasingDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Edit purchasing response</DialogTitle>
-          <DialogDescription>
-            Save records the new product code, lead time and cost on this
-            application.
+          <DialogDescription className="sr-only">
+            Purchasing response for {r.application_no}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
@@ -164,11 +164,17 @@ export default function NewProductApplicationPurchasingDialog({
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  setOutcome('link');
-                  setProduct({
-                    value: earlier.product_id,
-                    label: earlier.product_code,
-                  });
+                  // A typed code AutoCount has not sent has no product to link: it fills New product code.
+                  if (earlier.product_id) {
+                    setOutcome('link');
+                    setProduct({
+                      value: earlier.product_id,
+                      label: earlier.product_code,
+                    });
+                  } else {
+                    setOutcome('new');
+                    setNewCode(earlier.product_code);
+                  }
                 }}
               >
                 Use {earlier.product_code}
@@ -234,6 +240,12 @@ export default function NewProductApplicationPurchasingDialog({
                 />
               )}
             </div>
+            {initial !== null && (
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="none" id="npa-out-none" />
+                <Label htmlFor="npa-out-none">No answer yet</Label>
+              </div>
+            )}
           </RadioGroup>
 
           <div className="space-y-1.5">

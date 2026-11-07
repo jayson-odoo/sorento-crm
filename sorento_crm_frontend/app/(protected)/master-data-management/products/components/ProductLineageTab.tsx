@@ -50,17 +50,21 @@ function LineageTable({
             <tbody>
               {rows.map((row) => (
                 <tr
-                  key={`${row.application_no}-${row.product_id}`}
+                  key={`${row.application_no}-${row.product_id ?? row.product_code}`}
                   className="border-t"
                 >
                   {showNewCode && (
                     <td className={TD}>
-                      <Link
-                        href={`/master-data-management/products/${row.product_id}`}
-                        className="font-medium text-primary hover:underline"
-                      >
-                        {row.product_code}
-                      </Link>
+                      {row.product_id ? (
+                        <Link
+                          href={`/master-data-management/products/${row.product_id}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {row.product_code}
+                        </Link>
+                      ) : (
+                        <span className="font-medium">{row.product_code}</span>
+                      )}
                     </td>
                   )}
                   <td className={`${TD} break-words`}>{codes(row) || '-'}</td>

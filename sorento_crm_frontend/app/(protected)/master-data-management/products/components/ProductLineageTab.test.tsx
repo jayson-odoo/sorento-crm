@@ -97,3 +97,20 @@ describe('Lineage tab states', () => {
     expect(screen.getByText('None')).toBeInTheDocument();
   });
 });
+
+describe('a typed new code that AutoCount has not sent yet', () => {
+  it('shows the code as plain text, never a /products/null link', async () => {
+    net.fetch.mockResolvedValue(
+      json(200, {
+        created_from: [],
+        made_from_this: [
+          row({ product_id: null, product_code: 'XY-TYPED-7', application_id: 'a-2' }),
+        ],
+      }),
+    );
+    renderTab();
+    expect(await screen.findByText('XY-TYPED-7')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'XY-TYPED-7' })).toBeNull();
+    expect(document.querySelector('a[href*="/products/null"]')).toBeNull();
+  });
+});
