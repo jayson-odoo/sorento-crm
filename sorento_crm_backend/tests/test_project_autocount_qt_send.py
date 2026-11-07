@@ -517,6 +517,83 @@ def test_a_stale_add_lines_step_after_a_done_patch_keeps_the_patch_stamp(api, fa
     assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
 
 
+# --------------------------------------------------------------------------- B11: fields AutoCount ignored
+
+
+def _ignored_answer(world, message, code="FIELD_IGNORED"):
+    body = done_body(
+        doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world), last_modified="2026-11-06T18:08:00"
+    )
+    body.update({"outcome": "mismatch", "errorCode": code, "message": message})
+    return (502, body)
+
+
+def _issue2_sent_with_patch_answer(db, world, fake_ss, answer):
+    _mark_sent(db, world)
+    issue2 = add_issue(
+        db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True
+    )
+    db.commit()
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world))
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = answer
+    return issue2
+
+
+def test_fields_we_did_not_send_ignored_by_autocount_still_count_as_updated(api, fake_ss):
+    """B11 (db3, QT-000006): SS echoes Remark2-4 and AutoCount mirrors Remark1 into them, so
+    SS answers mismatch FIELD_IGNORED on fields this call never asked to change."""
+    client, db, world = api
+    issue2 = _issue2_sent_with_patch_answer(
+        db, world, fake_ss, _ignored_answer(world, "ignored: Remark2, Remark3, Remark4")
+    )
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "done", body
+    assert body["message"] == "QT000777 updated in AutoCount"
+    db.refresh(world.document)
+    assert world.document.autocount_edit_issue_id == issue2.id
+    assert world.document.autocount_issue_id == issue2.id
+    assert world.document.autocount_last_modified == "2026-11-06T18:08:00"
+
+    calls = len(fake_ss.calls)
+    again = client.post(_url(world))
+    assert again.status_code == 409 and again.json()["message"] == ALREADY
+    assert len(fake_ss.calls) == calls
+
+
+def test_a_field_we_sent_being_ignored_is_not_updated(api, fake_ss):
+    client, db, world = api
+    issue2 = _issue2_sent_with_patch_answer(
+        db, world, fake_ss, _ignored_answer(world, "ignored: Remark1, Remark2")
+    )
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] != "done"
+    db.refresh(world.document)
+    assert world.document.autocount_edit_issue_id != issue2.id
+    assert world.document.autocount_issue_id != issue2.id
+    assert world.document.autocount_last_modified == "2026-10-21T08:00:00"
+
+
+@pytest.mark.parametrize(
+    "message,code",
+    [
+        ("ignored:", "FIELD_IGNORED"),                       # no names: cannot tell, not done
+        ("Qty differs after write", "FIELD_IGNORED"),        # no "ignored:" list
+        ("ignored: Remark2", "VALUE_MISMATCH"),               # another mismatch code
+    ],
+)
+def test_any_other_mismatch_is_not_updated(api, fake_ss, message, code):
+    client, db, world = api
+    issue2 = _issue2_sent_with_patch_answer(db, world, fake_ss, _ignored_answer(world, message, code))
+
+    assert client.post(_url(world)).json()["outcome"] != "done"
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id != issue2.id
+
+
 def test_a_press_after_a_complete_update_is_409_already_with_no_call(api, fake_ss):
     client, db, world = api
     _second_issue_with_new_item(db, world)
