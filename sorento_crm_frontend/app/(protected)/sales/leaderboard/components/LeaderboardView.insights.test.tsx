@@ -192,7 +192,7 @@ describe('P2-2 URL round trip', () => {
     expect(last()).toMatchObject({
       basis: 'delivered', by: 'customer', date_from: range.from, date_to: range.to,
       previous_from: range.previousFrom, previous_to: range.previousTo,
-      company: 'SOR', brand: ['b1'], category: ['c1'], channel: ['dealer'], person: ['LCL'],
+      company: ['SOR'], brand: ['b1'], category: ['c1'], channel: ['dealer'], person: ['LCL'],
     });
     expect(screen.getByRole('button', { name: 'Delivered' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Invoiced' }).getAttribute('aria-pressed')).toBe('false');
@@ -611,5 +611,131 @@ describe('review fix: a view of a thousand rows pages client-side', () => {
     expect(list.querySelectorAll('button').length).toBe(50 + 1);
     fireEvent.click(within(list).getByRole('button', { name: /Show more \(70\)/ }));
     expect(list.querySelectorAll('button').length).toBe(100 + 1);
+  });
+});
+
+describe('fix round 2', () => {
+  const threePeople = () =>
+    board('person', [personRow(1, 'LCL'), personRow(2, 'SEAN'), personRow(3, 'JUSTIN'), personRow(4, 'JIMMY')]);
+
+  it('1: a podium card drills like its row (button, data-drill, same handler)', () => {
+    state.respond = threePeople;
+    render(<LeaderboardView />);
+    const card = screen.getByTestId('leaderboard-podium-1');
+    expect(card.tagName).toBe('BUTTON');
+    expect(card.getAttribute('data-drill')).toBe('true');
+    fireEvent.click(card);
+    expect(last()).toMatchObject({ by: 'customer', person: ['LCL'] });
+  });
+
+  it('1: a podium card is not clickable when its row would not be', () => {
+    state.respond = () =>
+      board('person', [personRow(1, 'LCL'), personRow(2, 'JENNIFER', { is_me: true }), personRow(3, 'SEAN')], {
+        can_drill_others: false,
+      });
+    render(<LeaderboardView />);
+    const other = screen.getByTestId('leaderboard-podium-1');
+    expect(other.tagName).not.toBe('BUTTON');
+    expect(other.getAttribute('data-drill')).toBeNull();
+    fireEvent.click(other);
+    expect(nav.pushes.length).toBe(0);
+    const own = screen.getByTestId('leaderboard-podium-2');
+    expect(own.getAttribute('data-drill')).toBe('true');
+    fireEvent.click(own);
+    expect(last()).toMatchObject({ by: 'customer', person: ['JENNIFER'] });
+  });
+
+  it('3: switching basis keeps the period; leaving Undelivered restores the last dated period', () => {
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delivered' }));
+    expect(lastUrl().searchParams.get('period')).toBe('last_month');
+    fireEvent.click(screen.getByRole('button', { name: 'Undelivered orders' }));
+    expect(lastUrl().searchParams.get('period')).toBe('all_open');
+    fireEvent.click(screen.getByRole('button', { name: 'Ordered' }));
+    expect(lastUrl().searchParams.get('period')).toBe('last_month');
+    expect(screen.getByRole('button', { name: 'Last month' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('3: a custom range survives the same round trip', () => {
+    nav.set('?period=custom&from=2026-10-01&to=2026-10-15');
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Undelivered orders' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delivered' }));
+    const sp = lastUrl().searchParams;
+    expect([sp.get('period'), sp.get('from'), sp.get('to')]).toEqual(['custom', '2026-10-01', '2026-10-15']);
+  });
+
+  it('6: removing a chip returns to that chip\'s own view', () => {
+    nav.set('?by=product&person=LCL&customer=c-1&customer_label=ACME%20SDN%20BHD&product=p-1&product_label=AC-1');
+    render(<LeaderboardView />);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Sales person: LCL' }));
+    expect(lastUrl().searchParams.get('by')).toBe('person');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Customer: ACME SDN BHD' }));
+    expect(lastUrl().searchParams.get('by')).toBe('customer');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Product: AC-1' }));
+    expect(lastUrl().searchParams.get('by')).toBe('product');
+  });
+
+  it('7a: a header sorts on the server: the URL and the query carry sort and dir', () => {
+    render(<LeaderboardView />);
+    const header = () => within(document.querySelector('thead') as HTMLElement).getByRole('button', { name: 'Invoiced net (RM)' });
+    fireEvent.click(header());
+    expect([lastUrl().searchParams.get('sort'), lastUrl().searchParams.get('dir')]).toEqual(['amount', 'asc']);
+    expect(last()).toMatchObject({ sort: 'amount', dir: 'asc' });
+    fireEvent.click(header());
+    expect(last()).toMatchObject({ sort: 'amount', dir: 'desc' });
+  });
+
+  it('7a: the URL sort comes back into the query, and the default is rank asc', () => {
+    nav.set('?by=customer&sort=name&dir=desc');
+    render(<LeaderboardView />);
+    expect(last()).toMatchObject({ sort: 'name', dir: 'desc' });
+    nav.set('');
+    expect(last()).toMatchObject({ sort: 'rank', dir: 'asc' });
+  });
+
+  it('7a: the grid keeps the server order (no client sort)', () => {
+    nav.set('?by=customer&sort=name&dir=desc');
+    state.respond = () =>
+      board('customer', [customerRow(2, 'ZED', ['c-2'], 'Z', ['SOR']), customerRow(1, 'ALPHA', ['c-1'], 'A', ['SOR'])]);
+    const { container } = render(<LeaderboardView />);
+    expect(trs(container).map((tr) => tr.textContent?.includes('ZED'))).toEqual([true, false]);
+  });
+
+  it('7b: Company is a multi select held as a list in the URL and the query', () => {
+    nav.set('?company=SOR&company=MCH');
+    state.options = { ...optionsFor(true), companies: [{ value: 'SOR', label: 'SOR' }, { value: 'MCH', label: 'MCH' }] };
+    render(<LeaderboardView />);
+    expect(last()).toMatchObject({ company: ['SOR', 'MCH'] });
+    fireEvent.click(within(screen.getByTestId('lb-company')).getByLabelText('MCH'));
+    expect(lastUrl().searchParams.getAll('company')).toEqual(['SOR']);
+  });
+
+  it('7c: Open as report and Top selling items carry the companies', () => {
+    nav.set('?by=product&company=SOR&company=MCH&period=custom&from=2026-10-01&to=2026-10-31');
+    render(<LeaderboardView />);
+    for (const name of ['Open as report', 'Open in Top selling items']) {
+      const url = new URL(screen.getByRole('link', { name }).getAttribute('href')!, 'http://x');
+      expect(JSON.parse(url.searchParams.get('seed')!).params.company).toEqual(['SOR', 'MCH']);
+    }
+  });
+
+  it('8b: the blank row is a line under the grid, not a ranked row', () => {
+    nav.set('?by=product');
+    state.respond = () =>
+      board('product', [productRow(1, 'AC-EXP-006', 'p-1')], {
+        blank: { name: '(no product)', amount: 38000, qty: 4, prev_amount: 0, change_pct: null },
+      });
+    const { container } = render(<LeaderboardView />);
+    expect(trs(container).length).toBe(1);
+    const line = screen.getByTestId('leaderboard-blank');
+    expect(line.textContent).toContain('(no product)');
+    expect(line.textContent).toContain('38,000.00');
+  });
+
+  it('8b: no blank line when there is none', () => {
+    render(<LeaderboardView />);
+    expect(screen.queryByTestId('leaderboard-blank')).toBeNull();
   });
 });

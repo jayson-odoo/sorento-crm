@@ -84,3 +84,27 @@ describe('getLeaderboard insights params', () => {
     for (const key of ['channel', 'person', 'customer', 'product']) expect(sp.has(key)).toBe(false);
   });
 });
+
+describe('getLeaderboard fix round 2 params', () => {
+  it('7a / 7b repeats company and sends sort and dir', async () => {
+    await getLeaderboard({
+      basis: 'invoiced',
+      by: 'customer',
+      date_from: '2026-10-01',
+      date_to: '2026-10-31',
+      company: ['SOR', 'MCH'],
+      sort: 'name',
+      dir: 'desc',
+    } as never);
+    const sp = urlOfCall().searchParams;
+    expect(sp.getAll('company')).toEqual(['SOR', 'MCH']);
+    expect([sp.get('sort'), sp.get('dir')]).toEqual(['name', 'desc']);
+  });
+
+  it('omits sort and dir at the default', async () => {
+    await getLeaderboard({ basis: 'invoiced', by: 'person', date_from: '2026-10-01', date_to: '2026-10-31', sort: 'rank', dir: 'asc' } as never);
+    const sp = urlOfCall().searchParams;
+    expect(sp.has('sort')).toBe(false);
+    expect(sp.has('dir')).toBe(false);
+  });
+});

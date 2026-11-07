@@ -67,7 +67,7 @@ EVERY = (date(1900, 1, 1), date(2200, 12, 31))
 GRANTS = frozenset({DEFAULT_COMPANY_ID, MOCHA_ID})
 TOP_KEYS = {
     "basis", "by", "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount",
-    "rows", "me", "can_drill_others",
+    "rows", "me", "can_drill_others", "blank",
 }
 TOTAL_KEYS = {"amount", "qty", "prev_amount", "change_pct", "customers", "products"}
 ROW_KEYS = {"rank", "name", "keys", "amount", "qty", "prev_amount", "change_pct", "customers", "products"}
@@ -555,9 +555,11 @@ def test_p1_1_brand_and_category_views_group_by_their_names_and_filters_narrow(d
     assert _by_name(categories)[world.category.category_name] == D("1000.00")
     real = next(r for r in brands["rows"] if r["name"] == world.brand.brand_name)
     assert real["keys"] == [world.brand.id]
-    blank = next(r for r in brands["rows"] if r["name"] == "(no brand)")
-    assert blank["keys"] == [] and _money(blank["amount"]) == D("1020.00")
-    assert sum(_money(r["amount"]) for r in brands["rows"]) == _money(brands["total"]["amount"])
+    assert all(r["name"] != "(no brand)" for r in brands["rows"])
+    blank = brands["blank"]
+    assert blank["name"] == "(no brand)" and _money(blank["amount"]) == D("1020.00")
+    assert set(blank) == {"name", "amount", "qty", "prev_amount", "change_pct"}
+    assert sum(_money(r["amount"]) for r in brands["rows"]) + _money(blank["amount"]) == _money(brands["total"]["amount"])
     assert _by_name(narrowed) == {world.c1.customer_name: D("1000.00")}
 
 
@@ -968,3 +970,159 @@ def test_r1_person_options_include_inactive_agents(db):
     row.is_active = False
     db.commit()
     assert (f"ZZT PAST {s}", f"ZZT PAST {s}") in ap.person_options(db)
+
+
+# ====================================================================== fix round 2
+
+
+def test_r2_7a_every_view_sorts_server_side_rank_stays_the_amount_rank(db):
+    world = _world(db)
+    with make_client(db, allow=ALL3) as client:
+        default = _ok(client, by="customer")["rows"]
+        by_name = _ok(client, by="customer", sort="name", dir="asc")["rows"]
+        by_name_desc = _ok(client, by="customer", sort="name", dir="desc")["rows"]
+        by_amount_asc = _ok(client, by="customer", sort="amount", dir="asc")["rows"]
+        persons_codes = _ok(client, sort="codes", dir="asc")["rows"]
+    assert [r["rank"] for r in default] == list(range(1, len(default) + 1))
+    assert [r["name"] for r in by_name] == sorted(r["name"] for r in default)
+    assert [r["name"] for r in by_name_desc] == sorted((r["name"] for r in default), reverse=True)
+    assert [_money(r["amount"]) for r in by_amount_asc] == sorted(_money(r["amount"]) for r in default)
+    assert {r["name"]: r["rank"] for r in by_name} == {r["name"]: r["rank"] for r in default}
+    assert world.alpha in [r["person"] for r in persons_codes]
+
+
+def test_r2_7a_nulls_sort_last_whatever_the_direction(db):
+    world = _world(db)
+    with make_client(db, allow=ALL3) as client:
+        asc = _ok(client, sort="change_pct", dir="asc")["rows"]
+        desc = _ok(client, sort="change_pct", dir="desc")["rows"]
+    for rows in (asc, desc):
+        seen_null = False
+        for r in rows:
+            if r["change_pct"] is None:
+                seen_null = True
+            else:
+                assert not seen_null
+        assert any(r["change_pct"] is None for r in rows)
+    assert asc[0]["person"] == world.alpha
+
+
+@pytest.mark.parametrize("extra", [
+    {"sort": "bogus"}, {"dir": "sideways"}, {"by": "customer", "sort": "brand"}, {"by": "person", "sort": "brand"},
+])
+def test_r2_7a_an_unknown_sort_key_or_direction_is_422(db, extra):
+    with make_client(db, allow=ALL3) as client:
+        resp = client.get(ROUTE, params={"date_from": OCT[0], "date_to": OCT[1], **extra})
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "REPORT_INVALID_PARAMS"
+
+
+def test_r2_7a_the_views_own_text_columns_sort(db):
+    world = _world(db)
+    with make_client(db, allow=ALL3) as client:
+        products = _ok(client, by="product", sort="brand", dir="desc")["rows"]
+        customers = _ok(client, by="customer", sort="code", dir="asc")["rows"]
+    assert products[0]["brand"] == world.brand.brand_name  # nulls last
+    assert [r["code"] for r in customers] == sorted(r["code"] for r in customers)
+
+
+def test_r2_7b_company_repeats_and_each_value_must_be_granted(db):
+    _world(db)
+    with make_client(db, allow=ALL3, grants=(DEFAULT_COMPANY_ID,)) as client:
+        assert _ok(client, company=[DEFAULT_COMPANY_ID])["rows"]
+        resp = _lb(client, company=[DEFAULT_COMPANY_ID, MOCHA_ID])
+        assert resp.status_code == 403
+    with make_client(db, allow=ALL3) as client:
+        both = _ok(client, company=[DEFAULT_COMPANY_ID, MOCHA_ID])
+        one = _ok(client, company=[DEFAULT_COMPANY_ID])
+    assert _money(both["total"]["amount"]) == _money(one["total"]["amount"]) == D("2020.00")
+
+
+def test_r2_8b_the_blank_row_leaves_the_ranked_rows_and_rows_plus_blank_equal_the_total(db):
+    world = _world(db)
+    blank_product = None
+    with make_client(db, allow=ALL3) as client:
+        for by, blank_name in (("brand", "(no brand)"),):
+            body = _ok(client, by=by)
+            assert body["blank"]["name"] == blank_name
+            assert all(r["name"] != blank_name for r in body["rows"])
+            assert sum(_money(r["amount"]) for r in body["rows"]) + _money(body["blank"]["amount"]) == _money(body["total"]["amount"])
+        for by in ("person", "channel"):
+            assert _ok(client, by=by)["blank"] is None
+        customers = _ok(client, by="customer")
+    assert customers["blank"] is None
+    assert sum(_money(r["amount"]) for r in customers["rows"]) == _money(customers["total"]["amount"])
+    assert blank_product is None and world
+
+
+def test_r2_8a_the_order_bases_no_class_bucket_reads_sales_order_type_not_set(db):
+    _world(db)
+    with make_client(db, allow=ALL3) as client:
+        body = _ok(client, basis="ordered", by="channel")
+    row = next(r for r in body["rows"] if r["key"] is None)
+    assert row["name"] == "Sales order type not set"
+
+
+def _two_companies(db):
+    s = unique_code("W", alpha=True)[-8:]
+    a = _agent(db, f"ZZT-CA-{s}", person=f"ZZT CA {s}", company_id=DEFAULT_COMPANY_ID)
+    b = _agent(db, f"ZZT-CB-{s}", person=f"ZZT CB {s}", company_id=MOCHA_ID)
+    ca = cust(db, name=f"ZZT CA {s}", code=f"ZZT-CAC-{s}")
+    cb = cust(db, name=f"ZZT CB {s}", code=f"ZZT-CBC-{s}", company_id=MOCHA_ID)
+    doc(db, "invoice", "100.00", date(2026, 10, 5), customer=ca, agent_row=a,
+        lines=[line(net="100.00", prod=product(db, company_id=DEFAULT_COMPANY_ID))])
+    doc(db, "invoice", "200.00", date(2026, 10, 6), customer=cb, agent_row=b, company_id=MOCHA_ID,
+        lines=[line(net="200.00", prod=product(db, company_id=MOCHA_ID))])
+    db.commit()
+
+
+def _engine_total(db, definition, company, grants=GRANTS):
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine
+
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-10-01", "to": "2026-10-31"}}
+    if company is not None:
+        params["company"] = company
+    view = ReportViewConfig.model_validate({
+        "params": params, "detail": {"columns": [], "order": []},
+        "pivot": {"rows": "month", "cols": "all", "measures": ["amount"]},
+    })
+    pivot = engine.run_summary(db, definition, params, view, company_grants=grants)
+    return _money((pivot.grand_total or {}).get("amount") or 0)
+
+
+def _definitions():
+    from app.services.reports import ask
+    from app.services.reports.definitions import top_selling_items
+
+    sales = ask.CATALOGUE["sales"]
+    return {
+        "top_selling": top_selling_items.REPORT,
+        "invoiced": sales["invoiced"]["definition"],
+        "ordered": sales["ordered"]["definition"],
+    }
+
+
+@pytest.mark.parametrize("name", ("top_selling", "invoiced"))
+def test_r2_7c_the_invoiced_reports_take_several_companies_and_empty_means_every_company_held(db, name):
+    _two_companies(db)
+    definition = _definitions()[name]
+    assert _engine_total(db, definition, None) == D("300.00")
+    assert _engine_total(db, definition, []) == D("300.00")
+    assert _engine_total(db, definition, [DEFAULT_COMPANY_ID]) == D("100.00")
+    assert _engine_total(db, definition, [DEFAULT_COMPANY_ID, MOCHA_ID]) == D("300.00")
+    assert _engine_total(db, definition, [MOCHA_ID]) == D("200.00")
+
+
+@pytest.mark.parametrize("name", ("top_selling", "invoiced", "ordered"))
+def test_r2_7c_a_company_outside_the_grant_is_403(db, name):
+    _two_companies(db)
+    with pytest.raises(AppException) as err:
+        _engine_total(db, _definitions()[name], [MOCHA_ID], grants=frozenset({DEFAULT_COMPANY_ID}))
+    assert err.value.status_code == 403
+
+
+def test_r2_7c_every_sales_report_declares_a_clearable_multi_company_param():
+    for name, definition in _definitions().items():
+        param = next(p for p in definition.params if p.key == "company")
+        assert param.multi and param.clearable, name

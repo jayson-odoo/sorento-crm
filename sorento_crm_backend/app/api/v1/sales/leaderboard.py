@@ -33,7 +33,7 @@ def get_leaderboard(
     by: str = Query("person"),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
-    company: Optional[str] = Query(None),
+    company: Optional[list[str]] = Query(None),
     brand: Optional[list[str]] = Query(None),
     category: Optional[list[str]] = Query(None),
     channel: Optional[list[str]] = Query(None),
@@ -42,6 +42,8 @@ def get_leaderboard(
     product: Optional[list[str]] = Query(None),
     previous_from: Optional[date] = Query(None),
     previous_to: Optional[date] = Query(None),
+    sort: str = Query("rank"),
+    dir: str = Query("asc"),
     user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -52,10 +54,10 @@ def get_leaderboard(
     if previous_from is not None and previous_to < previous_from:
         raise _invalid("previous_to must not be before previous_from")
     return leaderboard_service.build(
-        db, user, date_from, date_to, basis=basis, by=by, company=company or None,
+        db, user, date_from, date_to, basis=basis, by=by, companies=multi_values(company),
         brands=multi_values(brand), categories=multi_values(category), channels=multi_values(channel),
         persons=[p for p in person or [] if p], customers=multi_values(customer), products=multi_values(product),
-        previous_from=previous_from, previous_to=previous_to,
+        previous_from=previous_from, previous_to=previous_to, sort=sort, direction=dir,
     )
 
 

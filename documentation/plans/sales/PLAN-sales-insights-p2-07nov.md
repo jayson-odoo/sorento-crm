@@ -31,7 +31,12 @@ Query (every #2227 param keeps its meaning):
 - `date_from` / `date_to`: required, except on `outstanding` where both may be absent (both or neither, else 422;
   absent = every date, `ask.OPEN_BASES`).
 - `previous_from` / `previous_to`: as #2227; ignored on `outstanding` (no compare there).
-- `company`, `brand` (repeat), `category` (repeat): as #2227.
+- `company` (repeat, each value inside the caller's grants else 403; none = every company held), `brand` (repeat),
+  `category` (repeat): as #2227.
+- `sort` (default `rank`) and `dir` (`asc` default | `desc`): server-side, nulls last, ties by the amount rank; `rank`
+  itself stays the amount rank under any sort. `sort` is `rank | name | amount | qty | prev_amount | change_pct |
+  customers | products` plus the view's own text columns (person: `codes`, `target`; customer: `code`, `companies`;
+  product: `brand`, `category`); an unknown key or dir is 422 `REPORT_INVALID_PARAMS`.
 - `channel` (repeat): sales type values. Invoiced: `dealer`, `project`, `other`, `set_apart`, `mixed`,
   `type_not_set`, `no_sales_order` (`inv.SALES_TYPES`). Order bases: `dealer`, `project`, `other`. Any other value on
   the basis: 422 `REPORT_INVALID_PARAMS`.
@@ -72,6 +77,10 @@ Response:
   By `product`: `brand`, `category` (of the first key's product, null when none). By `channel`: `key` = the sales type
   value (`dealer`, ..., null for the order bases' "(none)" row).
   Every by except person: `no_agent_amount` 0.0, `me` null.
+- `blank` (fix round 2): on Customer / Product / Brand / Category the engine's blank row ("(no customer)",
+  "(no product)", "(no brand)", "(no category)") is not a ranked row but `{name, amount, qty, prev_amount, change_pct}`
+  (null when there is none, and on Sales person / Channel); rows + blank = total. Channel keeps its no-class bucket as a
+  ranked row, named "Sales order type not set" on every basis (key null on the order bases).
 - `prev_amount` / `change_pct` per row: previous window joined by `name`, the #2227 rule (null when prev <= 0),
   both null on outstanding.
 - `target` (person rows only, Q3): null, or `{"target_no", "basis", "period_from", "period_to", "target_amount",

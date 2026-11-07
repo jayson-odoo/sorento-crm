@@ -239,4 +239,48 @@ describe('ReportPage seed (P5-1)', () => {
     expect(runs()[0][1].brand).toEqual(['b1']);
     expect(runs()[0][1].sales_person).toEqual(['LCL']);
   });
+
+  it('a second visit in the same session applies its own seed (cached meta, strict double effects)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mount = () =>
+      rtlRender(
+        <React.StrictMode>
+          <QueryClientProvider client={client}>
+            <ReportPage reportKey="zzt_sales" breadcrumb={[{ label: 'Sales' }]} />
+          </QueryClientProvider>
+        </React.StrictMode>,
+      );
+    nav.seed = JSON.stringify(SEED);
+    const first = mount();
+    await waitFor(() => expect(runs().length).toBeGreaterThan(0));
+    first.unmount();
+    runReport.mockClear();
+
+    const second = { ...SEED, params: { ...SEED.params, period: { kind: 'custom', from: '2026-09-01', to: '2026-09-30' } } };
+    nav.seed = JSON.stringify(second);
+    mount();
+    await waitFor(() => expect(runs().length).toBeGreaterThan(0));
+    expect(runs().every((r) => (r[1].period as { from?: string }).from === '2026-09-01')).toBe(true);
+    expect(runs()[0][2].pivot.rows).toBe('sales_person');
+  });
+
+  it('a seed with a pivot opens the summary tab; no seed keeps the report opening tab', async () => {
+    runReport.mockResolvedValue({
+      ...result,
+      row_count: 1,
+      layouts: {
+        detail: { ...result.layouts.detail, title: 'Rows' },
+        summary: { ...result.layouts.summary, title: 'Summary' },
+      },
+    });
+    nav.seed = JSON.stringify(SEED);
+    const first = render();
+    const summary = await screen.findByRole('tab', { name: /Summary/ });
+    expect(summary.getAttribute('aria-selected')).toBe('true');
+    first.unmount();
+    nav.seed = null;
+    render();
+    const again = await screen.findByRole('tab', { name: /Summary/ });
+    expect(again.getAttribute('aria-selected')).toBe('false');
+  });
 });

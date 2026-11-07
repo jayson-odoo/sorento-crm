@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { ReportParamsContext } from './reportParamsContext';
 import {
   type ColumnDef,
   type PaginationState,
@@ -464,8 +465,9 @@ export function ReportPage({
     const fallback = views
       ? ([...views.mine, ...views.shared].find((v) => v.is_default) ?? null)
       : null;
+    // Not cleared once used: a strict-mode double run (and a cached meta, which runs this on mount) must apply the
+    // same seed again, never fall back to the default view.
     const seed = seedRef.current;
-    seedRef.current = null;
     const known = (key: string) => meta.catalog.some((c) => c.key === key);
     const pivotOk =
       !seed?.pivot ||
@@ -479,6 +481,8 @@ export function ReportPage({
     // A report opens on the tab it is read by: the Yearly comparison is its summary.
     if (meta.opens_on) setActiveTab(meta.opens_on);
     if (seed) dropSeedFromUrl();
+    // A board's "Open as report" brings a pivot: it opens on the summary it asked for.
+    if (usable?.pivot) setActiveTab('summary');
     setState({
       viewId: usable ? null : (fallback?.id ?? null),
       params: withParamDefaults(
@@ -758,7 +762,7 @@ export function ReportPage({
           ) : null
         }
       />
-      {belowHeader}
+      <ReportParamsContext.Provider value={runParams}>{belowHeader}</ReportParamsContext.Provider>
     </Container>
   );
 

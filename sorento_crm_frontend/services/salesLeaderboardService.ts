@@ -78,6 +78,16 @@ export interface LeaderboardResponse {
   rows: LeaderboardRow[];
   me: { person: string; rank: number } | null;
   can_drill_others: boolean;
+  /** The engine's blank row on Customer / Product / Brand / Category, beside the ranked rows (rows + blank = total). */
+  blank?: LeaderboardBlank | null;
+}
+
+export interface LeaderboardBlank {
+  name: string;
+  amount: number;
+  qty: number;
+  prev_amount: number | null;
+  change_pct: number | null;
 }
 
 export interface LeaderboardOption {
@@ -102,7 +112,10 @@ export interface LeaderboardParams {
   /** Both or neither; absent = the same number of days just before. */
   previous_from?: string;
   previous_to?: string;
-  company?: string;
+  company?: string[];
+  /** Server-side sort of the grid; rank asc (the amount rank) is the default. */
+  sort?: string;
+  dir?: 'asc' | 'desc';
   brand?: string[];
   category?: string[];
   channel?: string[];
@@ -124,7 +137,9 @@ function query(params: LeaderboardParams): string {
     search.set('previous_from', params.previous_from);
     search.set('previous_to', params.previous_to);
   }
-  if (params.company) search.set('company', params.company);
+  for (const id of params.company ?? []) search.append('company', id);
+  if (params.sort && params.sort !== 'rank') search.set('sort', params.sort);
+  if (params.dir && params.dir !== 'asc') search.set('dir', params.dir);
   for (const id of params.brand ?? []) search.append('brand', id);
   for (const id of params.category ?? []) search.append('category', id);
   for (const value of params.channel ?? []) search.append('channel', value);

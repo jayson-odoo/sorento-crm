@@ -37,7 +37,41 @@ _ORDER_CHANNELS = (("dealer", "Dealer"), ("project", "Project team"), ("other", 
 
 #: The engine's "(blank)" row, named for the view it sits in; kept so a view's rows add up to its total.
 _BLANK_NAMES = {"customer": "(no customer)", "product": "(no product)", "brand": "(no brand)",
-                "category": "(no category)", "channel": "(none)"}
+                "category": "(no category)", "channel": "Sales order type not set"}
+#: The views whose blank row is shown beside the grid (`blank`), not ranked in it; a channel's is a real bucket.
+_BLANK_APART = ("customer", "product", "brand", "category")
+
+#: What each view's grid may sort by (server side). `rank` is the amount rank and stays so under any sort.
+_NUMERIC_SORTS = ("rank", "amount", "qty", "prev_amount", "change_pct", "customers", "products")
+_SORTS = {
+    "person": (*_NUMERIC_SORTS, "name", "codes", "target"),
+    "customer": (*_NUMERIC_SORTS, "name", "code", "companies"),
+    "product": (*_NUMERIC_SORTS, "name", "brand", "category"),
+    "brand": (*_NUMERIC_SORTS, "name"),
+    "category": (*_NUMERIC_SORTS, "name"),
+    "channel": (*_NUMERIC_SORTS, "name"),
+}
+
+
+def _sort_value(row: dict[str, Any], key: str) -> Any:
+    if key == "codes":
+        return ", ".join(row.get("codes") or []).casefold() or None
+    if key == "companies":
+        return ", ".join(row.get("companies") or []).casefold() or None
+    if key == "target":
+        return (row.get("target") or {}).get("achieved_pct")
+    value = row.get(key)
+    return value.casefold() if isinstance(value, str) else value
+
+
+def _sorted(rows: list[dict[str, Any]], key: str, direction: str) -> list[dict[str, Any]]:
+    """Rows by `key`, nulls last either way, ties by the amount rank."""
+    rows = sorted(rows, key=lambda r: r["rank"])
+    if key == "rank" and direction == "asc":
+        return rows
+    have = [r for r in rows if _sort_value(r, key) is not None]
+    none = [r for r in rows if _sort_value(r, key) is None]
+    return sorted(have, key=lambda r: _sort_value(r, key), reverse=direction == "desc") + none
 
 
 def channel_options() -> dict[str, list[dict[str, str]]]:
@@ -251,7 +285,7 @@ def build(
     date_to: Optional[date],
     basis: str = "invoiced",
     by: str = "person",
-    company: Optional[str] = None,
+    companies: Optional[list[str]] = None,
     brands: Optional[list[str]] = None,
     categories: Optional[list[str]] = None,
     channels: Optional[list[str]] = None,
@@ -260,11 +294,17 @@ def build(
     products: Optional[list[str]] = None,
     previous_from: Optional[date] = None,
     previous_to: Optional[date] = None,
+    sort: str = "rank",
+    direction: str = "asc",
 ) -> dict[str, Any]:
     if basis not in BASES:
         raise _invalid(f"basis is one of {', '.join(BASES)}")
     if by not in BYS:
         raise _invalid(f"by is one of {', '.join(BYS)}")
+    if sort not in _SORTS.get(by, ()):
+        raise _invalid(f"sort is one of {', '.join(_SORTS[by])}")
+    if direction not in ("asc", "desc"):
+        raise _invalid("dir is asc or desc")
     open_basis = basis == "outstanding"
     if (date_from is None) != (date_to is None) or (date_from is None and not open_basis):
         raise _invalid("date_from and date_to are required" if not open_basis else "date_from and date_to go together")
@@ -275,10 +315,10 @@ def build(
 
     all_grants = _grants(db, user_id)
     grants = all_grants
-    if company:
-        if str(company) not in all_grants:
+    if companies:
+        if any(str(c) not in all_grants for c in companies):
             raise AppException(status_code=403, message="Company not available to you", code="FORBIDDEN")
-        grants = frozenset({str(company)})
+        grants = frozenset(str(c) for c in companies)
 
     filters: dict[str, list[str]] = {}
     if brands:
@@ -315,7 +355,11 @@ def build(
     prev_by_name = {r["name"]: r["amount"] for r in before["rows"]} if before else {}
     no_agent = 0.0
     ranked = []
+    blank_row = None
     for r in now["rows"]:
+        if by in _BLANK_APART and r["name"] == engine.BLANK_VALUE:
+            blank_row = r
+            continue
         if by == "person" and r["name"] == inv.NO_AGENT:
             no_agent = _money(r["amount"])
             continue
@@ -358,6 +402,17 @@ def build(
             row["key"] = _CHANNEL_KEYS.get(r["name"])  # the "(blank)" row has no key
         rows.append(row)
 
+    blank = None
+    if blank_row is not None:
+        prev = prev_by_name.get(engine.BLANK_VALUE, 0)
+        blank = {
+            "name": _BLANK_NAMES[by],
+            "amount": _money(blank_row["amount"]),
+            "qty": int(blank_row.get("qty") or 0),
+            "prev_amount": None if open_basis else _money(prev),
+            "change_pct": None if open_basis else _change(blank_row["amount"], prev),
+        }
+
     me = None
     if by == "person":
         for person, target in _targets(db, grants, {p: {co for co, _c in codes.get(p, set())} for p in (r["person"] for r in rows)}, basis, date_from, date_to).items():
@@ -369,6 +424,7 @@ def build(
             best["is_me"] = True
             me = {"person": best["person"], "rank": best["rank"]}
 
+    rows = _sorted(rows, sort, direction)
     total = now["total"]
     return {
         "basis": basis,
@@ -390,4 +446,5 @@ def build(
         "rows": rows,
         "me": me,
         "can_drill_others": holds,
+        "blank": blank,
     }

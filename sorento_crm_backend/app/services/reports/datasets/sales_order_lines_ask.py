@@ -73,6 +73,16 @@ def _no_options(db: Any) -> List[Any]:
     return []
 
 
+def company_options(db: Any) -> List[Any]:
+    from app.services.reports.datasets.sales_order_lines import company_options as options
+
+    return options(db)
+
+
+def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return SalesOrder.company_id.in_(values)
+
+
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return SalesOrder.customer_id.in_(values)
 
@@ -223,6 +233,8 @@ def _definition(basis: str) -> reg.ReportDefinition:
         date_bases=(reg.DateBasis("order_date", "Line date", _bucket_expr()),),
         base=_base_for(basis),
         company_column=SalesOrder.company_id,
+        company_param="company",
+        company_multi=True,
         product_id_column=SalesOrderLine.product_id,
     )
     definition = reg.ReportDefinition(
@@ -237,6 +249,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
                 # An open basis counts every date when no period is named, as the chatbot does.
                 default=reg.all_dates_period if basis == "outstanding" else reg.current_year_period,
             ),
+            reg.SelectParam("company", "Company", True, (), company_options, company_condition),
             reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
             reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition),
             reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),

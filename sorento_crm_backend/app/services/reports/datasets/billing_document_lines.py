@@ -28,6 +28,7 @@ from app.models.product import Brand, Product, ProductCategory
 from app.services.error_handler import AppException
 from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
+from app.services.reports.datasets import sales_order_lines as ds_orders
 from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR
 from app.services.reports.engine import month_label
 from app.services.sales import invoiced_sales as inv
@@ -73,7 +74,7 @@ _SALES_TYPE = inv.label_of(_DOC_TYPE.c.value)
 
 
 def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return BillingDocument.company_id == values[0]
+    return BillingDocument.company_id.in_(values)
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
@@ -216,6 +217,7 @@ DATASET = reg.Dataset(
     base=_base,
     company_column=BillingDocument.company_id,
     company_param="company",
+    company_multi=True,
     product_id_column=BillingDocumentLine.product_id,
 )
 
@@ -237,9 +239,12 @@ ASK_DEFINITION = reg.ReportDefinition(
         date_bases=DATASET.date_bases,
         base=_base,
         company_column=BillingDocument.company_id,
+        company_param="company",
+        company_multi=True,
         product_id_column=BillingDocumentLine.product_id,
     ),
     params=(
+        reg.SelectParam("company", "Company", True, (), ds_orders.company_options, company_condition),
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
         reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),

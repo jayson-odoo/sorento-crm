@@ -64,7 +64,7 @@ ROW_KEYS = {
 }
 TOP_KEYS = {
     "basis", "by", "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount",
-    "rows", "me", "can_drill_others",
+    "rows", "me", "can_drill_others", "blank",
 }
 
 
