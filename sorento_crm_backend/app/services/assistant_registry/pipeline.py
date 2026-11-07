@@ -123,7 +123,6 @@ register(
             "loss_reason": FieldDef("Loss reason"),
             "estimated_value": FieldDef("Estimated value", expr=_estimated_value),
             "owner": FieldDef("Owner", expr=_project_owner, note="The staff member who owns the project."),
-            "approval_state": FieldDef("Approval", note="approved or empty (a staff project); others are not read."),
             "is_critical": FieldDef("Critical"),
             "last_meaningful_activity_at": FieldDef("Last activity"),
             "created_at": FieldDef("Created at"),
