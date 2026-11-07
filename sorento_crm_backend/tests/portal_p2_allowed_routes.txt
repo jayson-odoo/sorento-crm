@@ -204,6 +204,7 @@ POST /projects/
 POST /projects/ai-extract
 POST /projects/clash-preview
 POST /projects/{project_id}/approve
+POST /projects/{project_id}/outcome
 POST /projects/{project_id}/parties/{party_id}/phone
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
@@ -243,7 +244,6 @@ POST /purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge
 POST /quotation-versions/{version_id}/lines
 POST /quotation-versions/{version_id}/lines/{line_id}/media-escalation
 POST /quotation-versions/{version_id}/recompute
-POST /quotations/{quotation_id}/outcome
 POST /quotations/{quotation_id}/revise
 POST /sales-orders/{pso_id}/amendments
 POST /sales-orders/{pso_id}/amendments/preview
