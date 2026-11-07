@@ -303,8 +303,13 @@ def _sorted(items: list[dict], order: list[tuple[str, str]]) -> list[dict]:
 def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set[str], spec: dict) -> dict:
     asked = _list(spec, "filters", MAX_FILTERS)
     date_from, date_to, rest, period = _window(entity, asked)
-    named = {f.get("field") for f in rest}
     notes = []
+    if period is None and entity.default_window and entity.window_field:
+        # No period named: the entity's own default window, said (crew live x3: a payout answered for today only).
+        default = {"field": entity.window_field, "op": "eq", "value": entity.default_window}
+        date_from, date_to, rest, period = _window(entity, [*asked, default])
+        notes.append(f"No period named: {entity.default_window.replace('_', ' ')}.")
+    named = {f.get("field") for f in rest}
     for field, op, value, note in entity.default_filters:
         if field not in named:
             rest.append({"field": field, "op": op, "value": value})
@@ -430,8 +435,11 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     for item in sort:
         path, _f = _field(entity, slugs, item["field"])
         order.append((path, _sort_dir(item)))
+    ranked = not order and entity.rank_by is not None
+    if ranked:
+        order = [(entity.rank_by, "desc")]
     rows = _sorted(list(rows), order) if order else rows
-    limit = _limit(spec, MAX_ROWS, DEFAULT_ROWS)
+    limit = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS)
     out_rows = []
     for row in rows[:limit]:
         item = {"id": str(row.get("id"))}
@@ -440,7 +448,12 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
         parts = [str(_plain(row.get(f))) for f in entity.name_by if f in shown and row.get(f) not in (None, "")]
         if parts:
             item["label"] = parts[0] if len(parts) == 1 else f"{parts[0]}: {' '.join(parts[1:])}"
-        item.update({f: _plain(row.get(f)) for f in shown if f not in entity.name_by})
+        # An empty figure the row explains in words ("no commission set"), never printed as 0 (crew live x3).
+        empty = row.get("_empty") or {}
+        item.update({
+            f: empty[f] if row.get(f) is None and f in empty else _plain(row.get(f))
+            for f in shown if f not in entity.name_by
+        })
         out_rows.append(item)
     columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
         {"key": f, "label": entity.fields[f].label} for f in shown if f not in entity.name_by
@@ -451,12 +464,17 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     }
     if dropped:
         out["columns_dropped"] = dropped
+    if ranked and out["truncated"]:
+        out["ranked_by"] = entity.fields[entity.rank_by].label
     shown_keys = {c["key"] for c in columns}
     totals = {}
     for f in entity.row_totals:
         if f in shown_keys:
-            # Over every matching row, not only those shown (`truncated` says how many are shown).
-            values = [r.get(f) or 0 for r in rows]
+            # Over every matching row, not only those shown (`truncated` says how many are shown). A column with
+            # no figure at all has no total (not 0).
+            values = [r.get(f) for r in rows if r.get(f) is not None]
+            if not values:
+                continue
             totals[f] = sum(values) if all(isinstance(v, int) for v in values) else round(sum(map(float, values)), 2)
     if totals:
         out["totals"] = totals
@@ -482,19 +500,28 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         if item["field"] not in names:
             raise QueryRefused("invalid", f"Sort by a group or aggregate: {', '.join(names)}.")
         order.append((item["field"], _sort_dir(item)))
+    rank = f"sum_{entity.rank_by}" if entity.rank_by else None
+    ranked = not order and rank in names
+    if ranked:
+        order = [(rank, "desc")]
     order += [(name, "asc") for name, _fn, _l in key_rows if name not in {o[0] for o in order}]
     groups = _sorted(groups, order)
     total_groups = len(groups)
+    every = groups
     groups = groups[: _limit(spec, MAX_GROUPS, MAX_GROUPS)]
     truncated = total_groups > len(groups)
     totals = {}
-    if key_rows and not truncated:
+    # Over every group, shown or not (crew live x3: a cut list had no totals row at all).
+    if key_rows:
         for alias, _fn, _label in agg_rows:
             if alias == "count" or alias.startswith(("count_", "sum_")):
-                totals[alias] = round(sum(float(g[alias] or 0) for g in groups), 2)
+                present = [g[alias] for g in every if g[alias] is not None]
+                if not present:
+                    continue
+                totals[alias] = round(sum(float(v) for v in present), 2)
                 if alias == "count" or alias.startswith("count_"):
                     totals[alias] = int(totals[alias])
-    return {
+    out = {
         "entity": entity.key,
         "groups": [{k: _plain(v) for k, v in g.items()} for g in groups],
         "total_groups": total_groups,
@@ -503,3 +530,6 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         + [{"key": alias, "label": label} for alias, _fn, label in agg_rows],
         "totals": totals,
     }
+    if ranked and truncated:
+        out["ranked_by"] = next(label for alias, _fn, label in agg_rows if alias == rank)
+    return out

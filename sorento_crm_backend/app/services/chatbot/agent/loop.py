@@ -611,6 +611,23 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return entry["status"] == "empty" and bool(term) and (
             term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
         )
+    if entry["name"] == "crm_query" and entry["status"] == "ok" and isinstance(entry.get("data"), dict):
+        # A crm_query that matched no row backs "none" for the very term it named (crew live x3, 8 Nov: "commission
+        # payout to fullshun" was prefixed with a not-confirmed line after an empty query for "fullshun").
+        data = entry["data"]
+        if data.get("rows") != [] or data.get("total"):
+            return False
+        args = entry.get("args") or {}
+        terms = [args.get("agent")] + [
+            f.get("value") for f in args.get("filters") or []
+            if isinstance(f, dict) and f.get("op") in ("eq", "contains", "starts_with")
+        ]
+        return any(
+            isinstance(t, str) and (term := _fold_text(t)) and (
+                term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+            )
+            for t in terms
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
@@ -678,7 +695,8 @@ def final_reply(
     if bad_numbers:
         text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
-        text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
+        missing = "; ".join(bad_not_found)
+        text = f"I did not search for {missing}, so I cannot say it does not exist. {text}".strip()
     if not_checked:
         text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
     left = open_parts(args, plan or [], on_limit)

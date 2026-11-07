@@ -225,7 +225,16 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
     rows = []
     for out in per.values():
         summed = out.pop("_summed")
-        complete = out.pop("_complete") and summed
+        whole = out.pop("_complete")
+        complete = whole and summed
+        # Empty figures said in words in the result itself (crew live x3, 8 Nov): never "RM 0" for no commission,
+        # and no target or achieved figure on a row that holds only targets of 0 (the note leaves them out).
+        empty = {}
+        if not out["_has_commission"]:
+            empty.update(dict.fromkeys(("commission", "bonus", "payout"), NO_COMMISSION))
+        if whole and not summed and out["_zero"]:
+            empty.update(dict.fromkeys(("target_value", "achieved_value", "achieved_pct"), ZERO_TARGET))
+        out["_empty"] = empty
         out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
         out["targets"] = len(out["targets"])
         goal, achieved = round(out["target_value"], 2), round(out["achieved_value"], 2)
@@ -239,9 +248,15 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         out["_zero"] = sorted(out["_zero"])
         out["_replaced"] = sorted(out["_replaced"])
         rows.append(out)
-    # Agents by name, then teams, then dealers.
+    # Agents by name, then teams, then dealers (the result ranks them by payout, `EntityDef.rank_by`).
     rows.sort(key=lambda r: ({"agent": 0, "team": 1}.get(r["owner_kind"], 2), r["owner"]))
     return rows
+
+
+#: What an empty payout reads as: no commission tiers on any of the row's targets.
+NO_COMMISSION = "no commission set"
+#: What target, achieved and % read as on a row of only targets of 0.
+ZERO_TARGET = "left out (target of 0)"
 
 
 def _norm(value) -> str:
@@ -262,7 +277,7 @@ def _summary_note(rows: list[dict]) -> str | None:
         parts.append(f"Left out of target and achieved (a target of 0): {_some(zero)}.")
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
-        parts.append(f"No commission is set on the targets of {_some(unset)}: payout is empty, not RM 0.")
+        parts.append(f"No commission is set on the targets of {_some(unset)}.")
     for r in rows:
         for no, by in r["_replaced"]:
             parts.append(
@@ -450,7 +465,7 @@ register(
         },
         name_by=("owner",),
         hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
-             "one row per agent, team and dealer over the window, totals row. One of them: agent=<code or name as said> "
+             "one row per agent, team and dealer, highest payout first, totals row; no period = this year. One of them: agent=<code or name as said> "
              "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
         list_fields=("owner_kind", "targets", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
@@ -459,6 +474,10 @@ register(
         brand_blind=True,
         own_note="You see only your own agents' targets: team and dealer payouts are not visible to you.",
         row_note=_summary_note,
+        rank_by="payout",
+        default_window="this_year",
+        # Every agent, team and dealer of a normal window in one result (the table is rendered by code).
+        default_limit=50,
     ),
     EntityDef(
         key="target_list",

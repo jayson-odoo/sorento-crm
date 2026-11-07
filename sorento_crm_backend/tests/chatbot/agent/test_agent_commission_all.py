@@ -120,14 +120,16 @@ def test_C4_an_agents_payout_never_includes_a_dealer_it_owns(targets):
     assert [r["label"] for r in mine["rows"]] == ["ZZT DEALER W2"]
 
 
-def test_C5_everyone_is_agents_then_teams_then_dealers_with_totals(team):
-    db, _c, t = team
+def test_C5_everyone_is_ranked_by_payout_with_totals(team):
+    """Crew live x3 (8 Nov): highest payout first, rows with no commission set last."""
+    db, _c, _t = team
     out = run(db, {"entity": ENTITY, "fields": ["owner_kind", "payout"]})
     kinds = [r["owner_kind"] for r in out["rows"]]
-    assert kinds == sorted(kinds, key=["agent", "team", "dealer"].index)
     assert {"agent", "team", "dealer"} == set(kinds)
     assert "Unassigned" not in [r["label"] for r in out["rows"]]
-    assert out["totals"]["payout"] == round(sum(r["payout"] or 0 for r in out["rows"]), 2)
+    paid = [r["payout"] for r in out["rows"] if isinstance(r["payout"], float)]
+    assert paid == sorted(paid, reverse=True)
+    assert out["totals"]["payout"] == round(sum(paid), 2)
 
 
 # ------------------------------------------------------------------ teams (Q2, Q3)
@@ -268,7 +270,7 @@ def test_E3_no_commission_set_is_said_never_shown_as_rm_0(targets):
     _plain_agent_target(client, c, value=5000)
     out = run(db, {"entity": ENTITY, "agent": "Agent C", "period": "2026-10", "fields": ["commission", "payout"]})
     [row] = out["rows"]
-    assert row["payout"] is None and row["commission"] is None
+    assert row["payout"] == row["commission"] == "no commission set"
     assert "No commission is set" in out["scope_note"] and c.sales_agent in out["scope_note"]
 
 
