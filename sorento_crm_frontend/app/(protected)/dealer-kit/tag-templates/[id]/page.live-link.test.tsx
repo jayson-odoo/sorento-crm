@@ -92,8 +92,8 @@ const box = (headerText: string): Layer => ({
   type: 'accessories',
   props: { kind: 'accessories', direction: 'vertical', headerText, presetId: 'p1' },
 });
-const serverRecord = (headerText: string) =>
-  ({ id: 'p1', name: 'FREE', used_in: 1, design: { direction: 'vertical', headerText } }) as never;
+const serverRecord = (headerText: string, updated_at = 'U1') =>
+  ({ id: 'p1', name: 'FREE', used_in: 1, updated_at, design: { direction: 'vertical', headerText } }) as never;
 
 function fixture(layers: Layer[]) {
   return {
@@ -122,6 +122,19 @@ beforeEach(() => {
 });
 
 describe('live link on autosave', () => {
+  it('when the template was saved elsewhere since this tag loaded, nothing is pushed and the server design wins', async () => {
+    vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
+    vi.mocked(updateTemplate).mockResolvedValue(fixture([box('EDITED')]));
+    // Loaded at U1; by the first save the template is at U2 with a newer design.
+    link.fetch.mockResolvedValueOnce(serverRecord('OLD', 'U1')).mockResolvedValue(serverRecord('NEWER', 'U2'));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    await editThenAutosave('Edit the box');
+    expect(link.push).not.toHaveBeenCalled();
+    const [patches] = link.patches.mock.calls[0] as unknown as [{ props: { headerText: string } }[]];
+    expect(patches[0].props.headerText).toBe('NEWER');
+  });
+
   it('a box that was already linked and is edited is pushed to its template', async () => {
     vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
     vi.mocked(updateTemplate).mockResolvedValue(fixture([box('EDITED')]));
@@ -131,7 +144,7 @@ describe('live link on autosave', () => {
     await editThenAutosave('Edit the box');
     expect(link.push).toHaveBeenCalledWith({
       id: 'p1',
-      input: { design: expect.objectContaining({ headerText: 'EDITED' }) },
+      input: { design: expect.objectContaining({ headerText: 'EDITED' }), base_updated_at: 'U1' },
     });
   });
 

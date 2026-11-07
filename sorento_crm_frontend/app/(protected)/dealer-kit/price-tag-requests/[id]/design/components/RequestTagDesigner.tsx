@@ -1018,17 +1018,30 @@ export function RequestTagDesigner({
     // Loaded on first use: most requests carry no linked box.
     const { findAccessoryTemplate } = await import('../../../../services/accessoryTemplateService');
     const fixes: Record<string, LinkAction[]> = {};
+    // Each template is read once per refresh, however many tags carry a box of it.
+    const reads = new Map<string, ReturnType<typeof findAccessoryTemplate>>();
+    const readOnce = (id: string) => {
+      if (!reads.has(id)) reads.set(id, findAccessoryTemplate(id));
+      return reads.get(id)!;
+    };
     for (const [tagId, tag] of linked) {
-      const actions = await linkRefreshActions(tag.layers, findAccessoryTemplate);
+      const actions = await linkRefreshActions(tag.layers, readOnce);
       if (actions.length > 0) fixes[tagId] = actions;
     }
     const ids = Object.keys(fixes);
     if (ids.length === 0) return;
     const selected = selectedIdRef.current;
     const live = selected && fixes[selected] ? linkPatchesRef.current : null;
+    // Loading the sheet is the page's doing, not an edit: neither the live patch (which reaches `tags`
+    // through the canvas's own change stream) nor the state update below may schedule a save. The guard
+    // is consumed by the next `doc` change, and dropped shortly after in case nothing changed.
+    if (!persist) {
+      autoCloneRef.current = true;
+      setTimeout(() => {
+        autoCloneRef.current = false;
+      }, 100);
+    }
     if (live && selected) live(linkCorrectionPatches(tagsRef.current[selected].layers, fixes[selected]));
-    // Loading the sheet is the page's doing, not an edit: it must not write a design by itself.
-    if (!persist) autoCloneRef.current = true;
     setTags((prev) => {
       const next = { ...prev };
       for (const tagId of ids) {

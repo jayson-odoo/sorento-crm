@@ -199,27 +199,26 @@ describe('a correction from the host is never an undo step', () => {
     const ref: { current: ((patches: unknown[]) => void) | null } = { current: null };
     const state = mount(accessoriesLayer('acc1', { card, presetId: 'p1', headerText: 'MINE' }), undefined, ref);
     fireEvent.click(screen.getByTestId('layer-acc1'));
-    // The user's edit: Footer note on.
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Footer note' }));
-    const edited = state.layers[0].props as unknown as Record<string, unknown> & { footer?: { show: boolean } };
-    expect(edited.footer?.show).toBe(true);
+    // The user's edit: nudge the box.
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(state.layers[0].x_mm).toBe(5.25);
+    const current = state.layers[0].props as never;
 
-    // The host's correction: the template's newer design (a different header).
+    // The host's correction: the template's newer design.
     act(() => {
       ref.current?.([
         {
           layerId: 'acc1',
-          expectedKey: designKey(accessoryDesign(edited as never)),
-          props: { ...edited, headerText: 'SERVER' },
+          expectedKey: designKey(accessoryDesign(current)),
+          props: { ...(current as object), headerText: 'SERVER' },
         },
       ]);
     });
     expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('SERVER');
 
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
-    const after = state.layers[0].props as unknown as { headerText: string; footer?: { show: boolean } };
-    expect(after.footer?.show ?? false).toBe(false);
-    expect(after.headerText).toBe('SERVER');
+    expect(state.layers[0].x_mm).toBe(5);
+    expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('SERVER');
   });
 
   it('skips a box the user changed meanwhile', () => {
