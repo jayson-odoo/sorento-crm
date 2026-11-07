@@ -155,7 +155,9 @@ def test_W9_per_account_rates_pay_the_rest_in_the_mix_sold_so_far(two_accounts):
     db, _c, t = two_accounts
     row, out = _one(db, t["a1"].customer_code, ["01/10/2026", "31/12/2026"])
     assert (row["to_next_tier"], row["next_tier_payout"]) == (60000.0, 2500.0)
-    assert "mix sold so far" in out["scope_note"]
+    note = out["scope_note"]
+    assert "if the rest comes in the same account mix as sold so far" in note
+    assert "ZZT MIX ONE 2%, ZZT MIX TWO 4%" in note
 
 
 def test_W10_per_account_rates_with_nothing_sold_split_evenly(two_accounts):
@@ -195,3 +197,12 @@ def test_W13_the_per_period_rows_carry_the_same_next_tier(targets):
                    "period": OCT, "fields": NEXT})
     [row] = out["rows"]
     assert (row["to_next_tier"], row["next_tier_payout"], row["next_tier_gain"]) == (1000.0, 300.0, 120.0)
+
+
+def test_W14_a_plain_payout_question_carries_no_next_tier_lines(targets):
+    db, _c, _t = targets
+    out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "fields": ["payout"]})
+    assert "Next tier" not in (out["scope_note"] or "")
+    asked = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "fields": ["payout"],
+                     "sort": [{"field": "to_next_tier", "dir": "asc"}]})
+    assert "Next tier" in asked["scope_note"]

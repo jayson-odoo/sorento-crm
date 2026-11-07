@@ -20,6 +20,26 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 TARGETS_VIEW = "sales.targets.view"
 
 
+#: W-A (AGENT-COMMISSION-WA): the next rung of the target page's own tier ladder, on the per-period rows and on a
+#: summary row whose subject has one commission target in the window.
+NEXT_TIER_FIELDS = {
+    "next_tier": FieldDef(
+        "Next tier", kind="number",
+        note="The next tier's number on the target's ladder; empty at the top tier, without commission, or when the "
+             "subject has several targets (then the note answers target by target).",
+    ),
+    "next_tier_at": FieldDef("Next tier from (RM)", kind="number", note="Where the next tier starts."),
+    "to_next_tier": FieldDef("To the next tier (RM)", kind="number", note="Still to sell to reach the next tier."),
+    "next_tier_payout": FieldDef(
+        "Payout at the next tier", kind="number",
+        note="Commission plus bonus the period would pay on reaching the next tier (the same engine as the page).",
+    ),
+    "next_tier_gain": FieldDef(
+        "More at the next tier", kind="number", note="Payout at the next tier minus the payout now.",
+    ),
+}
+
+
 def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
     from sqlalchemy import or_, select
 
@@ -127,9 +147,24 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "payout": round((commission or 0) + (bonus or 0), 2) if has_commission else None,
                 "replaced": fig["replaced"],
                 "replaced_by": replacing.get(target.replaced_by_target_id) if fig["replaced"] else None,
+                **_next_fields(fig["next_tier"]),
+                "_next": fig["next_tier"],
+                "_has_tiers": has_commission,
             }
         )
     return rows
+
+
+def _next_fields(nxt: dict | None) -> dict:
+    """The next rung of one period (`target_service._next_tier`, the page's own ladder and engine) as fields."""
+    nxt = nxt or {}
+    return {
+        "next_tier": nxt.get("tier"),
+        "next_tier_at": nxt.get("threshold"),
+        "to_next_tier": nxt.get("gap"),
+        "next_tier_payout": nxt.get("payout"),
+        "next_tier_gain": nxt.get("gain"),
+    }
 
 
 def _below(pct) -> bool:
@@ -222,8 +257,17 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
                 out[k] = round((out[k] or 0.0) + row[k], 2)
         if row.get("replaced_by"):
             out["_replaced"].add((row["target_no"], row["replaced_by"]))
+        if row["_has_tiers"]:
+            out.setdefault("_periods", {}).setdefault(row["target_no"], []).append(row)
     rows = []
     for out in per.values():
+        # W-A: each commission target's live period, the row's numbers only when there is one (owner card Q2 a).
+        live = [_live(p) for _no, p in sorted(out.pop("_periods", {}).items())]
+        out["_live"] = [
+            {"target_no": p["target_no"], "start": p["period_start"], "end": p["period_end"], "next": p["_next"]}
+            for p in live
+        ]
+        out.update(_next_fields(live[0]["_next"] if len(live) == 1 else None))
         summed = out.pop("_summed")
         complete = out.pop("_complete") and summed
         out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
@@ -253,7 +297,47 @@ def _some(names: list[str], most: int = 5) -> str:
     return f"{shown} and {len(names) - most} more" if len(names) > most else shown
 
 
-def _summary_note(rows: list[dict]) -> str | None:
+def _live(periods: list[dict]) -> dict:
+    """The one period of a target the next-tier answer reads: today's, else the last one started by today, else the
+    window's first (a window wholly in the future)."""
+    from app.services.sales.team_service import _today
+
+    current = [p for p in periods if p["is_current"]]
+    if current:
+        return current[0]
+    started = [p for p in periods if p["period_start"] <= _today()]
+    return started[-1] if started else periods[0]
+
+
+#: The most next-tier lines one answer carries.
+NEXT_LINES = 10
+
+
+def _rm(value) -> str:
+    return f"RM {value:,.2f}"
+
+
+def _next_line(owner: str, live: dict) -> str:
+    from app.services.sales.team_service import _today
+
+    nxt, no = live["next"], live["target_no"]
+    when = f"{live['start']:%d/%m/%Y} to {live['end']:%d/%m/%Y}" + (" (closed)" if live["end"] < _today() else "")
+    if nxt is None:
+        return f"{no} ({owner}, {when}) has reached its top tier: no next tier."
+    line = (
+        f"{no} ({owner}, {when}): tier {nxt['tier']} at {_rm(nxt['threshold'])}, {_rm(nxt['gap'])} to go, would pay "
+        f"{_rm(nxt['payout'])} ({_rm(nxt['gain'])} more than now)"
+    )
+    if nxt.get("mix") == "so_far":
+        line += ", if the rest comes in the same account mix as sold so far"
+    elif nxt.get("mix") == "even":
+        line += ", with nothing sold yet: if the rest is split evenly across the accounts"
+    if nxt.get("rates"):
+        line += " (rates on that tier: " + ", ".join(f"{r['label']} {r['rate']:g}%" for r in nxt["rates"]) + ")"
+    return line + "."
+
+
+def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     """What the answer must say about the rows it shows (owner C3, Q5): which targets of 0 were left out of target
     and achieved, whose payout is empty because no commission is set (never "RM 0"), and a replaced dealer period."""
     parts = []
@@ -268,6 +352,15 @@ def _summary_note(rows: list[dict]) -> str | None:
             parts.append(
                 f"{no} ({r['owner']}) is replaced by {by} in the periods that target reached a tier, so it pays 0 there."
             )
+    # Next tier (W-A): one line per commission target's live period, so a subject with several targets is answered
+    # target by target (owner card Q2 a: a sum of two distances is not a distance).
+    # Only when the question is about the next tier (one of its fields asked, filtered or sorted on).
+    asked = used & NEXT_TIER_FIELDS.keys()
+    lines = [_next_line(r["owner"], live) for r in rows for live in r.get("_live", [])] if asked else []
+    if lines:
+        parts.append("Next tier: " + " ".join(lines[:NEXT_LINES]))
+        if len(lines) > NEXT_LINES:
+            parts.append(f"And {len(lines) - NEXT_LINES} more targets: ask for one agent, team or dealer.")
     return " ".join(parts) or None
 
 
@@ -382,6 +475,7 @@ register(
                 "Replaced by dealer target", kind="boolean",
                 note="True when the dealer's own target reached a tier, so this one pays nothing.",
             ),
+            **NEXT_TIER_FIELDS,
         },
         name_by=("target_no", "subject"),
         screen_path="/sales/targets/{target_id}",
@@ -447,11 +541,13 @@ register(
                 "Replaced by", kind="text",
                 note="A dealer target that replaced this dealer's own target in a period it reached a tier (pays 0).",
             ),
+            **NEXT_TIER_FIELDS,
         },
         name_by=("owner",),
-        hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
-             "one row per agent, team and dealer over the window, totals row. One of them: agent=<code or name as said> "
-             "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
+        hint="COMMISSION PAYOUT / TARGET vs ACHIEVED / NEXT TIER (how far to it, what it would pay) for an agent, a "
+             "team or a dealer, or per agent / team / dealer: one row per agent, team and dealer over the window, "
+             "totals row. One of them: agent=<code or name as said> (an agent, team or dealer); only dealers or "
+             "teams: owner_kind eq dealer|team",
         list_fields=("owner_kind", "targets", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
