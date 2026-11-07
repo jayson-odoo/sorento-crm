@@ -13,14 +13,14 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md.
 
 Revision ID: npasi_0001_lineage
-Revises: sbt_0001_billing_subtotal_lines
+Revises: sales_0007_targets_view_own
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "npasi_0001_lineage"
-down_revision = "sbt_0001_billing_subtotal_lines"
+down_revision = "sales_0007_targets_view_own"
 branch_labels = None
 depends_on = None
 
