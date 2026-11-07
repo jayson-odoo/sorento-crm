@@ -8,6 +8,9 @@ Two nodes, no witness server: the third vote is the Cloudflare LB's own health v
 node (monitor `GET /api/v1/health/role`, 200 only where the local Postgres is writable).
 
 - `decide()` is pure (no I/O, no clock) and holds every rule. infra/tests/test_cf_failover.py.
+- Section 3 sync record (PLAN-ha-b-replica-sync-07nov.md): P4'/S1' read the R2 record through
+  `ha-pg.sh sync-record get|put`. Env: CONTROLLER_ARMED=yes (else exit 3), PEER_APP_NAME, and for
+  SYNC_MODE != off R2_ENDPOINT, R2_BUCKET, R2_CREDENTIALS_FILE.
 - `main()` observes (infra/scripts/ha-pg.sh observe + the Cloudflare pool health API), calls
   `decide()`, runs the actions through ha-pg.sh, pets the watchdog, persists the state.
 
@@ -60,6 +63,7 @@ class Config:
     sync_mode: str = "off"
     reseed_keep_days: int = 7
     max_obs_gap: int = 45
+    peer_app_name: str = ''
 
     @classmethod
     def from_env(cls, env) -> "Config":
@@ -80,6 +84,9 @@ class Config:
         for k, v in (("NODE_NAME", node), ("PEER_NAME", peer)):
             if not NAME_RE.match(v):
                 raise ConfigError(f"{k} must match {NAME_RE.pattern}")
+        pan = env.get("PEER_APP_NAME") or peer
+        if not NAME_RE.match(pan):
+            raise ConfigError("PEER_APP_NAME bad")
         if node == peer:
             raise ConfigError("PEER_NAME must differ from NODE_NAME")
 
@@ -116,6 +123,7 @@ class Config:
             max_lag=num("MAX_LAG", 16 * 1024 * 1024),
             sync_mode=sync_mode,
             reseed_keep_days=num("RESEED_KEEP_DAYS", 7),
+            peer_app_name=pan,
             max_obs_gap=num("MAX_OBS_GAP", 3 * tick),
         )
 
@@ -130,7 +138,10 @@ class Obs:
     cf_self: str                 # healthy | unhealthy | unknown (Cloudflare's view of this node)
     cf_peer: str                 # same for the peer
     sync_names: str = ""         # synchronous_standby_names on this node, quotes stripped
-    peer_slot_ok: bool = True    # primary only: the peer's replication slot exists and is usable
+    peer_slot_ok: bool = True
+    rec_mode: str = 'unknown'
+    rec_primary: Optional[str] = None
+    rec_since: Optional[int] = None
 
 
 # Windows: seconds a condition has held without a break. Reset when the controller was not
@@ -157,6 +168,7 @@ def initial_state() -> dict:
         "peer_last_role": None,
         "lag_alerted": False,
         "two_primaries_alerted": False,
+        "rec_alerted": False,
         **{k: None for k in WINDOWS},
     }
 
@@ -252,9 +264,15 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             fence(f"app sick: Cloudflare-unhealthy for {int(sick)}s with a streaming standby")
             return s, acts
 
-        desired = c.peer_name if (c.sync_mode != "off" and o.self_streaming) else ""  # P4
+        desired = c.peer_app_name if (c.sync_mode != "off" and o.self_streaming) else ""  # P4
+        want = "sync" if desired else "async"
         if o.sync_names != desired:
-            acts.append(("set_sync", desired))
+            if desired:
+                acts.append(("set_sync", desired)); acts.append(("sync_record", "sync"))
+            else:
+                acts.append(("sync_record", "async")); acts.append(("set_sync", ""))
+        elif o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name):
+            acts.append(("sync_record", want))
         if not o.peer_slot_ok:  # P5: the standby can only stream into its slot
             acts.append(("ensure_slot",))
         return s, acts
@@ -274,6 +292,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         not_streaming = held("not_streaming_since", not o.self_streaming)
         both = held("both_standby_since", o.peer_pg == "standby")
         if o.self_streaming:
+            s["rec_alerted"] = False
             s["lag_alerted"] = False
             s["rejoins_since_stream"] = 0
 
@@ -289,7 +308,13 @@ def decide(state: dict, o: Obs, now: float, c: Config):
                                           f"({behind} bytes > {c.max_lag}); NOT promoting"))
                     s["lag_alerted"] = True
                 return s, acts
+            if not (o.rec_mode == "sync" and o.rec_primary == c.peer_name):
+                if not s["rec_alerted"]:
+                    s["rec_alerted"] = True
+                    acts.append(("alert", f"record async since {o.rec_since}" if o.rec_mode == "async" else "sync record could not be read"))
+                return s, acts
             promote(f"peer Cloudflare-unhealthy and unreachable for {c.promote_after}s")
+            acts.append(("sync_record", "async"))
             return s, acts
 
         # S2
@@ -458,6 +483,9 @@ def main() -> int:
     except ConfigError as e:
         log(f"config refused: {e}")
         return 2
+    if env.get("CONTROLLER_ARMED") != "yes":
+        log("not armed (CONTROLLER_ARMED=yes in ha-pg.env arms it, after the section 3 drill)")
+        return 3
     pg_cmd = env.get("PG_CMD", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ha-pg.sh"))
     state_path = env.get("STATE_FILE", "/var/lib/sorento-ha/cf-failover.json")
     alert_cmd = env.get("ALERT_CMD", "")
@@ -471,6 +499,9 @@ def main() -> int:
         return 2
     if token_file and os.path.exists(token_file) and os.stat(token_file).st_mode & 0o077:
         log(f"warning: {token_file} is readable by group or others; make it mode 600")
+    if c.sync_mode != "off" and not all(env.get(k) for k in ("R2_ENDPOINT", "R2_BUCKET", "R2_CREDENTIALS_FILE")):
+        log("config refused: R2")
+        return 2
     watchdog = Watchdog(env.get("WATCHDOG_DEVICE", ""))
 
     def stop(signum, frame):
@@ -508,7 +539,12 @@ def main() -> int:
         self_pg = d.get("self_pg") if d.get("self_pg") in ROLES else None
         if self_pg is None:
             raise RuntimeError(f"observe failed (rc={rc})")
+        rrc, rout = run_cmd([pg_cmd, "sync-record", "get"], watchdog, 15, c.tick)
+        rd = parse_observe(rout) if rrc == 0 else {}
+        rsince = rd.get("rec_since", "")
         o = Obs(
+            rec_mode=rd.get("rec_mode") if rd.get("rec_mode") in ("sync", "async") else "unknown",
+            rec_primary=rd.get("rec_primary"), rec_since=int(rsince) if rsince.isdigit() else None,
             self_pg=self_pg,
             self_streaming=d.get("self_streaming") == "t",
             self_lsn=lsn("self_lsn"),
@@ -527,6 +563,13 @@ def main() -> int:
                 continue
             log(f"action {a[0]} {' '.join(a[1:])} (obs {o})")
             argv = [pg_cmd, a[0].replace("_", "-")] + list(a[1:])
+            if a[0] == "sync_record":
+                argv = [pg_cmd, "sync-record", "put", a[1]]
+                rc, out = run_cmd(argv, watchdog, 30, c.tick)
+                if rc != 0:
+                    alert("sync record write failed; NOT dropping the sync standby")
+                    break
+                continue
             if a[0] == "fence":
                 # Bounded well inside FENCE_MARGIN, never keeping the box alive while it runs.
                 rc, out = run_cmd(argv, watchdog, FENCE_TIMEOUT, c.tick, keepalive=False)

@@ -140,6 +140,40 @@ class FakeCF:
                     setattr(self, k, v)
 
 
+class FakeR2:
+    """One object store slot for the sync record: PUT stores the body, GET returns it (404 before
+    the first PUT). No signature check; the adapter only has to reach it on 127.0.0.1."""
+
+    def __init__(self):
+        self.body = None
+        r2 = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_PUT(self):
+                r2.body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def do_GET(self):
+                if r2.body is None:
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(r2.body)))
+                self.end_headers()
+                self.wfile.write(r2.body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+
 # ---------------------------------------------------------------- stack
 
 
@@ -147,6 +181,7 @@ class Stack:
     def __init__(self, workdir: Path, cf: FakeCF):
         self.dir = workdir
         self.cf = cf
+        self.r2 = FakeR2()
         self.procs = {}
 
     def adapter_env(self, n):
@@ -163,6 +198,9 @@ class Stack:
             "PEER_PSQL": f"docker exec drill-probe-{n} psql",
             "WORKERS_STOP": "true",
             "SYNC_MODE": "remote_write",
+            "CONTROLLER_ARMED": "yes", "ROLE_WATCHER_ARMED": "yes",
+            "R2_ENDPOINT": f"http://127.0.0.1:{self.r2.port}", "R2_BUCKET": "drill",
+            "R2_CREDENTIALS_FILE": str(self.dir / "r2-credentials"),
         }
 
     def up(self):
@@ -221,6 +259,7 @@ class Stack:
                "CF_API_TOKEN_FILE": str(self.dir / "token"),
                "ALERT_CMD": f"cat >> {self.dir}/alerts-{n}.log; echo >> {self.dir}/alerts-{n}.log"}
         (self.dir / "token").write_text("drill-token\n")
+        (self.dir / "r2-credentials").write_text("AWS_ACCESS_KEY_ID=drill\nAWS_SECRET_ACCESS_KEY=drill\n")
         log = open(self.dir / f"controller-{n}.log", "a")
         self.procs[n] = subprocess.Popen([sys.executable, str(CONTROLLER)], env=env, stdout=log, stderr=subprocess.STDOUT)
 

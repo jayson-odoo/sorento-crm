@@ -33,6 +33,7 @@ PROJECT_DIR="${PROJECT_DIR:-.}"
 MAX_TICKS="${MAX_TICKS:-0}"
 DEPLOY_LOCK_PATH="${DEPLOY_LOCK_PATH:-/opt/sorento-crm2/.deploy.lock}"
 
+[ "${ROLE_WATCHER_ARMED:-}" = yes ] || { echo "role-watcher: not armed (ROLE_WATCHER_ARMED=yes in ha-pg.env arms it)"; exit 3; }
 cd "$PROJECT_DIR" || { echo "role-watcher: cannot cd to $PROJECT_DIR" >&2; exit 1; }
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) role-watcher: $*"; }

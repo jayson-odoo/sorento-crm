@@ -17,6 +17,8 @@
 #                      exit 0 = rewound, 3 = re-seeded, other = failed
 #   ensure-slot        on the primary: (re)create the peer's replication slot if missing or lost
 #   set-sync NAMES     synchronous_standby_names (empty = async), synchronous_commit from SYNC_MODE
+#   sync-record get    key=value lines rec_mode rec_primary rec_since from the R2 sync record (exit 1 = unreadable)
+#   sync-record put M  write {mode M (sync|async), primary NODE_NAME, since now} to R2 (exit 1 = failed)
 #   prune DAYS         delete moved-aside data directories older than DAYS
 #
 # Env (the same file on both nodes except the names and PEER_HOST):
@@ -31,6 +33,9 @@
 #   PEER_PSQL              psql that reaches the peer over the private link (host client)
 #   WORKERS_STOP           command (sh -c) that stops worker + worker_fast (the role watcher would stop them a tick later)
 #   SYNC_MODE              off | remote_write | on_commit
+#   SELF_APP_NAME PEER_APP_NAME   application_name of this / the peer standby (default NODE_NAME / PEER_NAME)
+#   SELF_SLOT PEER_SLOT           replication slot names (default NODE_NAME / PEER_NAME, dashes to underscores)
+#   R2_ENDPOINT R2_BUCKET R2_CREDENTIALS_FILE [SYNC_RECORD_KEY]   sync record (https, or http://127.0.0.1 for tests)
 # Passwords: never in this env. The replication user's password sits in a pgpass file read by
 # both the container and the host client (PGPASSFILE), mode 600.
 set -uo pipefail
@@ -52,10 +57,13 @@ for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
 
-SELF_SLOT=${NODE_NAME//-/_}
-PEER_SLOT=${PEER_NAME//-/_}
+SELF_APP_NAME="${SELF_APP_NAME:-$NODE_NAME}"; PEER_APP_NAME="${PEER_APP_NAME:-$PEER_NAME}"
+SELF_SLOT="${SELF_SLOT:-${NODE_NAME//-/_}}"; PEER_SLOT="${PEER_SLOT:-${PEER_NAME//-/_}}"
+name_ok "$SELF_APP_NAME" && name_ok "$PEER_APP_NAME" || { echo "ha-pg: app name invalid" >&2; exit 2; }
+slot_ok() { [[ "$1" =~ ^[a-z0-9_]{1,63}$ ]]; }
+slot_ok "$SELF_SLOT" && slot_ok "$PEER_SLOT" || { echo "ha-pg: slot invalid" >&2; exit 2; }
 PEER_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER dbname=postgres connect_timeout=3 $PEER_CONNINFO_EXTRA"
-STANDBY_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER application_name=$NODE_NAME $PEER_CONNINFO_EXTRA"
+STANDBY_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER application_name=$SELF_APP_NAME $PEER_CONNINFO_EXTRA"
 
 # shellcheck disable=SC2086
 local_sql() { timeout 20 $PG_EXEC psql -XAtq -F'|' -d postgres -v ON_ERROR_STOP=1 -c "$1"; }
@@ -72,7 +80,7 @@ SELF_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END
         ELSE pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0') END)::bigint,
   (CASE WHEN pg_is_in_recovery()
         THEN EXISTS (SELECT 1 FROM pg_stat_wal_receiver WHERE status = 'streaming')
-        ELSE EXISTS (SELECT 1 FROM pg_stat_replication WHERE application_name = '$PEER_NAME' AND state = 'streaming') END),
+        ELSE EXISTS (SELECT 1 FROM pg_stat_replication WHERE application_name = '$PEER_APP_NAME' AND state = 'streaming') END),
   replace(current_setting('synchronous_standby_names'), '\"', ''),
   (CASE WHEN pg_is_in_recovery() THEN true
         ELSE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT' AND coalesce(wal_status, '') <> 'lost') END)"
@@ -188,6 +196,27 @@ case "$cmd" in
     fi
     local_sql "SELECT pg_reload_conf()" >/dev/null
     ;;
+  sync-record)
+    [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${R2_CREDENTIALS_FILE:-}" ] || exit 2
+    [[ "$R2_ENDPOINT" =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://127\.0\.0\.1(:[0-9]+)?)(/.*)?$ ]] || exit 2
+    url="$R2_ENDPOINT/$R2_BUCKET/${SYNC_RECORD_KEY:-ha/sync-state.json}"
+    id=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' "$R2_CREDENTIALS_FILE"); sec=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' "$R2_CREDENTIALS_FILE")
+    cfg() { printf 'user = "%s:%s"\n' "$id" "$sec"; }
+    case "${2:-}" in
+      get)
+        body=$(cfg | curl -fsS -m 5 -K - --aws-sigv4 "aws:amz:auto:s3" "$url") || exit 1
+        printf '%s' "$body" | python3 -c '
+import json,re,sys
+d=json.load(sys.stdin)
+assert d["mode"] in ("sync","async") and re.fullmatch(r"[a-z0-9_-]{1,32}",d["primary"])
+assert type(d["since"]) is int and d["since"]>=0
+print("rec_mode=%s\nrec_primary=%s\nrec_since=%d"%(d["mode"],d["primary"],d["since"]))' || exit 1 ;;
+      put)
+        m="${3:-}"; [ "$m" = sync ] || [ "$m" = async ] || exit 2
+        code=$(cfg | curl -sS -m 5 -K - --aws-sigv4 "aws:amz:auto:s3" -o /dev/null -w '%{http_code}' -X PUT --data "{\"mode\": \"$m\", \"primary\": \"$NODE_NAME\", \"since\": $(date +%s)}" "$url") || exit 1
+        [ "$code" = 200 ] || exit 1 ;;
+      *) exit 2 ;;
+    esac ;;
   prune)
     days="${2:-7}"
     [[ "$days" =~ ^[0-9]+$ ]] || exit 2

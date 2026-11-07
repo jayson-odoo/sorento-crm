@@ -14,6 +14,8 @@ ExecStart=/usr/bin/python3 /opt/sorento-crm2/infra/scripts/cf_failover.py
 # A clean stop disarms the watchdog first (SIGTERM handler); a crash or hang lets it fire.
 KillSignal=SIGTERM
 Restart=always
+# Exit 3 = disarmed (ARMED flag not "yes" in ha-pg.env): stay down instead of restart-looping.
+RestartPreventExitStatus=3
 RestartSec=5
 
 [Install]

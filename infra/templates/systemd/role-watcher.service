@@ -13,6 +13,8 @@ Environment="COMPOSE_FILES=-f docker-compose.yml -f compose.ha.yml"
 Environment=DEPLOY_LOCK_PATH=/opt/sorento-crm2/.deploy.lock
 ExecStart=/opt/sorento-crm2/infra/scripts/role-watcher.sh
 Restart=always
+# Exit 3 = disarmed (ARMED flag not "yes" in ha-pg.env): stay down instead of restart-looping.
+RestartPreventExitStatus=3
 RestartSec=5
 
 [Install]
