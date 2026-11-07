@@ -1,11 +1,8 @@
 # PLAN: chatbot totals vs top-N, company vs brand, clearing a held filter, combined turn (4 Nov 2026)
 
-Status: Review (M track, LEAD pattern), owner hand test 1 fix rounds. 4 Nov: owner hand test 1 FAIL on v199 ("sorento
-company only" read as the brand; a filter follow-up asked "How many?"). 5 Nov round 2: Company candidates block + entity
-said_as (UAC HT1-1..12), candidate v200 9ad88b43, stability 39/39. Crew re-pass on v200: a bare "Sorento" got said_as
-company with no kind word (2 of 3), so round 3 adds entity said_as_text (HT1-13..17), candidate v202 d29c1983: gate 5 24
-of 34 (bare rows pass), TRAIN slice 1 not worse (42 vs 44, p=0.73). Earlier answers: Q1 (a) new path only; Q3 (a) held
-filters survive until the user changes them; Q2 (c) ask once, both must work; Q5 no code.
+Status: merged (main 2adb19b7, 5 Nov 2026, owner hand test PASS); shipped in release 30bbcc6a7c with parser text v202
+md5 d29c1983 on the production label (prod v72). Follow-up for the owner's prod transcript on v72 (widen and re-ask):
+PLAN-chatbot-report-widen-reask-7nov.md.
 
 ## Journey
 
