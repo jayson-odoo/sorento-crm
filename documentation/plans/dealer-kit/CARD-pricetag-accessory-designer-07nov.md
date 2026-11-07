@@ -1,10 +1,54 @@
 # CARD: accessory card layout, designed inside the Tag Template designer (PRICETAG-ACCESSORY-DESIGNER, 07/11/2026)
 
-Behaviour card. Owner 7 Nov ~21:35 + ~21:45. Mock: `pricetag-accessory-designer-mock.html` (same
+Behaviour card v2. Owner 7 Nov ~21:35 + ~21:45, rulings ~21:55. Mocks: v1 `pricetag-accessory-designer-mock.html`, v2 `pricetag-accessory-designer-mock-v2.html` (same
 folder). **No build before the owner OKs the mock.** Builds on PRICETAG-ACCESSORIES (#2211, card
 `CARD-pricetag-accessories-06nov.md`, rulings Q1-Q5 + A13-A16 stand) and coordinates with
 PRICETAG-ACC-LABELS (#2235, labels + designer drop warning: this lane reuses that warning, does not
 redo it).
+
+## Owner rulings on v1 (7 Nov ~21:55). These win over the v1 rules below.
+
+- Q1 (b) **live link**: a saved accessories template is linked, not copied. Saving it updates every
+  box that uses it, in every tag template ("that's how it behaves now": a request line already
+  prints with its tag template live, `price_tag_request_lines.tag_template_id`,
+  `app/models/price_tag.py:246`). Each box has **Detach** to break the link and keep a private copy.
+- Q2 (a), crew's call: shrink together to a 70% minimum, then whole cards only + the warning.
+- Q3 (a): the picture chosen on the list entry, default the first; dots show all colours.
+- Q4: **nothing fixed**. Colour dots are a freely placed element (move, resize, hide) on the card
+  AND in the footer; no fixed spot. The footer dots show the box's colours (de-duplicated) unless
+  set by hand on that element.
+- Q5 (b) **both**: the designer's Accessories menu AND a management page
+  `/dealer-kit/accessory-templates`, like Dealer Kit > Tag Sizes.
+- Owner on mock v1: "so where do i design the drag and drop of the accessories, like how do I put
+  the colour circles in" / "where do I design the layout of the accesories box?". Mock v2 answers
+  both click by click (`pricetag-accessory-designer-mock-v2.html`).
+
+### Rules v2 (replace D6-D8 and F1-F2 where they differ)
+
+V1. **Card editing mode** (the answer to "where do I design"): select the box, then double-click it
+    or click **Edit card** in the inspector. The toolbar swaps to `Editing card: Picture | Text |
+    Colour dots | Shape | Done`; card 1 is outlined, the others fade and follow live. Click a tool
+    to drop that element in the middle of card 1, drag it anywhere inside the card, resize it by its
+    corner handles, hide it from the inspector (eye) or delete it (Delete key). Snapping guides as
+    on the tag. **Done**, Escape or a click outside the box leaves.
+V2. **Colour dots element**: inspector sets dot size, gap, row or column, outline, and which colours
+    (this accessory's, the default; or hand-picked). Resizing the element by its handle resizes the
+    dots.
+V3. **Box layout** (box selected, inspector): Header (text, on border, show), Direction (vertical /
+    horizontal), Gap between cards, Inner margin, Shrink to fit (on; minimum 70%), Frame (fill,
+    border, corners), Footer (show). **Edit footer** (or double-click the footer) enters footer
+    editing mode, same tools minus Picture; the footer note and its dots are placed freely there.
+V4. **Live link**: a box made from a saved accessories template shows `Linked: <name> (used in N
+    tag templates)`. Editing its card, footer or box layout in place edits the saved template: a
+    banner says "Changes here update N tag templates" before the first change sticks (Undo works).
+    Position, size and "Reads from" stay per box and never link. **Detach** keeps the current design
+    as this box's own copy; it no longer follows.
+V5. **Management page** `/dealer-kit/accessory-templates` (Dealer Kit sidebar, beside Tag Sizes):
+    DataGrid with thumbnail, name, used in (N tag templates, click to list them), updated
+    (dd/mm/yyyy), by. Rename in a modal, deferred-action delete (10 s countdown, no confirm). Deleting
+    one detaches every box using it (each keeps its last design). No design editing on the page:
+    the design is always edited in the Tag Template designer. Permission `dealer_kit.tag_templates.view`
+    / `.manage`, as Tag Sizes.
 
 ## Owner asks (verbatim intent)
 
@@ -141,7 +185,7 @@ grey box); no colours (dots element prints nothing); per-use picture deleted fro
 D7 copy rule); entering a box with an empty list (2 sample cards to style, as today, A7); a card
 element bound to Price on a library accessory (prints nothing: accessories have no price).
 
-## Questions (max 5, recommendation first)
+## Questions (v1, ANSWERED 7 Nov ~21:55, see "Owner rulings on v1" at the top)
 
 Q1. When a saved accessories template is changed, what happens to tag templates already using it?
     (a) **Nothing automatically: applying copies the design. A box remembers which saved template
