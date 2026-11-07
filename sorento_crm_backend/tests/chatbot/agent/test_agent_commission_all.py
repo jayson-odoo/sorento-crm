@@ -210,3 +210,58 @@ def test_C12_every_row_is_the_sum_of_its_targets_page_payouts(team):
     assert by[_agent_label(t, "b")] == _page_payout(db, t["tb"]["id"], lo, hi)
     assert by["Team ZZT North"] == _page_payout(db, t["team"]["id"], lo, hi)
     assert by["ZZT DEALER W2"] == _page_payout(db, t["dealer"]["id"], lo, hi)
+
+
+# ------------------------------------------------------------------ owner session evidence (crew, 8 Nov)
+
+
+def _plain_agent_target(client, agent, *, value, tiers=None):
+    body = {
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "Test", "metric": "amount", "basis": "ordered",
+        "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": value,
+    }
+    if tiers:
+        body.update({"commission_method": "retroactive", "tiers": tiers})
+    res = client.post(BASE, json=body)
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def test_E1_a_persons_first_name_takes_every_code_of_that_person_in_one_query(targets):
+    """Owner C3: "commission payout to <first name>" matched none of Agent F I / III / IV (one person, three codes);
+    the model then queried each code and the 3-call cap left Agent F IV unchecked."""
+    from tests.test_sales_targets_s1 import _agent
+
+    db, client, _t = targets
+    codes = [_agent(db, f"F{n}", f"Fanny {n}", person_label="Fanny") for n in ("I", "III", "IV")]
+    for agent in codes:
+        _plain_agent_target(client, agent, value=1000, tiers=[{"from_pct": 100, "rate": 1}])
+    for said in ("Fanny", "fanny"):
+        out = run(db, {"entity": ENTITY, "agent": said, "period": "2026-10", "fields": ["payout"]})
+        assert sorted(r["label"] for r in out["rows"]) == sorted(f"{a.sales_agent} - {a.description}" for a in codes)
+        assert "instruction" not in out
+
+
+def test_E2_a_target_of_0_adds_nothing_to_target_achieved_or_percent(targets):
+    """Owner C3: an RM-0 agent target named "Test" put RM 10.4M "achieved" on the row: 1,396.8%, payout RM 0."""
+    db, client, t = targets
+    zero = _plain_agent_target(client, t["a"], value=0)
+    out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": "2026-10",
+                   "fields": ["targets", "target_value", "achieved_value", "achieved_pct", "payout"]})
+    [row] = out["rows"]
+    assert row["targets"] == 2
+    assert (row["target_value"], row["achieved_value"], row["achieved_pct"], row["payout"]) == (10000.0, 9000.0, 90.0, 180.0)
+    assert zero["target_no"] in out["scope_note"] and "target of 0" in out["scope_note"]
+
+
+def test_E3_no_commission_set_is_said_never_shown_as_rm_0(targets):
+    """Owner C3: Agent F III has no commission target; the reply printed "RM 0.00"."""
+    from tests.test_sales_targets_s1 import _agent
+
+    db, client, _t = targets
+    c = _agent(db, "C", "Agent C")
+    _plain_agent_target(client, c, value=5000)
+    out = run(db, {"entity": ENTITY, "agent": "Agent C", "period": "2026-10", "fields": ["commission", "payout"]})
+    [row] = out["rows"]
+    assert row["payout"] is None and row["commission"] is None
+    assert "No commission is set" in out["scope_note"] and c.sales_agent in out["scope_note"]

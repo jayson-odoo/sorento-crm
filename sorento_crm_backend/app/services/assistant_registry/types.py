@@ -101,3 +101,7 @@ class EntityDef:
     in_index: bool = True
     #: Said with every result of the entity (`scope_note`): a definition the answer must carry.
     always_note: str | None = None
+    #: Said with every result read under the own-only slug: what that reader cannot see (AGENT-COMMISSION-ALL Q4).
+    own_note: str | None = None
+    #: A computed entity's note from the rows it returns (rows -> one line or None), said with the result.
+    row_note: Callable[[list[dict]], str | None] | None = None
