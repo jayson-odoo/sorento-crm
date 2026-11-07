@@ -108,4 +108,13 @@ Not through the queue, so untouched by the gate: the "Send to purchasing" resend
 - `tests/test_oi_closed_line_cleanup.py`: S7 script emails nobody.
 - Suites that pin the email's CONTENT through a service call opt in to
   `pytest.mark.usefixtures("as_board_confirm")` (`tests/conftest.py`).
+- `tests/test_purchasing_email_tripwire_so_po.py` + `_docs.py`: every ingest scenario (SO line
+  removed / added / qty / date / item / re-keyed, header cancelled, PO line removed, PO
+  auto-confirm, Cancel SO document, DO, GRN) with the handover and changed-with-links automations
+  ON, plus a positive control.
+- `tests/test_lessons_learnt_regressions.py` (Postgres-free, the release gate's executing step):
+  only the two named callers mark a trigger; every purchasing `dispatch_event`, the
+  changed-with-links queue and `send_match` sit behind the one gate (AST; kill: removing either
+  gate or adding a bypass dispatch is red); the heavy guards above still exist and name every
+  scenario.
 - Kill test: with the gate disabled, the unmarked-apply, mark-lifetime and S7 tests fail.
