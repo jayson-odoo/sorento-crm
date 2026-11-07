@@ -22,7 +22,8 @@ if svc is None:
 env = c["services"][svc].get("environment") or {}
 out = []
 for key in ("DATABASE_URL", "DIRECT_URL"):
-    val = env.get(key) or ""
+    # compose prints a literal "$" as "$$" (its escape); .env single-quoted values are literal.
+    val = (env.get(key) or "").replace("$$", "$")
     new, n = re.subn(r"@[^@/:]+(:\d+)?/", "@sorento_crm_replica:5432/", val, count=1)
     if n != 1 or "'" in new:
         sys.exit("STOP: %s has no single @host:port/ part (or holds a quote); set it by hand" % key)

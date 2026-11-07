@@ -598,8 +598,8 @@ then `scp /tmp/bgd.sh <B>:/opt/sorento-crm2/scripts/blue_green_deploy.sh`.
 
 **Order (8 Nov, after the compose diff):** S5.1a fetch tools -> S5.1b A's compose URLs made
 overridable (A proven unchanged) -> S5.1c copy A's compose to B -> S5.3 B `.env` + check -> S5.1
-env-hash parity -> S5.5 -> S5.2 -> S5.4 -> S5.6 -> S5.7 -> S5.8. The exact blocks are PR #2166
-comment 6711198201; the summary is below.
+env-hash parity -> S5.5 -> S5.2 -> S5.4 -> S5.6 -> S5.7 -> S5.8. The blocks below are the
+current ones (crew review 8 Nov applied); they supersede PR #2166 comment 6711198201.
 
 **Why (owner diff, 8 Nov):** prod's compose puts LITERAL `DATABASE_URL` (`@pgbouncer:5432`) and
 `DIRECT_URL` (`@db:5432`) in the `x-backend-env` anchor, which beats `.env`. B's old compose pointed
@@ -607,7 +607,8 @@ B's app at A's PUBLIC database and Redis, and had no db, pgbouncer, redis or wor
 `infra/scripts/compose-ha-urls.py` rewrites the two literals to `'${HA_DATABASE_URL:-<literal>}'` /
 `'${HA_DIRECT_URL:-<literal>}'`. Only B sets `HA_*` (written by `infra/scripts/ha-env-for-replica.py`,
 host swapped to `sorento_crm_replica:5432`), so A resolves byte-identical values (proved with
-`infra/scripts/compose-env-hash.py` before/after) and both nodes run ONE identical compose file.
+`infra/scripts/compose-env-hash.py --all` before/after: every key of every service, plus each whole
+service and top-level section) and both nodes run ONE identical compose file.
 `REDIS_URL` is already `${REDIS_URL:-redis://redis:6379/0}`; B's `.env` sets it to its own Redis.
 
 **Why B's app sends nothing while it is a standby** (code read 8 Nov): APScheduler starts only with
@@ -621,6 +622,44 @@ nothing customer-facing. Do NOT switch the sweeper off on B: it must already be 
 promoted. Its mutex is in Redis and B has its own Redis, so at a real failover B recovers A's
 in-flight rows: unsent rows are answered, rows caught mid-send are flagged for staff, never resent
 (`should_resend`, `:709`).
+
+**S5.1a Fetch the tools (MacBook):**
+
+```bash
+git fetch origin claude/ha-cf-failover-wz466v && for f in compose-ha-urls.py ha-env-for-replica.py compose-env-hash.py compose-find-keys.py replica-recreate-gen.py; do git show FETCH_HEAD:infra/scripts/$f > /tmp/$f; done
+for h in <A_PUBLIC_IP> <B_PUBLIC_IP>; do scp /tmp/compose-ha-urls.py /tmp/ha-env-for-replica.py /tmp/compose-env-hash.py /tmp/compose-find-keys.py /tmp/replica-recreate-gen.py root@$h:/root/ &&
+  ssh root@$h 'cd /root && chmod 600 compose-ha-urls.py ha-env-for-replica.py compose-env-hash.py compose-find-keys.py replica-recreate-gen.py && mv replica-recreate-gen.py replica-gen.py && ls -l /root/*.py'; done
+```
+
+**S5.1b Node A: make the two URLs overridable (THIS CHANGES PROD FILES; nothing restarts):**
+
+```bash
+cd /opt/sorento-crm2
+P='docker compose --profile blue --profile green --profile promoted config --format json'
+cp -p docker-compose.yml docker-compose.yml.bak-08nov
+$P | python3 -I /root/compose-env-hash.py --all > /root/env-before.txt && wc -l < /root/env-before.txt
+python3 -I /root/compose-ha-urls.py docker-compose.yml          # "changed lines: N", N >= 2; a STOP leaves the file untouched
+$P | python3 -I /root/compose-env-hash.py --all | diff /root/env-before.txt - && echo A-UNCHANGED
+grep -c '^HA_' .env                                              # 0: HA_ must NEVER be set on A
+chmod 600 docker-compose.yml docker-compose.yml.bak-08nov .env
+```
+
+Expected: a line count above 0, `changed lines: 2` or more, `A-UNCHANGED`, `0`. `--all` hashes
+every env key of every service (the URLs included), each whole service definition and every
+top-level section, so ANY change in what A resolves shows as a diff. No `A-UNCHANGED`: roll back
+(`cp -p docker-compose.yml.bak-08nov docker-compose.yml`) and post the diff (hashes only).
+`grep -n "HA_" docker-compose.yml | cut -d: -f1-2` shows which lines changed, without values.
+
+**S5.1c Copy A's file to B (MacBook; B files only):**
+
+```bash
+ssh root@<B_PUBLIC_IP> 'cp -p /opt/sorento-crm2/docker-compose.yml /opt/sorento-crm2/docker-compose.yml.bak-08nov' &&
+ssh root@<A_PUBLIC_IP> 'cat /opt/sorento-crm2/docker-compose.yml' | ssh root@<B_PUBLIC_IP> 'cat > /opt/sorento-crm2/docker-compose.yml' &&
+ssh root@<A_PUBLIC_IP> 'sha256sum /opt/sorento-crm2/docker-compose.yml' &&
+ssh root@<B_PUBLIC_IP> 'cd /opt/sorento-crm2 && sha256sum docker-compose.yml && chmod 600 docker-compose.yml docker-compose.yml.bak-08nov .env'
+```
+
+Expected: identical hashes. Rollback: `ssh root@<B_PUBLIC_IP> 'cp -p /opt/sorento-crm2/docker-compose.yml.bak-08nov /opt/sorento-crm2/docker-compose.yml'`.
 
 **S5.1 Parity (read-only, from the MacBook, after S5.1c and S5.3):** compare what compose RESOLVES
 for every CRM service, as hashes (the secrets are not plain `KEY=` lines in `.env` on A, 8 Nov):
@@ -671,19 +710,40 @@ is not up yet.)
 Afterwards `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh`.
 
 **S5.3 B's `.env` (backup first):** comment out the old `DATABASE_URL` / `DIRECT_URL` / `REDIS_URL`
-lines (they pointed at A), then append the generated lines:
+lines (they pointed at A), then append the generated lines (a `$` in the password is unescaped
+from compose's `$$`):
 
 ```bash
-cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov
+cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov && chmod 600 .env .env.bak-08nov
 sed -i -E 's/^(DATABASE_URL|DIRECT_URL|REDIS_URL)=/#&/' .env
 grep -c '^HA_' .env      # 0
 docker compose --profile blue --profile green config --format json | python3 -I /root/ha-env-for-replica.py >> .env
 ```
 
-Check (masked): every `DATABASE_URL` / `DIRECT_URL` resolves to `***@sorento_crm_replica:5432/<db>`,
-every `REDIS_URL` to `redis://redis:6379/0`, `ENABLE_SCHEDULER true` only on `worker`, and
-`docker compose config | grep -c '<A_PUBLIC_IP>'` prints `0`. Never set `HA_*` on A.
-Rollback: `cp -p .env.bak-08nov .env && cp -p docker-compose.yml.bak-08nov docker-compose.yml`.
+**S5.3 check (B, read-only; prints key paths and masked hosts, never a password):**
+
+```bash
+cd /opt/sorento-crm2
+P='docker compose --profile blue --profile green --profile promoted config --format json'
+$P | python3 -I -c 'import json,sys,re
+c=json.load(sys.stdin)
+for s in sorted(c["services"]):
+    e=c["services"][s].get("environment") or {}
+    if isinstance(e,list): e=dict(x.split("=",1) for x in e if "=" in x)
+    for k in ("DATABASE_URL","DIRECT_URL","REDIS_URL","ENABLE_SCHEDULER"):
+        if k in e: print(s,k,re.sub(r"//[^@/]*@","//***@",str(e[k])))'
+$P | python3 -I /root/compose-find-keys.py '@pgbouncer' '@db:' '<A_PUBLIC_IP>' '<CRM_HOST>'
+grep -n -e '<A_PUBLIC_IP>' -e '<CRM_HOST>' .env | cut -d= -f1
+```
+
+Expected: every `DATABASE_URL` / `DIRECT_URL` is `postgresql://***@sorento_crm_replica:5432/<db>`;
+every `REDIS_URL` `redis://redis:6379/0`; `ENABLE_SCHEDULER true` only on `worker`.
+`compose-find-keys.py` prints `HITS: 0` for `@pgbouncer`, `@db:` and A's address; a hit names the
+key (for example `ANALYTICS_RO_DATABASE_URL`, `app/config.py:225`, still reaching A's pgbouncer):
+STOP and post the key path. A hit for `<CRM_HOST>` is fine only on keys that are meant to be the
+public URL (e.g. `NEXTAUTH_URL`, `FRONTEND_BASE_URL`): post the list, crew confirms. The `.env` grep
+prints only the commented `#DATABASE_URL` / `#DIRECT_URL` / `#REDIS_URL` (or nothing).
+Never set `HA_*` on A. Rollback: `cp -p .env.bak-08nov .env && cp -p docker-compose.yml.bak-08nov docker-compose.yml`.
 
 **S5.4 B's `.deploy.env`:**
 
@@ -694,11 +754,26 @@ ls -l .deploy.env      # owned by the deploy user, -rw-------
 
 **S5.5 Start only B's Redis, remove the stale workers:**
 
+First (read-only): B's n8n Redis already listens on host port 6379. If the compose `redis` service
+publishes a host port, the two collide:
+
+```bash
+cd /opt/sorento-crm2 && docker compose config --format json | python3 -I -c 'import json,sys
+r=json.load(sys.stdin)["services"].get("redis",{}); print("redis ports:", r.get("ports") or "none")'
+```
+
+Expected `redis ports: none` (the app reaches it on the compose network). Any published port: STOP
+and post it (crew makes it overridable the same way as the URLs).
+
 ```bash
 # THIS CHANGES PROD (node B). NEVER a bare `docker compose up -d` on B: it would start workers and a compose db.
 docker compose up -d --no-deps redis
-docker compose rm -f worker worker_fast
+docker compose rm -sf worker worker_fast          # -s stops them first if they are running
+docker compose ps -a --format '{{.Service}} {{.State}}' | grep -i worker || echo "NO CRM WORKERS"
 ```
+
+Expected: `NO CRM WORKERS` (this lists only this compose project, so n8n's own workers do not show).
+Anything else: STOP before S5.8.
 
 **S5.6 nginx, sudo and registry on B, as on A:** copy A's nginx site config and its TLS
 certificate/key for `<CRM_HOST>` (not the upstreams file: the release writes it), the deploy
@@ -719,9 +794,14 @@ docker compose config | grep -n 'ENABLE_SCHEDULER'   # `true` only under the wor
 **S5.8 First start on B with A's current release:**
 
 ```bash
-# THIS CHANGES PROD (node B only).
-IMAGE_TAG=<SHA> ./scripts/blue_green_deploy.sh
+# THIS CHANGES PROD (node B only). Runs only if the role reads standby right now.
+R=$(./scripts/blue_green_deploy.sh --role); echo "role: $R"
+[ "$R" = standby ] && IMAGE_TAG=<SHA> ./scripts/blue_green_deploy.sh 2>&1 | tee /tmp/s58.log
 ```
+
+Watch the output: the line `==> Node role: standby` comes right after the preflight. If it reads
+anything else, press Ctrl-C at once and post `/tmp/s58.log` (the release since 8 Nov stops by
+itself on `unknown` when `DB_CONTAINER` is set, and never runs the worker steps on a standby).
 
 **Expected:** `Node role: standby`, no snapshot, workers untouched, `Deploy complete`. Then on B:
 

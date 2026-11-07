@@ -1325,3 +1325,26 @@ def test_without_db_container_the_compose_db_is_used_as_before(box):
     calls = _calls(box)
     assert not any(l.startswith("exec ") or l.startswith("ps ") for l in calls), calls
     assert any(l.startswith("compose") and " exec " in l and "pg_dump" in l for l in calls), calls
+
+
+# --- HA-TONIGHT 8 Nov crew review MUST-FIX 2: with DB_CONTAINER set, a role that is not a clear
+# t/f must never fall back to "single" (the primary release path would start worker + worker_fast
+# with ENABLE_SCHEDULER=true on node B). It is "unknown", and a deploy stops before any change.
+
+
+@pytest.mark.parametrize("answer", ["", "garbage\n", "error\n"])
+def test_db_container_unclear_role_is_unknown_not_single(box, answer):
+    _container_box(box, answer)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.stdout.strip() == "unknown", r.stdout + r.stderr
+
+
+def test_db_container_unclear_role_stops_the_release_before_any_change(box):
+    _container_box(box, "")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0, r.stdout
+    assert "Node role: unknown" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _changed_anything(calls), calls
+    assert not any("worker" in l and " up " in f" {l} " for l in calls), calls

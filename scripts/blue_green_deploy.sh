@@ -157,11 +157,17 @@ node_role() {
   local r
   if [ "$HA_MODE" = 0 ]; then
     # Plain compose with a streaming replica (PLAN-ha-b-replica-sync-07nov.md 7a): the role
-    # comes from the plain db. Anything but a clear answer is "single" = today's release.
+    # comes from the plain db. Anything but a clear answer is "single" = today's release, EXCEPT
+    # with DB_CONTAINER: that names a replica node (B), where a fallback to the primary path would
+    # start the workers with the scheduler; there it is "unknown" and the release stops (8 Nov).
     # shellcheck disable=SC2016
     r=$(db_exec \
           sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "select pg_is_in_recovery()"' 2>/dev/null || true)
-    case "$r" in t) echo standby ;; f) echo primary ;; *) echo single ;; esac
+    case "$r" in
+      t) echo standby ;;
+      f) echo primary ;;
+      *) if [ -n "$DB_CONTAINER" ]; then echo unknown; else echo single; fi ;;
+    esac
     return
   fi
   r=$(docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -Atc 'select pg_is_in_recovery()' 2>/dev/null || true)
@@ -559,7 +565,7 @@ fi
 ROLE=$(node_role)
 echo "==> Node role: ${ROLE}"
 if [ "$ROLE" = unknown ]; then
-  echo "ERROR: HA node, but the local Postgres did not say whether it is primary or standby. Nothing was changed."
+  echo "ERROR: HA node (or DB_CONTAINER set), but the local Postgres did not say whether it is primary or standby. Nothing was changed."
   exit 1
 fi
 if [ "$ROLE" = standby ]; then
