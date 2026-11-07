@@ -1397,3 +1397,39 @@ def test_t4_warranty_asked_first_the_refused_do_number_is_not_redacted(db, store
     assert f"Delivery order {foreign} not found." in turn.reply_text, turn.reply_text
     assert NOT_VERIFIED not in turn.reply_text and "could not confirm" not in turn.reply_text
     assert "Rival" not in turn.reply_text
+
+
+def test_t5_a_number_the_dealer_gave_in_an_earlier_message_is_not_redacted(db, store):
+    """Crew queue after 05562ce7: the dealer gave the DO and product one message back; the agent repeats them
+    in a question with no tool call this turn, and the figure check redacted them ("For DO (not verified)-...")."""
+    from app.services.chatbot.agent.loop import NOT_VERIFIED, run_agent_turn
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"], number="88123-4471")
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text=f"DO {do} ELP3754 cracked, please claim",
+                   provider=_scripted(_answer("Is it still within warranty?")), mcp_call=_forbidden, catalog={},
+                   is_test=False)
+
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes still under warranty",
+                          provider=_scripted(_answer(f"For DO {do}, are all ELP3754 cracked?")),
+                          mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert f"For DO {do}, are all ELP3754 cracked?" in turn.reply_text, turn.reply_text
+    assert NOT_VERIFIED not in turn.reply_text
+
+
+def test_t5_a_number_only_the_model_wrote_is_still_redacted(db, store):
+    """Guard: the dealer's own words back a number, the model's invention does not."""
+    from app.services.chatbot.agent.loop import NOT_VERIFIED, run_agent_turn
+
+    contact = _dealer(db)
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="ELP3754 cracked, please claim",
+                   provider=_scripted(_answer("Is it still within warranty?")), mcp_call=_forbidden, catalog={},
+                   is_test=False)
+
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes still under warranty",
+                          provider=_scripted(_answer("Is it DO 77341-9902?")),
+                          mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert "77341-9902" not in turn.reply_text, turn.reply_text
+    assert NOT_VERIFIED in turn.reply_text
