@@ -13,7 +13,7 @@ resolution, route params and header labels; `crm_report_ask` takes the same `Rep
 **New feature cost, end state:** new filter axis ~40-80 lines, no merge change; dealer vs project split 0 lines
 (already `group_by: channel`); supplier outstanding ~250 lines (a dataset + a kind); leaderboard vs target ~120.
 
-**Lanes (plan section 3):** W1 corpus (after #2209 merges) -> W2 spec + prod shadow -> W3 delta prompt ->
+**Lanes (plan section 3):** W1 corpus (#2209 merged 7 Nov 10:26 UTC; waits on the re-record) -> W2 spec + prod shadow -> W3 delta prompt ->
 W4 clarify as delta (beside W5 agent spec) -> W6 delete the old path (after the shadow week + published prompt) ->
 W7 resolver table. ~13-15 lane-days.
 

@@ -1,8 +1,10 @@
 # ARCH: can the chatbot report engine scale? (REPORT-ASK-ARCH, 7 Nov 2026)
 
 Status: final (plan accepted). Owner, 7 Nov ~16:15, on PR #2229: "2229 ok", which accepts all 5 recommendations
-(section 4). Delivery is the lanes in section 3 (REPORT-SPEC-W1 to W7). W1 starts after #2209 merges; none has
-started. Each lane writes its own PLAN + UAC under `documentation/plans/chatbot/` before code.
+(section 4). Delivery is the lanes in section 3 (REPORT-SPEC-W1 to W7). #2209 merged 7 Nov 10:26 UTC (3200ee1a,
+head f3d4789f): W1 is unblocked once crew re-records the 26 steps, and the keep/clear rule freeze (3.0) is in force
+from that merge. No lane has started. Re-checked on main 56b5458b: no app file differs between the measured #2209 head
+89f14f49 and the merged head f3d4789f, so section 1's #2209 numbers are now main's numbers. Each lane writes its own PLAN + UAC under `documentation/plans/chatbot/` before code.
 
 Owner, 7 Nov ~16:00, after REPORT-FILTER-ALL (#2209) took 8 rounds: "you see, ~480 branches, can we really scale for
 more future features?"
