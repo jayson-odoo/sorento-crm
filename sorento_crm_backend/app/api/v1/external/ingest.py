@@ -366,7 +366,10 @@ SUPPORTED_ENTITIES = (
 # "2.11" (ITEM-CLASS-MASTER): `item_classes` joins ENTITY_SPECS as a master (AutoCount
 # ItemClass), the brands shape with its own INGEST/READ/DELETE slugs; its deletions only ever
 # deactivate. Additive: an ESB on 2.10 never sees `item_classes` in `entities`.
-CONTRACT_VERSION = "2.11"
+# "2.13" (SS-PACKAGE-LINES, ss PR #226; 2.12 left to the lane that took it): `billing_documents`
+# lines accept `parent_line_ref` (an item-package child names its parent line's source_ref) and
+# `line_type` (AutoCount's raw DtlType). Optional; a 2.11 payload ingests unchanged.
+CONTRACT_VERSION = "2.13"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
