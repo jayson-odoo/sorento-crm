@@ -238,3 +238,68 @@ def test_prefill_copies_the_inquiry_remark(world):
     si = _inquiry(world.db, remark="Customer wants matte finish")
     body = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": si.id}).json()
     assert body["remark"] == "Customer wants matte finish"
+
+
+# ------------------------------------------------------------------ purchasing's ask on the SI (rules 1-2)
+
+SI = "/api/v1/procurement/stock-inquiries"
+
+
+def _put_si(w, si, user, **body):
+    return w.api.as_(user).put(f"{SI}/{si.id}", json=body)
+
+
+def test_purchasing_asks_for_an_npa_and_the_server_stamps_who_and_when(world):
+    si = _inquiry(world.db)
+    res = _put_si(world, si, world.buyer, npa_requested=True)
+    assert res.status_code == 200, res.text
+    world.db.refresh(si)
+    assert si.npa_requested is True
+    assert si.npa_requested_by == world.buyer
+    assert si.npa_requested_at is not None
+    detail = world.api.as_(world.buyer).get(f"{SI}/{si.id}").json()
+    assert detail["npa_requested"] is True
+    assert detail["npa_requested_by_name"] == f"{MARKER} purchasing"
+
+
+def test_unticking_clears_who_and_when(world):
+    si = _inquiry(world.db)
+    assert _put_si(world, si, world.buyer, npa_requested=True).status_code == 200
+    assert _put_si(world, si, world.buyer, npa_requested=False).status_code == 200
+    world.db.refresh(si)
+    assert (si.npa_requested, si.npa_requested_by, si.npa_requested_at) == (False, None, None)
+
+
+def test_the_ask_is_a_response_write_refused_outside_the_response_stage(world):
+    si = _inquiry(world.db, status="pending_project_sales")
+    res = _put_si(world, si, world.buyer, npa_requested=True)
+    assert res.status_code == 422
+    world.db.refresh(si)
+    assert si.npa_requested is False
+    # An echo of the current value is not a write (the edit form posts the whole entity).
+    assert _put_si(world, si, world.buyer, npa_requested=False).status_code == 200
+
+
+def test_the_reply_sentence_follows_the_ask_until_a_live_application_exists(world):
+    from app.services import new_product_application_service as svc
+
+    si = _inquiry(world.db)
+    assert svc.npa_next_step_sentence(world.db, si) is None
+    si.npa_requested = True
+    world.db.flush()
+    assert svc.npa_next_step_sentence(world.db, si) == svc.NPA_NEXT_STEP
+    d = _draft(world, [], inquiry=si)
+    assert svc.npa_next_step_sentence(world.db, si) is None
+    assert _act(world, d["id"], "cancel", world.sales, reason="customer left").status_code == 200
+    assert svc.npa_next_step_sentence(world.db, si) == svc.NPA_NEXT_STEP
+
+
+def test_the_summary_lists_each_created_code_with_its_current_codes(world):
+    newp = make_product(world.db, code="ZZT-KS2497")
+    done = _completed(world, [world.product.id], newp)
+    listed = world.api.as_(world.admin).get(NPA, params={"stock_inquiry_id": world.inquiry.id}).json()["items"]
+    row = next(r for r in listed if r["id"] == done["id"])
+    [code] = row["created_codes"]
+    assert code["product_code"] == "ZZT-KS2497"
+    assert code["current_codes"] == ["ZZT-KS2433"]
+    assert code["created_at"]

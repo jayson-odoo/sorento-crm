@@ -942,6 +942,62 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     return {"created_from": [row(*r) for r in created], "made_from_this": [row(*r) for r in made]}
 
 
+#: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
+NPA_NEXT_STEP = "Next step: please create a New Product Application for this inquiry."
+#: An application that still answers the inquiry's ask (a rejected or cancelled one does not).
+_LIVE = (DRAFT, *AWAITING_REVIEW, APPROVED, COMPLETED)
+
+
+def has_live_application(db: Session, stock_inquiry_id: Any) -> bool:
+    return (
+        db.query(NewProductApplication.id)
+        .filter(
+            NewProductApplication.stock_inquiry_id == str(stock_inquiry_id),
+            NewProductApplication.status.in_(_LIVE),
+        )
+        .first()
+        is not None
+    )
+
+
+def npa_next_step_sentence(db: Session, inquiry: StockInquiry) -> Optional[str]:
+    if not getattr(inquiry, "npa_requested", False) or has_live_application(db, inquiry.id):
+        return None
+    return NPA_NEXT_STEP
+
+
+def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict[str, Any]]:
+    """The portal stock inquiry's "New product applications" tab: the applications its OWN
+    contact raised from it, newest first. Both filters bind to the contact's own rows, so
+    the company filter is lifted (None = every company) only here: an inquiry carries no
+    company, and the contact's application may sit under the company its token resolved."""
+    from app.models.base import company_scope
+
+    if not inquiry.contact_id:
+        return []
+    with company_scope(db, None):
+        rows = (
+            db.query(NewProductApplication)
+            .filter(
+                NewProductApplication.stock_inquiry_id == str(inquiry.id),
+                NewProductApplication.contact_id == str(inquiry.contact_id),
+            )
+            .order_by(NewProductApplication.created_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": a.id,
+                "application_no": a.application_no,
+                "status": a.status,
+                "status_label": STATUS_LABELS.get(a.status, a.status),
+                "created_at": _iso(a.created_at),
+                "created_codes": _created_codes(db, a),
+            }
+            for a in rows
+        ]
+
+
 # ------------------------------------------------------------------ reads
 
 
@@ -1123,10 +1179,34 @@ def serialize_summary(
         "opened_codes": (opened if opened is not None else _opened_codes(db, [str(app.id)])).get(
             str(app.id), []
         ),
+        "created_codes": _created_codes(db, app),
         "needed_by": _iso(app.needed_by),
         "submitted_at": _iso(app.submitted_at),
         "created_at": _iso(app.created_at),
     }
+
+
+def _created_codes(db: Session, app: NewProductApplication) -> List[Dict[str, Any]]:
+    """NPA-FROM-SI: each new code purchasing linked, with its current codes and when (the
+    stock inquiry's "code created" indicator reads this; nothing is stored for it)."""
+    opened = [l for l in app.lines if l.opened_product_id]
+    if not opened:
+        return []
+    codes = {
+        str(k): v
+        for k, v in db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_([l.opened_product_id for l in opened]))
+        .all()
+    }
+    sources = _sources_by_line(db, [l.id for l in opened])
+    return [
+        {
+            "product_code": codes.get(str(l.opened_product_id)),
+            "current_codes": [c["product_code"] for c in sources.get(str(l.id), [])],
+            "created_at": _iso(l.resolved_at),
+        }
+        for l in opened
+    ]
 
 
 def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict[str, Any]]:

@@ -5932,6 +5932,9 @@ class StockInquiryService:
         # gates its response affordances on this rather than mirroring the status
         # list (UAC O1).
         data["response_write_allowed"] = inquiry.response_write_allowed
+        data["npa_requested_by_name"] = (
+            self._resolve_user_display_name(inquiry.npa_requested_by) if inquiry.npa_requested_by else None
+        )
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -6764,7 +6767,29 @@ class StockInquiryService:
 
         threading.Thread(target=send_async, daemon=True).start()
 
-    def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
+    def _apply_npa_request(self, inquiry, update_data: dict, actor_user_id: Optional[str]) -> None:
+        """NPA-FROM-SI rule 1: purchasing's "salesperson must create a New Product Application".
+
+        Popped from ``update_data`` so the plain setattr loop never writes it. A change is a
+        response write (UAC O1 gate, same as ``purchasing_response``); an echo of the current
+        value is not. Who / when come from the caller, never the payload. Non-blocking."""
+        if "npa_requested" not in update_data:
+            return
+        wanted = update_data.pop("npa_requested")
+        if wanted is None or bool(wanted) == bool(inquiry.npa_requested):
+            return
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        inquiry.npa_requested = bool(wanted)
+        if wanted:
+            inquiry.npa_requested_by = actor_user_id or None
+            inquiry.npa_requested_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            inquiry.npa_requested_by = None
+            inquiry.npa_requested_at = None
+
+    def update_inquiry(
+        self, inquiry_id: str, inquiry_data: StockInquiryUpdate, actor_user_id: Optional[str] = None
+    ):
         """Update a stock inquiry. Status is only changed via workflow actions (submit/approve/reject/reopen)."""
         inquiry = self.get_inquiry(inquiry_id)
 
@@ -6789,6 +6814,7 @@ class StockInquiryService:
             update_data.get("purchasing_response"),
         ):
             assert_response_write_allowed("stock_inquiry", inquiry.status)
+        self._apply_npa_request(inquiry, update_data, actor_user_id)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -6945,6 +6971,7 @@ class StockInquiryService:
             raise handle_validation_error("purchasing_response is required to reply.")
         # Do not persist the reply payload (often includes view link) into purchasing_response
         update_data.pop("purchasing_response", None)
+        self._apply_npa_request(inquiry, update_data, crm_sender_user_id)
 
         for key, value in update_data.items():
             setattr(inquiry, key, value)
@@ -6981,6 +7008,11 @@ class StockInquiryService:
         # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
         outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
+        from app.services.new_product_application_service import npa_next_step_sentence
+
+        next_step = npa_next_step_sentence(self.db, inquiry)
+        if next_step:
+            outgoing_bare = f"{outgoing_bare}\n{next_step}"
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:

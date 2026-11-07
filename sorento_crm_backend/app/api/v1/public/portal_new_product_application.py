@@ -157,9 +157,11 @@ def register_new_product_application_routes(
         db: Session = Depends(get_db),
     ):
         _assert_visible(db, token.contact_id)
-        return svc.prefill(
-            db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
-        )
+        # Scoped: the exact current-code match (NPA-FROM-SI Q3) reads the company's products.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.prefill(
+                db, stock_inquiry_id, contact_id=str(token.contact_id), space_id=token.space_id
+            )
 
 
     @router.get(f"{OWN}/lookups/{{kind}}")
@@ -172,6 +174,33 @@ def register_new_product_application_routes(
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             return svc.portal_lookup(db, kind, q)
+
+
+    @router.get(f"{OWN}/products")
+    def portal_products(
+        q: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """NPA-FROM-SI rule 4: pick the current product codes (code, name, brand only; lists,
+        never picks)."""
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.search_products(db, q)
+
+
+    @router.get(f"{OWN}/reuse-suggestions")
+    def portal_reuse_suggestions(
+        product_ids: str = Query(""),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """NPA-FROM-SI rule 6, Q4 (a): the code created before from exactly these current codes,
+        without the earlier application (another salesperson's), customer, project or qty."""
+        _assert_visible(db, token.contact_id)
+        ids = [part.strip() for part in product_ids.split(",") if part.strip()][:20]
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return svc.reuse_suggestions(db, ids, portal=True)
 
 
     @router.get(f"{OWN}/customers")

@@ -2195,6 +2195,8 @@ class PortalService:
         return self._contact_display_name(contact) if contact else None
 
     def _serialize_stock_inquiry_detail(self, row: StockInquiry) -> dict:
+        from app.services import new_product_application_service as npa_service
+
         base = self._serialize_stock_inquiry_summary(row)
         salesperson_contact_id = getattr(row, "salesperson_contact_id", None)
         base.update(
@@ -2211,6 +2213,9 @@ class PortalService:
                 "purchasing_response": row.purchasing_response,
                 "salesperson_contact_id": salesperson_contact_id,
                 "salesperson_contact_name": self._resolve_contact_name_by_id(salesperson_contact_id),
+                # NPA-FROM-SI rules 1-2 + 7: purchasing's ask and the contact's own applications.
+                "npa_requested": bool(getattr(row, "npa_requested", False)),
+                "new_product_applications": npa_service.portal_inquiry_applications(self.db, row),
             }
         )
         return base
