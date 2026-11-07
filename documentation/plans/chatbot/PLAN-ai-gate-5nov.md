@@ -1,6 +1,6 @@
 # PLAN: AI-GATE (assistant coverage CI gate)
 
-Status: built 5 Nov 2026, in review on PR #2189 (waiting on QUERY-CORE #2188 to merge first, then owner go). Track: small fix track (no migration, no auth/RBAC change, no
+Status: built 5 Nov 2026, in review on PR #2189. QUERY-CORE #2188 merged (7 Nov re-check: the gate reads all 4 `routes=` strings it committed and each resolves to a served GET path); waiting on owner go. Track: small fix track (no migration, no auth/RBAC change, no
 ingest surface). Parent plan: `PLAN-ai-tools-standard-5nov.md` section 4 "AI-GATE" and 2.5 (PR #2185).
 Lane AI-GATE. Merges after QUERY-CORE (it reads `EntityDef.routes` from `app/services/assistant_registry`).
 
