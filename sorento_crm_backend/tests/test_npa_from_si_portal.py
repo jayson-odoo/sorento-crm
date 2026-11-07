@@ -139,3 +139,10 @@ def test_portal_prefill_picks_the_exact_current_code(portal):
     si = _inquiry(p.db, p.granted, product_code=f" {p.product.product_code.lower()} ")
     body = _as(p, p.granted).get(f"{NPA}/prefill", params={"stock_inquiry_id": si.id}).json()
     assert body["current_product_ids"] == [p.product.id]
+
+
+def test_portal_new_code_facts_show_the_supplier_only(portal):
+    p = portal
+    row, _newp = _seed_created(p, [p.product.id], contact=p.granted, inquiry=p.mine)
+    detail = _as(p, p.granted).get(f"{BASE}/{row.id}").json()
+    assert set(detail["new_product_facts"]) == {"opened_supplier_name"}

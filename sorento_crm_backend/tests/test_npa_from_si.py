@@ -366,3 +366,12 @@ def test_the_detail_carries_its_stock_inquiry_for_the_tab(world):
     assert si["purchasing_response"] == world.inquiry.purchasing_response
     no_si = world.api.as_(world.sales).post(NPA, json={"lines": [_line(world)]}).json()
     assert _get(world, no_si["id"])["stock_inquiry"] is None
+
+
+def test_the_new_code_carries_the_values_autocount_set(world):
+    newp = make_product(world.db)
+    done = _completed(world, [world.product.id], newp)
+    facts = _get(world, done["id"])["new_product_facts"]
+    assert set(facts) == {"opened_category_name", "opened_base_uom_name", "opened_list_price", "opened_supplier_name"}
+    assert facts["opened_list_price"] == "100.00"
+    assert _get(world, _draft(world, [])["id"])["new_product_facts"] is None

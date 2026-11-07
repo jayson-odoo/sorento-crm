@@ -1431,6 +1431,17 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "new_code_closed_reason": app.new_code_closed_reason,
         "new_code_by_name": users.get(str(app.new_code_by)) if app.new_code_by else None,
         "new_code_at": _iso(app.new_code_at),
+        # The values AutoCount set on the new code (read-only, #1769 v4 D3), as the per-row
+        # "From AutoCount" showed them; the portal sees the supplier only (PQ1).
+        "new_product_facts": (
+            {
+                k: v
+                for k, v in _linked_product_facts(db, [app.new_product_id]).get(str(app.new_product_id), {}).items()
+                if not (portal and k in _PORTAL_HIDDEN)
+            }
+            if app.new_product_id
+            else None
+        ),
         "lines": [line_out(l) for l in lines],
     }
     if portal:
