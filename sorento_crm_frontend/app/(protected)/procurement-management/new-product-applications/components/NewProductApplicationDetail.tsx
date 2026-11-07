@@ -179,6 +179,15 @@ function NewCodeField({
       Undo
     </button>
   );
+  const facts = r.new_product_facts;
+  const fromAutoCount = [
+    facts?.opened_category_name,
+    facts?.opened_base_uom_name,
+    facts?.opened_list_price == null ? null : `MYR ${facts.opened_list_price}`,
+    facts?.opened_supplier_name,
+  ]
+    .filter(Boolean)
+    .join(', ');
   const who = [r.new_code_by_name, day(r.new_code_at)]
     .filter(Boolean)
     .join(', ');
@@ -206,6 +215,9 @@ function NewCodeField({
         </div>
         <p className="text-xs text-muted-foreground">
           {who} {undo}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          From AutoCount: {fromAutoCount || '-'}
         </p>
       </div>
     );

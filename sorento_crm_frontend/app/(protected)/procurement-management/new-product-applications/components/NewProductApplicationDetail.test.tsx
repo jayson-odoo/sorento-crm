@@ -620,6 +620,37 @@ describe('attachments list is the shared PanelDataGrid', () => {
   });
 });
 
+describe('From AutoCount (header)', () => {
+  it('shows the linked product item group, base UOM, list price and supplier read-only', () => {
+    state.userId = 'u-buyer';
+    state.perms = new Set([OPEN]);
+    state.data = approved({
+      new_product_id: 'p-1',
+      new_product_code: 'XY-1234-MB',
+      new_product_name: 'Example kitchen sink',
+      new_product_active: true,
+      new_product_facts: {
+        opened_category_name: 'Example Group',
+        opened_base_uom_name: 'Example UOM',
+        opened_list_price: '185.00',
+        opened_supplier_name: 'Example Supplier Co',
+      },
+    });
+    render(<Page />);
+    expect(screen.getByText(/From AutoCount/)).toBeInTheDocument();
+    expect(screen.getByText(/Example Group/)).toBeInTheDocument();
+    expect(screen.getByText(/Example UOM/)).toBeInTheDocument();
+    expect(screen.getByText(/185\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/Example Supplier Co/)).toBeInTheDocument();
+  });
+
+  it('shows no From AutoCount block before a product is linked', () => {
+    state.data = approved();
+    render(<Page />);
+    expect(screen.queryByText(/From AutoCount/)).toBeNull();
+  });
+});
+
 describe('NEW PRODUCT CODE (header)', () => {
   const earlier = {
     product_id: 'p-69',

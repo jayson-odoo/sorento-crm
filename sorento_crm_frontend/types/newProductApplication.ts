@@ -179,6 +179,13 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   new_code_closed_reason?: string | null;
   new_code_by_name?: string | null;
   new_code_at?: string | null;
+  /** Read from the linked product; the portal gets the supplier only. */
+  new_product_facts?: {
+    opened_category_name?: string | null;
+    opened_base_uom_name?: string | null;
+    opened_list_price?: string | number | null;
+    opened_supplier_name?: string | null;
+  } | null;
 }
 
 export interface NewProductApplicationPage {

@@ -593,6 +593,7 @@ export default function NewProductApplicationForm({
                 code={application?.new_product_code}
                 active={application?.new_product_active}
                 closedReason={application?.new_code_closed_reason}
+                supplier={application?.new_product_facts?.opened_supplier_name}
               />
             }
             customerField={

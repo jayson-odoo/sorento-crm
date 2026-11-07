@@ -619,6 +619,20 @@ describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
     expect(screen.getByText('Inactive')).toBeInTheDocument();
   });
 
+  it('shows the supplier of the linked code and nothing else of its facts', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      submitted({
+        new_product_id: 'p-9',
+        new_product_code: 'A-1-69',
+        new_product_active: true,
+        new_product_facts: { opened_supplier_name: 'Example Supplier Co' },
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('Supplier: Example Supplier Co')).toBeInTheDocument();
+    expect(screen.queryByText(/From AutoCount/)).toBeNull();
+  });
+
   it('shows Not opening with the reason', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       submitted({ new_code_closed_reason: 'Customer walked away' }),

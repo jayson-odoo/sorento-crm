@@ -11,19 +11,27 @@ export function NewProductApplicationNewCodeValue({
   code,
   active,
   closedReason,
+  supplier,
   link,
 }: {
   code?: string | null;
   active?: boolean | null;
   closedReason?: string | null;
+  /** The portal's one read-out of the linked product (PQ1). */
+  supplier?: string | null;
   link?: React.ReactNode;
 }) {
   if (code) {
     return (
-      <span className="flex flex-wrap items-center gap-2 font-medium">
-        {link ?? code}
-        {active === false && <Badge variant="secondary">Inactive</Badge>}
-      </span>
+      <div className="min-w-0 space-y-0.5">
+        <span className="flex flex-wrap items-center gap-2 font-medium">
+          {link ?? code}
+          {active === false && <Badge variant="secondary">Inactive</Badge>}
+        </span>
+        {supplier && (
+          <p className="text-xs text-muted-foreground">Supplier: {supplier}</p>
+        )}
+      </div>
     );
   }
   if (closedReason) {
