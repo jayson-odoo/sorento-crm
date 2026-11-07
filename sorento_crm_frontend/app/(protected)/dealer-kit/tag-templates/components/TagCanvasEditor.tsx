@@ -1812,7 +1812,9 @@ export function TagCanvasEditor({
   const applyExternalLayerProps = useCallback(
     (patches: LayerPropsPatch[]) => {
       setLayers((prev) => {
-        const applied = new Map<string, LayerPropsPatch>();
+        // layer id -> [patch, the preset the box is linked to NOW]: a snapshot is amended only where its
+        // box is still linked to that same preset (never relink a snapshot where it was detached).
+        const applied = new Map<string, [LayerPropsPatch, string | null]>();
         const withDesign = (layer: TagLayer, patch: LayerPropsPatch): TagLayer => ({
           ...layer,
           props: applyAccessoryDesign(
@@ -1825,14 +1827,16 @@ export function TagCanvasEditor({
           const patch = patches.find((candidate) => candidate.layerId === layer.id);
           if (!patch || layer.props.kind !== 'accessories') return layer;
           if (designKey(accessoryDesign(layer.props)) !== patch.expectedKey) return layer;
-          applied.set(layer.id, patch);
+          applied.set(layer.id, [patch, layer.props.presetId ?? null]);
           return withDesign(layer, patch);
         });
         if (applied.size === 0) return prev;
         history.amend((snapshot) =>
           snapshot.map((layer) => {
-            const patch = applied.get(layer.id);
-            return patch && layer.props.kind === 'accessories' ? withDesign(layer, patch) : layer;
+            const hit = applied.get(layer.id);
+            return hit && layer.props.kind === 'accessories' && (layer.props.presetId ?? null) === hit[1]
+              ? withDesign(layer, hit[0])
+              : layer;
           }),
         );
         return next;

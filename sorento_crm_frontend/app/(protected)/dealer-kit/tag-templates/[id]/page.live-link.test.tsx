@@ -4,7 +4,7 @@
  * canvas as patches (no remount).
  */
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
@@ -122,6 +122,28 @@ beforeEach(() => {
 });
 
 describe('live link on autosave', () => {
+  it('does nothing until the baselines exist, then pushes the edit', async () => {
+    vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
+    vi.mocked(updateTemplate).mockResolvedValue(fixture([box('EDITED')]));
+    let release: (value: unknown) => void = () => {};
+    link.fetch
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)))
+      .mockResolvedValue(serverRecord('OLD', 'U1'));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    await editThenAutosave('Edit the box');
+    expect(link.push).not.toHaveBeenCalled();
+    await act(async () => {
+      release(serverRecord('OLD', 'U1'));
+    });
+    await waitFor(() =>
+      expect(link.push).toHaveBeenCalledWith({
+        id: 'p1',
+        input: { design: expect.objectContaining({ headerText: 'EDITED' }), base_updated_at: 'U1' },
+      }),
+    );
+  });
+
   it('when the template was saved elsewhere since this tag loaded, nothing is pushed and the server design wins', async () => {
     vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
     vi.mocked(updateTemplate).mockResolvedValue(fixture([box('EDITED')]));

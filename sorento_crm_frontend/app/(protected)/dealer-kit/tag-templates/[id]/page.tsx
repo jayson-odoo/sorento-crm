@@ -213,13 +213,18 @@ function TagTemplateEditor() {
   // The baseline a loaded (or restored) draft starts from: its linked boxes as saved, each template's
   // version now. Read through a ref so the load effect below stays stable.
   const rebaseLinksRef = useRef<(layers: TagLayer[]) => void>(() => {});
+  // Resolves once the baselines of the latest load / restore exist; the sync waits for it, so an edit
+  // is pushed on the first autosave AFTER the baselines are known, never before.
+  const baselinesReadyRef = useRef<Promise<void>>(Promise.resolve());
   rebaseLinksRef.current = (layers: TagLayer[]) => {
-    void captureBaselines(layers, linkDeps().fetch).then((captured) => {
+    linkBaselineRef.current = new Map();
+    baselinesReadyRef.current = captureBaselines(layers, linkDeps().fetch).then((captured) => {
       linkBaselineRef.current = captured;
     });
   };
   const rebaseLinks = useCallback((layers: TagLayer[]) => rebaseLinksRef.current(layers), []);
   syncLinksRef.current = async (layers: TagLayer[]) => {
+    await baselinesReadyRef.current;
     const result = await syncLinkedBoxes(layers, linkBaselineRef.current, linkDeps());
     for (const message of result.messages) {
       if (message === 'deleted') toast.warning('Saved accessories template was deleted; box detached');

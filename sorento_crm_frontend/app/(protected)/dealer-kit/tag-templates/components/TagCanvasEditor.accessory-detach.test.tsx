@@ -221,6 +221,34 @@ describe('a correction from the host is never an undo step', () => {
     expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('SERVER');
   });
 
+  it('a correction never relinks a snapshot where the box was detached: detach, undo, correct, redo still detaches', () => {
+    const ref: { current: ((patches: unknown[]) => void) | null } = { current: null };
+    const state = mount(accessoriesLayer('acc1', { card, presetId: 'p1', headerText: 'MINE' }), undefined, ref);
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+    expect((state.layers[0].props as unknown as { presetId?: string | null }).presetId ?? null).toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect((state.layers[0].props as unknown as { presetId?: string }).presetId).toBe('p1');
+
+    const current = state.layers[0].props as never;
+    act(() => {
+      ref.current?.([
+        {
+          layerId: 'acc1',
+          expectedKey: designKey(accessoryDesign(current)),
+          props: { ...(current as object), headerText: 'SERVER' },
+        },
+      ]);
+    });
+    expect((state.layers[0].props as unknown as { headerText: string }).headerText).toBe('SERVER');
+
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    const redone = state.layers[0].props as unknown as { presetId?: string | null; headerText: string };
+    expect(redone.presetId ?? null).toBeNull();
+    expect(redone.headerText).toBe('MINE');
+  });
+
   it('skips a box the user changed meanwhile', () => {
     const ref: { current: ((patches: unknown[]) => void) | null } = { current: null };
     const state = mount(accessoriesLayer('acc1', { card, presetId: 'p1', headerText: 'MINE' }), undefined, ref);
