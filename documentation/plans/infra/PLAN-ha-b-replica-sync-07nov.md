@@ -1,6 +1,6 @@
 # PLAN: node B exists as a replica; deploy both, then LB, then no-data-loss failover (HA-CF-FAILOVER, 7 Nov)
 
-Status: Card (7 Nov). No code before the owner answers the card in section 6.
+Status: Build (7 Nov). Card answered 7 Nov about 11:00 (section 7): all five recommendations. Step 1 (deploy both on the plain compose) in build; section 3 (sync record) next.
 Track: full (prod infra). Nothing in this lane touches production: every prod step is an owner
 command, and every block in section 5 is READ-ONLY.
 
@@ -278,3 +278,29 @@ first if they run), B4 + 5.AB (Q3 `on` vs `remote_write`).
    choose to wait for A or to promote and accept the loss; (b) automatic promotion after B replays
    what the R2 WAL archive holds (loses up to `archive_timeout`, 60 s). Rec (a): it is the only
    case where "automatic" and "no data loss" conflict, and a single failure never lands here.
+
+## 7. Owner answers (7 Nov about 11:00, verbatim "I am ok with the HA recommendation")
+
+- **Q1 (a)** adopt B as built; re-seed only if the checks show a different Postgres major or image.
+- **Q2 (a)** the two-node release reads each node's role from today's plain compose; step 1 ships
+  on its own, no restart on A.
+- **Q3 (a)** `synchronous_commit=on` if the measured A-B RTT is under 3 ms, else (b) `remote_write`.
+- **Q4 (a)** strict: saves on A wait while both B and R2 are unreachable, alert at once.
+- **Q5 (a)** no automatic promotion when B was already out of sync: page the owner.
+
+### 7a. Step 1 as built (Q2)
+
+`blue_green_deploy.sh --role` on the plain compose (no `compose.ha.yml`) asks the plain `db`
+service `pg_is_in_recovery()` as `$POSTGRES_USER` on the `postgres` database: `t` = standby,
+`f` = primary. Any failure or other answer = `single`, which is exactly today's release, so a
+single-host release never fails on the new query. A plain standby gets the same standby release
+as the HA one (SKIP_MIGRATIONS=1 exported, no snapshot, workers untouched, waits for the
+replicated alembic head) but writes no `.ha-image-tag` (no role watcher reads it there).
+`ha_release.sh` is unchanged: it refuses unless exactly one host answers primary and every other
+answers standby.
+
+Note for the owner: start.sh honours SKIP_MIGRATIONS only if B's compose passes it to the backend
+colours (the repo template does not, `sorento_crm/docker-compose.yml`). Either way B never
+migrates: the release waits for the replicated head first, so `alembic upgrade head` finds
+nothing to do, and any DDL on a replica would fail the new colour's health check, leaving the
+old colour serving.

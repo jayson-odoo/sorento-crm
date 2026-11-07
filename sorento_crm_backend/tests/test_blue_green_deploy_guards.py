@@ -1106,10 +1106,87 @@ def test_ha_role_flag_prints_the_role_and_changes_nothing(box, in_recovery, want
     assert not _changed_anything(_calls(box)), _calls(box)
 
 
-def test_ha_role_flag_without_ha_is_single(box):
+# --- HA-CF-FAILOVER 7 Nov: the two-node release on today's PLAIN compose -----------------
+# Plan: documentation/plans/infra/PLAN-ha-b-replica-sync-07nov.md G3, owner Q2 (a). Node B is a
+# streaming replica on the plain compose (no compose.ha.yml), so the role comes from the plain
+# db service: in recovery = standby, otherwise primary. A db that does not answer stays
+# "single", which is exactly today's single-host release.
+
+
+def _plain_role_box(box, in_recovery: str):
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "skip.log"), "a").write(" ".join(args[:6]) + " SKIP_MIGRATIONS=" + os.environ.get("SKIP_MIGRATIONS", "<unset>") + "\\n")\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["stub"] / "in_recovery").write_text(in_recovery)
+
+
+@pytest.mark.parametrize("in_recovery, want", [("t\n", "standby"), ("f\n", "primary"), ("", "single"), ("garbage\n", "single")])
+def test_plain_role_flag_reads_the_plain_db(box, in_recovery, want):
+    _plain_role_box(box, in_recovery)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == want
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_plain_role_flag_with_a_failing_db_is_single(box):
+    (box["stub"] / "psql_fail").write_text("1")
     r = _run(box, args=("--role",), IMAGE_TAG="")
     assert r.returncode == 0 and r.stdout.strip() == "single", r.stdout + r.stderr
-    assert not _calls(box)
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_plain_role_query_runs_as_the_db_user_on_the_postgres_database(box):
+    _plain_role_box(box, "t\n")
+    _run(box, args=("--role",), IMAGE_TAG="")
+    q = [l for l in _calls(box) if "pg_is_in_recovery" in l]
+    assert q, _calls(box)
+    assert all("-u postgres" not in l and "POSTGRES_USER" in l and "-d postgres" in l for l in q), q
+
+
+def test_plain_standby_release_skips_migrations_snapshot_and_workers(box):
+    _plain_role_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Node role: standby" in r.stdout
+    calls = _calls(box)
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and all(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+    # Not an HA compose node: no role watcher reads the tag file.
+    assert not (box["root"] / ".ha-image-tag").exists()
+
+
+def test_plain_standby_waits_for_the_primary_migration_and_never_starts_behind(box):
+    _plain_role_box(box, "t\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA, STANDBY_SCHEMA_WAIT_SECONDS="30")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "deploy the primary first" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _started_new_colour(calls) and not _swapped(calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+
+
+@pytest.mark.parametrize("in_recovery", ["f\n", ""])
+def test_plain_primary_or_single_release_is_todays_release(box, in_recovery):
+    _plain_role_box(box, in_recovery)
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert any("pg_dump" in l for l in calls), calls
+    assert any("--force-recreate" in l and "worker" in l for l in calls), calls
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and not any(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
 
 
 def test_ha_standby_release_skips_migrations_snapshot_and_workers(box):
