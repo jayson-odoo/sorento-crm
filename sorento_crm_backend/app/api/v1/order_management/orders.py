@@ -2248,10 +2248,11 @@ def get_top_selling(
         channel_norm = _choice(channel_norm, "channel", allowed_channels)
     if basis_norm == "invoiced":
         # SALES-UNIFIED: the invoiced basis is the Top selling items report, items only, and
-        # finance data: it needs the reports' own slug, not only orders.view (security M1).
+        # finance data: the reports' own slug, not only orders.view (security M1), or on a
+        # contact's call that contact's Sales report tick (CHATBOT-SALES-REPORT-TICK).
         from app.services.sales.invoiced_sales import require_invoiced_access
 
-        require_invoiced_access(db, current_user)
+        require_invoiced_access(db, current_user, contact_id=contact_id, space_id=space_id)
         for value, name, code in (
             (group_norm == "category", "group=category", "group_needs_order_basis"),
             ((customer_query or "").strip(), "customer_query", "customer_query_needs_order_basis"),
