@@ -43,14 +43,15 @@ vi.mock('@/hooks/useSalesLeaderboardQuery', () => ({
 import LeaderboardView from './LeaderboardView';
 
 const row = (rank: number, person: string, amount: number, is_me = false): LeaderboardRow => ({
-  rank, person, codes: [person], amount, prev_amount: 100, change_pct: 27.6, customers: 3, is_me,
+  rank, name: person, keys: [], person, codes: [person], amount, qty: 0, prev_amount: 100, change_pct: 27.6, customers: 3, products: 0, is_me,
 });
 
 function response(rows: LeaderboardRow[], me: LeaderboardResponse['me']): LeaderboardResponse {
   return {
+    basis: 'invoiced', by: 'person', can_drill_others: true,
     date_from: '2026-10-01', date_to: '2026-10-31', previous_from: '2026-09-01', previous_to: '2026-09-30',
     as_of: '2026-11-04T03:10:00',
-    total: { amount: 16369803.26, prev_amount: 15894544.36, change_pct: 3.0 },
+    total: { amount: 16369803.26, qty: 0, prev_amount: 15894544.36, change_pct: 3.0, customers: 0, products: 0 },
     no_agent_amount: 1210.32, rows, me,
   };
 }
