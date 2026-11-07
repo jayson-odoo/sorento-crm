@@ -596,6 +596,21 @@ Needs the branch's `scripts/blue_green_deploy.sh` (#2166, `DB_CONTAINER` support
 `git fetch origin claude/ha-cf-failover-wz466v && git show FETCH_HEAD:scripts/blue_green_deploy.sh > /tmp/bgd.sh`,
 then `scp /tmp/bgd.sh <B>:/opt/sorento-crm2/scripts/blue_green_deploy.sh`.
 
+**Order: S5.1 -> S5.5 -> S5.2 -> S5.3 -> S5.4 -> S5.6 -> S5.7 -> S5.8** (S5.5 creates the
+compose network S5.2 needs).
+
+**Why B's app sends nothing while it is a standby** (code read 8 Nov): APScheduler starts only with
+`ENABLE_SCHEDULER=true` (`app/main.py:438`), set only on the `worker` service, and S5 starts no
+worker; RQ queues run only in `worker.py`. The one in-process sender is the chatbot inbox sweeper
+(`app/main.py:426`, `app/services/chatbot/inbox_queue.py`): its dead-row recovery (`:1047`) only
+writes, and the send (`_post`, `:718`) runs only after `_claim_next` (`:558`) has committed an
+`UPDATE`, which a read-only replica refuses. Startup seeds (`app/main.py:449-598`) are DB writes in
+`try/except` and only log. The lookup warm (`:432`) reads and calls the OpenAI embeddings API,
+nothing customer-facing. Do NOT switch the sweeper off on B: it must already be running when B is
+promoted. Its mutex is in Redis and B has its own Redis, so at a real failover B recovers A's
+in-flight rows: unsent rows are answered, rows caught mid-send are flagged for staff, never resent
+(`should_resend`, `:709`).
+
 **S5.1 Parity (read-only, both nodes):**
 
 ```bash
@@ -624,7 +639,7 @@ the same volume, a `POSTGRES_USER=` env line (the release script needs it), a `s
 
 ```bash
 # THIS CHANGES PROD (node B). Replica down about 10-30 s.
-docker rm sorento_crm_replica_old 2>/dev/null; true     # the S2.3 leftover, only once S2.3 has run a day
+docker rename sorento_crm_replica_old sorento_crm_replica_s23 &&   # S2.3 leftover, kept stopped as the older fallback
 docker stop -t 60 sorento_crm_replica &&
 docker rename sorento_crm_replica sorento_crm_replica_old &&
 docker update --restart no sorento_crm_replica_old &&
@@ -633,8 +648,7 @@ docker exec sorento_crm_replica psql -U postgres -d postgres -Atc \
   "select pg_is_in_recovery(), status, sender_host from pg_stat_wal_receiver"
 ```
 
-(If S2.3 is less than a day old, skip the `docker rm` line and rename the S2.3 leftover first:
-`docker rename sorento_crm_replica_old sorento_crm_replica_s23`.)
+Remove `_old` and `_s23` after B has run a day (`_s23` with S2.4, not before 9 Nov ~02:00).
 
 (5434 is closed to everything but `wg0` by S3 and is not in the Hostinger accept list. Binding
 `0.0.0.0` instead of `10.77.0.2` keeps the container starting after a reboot even if the tunnel
@@ -677,6 +691,7 @@ Also on B (reload, no restart), so the slot A will use after a failover cannot f
 ```bash
 ./scripts/blue_green_deploy.sh --preflight      # every line PASS
 ./scripts/blue_green_deploy.sh --role           # prints: standby
+docker compose config | grep -n 'ENABLE_SCHEDULER'   # `true` only under the worker service; a backend colour with it: STOP
 ```
 
 **S5.8 First start on B with A's current release:**
