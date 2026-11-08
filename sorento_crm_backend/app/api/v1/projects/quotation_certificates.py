@@ -109,8 +109,11 @@ def list_certificates(
         document = _document(db, project_id, document_id)
         items = certs.list_rows(db, document)
         _commit_if_changed(db)
+        can_edit = _can_edit(db, project_id, user)
         return {
-            "can_edit": _can_edit(db, project_id, user),
+            "can_edit": can_edit,
+            # Adding reads the register, so it needs its view right as well (the POST checks it too).
+            "can_add": can_edit and REGISTER_VIEW_SLUG in permission_slugs(db, user["id"]),
             "can_edit_defaults": _can_defaults(db, user),
             "items": items,
         }

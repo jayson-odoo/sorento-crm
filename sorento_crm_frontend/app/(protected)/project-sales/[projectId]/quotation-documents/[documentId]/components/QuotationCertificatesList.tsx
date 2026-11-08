@@ -135,6 +135,7 @@ export function QuotationCertificatesList({
 
   const rows = React.useMemo(() => list.data?.items ?? [], [list.data]);
   const canEdit = Boolean(list.data?.can_edit);
+  const canAdd = Boolean(list.data?.can_add);
   const listed = React.useMemo(() => new Set(rows.map((r) => r.certificate_id)), [rows]);
   const run = removal.run;
   const onRemove = React.useCallback(
@@ -313,7 +314,7 @@ export function QuotationCertificatesList({
               <FileDown className="size-4" aria-hidden />
               Download certificates PDF
             </Button>
-            {canEdit && (
+            {canAdd && (
               <Button size="sm" onClick={() => setAdding(true)}>
                 <Plus className="size-4" aria-hidden />
                 Add certificate
@@ -322,7 +323,7 @@ export function QuotationCertificatesList({
           </div>
         }
       />
-      {canEdit && (
+      {canAdd && (
         <AddCertificateDialog
           open={adding}
           onOpenChange={setAdding}

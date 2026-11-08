@@ -88,7 +88,7 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 function data(items: unknown[], canEdit = true) {
-  return { can_edit: canEdit, can_edit_defaults: false, items };
+  return { can_edit: canEdit, can_add: canEdit, can_edit_defaults: false, items };
 }
 
 function ok(items: unknown[], canEdit = true) {
@@ -181,6 +181,19 @@ describe('QuotationCertificatesList', () => {
     renderList();
     await screen.findByText('ZZT-0119');
     expect(screen.queryByRole('button', { name: /add certificate/i })).toBeNull();
+  });
+
+  it('hides Add certificate when the viewer can edit but may not read the register', async () => {
+    useQuotationCertificates.mockReturnValue({
+      data: { can_edit: true, can_add: false, can_edit_defaults: false, items: [row()] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    renderList();
+    await screen.findByText('ZZT-0119');
+    expect(screen.queryByRole('button', { name: /add certificate/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /download certificates pdf/i })).toBeInTheDocument();
   });
 
   it('shows neither the empty state nor rows while loading', () => {

@@ -415,3 +415,13 @@ def test_suggest_code_accepts_a_bare_three_character_code_with_a_digit():
     assert suggest_code(_text_pdf("1515", "WB 1515"), "SRTWB1515") == "WB 1515"
     # Under three characters never qualifies.
     assert suggest_code(_text_pdf("A1"), "ZZTA1X") is None
+
+
+def test_suggest_code_three_characters_need_a_letter_and_a_digit():
+    from app.services.certificate_pdf_service import suggest_code
+
+    # "120" is a quantity in prose, not a model: a bare number of three characters never qualifies.
+    assert suggest_code(_text_pdf("Fire resistance 120 minutes"), "SRTWB1202") is None
+    assert suggest_code(_text_pdf("Model", "14A"), "ZZT-SV14A-CP") == "14A"
+    # Four or more characters keep the digit-only rule.
+    assert suggest_code(_text_pdf("1515"), "SRTWB1515") == "1515"

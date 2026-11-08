@@ -54,6 +54,8 @@ R9. **Renewal.** A certificate renewal (new revision) drops saved boxes for the 
 - Line with no `product_id` (free text line): contributes no certificate.
 - Product removed from the quote: its certificate leaves the list unless added by hand; a hand-added or
   removed marker for a certificate stays on the quote.
+- A product whose own `product_code` is edited keeps a negative "no code found" cache until the next
+  certificate revision or a typed code; the cache is keyed by revision, not by the product code.
 - Certificate's current revision has no file (`attachment_id` NULL): listed with "No file", cannot be
   opened, left out of the customer PDF.
 - Encrypted or broken PDF: treated like scanned (no auto box); export copies it without boxes and the

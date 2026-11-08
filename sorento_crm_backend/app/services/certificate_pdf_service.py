@@ -206,9 +206,19 @@ def find_boxes(pdf_bytes: bytes, code: str) -> dict[str, Any]:
         doc.close()
 
 
+def _qualifies(norm: str) -> bool:
+    """A suggestion candidate: 4+ characters with a digit, or exactly 3 with a letter AND a digit
+    ("14A" yes, "120" no: a bare three digit number is usually a quantity in prose)."""
+    if not any(ch.isdigit() for ch in norm):
+        return False
+    if len(norm) >= 4:
+        return True
+    return len(norm) == 3 and any(ch.isalpha() for ch in norm)
+
+
 def suggest_code(pdf_bytes: bytes, product_code: str) -> str | None:
     """The printed code for a product (CERT-14): the longest 1-3 word run that is a substring of the
-    product code, at least 3 characters and containing a digit; ties go to reading order. The
+    product code, at least 3 characters (3 need a letter and a digit) and containing a digit; ties go to reading order. The
     product code itself never qualifies (CERT-3: it is not searched)."""
     doc = _open(pdf_bytes)
     if doc is None:
@@ -221,7 +231,7 @@ def suggest_code(pdf_bytes: bytes, product_code: str) -> str | None:
         for index in range(min(len(doc), MAX_PAGES)):
             words = _words(doc[index])
             for i, n, acc in _runs(words, 3):
-                if len(acc) < 3 or not any(ch.isdigit() for ch in acc) or acc not in product_norm or acc == product_norm:
+                if not _qualifies(acc) or acc not in product_norm or acc == product_norm:
                     continue
                 if best is None or len(acc) > best[0]:
                     printed = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")

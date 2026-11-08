@@ -60,6 +60,8 @@ export interface CertificateRow {
 
 export interface CertificateList {
   can_edit: boolean;
+  /** Edit right and the register's view right: the Add certificate button. */
+  can_add: boolean;
   can_edit_defaults: boolean;
   items: CertificateRow[];
 }

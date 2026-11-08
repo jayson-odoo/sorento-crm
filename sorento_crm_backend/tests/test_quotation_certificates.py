@@ -1235,3 +1235,55 @@ def test_l4_adding_a_certificate_needs_the_register_view_right(files):
             assert r.status_code == 403, r.text
         with _api(db, c, EDIT_SLUGS) as client:
             assert client.post(_u(c), json={"certificate_id": cr.id}).status_code == 201
+
+
+# ------------------------------------------------------------------ 12 fix round 3
+
+
+def test_r3_a_new_revision_discards_the_negative_cache(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], None, None)], pdf=_pdf("ZZ 9"), link_source="ai")
+        cp = cr.cps[c["a"].id]
+        with _api(db, c) as client:
+            assert _items(client, c)[0]["marked"]["state"] == "not_on_certificate"
+            db.expire_all()
+            assert cp.boxes["code"] is None and cp.boxes["revision_id"] == cr.rev.id
+            _new_revision(db, cr, files, _pdf("XX 1", "WB 1515"))
+            db.commit()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 1, "state": "suggested"}
+            db.expire_all()
+            assert cp.model_code == "WB 1515" and cp.model_code_source == "ai"
+
+
+def test_r3_a_manual_default_drawn_on_an_old_revision_is_ignored_after_a_new_one(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c, DEFAULTS) as client:
+            put = client.put(
+                _u(c, f"/{cr.id}/boxes"),
+                json={"scope": "default", "boxes": [_box(y=0.9, h=0.05, product_id=c["a"].id)]},
+            )
+            assert put.status_code == 200, put.text
+            assert _items(client, c)[0]["marked"]["state"] == "edited"
+            _new_revision(db, cr, files, _pdf("AA 1", "WB 1515"))
+            db.commit()
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 1, "state": "found"}
+            d = _detail(client, c, cr.id)
+            assert d["box_source"] == "default" and d["boxes"][0]["y"] != pytest.approx(0.9)
+
+
+def test_r4_can_add_needs_the_edit_right_and_the_register_view_right(files):
+    with blank_session() as db:
+        c = _draft(db)
+        with _api(db, c, EDIT_SLUGS) as client:
+            body = client.get(_u(c)).json()
+            assert body["can_edit"] is True and body["can_add"] is True
+        with _api(db, c, EDIT_NO_CERT_VIEW) as client:
+            body = client.get(_u(c)).json()
+            assert body["can_edit"] is True and body["can_add"] is False
+        with _api(db, c, VIEW_ONLY) as client:
+            assert client.get(_u(c)).json()["can_add"] is False
