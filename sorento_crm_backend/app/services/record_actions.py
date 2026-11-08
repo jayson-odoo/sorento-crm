@@ -284,6 +284,18 @@ register(
     )
 )
 
+register(
+    FormAction(
+        key="sales_target.delete",
+        entity_types=("sales_target",),
+        execute=_delete_sales_target,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.targets.delete",
+        label="Delete target",
+    )
+)
+
+
 def _delete_point_ratio(db: Session, payload: dict):
     from app.services.sales import target_service
 
@@ -302,16 +314,6 @@ register(
     )
 )
 
-register(
-    FormAction(
-        key="sales_target.delete",
-        entity_types=("sales_target",),
-        execute=_delete_sales_target,
-        window=WINDOW_DESTRUCTIVE,
-        permission="sales.targets.delete",
-        label="Delete target",
-    )
-)
 
 register(
     FormAction(

@@ -25,11 +25,18 @@ const service = vi.hoisted(() => ({
   duplicateSalesTarget: vi.fn(),
   createTargetChild: vi.fn(),
   deleteSalesTarget: vi.fn(),
+  updatePointRatio: vi.fn(),
 }));
 vi.mock('../services/salesTargetService', () => service);
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { useCreateSalesTarget, usePatchSalesTargetPeriod, useSalesTarget, useSalesTargets } from './useSalesTargets';
+import {
+  useCreateSalesTarget,
+  usePatchSalesTargetPeriod,
+  useSalesTarget,
+  useSalesTargets,
+  useUpdatePointRatio,
+} from './useSalesTargets';
 import { toast } from '@/lib/toast';
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -102,5 +109,24 @@ describe('usePatchSalesTargetPeriod', () => {
     );
     expect(service.patchSalesTargetPeriod).toHaveBeenCalledWith('t1', 'p1', { target_value: 250 });
     expect(toast.success).toHaveBeenCalled();
+  });
+});
+
+describe('useUpdatePointRatio (POINT-RATIO-EDIT)', () => {
+  it('saves by id and refreshes the ratios and every target that reads them', async () => {
+    service.updatePointRatio.mockResolvedValue({ id: 'r1' });
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const own = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useUpdatePointRatio(), { wrapper: own });
+    await act(() => result.current.mutateAsync({ id: 'r1', effective_from: '2026-02-01', rm_per_point: 1.25 }));
+    expect(service.updatePointRatio).toHaveBeenCalledWith('r1', { effective_from: '2026-02-01', rm_per_point: 1.25 });
+    const keys = spy.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([['sales-target-point-ratios'], ['sales-targets'], ['sales-target']]),
+    );
+    expect(toast.success).toHaveBeenCalledWith('Ratio saved');
   });
 });

@@ -35,6 +35,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Integer, cast, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
@@ -328,6 +329,10 @@ def _point_ratio(db: Session, ratio_id: str) -> SalesPointRatio:
     return row
 
 
+def _ratio_clash_message(effective_from: date) -> str:
+    return f"A ratio from {effective_from.strftime('%d/%m/%Y')} already exists. Edit that one instead."
+
+
 def update_point_ratio(
     db: Session, ratio_id: str, effective_from: date, rm_per_point: float
 ) -> SalesPointRatio:
@@ -340,20 +345,29 @@ def update_point_ratio(
         .first()
     )
     if clash is not None:
-        raise AppException(
-            status_code=409,
-            message=f"A ratio from {effective_from.strftime('%d/%m/%Y')} already exists. Edit that one instead.",
-        )
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from))
     row.effective_from = effective_from
     row.rm_per_point = Decimal(str(rm_per_point)).quantize(Decimal("0.0001"))
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Two edits racing onto one date pass the check above; the unique index answers.
+        if "uq_sales_point_ratios_company_from" not in str(exc.orig):
+            raise
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from)) from exc
     return row
 
 
 def delete_point_ratio(db: Session, ratio_id: str) -> None:
-    """Hard delete (D7). The next older ratio then applies from that date on; with none
-    left, a points target reads as "ratio missing", the state before the first ratio."""
-    row = _point_ratio(db, ratio_id)
+    """The parked `point_ratio.delete` handler, a hard delete (D7). The next older ratio then
+    applies from that date on; with none left, a points target reads as "ratio missing", the
+    state before the first ratio. Already gone is not an error (`delete_target_by_id`)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(ratio_id, resource="Point ratio")
+    row = db.query(SalesPointRatio).filter(SalesPointRatio.id == ratio_id).first()
+    if row is None:
+        return
     db.delete(row)
     db.commit()
 

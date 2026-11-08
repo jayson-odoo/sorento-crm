@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from .test_sales_targets_s1 import (  # noqa: F401  (fixtures)
     BASE,
     _agent,
@@ -741,9 +743,43 @@ def test_point_ratio_delete_last_row_leaves_no_ratio(api):
     assert client.get(RATIOS).json()["rows"] == []
     # Points targets then read as "ratio missing", the state before the first ratio was added.
     assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) is None
-    missing = "00000000-0000-0000-0000-000000000000"
-    import pytest
-    from app.services.error_handler import AppException
+    # Already gone at commit time (a second Delete on the same row) is not an error.
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    get_action("point_ratio.delete").execute(db, {"entity_id": "00000000-0000-0000-0000-000000000000"})
 
-    with pytest.raises(AppException):
-        get_action("point_ratio.delete").execute(db, {"entity_id": missing})
+
+def test_point_ratio_edit_and_delete_are_company_scoped(api):
+    import app.services.record_actions  # noqa: F401
+    from sqlalchemy import text
+
+    from app.models.base import company_scope
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    other_company = db.execute(
+        text("select id from companies where id <> :c order by code limit 1"), {"c": company_id}
+    ).scalar()
+    if other_company is None:
+        from app.models.company import Company
+
+        other_company = Company(code="ZZT2", name="ZZT Other Sdn Bhd")
+        db.add(other_company)
+        db.flush()
+        other_company = other_company.id
+    with company_scope(db, frozenset({other_company})):
+        theirs = target_service.save_point_ratio(db, date(2026, 3, 1), 9.9)
+        theirs_id = theirs.id
+    db.expire_all()
+    mine = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+
+    # Another company's ratio is not found, to an edit or to a delete.
+    res = client.patch(f"{RATIOS}/{theirs_id}", json={"effective_from": "2026-03-01", "rm_per_point": 1})
+    assert res.status_code == 404, res.text
+    get_action("point_ratio.delete").execute(db, {"entity_id": theirs_id})
+    # Their date is no clash for my ratio.
+    res = client.patch(f"{RATIOS}/{mine}", json={"effective_from": "2026-03-01", "rm_per_point": 1.3})
+    assert res.status_code == 200, res.text
+    with company_scope(db, frozenset({other_company})):
+        db.expire_all()
+        assert [float(r.rm_per_point) for r in target_service.point_ratios(db)] == [9.9]
