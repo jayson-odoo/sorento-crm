@@ -1,7 +1,7 @@
 """Dynamic export rows (flattened for order lines) using same filter compiler as list search."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -20,7 +20,7 @@ from app.schemas.list_query import ListExportRequest
 from app.services.finance import billing_document_query_service
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import require_adapter
-from app.services.product_service import malaysia_day_start_utc
+from app.services.product_service import malaysia_day_range_filters
 from app.services.query.filter_compiler import compile_optional_filter
 from app.services.sla_service import MALAYSIA_TZ
 from app.services.workflow_submission_dynamic_list_query import merge_submission_field_maps
@@ -263,15 +263,13 @@ class ListQueryExportService:
             q = q.filter(Product.is_active == (req.product_status == "active"))
         if req.item_type:
             q = q.filter(Product.item_type == req.item_type)
-        # "Discontinued at" range (issue #1287): inclusive by Malaysia calendar day,
-        # same bounds as `ProductService._build_list_query`.
-        if req.discontinued_from is not None:
-            q = q.filter(Product.discontinued_notified_at >= malaysia_day_start_utc(req.discontinued_from))
-        if req.discontinued_to is not None:
-            q = q.filter(
-                Product.discontinued_notified_at
-                < malaysia_day_start_utc(req.discontinued_to + timedelta(days=1))
-            )
+        # "Discontinued between" / "List price changed between": the list's own bounds.
+        for clause in malaysia_day_range_filters(
+            Product.discontinued_notified_at, req.discontinued_from, req.discontinued_to
+        ) + malaysia_day_range_filters(
+            Product.list_price_notified_at, req.list_price_changed_from, req.list_price_changed_to
+        ):
+            q = q.filter(clause)
         if req.price_min or req.price_max:
             pf = []
             if req.price_min is not None:

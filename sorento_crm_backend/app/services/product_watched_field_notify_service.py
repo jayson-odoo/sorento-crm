@@ -466,8 +466,7 @@ def _list_price_sources(db: Session, rows: list) -> dict[str, str]:
         {"ids": list(by_id)},
     ).all()
 
-    sources: dict[str, str] = {}
-    staff: dict[str, str] = {}
+    actors: dict[str, tuple] = {}
     for entity_id, actor_type, user_id, new_price, changed_at in audit_rows:
         p = by_id.get(str(entity_id))
         if p is None:
@@ -480,10 +479,23 @@ def _list_price_sources(db: Session, rows: list) -> dict[str, str]:
         notified_at = getattr(p, "list_price_notified_at", None)
         if notified_at is not None and changed_at is not None and changed_at <= notified_at:
             continue
+        actors[str(entity_id)] = (actor_type, user_id)
+    return audit_source_labels(db, actors)
+
+
+def audit_source_labels(db: Session, actors: dict) -> dict:
+    """``{key: (actor_type, user_id)}`` -> ``{key: label}`` for the keys that get one.
+
+    The one "by <source>" rule, shared by the #2228 digest and the products list's
+    list-price history lightbox: an integration -> ``SYNC_SOURCE_LABEL``; a staff user ->
+    their name (else email); any other actor (scheduler, worker, legacy) -> no label."""
+    sources: dict = {}
+    staff: dict = {}
+    for key, (actor_type, user_id) in actors.items():
         if actor_type == "integration":
-            sources[str(entity_id)] = SYNC_SOURCE_LABEL
+            sources[key] = SYNC_SOURCE_LABEL
         elif actor_type == "user" and user_id:
-            staff[str(entity_id)] = str(user_id)
+            staff[key] = str(user_id)
 
     if staff:
         names = {
@@ -492,9 +504,9 @@ def _list_price_sources(db: Session, rows: list) -> dict[str, str]:
             .filter(User.id.in_(set(staff.values())))
             .all()
         }
-        for pid, uid in staff.items():
+        for key, uid in staff.items():
             if names.get(uid):
-                sources[pid] = names[uid]
+                sources[key] = names[uid]
     return sources
 
 
