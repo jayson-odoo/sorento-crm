@@ -22,7 +22,6 @@ import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
-  numberErrors,
   payloadFromState,
   stateFromDetail,
   stateFromPrefill,
@@ -87,7 +86,6 @@ function StaffNewProductApplicationForm({
   // Owner hand test 9 Nov: no product rows on the form; an older draft keeps (and resends) its own.
   const [state, setState] = useState<FormState>(EMPTY_FORM);
   const [hydrated, setHydrated] = useState(!applicationId && !stockInquiryId);
-  const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
   const [savedId, setSavedId] = useState<string | null>(null);
 
@@ -148,14 +146,8 @@ function StaffNewProductApplicationForm({
     return created;
   };
 
-  const checkNumbers = () => {
-    const found = numberErrors(state);
-    setErrors(found);
-    return Object.keys(found).length === 0;
-  };
 
   const handleSaveDraft = async () => {
-    if (!checkNumbers()) return;
     try {
       const saved = await save();
       router.push(`${BASE_PATH}/${saved.id}`);
@@ -167,7 +159,6 @@ function StaffNewProductApplicationForm({
   // Save, then submit. The server's refusal names the line; the toast shows it and the
   // user stays here with the draft kept.
   const handleSubmit = async () => {
-    if (!checkNumbers()) return;
     try {
       const saved = await save();
       await submit.mutateAsync(saved.id);

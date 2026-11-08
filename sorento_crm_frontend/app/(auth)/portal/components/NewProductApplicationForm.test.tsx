@@ -239,15 +239,13 @@ describe('new application', () => {
 
   it('has no item group, base UOM or selling price, and no cost box to write', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     expect(screen.queryByText(/item group/i)).toBeNull();
     expect(screen.queryByText(/base uom/i)).toBeNull();
     expect(screen.queryByText(/selling/i)).toBeNull();
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
     expect(screen.queryByLabelText('Lead time')).toBeNull();
-    expect(
-      screen.getByRole('columnheader', { name: /product code/i }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
   });
 
@@ -256,7 +254,7 @@ describe('new application', () => {
       new Error('Product 1: enter the product type.'),
     );
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
     expect(
       await screen.findByText('Product 1: enter the product type.'),
@@ -272,9 +270,7 @@ describe('an existing application', () => {
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
 
-    expect(
-      (await screen.findAllByText('Example kitchen sink')).length,
-    ).toBeGreaterThan(0);
+    expect((await screen.findAllByText('NPA-000001')).length).toBeGreaterThan(0);
     // S3: the read view is plain text, not disabled inputs
     expect(screen.queryByLabelText('Product type')).toBeNull();
     expect(screen.queryAllByRole('textbox')).toHaveLength(0);
@@ -343,7 +339,7 @@ describe('an existing application', () => {
     expect(
       await screen.findByText(/Use the existing codes/),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Product type')).not.toBeDisabled();
+    expect(screen.getByLabelText('Remark')).not.toBeDisabled();
   });
 
   it('sends a rejected application back with Appeal, not Submit (owner, 28 Oct)', async () => {
@@ -374,7 +370,7 @@ describe('portal: stock inquiry tab and earlier codes (NPA-FROM-SI)', () => {
       detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: SI }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    await screen.findAllByText('Example kitchen sink');
+    await screen.findAllByText('NPA-000001');
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
     expect(await screen.findByText('SI26-0412')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'SI26-0412' })).toBeNull();
@@ -386,7 +382,7 @@ describe('portal: stock inquiry tab and earlier codes (NPA-FROM-SI)', () => {
       detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry: null }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    await screen.findAllByText('Example kitchen sink');
+    await screen.findAllByText('NPA-000001');
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Stock inquiry' }));
     expect(await screen.findByText('No stock inquiry')).toBeInTheDocument();
   });
@@ -427,6 +423,7 @@ describe('purchasing feedback on the portal (PQ1)', () => {
       new_product_code: 'XY-1234-MB-69',
       new_product_active: true,
       new_product_facts: { opened_supplier_name: 'Example Supplier Co' },
+      cost_price: '12.50',
       lines: [line({ cost_price: '12.50' })],
     });
 
@@ -491,11 +488,18 @@ describe('portal: table form and attachments (v5)', () => {
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
     expect(screen.queryByLabelText(/add image/i)).toBeNull();
     expect(screen.queryByText(/copy from the inquiry/i)).toBeNull();
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: /add row/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(2);
-    fireEvent.click(screen.getByRole('button', { name: /^remove row 1$/i }));
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
+    // Owner hand test 9 Nov: no product table, on the portal form too (form parity).
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add row/i })).toBeNull();
+    expect(screen.queryByText('No debtor code')).toBeNull();
+  });
+
+  it('an existing application with rows draws no table either', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(detail());
+    render(<NewProductApplicationForm slug="acme" applicationId="npa-1" />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
   it('renders the shared dropzone for kind new_product_application; on create the files are pending and upload right after the first save', async () => {
@@ -545,14 +549,12 @@ describe('portal: table form and attachments (v5)', () => {
     expect(await screen.findByTestId('dropzone')).toHaveAttribute('data-readonly', 'yes');
   });
 
-  it('the payload has no per-row image keys', async () => {
+  it('a new application sends no product rows', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
     await waitFor(() => expect(createNewProductApplication).toHaveBeenCalled());
-    const row = asMock(createNewProductApplication).mock.calls[0][0].lines[0];
-    for (const k of ['images', 'staged_images', 'removed_link_ids'])
-      expect(row).not.toHaveProperty(k);
+    expect(asMock(createNewProductApplication).mock.calls[0][0].lines).toEqual([]);
   });
 });
 
@@ -634,7 +636,7 @@ describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
 describe('portal: Brand column gone, per-row Opened as for older applications (NPA-FROM-SI v3)', () => {
   it('draws no Brand header or picker on a new form', async () => {
     render(<NewProductApplicationForm slug="acme" />);
-    await screen.findByLabelText('Product code');
+    await screen.findByText('NEW PRODUCT APPLICATION');
     expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
     expect(screen.queryByLabelText(/brand/i)).toBeNull();
   });
@@ -648,37 +650,9 @@ describe('portal: Brand column gone, per-row Opened as for older applications (N
       }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    await screen.findAllByText('Example kitchen sink');
+    await screen.findAllByText('NPA-000001');
     expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
     expect(screen.queryByText('Example Brand')).toBeNull();
-  });
-
-  it('shows the Opened as column with the opened code and the Rejected reason per row', async () => {
-    asMock(getNewProductApplication).mockResolvedValue(
-      detail({
-        status: 'approved',
-        status_label: 'Approved',
-        lines_total: 3,
-        lines_done: 2,
-        lines: [
-          line({
-            opened_product_id: 'p-9',
-            opened_product_code: 'XY-1234-MB-9',
-            opened_product_name: 'Example sink 9',
-            opened_product_active: true,
-          }),
-          line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG', closed_reason: 'Customer walked away' }),
-          line({ id: 'l-3', line_no: 3, proposed_code: 'XY-1234-ZZ' }),
-        ],
-      }),
-    );
-    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    expect(await screen.findByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
-    const rows = screen.getAllByTestId('npa-line');
-    expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Rejected: Customer walked away/)).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Rejected:/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('shows no Opened as column when no line is resolved', async () => {
@@ -686,7 +660,7 @@ describe('portal: Brand column gone, per-row Opened as for older applications (N
       detail({ status: 'approved', status_label: 'Approved' }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    await screen.findAllByText('Example kitchen sink');
+    await screen.findAllByText('NPA-000001');
     expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
   });
 });
@@ -751,19 +725,20 @@ describe('portal: no product table from a stock inquiry, purchasing result read-
       }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    expect((await screen.findAllByText('Example kitchen sink')).length).toBeGreaterThan(0);
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+    expect((await screen.findAllByText('NPA-000001')).length).toBeGreaterThan(0);
+    // Owner hand test 9 Nov: an older application's rows are not drawn.
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
     expect(screen.queryByLabelText('Product type')).toBeNull();
   });
 
-  it('a standalone application keeps its table', async () => {
+  it('a standalone application draws no table either (owner hand test 9 Nov)', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry_id: null }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    await screen.findAllByText('Example kitchen sink');
-    expect(screen.getByRole('columnheader', { name: /product code/i })).toBeInTheDocument();
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+    await screen.findAllByText('NPA-000001');
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
   it('shows a typed new code (no product yet), LEADTIME and COST read-only, with no purchasing controls', async () => {

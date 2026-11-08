@@ -142,7 +142,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
 }));
 vi.mock('../services/newProductApplicationService', () => ({
   searchNewProductApplicationProducts: (q: string) => state.search(q),
-  downloadNewProductApplicationExcel: (...a: unknown[]) => state.download(...a),
+  exportNewProductApplicationXlsx: (...a: unknown[]) => state.download(...a),
   linkNewProductApplicationAttachment: (...a: unknown[]) => state.linkAtt(...a),
 }));
 
@@ -488,10 +488,9 @@ describe('the table form', () => {
     }
     expect(screen.getByText('NPA-000001')).toBeInTheDocument();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
+    // Owner hand test 9 Nov: no product table under the header.
     for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i])
-      expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(3);
+      expect(screen.queryByRole('columnheader', { name: h })).toBeNull();
   });
 });
 
@@ -548,12 +547,51 @@ describe('PURCHASING FEEDBACK (Edit purchasing response)', () => {
 });
 
 describe('Download Excel', () => {
-  it('is in the gear menu and calls the download service with the application id', async () => {
+  it('is in the gear menu and queues the workbook in My Downloads, the stock inquiry PDF\'s way', async () => {
+    const { toast } = await import('@/lib/toast');
+    state.download.mockResolvedValue({ id: 'd-1', kind: 'new_product_application_xlsx', status: 'pending' });
     state.data = approved();
     render(<Page />);
     fireEvent.click(screen.getByRole('button', { name: /download excel/i }));
     await waitFor(() => expect(state.download).toHaveBeenCalledTimes(1));
     expect(state.download.mock.calls[0][0]).toBe('a-1');
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('My Downloads')),
+    );
+  });
+});
+
+describe('owner hand test 9 Nov: no product rows, no repeated status', () => {
+  it('shows no product table and no "line done" count', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({
+      status: 'submitted',
+      status_label: 'Submitted',
+      submitted_at: '2026-11-08T01:00:00',
+      lines_total: 1,
+      lines_done: 0,
+    } as Partial<Detail>);
+    render(<Page />);
+    expect(screen.queryByText(/line done|lines done/)).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /product type/i })).toBeNull();
+    expect(screen.queryByText('XY-1234-BG')).toBeNull();
+  });
+
+  it('shows no "No debtor code" chip next to the customer', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({ customer_code: null, customer_name: '300-1001 - EXAMPLE DEPOT SDN BHD' });
+    render(<Page />);
+    expect(screen.getByText(/300-1001 - EXAMPLE DEPOT SDN BHD/)).toBeInTheDocument();
+    expect(screen.queryByText('No debtor code')).toBeNull();
+  });
+
+  it('shows no "Approved by" banner: the status pill and the SLA tab say it', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = { ...approved(), decided_by_name: 'Example Manager', decided_at: '2026-11-09T01:00:00' };
+    render(<Page />);
+    expect(screen.queryByText(/Approved by Example Manager/)).toBeNull();
+    expect(screen.queryByText(/^Approved\.$/)).toBeNull();
+    expect(screen.getAllByText('Approved').length).toBeGreaterThan(0);
   });
 });
 
@@ -570,8 +608,6 @@ describe('read view shows plain values (S3)', () => {
     expect(screen.queryAllByRole('textbox')).toHaveLength(0);
     expect(screen.queryAllByRole('combobox')).toHaveLength(0);
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(screen.getAllByText('Example kitchen sink').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Carton').length).toBeGreaterThan(0);
     expect(screen.getByText('17/01/2028')).toBeInTheDocument();
     expect(screen.getByText('17/10/2026')).toBeInTheDocument();
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
@@ -724,10 +760,10 @@ describe('NEW PRODUCT CODE (header)', () => {
     state.perms = new Set([OPEN]);
   });
 
-  it('has no Opened as column and the table keeps its paper columns', () => {
+  it('has no product table at all (owner hand test 9 Nov)', () => {
     render(<Page />);
     expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-    expect(screen.getByRole('columnheader', { name: /cost \(myr\)/i })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /cost \(myr\)/i })).toBeNull();
   });
 
   it('keeps the suggestion out of the page; Use <code> in the dialog pre-selects Link and saves nothing', async () => {
@@ -831,71 +867,6 @@ describe('Stock inquiry tab', () => {
     expect(
       screen.getByText('Applications raised from a stock inquiry show it here.'),
     ).toBeInTheDocument();
-  });
-});
-
-describe('older applications worked row by row (NPA-FROM-SI v3)', () => {
-  const opened = () =>
-    approved({
-      lines_done: 2,
-      lines: [
-        line({
-          opened_product_id: 'p-9',
-          opened_product_code: 'XY-1234-MB-9',
-          opened_product_name: 'Example sink 9',
-          opened_product_active: true,
-        }),
-        line({
-          id: 'l-2',
-          line_no: 2,
-          proposed_code: 'XY-1234-BG',
-          closed_reason: 'Customer walked away',
-        }),
-        line({ id: 'l-3', line_no: 3, proposed_code: 'XY-1234-ZZ' }),
-      ],
-    });
-
-  it('shows the Opened as column with the opened code and the Rejected reason per row', () => {
-    state.data = opened();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
-    const rows = screen.getAllByTestId('npa-line');
-    expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Rejected: Customer walked away/)).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Rejected:/)).toBeNull();
-    expect(within(rows[2]).queryByText(/XY-1234-MB-9/)).toBeNull();
-  });
-
-  it('keeps Undo on a resolved row for open_code, and it undoes that row', () => {
-    state.data = opened();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    const rows = screen.getAllByTestId('npa-line');
-    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Undo' }));
-    expect(state.undoLine).toHaveBeenCalledWith({ id: 'a-1', lineId: 'l-1' });
-    expect(within(rows[2]).queryByRole('button', { name: 'Undo' })).toBeNull();
-  });
-
-  it('shows the column but no Undo to a viewer without open_code', () => {
-    state.data = opened();
-    state.perms = new Set();
-    render(<Page />);
-    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
-  });
-
-  it('shows no Opened as column when no line is resolved', () => {
-    state.data = approved();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-  });
-
-  it('has no Brand column', () => {
-    state.data = opened();
-    render(<Page />);
-    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { EMPTY_FORM, blankLine, payloadFromState } from '@/lib/new-product-application-form';
+import { EMPTY_FORM, payloadFromState } from '@/lib/new-product-application-form';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -180,7 +180,7 @@ describe('limited user, New Product Application create renders the portal form',
     mountForm(LIMITED);
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
-    expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual(payloadFromState({ ...EMPTY_FORM, lines: [blankLine()] }));
+    expect(where((c) => c.method === 'POST' && c.url === MINE)[0].body).toEqual(payloadFromState(EMPTY_FORM));
     await waitFor(() => expect(nav.replace).toHaveBeenCalledWith('/procurement-management/new-product-applications/new-1'));
     expect(nav.replace.mock.calls.every((a) => !String(a[0]).startsWith('/portal'))).toBe(true);
     expect(staffApi()).toHaveLength(0);

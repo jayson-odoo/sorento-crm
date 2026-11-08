@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Download, Link2, Trash2, XCircle } from 'lucide-react';
@@ -26,7 +27,6 @@ import AuditTrail from '@/components/audit/AuditTrail';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
@@ -60,7 +60,7 @@ import {
   useNewProductApplicationMutations,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import { downloadNewProductApplicationExcel } from '../services/newProductApplicationService';
+import { exportNewProductApplicationXlsx } from '../services/newProductApplicationService';
 
 // The sheet is read-only here, so no brand or product is ever searched.
 const NO_PRODUCTS = async () => [];
@@ -222,6 +222,7 @@ function StaffNewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
+  const queryClient = useQueryClient();
   const { submit, approve, reject, revise, cancel, undo, purchasingReject } =
     useNewProductApplicationMutations();
   const canCreate = useHasPermission(
@@ -320,11 +321,18 @@ function StaffNewProductApplicationDetail({
     canOpen && (r.status === 'approved' || r.status === 'completed');
   const sheetState = savedState;
 
+  // Through My Downloads, the stock inquiry PDF's way (owner 9 Nov): the list's Print Count counts it.
   const downloadExcel = async () => {
     try {
-      await downloadNewProductApplicationExcel(r.id);
+      await exportNewProductApplicationXlsx(r.id);
+      void queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      void queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'new_product_application', r.id],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['new-product-applications'] });
+      toast.success('Preparing the workbook… it will appear in My Downloads.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to download');
+      toast.error(e instanceof Error ? e.message : 'Failed to start the download');
     }
   };
 
@@ -413,13 +421,6 @@ function StaffNewProductApplicationDetail({
             >
               {r.status_label}
             </span>
-            {r.lines_total > 0 && (
-              <>
-                {' · '}
-                {r.lines_done} of {r.lines_total}{' '}
-                {r.lines_total === 1 ? 'line' : 'lines'} done
-              </>
-            )}
           </p>
         </div>
         <DetailActions
@@ -535,11 +536,6 @@ function StaffNewProductApplicationDetail({
         />
       </div>
 
-      {r.status === 'approved' && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {`Approved${r.decided_by_name ? ` by ${r.decided_by_name}` : ''}${r.decided_at ? ` on ${day(r.decided_at)}` : ''}.`}
-        </div>
-      )}
       {r.status === 'rejected' && (
         <RejectionReasonBanner
           reason={r.reject_reason}
@@ -641,89 +637,20 @@ function StaffNewProductApplicationDetail({
                       </InquiryReadValue>
                     }
                     costField={
-                      r.lines.length === 0 ? (
-                        <InquiryReadValue>
-                          {r.cost_price == null || r.cost_price === ''
-                            ? ''
-                            : `MYR ${r.cost_price}`}
-                        </InquiryReadValue>
-                      ) : undefined
+                      <InquiryReadValue>
+                        {r.cost_price == null || r.cost_price === ''
+                          ? ''
+                          : `MYR ${r.cost_price}`}
+                      </InquiryReadValue>
                     }
                     customerField={
                       <span className="flex flex-wrap items-center gap-2">
                         {[r.customer_code, r.customer_name]
                           .filter(Boolean)
                           .join(' - ') || 'None'}
-                        {!r.customer_code && r.customer_name && (
-                          <Badge variant="secondary">No debtor code</Badge>
-                        )}
                       </span>
                     }
                   />
-                  {(!r.stock_inquiry_id || r.lines.length > 0) && (
-                    <div className="mt-6">
-                      <NewProductApplicationLines
-                        lines={sheetState.lines}
-                        onChange={() => {}}
-                        readOnly
-                        showCost
-                        renderOpenedAs={
-                          r.lines.some(isResolved)
-                            ? (draftLine) => {
-                                const l = r.lines.find(
-                                  (x) => x.id === draftLine.id,
-                                );
-                                if (!l || !isResolved(l)) return null;
-                                const showUndo =
-                                  canOpen &&
-                                  ['approved', 'completed'].includes(r.status);
-                                return (
-                                  <div className="min-w-0 space-y-0.5">
-                                    {l.opened_product_id ? (
-                                      <div className="flex flex-wrap items-center gap-1.5">
-                                        <Link
-                                          href={`/master-data-management/products/${l.opened_product_id}`}
-                                          className="truncate font-medium text-primary hover:underline"
-                                        >
-                                          {codeWithName(
-                                            l.opened_product_code,
-                                            l.opened_product_name,
-                                          )}
-                                        </Link>
-                                        {l.opened_product_active === false && (
-                                          <Badge variant="secondary">
-                                            Inactive
-                                          </Badge>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <span className="break-words">
-                                        Rejected: {l.closed_reason}
-                                      </span>
-                                    )}
-                                    {showUndo && (
-                                      <button
-                                        type="button"
-                                        className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                                        disabled={workBusy}
-                                        onClick={() =>
-                                          undo.mutate({
-                                            id: r.id,
-                                            lineId: l.id,
-                                          })
-                                        }
-                                      >
-                                        Undo
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              }
-                            : undefined
-                        }
-                      />
-                    </div>
-                  )}
                 </>
               )}
             </CardContent>

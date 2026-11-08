@@ -473,26 +473,17 @@ describe('product table on the staff detail', () => {
     expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
-  it('an older SI application with lines shows them read-only', async () => {
-    state.data = app({ lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })], lines_total: 2 });
-    render(<Page />);
-    await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(2);
-    expect(screen.queryByLabelText('Product type')).toBeNull();
-    expect(screen.queryByRole('button', { name: /add (row|product)/i })).toBeNull();
-  });
-
-  it('a standalone application keeps its table', async () => {
+  it('an older application with lines, SI or standalone, draws no table (owner hand test 9 Nov)', async () => {
     state.data = app({
       stock_inquiry_id: null,
       stock_inquiry_number: null,
-      lines: [line()],
-      lines_total: 1,
+      lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
+      lines_total: 2,
     });
     render(<Page />);
     await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getByRole('columnheader', { name: /product code/i })).toBeInTheDocument();
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 });
 
@@ -631,10 +622,11 @@ describe('no lock banner while Submitted or Resubmitted (owner 8 Nov 09:30)', ()
     expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
   });
 
-  it('Approved keeps "Approved by X on D."', async () => {
+  it('Approved shows no "Approved by X on D." banner (owner hand test 9 Nov: the pill says it)', async () => {
     state.data = app({ decided_by_name: 'Approver One', decided_at: '2026-11-02T01:00:00' });
     render(<Page />);
-    expect(await screen.findByText(/Approved by Approver One on /)).toBeInTheDocument();
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText(/Approved by Approver One on /)).toBeNull();
   });
 });
 
