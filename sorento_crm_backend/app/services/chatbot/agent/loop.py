@@ -1975,7 +1975,8 @@ def _run(
         ]
         # The rows not changed, read by the pick follow-up so they stay listed when the model leaves them out.
         turn.response["batch_skipped"] = [
-            {"row": s["row"], "key": s.get("key"), "reason": s["reason"], "cells": s.get("cells") or {}}
+            {"row": s["row"], "key": s.get("key"), "reason": s["reason"], "cells": s.get("cells") or {},
+             "args": s.get("args")}
             for s in batch_skipped
         ]
         turn.response["batch_write"] = batch_write

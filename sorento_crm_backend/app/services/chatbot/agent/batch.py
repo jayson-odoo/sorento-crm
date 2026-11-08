@@ -227,7 +227,10 @@ def propose_rows(
                     keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
-            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None)})
+            skipped.append({
+                "row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None),
+                "args": copy.deepcopy(args) if isinstance(args, dict) else None,
+            })
             continue
         if key is not None:
             keys[key] = n
@@ -258,12 +261,8 @@ def carried_skips(
     current request is then still that table, so its not-changed rows stay listed with their earlier reason,
     whatever rows the model chose to send. A new table, or another write, inherits none. A row this call sent
     (same phone, or same row number when the row has no phone) is never carried: it was checked again."""
-    previous = previous or {}
-    earlier = previous.get("skipped") or []
-    if not earlier or previous.get("write") != write:
-        return []
-    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
-    if not (waiting_keys & sent_keys):
+    earlier = _follow_up_skips(write, sent_keys, previous)
+    if not earlier:
         return []
     sent_rows = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
     out = []
@@ -273,8 +272,60 @@ def carried_skips(
         key = s.get("key")
         if (key in sent_keys) if key is not None else (s.get("row") in sent_rows):
             continue
-        out.append({"row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {})})
+        out.append({
+            "row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {}),
+            "args": s.get("args"),
+        })
     return out
+
+
+def _follow_up_skips(write: str, sent_keys: set, previous: dict | None) -> list[dict]:
+    """The earlier table turn's not-changed rows when this call is that table's pick follow-up (the same write, and
+    a row it left waiting is sent again); [] otherwise."""
+    previous = previous or {}
+    earlier = previous.get("skipped") or []
+    if not earlier or previous.get("write") != write:
+        return []
+    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
+    return earlier if waiting_keys & sent_keys else []
+
+
+def _filled(args: Any) -> dict:
+    """The row's non-empty arguments, strings compared case and spacing aside."""
+    if not isinstance(args, dict):
+        return {}
+    out = {}
+    for k, v in args.items():
+        if isinstance(v, str):
+            v = " ".join(v.split()).lower()
+        elif isinstance(v, list):
+            v = [" ".join(x.split()).lower() if isinstance(x, str) else x for x in v if x not in (None, "")]
+        if v not in (None, "", []):
+            out[k] = v
+    return out
+
+
+def keep_earlier_reasons(write: str, sent_keys: set, skipped: list[dict], previous: dict | None) -> None:
+    """On the pick follow-up of the same table, a not-changed row the model sent again with cells dropped and
+    nothing new (its arguments a strict part of the earlier ones) keeps the earlier reason: a dropped cell is not
+    the user's correction (crew W3 live: 'Name the sales agent.' replaced 'No sales agent named ...'). Structured
+    arguments only; a row with any new or changed value is the user's correction and keeps its new check."""
+    earlier = _follow_up_skips(write, sent_keys, previous)
+    if not earlier:
+        return
+    for s in skipped:
+        now = _filled(s.get("args"))
+        if not now:
+            continue
+        key = s.get("key")
+        match = [e for e in earlier if isinstance(e, dict) and e.get("args") and (
+            e.get("key") == key if key is not None and e.get("key") is not None else e.get("row") == s.get("row")
+        )]
+        if not match:
+            continue
+        before = _filled(match[0]["args"])
+        if len(now) < len(before) and all(before.get(k) == v for k, v in now.items()):
+            s["reason"] = match[0]["reason"]
 
 
 def propose(
@@ -312,7 +363,9 @@ def propose(
         closed=closed,
     )
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting).
-    carried = carried_skips(write, _sent_keys(definition, rows), new_steps, skipped, waiting, previous)
+    sent = _sent_keys(definition, rows)
+    keep_earlier_reasons(write, sent, skipped, previous)
+    carried = carried_skips(write, sent, new_steps, skipped, waiting, previous)
     skipped += carried
     steps[:] = new_steps
     if skipped_out is not None:
