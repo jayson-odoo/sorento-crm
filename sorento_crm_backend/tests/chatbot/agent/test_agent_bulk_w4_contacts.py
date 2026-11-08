@@ -146,13 +146,13 @@ def test_02_the_sponsorship_switch_and_the_workspace_change_and_the_name_stays(d
     db.commit()
 
     steps, skipped, _ = propose_rows(db, w, [row_(
-        person.phone_number, name="zzt same  name", sponsorship_registered_project=True, workspace=new_ws.name.upper(),
+        person.phone_number, name="  ZZT Same   Name ", sponsorship_registered_project=True, workspace=new_ws.name.upper(),
     )])
     assert skipped == [] and len(steps) == 1
     change = steps[0]["cells"]["Will change"]
     assert "sponsorship rule off -> on" in change
     assert f"workspace {old_ws.name} -> {new_ws.name}" in change
-    assert 'name "' not in change  # case and spacing only: the same name
+    assert 'name "' not in change  # spacing only: the same name
 
     assert confirm(db, w, steps).status == "executed"
     after = contact(db, person.id)
@@ -373,3 +373,22 @@ def test_06_a_target_workspace_renamed_before_confirm_fails_the_row(db):
     outcome = confirm(db, w, steps)
     assert outcome.status != "executed"
     assert contact(db, person.id).workspace_id is None
+
+
+# ------------------------------------------------------------------ 7. crew ruling (8 Nov): capitals compare exactly
+
+
+def test_07_a_case_only_rename_goes_through_and_spacing_alone_is_no_change(db):
+    """Crew (b): a lowercase WhatsApp name fixed to proper capitals is a rename; spacing alone is not."""
+    w = make_world(db)
+    lower = dealer(db, w, name="zzt ali hardware")
+    spaced = dealer(db, w, name=" ZZT  Spaced Name")  # stored with stray spaces
+    steps, skipped, _ = propose_rows(db, w, [
+        row_(lower.phone_number, name="ZZT Ali Hardware"),
+        row_(spaced.phone_number, name="ZZT Spaced Name"),
+    ])
+    assert [s["row"] for s in steps] == [1]
+    assert 'name "zzt ali hardware" -> "ZZT Ali Hardware"' in steps[0]["cells"]["Will change"]
+    assert reason_of(skipped, 2) == "Nothing to change."
+    assert confirm(db, w, steps).status == "executed"
+    assert contact(db, lower.id).name == "ZZT Ali Hardware"

@@ -30,10 +30,6 @@ WORKSPACE_VIEW = "system.respond_workspaces.view"
 NO_WORKSPACE = "You cannot change a contact's Respond.io workspace."
 
 
-def _fold(text: Any) -> str:
-    return _clean(text).lower()
-
-
 def _workspace_label(ws) -> str:
     """The workspace as the Edit Contact form lists it."""
     if ws is None:
@@ -104,8 +100,9 @@ def plan(db, user: dict, args: dict) -> dict:
     lines: list[str] = []
     old: dict[str, str] = {}
     new: dict[str, str] = {}
-    # A name that differs only in case or spacing is the same name (tables often shout).
-    if name and _fold(name) != _fold(contact.name):
+    # Spacing alone is the same name; capitals compare exactly, so a lowercase WhatsApp name can be fixed (crew ruling
+    # 8 Nov, option b). The card shows every rename before Confirm.
+    if name and name != _clean(contact.name):
         fields["name"] = name
         lines.append(f'name "{_clean(contact.name)}" -> "{name}"')
         old["Name"], new["Name"] = _clean(contact.name) or "none", name

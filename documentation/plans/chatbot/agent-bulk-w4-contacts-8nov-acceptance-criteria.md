@@ -9,6 +9,7 @@ Owner answers 8 Nov ("2256 all recs"). Tests: `sorento_crm_backend/tests/chatbot
 3. The phone matches as W1 does (normalised Malaysian mobile, either stored form). Unknown phone: `No contact with
    the phone <phone>.`, never created. Two contacts: `More than one contact has this phone number; ...` (Q3).
 4. A blank cell is unchanged, nothing is cleared (Q4); every cell equal: `Nothing to change.`; no cell: asks for one.
+   A name equal apart from spacing is unchanged; capitals compare exactly, so a case-only fix is a rename (crew, 8 Nov).
 5. Unknown workspace / two workspaces with the name: not changed with the reason. The user's own contact: refused.
 6. The card shows `# | Phone | Name | Will change` and Not changed `... | Why`; nothing changes before Confirm.
 7. Confirm writes through `ContactService.update_contact` (the screen's service), one audit row per contact

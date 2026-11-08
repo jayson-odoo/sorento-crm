@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 4, edit contacts from a pasted table keyed by phone (AGENT-BULK-W4-CONTACTS)
 
-Status: Review (owner answered all recommendations 8 Nov; `crm_contact_edit` built red-first, kill-tested; reviewer + security reviewer next). Track: full (agent write path to contacts).
+Status: Merge-ready pending crew live run x3 (laneboard/scripts/2256.md); reviewer READY, security review fixes applied, capitals ruling built. Track: full. Track: full (agent write path to contacts).
 
 Wave 4 after AGENT-BULK-W3-AGENTS (#2253). Pattern: `crm_customer_agent` (`app/services/chatbot/agent/customer_agent.py`)
 through `crm_batch_propose` (`batch.py`) and one confirm card.
@@ -47,7 +47,8 @@ two contacts is refused; Q4 (a) a blank cell is unchanged, nothing is cleared; Q
 - `app/services/chatbot/agent/contact_edit.py`: `crm_contact_edit` (`plan`, `_execute` through
   `ContactService.update_contact`, audit event `contact.edit_agent`). Registered last in `writes.py` so the label
   lists keep their order; label "edit contacts from a pasted table" (`tools.py`).
-- A name that differs only in case or spacing is the same name (not a change). Workspace by exact name (case and
+- A name that differs only in spacing is the same name (not a change); capitals compare exactly (crew ruling 8 Nov,
+  option b: a case-only fix goes through, the card shows it). Workspace by exact name (case and
   spaces aside) or space id; two workspaces with one name: give the space id.
 - The confirm re-check compares contact id, name, sponsorship switch and workspace id: a contact edited on screen
   since the preview fails alone.
@@ -63,4 +64,4 @@ two contacts is refused; Q4 (a) a blank cell is unchanged, nothing is cleared; Q
 Reviewer READY. Security reviewer fixes: S1 inactive workspaces are not found (the screen lists active only); S2 the
 workspace cell needs `system.respond_workspaces.view` for the user and the operator (the screen's picker slug), else
 one fixed refusal; N1 the target workspace is in `before` (a rename before Confirm fails the row); N2 the audit row
-commits with the change. Tests `test_06_*`, each kill-tested. Open for the owner: the case-only rename (crew-ask).
+commits with the change. Tests `test_06_*`, each kill-tested. Case-only rename: owner had no opinion, crew ruled (b), built red-first (`test_07_*`, kill-tested).
