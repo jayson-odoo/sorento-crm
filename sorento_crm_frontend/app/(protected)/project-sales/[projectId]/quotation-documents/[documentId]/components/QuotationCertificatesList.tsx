@@ -58,6 +58,9 @@ function markedText(marked: CertificateRow['marked']): string {
   return `${rows}, ${MARKED_WORDS[marked.state]}`;
 }
 
+/** CERT-16: a certificate whose code is not printed on its file is listed greyed. */
+const isGrey = (row: CertificateRow) => row.verified === false;
+
 async function saveFile(projectId: string, documentId: string, row: CertificateRow) {
   try {
     const bytes = await fetchQuotationCertificateFile(projectId, documentId, row.certificate_id);
@@ -157,7 +160,7 @@ export function QuotationCertificatesList({
         id: 'certificate',
         header: ({ column }) => <DataGridColumnHeader title="Certificate" column={column} />,
         cell: ({ row }) => (
-          <div className={row.original.verified ? undefined : 'text-muted-foreground'}>
+          <div className={isGrey(row.original) ? 'text-muted-foreground' : undefined}>
             <span className="block truncate font-medium" title={row.original.certificate_number}>
               {row.original.certificate_number}
             </span>
@@ -178,7 +181,7 @@ export function QuotationCertificatesList({
         header: ({ column }) => <DataGridColumnHeader title="Scheme" column={column} />,
         cell: ({ row }) => (
           <span
-            className={`block truncate ${row.original.verified ? '' : 'text-muted-foreground'}`}
+            className={`block truncate ${isGrey(row.original) ? 'text-muted-foreground' : ''}`}
             title={row.original.scheme}
           >
             {row.original.scheme}
@@ -216,7 +219,7 @@ export function QuotationCertificatesList({
           const text = row.original.products.map((p) => p.product_code).join(', ');
           return (
             <span
-              className={`block truncate ${row.original.verified ? '' : 'text-muted-foreground'}`}
+              className={`block truncate ${isGrey(row.original) ? 'text-muted-foreground' : ''}`}
               title={text}
             >
               {text}
@@ -232,8 +235,8 @@ export function QuotationCertificatesList({
         id: 'marked',
         header: ({ column }) => <DataGridColumnHeader title="Rows marked" column={column} />,
         cell: ({ row }) => {
-          const { verified, marked } = row.original;
-          if (!verified) {
+          const { marked } = row.original;
+          if (isGrey(row.original)) {
             return (
               <Badge variant="secondary" appearance="light" size="sm">
                 Not found on certificate
