@@ -740,6 +740,11 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
+    # QUOTE-CERT-TAB (CERT-11): the certificates that go out with this revision, frozen.
+    from app.services import quotation_certificate_service
+
+    record.certificates = quotation_certificate_service.snapshot(db, document)
+    db.flush()
     # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
@@ -1307,6 +1312,13 @@ def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any
         "issued_by_name": name,
         "grand_total": Decimal(record.grand_total or 0),
         "scope_count": int(scope_count),
+        # QUOTE-CERT-TAB: how many certificates went out with this revision (frozen at issue).
+        # None = issued before certificates were frozen (never frozen), not "none went out".
+        "certificates_count": (
+            None
+            if record.certificates is None
+            else len([c for c in record.certificates if c.get("attachment_id")])
+        ),
         # The acceptance lands HERE, on the thing the customer actually held and signed, while the
         # screen watching for it is the document. Without these the document panel says "not
         # counter-signed yet" forever on a quotation that is already won.

@@ -14,6 +14,8 @@ from typing import Any, Callable
 class FieldDef:
     label: str
     #: An extra slug needed to read this field (cost price, phone, margin); None = the entity's slug is enough.
+    #: `reveal:<key>` names a reveal key instead (`contact_field_reveal_service`), held by a staff member through
+    #: the slug of the screen that shows that data (`staff_reveal_keys`): the sales report's own gate.
     permission: str | None = None
     #: The model attribute; None = the field key itself.
     column: str | None = None
@@ -23,6 +25,15 @@ class FieldDef:
     #: of product codes): refused while the session carries a contact's brand scope, whose screen recomputes or
     #: cuts it to the in-scope lines only.
     whole_document: bool = False
+    #: () -> SQL expression over the model, taken from the module's own service (the owner's sales figure is
+    #: `invoiced_sales.signed_amount`), so the figure is never written twice. Read-only: no `column`.
+    expr: Callable[[], Any] | None = None
+    #: The field's type on a computed entity (no column to read it from): text, number, date, boolean.
+    kind: str | None = None
+    #: () -> SQL expression of the record's sales agent id, on a field that prints the agent: an `eq`, `contains`
+    #: or `starts_with` on it names agents (`query.match_agents`, exact first) and matches by that link, as the
+    #: agent's own Customers tab does. On a computed entity, True: the "CODE - Name" value is matched exact first.
+    agent_id: Callable[[], Any] | bool | None = None
 
 
 @dataclass(frozen=True)
@@ -58,3 +69,58 @@ class EntityDef:
     routes: tuple[str, ...] = ()
     #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
     scope: Callable[[Any], list] | None = None
+    #: A computed entity (figures no table holds: a target's achievement and commission). (db, user_id, own_only,
+    #: date_from, date_to) -> rows as dicts keyed by field, built by the module's own service; filters, groups
+    #: and aggregates then run over them in code (`assistant_registry.computed`). The row's "id" and every
+    #: `screen_path` placeholder come from the dict.
+    compute: Callable[..., list[dict]] | None = None
+    #: A computed entity's date-window field: a filter on it picks which periods `compute` reads (overlap), it is
+    #: not a row filter. Without one the window is today, and the result's scope note says so.
+    window_field: str | None = None
+    #: The date `crm_query`'s `period` argument filters on (a SQL entity; a computed one uses `window_field`).
+    date_field: str | None = None
+    #: Figures that cover every brand and cannot be cut to a brand-scoped contact's brands (invoice totals, a
+    #: target's achievement): refused while the session carries a brand scope (a linked user's WhatsApp turn).
+    brand_blind: bool = False
+    #: A slug (or `reveal:<key>`) needed for any group_by or aggregate: totals and rankings are the sales report's
+    #: figures, so they follow its gate even where the list screen does not (crew pass, 5 Nov).
+    aggregate_permission: str | None = None
+    #: One line for the compact entity index in `crm_query`'s description: what the entity is for, so most
+    #: questions need no `crm_describe` call (crew pass, 5 Nov: the extra round cost ~28k prompt tokens a turn).
+    hint: str = ""
+    #: The columns a row shows when the query names no `fields` (crew pass on 69b3b479: a below-target answer
+    #: carried 22 columns into the prompt and the table). Empty = every field, as before.
+    list_fields: tuple[str, ...] = ()
+    #: Said with every total or grouping (`scope_note`): which figure the money is (crew pass on 74b6b751: a sales
+    #: table on the delivery-order basis under an invoiced total).
+    aggregate_note: str | None = None
+    #: Number fields summed over every row of a rows result (not only those shown), as a totals row.
+    row_totals: tuple[str, ...] = ()
+    #: Listed in `crm_query`'s compact index. False = reachable only through crm_describe (one entity per question
+    #: kind in the index, crew pass on 0463b805).
+    in_index: bool = True
+    #: Said with every result of the entity (`scope_note`): a definition the answer must carry.
+    always_note: str | None = None
+    #: Said with every result read under the own-only slug: what that reader cannot see (AGENT-COMMISSION-ALL Q4).
+    own_note: str | None = None
+    #: A computed entity's note from the rows it returns (rows -> one line or None), said with the result.
+    row_note: Callable[[list[dict]], str | None] | None = None
+    #: A computed entity's number field rows are ranked by, highest first, unless the query sorts (crew live x3,
+    #: 8 Nov: "payout per dealer" came back by name and cut at 20, the top dealer missing). Groups that sum it
+    #: rank by that sum; a cut result says "Top N of M by <field>".
+    rank_by: str | None = None
+    #: A computed entity's window when the query names none (a window name such as this_year), said in the note;
+    #: None = the periods containing today.
+    default_window: str | None = None
+    #: A computed entity's rows when the query sets no limit (`query.DEFAULT_ROWS` otherwise).
+    default_limit: int | None = None
+    #: Fields that name one row of a computed entity: a group_by on any of them, or aggregates with no group_by,
+    #: is answered with the rows themselves (their totals row holds the sums), so a regroup never drops a row's
+    #: columns or merges same-name rows (crew live round 4: dealers grouped by name lost TGT and account).
+    row_identity: tuple[str, ...] = ()
+    #: Code-render the table from this many rows (`query_tools.CARD_MIN_ROWS` otherwise), so the model passes it
+    #: through instead of rewriting it.
+    card_min_rows: int | None = None
+    #: A computed entity's columns shown on every rows result, right after the label, whatever `fields` the
+    #: query asks for (crew live round 5: same-name dealer rows looked identical once the model chose columns).
+    always_fields: tuple[str, ...] = ()

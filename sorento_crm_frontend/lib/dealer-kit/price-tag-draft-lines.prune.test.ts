@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { EMPTY_LINE, MISSING_TAG_TEMPLATE, pruneGuardError } from './price-tag-draft-lines';
 
 describe('pruneGuardError', () => {
-  const all = ['No combo list price.', 'Kitchen tap: pick 1 more.', 'SRTKT1 is discontinued.', 'No tag template yet.'];
+  const all = ['No combo list price.', 'Kitchen tap: pick 1 more.','No tag template yet.'];
 
   it('keeps the messages whose problem still holds', () => {
     expect(pruneGuardError(all.join('\n'), all)).toBe(all.join('\n'));

@@ -16,8 +16,8 @@
  * - `linePickProblems(lines, pricingByKey, priceMode = 'list')` -> string[] in line order;
  *   `priceMode` is the request's mode, used when a line has no own `price_type` (the plan's
  *   two-argument signature cannot tell an LP line from an SP line).
- * - Reason words, exact: "Line i: <group>: pick n more.", "<code> is discontinued. Pick another
- *   or escalate it to marketing.", "No combo list price for line i. Escalate it to marketing."
+ * - Reason words, exact: "Line i: <group>: pick n more.", "No combo list price for line i. Escalate it
+ *   to marketing." (A discontinued product is not a reason since PRICETAG-DISCONTINUED-PICK, 7 Nov.)
  * - Only a group the template needs k >= 2 from can be short; an open k <= 1 group is not a
  *   problem (it is today's "any of" row).
  */
@@ -302,18 +302,19 @@ describe('linePickProblems', () => {
     ]);
   });
 
-  it('a discontinued pick blocks, named by its code', () => {
+  // PRICETAG-DISCONTINUED-PICK (owner, 7 Nov): a discontinued option is a valid choice.
+  it('a discontinued multi pick does not block', () => {
     const combo = {
       ...S1_COMBO,
       parts: S1_COMBO.parts.map((p) => (p.code === OPTIONS[2] ? { ...p, is_discontinued: true } : p)),
     };
     const l = line({ combos: [combo] });
-    expect(api.linePickProblems([l], {})).toEqual([
-      'SRTKT1871SS is discontinued.',
-    ]);
+    expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
-  it('a discontinued single pick and a discontinued fixed part block too', () => {
+  // Owner ruling, 7 Nov ~21:50: a discontinued fixed part is a warning (its row badge), not an
+  // Approve block either.
+  it('neither a discontinued single pick nor a discontinued fixed part blocks', () => {
     const combo = {
       ...S1_COMBO,
       parts: [
@@ -324,10 +325,22 @@ describe('linePickProblems', () => {
     const single = { key: 's', product_id: id(OPTIONS[0]), code: OPTIONS[0], name: OPTIONS[0], role: 'Kitchen tap', candidates };
     const fixed = { key: 'f', product_id: 'fx', code: 'SRTMCB8083-BL', name: 'Mirror', role: null, candidates: [] };
     const l = line({ combos: [combo], tag_template_id: 't1', parts: [fixed, single] });
-    expect(api.linePickProblems([l], {})).toEqual([
-      'SRTMCB8083-BL is discontinued.',
-      'SRTKT1862SS is discontinued.',
-    ]);
+    expect(api.linePickProblems([l], {})).toEqual([]);
+  });
+
+  it('a discontinued Upgrade pick and a discontinued one-option group do not block', () => {
+    const combo = {
+      ...S1_COMBO,
+      parts: [
+        { product_id: 'solo', code: 'SRTSOLO', name: 'Solo', choice_group: 'Waste', is_discontinued: true },
+        { product_id: 'up', code: 'SRTUP', name: 'Up', choice_group: null, is_upgrade: true, is_discontinued: true },
+        ...S1_COMBO.parts,
+      ],
+    };
+    const solo = { key: 'w', product_id: 'solo', code: 'SRTSOLO', name: 'Solo', role: 'Waste', candidates: [] };
+    const upgrade = { key: 'u', product_id: 'up', code: 'SRTUP', name: 'Up', role: 'Upgrade', candidates: [] };
+    const l = line({ combos: [combo], parts: [...line().parts, solo, upgrade] });
+    expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
   it('an LP combo line with no combo list price blocks', () => {

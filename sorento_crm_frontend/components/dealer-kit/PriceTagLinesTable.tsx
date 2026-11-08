@@ -308,7 +308,7 @@ function PartRow({
                   value: candidate.product_id,
                   label: candidateOptionLabel(candidate, pricing, priceMode),
                   description: distinctName(candidate.code, candidate.name) ?? undefined,
-                  disabled: discontinued(candidate),
+                  // Owner, 7 Nov: a discontinued option is still a choice; the badge only says so.
                   badgeText: discontinued(candidate) ? 'Discontinued' : undefined,
                 }))}
                 placeholder={`Pick ${picksK}`}
@@ -334,10 +334,10 @@ function PartRow({
                     ),
                     // Owner, 4 Nov: the code is already the option's first line; a second
                     // line only when the name says something the code does not.
+                    // Owner, 7 Nov: a discontinued option stays pickable, marked "Discontinued".
                     description: discontinued(candidate)
                       ? 'Discontinued'
                       : (distinctName(candidate.code, candidate.name) ?? undefined),
-                    disabled: discontinued(candidate),
                   }))}
                   placeholder={
                     part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`

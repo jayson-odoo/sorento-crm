@@ -495,9 +495,12 @@ def test_downgrade_keeps_schema_and_permissions():
                     sa.text("SELECT slug FROM user_permissions WHERE slug LIKE 'sales.targets.%'")
                 ).scalars()
             )
-            assert found == {
+            # Subset, not equality: `user_permissions` is the real (head-migrated) table, and
+            # later revisions seed more `sales.targets.*` slugs (sales_0007_targets_view_own
+            # adds `sales.targets.view_own`). This test only owns sales_0003's four.
+            assert {
                 "sales.targets.view", "sales.targets.add", "sales.targets.edit",
                 "sales.targets.delete",
-            }
+            } <= found
         finally:
             outer.rollback()

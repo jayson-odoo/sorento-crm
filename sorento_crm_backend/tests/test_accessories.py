@@ -322,11 +322,13 @@ def test_a3_product_tag_data_carries_the_products_list(db, signed):
     assert data["accessories"] == [
         {
             "kind": "accessory", "id": drainer.id, "name": drainer.name,
-            "spec": "390x300x140, Depth: 160mm", "image": None, "code": None, "list_price": None,
+            "spec": "390x300x140, Depth: 160mm", "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
         {
             "kind": "accessory", "id": board.id, "name": board.name,
-            "spec": None, "image": None, "code": None, "list_price": None,
+            "spec": None, "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
     ]
 
@@ -722,7 +724,7 @@ def test_sec_write_routes_take_a_signed_in_user_not_an_api_key():
 
     source = Path(accessories.__file__).read_text()
     assert "require_permission_with_api_key(EDIT)" not in source
-    assert source.count("require_permission(EDIT)") == 7
+    assert source.count("require_permission(EDIT)") == 12  # + 4 picture routes (POST, PATCH, DELETE, PUT order) + PUT colours
 
 
 def test_crew_an_ala_carte_line_with_no_list_carries_none(db, signed):

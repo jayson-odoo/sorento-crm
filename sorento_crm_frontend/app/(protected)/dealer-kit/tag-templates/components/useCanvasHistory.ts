@@ -20,6 +20,11 @@ export interface CanvasHistory {
   undo: () => TagLayer[] | null;
   /** Restore the next state. Returns the restored layers, or null. */
   redo: () => TagLayer[] | null;
+  /**
+   * Rewrite the current state AND every undo/redo snapshot in place, with no new step: for a correction
+   * from outside (a linked box following its template) that no Undo may bring back.
+   */
+  amend: (fn: (layers: TagLayer[]) => TagLayer[]) => void;
   canUndo: boolean;
   canRedo: boolean;
 }
@@ -73,8 +78,19 @@ export function useCanvasHistory(initialLayers: TagLayer[]): CanvasHistory {
     return structuredClone(next);
   }, [bump]);
 
+  const amend = useCallback(
+    (fn: (layers: TagLayer[]) => TagLayer[]) => {
+      currentRef.current = fn(currentRef.current);
+      pastRef.current = pastRef.current.map(fn);
+      futureRef.current = futureRef.current.map(fn);
+      bump();
+    },
+    [bump],
+  );
+
   return {
     pushState,
+    amend,
     undo,
     redo,
     canUndo: pastRef.current.length > 0,

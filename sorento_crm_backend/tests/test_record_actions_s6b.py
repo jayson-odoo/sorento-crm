@@ -341,6 +341,7 @@ def test_every_handler_resolves_its_service_import(key):
     entity_ids = {
         "product_spec_value.clear": f"{_uid()}:width",
         "contact_chatbot_fact.delete": f"{_uid()}:note",
+        "quotation_certificate.remove": f"{_uid()}:{_uid()}",
     }
     payload = {
         "entity_id": entity_ids.get(key, _uid()),

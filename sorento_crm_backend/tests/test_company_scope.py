@@ -638,7 +638,12 @@ def test_every_company_id_table_is_registered():
     #   party within the company = 177.
     # + 1 (SPEC-SHEET-V2, #2124): `projects.quotation_spec_sheets`, one company's saved spec
     #   sheets of its quotation documents = 178.
-    expected_owned = 178
+    # + 1 (PRICETAG-ACCESSORIES, ed1c09c9): `accessories`, one company's accessory library; the
+    #   name is unique per company ignoring case. Its product / combo list rows are NOT owned: they
+    #   inherit the partition through the product, like `product_combos` = 179.
+    # + 1 (PRICETAG-ACCESSORY-DESIGNER, #2237): `dealer_kit.accessory_box_preset`, one company's
+    #   saved accessories box designs; the name is unique per company ignoring case = 180.
+    expected_owned = 180
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

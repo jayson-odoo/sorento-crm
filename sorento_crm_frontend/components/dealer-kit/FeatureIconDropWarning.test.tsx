@@ -22,6 +22,16 @@ describe('FeatureIconDropWarning', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Tag 3b: 2 feature icons do not fit their box');
   });
 
+  it('drops the "Tag" prefix for the template designer\'s one unlabelled tag (7 Nov)', () => {
+    render(<FeatureIconDropWarning drops={[]} accessoryDrops={[{ tagLabel: '', dropped: 1 }]} />);
+    expect(screen.getByRole('status')).toHaveTextContent(/^1 accessory does not fit its box$/);
+  });
+
+  it('labels accessory lines per tag on a request', () => {
+    render(<FeatureIconDropWarning drops={[]} accessoryDrops={[{ tagLabel: '1a', dropped: 2 }]} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Tag 1a: 2 accessories do not fit their box');
+  });
+
   it('renders nothing when every icon fits', () => {
     const { container } = render(<FeatureIconDropWarning drops={[]} />);
     expect(container).toBeEmptyDOMElement();

@@ -200,23 +200,41 @@ describe('a group the template needs one or none from', () => {
   });
 });
 
+// PRICETAG-DISCONTINUED-PICK (owner, 7 Nov): a discontinued option stays pickable; the
+// "Discontinued" hint stays so the requester knows. Supersedes the disabled half of AC-C6.
 describe('discontinued options', () => {
-  it('multi: the option is disabled and badged Discontinued, the others are not', () => {
+  it('multi: the option is pickable and badged Discontinued, the others carry no badge', () => {
     renderTable({}, ['SRTKT1871SS']);
     const bad = screen.getByTestId(`multi-opt-${id('SRTKT1871SS')}`);
-    expect(bad.dataset.disabled).toBe('true');
+    expect(bad.dataset.disabled).toBe('false');
     expect(bad.dataset.badge).toBe('Discontinued');
     const fine = screen.getByTestId(`multi-opt-${id('SRTKT1862SS')}`);
     expect(fine.dataset.disabled).toBe('false');
     expect(fine.dataset.badge).toBe('');
   });
 
-  it('single: the option is disabled with Discontinued as its description', () => {
-    renderTable({ tag_template_id: 't1' }, ['SRTKT1871SS']);
+  it('single: the option is pickable with Discontinued as its description', () => {
+    const { resolvePart } = renderTable({ tag_template_id: 't1' }, ['SRTKT1871SS']);
     const bad = screen.getByRole('option', { name: /SRTKT1871SS/ });
-    expect(bad).toBeDisabled();
+    expect(bad).not.toBeDisabled();
     expect(bad.textContent).toContain('Discontinued');
-    expect(screen.getByRole('option', { name: /SRTKT1862SS/ })).not.toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Not sure, any of 5'), { target: { value: id('SRTKT1871SS') } });
+    expect(resolvePart).toHaveBeenCalledWith('l1', 'g1', id('SRTKT1871SS'));
+  });
+
+  it('single: the flag read from the combo part alone still only labels, never disables', () => {
+    renderTable(
+      {
+        tag_template_id: 't1',
+        parts: [
+          { key: 'g1', product_id: null, code: '', name: '', role: 'Kitchen tap', candidates: candidates().map(({ is_discontinued: _d, ...c }) => c), product_ids: [] },
+        ],
+      } as never,
+      ['SRTKT1871SS'],
+    );
+    const bad = screen.getByRole('option', { name: /SRTKT1871SS/ });
+    expect(bad).not.toBeDisabled();
+    expect(bad.textContent).toContain('Discontinued');
   });
 });
 

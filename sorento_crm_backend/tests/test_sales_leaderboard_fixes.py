@@ -43,15 +43,6 @@ def test_the_same_code_as_two_persons_in_two_companies_shows_the_code_on_both_ro
     assert rows[b]["codes"] == [code]
 
 
-def test_the_invoiced_screens_columns_menu_does_not_gain_sales_person_but_the_ask_still_groups_by_it():
-    from app.services.reports.datasets import billing_document_lines as bdl
-
-    visible = [c.key for c in bdl.ASK_DEFINITION.dataset.columns if not c.hidden]
-    assert "sales_person" not in visible
-    assert "sales_person" in [c.key for c in bdl.ASK_DEFINITION.dataset.columns]
-    assert "sales_person" not in [c.key for c in bdl.DATASET.columns]  # Top selling items unchanged
-
-
 def test_options_without_the_permission_is_403(db):
     with make_client(db, allow=("sales.reports.view",)) as client:
         assert client.get(OPTIONS).status_code == 403

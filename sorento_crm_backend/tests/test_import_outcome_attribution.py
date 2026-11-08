@@ -101,9 +101,15 @@ def session_factory():
 
     admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_dealer_kit"')
     admin.close()
 
-    scoped = engine.execution_options(schema_translate_map={None: name})
+    # products carries a FK into dealer_kit.accessory_box_preset (#2237), so
+    # _with_dependencies pulls that table in; untranslated it would be created
+    # in the REAL dealer_kit schema (DuplicateTable).
+    scoped = engine.execution_options(
+        schema_translate_map={None: name, "dealer_kit": f"{name}_dealer_kit"}
+    )
     with scoped.connect() as connection:
         Base.metadata.create_all(connection, tables=tables, checkfirst=False)
         connection.commit()
@@ -113,6 +119,7 @@ def session_factory():
     finally:
         cleanup = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_dealer_kit" CASCADE')
         cleanup.close()
 
 

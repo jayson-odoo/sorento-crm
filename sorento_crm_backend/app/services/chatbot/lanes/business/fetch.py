@@ -1339,7 +1339,10 @@ def entity_ids_transformer(
 
     # SUPPLIER-ASK fix round 9: the structural guard. A supplier-scoped turn never lists without a supplier filter.
     supplier_scope = jsc.get(semantic_input, "supplier_scope") if isinstance(semantic_input, dict) else None
-    if isinstance(supplier_scope, dict) and tool_name in SUPPLIER_GUARDED_TOOLS and not out.get("supplier_ids"):
+    guarded = SUPPLIER_GUARDED_TOOLS
+    if isinstance(supplier_scope, dict) and isinstance(supplier_scope.get("tools"), list):
+        guarded = frozenset(supplier_scope["tools"])  # a party-only scope guards the PO book alone
+    if isinstance(supplier_scope, dict) and tool_name in guarded and not out.get("supplier_ids"):
         raise SupplierScopeViolation(
             f"{tool_name} would list without the supplier this turn is about",
             line=str(supplier_scope.get("line") or ""),

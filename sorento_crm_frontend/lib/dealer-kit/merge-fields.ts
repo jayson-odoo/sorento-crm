@@ -197,7 +197,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
-  { path: 'combo.free_items', label: 'Combo free items', group: 'Combo' },
+  { path: 'combo.free_items', label: 'Combo accessories included', group: 'Combo' },
   // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
   { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
   { path: 'line.area', label: 'Area', group: 'Spec sheet' },

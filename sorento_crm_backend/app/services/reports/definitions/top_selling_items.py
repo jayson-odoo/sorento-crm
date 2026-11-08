@@ -57,8 +57,8 @@ REPORT = reg.register(
         dataset=bl.DATASET,
         params=(
             reg.SelectParam(
-                key="company", label="Company", multi=False, default=(),
-                options=ds.company_options, condition=bl.company_condition, clearable=False,
+                key="company", label="Company", multi=True, default=(),
+                options=ds.company_options, condition=bl.company_condition,
             ),
             reg.SelectParam(
                 key="channel", label="Sales type", multi=True,
