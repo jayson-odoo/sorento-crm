@@ -321,10 +321,7 @@ class _Column:
 _KIND_NAME = {"Q": "quarterly", "M": "monthly", "Y": "yearly"}
 #: A PAY TO cell, or a rate naming an account the target does not count, no longer names a payee
 #: (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every counted account is paid its own share.
-PAY_TO_IGNORED = (
-    "PAY TO not used: each counted account is paid its own share; an RM bonus naming an "
-    "account the target does not count goes to its one counted account"
-)
+PAY_TO_IGNORED = "PAY TO not used: each counted account is paid its own share"
 
 #: A header cell that names a row's own field, matched on the WHOLE cell so a title such as
 #: "SORENTO DEALER INCENTIVE 2026" is never read as the dealer column.

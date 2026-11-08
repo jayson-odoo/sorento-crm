@@ -2103,7 +2103,10 @@ function CommissionTiers({
   // own Additional is a % there.
   const addKindOptions = [
     { value: 'pct', label: draft.metric === 'quantity' ? 'RM/unit' : '%' },
-    ...(ownBonus ? [] : [{ value: 'amount', label: 'RM' }]),
+    // A legacy tier-level amount keeps its RM option so it shows what Save asks to clear.
+    ...(ownBonus && !draft.tiers.some((t) => t.addKind === 'amount' && t.addValue.trim() !== '')
+      ? []
+      : [{ value: 'amount', label: 'RM' }]),
   ];
   const periodOptions = periodStarts.map((p) => ({ value: p.start, label: periodLabel(p.start) }));
   return (
@@ -2300,6 +2303,18 @@ function tierAdditional(t: CommissionTier, labelOf: (customerId: string) => stri
   return null;
 }
 
+/** The tier table's Additional cell; a legacy tier-level RM amount on a combined target pays
+ * nothing (owner 8 Nov 23:59), so it says so. */
+function tierAdditionalText(t: CommissionTier, target: SalesTargetDetail): string {
+  const labelOf = (id: string) => target.accounts?.find((a) => a.customer_id === id)?.label ?? '';
+  const add = tierAdditional(t, labelOf);
+  const combined = target.subject_kind === 'dealer' && (target.accounts ?? []).length > 1;
+  if (combined && add?.kind === 'amount' && !add.accounts?.length) {
+    return `RM ${formatMoney(add.value)} not paid: set it per account`;
+  }
+  return additionalText(add, target.metric);
+}
+
 /** A period's tiers in the engine's order: main tiers by threshold (so position n is "Tier n"),
  * then any legacy "+ Additional" rows. */
 function periodTiers(target: SalesTargetDetail, periodStart: string): CommissionTier[] {
@@ -2424,10 +2439,7 @@ function TiersGrid({
       accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
       header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
       cell: ({ row }) =>
-        additionalText(
-          tierAdditional(row.original.tier, (id) => target.accounts?.find((a) => a.customer_id === id)?.label ?? ''),
-          target.metric,
-        ) || '-',
+        tierAdditionalText(row.original.tier, target) || '-',
       size: 130,
       meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
     });
@@ -2738,7 +2750,7 @@ function AccountsGrid({
             </span>
           );
         },
-        size: 210,
+        size: 200,
         meta: { headerTitle: 'Period' },
       },
       {
@@ -2758,7 +2770,7 @@ function AccountsGrid({
             {row.original.account?.name ?? ''}
           </span>
         ),
-        size: 180,
+        size: 170,
         meta: { headerTitle: 'Customer' },
       },
       {
@@ -2809,7 +2821,7 @@ function AccountsGrid({
           const value = paid(row.original);
           return value === null ? '-' : formatMoney(value);
         },
-        size: 150,
+        size: 170,
         meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
       });
     }

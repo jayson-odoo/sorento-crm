@@ -58,11 +58,27 @@ def _reached_rate(p: dict, metric: str) -> str:
     add = p.get("tier_additional")
     if not text or not add or not add.get("value"):
         return text
+    if add["kind"] == "amount" and add.get("accounts"):
+        # Set per account (owner 8 Nov): each account named, as the Periods tab reads it.
+        own = ", ".join(f"{e['label']} + RM {e['rate']:,.2f}" for e in add["accounts"] if e.get("rate"))
+        return f"{text}, {own}" if own else text
     if add["kind"] == "amount":
         return f"{text} + RM {add['value']:,.2f}"
     if metric == "quantity":
         return f"{text} + RM {add['value']:.2f}/unit"
     return f"{text} + {add['value']:.2f}%"
+
+
+def _tier_additional(rung: dict, metric: str) -> str:
+    """The tier table's Additional cell: its % Additional rates, and an RM Additional set per
+    account as each account's own amount ("A/C I RM 100.00")."""
+    parts = [_rates(rung.get("additional_rates") or [], metric)]
+    add = rung.get("additional") or {}
+    if add.get("kind") == "amount" and add.get("accounts"):
+        parts.append(", ".join(f"{e['label']} RM {e['rate']:,.2f}" for e in add["accounts"] if e.get("rate")))
+    elif add.get("kind") == "amount" and add.get("value"):
+        parts.append(f"RM {add['value']:,.2f}")
+    return ", ".join(p for p in parts if p)
 
 
 def _period_label(p: dict) -> str:
@@ -158,7 +174,7 @@ def _target_sheet(ws, t: dict, generated: datetime, on: date) -> None:
             for rung in p["tier_table"]:
                 sheet.write(
                     [f"Tier {rung['tier']}", rung["from_pct"], rung["threshold_rm"],
-                     _rates(rung["rates"], metric), _rates(rung["additional_rates"], metric),
+                     _rates(rung["rates"], metric), _tier_additional(rung, metric),
                      "Yes" if rung["reached"] else "No"],
                     money=[3], pct=[2],
                 )

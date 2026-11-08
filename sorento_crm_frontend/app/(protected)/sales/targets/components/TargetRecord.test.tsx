@@ -1320,3 +1320,30 @@ describe('TargetRecord: a combined target sets its RM Additional per account onl
     expect(screen.queryByLabelText(/additional \(RM\)/)).toBeNull();
   });
 });
+
+describe('TargetRecord: a legacy tier-level RM amount on a combined target (owner 8 Nov 23:59)', () => {
+  function legacy() {
+    const base = dealerDetail();
+    return dealerDetail({ tiers: [{ ...(base.tiers[0] as object), bonus_amount: 50 }, base.tiers[1]] });
+  }
+
+  it('the tier table says it is not paid and must be set per account', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: legacy(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    expect(screen.getAllByText('RM 50.00 not paid: set it per account').length).toBeGreaterThan(0);
+  });
+
+  it('Edit keeps its RM option visible and refuses Save until it is set per account', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: legacy(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    const kinds = Array.from((screen.getByLabelText('Tier 1 additional in') as HTMLSelectElement).options).map((o) => o.value);
+    expect(kinds).toContain('amount');
+    expect(screen.getByText('This target counts several accounts: set the RM Additional per account, not for the tier.')).toBeTruthy();
+    const save = within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    fireEvent.click(save);
+    expect(patchHeader.mutateAsync).not.toHaveBeenCalled();
+  });
+});

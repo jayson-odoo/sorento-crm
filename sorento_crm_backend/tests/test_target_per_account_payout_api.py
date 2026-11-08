@@ -228,3 +228,50 @@ def test_an_account_bonus_for_an_uncounted_or_foreign_customer_is_refused(api):
         ]})
         assert res.status_code == 422, res.text
         assert res.json().get("code") == "INVALID_TIERS", res.text
+
+
+def test_the_dealers_list_commission_includes_the_rm_additional_as_the_detail_does(api):
+    """Crew pass on bf694969: the list read 16,613.39 where the detail read 16,713.39. The list's
+    current commission is the detail's current period commission + bonus."""
+    client, db, company_id = api
+    (a1, a2, a3), combined = _deluxe(client, db, company_id)
+    res = client.patch(f"{BASE}/{combined['id']}", json={"tiers": [
+        {"threshold": 1000000, "rate": 0, "account_rates": [
+            {"customer_id": a1.id, "rate": 1.5}, {"customer_id": a2.id, "rate": 1},
+            {"customer_id": a3.id, "rate": 1.5, "bonus_amount": 100},
+        ]},
+    ]})
+    assert res.status_code == 200, res.text
+    detail = res.json()
+    assert detail["commission_current"] == 16441.11
+    rows = client.get(BASE, params={"subject": "dealer", "all": "true"}).json()["rows"]
+    row = next(r for r in rows if r["target_id"] == combined["id"])
+    assert row["commission_earned"] == detail["commission_current"] == 16341.11 + 100
+
+
+def test_the_statement_names_the_account_of_a_per_account_rm_additional(api):
+    """Crew pass on bf694969: the Rate cell read '+ RM 100.00' with no account, and the tier
+    table's Additional column was blank for an RM Additional set per account."""
+    import io
+    from datetime import date as _date
+
+    from openpyxl import load_workbook
+
+    from app.services.sales import commission_statement_xlsx, target_service
+
+    client, db, company_id = api
+    (a1, a2, a3), combined = _deluxe(client, db, company_id)
+    res = client.patch(f"{BASE}/{combined['id']}", json={"tiers": [
+        {"threshold": 1000000, "rate": 0, "account_rates": [
+            {"customer_id": a1.id, "rate": 1.5}, {"customer_id": a2.id, "rate": 1},
+            {"customer_id": a3.id, "rate": 1.5, "bonus_amount": 100},
+        ]},
+    ]})
+    assert res.status_code == 200, res.text
+    target = target_service.get_target_or_404(db, combined["id"])
+    statements = target_service.commission_statements(db, [target], on=_date(2026, 10, 20))
+    wb = load_workbook(io.BytesIO(commission_statement_xlsx.build(statements, on=_date(2026, 10, 20))))
+    cells = [str(v) for row in wb[combined["target_no"]].iter_rows(values_only=True) for v in row if v is not None]
+    label = statements[0]["accounts"][2]["label"]
+    assert any(c.endswith(f"{label} + RM 100.00") for c in cells), cells
+    assert f"{label} RM 100.00" in cells, cells

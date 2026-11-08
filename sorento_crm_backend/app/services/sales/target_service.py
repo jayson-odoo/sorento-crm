@@ -1646,7 +1646,10 @@ def list_all_targets(
             target, now, _engine_tiers(tiers, rates, bonuses), [t.period_start for t in tiers],
             by_account.get(now.id, {}), ratios,
         )
-        return _num(payout.commission)
+        if payout.commission is None:
+            return None
+        # Commission + bonus, as the target page's current period reads it (crew pass, 8 Nov).
+        return _num(payout.commission + (payout.bonus or Decimal("0")))
 
     rows: List[dict] = []
     for target in targets:
@@ -2013,6 +2016,8 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
                     "threshold_rm": _r2(rung["threshold_rm"]),
                     "rates": rung["rates"],
                     "additional_rates": rung["additional_rates"],
+                    # The tier's own Additional; an RM one set per account names each account.
+                    "additional": rung["additional"],
                     # Main tiers run in threshold order, so every tier up to the one reached is.
                     "reached": row["tier_reached"] is not None and rung["tier"] <= row["tier_reached"],
                 }
@@ -2255,6 +2260,10 @@ def tier_ladder(
                 "value": float(sum(tier.account_bonuses.values(), Decimal("0"))),
                 "accounts": _rate_entries(tier.account_bonuses, labels or []),
             }
+        if tier.bonus_amount and len(labels or []) > 1:
+            # A legacy tier-level amount on a combined target pays nothing (owner 8 Nov 23:59):
+            # no Additional for the rate it reached; the tier table flags it to be set per account.
+            return None
         if tier.bonus_amount:
             return {"kind": "amount", "value": float(tier.bonus_amount)}
         return None
