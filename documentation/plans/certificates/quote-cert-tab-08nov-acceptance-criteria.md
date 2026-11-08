@@ -144,6 +144,15 @@ state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
   before expired, then latest `valid_until`, then scheme, number; the others go in `also_filed_as`.
   Boxes, override and `send_to_customer` are keyed by the representative; Remove writes
   `included=false` for every member; the export carries the file once; `products` is the union.
+- CERT-16 Verified listing (owner 8 Nov ~11:05, "cert a"): an AUTO row (not added by hand) whose
+  current file has text, where NO covered quoted product has its code found (all products
+  `not_found` / `code_needed`) and no box exists (no quote override, no manual default), is listed
+  with `verified: false`, `marked.state = "not_on_certificate"`, rendered greyed with the text
+  "Not found on certificate", and its effective `send_to_customer` is false unless the stored value
+  is true (a person ticked Include). Drawing a box (quote override or default) makes it
+  `verified: true`. Scanned files (`no_text`), files missing, links with `certificate_products.source
+  = manual`, and hand-added rows are always `verified: true`. Verified rows sort before unverified.
+  `Row` gains `verified: bool`. The Master Data link clean-up report is a separate lane.
 - CERT-13 Removing a quoted product drops its auto certificate from the list on next read; manual
   and removed markers persist.
 
