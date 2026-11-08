@@ -1,6 +1,6 @@
 # Plan: NPA approval and purchasing through Form SLA config (NPA-FORM-SLA)
 
-Status: Merge-ready pending CI (built; reviewer READY, security CLEAN, crew pass items fixed, owner access ruling a), 9 Nov 2026. Size M, full track (data-only migration, RBAC gate
+Status: Review (owner hand test 9 Nov round built: no product rows, SI list columns; reviewer pending), 9 Nov 2026. Size M, full track (data migration + one additive column, RBAC gate
 change on approve / reject / purchasing moves). Owner ask 8 Nov ("2233 sla a + same teams"): the
 New Product Application's approver / processor flow works like the Stock Inquiry's, through Form SLA
 config, same component and same engine.
@@ -148,3 +148,35 @@ purchasing; purchasing response stops the response clock; complete / purchasing 
 revise / cancel void; no stage row tells no permission holder; team notice per move with and
 without a stage row; escalated + lock on: non-holder approve 403, holder 200; tracker reader admits
 `.approve` holder for NPA trackers only. FE: dialog offers the type; NPA detail renders the SLA tab.
+
+## Owner hand test round (9 Nov ~00:55)
+
+Owner: remove the product table (create and detail), the wrong "No debtor code" chip and the
+"Approved by" banner; the NPA list needs "the columns just like stock inquiries".
+
+- **Product rows gone from every NPA screen**: staff create / edit, staff detail, the portal form
+  (create and view, form parity; a limited applicant sees it as their detail). The header's
+  "N of M lines done" is gone. An older NPA's rows stay in the record (nothing is deleted) and an
+  edit resends them unchanged; the per-row purchasing controls (link / close / Undo a row) have no
+  screen any more: purchasing answers through the NEW PRODUCT CODE in the Edit purchasing response
+  dialog, which already completes the NPA (`_maybe_complete`). The header Cost always shows.
+- **Submit without rows**: an NPA raised from a stock inquiry needs nothing more (as before); a
+  standalone one must say what new product is wanted in REMARK (422 otherwise).
+- **Status banners**: only "Approved by X on D." only repeated the status (the Approved pill and the
+  SLA tab carry it): removed. The Rejected banner stays (it carries the reason), as do the revise /
+  cancel reasons.
+- **"No debtor code" chip**: removed everywhere the NPA showed it (staff form, staff detail, portal
+  form). It fired on any customer kept as typed text, which is how a customer copied from a stock
+  inquiry arrives (code included in the text), so it was wrong on exactly the SI-raised NPAs.
+- **List columns like the SI list** (crew: build both Print Count and Rev):
+  Rev, Salesperson, Status, Assigned To, Handled By, Print Count, with the SI list's own components.
+  Assigned To / Handled By / Print Count are filled and sorted by the SI list's own helpers
+  (`StockInquiryService._attach_sla_handlers`, `_attach_print_counts`, `_sla_person_name_sort`,
+  `_print_count_sort`), which now take the form type (a stock inquiry passes none). First line /
+  Lines / Done are gone.
+  - Rev: `new_product_applications.revision_no` (migration `npasla_0002_npa_revision_no`, additive),
+    +1 on every Revise; shown as the SI's revision badge ("Rev 2"), a dash when never revised.
+  - Print Count: Download Excel now goes through My Downloads like the SI's PDF
+    (`POST /{id}/export/xlsx` -> `user_downloads` row -> RQ `generate_new_product_application_xlsx`),
+    so the viewer's own downloads are counted and re-downloadable from the count button. The
+    portal's own direct download is unchanged (a portal contact has no My Downloads).
