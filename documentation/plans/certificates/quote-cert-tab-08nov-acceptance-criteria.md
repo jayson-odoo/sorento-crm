@@ -134,7 +134,8 @@ state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
   has a `manual` code (never overwritten). A product whose code is `ai` shows `state = suggested`
   when its boxes are found. PATCH coverage `{model_code}` (typed) and `{"confirm": true}` (keep the
   suggested text) both set `model_code_source = 'manual'`; both need `master_data.certificates.edit`.
-  Suggested boxes ARE sent to the customer (pending owner sub-question; default (i)).
+  Suggested boxes ARE sent to the customer, drawn like confirmed ones (owner 8 Nov, sub-question (i));
+  the tab flags "Suggested, check" before sending.
 - CERT-15 Dedupe by file: certificates on the list whose current revision's file is the same
   (`attachments.file_hash` equal, else same `attachment_id`) form ONE Row. Representative = valid
   before expired, then latest `valid_until`, then scheme, number; the others go in `also_filed_as`.
