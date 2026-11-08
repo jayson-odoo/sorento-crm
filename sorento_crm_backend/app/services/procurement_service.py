@@ -5932,6 +5932,9 @@ class StockInquiryService:
         # gates its response affordances on this rather than mirroring the status
         # list (UAC O1).
         data["response_write_allowed"] = inquiry.response_write_allowed
+        data["npa_requested_by_name"] = (
+            self._resolve_user_display_name(inquiry.npa_requested_by) if inquiry.npa_requested_by else None
+        )
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -6764,7 +6767,29 @@ class StockInquiryService:
 
         threading.Thread(target=send_async, daemon=True).start()
 
-    def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
+    def _apply_npa_request(self, inquiry, update_data: dict, actor_user_id: Optional[str]) -> None:
+        """NPA-FROM-SI rule 1: purchasing's "salesperson must create a New Product Application".
+
+        Popped from ``update_data`` so the plain setattr loop never writes it. A change is a
+        response write (UAC O1 gate, same as ``purchasing_response``); an echo of the current
+        value is not. Who / when come from the caller, never the payload. Non-blocking."""
+        if "npa_requested" not in update_data:
+            return
+        wanted = update_data.pop("npa_requested")
+        if wanted is None or bool(wanted) == bool(inquiry.npa_requested):
+            return
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        inquiry.npa_requested = bool(wanted)
+        if wanted:
+            inquiry.npa_requested_by = actor_user_id or None
+            inquiry.npa_requested_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            inquiry.npa_requested_by = None
+            inquiry.npa_requested_at = None
+
+    def update_inquiry(
+        self, inquiry_id: str, inquiry_data: StockInquiryUpdate, actor_user_id: Optional[str] = None
+    ):
         """Update a stock inquiry. Status is only changed via workflow actions (submit/approve/reject/reopen)."""
         inquiry = self.get_inquiry(inquiry_id)
 
@@ -6789,6 +6814,7 @@ class StockInquiryService:
             update_data.get("purchasing_response"),
         ):
             assert_response_write_allowed("stock_inquiry", inquiry.status)
+        self._apply_npa_request(inquiry, update_data, actor_user_id)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -6817,8 +6843,13 @@ class StockInquiryService:
 
     STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
 
+    #: The NPA's own preamble (owner 8 Nov 17:25: the NPA reply must not read "Stock Inquiry").
+    NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE = "There is a response to your new product application"
+
     @classmethod
-    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+    def compose_stock_inquiry_reply_message(
+        cls, bare_body: str, portal_url: str, preamble: Optional[str] = None
+    ) -> str:
         """The contact-facing WhatsApp text for a purchasing reply.
 
         Composed HERE, not in the frontend. The FE used to build
@@ -6837,7 +6868,7 @@ class StockInquiryService:
         """
         body = (bare_body or "").strip()
         url = (portal_url or "").strip()
-        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        text = f"{preamble or cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
         if body:
             text = f"{text}\n{body}"
         return f"{text}\n\n{url}" if url else text
@@ -6868,6 +6899,87 @@ class StockInquiryService:
             return s
         idx = s.rfind(": ")
         return s[idx + 2 :].strip() if idx != -1 else s
+
+    def enqueue_update_reply(
+        self,
+        inquiry: StockInquiry,
+        *,
+        identifier: str,
+        update_text: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" message on the inquiry's conversation.
+
+        The SI's own reply; the New Product Application's sibling is
+        ``enqueue_application_update_reply`` (same queue, composer and worker send, its own
+        template use case). Call AFTER the business write commits.
+
+        Structured-template vars: the bare ``update`` text + links (mirrors complaint's bare
+        ``stored_body``). One portal URL resolution, shared by the in-window text and the
+        out-of-window template, so both carry the same interactive portal link.
+        """
+        inquiry_id = str(inquiry.id)
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, inquiry_id)
+        reply_extra_vars = {
+            "update": update_text,
+            "portal_url": portal_url,
+            "view_url": (self._build_stock_inquiry_view_url(inquiry_id) or "").strip(),
+        }
+        self._enqueue_stock_inquiry_respond_message(
+            inquiry_id=inquiry_id,
+            identifier=identifier,
+            message_text=self.compose_stock_inquiry_reply_message(update_text, portal_url),
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(inquiry, "space_id", None),
+            verify_delivery=True,
+            extra_context_vars=reply_extra_vars,
+        )
+
+    def enqueue_application_update_reply(
+        self,
+        inquiry: StockInquiry,
+        application,
+        *,
+        identifier: str,
+        update_text: str,
+        message_body: str,
+        portal_url: str,
+        template_vars: dict,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" on a New Product Application, through the stock
+        inquiry's conversation, with the NPA's own template use case (owner 8 Nov 17:35).
+
+        The same path as the SI's reply (``enqueue_update_reply``): the respond_io queue, the
+        same composer, and the same worker send (``_send_and_log``) on the SI's conversation.
+        The template maps ``template_vars`` (``new_product_application_service.template_vars``,
+        computed by the caller in its company scope), ``update`` (purchasing's text) and
+        ``portal_url`` (the NPA's portal page). ``message_body`` is the in-window text when no
+        template is mapped.
+        """
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_new_product_application_respond_message
+
+        application_id = str(application.id)
+        portal_url = (portal_url or "").strip()
+        job = enqueue_job(
+            send_new_product_application_respond_message,
+            str(inquiry.id),
+            identifier,
+            self.compose_stock_inquiry_reply_message(
+                message_body, portal_url, preamble=self.NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE
+            ),
+            respond_user_id,
+            crm_sender_user_id,
+            getattr(inquiry, "space_id", None),
+            {**template_vars, "update": update_text, "portal_url": portal_url},
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+        logger.info("Enqueued respond.io send job %s for new_product_application %s", job.id, application_id)
 
     def update_inquiry_and_reply(
         self,
@@ -6945,6 +7057,7 @@ class StockInquiryService:
             raise handle_validation_error("purchasing_response is required to reply.")
         # Do not persist the reply payload (often includes view link) into purchasing_response
         update_data.pop("purchasing_response", None)
+        self._apply_npa_request(inquiry, update_data, crm_sender_user_id)
 
         for key, value in update_data.items():
             setattr(inquiry, key, value)
@@ -6981,6 +7094,11 @@ class StockInquiryService:
         # second preamble and re-sending the stale read-only view link.
         bare_reply = self._bare_stock_inquiry_reply(message_to_send)
         outgoing_bare = f"{bare_reply}\n{attachment_sentence}" if attachment_sentence else bare_reply
+        from app.services.new_product_application_service import npa_next_step_sentence
+
+        next_step = npa_next_step_sentence(self.db, inquiry)
+        if next_step:
+            outgoing_bare = f"{outgoing_bare}\n{next_step}"
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -7033,27 +7151,12 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
 
-        # Structured-template vars: bare purchasing_response text (+ attachment
-        # sentence, D10) as `update` core + links. Mirrors complaint's bare
-        # `stored_body`.
-        # One resolution, shared by the in-window text and the out-of-window
-        # template, so both carry the same interactive portal link.
-        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
-        reply_extra_vars = {
-            "update": outgoing_bare,
-            "portal_url": portal_url,
-            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
-        }
-        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
-        self._enqueue_stock_inquiry_respond_message(
-            inquiry_id=inquiry_id,
+        self.enqueue_update_reply(
+            inquiry,
             identifier=identifier,
-            message_text=outgoing_text,
+            update_text=outgoing_bare,
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
-            space_id=getattr(inquiry, "space_id", None),
-            verify_delivery=True,
-            extra_context_vars=reply_extra_vars,
         )
 
         if transition_to_responded_workflow:

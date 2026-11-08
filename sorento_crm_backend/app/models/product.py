@@ -373,6 +373,14 @@ class Product(Base, CompanyScopedMixin):
     # Stable id of the batch this product was reported in. Deep-linked from the
     # notification to the product list filtered to exactly that batch.
     discontinued_notify_batch_id = Column(UUID(as_uuid=False), nullable=True)
+    # List-price change notification watermark (PRODUCT-FIELD-CHANGE-NOTIFY, second watched
+    # field of product_watched_field_notify_service). ``list_price_notified`` is the price
+    # last reported; a product is pending while ``list_price`` differs from it. NULL (a new
+    # product) adopts the current price silently on the next run - a new product is not a
+    # price change.
+    list_price_notified = Column(Numeric(12, 2), nullable=True)
+    list_price_notified_at = Column(DateTime(timezone=False), nullable=True)
+    list_price_notify_batch_id = Column(UUID(as_uuid=False), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     updated_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -436,6 +444,7 @@ class Product(Base, CompanyScopedMixin):
         ),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
+        Index("ix_products_list_price_notify_batch_id", "list_price_notify_batch_id"),
         # Should fix 2 (reviewer pass, PR #1221, 85c2e9e7): matches
         # sa2_0001_xy_columns's CHECK constraints by name, so `create_all`
         # (every blank-schema test fixture, bootstrap_env) and the migration
