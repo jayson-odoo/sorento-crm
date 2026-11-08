@@ -214,9 +214,9 @@ describe('QuotationCertificatesList', () => {
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        action_key: 'quotation_certificate.remove',
-        entity_type: 'quotation_certificate',
-        entity_id: 'd1',
+        actionKey: 'quotation_certificate.remove',
+        entityType: 'quotation_certificate',
+        entityId: 'd1',
         payload: expect.objectContaining({ certificate_id: 'cert-1' }),
       }),
     );

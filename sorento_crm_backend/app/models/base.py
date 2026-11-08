@@ -145,12 +145,3 @@ class CompanyScopedMixin:
             nullable=True,
             index=True,
         )
-
-
-def __getattr__(name: str):
-    # `Base` lives in app.database; resolved lazily so this module stays dependency-light.
-    if name == "Base":
-        from app.database import Base
-
-        return Base
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

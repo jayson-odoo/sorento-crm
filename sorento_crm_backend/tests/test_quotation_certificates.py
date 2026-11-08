@@ -214,7 +214,7 @@ def _ids(items):
 
 
 def _markers(db, c):
-    from app.models.base import Base
+    from app.database import Base
 
     table = Base.metadata.tables["projects.quotation_document_certificates"]
     db.expire_all()

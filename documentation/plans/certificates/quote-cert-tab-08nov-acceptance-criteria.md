@@ -105,8 +105,9 @@ state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
   `revision_id` is current (and, for `source=auto`, its `code` equals the code used); else
   `find_boxes` on the current file, written back to `certificate_products.boxes` as `source=auto`.
   A manual-added certificate covering no quoted product has no boxes.
-- CERT-5 `marked.state` (first that applies): `no_file` (current revision has no attachment), `no_text` (scan),
-  `edited` (quote override or any manual default in use), `suggested` (count > 0 and any box from an
+- CERT-5 `marked.state` (first that applies): `no_file` (current revision has no attachment), `edited`
+  (a person drew boxes, so a scan with boxes reads edited), `no_text` (scan),
+  `suggested` (count > 0 and any box from an
   `ai` code), `found` (count > 0), `code_needed` (a covered product has no code), `not_found`
   (text PDF, products present, zero hits), `none` (no quoted product covered).
 - CERT-6 PUT boxes `scope=quote` writes the override for the current revision (any quote editor).
