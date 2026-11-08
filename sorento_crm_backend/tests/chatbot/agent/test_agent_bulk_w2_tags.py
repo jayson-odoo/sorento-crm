@@ -612,17 +612,19 @@ def test_r1_two_tags_that_differ_only_in_inner_spaces_are_never_picked_at_random
     w = make_world(db)
     s = stem()
     one = tag_(db, f"{s} Office Staff")
-    tag_(db, f"{s} Office  Staff")
+    tag_(db, f"{s} Office  Staff")  # differs only in an inner space
     person = dealer(db, w)
 
     steps, _, _ = propose_rows(db, w, [row_(person.phone_number, add=[one.name])])
-    assert f"add tag {one.name}" in steps[0]["summary"]
+    assert steps[0]["before"]["targets"] == [str(one.id)]
 
-    steps, _, waiting = propose_rows(db, w, [row_(person.phone_number, add=[f"{s} OFFICE   staff ".lower()])])
-    if steps:  # written with collapsed spaces = the single-spaced tag's own name
-        assert f"add tag {one.name}" in steps[0]["summary"]
-    else:
-        assert len(waiting[0]["candidates"]) == 2
+    double = f"{s} Office  Staff"
+    two = db.query(ContactTag).filter(ContactTag.name == double).one()
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, add=[double.upper()])])
+    assert steps[0]["before"]["targets"] == [str(two.id)]  # the summary collapses spaces; the target does not
+
+    steps, _, waiting = propose_rows(db, w, [row_(person.phone_number, add=[f"{s} Office   Staff"])])
+    assert steps == [] and sorted(c["code"] for c in waiting[0]["candidates"]) == sorted([one.name, double])
 
 
 def test_r1_the_name_is_the_crm_contacts_with_the_tables_when_they_differ(db):

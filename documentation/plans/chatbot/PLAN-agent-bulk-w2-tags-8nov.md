@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 2, contact tags from a pasted table (AGENT-BULK-W2-TAGS)
 
-Status: Review fix round 1 (crew live x3 NOT READY on 0aea0605; fixes R1-R9 in the UAC; decided-cards blocker on lane AGENT-DECIDED-CARDS).
+Status: Merge-ready pending crew live re-run (laneboard/scripts/2247.md) + router gate; reviewer READY after fix round 1, security-reviewer READY; decided-cards follow-up blocker on lane AGENT-DECIDED-CARDS (rebase when it merges). Track: full.
 Track: full (agent write path; no migration, no new permission, no new ingest surface).
 
 Wave 2 after AGENT-BULK-V2 (#2241). Owner wave order (8 Nov): 2 contact tags (this lane), 3 sales agent ->

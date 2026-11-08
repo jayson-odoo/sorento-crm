@@ -60,14 +60,15 @@ def _resolve(
 
     norm = func.lower(func.regexp_replace(func.trim(ContactTag.name), r"\s+", " ", "g"))
     out: dict[str, Any] = {}
-    for name in dict.fromkeys(_clean(n) for n in written):
+    for raw in dict.fromkeys(str(n).strip() for n in written):
+        name = _clean(raw)
         if not name:
             continue
         same = db.query(ContactTag).filter(norm == name.lower()).order_by(ContactTag.name).all()
         if len(same) > 1:
             # Names that differ only in inner spaces ("Office Staff" / "Office  Staff"): the one written as is, else
             # a pick, never an arbitrary one.
-            same = [t for t in same if t.name.lower() == name.lower()] or same
+            same = [t for t in same if t.name.strip().lower() == raw.lower()] or same
         if len(same) > 1:
             if may_list:
                 choices.append(_choice(name, [t.name for t in same]))
