@@ -719,3 +719,31 @@ def test_an_admin_edited_team_notice_row_is_left_alone(world):
         text("SELECT layout_json FROM email_templates WHERE code = 'stock_inquiry_created'")
     ).scalar()
     assert layout["blocks"][3]["label"] == "See the request"
+
+
+def test_upgrade_runs_the_seed_and_the_template_update(world, monkeypatch):
+    """The wiring, not only the statements: `upgrade()` itself seeds the NPA rows from the SI's and
+    relabels the seeded team-notice row (review nit 1)."""
+    module = _load_migration()
+    db = world.db
+    _si_rows(db)
+    db.execute(text("DELETE FROM email_templates WHERE code = 'stock_inquiry_created'"))
+    _template_row(db, module.SEEDED_LAYOUT)
+
+    class _Op:
+        @staticmethod
+        def execute(statement):
+            db.execute(statement)
+
+        @staticmethod
+        def get_bind():
+            return db
+
+    monkeypatch.setattr(module, "op", _Op)
+    module.upgrade()
+    db.commit()
+    assert [r["team_set_code"] for r in _npa_rows(db)] == ["project_sales", "purchasing"]
+    layout = db.execute(
+        text("SELECT layout_json FROM email_templates WHERE code = 'stock_inquiry_created'")
+    ).scalar()
+    assert layout["blocks"][3]["label"] == "{{ button_label or 'Open stock inquiry' }}"
