@@ -14,3 +14,42 @@ replace them after the fix round. Measurements from that pass, which carry no bu
 - Bundles (dev server): the dashboard's 69 chunks contain no "WebGLRenderer"; /town loads three.js.
 - No WebGL and reduced motion: cards only, no errors. 375 px: no horizontal scroll.
 - Viewer without sales.reports.view: no RM, no names, keys s1..sN in the response body.
+
+## Re-pass after fix round 3 (masked, fictional data only)
+
+Head fa15db0420 (fix round 3 included). Data: a stored fictional snapshot (30 shops named Alpha Tiles,
+Beta Home Centre and so on, 8 lit, 60 stalls named "Stall NN Trading", round invented figures). Users:
+admin, a staff user with the purchasing role (no `sales.reports.view`), a portal_user. Sidebar click from `/`.
+
+Screenshots (2x, palette compressed under 200 KB):
+
+- `a-admin-1280-panel-lit-shop.png`: admin 1280x800, Sheet panel open on a lit shop.
+- `b-admin-375-town-and-cards.png`: 375 town stage plus the top cards.
+
+Results:
+
+- Stalls and tags: instanced building draw counts are 35 = 30 shops + 5 stalls (60 stalls in the snapshot);
+  5 name tags drawn; "+64 more dealers bought today" = 77 dealers minus 13 lit buildings drawn. PASS.
+  Tags are not clipped at the canvas edge, but one of the five overlaps another (see defects). PARTIAL.
+- Scoreboard says "23% vs Sun 1 Nov" in the scene and in the card (date derived from today). PASS.
+- Sheet: every tap (scoreboard, shop, "!", depot, approvals) opens it; focus is inside it; Escape closes it;
+  with it open a tap on the depot swaps its content (scene still tappable, one dialog). PASS.
+- Loading skeleton ("Loading town") shown while the snapshot response was held 3 s, gone after. PASS.
+- 375x812: no horizontal scroll (scrollWidth 375), stage is square (341x341), cards stack below, panel inside
+  the viewport and closes on Escape. The town does NOT fill the stage (see defects). PARTIAL.
+- Staff user: no RM, no money-shaped figure, no names, no UUID, in the page or the scene text; shops read
+  "Dealer"; counts present. The response keeps only `account_label, key, kind, today_docs` per shop with keys
+  `s1..sN`, and the order is not the rank order (lit first, then a key hash). PASS.
+- Portal_user: `GET /api/v1/town/snapshot` answers 403 `town_staff_only`; staff and admin answer 200. PASS.
+- 6x CPU throttle, DPR 3, 60 stalls: 18 draw calls per frame at both widths (limit 100); pixel ratio 1.5;
+  0 rendered frames in 5 s idle and 0 in 3 s after a drag. Drag render callback p50 8.5 ms, p95 23.7 ms at
+  1280 (p50 4.8 ms, p95 13.8 ms at 375), software GL, first frame 630 ms and 450 ms.
+
+Defects:
+
+1. One name tag is partly hidden behind its neighbour at 1280 and at 375 (Iota Ceramics under Mu Flooring).
+2. The island is small inside its stage: at 1280 about 45 percent of the stage height, at 375 about two thirds
+   of the width with an empty band on top; the legend then overlaps the island's lower edge on a phone.
+3. Opening the "products low" Sheet at 375 logs two React warnings: Missing `Description` or
+   `aria-describedby={undefined}` for DialogContent.
+4. The Sheet close icon button is 16x16 px at 375.
