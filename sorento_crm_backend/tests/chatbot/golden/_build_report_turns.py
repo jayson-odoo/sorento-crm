@@ -47,12 +47,19 @@ BRANDS = {"8": ["SORENTO", "CABANA"]}
 REPEATS = {"18.1": "1", "18.2": "2", "18.4": "4"}
 
 XFAIL_W3 = "REPORT-SPEC-W3"
-# Step 18 on the v72 text (crew Q1 (a), 8 Nov): steps 1 / 2 / 4's expectation, xfail where today's engine misses.
-V72_MISS = {
-    s: f"{XFAIL_W3}: the v72 text has no ALL, so the clear leaves `brands` out and the held brand stays "
-       "(owner Expected 18: the fix needs the new prompt)"
-    for s in ("18.2", "18.4")
+# Step 18 on the v72 text (crew Q1 (a), 8 Nov): steps 1 / 2 / 4's expectation, xfail REPORT-SPEC-W3 where today's
+# engine misses. With the held lines on record, production cleared the brand at 18.2 (the v72 legacy widen signal), so
+# no step-18 row is a known miss; 18.2 / 18.4 wait on the flat parse (NEEDS_FLAT).
+# Turns whose replay needs the recorded FLAT parse, not only the object (8 Nov, after the held-line extraction): on the
+# v72 text a clear rides the legacy widen signal (`report_ask._legacy_all` reads `broaden_axis` / `broaden_to`), and
+# r2 14c's brand drop rides an entity field. The recorded line after them shows the brand cleared; an object-only
+# replay keeps it. Pending until crew's `parser_raw` for the turn that decides it arrives: (row) -> (deciding step).
+NEEDS_FLAT = {
+    **{(EXPECTATION_HEAD, r, s): "18.2" for r in ("1", "2", "3") for s in ("18.2", "18.4")},
+    (EXPECTATION_HEAD, "2", "14d"): "14c",
 }
+FLAT_PENDING = ("pending: replaying this turn needs the recorded flat parse (parser_raw) of step {step}, not only its "
+                "object; requested from crew (8 Nov)")
 STEP19_PENDING = "the flat parse (the supplier entity) is not on record for this turn, so it cannot be replayed"
 
 
@@ -138,8 +145,6 @@ def _live_rows() -> tuple[list[dict[str, Any]], bool]:
             row["parse"] = parse
         if skip:
             row["skip"] = skip
-        if step in V72_MISS and head == EXPECTATION_HEAD and prompt == md5(V72):
-            row["xfail"] = V72_MISS[step]
         if (head, run, step) in PARSER_MISS:
             row["xfail"] = f"{XFAIL_W3}: the parser kept company Sorento beside ALL in every list (PARSER_MISS)"
         if r.get("parser_raw"):  # the whole recorded parse: replayed as it is (replay.py's recorded-parse mode)
@@ -152,6 +157,15 @@ def _live_rows() -> tuple[list[dict[str, Any]], bool]:
         if r.get("note"):
             row["note"] = r["note"]
         out.append(row)
+    flat = {(r["head"], r["run"], r["step"]) for r in out if r.get("parser_raw")}
+    for row in out:
+        need = NEEDS_FLAT.get((row["head"], row["run"], row["step"]))
+        if need and (row["head"], row["run"], need) not in flat:
+            reason = FLAT_PENDING.format(step=need)
+            if row["step"] != need:  # the line printed AFTER the deciding turn
+                row["held_pending"] = reason
+            if need == "18.2":  # 18.2's own outcome and 18.4's, which starts from it
+                row["route_pending"] = reason
     return out, recorded
 
 

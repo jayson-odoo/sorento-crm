@@ -176,6 +176,15 @@ def _owner_world(rbot, monkeypatch) -> None:
     monkeypatch.setattr(engine_mod, "check_access", _access)
     db = rbot.console.session_factory()
     try:
+        # The owner's book names its brands in capitals (the recorded Held report lines print "SORENTO", "CABANA");
+        # the harness world seeds "Sorento" / "Cabana". Same rows, the book's spelling.
+        from app.models.product import Brand
+
+        db.info["company_scope"] = None
+        renamed = 0
+        for brand in db.query(Brand).filter(Brand.brand_name.in_(("Sorento", "Cabana"))):
+            brand.brand_name, renamed = brand.brand_name.upper(), renamed + 1
+        assert renamed, "harness: the world seeds no Sorento / Cabana brand to spell as the book does"
         sup = Supplier(id=str(uuid.uuid4()), supplier_code=SUPPLIER[0], supplier_name=SUPPLIER[1], company_id=DEFAULT_COMPANY_ID)
         db.add(sup)
         db.flush()
@@ -285,6 +294,8 @@ def test_engine_prints_the_recorded_held_line(request, row) -> None:
     engine change that moves what the parser reads shows here first (plan 1.5, step 11)."""
     if not row["held_recorded"]:
         pytest.skip("held line pending crew's extraction (report_turns.recorded.jsonl)")
+    if row.get("held_pending"):
+        pytest.skip(row["held_pending"])
     got = _outcome(request, row)["held"]
     want = [row["held"]] if row["held"] is not None else []
     if row["head"] == "gold" and want:
@@ -324,6 +335,8 @@ def _same(want: Any, got: Any) -> bool:
 
 @pytest.mark.parametrize("row", [_param(r) for r in ASSERTED])
 def test_report_golden(request, row) -> None:
+    if row.get("route_pending"):
+        pytest.skip(row["route_pending"])
     if row.get("xfail"):
         request.applymarker(pytest.mark.xfail(reason=row["xfail"], strict=True))
     out = _outcome(request, row)
