@@ -259,6 +259,34 @@ describe('crew pass 8 Nov', () => {
   });
 });
 
+describe('owner hand test 8 Nov 20:45: the Link picker opens with something to pick', () => {
+  it('opens the picker on the linked code (the search starts from it)', async () => {
+    state.data = app({
+      status: 'completed',
+      status_label: 'Completed',
+      new_product_id: 'p-1',
+      new_product_code: 'CB313',
+    });
+    render(<Page />);
+    const dialog = await openDialog();
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: /product code/i }));
+    await waitFor(() =>
+      expect(state.calls.some((c) => /\/products\?q=CB313(&|$)/.test(c.url))).toBe(true),
+    );
+  });
+
+  it('with nothing linked it opens on an empty search (the server lists products)', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    fireEvent.click(within(dialog).getByRole('radio', { name: /link an existing product code/i }));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: /product code/i }));
+    await waitFor(() =>
+      expect(state.calls.some((c) => /\/products\?q=(&|$)/.test(c.url))).toBe(true),
+    );
+    expect(await within(document.body).findByText('XY-1234-MB-69')).toBeInTheDocument();
+  });
+});
+
 describe('the dialog', () => {
   it('is titled like the stock inquiry one and offers the three outcomes, Lead time, one Cost and Save', async () => {
     render(<Page />);

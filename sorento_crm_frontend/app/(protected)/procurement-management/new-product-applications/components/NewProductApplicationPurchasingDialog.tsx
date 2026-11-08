@@ -190,6 +190,9 @@ export default function NewProductApplicationPurchasingDialog({
                 placeholder="Search product code"
                 emptyMessage="No product matches that."
                 fetchOptions={searchProducts}
+                // Opens on the linked code, so the list shows it (owner hand test 8 Nov); with
+                // nothing linked the empty search lists the first active products.
+                initialQuery={product?.label ?? ''}
                 selectedOption={product ?? undefined}
                 onChange={() => undefined}
                 onOptionChange={(opt) =>

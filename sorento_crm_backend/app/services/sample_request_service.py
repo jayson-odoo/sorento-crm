@@ -1001,15 +1001,21 @@ def _folded(column):
 
 
 def search_products(
-    db: Session, q: str, limit: int = 20, product_ids: Optional[set] = None
+    db: Session,
+    q: str,
+    limit: int = 20,
+    product_ids: Optional[set] = None,
+    list_when_empty: bool = False,
 ) -> List[Dict[str, Any]]:
     """Active products whose code (dashes, spaces, case ignored) or name matches. The
     search only LISTS products; a person always picks one (card rule 5).
 
     ``product_ids`` (a request's source quotation, SFQ-27) narrows the search to those products,
-    and an empty search then lists them all so a phone user can pick without typing."""
+    and an empty search then lists them all so a phone user can pick without typing.
+    ``list_when_empty`` (New Product Application pickers, owner 8 Nov) lists the first ``limit``
+    active products for an empty search; the sample request keeps listing nothing."""
     text = (q or "").strip()
-    if not text and product_ids is None:
+    if not text and product_ids is None and not list_when_empty:
         return []
     query = (
         db.query(Product, Brand.brand_name)

@@ -327,3 +327,11 @@ def test_my_own_application_outside_my_resolved_company_is_404_not_a_mismatch(po
     portal.db.commit()
     res = _as(portal, portal.granted).get(f"{BASE}/{d['id']}")
     assert res.status_code == 404, res.text
+
+
+def test_portal_empty_product_search_lists_my_companys_products_only(portal):
+    """Owner hand test 8 Nov 20:45: the portal picker opens with products, of the contact's company only."""
+    p = portal
+    ids = [r["id"] for r in _as(p, p.granted).get(f"{NPA}/products", params={"q": ""}).json()]
+    assert 0 < len(ids) <= 20
+    assert p.foreign.id not in ids

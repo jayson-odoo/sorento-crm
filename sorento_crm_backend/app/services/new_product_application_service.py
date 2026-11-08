@@ -971,9 +971,12 @@ def _folded(column):
 
 
 def search_products(db: Session, q: str) -> List[Dict[str, Any]]:
+    """The NPA pickers' search (Link an existing product code, PRODUCT CODES, staff and portal).
+    An empty search lists the first active products, so a picker opens with something to pick
+    (owner hand test 8 Nov 20:45)."""
     from app.services import sample_request_service
 
-    return sample_request_service.search_products(db, q)
+    return sample_request_service.search_products(db, q, list_when_empty=True)
 
 
 def _simple_lookup(db: Session, model, code_col, name_col, q: str, limit: int = 50) -> List[Dict[str, Any]]:

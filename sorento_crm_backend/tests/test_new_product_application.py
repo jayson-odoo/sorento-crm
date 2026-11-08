@@ -674,7 +674,10 @@ def test_ac31_product_search_ignores_dashes_and_case_and_only_lists(world):
     assert res.status_code == 200, res.text
     codes = [p["product_code"] for p in res.json()]
     assert "ZZT-KS2433" in codes
-    assert world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": ""}).json() == []
+    # NPA-FROM-SI owner hand test (8 Nov 20:45): an empty search lists active products to pick from
+    # (the NPA search only; the sample request keeps its empty-search rule).
+    empty = world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": ""}).json()
+    assert 0 < len(empty) <= 20
     inactive = world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": world.inactive.product_code})
     assert world.inactive.product_code not in [p["product_code"] for p in inactive.json()]
 

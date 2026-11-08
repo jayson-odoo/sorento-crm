@@ -120,6 +120,29 @@ def test_the_applicant_can_search_products_to_pick_codes(world):
     assert [p["product_code"] for p in res.json()] == ["ZZT-KS2433"]
 
 
+def test_an_empty_product_search_lists_the_first_active_products(world):
+    """Owner hand test 8 Nov 20:45: the Link / current-code pickers open with something to pick."""
+    from app.models.product import Product
+
+    rows = world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": ""}).json()
+    assert 0 < len(rows) <= 20
+    codes = [r["product_code"] for r in rows]
+    assert codes == sorted(codes)
+    active = {
+        pid for (pid,) in world.db.query(Product.id).filter(Product.id.in_([r["id"] for r in rows]),
+                                                            Product.is_active.is_(True))
+    }
+    assert active == {r["id"] for r in rows}
+    # The applicant's current-code cell uses the same search.
+    assert world.api.as_(world.sales).get(f"{NPA}/products", params={"q": ""}).json() == rows
+
+
+def test_the_sample_request_keeps_its_empty_search_rule(world):
+    from app.services import sample_request_service
+
+    assert sample_request_service.search_products(world.db, "") == []
+
+
 # ------------------------------------------------------------------ the ONE new product code (Q1')
 
 
