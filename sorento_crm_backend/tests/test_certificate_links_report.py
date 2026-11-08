@@ -333,3 +333,15 @@ def test_filters_by_certificate_type_and_status_and_lists_the_types(env, files):
     assert {r["certificate_number"] for r in only_a["data"]} == {"RPT-18"}
     archived = _rows(env, status="archived")
     assert {r["certificate_number"] for r in archived["data"]} == {"RPT-19"}
+
+
+def test_a_certificate_already_checked_is_not_read_again(env, files, monkeypatch):
+    """Reviewer round 2: a second job carrying ids an earlier job has done reads nothing."""
+    from app.services import certificate_link_report_service as report
+
+    cert = _certificate(env, files, "RPT-20", ["Model 14A"], ["14A"], ["SV-14A-CP"])
+    assert report.check_certificates(env.db, [str(cert.id)]) == {"certificates": 1, "links": 1}
+    reads = []
+    monkeypatch.setattr(report, "_read_current_text", lambda *a: reads.append(a) or None)
+    assert report.check_certificates(env.db, [str(cert.id)]) == {"certificates": 0, "links": 0}
+    assert reads == []

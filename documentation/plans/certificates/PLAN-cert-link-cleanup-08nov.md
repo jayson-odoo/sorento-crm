@@ -1,7 +1,7 @@
 # PLAN: Certificate links to check (CERT-LINK-CLEANUP)
 
 Status: Built, in review (PR #2249). Track: full (M: migration + new report + bulk actions + ingest change).
-Tests first, reviewer + security-reviewer fix round 1 done, cloud browser pass done.
+Tests first, reviewer READY after round 2, security-reviewer findings fixed, cloud browser pass done.
 Follow-up to #2245 (QUOTE-CERT-TAB). Behaviour card: `CARD-cert-link-cleanup-08nov.md`.
 UAC: `cert-link-cleanup-08nov-acceptance-criteria.md`.
 
@@ -44,6 +44,13 @@ backed: the product's own code, a printed product-set code the product belongs t
 - R6 audit: one row per link on the product's Audit Trail (the existing PRODUCT-ATTACH-AUDIT pattern:
   `file_unlinked` for Remove, `certificate_link_confirmed` for Confirm), not one per certificate.
 - `POST /check` needs only `.view`: it writes derived verdict columns only and is deduped.
+
+## Known limit
+
+- Adding a product to a product set, or removing it, does not re-check its links: the stored key covers
+  revision, Code on certificate and product code, not set membership. The verdict refreshes on the next
+  revision or code change. Trigger to add membership to the key: a set edit leaves a wrong verdict that
+  someone acts on.
 
 ## Deploy notes
 

@@ -348,6 +348,10 @@ def check_certificates(db: Session, certificate_ids: Iterable[str]) -> dict:
     Commits per certificate, so a long run keeps what it has done if it is stopped. An empty list
     checks nothing: the worker runs with the scope off, so it never widens to "every pending"."""
     ids = [str(x) for x in (certificate_ids or [])]
+    # A later job queued while an earlier one was still running carries ids it has since done:
+    # read only the ones still pending (reviewer round 2), so a long backfill is not repeated.
+    still = set(pending_certificate_ids(db)) if ids else set()
+    ids = [x for x in ids if x in still]
     checked = links = 0
     for certificate_id in ids:
         certificate = db.query(Certificate).filter(Certificate.id == certificate_id).first()
