@@ -542,7 +542,8 @@ describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
     await waitFor(() => expect(rejects()).toHaveLength(1));
     expect(rejects()[0].url).toContain('/api/v1/procurement/new-product-applications/a-1/purchasing-reject');
     expect(rejects()[0].body).toEqual({ reason: 'Supplier cannot make it' });
-    expect(await screen.findByText('Supplier cannot make it')).toBeInTheDocument();
+    // RejectionReasonBanner prints " - <reason>" after its label.
+    expect(await screen.findByText(/Supplier cannot make it/)).toBeInTheDocument();
     expect(screen.getAllByText('Rejected').length).toBeGreaterThan(0);
   });
 });

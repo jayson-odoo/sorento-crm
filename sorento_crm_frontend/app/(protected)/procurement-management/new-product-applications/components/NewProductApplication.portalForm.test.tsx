@@ -169,7 +169,7 @@ describe('limited user, New Product Application create renders the portal form',
     const customer = screen.getByLabelText('Customer');
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'ZZ' } });
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/customers`)).length).toBeGreaterThan(0), { timeout: 3000 });
+    await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/debtors')).length).toBeGreaterThan(0), { timeout: 3000 });
     expect(screen.queryByLabelText('Brand')).toBeNull();
     expect(portalCalls()).toHaveLength(0);
     expect(staffApi()).toHaveLength(0);

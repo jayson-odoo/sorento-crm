@@ -311,6 +311,8 @@ function StaffNewProductApplicationDetail({
         await reject.mutateAsync({ id: r.id, reason: value });
       else if (asking.kind === 'revise')
         await revise.mutateAsync({ id: r.id, reason: value });
+      else if (asking.kind === 'purchasingReject')
+        await purchasingReject.mutateAsync({ id: r.id, reason: value });
       else await cancel.mutateAsync({ id: r.id, reason: value || undefined });
       setAsking(null);
     } catch {
@@ -477,6 +479,18 @@ function StaffNewProductApplicationDetail({
               {canAnswer && (
                 <Button disabled={busy} onClick={() => setPurchasingOpen(true)}>
                   Edit purchasing response
+                </Button>
+              )}
+              {canAnswer && r.status === 'approved' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-destructive text-destructive hover:bg-destructive/10"
+                  disabled={busy}
+                  onClick={() => setAsking({ kind: 'purchasingReject' })}
+                >
+                  <XCircle className="size-4" />
+                  Reject
                 </Button>
               )}
             </div>

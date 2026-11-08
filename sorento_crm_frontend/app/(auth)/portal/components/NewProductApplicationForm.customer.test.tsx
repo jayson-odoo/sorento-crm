@@ -80,10 +80,12 @@ describe('portal NPA customer = the stock inquiry customer dropdown', () => {
   it('searches through client.lookupDebtors (all company customers), not the NPA customers lookup', async () => {
     mount();
     await typeInCustomer('ZZ');
-    await waitFor(() => expect(lookupDebtors).toHaveBeenCalled());
-    expect(lookupDebtors.mock.calls[0][0]).toBe('ZZ');
-    expect(lookupDebtors.mock.calls[0][1]).toBe(20);
-    expect(lookupDebtors.mock.calls[0][2]).toBeUndefined();
+    // The shared combobox (like the stock inquiry one) also fetches '' on focus: the typed search
+    // is the call that matters, with the SI's exact arguments.
+    await waitFor(() => expect(lookupDebtors.mock.calls.some((c) => c[0] === 'ZZ')).toBe(true));
+    const typed = lookupDebtors.mock.calls.find((c) => c[0] === 'ZZ')!;
+    expect(typed[1]).toBe(20);
+    expect(typed[2]).toBeUndefined();
     expect(lookupNewProductApplicationCustomers).not.toHaveBeenCalled();
   });
 
