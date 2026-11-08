@@ -178,6 +178,26 @@ def save_point_ratio(
         _reraise(db, exc)
 
 
+@router.patch("/point-ratios/{ratio_id}", response_model=SalesPointRatioOut)
+def update_point_ratio(
+    payload: SalesPointRatioIn,
+    ratio_id: str,
+    _user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Fix a ratio's RM per point or From date; another ratio's date is refused (409).
+    Delete is the deferred `point_ratio.delete` record action, not a route."""
+    try:
+        with db.begin_nested():
+            row = target_service.update_point_ratio(
+                db, ratio_id, payload.effective_from, payload.rm_per_point
+            )
+        db.commit()
+        return _ratio_out(row)
+    except Exception as exc:
+        _reraise(db, exc)
+
+
 #: A dealer targets workbook is a few hundred rows; anything this size is not one.
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 
