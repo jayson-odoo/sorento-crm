@@ -22,8 +22,6 @@ VIEW = "user_management.contacts.view"
 EVENT = "contact.tags_agent"
 MAX_TAGS = 10
 MAX_CHOICES = 10
-NOT_APPLIED = "not applied (needs more access)"
-SETTINGS_FAILED = "settings not saved; apply them from the tag screen"
 
 
 def _fold(text: Any) -> str:
@@ -150,19 +148,15 @@ def plan(db, user: dict, args: dict) -> dict:
     changed = list(dict.fromkeys(c["label"] for c in settings.get("changes") or []))
     if changed:
         lines.append("settings: " + ", ".join(changed))
-    blocked = list(dict.fromkeys(n["label"] for n in settings.get("not_applied") or []))
     conflicts = list(dict.fromkeys(c["label"] for c in settings.get("conflicts") or []))
     if not lines:
-        extra = f"; {NOT_APPLIED}: {', '.join(blocked)}" if blocked else ""
         if add and remove:
             head = "Already tagged and not tagged; nothing to change"
         elif add:
             head = "Already tagged; nothing to change"
         else:
             head = "Not tagged; nothing to remove"
-        raise _refuse(f"{head}{extra}.")
-    if blocked:
-        lines.append(f"{NOT_APPLIED}: " + ", ".join(blocked))
+        raise _refuse(f"{head}.")
     if conflicts:
         lines.append("tags disagree, not changed: " + ", ".join(conflicts))
     after = {**{i: n for i, n in holding.items() if i not in remove}, **{i: t.name for i, t in add.items()}}
@@ -216,15 +210,13 @@ def _execute(db, user: dict, args: dict) -> dict:
 
     p = plan(db, user, args)
     cid = p["contact_id"]
-    result = ContactTagService(db).bulk_tag(
+    # TAG-UNION: the membership and the settings it grants are written together or not at all (a failed
+    # settings write raises and fails this row), so the preview's lines are what happened.
+    ContactTagService(db).bulk_tag(
         [cid], list(p["add"]), list(p["remove"]), False, str(user["id"]),
         apply_settings=bool(p["add"]), gates=_gates(db, user),
-    )["results"][0]
+    )
     lines = p["lines"]
-    if (result.get("settings") or {}).get("status") == "failed":
-        # The screen's service keeps the membership when a settings write fails (that contact's savepoint only):
-        # say so rather than report settings that were not saved.
-        lines = [line for line in lines if not line.startswith("settings: ")] + [SETTINGS_FAILED]
     # After the write (the screen's service commits the membership with its own "Tag added / removed" rows, and
     # audit rows are append-only), so this row says what really happened.
     audit_service.record(

@@ -83,21 +83,25 @@ def test_the_catalog_offers_no_class_first_and_one_option_per_code(client, db, a
 # ---------------------------------------------------------------- merge + evaluate
 
 
-def test_two_tags_intersect_and_all_is_neutral(client, db, all_perms):
+def test_two_tags_add_up_and_all_gives_all(client, db, all_perms):
+    # TAG-UNION (owner 8 Nov): the allowed classes add up; any tag "all" gives every class.
     diy, serene = _class(db, "DIY"), _class(db, "SERENE")
-    a = _stag(client, db, {"item_classes": [NONE, diy.item_class_code, serene.item_class_code]})
+    a = _stag(client, db, {"item_classes": [NONE, serene.item_class_code]})
     b = _stag(client, db, {"item_classes": [NONE, diy.item_class_code]})
     c = _stag(client, db, {"item_classes": "all"})
-    item = _item(_read(client, _holder(client, db, [a, b, c])), "item_classes")
+    item = _item(_read(client, _holder(client, db, [a, b])), "item_classes")
     assert item["conflict"] is False
-    assert sorted(item["expected"]) == sorted(["No class", diy.item_class_name])
+    assert sorted(item["expected"]) == sorted(["No class", diy.item_class_name, serene.item_class_name])
+    assert _item(_read(client, _holder(client, db, [a, c])), "item_classes")["expected"] == "All"
 
 
-def test_nothing_in_common_is_a_conflict(client, db, all_perms):
+def test_nothing_in_common_adds_up_instead_of_conflicting(client, db, all_perms):
     diy, serene = _class(db, "DIY"), _class(db, "SERENE")
     a = _stag(client, db, {"item_classes": [diy.item_class_code]})
     b = _stag(client, db, {"item_classes": [serene.item_class_code]})
-    assert _item(_read(client, _holder(client, db, [a, b])), "item_classes")["conflict"] is True
+    item = _item(_read(client, _holder(client, db, [a, b])), "item_classes")
+    assert item["conflict"] is False
+    assert sorted(item["expected"]) == sorted([diy.item_class_name, serene.item_class_name])
 
 
 def test_current_reads_the_contact_column(client, db, all_perms):
@@ -141,13 +145,15 @@ def test_apply_all_clears_the_contact_list(client, db, all_perms):
     assert not _fresh(db, contact.id).allowed_item_class_codes
 
 
-def test_a_conflict_is_never_written(client, db, all_perms):
+def test_disjoint_classes_are_written_as_their_union(client, db, all_perms):
     diy, serene = _class(db, "DIY"), _class(db, "SERENE")
     a = _stag(client, db, {"item_classes": [diy.item_class_code]})
     b = _stag(client, db, {"item_classes": [serene.item_class_code]})
     contact = _holder(client, db, [a, b])
     _rows(_apply(client, [contact.id], dry_run=False))
-    assert _fresh(db, contact.id).allowed_item_class_codes is None
+    assert sorted(_fresh(db, contact.id).allowed_item_class_codes) == sorted(
+        [diy.item_class_code, serene.item_class_code]
+    )
 
 
 def test_apply_needs_contacts_edit_like_brands(client, db, perms):

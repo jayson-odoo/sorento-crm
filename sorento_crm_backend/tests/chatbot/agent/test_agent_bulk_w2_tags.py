@@ -370,7 +370,7 @@ def test_06_add_applies_the_tags_settings_listed_in_the_preview(db):
     assert fresh(db, person).chatbot_stock_allowed is False and held(db, person) == [t.name]
 
 
-def test_06_a_section_the_user_may_not_write_is_not_applied_and_not_written(db):
+def test_06_a_tag_setting_a_section_the_user_may_not_write_is_refused(db):
     from app.services.contact_tag_settings import SECTION_TITLES
 
     w = make_world(db, slugs=(EDIT,), superadmin=False)  # no access_agents.edit
@@ -383,13 +383,12 @@ def test_06_a_section_the_user_may_not_write_is_not_applied_and_not_written(db):
     db.commit()
 
     steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, add=[t.name])])
-    assert skipped == []
-    summary = steps[0]["summary"]
-    assert f"not applied (needs more access): {SECTION_TITLES['agents']}" in summary
-    assert "Stock checks" in summary
-
-    assert confirm(db, w, steps).status == "executed"
-    assert fresh(db, person).chatbot_stock_allowed is False
+    # TAG-UNION D4 (owner Q4): adding the tag grants its agents, so it needs the agents right; the row is
+    # refused as a whole and nothing is written.
+    assert steps == []
+    assert skipped[0]["reason"] == f"You may not add or remove a tag that sets {SECTION_TITLES['agents']}."
+    assert held(db, person) == []
+    assert fresh(db, person).chatbot_stock_allowed is True
     assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == str(person.id)).count() == 0
 
 
@@ -556,7 +555,7 @@ def test_r1_settings_edited_after_the_preview_fail_that_row_and_the_other_applie
     assert held(db, b) == [other.name]
 
 
-def test_r1_a_console_operator_without_the_agents_gate_leaves_agents_not_applied(db):
+def test_r1_a_console_operator_without_the_agents_gate_is_refused(db):
     from app.services.chatbot.agent import actions, batch
     from app.services.contact_tag_settings import SECTION_TITLES
 
@@ -571,17 +570,14 @@ def test_r1_a_console_operator_without_the_agents_gate_leaves_agents_not_applied
     db.commit()
 
     steps, skipped, _ = batch.propose_rows(db, ctx, TAGS, [row_(person.phone_number, add=[t.name])], seen_ids=set())
-    assert skipped == []
-    assert f"not applied (needs more access): {SECTION_TITLES['agents']}" in steps[0]["summary"]
-    action = store(db, w, steps)
-    outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
-
-    assert outcome.status == "executed", outcome.steps
-    assert fresh(db, person).chatbot_stock_allowed is False
+    # TAG-UNION D4: the operator lacks the agents right, so adding a tag that grants agents is refused.
+    assert steps == []
+    assert skipped[0]["reason"] == f"You may not add or remove a tag that sets {SECTION_TITLES['agents']}."
+    assert fresh(db, person).chatbot_stock_allowed is True
     assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == str(person.id)).count() == 0
 
 
-def test_r1_a_failed_settings_write_is_reported_as_not_saved_not_as_done(db):
+def test_r1_a_failed_settings_write_fails_the_row_and_keeps_no_membership(db):
     from sqlalchemy import text
 
     w = make_world(db)
@@ -601,10 +597,10 @@ def test_r1_a_failed_settings_write_is_reported_as_not_saved_not_as_done(db):
 
     db.execute(text("DROP TRIGGER zzt_boom_tags ON respond_contacts"))
     db.commit()
-    afters = [c["after"] for c in outcome.steps[0]["changes"]]
-    assert any("settings not saved" in a for a in afters)
-    assert not any(a.startswith("settings: ") for a in afters)
-    assert held(db, person) == [t.name]  # the screen's service keeps the membership
+    # TAG-UNION: the tag and the access it grants commit or fail together (live recompute), so a failed
+    # settings write fails the row and keeps no membership.
+    assert outcome.steps[0]["status"] == "failed" and outcome.steps[0]["error"]
+    assert held(db, person) == []
     assert fresh(db, person).chatbot_stock_allowed is True
 
 

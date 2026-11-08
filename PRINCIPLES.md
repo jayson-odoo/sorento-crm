@@ -232,6 +232,19 @@ the same axis as the module decision - not a separate schema axis.
    explicitly asks** (standing rule 2026-08-15, reaffirmed 2026-08-23). HMR is what makes iteration
    fast; parallel prod builds took the machine down twice. Dev hides some `next build`-only errors;
    if that class matters for the change, say so and ask rather than building.
+6. **The assistant can read it.** A new list screen adds its entity to
+   `sorento_crm_backend/app/services/assistant_registry/<module>.py` (fields = what the screen shows, with
+   the screen's slugs, and its list route in `routes`), or its list route carries
+   `# ai: not-for-assistant <reason>` on the comment line directly above its decorators. The PR gate
+   enforces this for every added GET route that takes `page` or `limit` (`scripts/ci_ai_coverage.py`).
+7. **The assistant can do it.** Each new button that changes a record and that a user would ask for in
+   words gets an `ActionDef` calling the same route function, or the plan says why not.
+8. **Two eval prompts** per feature in
+   `sorento_crm_backend/scripts/chatbot_eval/gold/assistant_<module>.jsonl`, each naming the expected
+   entity or action (`{"expect": {"entity": ...}}` or `{"expect": {"action": ...}}`, row format in
+   `scripts/chatbot_eval/cases.py`).
+
+   Lines 6 to 8: `documentation/plans/chatbot/PLAN-ai-tools-standard-5nov.md` section 2.5.
 
 ## Design mandates (non-negotiable)
 

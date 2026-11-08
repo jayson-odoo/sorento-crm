@@ -1262,7 +1262,9 @@ def _delete_contact_tag(db: Session, payload: dict):
         (lambda slug: bool(actor) and perms.check_user_has_permission(str(actor), slug)),
         (lambda: bool(actor) and _is_superadmin(db, str(actor))),
     )
-    return ContactTagService(db).delete_tag(_entity_id(payload), gates=gates)
+    return ContactTagService(db).delete_tag(
+        _entity_id(payload), gates=gates, actor_id=str(actor) if actor else None
+    )
 
 
 def _delete_onboarding_request(db: Session, payload: dict):

@@ -53,7 +53,7 @@ class CustomerGroup(Base, CompanyScopedMixin):
 
     The chatbot used to join ledgers by the name rule (`ledger_family_key`), which merges
     different legal entities and cannot join one owner's two names. A group is the office's
-    own say-so; a ledger with no group still falls back to the name rule.
+    own say-so; a ledger with no group is its own customer (CUSTOMER-GROUP-GATE, 3 Nov 2026).
     """
 
     __tablename__ = "customer_groups"
