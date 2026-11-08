@@ -1746,7 +1746,7 @@ def _run(
                         from app.services.chatbot.agent.query_tools import strip_self_agent
 
                         asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
-                        args, self_note = strip_self_agent(args, asker, text)
+                        args, self_note = strip_self_agent(args, asker)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),

@@ -310,6 +310,12 @@ QUERY_SCHEMA = {
                     "type": "object", "properties": {"field": _TEXT, "dir": _TEXT}, "required": ["field"],
                 }},
                 "limit": {"type": "integer"},
+                "about_self": {
+                    "type": "boolean",
+                    "description": "true when the user asks about their own figures: they say my / mine / me, "
+                    "or the same in any language (saya), or the user names themselves. Then their own name may be "
+                    "the `agent`. Leave it out otherwise: the asker's own name is not used as an agent filter.",
+                },
                 "next_tier": {
                     "type": "string", "enum": ["distance", "closest", "furthest"],
                     "description": "agent_target_summary only. Set it when the user asks about the NEXT commission "
@@ -386,20 +392,13 @@ def _year_as_range(text: str, entries: list[dict]) -> str:
     return text
 
 
-def _user_named(args: dict, user_text: str | None) -> bool:
-    said = " ".join(str(user_text or "").split()).lower()
-    if not said:
-        return False
-    values = [args.get("agent")] + [f.get("value") for f in args.get("filters") or [] if isinstance(f, dict)]
-    return any(isinstance(v, str) and v.strip() and " ".join(v.split()).lower() in said for v in values)
-
-
-def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple[dict, str | None]:
-    """The asking user's own name is not an agent filter unless they said "my" (or named themselves): crew live
-    round 4, "payout per dealer" was first filtered by the asker's own name and found nothing."""
+def strip_self_agent(args: dict, user_name: str | None) -> tuple[dict, str | None]:
+    """The asking user's own name is not an agent filter unless the question is about them: crew live round 4,
+    "payout per dealer" was first filtered by the asker's own name and found nothing. Whether the user means
+    themselves ("my", "saya", their own name, in any language) is the model's `about_self` argument; code only
+    compares the call's agent with the asker's stored name and never reads the message (owner rule 4 Oct, 28 Oct)."""
     own = " ".join(str(user_name or "").split()).lower()
-    said = " ".join(str(user_text or "").split()).lower()
-    if not own or re.search(r"\b(my|me|mine|myself|saya)\b", said):
+    if not own or args.get("about_self") is True:
         return args, None
 
     words = set(own.split())
@@ -407,7 +406,7 @@ def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple
     def is_self(value: Any) -> bool:
         # The asker's name, or part of it, in any order ("Teh", "teh jayson"); never one naming someone else too.
         v = " ".join(str(value or "").split()).lower()
-        return bool(v) and set(v.split()) <= words and v not in said
+        return bool(v) and set(v.split()) <= words
 
     out, dropped = dict(args), []
     if is_self(out.get("agent")):
@@ -424,7 +423,7 @@ def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple
         out["filters"] = keep
     if not dropped:
         return args, None
-    return out, f"Left out {', '.join(dropped)}: that is your own name and the question did not name it or say 'my'."
+    return out, f"Left out {', '.join(dropped)}: that is your own name and the question was not about you."
 
 
 def _names_a_subject(entity_key: str, args: dict) -> bool:
@@ -547,15 +546,15 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, ad
         args = e.get("args") or {}
         entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
         named = _names_a_subject(entity, args)
-        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total") and (
-            _user_named(args, user_text)
-        ):
-            # Only a name the USER asked about: an empty call on a name the model made up (the asker's own, crew
-            # live round 6) never hides the table a later call returned.
+        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total"):
+            # A named call is the user's name (`agent` as the user said it); the asker's own name the model made up
+            # is stripped before the call runs (`strip_self_agent`), so it never hides a later table (crew live
+            # round 6). Nothing here reads the message (owner rule).
             missed.add(entity)
-        if entity in missed and not named:
+        if entity in missed and not named and not args.get("subjects"):
             # A whole table nobody asked for, after the named record was not found, is not shown, nor its notes
-            # (owner 8 Nov: "payout to fullshun" appended every payout and notes on other agents).
+            # (owner 8 Nov: "payout to fullshun" appended every payout and notes on other agents). A next-tier
+            # ranking with `subjects` was asked for, by the model's own argument.
             continue
         kept.append(e)
         if e.get("display"):

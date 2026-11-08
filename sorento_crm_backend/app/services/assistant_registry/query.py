@@ -43,6 +43,7 @@ BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
 SPEC_KEYS = (
     "entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit", "next_tier", "subjects",
+    "about_self",
 )
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
@@ -641,6 +642,9 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    if spec.get("about_self") is not None and not isinstance(spec.get("about_self"), bool):
+        raise QueryRefused("invalid", "`about_self` is true or false.")
+    # `about_self` is read before the query runs (`query_tools.strip_self_agent`); nothing below reads it.
     if entity.spec_hook is None and (spec.get("next_tier") is not None or spec.get("subjects") is not None):
         raise QueryRefused("invalid", "`next_tier` and `subjects` are for agent_target_summary only.")
     spec = shorthands(entity, spec)
