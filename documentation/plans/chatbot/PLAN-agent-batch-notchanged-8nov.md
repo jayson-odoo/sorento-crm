@@ -16,11 +16,17 @@ the CURRENT request" reads to the model as "drop the rows that were not changed"
    `batch_waiting` on the turn response (`loop.py`). On the pick follow-up (the newest earlier table turn left rows
    waiting), `batch.propose` puts back every not-changed row of that turn whose row number the model did not send,
    with its earlier reason. The model never decides whether such a row is shown.
+   The guard sits in `batch.propose`, so it covers every batchable write: grants (P5 run 1) and tags (#2247 S2,
+   `row 3: Retail Salesperson` dropped rows 4-5 in 2 of 3 runs).
 2. Tool wording: send EVERY row of the current request (ready, waiting and not changed); leave out only rows of a
    card the user already cancelled or confirmed.
+
+3. Closing line by request shape: a request with one row and nothing to change ends "Nothing can change yet; fix
+   what is above and ask again." instead of the table wording "...send the table again." (`batch.NOTHING_ONE_TAIL`).
 
 ## Tests (red first)
 
 `sorento_crm_backend/tests/chatbot/agent/test_agent_batch_notchanged.py`: a 3-row request where row 3 is not
 changed; the follow-up pick sends only rows 1 and 2; row 3 is still under Not changed with its reason and the
-summary line counts it. A brand-new table (no waiting rows before it) inherits nothing.
+summary line counts it. The same for a 5-row tags table picked on row 3. A one-row request ends with the
+one-row closing line. A brand-new table (no waiting rows before it) inherits nothing.

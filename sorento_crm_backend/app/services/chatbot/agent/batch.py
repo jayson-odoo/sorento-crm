@@ -28,6 +28,7 @@ TAG_CHOICE_TAIL = "Reply with the tag name(s) for each row under Needs your choi
 PICK_ARGS = ("customer_codes", "tags_add", "tags_remove")
 READY_NOW = " Or reply yes to confirm the ready rows now."
 NOTHING_TAIL = "Nothing can change yet; fix the rows above and send the table again."
+NOTHING_ONE_TAIL = "Nothing can change yet; fix what is above and ask again."  # a one-row request is no table
 MORE_NOTE = "more than 10 accounts match; give a longer name or the code"
 TAG_MORE_NOTE = "more than 10 tags match; give a longer name"
 
@@ -353,5 +354,6 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
     if waiting:
         parts.append((TAG_CHOICE_TAIL if tags else CHOICE_TAIL) + (READY_NOW if steps else ""))
     else:
-        parts.append(PREVIEW_TAIL if steps else NOTHING_TAIL)
+        one_row = len({s.get("row") for s in skipped}) <= 1
+        parts.append(PREVIEW_TAIL if steps else NOTHING_ONE_TAIL if one_row else NOTHING_TAIL)
     return "\n\n".join(parts)

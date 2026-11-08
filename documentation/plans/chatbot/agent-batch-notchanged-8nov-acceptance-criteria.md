@@ -6,3 +6,7 @@
 - AC-2: The Confirm card holds only the 2 ready rows; nothing is written before Confirm.
 - AC-3: A new table sent when no earlier table turn left rows waiting carries no rows from earlier turns.
 - AC-4: The batch tool description asks for every row of the current request (ready, waiting and not changed).
+- AC-5: The same holds for the tags write: a 5-row tags table, row 3 waiting, rows 4-5 not changed; the pick of row
+  3 keeps rows 4 (Already tagged) and 5 (No tag named ...) under "Not changed:".
+- AC-6: A one-row request with nothing to change ends "Nothing can change yet; fix what is above and ask again.";
+  a table of 2+ rows keeps "...fix the rows above and send the table again."

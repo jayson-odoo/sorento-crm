@@ -13,6 +13,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     _listeners,
     dealer,
     db,
+    make_world,
     row_,
     state,
 )
@@ -92,7 +93,7 @@ def test_a_new_table_with_nothing_waiting_before_it_inherits_no_rows(db):
 
 def test_the_tool_asks_for_every_row_of_the_current_request(db):
     from app.services.chatbot.agent import batch
-    from tests.chatbot.agent.test_agent_bulk_grant import ctx_of, make_world
+    from tests.chatbot.agent.test_agent_bulk_grant import ctx_of
 
     w = make_world(db)
     text = batch.schema_for(db, ctx_of(db, w))["function"]["description"]
@@ -100,3 +101,64 @@ def test_the_tool_asks_for_every_row_of_the_current_request(db):
     assert "not changed" in text
     assert "Propose only the rows still open" not in text
     assert GRANT
+
+
+# ------------------------------------------------------------------ the tags write (#2247 S2), same guard
+
+
+def test_the_tag_pick_follow_up_keeps_the_not_changed_rows_the_model_left_out(db):
+    """S2 of the tags live check: 'row 3: Retail Salesperson' sent only rows 1-3, so rows 4 (Already tagged) and 5
+    (No tag named Gold) vanished from Not changed in 2 of 3 runs."""
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import hold, numbered, stem, tag_
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import row_ as tag_row
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import say as tag_say
+
+    w = make_world(db)
+    s = stem()
+    office = tag_(db, f"{s} Office Staff")
+    retail = tag_(db, f"{s} Retail Salesperson")
+    tag_(db, f"{s} Project Salesperson")
+    a, c, d, b = dealer(db, w), dealer(db, w), dealer(db, w), dealer(db, w)
+    hold(db, b, office)
+    gold = f"{s} Gold"
+    first = [
+        numbered(tag_row(a.phone_number, add=[office.name]), 1),
+        numbered(tag_row(c.phone_number, add=[office.name]), 2),
+        numbered(tag_row(d.phone_number, add=["salesperson"]), 3),
+        numbered(tag_row(b.phone_number, add=[office.name]), 4),
+        numbered(tag_row(d.phone_number.replace("+6019", "+6017"), add=[gold]), 5),
+    ]
+    r1 = tag_say(db, w, first, "tag these people")
+    assert "Needs your choice:" in r1.reply_text and gold in r1.reply_text
+
+    picked = first[:2] + [numbered(tag_row(d.phone_number, add=[retail.name]), 3)]
+    r2 = tag_say(db, w, picked, f"row 3: {retail.name}")
+
+    assert r2.reply_text.startswith("Rows from your table: 3 ready to confirm, 2 not changed.")
+    not_changed = r2.reply_text.split("Not changed:", 1)[1]
+    assert b.phone_number in not_changed and "Already tagged" in not_changed
+    assert gold in not_changed
+    assert len(r2.pending_action["lines"]) == 3
+
+
+# ------------------------------------------------------------------ the closing line follows the request's shape
+
+
+def test_a_one_row_request_with_nothing_to_change_does_not_ask_for_the_table_again(db):
+    from app.services.chatbot.agent import batch
+
+    w, f, h, (pf, ph, pr), _ = picker_world(db)
+    r = say(db, w, [row_(pr.phone_number, names=[NO_SUCH])], f"give {pr.phone_number} access to {NO_SUCH}")
+
+    assert r.pending_action is None
+    assert "send the table again" not in r.reply_text
+    assert r.reply_text.endswith(batch.NOTHING_ONE_TAIL)
+
+
+def test_a_table_with_nothing_to_change_still_asks_for_the_table_again():
+    from app.services.chatbot.agent import batch
+
+    skip = {"row": 1, "reason": "Unknown access: Manager.", "cells": {"Phone": "+60190000000"}}
+    block = batch.preview_block([], [skip, {**skip, "row": 2}], [])
+    assert block.endswith(batch.NOTHING_TAIL) and "send the table again" in batch.NOTHING_TAIL
+    assert batch.preview_block([], [skip], []).endswith(batch.NOTHING_ONE_TAIL)
