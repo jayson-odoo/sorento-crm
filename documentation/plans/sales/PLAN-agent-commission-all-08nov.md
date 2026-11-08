@@ -98,6 +98,19 @@ Posted on PR as `crew-ask` (owner answers drive the build). Summary of the propo
 - Owner evidence: `sales_target` hidden by ddd978ef; the per-dealer question now runs on the summary (one entity
   per question kind kept).
 
+## Crew live x3 round (8 Nov, head fe1c8af4)
+
+- Payout rows ranked by payout desc (`EntityDef.rank_by`); totals over every row and group, also when cut; a cut
+  list says "Top N of M by commission payout"; up to 50 rows by default.
+- Empty figures in words in the tool output (`_empty`): "no commission set", "left out (target of 0)"; no total
+  for a column with no figures.
+- No period named: this year (`EntityDef.default_window`), said; past the 2000-period cap, the periods containing
+  today, said.
+- An empty crm_query backs a not-found claim only for the name it searched with no other narrowing filter
+  (`loop._searched_names`); the unbacked line reads "I did not search for X, so I cannot say it does not exist."
+- Known and left: "this year" includes periods not started yet, so the year's target % reads low early in the
+  year; payout is unaffected (reviewer should-fix 3, an owner call).
+
 ## Next waves (one PR each, same single crm_query; crew starts the next without waiting)
 
 - W-A distance to the next tier and what it would pay (`tier_ladder`, `agent_progress`).

@@ -370,6 +370,7 @@ def test_product_tag_data_keeps_every_field(api):
         "price_tag_description",
         # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
         "accessories",
+        "accessory_box_style",
     }
     assert body["accessories"] == []
     assert body["code"] == product.product_code

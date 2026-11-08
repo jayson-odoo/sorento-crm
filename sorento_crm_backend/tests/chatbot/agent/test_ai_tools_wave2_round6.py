@@ -30,12 +30,13 @@ def test_S1_payout_per_agent_and_dealer_this_year_ranked_with_totals(targets):
     out = run(db, {"entity": ENTITY})
     assert [r["label"] for r in out["rows"]] == ["ZZT DEALER W2", _owner(t, "a"), _owner(t, "b")]
     a = out["rows"][1]
-    assert a["targets"] == 1 and a["target_value"] == 60000.0 and a["achieved_value"] == 21000.0
+    assert a["target_no"] == t["ta"]["target_no"] and a["target_value"] == 60000.0 and a["achieved_value"] == 21000.0
     assert a["achieved_pct"] == 35.0 and a["payout"] == 540.0
-    assert out["totals"] == {"targets": 3, "payout": 3500.0 + 540.0 + 180.0}
+    assert out["rows"][0]["target_no"] == t["dealer"]["target_no"]
+    assert out["totals"] == {"payout": 3500.0 + 540.0 + 180.0}
     assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
     # The dealer target has no figure (0): its sales stay out of target and achieved, its payout counts.
-    assert out["scope_note"] == f"No period named: this year. Left out of target and achieved (a target of 0): {t['dealer']['target_no']}."
+    assert out["scope_note"] == f"No period named: this year, 01/01/2026 to 31/12/2026. No target set on {t['dealer']['target_no']}: left out of target and achieved."
 
 
 def test_S1b_a_wider_window_is_still_one_row_per_agent(targets):

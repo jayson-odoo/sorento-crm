@@ -160,19 +160,19 @@ def test_C7_team_members_payout_is_their_own_agent_targets_by_team(team):
 
 
 def test_C8_a_replaced_dealer_period_pays_0_and_names_the_target_that_replaced_it(api, grant):
-    """The account's own target and the dealer target that replaces it carry the same dealer name: one dealer row,
-    paid once (the dealer's tier), and the answer says which target was replaced by which."""
+    """One row per dealer target, as the Dealers tab lists them (crew live round 2): the account's own target pays 0
+    and names the dealer target that replaced it."""
     client, db, company_id = api
     grant("sales.targets.view")
     dealer, own = _replacing_pair(client, db, company_id, 1300000)
     out = run(db, {"entity": ENTITY, "agent": "ZZT REPL A/C I", "period": YEAR,
                    "fields": ["owner_kind", "targets", "payout", "replaced_by"]})
-    [row] = out["rows"]
-    assert row["owner_kind"] == "dealer" and row["targets"] == 2
+    assert len(out["rows"]) == 2 and {r["owner_kind"] for r in out["rows"]} == {"dealer"}
     year = date(2026, 1, 1), date(2026, 12, 31)
-    assert _page_payout(db, own["id"], *year) == 0
-    assert row["payout"] == _page_payout(db, dealer["id"], *year) == 16000 + 32500
-    assert row["replaced_by"] == dealer["target_no"]
+    top, replaced = out["rows"]
+    assert top["payout"] == _page_payout(db, dealer["id"], *year) == 16000 + 32500 and top["replaced_by"] is None
+    assert replaced["payout"] == _page_payout(db, own["id"], *year) == 0
+    assert replaced["replaced_by"] == dealer["target_no"]
     assert f"{own['target_no']} (ZZT REPL A/C I) is replaced by {dealer['target_no']}" in out["scope_note"]
 
 
@@ -258,7 +258,8 @@ def test_E2_a_target_of_0_adds_nothing_to_target_achieved_or_percent(targets):
     [row] = out["rows"]
     assert row["targets"] == 2
     assert (row["target_value"], row["achieved_value"], row["achieved_pct"], row["payout"]) == (10000.0, 9000.0, 90.0, 180.0)
-    assert zero["target_no"] in out["scope_note"] and "target of 0" in out["scope_note"]
+    assert f"No target set on {zero['target_no']}" in out["scope_note"]
+    assert "RM 0" not in out["scope_note"] and "of 0" not in out["scope_note"]
 
 
 def test_E3_no_commission_set_is_said_never_shown_as_rm_0(targets):
@@ -388,7 +389,7 @@ def test_L2b_a_row_of_only_targets_of_0_prints_no_target_or_achieved_figure(targ
     out = run(db, {"entity": ENTITY, "agent": "Agent Z", "period": "2026-10",
                    "fields": ["target_value", "achieved_value", "achieved_pct"]})
     [row] = out["rows"]
-    assert row["target_value"] == row["achieved_value"] == row["achieved_pct"] == "left out (target of 0)"
+    assert row["target_value"] == row["achieved_value"] == row["achieved_pct"] == "no target set"
 
 
 def test_L3_no_period_named_is_this_year_and_says_so(targets):
@@ -397,7 +398,7 @@ def test_L3_no_period_named_is_this_year_and_says_so(targets):
     out = run(db, {"entity": ENTITY, "agent": "ZZT DEALER W2", "fields": ["payout"]})
     assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
     assert out["rows"][0]["payout"] == 3500.0  # Q3 counts, not only the Q4 period containing today
-    assert "No period named: this year." in out["scope_note"]
+    assert "No period named: this year, 01/01/2026 to 31/12/2026." in out["scope_note"]
 
 
 def test_L4_an_empty_crm_query_backs_a_not_found_claim_for_its_term():
@@ -419,3 +420,138 @@ def test_L4b_an_unbacked_not_found_claim_is_worded_plainly():
     text, _ = loop.final_reply({"text": "No payout for X."}, [], ["X"], ledger={})
     assert "could not confirm that nothing exists" not in text
     assert text.startswith("I did not search for X, so I cannot say it does not exist.")
+
+
+# ------------------------------------------------------------------ review round 2
+
+
+@pytest.mark.parametrize("claim, args", [
+    # "dealer" is an owner_kind value, never a searched name.
+    ("payout for dealer Hanlim", {"entity": ENTITY, "agent": "fullshun",
+                                  "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]}),
+    # Empty because of the payout filter: fullshun may well exist.
+    ("fullshun", {"entity": ENTITY, "agent": "fullshun", "filters": [{"field": "payout", "op": "gt", "value": 999999}]}),
+    # A status value is not a name.
+    ("pending orders for Hanlim", {"entity": "order", "filters": [{"field": "status", "op": "eq", "value": "pending"}]}),
+])
+def test_R4_an_empty_crm_query_backs_only_the_name_it_searched_with_no_other_narrowing(claim, args):
+    from app.services.chatbot.agent import loop
+
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": args,
+                     "data": {"entity": args["entity"], "rows": [], "total": 0}}}
+    assert loop._not_found_backed(claim, "q1", ledger, set()) is False
+
+
+def test_R4b_a_name_filter_and_a_window_still_back_it():
+    from app.services.chatbot.agent import loop
+
+    args = {"entity": ENTITY, "period": "2026", "filters": [
+        {"field": "owner", "op": "contains", "value": "fullshun"},
+        {"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}]}
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": args, "data": {"entity": ENTITY, "rows": [], "total": 0}}}
+    assert loop._not_found_backed("fullshun", "q1", ledger, set()) is True
+
+
+def test_R5_too_many_periods_this_year_falls_back_to_the_current_periods(targets, monkeypatch):
+    from app.services.assistant_registry import ENTITIES
+    from app.services.assistant_registry.query import QueryRefused
+
+    db, _c, _t = targets
+    entity = ENTITIES[ENTITY]
+    real = entity.compute
+
+    def capped(db, user_id, own_only, date_from, date_to, *, limit):
+        if date_from != date_to:
+            raise QueryRefused("timeout", "More than 2000 target periods in that window; narrow it.")
+        return real(db, user_id, own_only, date_from, date_to, limit=limit)
+
+    monkeypatch.setitem(ENTITIES, ENTITY, type(entity)(**{**entity.__dict__, "compute": capped}))
+    out = run(db, {"entity": ENTITY, "fields": ["payout"]})
+    assert out["rows"] and out["period_display"] is None
+    assert "too many periods this year" in out["scope_note"] and "containing today" in out["scope_note"]
+
+
+# ------------------------------------------------------------------ crew live round 2 on 20d05dcf (8 Nov)
+
+
+def test_P1_dealers_are_named_and_counted_as_the_dealers_tab_lists_them(targets):
+    """Live: 50 dealers vs 52 tab labels, 6 named otherwise. Two dealer targets on the ledgers of one customer
+    ("X (A/C I)", "X (A/C III)") were one row under the marker-less name; the tab lists each by its own label."""
+    from app.services.sales import target_service
+    from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
+
+    db, client, t = targets
+    company_id = _dealer_account(db, t).company_id
+    pid = _product_id(db, company_id)
+    for ledger, sold in (("ZZT LEDGER CO (A/C I)", 61000), ("ZZT LEDGER CO (A/C III)", 80000)):
+        c = _customer(db, company_id, ledger, level=1)
+        _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
+        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+            {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
+    out = run(db, {"entity": ENTITY, "period": "2026", "fields": ["payout"],
+                   "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]})
+    tab = target_service.list_all_targets(db, subject="dealer")["rows"]
+    assert sorted(r["label"] for r in out["rows"]) == sorted(r["subject_label"] for r in tab)
+    assert len(out["rows"]) == len(tab) == 3
+    assert "ZZT LEDGER CO (A/C III)" in [r["label"] for r in out["rows"]]
+
+
+def test_P2_view_own_never_sees_a_dealer_even_one_whose_accounts_it_owns(targets, grant, monkeypatch):
+    """Q4 (a). Not runnable live (no dev role holds view_own): held here."""
+    from app.services import own_scope
+
+    db, _c, t = targets
+    _dealer_account(db, t).sales_agent_id = t["a"].id
+    db.flush()
+    grant("sales.targets.view_own")
+    monkeypatch.setattr(own_scope, "me", lambda db, user_id: own_scope.Me(str(user_id), None, (t["a"].id,)))
+    out = run(db, {"entity": ENTITY, "period": "2026", "fields": ["owner_kind", "payout"]})
+    assert [(r["label"], r["owner_kind"]) for r in out["rows"]] == [(_agent_label(t, "a"), "agent")]
+    assert out["totals"]["payout"] == 540.0
+    by_dealer = run(db, {"entity": ENTITY, "period": "2026", "filters": [
+        {"field": "agent", "op": "eq", "value": "Agent A"}, {"field": "owner_kind", "op": "eq", "value": "dealer"}]})
+    assert by_dealer["rows"] == [] and "not visible to you" in by_dealer["scope_note"]
+
+
+# ------------------------------------------------------------------ owner 8 Nov ~11:15 MYT
+
+
+def test_D1_same_name_dealer_rows_carry_the_payout_account_and_target_no_as_the_dealers_tab(targets):
+    """Owner (a): SK ONE STOP HOME CENTRE shown 3 times; each row says its payout account ('A/C I') and TGT number,
+    row for row with the Dealers tab, in the default columns."""
+    from app.services.sales import target_service
+    from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
+
+    db, client, t = targets
+    company_id = _dealer_account(db, t).company_id
+    pid = _product_id(db, company_id)
+    group = [_customer(db, company_id, "ZZT SAME NAME", level=level) for level in (1, 3)]
+    for c, sold in zip(group, (61000, 80000)):
+        _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
+        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+            {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
+    out = run(db, {"entity": ENTITY, "period": "2026", "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]})
+    assert {"target_no", "payout_account"} <= {c["key"] for c in out["columns"]}
+    tab = target_service.list_all_targets(db, subject="dealer")["rows"]
+    assert sorted((r["label"], r["payout_account"], r["target_no"]) for r in out["rows"]) == sorted(
+        (r["subject_label"], r["payout_label"], r["target_no"]) for r in tab
+    )
+    same = sorted((r["payout_account"], r["payout"]) for r in out["rows"] if r["label"] == "ZZT SAME NAME")
+    assert same == [("A/C I", 3050.0), ("A/C III", 4000.0)]
+
+
+def test_D2_an_unasked_whole_table_after_a_named_empty_query_is_not_shown():
+    """Live Q6 run: 'payout to fullshun' matched nothing, then the reply appended the whole summary table."""
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "fullshun"},
+               "data": {"entity": ENTITY, "rows": [], "total": 0}, "display": None},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY},
+               "data": {"entity": ENTITY, "shown_to_user": True, "total": 40}, "display": "WHOLE TABLE"},
+    }
+    text = shape_reply("No commission payout for fullshun this year.", ledger)
+    assert "WHOLE TABLE" not in text and text.startswith("No commission payout for fullshun")
+    # A table that was asked for (a named query that found rows) still shows.
+    ledger["q1"]["data"] = {"entity": ENTITY, "rows": [{"id": "1"}], "total": 1}
+    assert "WHOLE TABLE" in shape_reply("Payout per dealer.", ledger)
