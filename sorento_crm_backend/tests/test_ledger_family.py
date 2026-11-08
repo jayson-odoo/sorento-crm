@@ -10,7 +10,11 @@ from __future__ import annotations
 import pytest
 
 from app.services import stock_ask_service
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import ledger_family_key, ledger_family_label, trading_name_key, without_ledger_marker
+
+#: CUSTOMER-GROUP-GATE (owner ruling 3 Nov 2026): the trading-name rule is SEARCH only
+#: (`trading_name_key`); a which-one list joins ledgers only through a customer group, so with no
+#: groups held every ledger is its own entry (`ledger_family_key`).
 
 
 @pytest.mark.parametrize(
@@ -22,23 +26,31 @@ from app.services.ledger_family import ledger_family_key, ledger_family_label
         "hanlim trading sdn. bhd.",
     ],
 )
-def test_ledgers_of_one_trading_name_share_a_key(name: str) -> None:
-    assert ledger_family_key(name) == "HANLIM TRADING"
+def test_ledgers_of_one_trading_name_share_a_search_key(name: str) -> None:
+    assert trading_name_key(name) == "HANLIM TRADING"
 
 
-def test_two_shops_are_two_keys_and_an_empty_name_is_no_key() -> None:
-    assert ledger_family_key("CHIN CHUN HARDWARE SDN BHD - [A/C I]") == "CHIN CHUN HARDWARE"
-    assert ledger_family_key("CHIN CHUN HARDWARE SDN BHD") != ledger_family_key("HANLIM TRADING SDN BHD")
+def test_without_a_group_every_ledger_is_its_own_entry() -> None:
+    names = ["HANLIM TRADING SDN BHD [A/C I]", "HANLIM TRADING SDN BHD - [A/C II]", "HANLIM TRADING SDN BHD"]
+    assert len({ledger_family_key(n) for n in names}) == len(names)
+    # case and spacing are not a different ledger
+    assert ledger_family_key("hanlim  trading sdn bhd") == ledger_family_key("HANLIM TRADING SDN BHD")
+
+
+def test_two_shops_are_two_search_keys_and_an_empty_name_is_no_key() -> None:
+    assert trading_name_key("CHIN CHUN HARDWARE SDN BHD - [A/C I]") == "CHIN CHUN HARDWARE"
+    assert trading_name_key("CHIN CHUN HARDWARE SDN BHD") != trading_name_key("HANLIM TRADING SDN BHD")
     assert ledger_family_key("") == ""
-    assert ledger_family_key("(SRT)") == ""
+    assert trading_name_key("(SRT)") == ""
 
 
-def test_label_is_the_name_without_its_ledger_marker() -> None:
-    assert ledger_family_label("HANLIM TRADING SDN BHD - [A/C II]") == "HANLIM TRADING SDN BHD"
-    assert ledger_family_label("HANLIM TRADING (JB) SDN BHD (SRT)") == "HANLIM TRADING SDN BHD"
-    assert ledger_family_label("CHIN CHUN HARDWARE SDN BHD") == "CHIN CHUN HARDWARE SDN BHD"
+def test_an_ungrouped_label_is_its_full_name_and_the_marker_strip_is_separate() -> None:
+    assert ledger_family_label("HANLIM TRADING SDN BHD - [A/C II]") == "HANLIM TRADING SDN BHD - [A/C II]"
+    assert without_ledger_marker("HANLIM TRADING SDN BHD - [A/C II]") == "HANLIM TRADING SDN BHD"
+    assert without_ledger_marker("HANLIM TRADING (JB) SDN BHD (SRT)") == "HANLIM TRADING SDN BHD"
+    assert without_ledger_marker("CHIN CHUN HARDWARE SDN BHD") == "CHIN CHUN HARDWARE SDN BHD"
     # A name that is ONLY a marker keeps its own text rather than becoming blank.
-    assert ledger_family_label("[A/C I]") == "[A/C I]"
+    assert without_ledger_marker("[A/C I]") == "[A/C I]"
 
 
 def test_the_stock_ask_record_reads_the_core_copy() -> None:

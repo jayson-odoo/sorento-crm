@@ -78,6 +78,8 @@ CONSOLE_LABELS = [
     "change one of your ideas",
     # AGENT-BULK-ACTIONS: a row write on both channels.
     "grant a dealer contact access",
+    "add or remove contact tags",
+    "assign sales agents to customers",
     "your customer asks",
     "recent changes",
     "your sales opportunities",

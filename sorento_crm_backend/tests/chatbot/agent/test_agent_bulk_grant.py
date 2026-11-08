@@ -284,12 +284,13 @@ def test_01_the_batch_tool_is_offered_only_with_the_contacts_edit_slug_and_its_a
     from app.services.chatbot.agent import batch
 
     w = make_world(db, superadmin=False)
-    schema = batch.schema_for(db, ctx_of(db, w))
+    schema = batch.batch_tool_schema(db, ctx_of(db, w))
     assert schema is not None
     fn = schema["function"]
     assert fn["name"] == BATCH
     params = fn["parameters"]
-    assert params["properties"]["write"]["enum"] == [GRANT]
+    # AGENT-BULK-W2-TAGS added the second batchable write on the same slug.
+    assert params["properties"]["write"]["enum"] == [GRANT, "crm_contact_tags"]
     rows = params["properties"]["rows"]
     assert rows["type"] == "array" and rows["items"]["type"] == "object"
     for spec in rows["items"]["properties"].values():
@@ -297,7 +298,7 @@ def test_01_the_batch_tool_is_offered_only_with_the_contacts_edit_slug_and_its_a
             assert "items" in spec  # Gemini refuses an array without items
 
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.schema_for(db, ctx_of(db, own)) is None
+    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
 
 
 def test_01_a_batch_call_without_the_slug_is_denied_and_proposes_nothing(db):

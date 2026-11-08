@@ -38,7 +38,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.turn_runtime import SPEC_TIER
-from app.services.ledger_family import apart_from_group, customer_group_of, group_key, ledger_family_key
+from app.services.ledger_family import ledger_family_key, ledger_family_label
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
@@ -187,13 +187,6 @@ VALID_BRANDS = ("sorento", "cabana", "mocha")
 
 _ACCOUNT_SUFFIX_DASH = re.compile(r"\s*-\s*\[[^\]]*\]\s*\Z")
 _ACCOUNT_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*\Z")
-_BRACKET_OR_PAREN = re.compile(r"\[[^\]]*\]|\([^)]*\)")
-_LEGAL_FORM = re.compile(r"\bSDN\.?\s*BHD\.?\b|\bSDN\b|\bBHD\b")
-_NON_ALNUM_UPPER = re.compile(r"[^A-Z0-9]+")
-_BRACKET_ANY = re.compile(r"\[[^\]]*\]")
-_TRAILING_PAREN = re.compile(r"\s*-?\s*\([^)]*\)\s*\Z")
-_WS_RUN = re.compile(r"\s+")
-_TRAILING_WS_DASH = re.compile(r"[\s-]+\Z")
 _SYNTHETIC_CODE = re.compile(r"^(dbr-|[0-9a-f]{8}-[0-9a-f]{4}-)", re.IGNORECASE)
 _DC_NON_ALNUM = re.compile(r"[^a-z0-9]")
 _DF_SEPARATORS = re.compile(r"[^a-z0-9]+")
@@ -371,18 +364,15 @@ def _display_name(match: Any) -> str | None:
 
 
 def _cust_base(match: Any) -> str:
-    """`_custBase` - the family GROUPING KEY, never customer copy."""
-    name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
-    # A customer group the turn holds for this name wins over the name rule.
-    group = customer_group_of(name)
-    if group is not None:
-        return group_key(group)
-    base = name.upper()
-    base = _BRACKET_OR_PAREN.sub(" ", base)
-    base = _LEGAL_FORM.sub(" ", base)
-    base = _NON_ALNUM_UPPER.sub(" ", base)
-    # An ungrouped row beside a group of the same key: apart or joined, by the ONE switch.
-    return apart_from_group(base.strip())
+    """`_custBase` - the which-one-list GROUPING KEY, never customer copy.
+
+    `ledger_family_key` of the row's FULL name and id: the office's customer group when the row
+    sits in one, else the ledger alone (owner ruling, CUSTOMER-GROUP-GATE 3 Nov 2026: explicit
+    links only, no joining by trading name). The group is looked up by the unstripped name and
+    the id; the "[A/C ..]"-stripped name never matched a grouped ledger."""
+    name = _display_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
+    uid = jsc.js_string(jsc.get(match, "uuid") or "") or None
+    return ledger_family_key(name, uid)
 
 
 def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting it hides the order
@@ -1172,9 +1162,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         # count alone asked "Which one do you mean? 1. <one line>". These families stay as they are: they
         # decide which ledgers each printed line carries (the owner's ruling, the same day, keeps a group's
         # ungrouped "- [IBORN]" ledger in its line).
-        printed_lines = {
-            ledger_family_key(_display_name(m) or jsc.js_string(jsc.get(m, "canonical_code") or "")) for m in reps
-        }
+        printed_lines = {_cust_base(m) for m in reps}
         if not pick_applied and not cust_pinned and len(bases) > 1 and len(printed_lines) > 1:
             # FORWARD PROBE INPUT: keep a merged list - the candidates PLUS everything
             # else that resolved - so the probe can ask "does this customer have a
@@ -1228,29 +1216,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 return len(set(fam)) if isinstance(fam, list) else 0
 
             def _rep_label(m: Any) -> str:
-                name = _cust_name(m)
-                if not name:
+                # One ledger: its exact label (the marker IS its identity). Several: the
+                # customer group they sit in, by its own name (CUSTOMER-GROUP-GATE: only a
+                # group joins ledgers).
+                exact = _display_name(m) or _cust_name(m)
+                if not exact:
                     return jsc.js_string(jsc.get(m, "canonical_code") or "")
                 if _fam_size_of(m) <= 1:
-                    display = jsc.get(m, "display") or {}
-                    exact = jsc.js_string(
-                        jsc.get(display, "customer_name")
-                        or jsc.get(display, "debtor_name")
-                        or ""
-                    ).strip()
-                    return exact or name
-                s = _BRACKET_ANY.sub(" ", name)
-                while True:
-                    prev = s
-                    s = _TRAILING_PAREN.sub("", s)
-                    if s == prev:
-                        break
-                s = _TRAILING_WS_DASH.sub("", _WS_RUN.sub(" ", s)).strip()
-                return s or name
+                    return exact
+                return ledger_family_label(exact, jsc.js_string(jsc.get(m, "uuid") or "") or None)
 
             # ── the option line NAMES THE LEDGER(S) the family sits in ──────
             # Owner ruling, console pass 3 (6 Sep 2026): "N. <name> (<company code>)".
-            # A family is keyed by NAME (`_cust_base`, n8n's own grouping), so one line can
+            # A family is keyed by `_cust_base` (a customer group, or one identical full name), so one line can
             # stand for accounts in more than one ledger - captures rg-15114061 (JYL JUBIN
             # under Mocha and Sorento) and rg-15125764 (YI HONG TILING under both) are
             # exactly that, and live rendered each as ONE line whose pick carried both

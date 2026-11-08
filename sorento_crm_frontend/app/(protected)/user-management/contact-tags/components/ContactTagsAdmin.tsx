@@ -177,12 +177,12 @@ export default function ContactTagsAdmin() {
         id: 'differs_count',
         accessorFn: (row) => row.differs_count ?? 0,
         header: ({ column }) => (
-          <DataGridColumnHeader title="Differs" column={column} />
+          <DataGridColumnHeader title="Own changes" column={column} />
         ),
         size: 90,
         enableSorting: false,
         meta: {
-          headerTitle: 'Differs',
+          headerTitle: 'Own changes',
           skeleton: <Skeleton className="h-4 w-10" />,
         },
         cell: ({ row }) =>
