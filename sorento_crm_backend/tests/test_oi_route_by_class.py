@@ -34,6 +34,10 @@ from .test_order_inquiry_handshake import (  # noqa: F401  (api/world are fixtur
     world,
 )
 
+# FP-EMAIL-ONE-TRIGGER: this suite pins the email's content; its writes stand in for the
+# board Confirm, the one trigger of the purchasing email (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("as_board_confirm")
+
 HANDOVER = "order_inquiry_handover"
 UNDONE = "order_inquiry_undone"
 CLASS_KEY = "order_inquiry.salesOrderClass"
