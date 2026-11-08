@@ -442,30 +442,48 @@ NEXT_TIER_COLUMNS = (
 DISTANCE_TITLE = "Distance to the next tier"
 #: The one line of a distance question nothing in the window can answer (crew live x3, W6).
 NO_LADDER_SUFFIX = "has a commission ladder this period."
+_TIER = r"tiers?(?:\s+\d+)?"
 _NEXT_TIER_SAID = re.compile(
-    r"\bnext\s+(?:commission\s+)?tier\b"
-    r"|\b(?:how\s+far|closest|nearest|to\s+go)\b.*\btier\b"
-    r"|\btier\b.*\b(?:to\s+go|away)\b"
+    rf"\bnext\s+(?:commission\s+)?(?:{_TIER}|level)\b"
+    rf"|\b{_TIER}\s+(?:is\s+)?next\b"
+    rf"|\b(?:reach|hit|get\s+to|away\s+from)\s+(?:the\s+|their\s+|its\s+|his\s+|her\s+)?{_TIER}\b"
+    rf"|\b(?:how\s+far|closest|nearest|furthest|farthest)\b.{{0,30}}\b(?:from|to)\s+"
+    rf"(?:the\s+|their\s+|its\s+|his\s+|her\s+)?(?:next\s+)?{_TIER}\b"
+    rf"|\b{_TIER}\s+seterusnya\b|\bberapa\s+(?:jauh|lagi)\b.{{0,40}}\b{_TIER}\b"
 )
-_AGENTS_SAID = re.compile(r"\b(?:agents|salespeople|salesmen|salespersons)\b")
+#: A ladder question names the next tier without asking how far it is ("what is the next tier rate").
+_LADDER_SAID = re.compile(r"\bnext\s+tier(?:'s)?\s+(?:rates?|percent(?:age)?|%)")
+_FURTHEST_SAID = re.compile(r"\b(?:furthest|farthest|most\s+to\s+go|furthest\s+away)\b")
+_AGENTS_SAID = re.compile(r"\b(?:agents?|salespeople|salesm[ae]n|salespersons?)\b")
 _OTHER_KINDS_SAID = re.compile(r"\b(?:dealers?|teams?|customers?)\b")
+#: The entities whose tables a distance answer replaces (crew live x3 W1 / W2: the targets table was appended).
+_TARGET_ENTITIES = frozenset({NEXT_TIER_ENTITY, "target_list", "sales_target"})
+#: What `loop.final_reply` adds to say what was not done; a distance answer keeps it (review: B2).
+_ADMITTED = re.compile(r"^(?:Not checked:|I did not get to:)")
+_NOT_SEARCHED = re.compile(r"I did not search for .*?, so I cannot say it does not exist\.")
 
 
 def next_tier_question(user_text: str | None) -> bool:
     """Is the user asking how far someone is from the next tier, or what it would pay."""
-    return bool(_NEXT_TIER_SAID.search(" ".join(str(user_text or "").split()).lower()))
+    said = " ".join(str(user_text or "").split()).lower()
+    return bool(_NEXT_TIER_SAID.search(said)) and not (
+        _LADDER_SAID.search(said) and not re.search(r"\b(?:how\s+far|to\s+go|closest|nearest|reach)\b", said)
+    )
 
 
 def next_tier_args(args: Any, user_text: str | None) -> Any:
     """A distance question's `agent_target_summary` call, shaped by code before it runs (crew live x3 on 0c5c7b78):
     one row per subject (no regroup), the next-tier columns whatever the model listed, ranked by what is still to
-    sell, and only agents when the user asked about agents and named no one. Any other call is returned as it is."""
+    sell (furthest first when asked so, or when the model sorted it that way), and only agents when the user asked
+    about agents and named no one. Any other call is returned as it is."""
     if not isinstance(args, dict) or args.get("entity") != NEXT_TIER_ENTITY or not next_tier_question(user_text):
         return args
+    said = " ".join(str(user_text or "").split()).lower()
+    own = [i for i in args.get("sort") or [] if isinstance(i, dict) and i.get("field") == "to_next_tier"]
+    desc = bool(_FURTHEST_SAID.search(said)) or (bool(own) and str(own[0].get("dir") or "").lower() == "desc")
     out = {k: v for k, v in args.items() if k not in ("group_by", "aggregates", "fields", "sort")}
     out["fields"] = list(NEXT_TIER_COLUMNS)
-    out["sort"] = [{"field": "to_next_tier", "dir": "asc"}]
-    said = " ".join(str(user_text or "").split()).lower()
+    out["sort"] = [{"field": "to_next_tier", "dir": "desc" if desc else "asc"}]
     filters = [f for f in out.get("filters") or [] if isinstance(f, dict)]
     if (
         _AGENTS_SAID.search(said) and not _OTHER_KINDS_SAID.search(said) and not _names_a_subject(NEXT_TIER_ENTITY, out)
@@ -481,27 +499,37 @@ def _is_distance(data: dict) -> bool:
     )
 
 
-def _distance_reply(kept: list[dict]) -> str | None:
-    """A distance question's whole reply, by code: the last distance call's table, alone (no lead line about the
-    payout, no other entity's table), or its one "no commission ladder" line. None when there is no distance call
-    to answer from (the reply is then shaped as any other)."""
+def _distance_reply(text: str, kept: list[dict]) -> str | None:
+    """A distance question's reply, by code: the table of every distance call that found something (two subjects
+    asked, two tables), with no lead line about the payout and no other target table, or the one "no commission
+    ladder" line; then any other entity's table, and what `final_reply` said was not done. None when no distance
+    call found anything (the reply is then shaped as any other: not found, not visible, ...)."""
     from app.services.assistant_registry.sales import NEXT_TIER_FIELDS
 
-    calls = [
-        e for e in kept
-        if (e.get("args") or {}).get("entity") == NEXT_TIER_ENTITY
-        and NEXT_TIER_FIELDS.keys() & set((e.get("args") or {}).get("fields") or [])
-    ]
+    def distance(e: dict) -> bool:
+        args = e.get("args") or {}
+        return args.get("entity") == NEXT_TIER_ENTITY and bool(NEXT_TIER_FIELDS.keys() & set(args.get("fields") or []))
+
+    calls = [e for e in kept if distance(e) and ((e.get("data") or {}).get("rows") or e.get("display"))]
     if not calls:
         return None
-    last = calls[-1]
-    data = last.get("data") or {}
-    named_none = data.get("rows") == [] and _names_a_subject(NEXT_TIER_ENTITY, last.get("args") or {})
-    for note in _sentences(data.get("scope_note") or ""):
-        # A name that matched nothing is answered as not found, not as "no ladder".
-        if note.endswith(NO_LADDER_SUFFIX) and not named_none:
-            return note
-    return last.get("display") or None
+    cards: list[str] = []
+    for e in calls:
+        data = e.get("data") or {}
+        line = next((n for n in _sentences(data.get("scope_note") or "") if n.endswith(NO_LADDER_SUFFIX)), None)
+        # Rows, none with a ladder: the line alone, never a ranking of them (crew live x3 W6).
+        shown = line or e.get("display")
+        if shown and shown not in cards:
+            cards.append(shown)
+    others = [
+        e["display"] for e in kept
+        if e.get("display") and str((e.get("data") or {}).get("entity") or (e.get("args") or {}).get("entity") or "")
+        not in _TARGET_ENTITIES
+    ]
+    admitted = [m.group(0) for m in [_NOT_SEARCHED.search(text)] if m]
+    admitted += [ln.strip() for ln in text.splitlines() if _ADMITTED.match(ln.strip())]
+    parts = list(dict.fromkeys([*cards, *others, *admitted]))
+    return "\n\n".join(parts) if parts else None
 
 
 def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
@@ -536,7 +564,7 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) ->
         if e.get("display"):
             per_entity[entity] = e["display"]
     if next_tier_question(user_text):
-        answer = _distance_reply(kept)
+        answer = _distance_reply(text, kept)
         if answer:
             return _ISO_DATE.sub(_dmy, answer)
     text = _year_as_range(text, kept)

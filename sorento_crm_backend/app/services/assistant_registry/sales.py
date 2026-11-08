@@ -404,9 +404,9 @@ def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     # Only when the question is about the next tier (one of its fields asked, filtered or sorted on).
     asked = used & NEXT_TIER_FIELDS.keys()
     lines = [_next_line(r["owner"], live) for r in rows for live in r.get("_live", [])] if asked else []
-    if asked and not lines:
-        # Nothing shown has a commission target: one line says so (crew live x3 W6, `query_tools._distance_reply`
-        # answers with it alone), never a ranking of something else.
+    if asked and rows and not lines:
+        # Rows, none with a commission target: one line says so (crew live x3 W6, `query_tools._distance_reply`
+        # answers with it alone), never a ranking of something else. No rows: the other notes speak (review B1).
         who = "agent target" if all(r["owner_kind"] == "agent" for r in rows) else "target"
         parts.insert(0, f"No {who} has a commission ladder this period.")
     if lines:

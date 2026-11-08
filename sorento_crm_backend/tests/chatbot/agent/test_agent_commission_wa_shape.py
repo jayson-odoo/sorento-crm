@@ -196,3 +196,97 @@ def test_N11_a_payout_answer_keeps_its_lead_line_and_its_table(targets):
     reply = _turn(db, "commission payout per agent this month", [{"entity": ENTITY, "period": OCT}],
                   "Total payout is RM 360.00.")
     assert reply.startswith("Total payout is RM 360.00.") and "To the next tier" not in reply
+
+
+# ------------------------------------------------------------------ review round on f18af7f3
+
+
+def test_R1_view_own_asking_about_dealers_is_told_not_visible_never_no_ladder(targets, grant, monkeypatch):
+    """B1: an empty result is not "no agent target has a commission ladder"; the own-only note speaks."""
+    from app.services import own_scope
+
+    db, _c, t = targets
+    grant("sales.targets.view_own")
+    monkeypatch.setattr(own_scope, "me", lambda db, user_id: own_scope.Me(str(user_id), None, (t["a"].id,)))
+    reply = _turn(db, "How far are the dealers from their next tier this quarter?",
+                  [{"entity": ENTITY, "period": ["01/10/2026", "31/12/2026"],
+                    "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]}], "None found.")
+    assert NO_LADDER not in reply and "not visible to you" in reply
+
+
+def test_R2_a_second_question_in_the_turn_and_what_was_not_done_are_kept(targets):
+    """B2: "Agent B's payout in September, and how far is Agent A from the next tier" kept only Agent A's card."""
+    db, _c, t = targets
+    reply = _turn(db, "What is Agent B's payout in September, and how far is Agent A from the next tier this month?", [
+        {"entity": ENTITY, "agent": "Agent B", "period": "2026-09", "fields": ["payout"]},
+        {"entity": ENTITY, "agent": "Agent A", "period": OCT},
+    ], "Agent B earned nothing in September.\n\nNot checked: Agent B's August payout.\n\nI did not get to: team North.")
+    assert f"{t['a'].sales_agent} - Agent A" in reply and f"{t['b'].sales_agent} - Agent B" in reply
+    assert "Not checked: Agent B's August payout." in reply and "I did not get to: team North." in reply
+
+
+def test_R3_two_named_subjects_are_two_tables(targets):
+    db, _c, t = targets
+    reply = _turn(db, "How far are Agent A and Agent B from the next tier this month?", [
+        {"entity": ENTITY, "agent": "Agent A", "period": OCT},
+        {"entity": ENTITY, "agent": "Agent B", "period": OCT},
+    ], "x")
+    assert f"{t['a'].sales_agent} - Agent A" in reply and f"{t['b'].sales_agent} - Agent B" in reply
+
+
+def test_R4_closest_first_and_furthest_first_are_ranked_by_what_is_still_to_sell(targets):
+    """B4 / K4: the ranking itself, and "furthest" (or a model's own desc sort) is furthest first."""
+    from app.services.chatbot.agent.query_tools import next_tier_args
+
+    db, _c, t = targets
+    a, d = f"{t['a'].sales_agent} - Agent A", "ZZT DEALER W2"  # 1,000 and 60,000 to go in October / Q4
+    window = ["01/10/2026", "31/10/2026"]
+    closest = _turn(db, "who is closest to the next tier this month", [{"entity": ENTITY, "period": window}], "x")
+    assert closest.index(a) < closest.index(d)
+    furthest = _turn(db, "who is furthest from the next tier this month",
+                     [{"entity": ENTITY, "period": window, "limit": 1}], "x")
+    assert d in furthest and a not in furthest
+    own = next_tier_args({"entity": ENTITY, "sort": [{"field": "to_next_tier", "dir": "desc"}]}, "how far from the next tier")
+    assert own["sort"] == [{"field": "to_next_tier", "dir": "desc"}]
+
+
+def test_R5_a_named_subject_not_found_is_answered_as_not_found(targets):
+    """K8: no table and no no-ladder line for a name that matched nothing."""
+    db, _c, _t = targets
+    reply = _turn(db, "How far is Agent Zed from the next tier?", [{"entity": ENTITY, "agent": "Agent Zed", "period": OCT}],
+                  "Agent Zed was not found.")
+    assert reply.startswith("Agent Zed was not found.") and NO_LADDER not in reply and "Distance to the next tier" not in reply
+
+
+def test_R6_which_agent_singular_ranks_agents_only(targets):
+    from app.services.chatbot.agent.query_tools import next_tier_args
+
+    out = next_tier_args({"entity": ENTITY}, "which agent is closest to the next tier")
+    assert {"field": "owner_kind", "op": "eq", "value": "agent"} in out["filters"]
+
+
+@pytest.mark.parametrize("said", [
+    "how far are agents from their next tiers",
+    "how much more to reach tier 2",
+    "how much away from tier 3",
+    "what does agent a need to hit tier 3",
+    "what tier is next for agent a",
+    "next level for agent a",
+    "tier seterusnya untuk agent a",
+    "berapa lagi agent a nak sampai tier seterusnya",
+])
+def test_R7_more_distance_phrasings(said):
+    from app.services.chatbot.agent.query_tools import next_tier_question
+
+    assert next_tier_question(said)
+
+
+@pytest.mark.parametrize("said", [
+    "who is closest to target and what tier are they on",
+    "how far did agent a get last month and which tier did he reach",
+    "what is the next tier rate for dealer d1",
+])
+def test_R8_not_distance_questions(said):
+    from app.services.chatbot.agent.query_tools import next_tier_question
+
+    assert not next_tier_question(said)

@@ -371,15 +371,19 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     rows = [r for r in computed if all(t(r) for t in tests)]
     if own_only and entity.own_note:
         notes.append(entity.own_note)
-    if entity.row_note:
-        said = entity.row_note(rows, used)
-        if said:
-            notes.append(said)
-
     if key_rows or agg_rows:
         out = _groups(entity, rows, key_rows, agg_rows, sort, spec)
     else:
         out = _rows(entity, slugs, rows, sort, spec)
+    if entity.row_note:
+        # About the rows the result shows (a limit or a cut leaves the others unsaid), in their order.
+        listed = {str(r.get("id")): i for i, r in enumerate(out.get("rows") or [])} if "rows" in out else None
+        about = rows if listed is None else sorted(
+            (r for r in rows if str(r.get("id")) in listed), key=lambda r: listed[str(r.get("id"))]
+        )
+        said = entity.row_note(about, used)
+        if said:
+            notes.append(said)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
     if not rows and computed:
