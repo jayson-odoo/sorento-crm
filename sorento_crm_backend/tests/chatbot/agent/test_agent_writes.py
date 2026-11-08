@@ -280,6 +280,10 @@ def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_
         "crm_idea_create", "crm_idea_update",
         # AGENTIC-UNIFY PR 4.
         "crm_complaint_close", "crm_order_cancel", "crm_it_support_ticket_create",
+        # AGENT-BULK-ACTIONS.
+        "crm_contact_grant",
+        # AGENT-BULK-W2-TAGS.
+        "crm_contact_tags",
     }
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]

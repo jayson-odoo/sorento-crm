@@ -245,6 +245,8 @@ describe('the quotation document tab strip', () => {
       'Customer feedback',
       // PS-SPEC-SHEET: the project catalogue, last.
       'Spec sheet',
+      // QUOTE-CERT-TAB: last.
+      'Certification',
     ]);
     expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('href', BASE);
     expect(screen.getByRole('tab', { name: 'Cover letter' })).toHaveAttribute(

@@ -19,6 +19,7 @@ import type {
   SlotBinding,
   SpecSheetDocFields,
   TagAccessory,
+  TagAccessoryBoxStyle,
   TagBindingData,
   TagCombo,
   TagImage,
@@ -72,6 +73,20 @@ import {
   fitLinePt,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
+import {
+  accessoryBoxStyleOf,
+  boxColours,
+  effectiveBoxProps,
+  cardBoxLayout,
+  cardElementsFor,
+  cardTextProps,
+  colourDotLayout,
+  DEFAULT_DOT_OUTLINE,
+  fitCardTextProps,
+  footerElementsFor,
+  type ResolvedCardElement,
+} from '@/lib/dealer-kit/accessory-card';
+import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
 import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
@@ -98,6 +113,8 @@ export interface ResolvedLineData {
   included_accessories: string;
   /** PRICETAG-ACCESSORIES: the list the "Accessories" box draws. Absent on an older pin. */
   accessories?: TagAccessory[];
+  /** S6: the box style this tag's owner names (null = the template's own box). */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
@@ -1340,9 +1357,13 @@ function renderAccessoriesLayer(
   media: TagSheetMedia,
   binding: TagBindingData | null,
 ) {
-  const props = layer.props;
-  if (props.kind !== 'accessories') return null;
+  const own = layer.props;
+  if (own.kind !== 'accessories') return null;
+  // The product / combo on this tag may name its own box style (S6): it replaces the design, not the place.
+  const props = effectiveBoxProps(own, accessoryBoxStyleOf(binding, layer));
   const items = accessoriesOf(binding, layer);
+  // A box with a designed card takes its own path; one without keeps the legacy cards below.
+  if (props.card) return renderDesignedAccessories({ ...layer, props }, media, items);
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
     items.length,
@@ -1385,7 +1406,7 @@ function renderAccessoriesLayer(
             width: `${box.frame.width_mm}mm`,
             height: `${box.frame.height_mm}mm`,
             boxSizing: 'border-box',
-            background: props.fill,
+            backgroundColor: props.fill,
             border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
             borderRadius: `${props.cornerRadius_mm}mm`,
           }}
@@ -1402,7 +1423,7 @@ function renderAccessoriesLayer(
             height: `${box.header.height_mm}mm`,
             lineHeight: `${box.header.height_mm}mm`,
             // On the border: the header background breaks the border behind the text (legend).
-            background: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+            backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
             ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
             // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
@@ -1429,7 +1450,7 @@ function renderAccessoriesLayer(
               top: `${card.y_mm}mm`,
               width: `${card.width_mm}mm`,
               height: `${card.height_mm}mm`,
-              background: props.cardFill,
+              backgroundColor: props.cardFill,
               borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
             }}
           >
@@ -1485,7 +1506,7 @@ function renderAccessoriesLayer(
             height: `${box.badge.height_mm}mm`,
             lineHeight: `${box.badge.height_mm}mm`,
             borderRadius: '50%',
-            background: props.badgeColor,
+            backgroundColor: props.badgeColor,
             color: '#ffffff',
             textAlign: 'center',
             fontWeight: 900,
@@ -1495,6 +1516,298 @@ function renderAccessoriesLayer(
           +
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * PRICETAG-ACCESSORY-DESIGNER: a box with a designed `card`, laid out by `cardBoxLayout` - the SAME
+ * function the editor canvas draws with. Chrome as the legacy box; each shown card at the layout's
+ * `scale` with the elements `cardElementsFor` resolves; the footer after the cards.
+ */
+function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items: TagAccessory[]) {
+  const props = layer.props;
+  if (props.kind !== 'accessories' || !props.card) return null;
+  const box = cardBoxLayout(items.length, props, layer.width_mm, layer.height_mm);
+  if (box.shown === 0) return null;
+  const font = props.fontFamily ? `'${props.fontFamily}', sans-serif` : undefined;
+  const headerStyle = accessoryHeaderStyle(props);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${box.boxWidth_mm}mm`,
+        height: `${box.boxHeight_mm}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        fontFamily: font,
+      }}
+      data-testid="accessories-box"
+    >
+      {box.frame && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.frame.x_mm}mm`,
+            top: `${box.frame.y_mm}mm`,
+            width: `${box.frame.width_mm}mm`,
+            height: `${box.frame.height_mm}mm`,
+            boxSizing: 'border-box',
+            backgroundColor: safeColour(props.fill),
+            border: `${props.strokeWidth_mm}mm solid ${safeColour(props.stroke)}`,
+            borderRadius: `${props.cornerRadius_mm}mm`,
+          }}
+          data-testid="accessories-frame"
+        />
+      )}
+      {box.header && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.header.x_mm}mm`,
+            top: `${box.header.y_mm}mm`,
+            width: `${box.header.width_mm}mm`,
+            height: `${box.header.height_mm}mm`,
+            lineHeight: `${box.header.height_mm}mm`,
+            backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
+            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
+            fontSize: `${box.header.fontSize_pt}pt`,
+            whiteSpace: 'nowrap',
+          }}
+          data-testid="accessories-header"
+        >
+          {props.headerText}
+        </div>
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        return (
+          <div
+            key={`${item.id}-${i}`}
+            style={{
+              position: 'absolute',
+              left: `${card.x_mm}mm`,
+              top: `${card.y_mm}mm`,
+              width: `${card.width_mm}mm`,
+              height: `${card.height_mm}mm`,
+              backgroundColor: safeColour(props.cardFill),
+              borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
+            }}
+            data-testid="accessories-card"
+          >
+            {cardElementsFor(item, props.card!).map((element) => (
+              <CardElementView
+                key={element.id}
+                element={element}
+                factor={box.scale}
+                boxFont={props.fontFamily}
+                src={
+                  element.kind === 'picture' && item.image
+                    ? (media.images?.[item.image.attachment_id] ?? item.image.url)
+                    : element.src
+                }
+                alt={item.name}
+              />
+            ))}
+          </div>
+        );
+      })}
+      {box.footer && props.footer && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.footer.x_mm}mm`,
+            top: `${box.footer.y_mm}mm`,
+            width: `${box.footer.width_mm}mm`,
+            height: `${box.footer.height_mm}mm`,
+          }}
+          data-testid="accessories-footer"
+        >
+          {footerElementsFor(boxColours(items.slice(0, box.shown)), props.footer).map((element) => (
+            <CardElementView
+              key={element.id}
+              element={element}
+              factor={1}
+              boxFont={props.fontFamily}
+              src={null}
+              alt=""
+            />
+          ))}
+        </div>
+      )}
+      {box.badge && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.badge.x_mm}mm`,
+            top: `${box.badge.y_mm}mm`,
+            width: `${box.badge.width_mm}mm`,
+            height: `${box.badge.height_mm}mm`,
+            lineHeight: `${box.badge.height_mm}mm`,
+            borderRadius: '50%',
+            backgroundColor: safeColour(props.badgeColor),
+            color: '#ffffff',
+            textAlign: 'center',
+            fontWeight: 900,
+            fontSize: `${box.badge.height_mm * 0.9}mm`,
+          }}
+        >
+          +
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One resolved card (or footer) element, millimetres at `factor`. */
+function CardElementView({
+  element,
+  factor,
+  boxFont,
+  src,
+  alt,
+}: {
+  element: ResolvedCardElement;
+  factor: number;
+  boxFont?: string;
+  src: string | null | undefined;
+  alt: string;
+}) {
+  const frame: CSSProperties = {
+    position: 'absolute',
+    left: `${element.x_mm * factor}mm`,
+    top: `${element.y_mm * factor}mm`,
+    width: `${element.width_mm * factor}mm`,
+    height: `${element.height_mm * factor}mm`,
+  };
+  switch (element.kind) {
+    case 'picture':
+      return src ? (
+        <img
+          src={src}
+          alt={alt}
+          style={{ ...frame, objectFit: element.fit ?? 'contain' }}
+          data-testid="accessories-picture"
+        />
+      ) : null;
+    case 'text':
+      return <CardTextBlock element={element} frame={frame} factor={factor} boxFont={boxFont} />;
+    case 'colour_dots': {
+      const colours = element.colours ?? [];
+      const dots = colourDotLayout(element, colours.length, factor);
+      return (
+        <div style={frame} data-testid="accessories-dots">
+          {dots.map((dot, i) => (
+            <div
+              key={i}
+              style={{
+                position: 'absolute',
+                left: `${dot.x_mm}mm`,
+                top: `${dot.y_mm}mm`,
+                width: `${dot.d_mm}mm`,
+                height: `${dot.d_mm}mm`,
+                borderRadius: '50%',
+                boxSizing: 'border-box',
+                backgroundColor: safeColour(colours[i]),
+                border: `${0.15 * factor}mm solid ${safeColour(element.dotOutline || DEFAULT_DOT_OUTLINE)}`,
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
+    case 'shape': {
+      const stroke = element.stroke || undefined;
+      const strokeWidth = (element.strokeWidth_mm ?? 0.2) * factor;
+      if (element.shape === 'line') {
+        const horizontal = element.width_mm >= element.height_mm;
+        const thick = Math.min(strokeWidth, Math.max(element.width_mm, element.height_mm) * factor);
+        return (
+          <div
+            style={{
+              ...frame,
+              ...(horizontal
+                ? { top: `${element.y_mm * factor + (element.height_mm * factor - thick) / 2}mm`, height: `${thick}mm` }
+                : { width: `${thick}mm` }),
+              backgroundColor: safeColour(element.stroke || element.fill || '#111827'),
+            }}
+          />
+        );
+      }
+      return (
+        <div
+          style={{
+            ...frame,
+            boxSizing: 'border-box',
+            backgroundColor: element.fill ? safeColour(element.fill) : undefined,
+            border: stroke ? `${strokeWidth}mm solid ${safeColour(stroke)}` : undefined,
+            borderRadius:
+              element.shape === 'ellipse'
+                ? '50%'
+                : element.shape === 'rounded_rect'
+                  ? `${(element.cornerRadius_mm ?? 1) * factor}mm`
+                  : undefined,
+          }}
+        />
+      );
+    }
+  }
+}
+
+/** A card text element, broken into the SAME lines the canvas draws (`textLayerLines`) and shrunk
+ *  by the same `fitCardTextProps`, so it never spills out of its rect. */
+function CardTextBlock({
+  element,
+  frame,
+  factor,
+  boxFont,
+}: {
+  element: ResolvedCardElement;
+  frame: CSSProperties;
+  factor: number;
+  boxFont?: string;
+}) {
+  const epoch = useFontsEpoch();
+  const text = element.text ?? '';
+  const widthMm = element.width_mm * factor;
+  const heightMm = element.height_mm * factor;
+  const props = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
+  }, [element, factor, boxFont, text, widthMm, heightMm, epoch]);
+  const rich = isRich(text);
+  const lines = useMemo(() => {
+    void epoch;
+    return rich ? null : textLayerLines(props, text, widthMm, heightMm);
+  }, [props, text, rich, widthMm, heightMm, epoch]);
+  const richLines = useMemo(() => {
+    void epoch;
+    return rich ? textLayerLines(props, parseRichText(text), widthMm, heightMm) : null;
+  }, [props, text, rich, widthMm, heightMm, epoch]);
+  const face = textFace(props);
+  return (
+    <div
+      style={{
+        ...frame,
+        fontFamily: face.fontFamily,
+        fontSize: `${face.fontSize_mm}mm`,
+        fontWeight: props.fontWeight,
+        fontStyle: props.italic ? 'italic' : 'normal',
+        textDecoration: props.underline ? 'underline' : 'none',
+        color: safeColour(props.color, '#111827'),
+        textAlign: props.align,
+        lineHeight: props.lineHeight,
+        boxSizing: 'border-box',
+        whiteSpace: 'pre',
+      }}
+      data-testid="accessories-element-text"
+    >
+      {richLines
+        ? richLines.map((line, index) => <RichLineView key={index} line={line} props={props} />)
+        : (lines ?? []).join('\n')}
     </div>
   );
 }
@@ -1516,6 +1829,6 @@ function accessoryTextCss(
     letterSpacing: style.letterSpacing
       ? `${style.letterSpacing * LETTER_SPACING_MM_PER_UNIT}mm`
       : undefined,
-    color: style.color,
+    color: safeColour(style.color, 'inherit'),
   };
 }

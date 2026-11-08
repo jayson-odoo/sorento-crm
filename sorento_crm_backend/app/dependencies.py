@@ -140,6 +140,11 @@ def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
     )
 
 
+def staff_proof_header() -> str:
+    """The header the MCP server relays the panel agent's identity proof in (`app.services.staff_proof`)."""
+    return "X-Staff-Proof"
+
+
 def staff_identity_refused() -> HTTPException:
     """The one refusal of an identity claim (AGENTIC-UNIFY AC-6): never a fall back to act-as."""
     return HTTPException(
@@ -179,8 +184,13 @@ def _apply_staff_identity(request: Request, db: Session, api_key: str, key_user:
         staff_id,
         getattr(request.scope.get("route"), "path_format", "-"),
     )
+    from app.services import staff_proof
+
     return {
         **staff,
+        # The backend's own panel agent proved it answers this staff member (`staff_proof`): the gate is theirs
+        # alone (`user_service.gate_user_ids`). Without the proof, both users, as before.
+        "staff_proven": staff_proof.verify(staff_id, request.headers.get(staff_proof_header())),
         "integration_id": key_user.get("integration_id"),
         "integration_name": key_user.get("integration_name"),
         "integration_type": key_user.get("integration_type"),

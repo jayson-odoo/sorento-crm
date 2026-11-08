@@ -325,7 +325,9 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // with its own `loading.tsx` (ListPageSkeleton). Total: 171.
     // SALES-LEADERBOARD (#2227): `sales/leaderboard` is a new DataGrid segment with its own `loading.tsx`
     // (ListPageSkeleton). Total: 172.
-    expect(requiredSegmentNames.length).toBe(172);
+    // PRICETAG-ACCESSORY-DESIGNER (#2237): `dealer-kit/accessory-templates` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton). Total: 173.
+    expect(requiredSegmentNames.length).toBe(173);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

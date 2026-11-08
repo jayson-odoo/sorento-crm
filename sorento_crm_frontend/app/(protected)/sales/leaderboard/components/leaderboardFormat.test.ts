@@ -6,6 +6,7 @@ import {
   formatChange,
   formatCompactRm,
   formatRm,
+  chipForRange,
   periodRange,
   previousLabel,
 } from './leaderboardFormat';
@@ -106,5 +107,20 @@ describe('grid fit and codes', () => {
     expect(codesText('SEAN', ['SEAN I', 'SEAN III'])).toBe('SEAN I, SEAN III');
     expect(codesText('JIMMY', ['JIM-1'])).toBe('JIM-1');
     expect(codesText('A', ['A', 'A2'])).toBe('A, A2');
+  });
+});
+
+describe('chipForRange', () => {
+  it('names the chip whose range for today is exactly the dates', () => {
+    const now = kl('2026-11-07');
+    expect(chipForRange('2026-10-01', '2026-10-31', now)).toBe('last_month');
+    expect(chipForRange('2026-11-01', '2026-11-07', now)).toBe('this_month');
+    expect(chipForRange('2026-01-01', '2026-11-07', now)).toBe('ytd');
+    expect(chipForRange('2026-10-01', '2026-11-07', now)).toBe('this_quarter');
+  });
+
+  it('is null for any other range', () => {
+    expect(chipForRange('2026-10-01', '2026-10-15', kl('2026-11-07'))).toBeNull();
+    expect(chipForRange('', '', kl('2026-11-07'))).toBeNull();
   });
 });

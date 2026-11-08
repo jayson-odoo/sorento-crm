@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,6 +19,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { waMeUrl } from '@/lib/wa-me';
 import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
+import { useQuotationCertificateMutations } from '../../../../_shared/hooks/useQuotationCertificates';
 import {
   useFillPartyPhone,
   usePartiesOnProject,
@@ -140,6 +141,13 @@ function WhatsAppBody({
   onClose: () => void;
 }) {
   const mutations = useQuotationDocumentMutations(projectId, document.id);
+  const certificates = useQuotationCertificateMutations(projectId, document.id);
+  // null = issued before certificates were frozen: the live list is exported, so no count is known.
+  const certificateCount = issue.certificates_count;
+  const showCertificates = certificateCount === null || (certificateCount ?? 0) > 0;
+  const certificatesFile = `${document.document_no} ${revisionLabel(issue)} Certificates.pdf${
+    certificateCount ? ` (${certificateCount})` : ''
+  }`;
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const [link, setLink] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -241,6 +249,23 @@ function WhatsAppBody({
           <p role="alert" className="text-sm text-destructive">
             Could not create the counter-sign link.
           </p>
+        )}
+        {showCertificates && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+            <span className="truncate" title={certificatesFile}>
+              {certificatesFile}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={certificates.exportPdf.isPending}
+              onClick={() => certificates.exportPdf.mutate(issue.id)}
+            >
+              <FileDown className="size-4" aria-hidden />
+              Download
+            </Button>
+          </div>
         )}
       </div>
       <DialogFooter className="gap-2 sm:gap-0">

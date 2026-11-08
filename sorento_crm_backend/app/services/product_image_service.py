@@ -37,10 +37,8 @@ email.
 from __future__ import annotations
 
 import base64
-import io
 import logging
 from dataclasses import dataclass
-from time import monotonic
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func, or_
@@ -73,13 +71,14 @@ OFF_CATALOG = "off_catalog"
 PRINT_BOX = 240
 #: Re-encode quality. Product photographs are flat studio shots and hold up well here.
 JPEG_QUALITY = 72
-#: The only formats ever decoded for a document, and what comes out is always Pillow's own JPEG
-#: re-encode. Nothing else is embedded, not even small: an SVG (whatever its stored mime) is
-#: markup a renderer would follow links out of, and an unknown format is no picture.
-EMBEDDABLE_FORMATS = ("PNG", "JPEG", "WEBP")
-
-#: Refused before decoding: a tiny palette PNG can claim hundreds of millions of pixels.
-MAX_IMAGE_PIXELS = 40_000_000
+#: Shared with every other copy of a stored image (IMAGE-UNIFY): one decode policy.
+from app.services.image_thumbnailer import (  # noqa: E402 - re-exported for existing callers
+    EMBEDDABLE_FORMATS,
+    MAX_IMAGE_PIXELS,  # noqa: F401 - re-exported
+    RenderedImage,
+    downscale,
+    rendition_urls,
+)
 
 
 #: The attachment type of a technical drawing. Matched on the name, as the Dealer Kit image
@@ -119,14 +118,6 @@ class ProductImage:
     candidates: Tuple[ProductFile, ...] = ()
 
 
-@dataclass(frozen=True)
-class RenderedImage:
-    """Bytes ready to embed, already inside ``PRINT_BOX``."""
-
-    data: bytes
-    mime_type: str
-    width: int
-    height: int
 
 
 OFF_CATALOG_IMAGE = ProductImage(product_id=None, state=OFF_CATALOG)
@@ -300,60 +291,30 @@ def images_for(
     return resolved
 
 
-#: How long a handed-out URL is reused before it is signed again.
-#:
-#: This is a BUCKET-TRAFFIC control, not a CPU one. Signing is a local HMAC and costs nothing,
-#: but it produces a DIFFERENT string every time (the signature covers a timestamp), and a URL
-#: that changes on every render is a URL the browser can never serve from its own cache. So a
-#: 52-line table re-downloaded all 52 photographs from the bucket on every paint, and opening
-#: a full-size preview re-downloaded the original every time. Returning the SAME string inside
-#: a window turns all of that into cache hits, which is the difference between one GET per
-#: photo per user per window and one per render. Getting this wrong has taken the system down
-#: before.
-_URL_TTL = 45 * 60
-#: Deliberately longer than the TTL, so a URL served at the last moment of its cache window
-#: still has a quarter of an hour of validity left in the browser.
-_URL_EXPIRES_IN = 60 * 60
-#: A plain bound so a long-lived process cannot grow this without limit. Evicting the whole
-#: thing is fine: the cost of a miss is one local HMAC.
-_URL_CACHE_MAX = 4096
-
-#: (attachment_id, "thumb" | "full") -> (url, monotonic deadline)
-_url_cache: Dict[tuple, tuple] = {}
+#: How long a handed-out picture URL is valid. ``storage_router`` (the one signing cache) hands
+#: back the SAME string for a sixth of this, 40 minutes, so a table repainting its photos reuses
+#: the browser's copy instead of re-downloading every one (the reason the old per-module cache
+#: existed: a URL that changes on every render cannot be cached, and that took the system down
+#: once). Four hours keeps that 40-minute window with most of the URL's life still ahead of it.
+_URL_EXPIRES_IN = 4 * 60 * 60
 
 
-def _cached_sign(row: Attachment, *, full: bool) -> Optional[str]:
-    """Sign this attachment, reusing the last signature while it is still fresh."""
-    key = (str(row.id), "full" if full else "thumb")
-    now = monotonic()
-    hit = _url_cache.get(key)
-    if hit is not None and hit[1] > now:
-        return hit[0]
-
+def _sign(row: Attachment, *, full: bool) -> Optional[str]:
+    """Sign this attachment's thumbnail (or ORIGINAL with ``full``) through ``storage_router``."""
     source = row.file_path if full else (row.thumbnail_path or row.file_path)
     try:
-        url = resolve_signed_url(
-            source, provider=row.storage_provider, expires_in=_URL_EXPIRES_IN
-        )
+        return resolve_signed_url(source, provider=row.storage_provider, expires_in=_URL_EXPIRES_IN)
     except Exception:  # noqa: BLE001 - a cell with no picture beats a broken one
         logger.warning("product image: cannot sign %s", row.id, exc_info=True)
         return None
 
-    if len(_url_cache) >= _URL_CACHE_MAX:
-        _url_cache.clear()
-    _url_cache[key] = (url, now + _URL_TTL)
-    return url
-
 
 def signed_urls(row: Attachment) -> Tuple[Optional[str], Optional[str]]:
-    """``(thumbnail, original)`` for a row already loaded, through the same cache as below.
-
-    The thumbnail first: a caller drawing a cell asks for it before the original, and the order
-    signatures are made in is the order the cache fills.
-    """
-    thumb = _cached_sign(row, full=False)
-    full = _cached_sign(row, full=True)
+    """``(thumbnail, original)`` for a row already loaded."""
+    thumb = _sign(row, full=False)
+    full = _sign(row, full=True)
     return thumb, full or thumb
+
 
 
 def preview_urls(
@@ -366,13 +327,13 @@ def preview_urls(
     ``full`` for the ORIGINAL, which is what a preview that can be zoomed needs and what the
     thumbnail is far too small to serve.
 
-    Both are cached per attachment - see ``_URL_TTL``.
+    Signatures are reused through ``storage_router``'s cache - see ``_URL_EXPIRES_IN``.
     """
     wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
     if not wanted:
         return {}
     return {
-        str(row.id): _cached_sign(row, full=full)
+        str(row.id): _sign(row, full=full)
         for row in db.query(Attachment).filter(Attachment.id.in_(wanted)).all()
     }
 
@@ -416,77 +377,22 @@ def _downscale(
     draft: bool = False,
     max_pixels: Optional[int] = None,
 ) -> Optional[RenderedImage]:
-    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be.
-
-    ``upright`` applies the EXIF orientation first. The re-encode drops that tag, and a browser
-    honours it on the original, so a copy that stands in for an original must be turned upright.
-
-    ``draft`` lets a JPEG decode at 1/2, 1/4 or 1/8 scale (never below ``box``), so a 48 MP
-    photograph is never decoded at full size; ``max_pixels`` is then checked on what will
-    actually be decoded.
-    """
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(raw), formats=EMBEDDABLE_FORMATS) as opened:
-            if draft:
-                opened.draft("RGB", (box, box))
-            ceiling = MAX_IMAGE_PIXELS if max_pixels is None else max_pixels
-            if opened.width * opened.height > ceiling:
-                logger.warning(
-                    "product image: %s is %dx%d, over the pixel ceiling, left out",
-                    attachment_id,
-                    opened.width,
-                    opened.height,
-                )
-                return None
-            opened.load()
-            if upright:
-                from PIL import ImageOps
-
-                opened = ImageOps.exif_transpose(opened) or opened
-            # Flattened onto white rather than converted straight to RGB: a PNG with alpha comes
-            # out of a naive convert with black behind it, and a product cut out on transparency
-            # is exactly the kind of file that gets uploaded.
-            if opened.mode in ("RGBA", "LA", "P"):
-                rgba = opened.convert("RGBA")
-                canvas = Image.new("RGB", rgba.size, (255, 255, 255))
-                canvas.paste(rgba, mask=rgba.split()[-1])
-                image = canvas
-            else:
-                # CMYK is the other one that bites: a CMYK JPEG re-saved as-is renders inverted.
-                image = opened.convert("RGB")
-            image.thumbnail((box, box), Image.Resampling.LANCZOS)
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=quality, optimize=True)
-            return RenderedImage(
-                data=buffer.getvalue(),
-                mime_type="image/jpeg",
-                width=image.width,
-                height=image.height,
-            )
-    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the document
-        # Never the raw bytes: what reaches a document is only ever Pillow's own re-encode.
-        logger.warning(
-            "product image: %s is not a PNG, JPEG or WebP (%d bytes), left out",
-            attachment_id,
-            len(raw),
-        )
-        return None
+    """A document embed of ``raw`` inside ``box`` px: the shared ``image_thumbnailer.downscale``,
+    limited to ``EMBEDDABLE_FORMATS``, with this module's print defaults."""
+    return downscale(
+        raw,
+        box,
+        quality,
+        formats=EMBEDDABLE_FORMATS,
+        upright=upright,
+        draft=draft,
+        max_pixels=max_pixels,
+        label=attachment_id,
+    )
 
 
-#: Longest edge of the rendition the spec sheet tab draws its ONE open page with: at least twice
-#: the ~420 px picture box, so a drawing's measurements read on a Retina screen (crew, 3 Nov).
+#: Longest edge of the rendition the spec sheet tab draws its ONE open page with.
 MEDIUM_BOX = 1024
-_MEDIUM_QUALITY = 82
-#: A rendition that could not be made is not tried again for this long.
-_MEDIUM_MISS_SECONDS = 10 * 60
-#: attachment id -> (signed url or None, monotonic deadline)
-_medium_cache: Dict[str, tuple] = {}
-
-
-def _medium_key(original_key: str) -> str:
-    return f"{original_key}.medium.jpg"
 
 
 def medium_urls(
@@ -494,72 +400,10 @@ def medium_urls(
     attachment_ids: Iterable[Optional[str]],
     release: Optional[Any] = None,
 ) -> Dict[str, str]:
-    """Signed URLs of a ``MEDIUM_BOX`` rendition of each picture; never the original.
+    """Signed URLs of each picture's medium rendition; never the original. A picture without one
+    (not ready, cannot be made) is left out and the caller keeps showing its thumbnail."""
+    return rendition_urls(db, attachment_ids, "medium", release=release)
 
-    The rendition is made from the original ONCE, stored beside it (``<key>.medium.jpg``) and
-    reused from then on. Where each file lives is read first; ``release`` then hands the DB
-    connection back before any byte moves. A picture with no rendition is left out, and the
-    caller keeps showing its thumbnail.
-    """
-    wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
-    now = monotonic()
-    out: Dict[str, str] = {}
-    missing: List[str] = []
-    for attachment_id in wanted:
-        hit = _medium_cache.get(attachment_id)
-        if hit is not None and hit[1] > now:
-            if hit[0]:
-                out[attachment_id] = hit[0]
-        else:
-            missing.append(attachment_id)
-    rows = (
-        [
-            (str(r.id), r.file_path, r.storage_provider)
-            for r in db.query(Attachment).filter(Attachment.id.in_(missing)).all()
-        ]
-        if missing
-        else []
-    )
-    if release is not None:
-        release()
-    for attachment_id, file_path, provider_name in rows:
-        url: Optional[str] = None
-        try:
-            key = extract_key(file_path) if file_path else None
-            if key:
-                provider = normalize_provider(provider_name)
-                backend = get_backend(provider)
-                medium = _medium_key(key)
-                if not backend.file_exists(medium):
-                    rendered = _downscale(
-                        backend.download_file(key),
-                        attachment_id,
-                        box=MEDIUM_BOX,
-                        quality=_MEDIUM_QUALITY,
-                        upright=True,
-                        draft=True,
-                    )
-                    if rendered is not None:
-                        backend.upload_file(
-                            file_content=rendered.data,
-                            file_path=medium,
-                            content_type="image/jpeg",
-                        )
-                    else:
-                        medium = None
-                if medium:
-                    url = resolve_signed_url(
-                        medium, provider=provider, expires_in=_URL_EXPIRES_IN, strict=True
-                    )
-        except Exception:  # noqa: BLE001 - the thumbnail stays on screen
-            logger.warning("product image: no medium rendition for %s", attachment_id, exc_info=True)
-            url = None
-        if len(_medium_cache) >= _URL_CACHE_MAX:
-            _medium_cache.clear()
-        _medium_cache[attachment_id] = (url, now + (_URL_TTL if url else _MEDIUM_MISS_SECONDS))
-        if url:
-            out[attachment_id] = url
-    return out
 
 
 def as_data_uri(rendered: Optional[RenderedImage]) -> Optional[str]:

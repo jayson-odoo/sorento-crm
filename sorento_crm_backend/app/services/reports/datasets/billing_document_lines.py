@@ -11,7 +11,8 @@ One dataset, two readers, so an item figure is computed once:
 
 Every figure and attribution is `app/services/sales/invoiced_sales.py`'s: the line's net of tax
 times the document's rate, negative on a credit note; the agent, debtor type and sales type of
-the line's document. A line whose item code is not a CRM product still counts, under its code.
+the line's document. A line whose item code is not a CRM product still counts, under its code;
+an AutoCount subtotal line does not (`inv.counted_line()`), or its document counts twice.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from app.models.product import Brand, Product, ProductCategory
 from app.services.error_handler import AppException
 from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
+from app.services.reports.datasets import sales_order_lines as ds_orders
 from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR
 from app.services.reports.engine import month_label
 from app.services.sales import invoiced_sales as inv
@@ -48,7 +50,7 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         # The sales type once per document, not per line (unread, it is never computed).
         .outerjoin(_DOC_TYPE, sa.true())
-        .where(inv.posted())
+        .where(inv.posted(), inv.counted_line())
     )
 
 
@@ -73,7 +75,7 @@ _SALES_TYPE = inv.label_of(_DOC_TYPE.c.value)
 
 
 def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return BillingDocument.company_id == values[0]
+    return BillingDocument.company_id.in_(values)
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
@@ -98,6 +100,10 @@ def category_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 def agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return inv.agent_condition(values)
+
+
+def sales_person_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return inv.person_label().in_(values)
 
 
 def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
@@ -201,7 +207,7 @@ ASK_COLUMNS = tuple(
     reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
     # The sales leaderboard's grouping (SALES-LEADERBOARD): codes sharing a person_label are one person.
     reg.Column("sales_person", "Sales person", "text", "dimension",
-               lambda c: sa.func.coalesce(inv.person_label(), inv.NO_AGENT), size=140, hidden=True),
+               lambda c: sa.func.coalesce(inv.person_label(), inv.NO_AGENT), size=140),
 )
 
 DATASET = reg.Dataset(
@@ -212,6 +218,7 @@ DATASET = reg.Dataset(
     base=_base,
     company_column=BillingDocument.company_id,
     company_param="company",
+    company_multi=True,
     product_id_column=BillingDocumentLine.product_id,
 )
 
@@ -233,9 +240,12 @@ ASK_DEFINITION = reg.ReportDefinition(
         date_bases=DATASET.date_bases,
         base=_base,
         company_column=BillingDocument.company_id,
+        company_param="company",
+        company_multi=True,
         product_id_column=BillingDocumentLine.product_id,
     ),
     params=(
+        reg.SelectParam("company", "Company", True, (), ds_orders.company_options, company_condition),
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
         reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
@@ -244,6 +254,7 @@ ASK_DEFINITION = reg.ReportDefinition(
         reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
         reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
         reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, agent_condition),
+        reg.SelectParam("sales_person", "Sales person", True, (), ap.person_options, sales_person_condition),
         reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
         reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
         reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),

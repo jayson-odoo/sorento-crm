@@ -22,14 +22,54 @@ def _screen_rules(db) -> list:
     return clauses
 
 
+
+def _customer_agent():
+    """The customer's agent as the Customers list links it (`Customer.sales_agent_id`, the agent's Customers tab,
+    `order_service._build_customer_list_query`) and as the screens print it: "CODE - Name"
+    (`team_service.agent_label`), so a question naming the agent by code or by name both match (crew pass on
+    69b3b479: "Agent A" is a name, and a code-only field found none)."""
+    from sqlalchemy import func, select
+    from sqlalchemy.orm import aliased
+
+    from app.models.sales_agent import SalesAgent
+
+    agent = aliased(SalesAgent)
+    name = func.nullif(func.btrim(agent.description), "")
+    label = func.coalesce(agent.sales_agent + " - " + name, agent.sales_agent)
+    return select(label).where(agent.id == Customer.sales_agent_id).correlate(Customer).scalar_subquery()
+
+
 register(
+    # The Customers list (`/order-management/customers`, menu slug `order_management.customers.view`; company scope
+    # only, no own rule). Also the lookup behind every document's `customer` relation. Phone, email, address and
+    # the AR figures are left out (AI-TOOLS-WAVE2).
     EntityDef(
         key="customer",
         label="Customers",
         module="order",
         model=Customer,
-        view_permission=None,
-        fields={"code": FieldDef("Customer code", column="customer_code"), "name": FieldDef("Customer name", column="customer_name")},
+        view_permission="order_management.customers.view",
+        fields={
+            "code": FieldDef("Customer code", column="customer_code"),
+            "name": FieldDef("Customer name", column="customer_name"),
+            "is_active": FieldDef("Active"),
+            "region": FieldDef("Region"),
+            "debtor_type": FieldDef("Debtor type", column="autocount_debtor_type"),
+            "agent": FieldDef(
+                "Agent", expr=_customer_agent, agent_id=lambda: Customer.sales_agent_id,
+                note="'CODE - Name'; filter with eq on the code or the name (one agent, as its Customers tab).",
+            ),
+            "created_at": FieldDef("Created at"),
+        },
+        name_by=("code", "name"),
+        # "Active customers": the Customers list's own Active filter (`order_service._build_customer_list_query`,
+        # `status=active` is `is_active`), applied unless the query names `is_active` (crew pass, 5 Nov).
+        default_filters=(("is_active", "eq", True, "Inactive customers excluded."),),
+        list_fields=("agent", "region"),
+        hint="customers (active only unless is_active is filtered); an agent's customers: agent=<code or name as said>",
+        screen_path="/order-management/customers/{id}",
+        pages=("/order-management/customers",),
+        routes=("GET /api/v1/order-management/customers/",),
     ),
     EntityDef(
         key="order_status",
@@ -77,6 +117,8 @@ register(
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),
         routes=("GET /api/v1/order-management/orders/",),
+        date_field="order_date",
+        hint="delivery orders (DO), NOT sales: only when DOs or delivered orders are asked; period = order_date",
         scope=_screen_rules,
     ),
 )

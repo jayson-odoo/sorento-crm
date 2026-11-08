@@ -57,6 +57,12 @@ class WriteDef:
     runs_as: str = "user"
     #: One plain note the model is given with the proposal (data `note`); the shared `message` stays as is.
     proposal_note: str | None = None
+    #: True = rows of a pasted table may be proposed together through `crm_batch_propose` (AGENT-BULK-ACTIONS).
+    batchable: bool = False
+    #: (args, shown or None) -> the row's cells in the batch preview table; None for a skipped row.
+    preview: Callable[[dict, dict | None], dict] | None = None
+    #: (args) -> what makes two rows the same record (a later duplicate is skipped); None = never the same.
+    batch_key: Callable[[dict], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +164,9 @@ def run_as_user(
     if user is None:
         raise AppException(status_code=403, message="The user is no longer available.", code="USER_GONE")
     user["linked_user_id"] = str(ctx.user_id)
+    # The console operator acting for the linked user (None on the user's own turn): a write that limits itself to
+    # what the person may set on screen limits itself to what BOTH may set (AGENT-BULK-ACTIONS).
+    user["operator_user_id"] = str(getattr(ctx, "operator_user_id", None) or "") or None
     previous = get_company_scope(db)
     actor = AuditActor(
         actor_type="user",
@@ -237,7 +246,9 @@ def _route_failure(exc: Exception) -> ToolResult:
         if exc.status_code in (403, 404):
             return ToolResult("denied", message=error_text(exc))
         if 400 <= exc.status_code < 500:
-            return ToolResult("invalid", message=error_text(exc))
+            # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
+            choices = getattr(exc, "choices", None)
+            return ToolResult("invalid", data={"choices": choices} if choices else None, message=error_text(exc))
     logger.warning("agent: in-process route call failed", exc_info=True)
     return ToolResult("error", message="The tool failed.")
 
@@ -532,6 +543,8 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
             return f"`{key}` must be one of: {', '.join(spec['enum'])}."
         if "maxLength" in spec and isinstance(value, str) and len(value) > spec["maxLength"]:
             return f"`{key}` is too long."
+        if "maxItems" in spec and isinstance(value, list) and len(value) > spec["maxItems"]:
+            return f"`{key}` has more than {spec['maxItems']} values."
     return None
 
 
@@ -2674,3 +2687,6 @@ WRITES[CREATE_TICKET] = WriteDef(
 
 # Registers `crm_query` and `crm_describe` in USER_READS; imported last because it builds on this module.
 from app.services.chatbot.agent import query_tools  # noqa: E402,F401
+
+# AGENT-BULK-ACTIONS: the contact grant row write and the generic batch tool; imported last for the same reason.
+from app.services.chatbot.agent import batch, contact_grant, contact_tags  # noqa: E402,F401

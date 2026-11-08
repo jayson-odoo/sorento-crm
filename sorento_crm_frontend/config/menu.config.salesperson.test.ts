@@ -111,6 +111,19 @@ describe('MENU_SIDEBAR for a salesperson', () => {
     expect(paths).toContain('/procurement-management/stock-inquiries');
   });
 
+  it('My targets sits in MY WORK for a holder of sales.targets.view_own (AI-TOOLS-WAVE2)', () => {
+    const out = slim(
+      applyMenuAccess(MENU_SIDEBAR, access([...SALES_PERMS, 'sales.targets.view_own'], { portalKinds: ALL_KINDS })),
+    );
+    expect(out.slice(0, 5)).toEqual([
+      { heading: 'MY WORK' },
+      { title: 'Projects', path: '/project-sales/pipeline' },
+      { title: 'Conversations', path: '/sla-management/conversations' },
+      { title: 'My targets', path: '/sales/targets' },
+      { title: 'Customer asks', path: '/sales/customer-asks' },
+    ]);
+  });
+
   it('no MY REQUESTS heading when the contact has no request kind', () => {
     const out = slim(
       applyMenuAccess(MENU_SIDEBAR, access(SALES_PERMS, { portalKinds: ['customer_asks', 'conversation'] })),

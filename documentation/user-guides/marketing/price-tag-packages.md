@@ -30,14 +30,14 @@ The group names you type are the names the pickers and templates show, so name t
 3. The new combo opens empty (**No parts yet.**). Use the **Add part** search at the bottom of the combo and pick a product; it lands as a part row showing the code, the name and the dimensions. Repeat for every part. The host product itself, and a product already in this combo, are refused with a message under the picker.
 4. Leave a part's group control on **Fixed part** if it always comes with the package. For a part the customer chooses, open the same control, type the group name (for example *Basin*) and choose **Use "Basin"**; the label is then offered on the other rows of this combo so the rest of the group is one click. Rows sharing a label are drawn together in their own block, headed *Basin - pick one*.
 5. A combo can carry one cover picture, the single photo of everything in the package. With none set, the combo shows **Upload picture**; pick a jpg, png or webp up to 10 MB. Once one is set, the same spot shows the thumbnail with **Replace** and **Clear** instead. This is separate from any product's own photos, and it becomes the first image a tag prints for a line using this combo - see [What prints on the tag](#what-prints-on-the-tag).
-6. Fill in what the tag should say about the package as a whole. **Description** is the combo's own text, for example the cabinet, basin, mirror and tap it includes. **Free items** is plain text printed as you type it, for example *Chopping board, drainer*; free items need no product code.
+6. Fill in what the tag should say about the package as a whole. **Description** is the combo's own text, for example the cabinet, basin, mirror and tap it includes. **Accessories included** is the combo's own list of accessories, built the same way as the product's **Accessories included** card: pick from **Add accessory** (the accessory library) or **Add product**, drag to reorder, and remove with the cross. The combo's list and each product's list are separate; editing one never changes the other.
 7. To print a package price, fill **List price (RM)** and **Sell price (RM)** on the combo. Leave them blank and the tag prints no price for the combo; the prices are never added up from the parts. On a choice group where each option has its own price, such as a sink whose price depends on the tap, fill **Sell price if picked** on each part row instead.
 8. To offer an upgrade, tick **Upgrade** on the part's row and fill **Top-up**, the amount it adds to the package price. Upgrades are drawn in their own **Upgrade** block after the choice groups.
 9. Remove a part with the trash icon on its row, or a whole combo with the trash icon in its header. Both are countdown actions with a **Cancel**, and there is no confirmation dialog to answer.
 10. To give the combo its own price tag templates, use **Price tag templates** in the **Add combo** dialog or on the combo, and with two or more linked pick a **Default template**. A request line on this combo then uses them; a combo with none falls back to the host product's templates. The picker says what each template needs in this combo's words (for example *105 x 148 mm. Needs 3 from Kitchen tap, upgrade*), and greys out a template the combo cannot fill with the reason (for example *Needs 6 from choice group 1; Kitchen tap has 5*). This needs the tag templates manage permission; without it the field does not show.
 11. For a product on two catalogue pages, click **Add combo** again and build the second one. Order matters only within a combo: fixed parts print first, then each choice group in the order its label first appears.
 
-Editing a combo's **parts** takes effect on requests raised **after** the change: a request already submitted keeps the parts that were copied onto it. A change to its **description, free items or prices** reaches tags still being designed, with the usual change note and roll back. An approved tag stays as it was, apart from the cover picture, which always shows the current one.
+Editing a combo's **parts** takes effect on requests raised **after** the change: a request already submitted keeps the parts that were copied onto it. A change to its **description, accessories included or prices** reaches tags still being designed, with the usual change note and roll back. An approved tag stays as it was, apart from the cover picture, which always shows the current one.
 
 ### Reading it from a part's own page
 
@@ -70,12 +70,16 @@ Do this once per shape of package (for example a sink with three taps); every co
 
 1. Open **[Dealer Kit → Room Designer → Tag Templates](/dealer-kit/tag-templates)** and open a template. Bathroom furniture and kitchen sink products pick their family's template on a new design.
 2. Use **Preview combo** above the canvas to pick a real combo. The canvas now shows that combo's picture, text and options while you design.
-3. Select a layer, and in the Inspector's field list choose from the **Combo** group: **Combo Photo**, **Combo Name**, **Combo Description**, **Combo Choices**, **Combo Top-ups**. Free items print through the existing **Accessories** field, and prices through **List Price** and **Sell Price**.
-4. In a text layer, **Insert field** offers the same content in its Combo group: combo name, combo description and free items.
+3. Select a layer, and in the Inspector's field list choose from the **Combo** group: **Combo Photo**, **Combo Name**, **Combo Description**, **Combo Choices**, **Combo Top-ups**. The combo's **Accessories included** list prints through an **Accessories** box (how to design its box: [Designing the Accessories box](price-tag-accessories.md)), and prices through **List Price** and **Sell Price**.
+4. In a text layer, **Insert field** offers the same content in its Combo group: **Combo name**, **Combo description** and **Combo accessories included** (the combo list's names, joined).
 5. To draw each product of the combo separately, set the layer's **Product** select to a position: **Main product**, **Fixed part n**, a group pick such as **Kitchen tap, pick 2**, or **Upgrade n**. Preview a combo first and the select shows that combo's own names and codes.
 6. A template needs whatever positions its layers use: a template with layers on **Kitchen tap, pick 1** to **pick 3** needs 3 from that group. You do not set this anywhere; it is read from the layers and shown on the combo's **Price tag templates** picker and on the request line.
-7. Free items, certificates and logos are pictures you place on the template as image layers. They are not part of the combo.
-8. **Publish**.
+7. Certificates and logos are pictures you place on the template as image layers. They are not part of the combo.
+8. An **Accessories** box has its own **Product** select, which says whose list it prints:
+   - **This tag's list (combo or product)**, the default: the combo's **Accessories included** on a combo tag, the product's own on a tag without a combo.
+   - **Main product's list**, **Fixed part 1 product's list** and so on: that product's own **Accessories included** card, never the combo's. A box set to **Main product's list** on a combo whose main product has no accessories of its own prints nothing; pick **This tag's list (combo or product)** to print the combo's list.
+9. An accessory that does not fit its box does not print. While a previewed product or combo has more accessories than a box can draw, a warning sits under **Preview combo**, for example *1 accessory does not fit its box*. Make the box bigger or the cards smaller until it goes. The same warning shows on the combo's **Tag preview** on the product page and on a request's preview, there with the tag's label (*Tag 1a: 1 accessory does not fit its box*).
+10. **Publish**.
 
 One template serves lines with and without a combo. With no combo, **Combo Photo** prints the product's photo, **Combo Name** the product code and **Combo Description** the product's price tag description; **Combo Choices** and **Combo Top-ups** print nothing.
 
@@ -109,5 +113,6 @@ There is no import screen. The technical team can load combos from the printed c
 ## See also
 
 * [Project Sales Rep - Submit via portal](../project-sales-rep/submit-via-portal.md#packages-and-parts-on-a-line) - the salesperson's side of the same package.
+* [Designing the Accessories box on a price tag](price-tag-accessories.md) - the card, footer, saved accessories templates and per-list overrides.
 * [Product Management - Manage products](../product/manage-products.md) - the rest of the product detail page.
 * [Configure Portal Revisions](../user-management/configure-portal-revisions.md) - letting a salesperson revise a submitted price tag request.
