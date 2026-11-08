@@ -18,7 +18,7 @@ from alembic import op
 
 
 revision = "pfcn_0001_list_price_notify"
-down_revision = "qcert_0001_quote_certificates"
+down_revision = "tagu_0001_tag_snapshot"
 branch_labels = None
 depends_on = None
 
