@@ -133,7 +133,7 @@ Rules, each a test:
   billing_documents.customer_name)` as the Invoiced report shows it.
 - Warehouses: active warehouses of the company folded onto their pool (`pool_warehouse_id`, else
   itself); `on_hand` / `available` = sums of `stock.quantity_on_hand` / `quantity_available`.
-- Reorder: `scm.reorder_level` rows of the company with `warehouse_id IS NULL`, `is_active`, `level > 0`
+- Reorder: `scm.reorder_level` rows of the company with `warehouse_id IS NULL`, product `is_active` (the table has no active flag, `scm.py:109-145`), `level > 0`
   (`set_count`); `below_count` = those whose product's summed `quantity_available` over warehouses with
   `is_active AND counts_as_available` is below `level` (no stock row = 0).
 - Approvals: `purchase_requests.approval_status = 'pending'` and not voided (no company column: same
@@ -144,8 +144,8 @@ Rules, each a test:
 
 `id uuid pk, company_id uuid not null, day date not null, snapshot jsonb not null, events jsonb not null,
 created_at, updated_at`, unique (company_id, day). `events` = the day's posted documents in creation
-order: `[{"at": "HH:MM", "shop_key": "<customer_id or null if not a shop>", "kind": "invoice|credit_note",
-"amount": "..."}]` (replay, phase 2). Company scoped (`CompanyScopedMixin`).
+order: `[{"at": "HH:MM" (MYT, from `billing_documents.created_at`), "shop_key": "<customer_id or null if not a shop>", "kind": "invoice|credit_note",
+"amount": "..." (signed: negative on a credit note)}]` (replay, phase 2). `warehouses[].locations` counts the pool itself plus its active sub-locations. `shops[].key` stays on the wallboard variant: it is a click key, never rendered. Company scoped (`CompanyScopedMixin`).
 
 ### Endpoint `GET /api/v1/town/snapshot?mode=wallboard`
 
