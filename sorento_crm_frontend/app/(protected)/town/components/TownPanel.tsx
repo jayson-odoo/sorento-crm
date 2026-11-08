@@ -26,16 +26,18 @@ const ROUTES = {
 
 function Rows({ rows }: { rows: [string, ReactNode][] }) {
   return (
-    <table className="mt-2 w-full text-sm">
-      <tbody>
-        {rows.map(([label, value]) => (
-          <tr key={label} className="border-b border-border last:border-0">
-            <td className="py-1.5 pe-2">{label}</td>
-            <td className="py-1.5 text-end tabular-nums">{value}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="mt-2 overflow-x-auto">
+      <table className="w-full text-sm">
+        <tbody>
+          {rows.map(([label, value]) => (
+            <tr key={label} className="border-b border-border last:border-0">
+              <td className="py-1.5 pe-2">{label}</td>
+              <td className="py-1.5 text-end tabular-nums">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -152,7 +154,7 @@ export function TownPanel({
   if (!target || isPending(snapshot)) return null;
   const { title, meta, content } = body(snapshot, target);
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-50 max-h-[55vh] overflow-auto rounded-lg border border-border bg-background p-4 shadow-lg sm:inset-x-auto sm:end-4 sm:top-24 sm:bottom-auto sm:w-80">
+    <aside className="fixed inset-x-3 bottom-3 z-50 max-h-[55dvh] overflow-auto rounded-lg border border-border bg-background p-4 shadow-lg sm:inset-x-auto sm:end-4 sm:top-24 sm:bottom-auto sm:w-80">
       <Button
         type="button"
         variant="ghost"

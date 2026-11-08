@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
+import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
 import { boughtToday, changePercent, count, rm0, shopLabel } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
@@ -479,21 +480,11 @@ export function TownScene({
   const yawRef = useRef(Math.PI / 4);
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
-  const [hint, setHint] = useState(() => {
-    try {
-      return !window.localStorage.getItem(HINT_KEY);
-    } catch {
-      return true;
-    }
-  });
+  const [hint, setHint] = useState(() => !localStore.getItem(HINT_KEY));
 
   const dismissHint = () => {
     setHint(false);
-    try {
-      window.localStorage.setItem(HINT_KEY, '1');
-    } catch {
-      // storage can be blocked; the hint then shows again next visit
-    }
+    localStore.setItem(HINT_KEY, '1');
   };
 
   useEffect(() => {
@@ -513,7 +504,7 @@ export function TownScene({
 
   return (
     <div
-      className={`relative h-[70vh] max-h-[41rem] min-h-[27.5rem] overflow-hidden rounded-xl border border-border ${
+      className={`relative h-[70dvh] max-h-[41rem] min-h-[27.5rem] overflow-hidden rounded-xl border border-border ${
         snapshot.phase === 'night' ? 'bg-slate-800' : 'bg-sky-50 dark:bg-slate-800'
       }`}
     >
