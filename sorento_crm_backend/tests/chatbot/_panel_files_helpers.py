@@ -165,7 +165,7 @@ def xlsx_bytes(sheets: dict[str, list[list]]) -> bytes:
     return buf.getvalue()
 
 
-DEALERS = [["Phone", "Name", "Role"], ["60123456789", "Person A", "owner"], ["60123456780", "Person B", "staff"]]
+DEALERS = [["Phone", "Name", "Role"], ["60123456789", "Person A", "owner"], ["60100000002", "Person B", "staff"]]
 
 
 def csv_bytes(rows: int = 2) -> bytes:

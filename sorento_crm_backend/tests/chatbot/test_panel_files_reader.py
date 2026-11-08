@@ -55,12 +55,12 @@ def test_s1_header_is_found_below_a_two_row_letterhead():
         [None],
         ["Phone", "Name", "Role"],
         ["60123456789", "Person A", "owner"],
-        ["60123456780", "Person B", "staff"],
+        ["60100000002", "Person B", "staff"],
     ])
 
     assert got.header_found is True
     assert got.header == ["Phone", "Name", "Role"]
-    assert got.rows == [["60123456789", "Person A", "owner"], ["60123456780", "Person B", "staff"]]
+    assert got.rows == [["60123456789", "Person A", "owner"], ["60100000002", "Person B", "staff"]]
     assert got.total_rows == 2
 
 
@@ -73,12 +73,12 @@ def test_s1_a_number_is_not_text_so_it_does_not_make_a_header():
 
 
 def test_s1_no_header_gives_numbered_columns_and_a_note():
-    got = one([[60123456789, 1], [60123456780, 2]])
+    got = one([[60123456789, 1], [60100000002, 2]])
 
     assert got.header_found is False
     assert got.header == ["Column 1", "Column 2"]
     assert got.total_rows == 2
-    assert got.rows == [["60123456789", "1"], ["60123456780", "2"]]
+    assert got.rows == [["60123456789", "1"], ["60100000002", "2"]]
     block = render_sheet_block("nohdr.xlsx", got, is_csv=False)
     assert "no header row found" in block
     assert "| Column 1 | Column 2 |" in block
@@ -202,9 +202,9 @@ def test_s5_row_cap_is_the_batch_cap_not_a_copy():
 
 
 def test_s5_block_text_for_a_short_sheet_is_exact():
-    rows = [["Phone", "Name", "Role"]] + [[f"6012345678{i}", f"Person {chr(65 + i)}", "owner"] for i in range(10)]
+    rows = [["Phone", "Name", "Role"]] + [[f"601000000{i:02d}", f"Person {chr(65 + i)}", "owner"] for i in range(10)]
     rows.append(["60123456789", "Person K", "owner"])
-    rows.append(["60123456780", "Person L", "owner"])
+    rows.append(["60100000002", "Person L", "owner"])
     got = one(rows)
 
     block = render_sheet_block("Dealer contacts Nov.xlsx", got, is_csv=False)
@@ -213,8 +213,8 @@ def test_s5_block_text_for_a_short_sheet_is_exact():
     assert lines[0] == 'Attached file "Dealer contacts Nov.xlsx", sheet "Dealers": 12 rows.'
     assert lines[1] == "| Phone | Name | Role |"
     assert lines[2] == "| --- | --- | --- |"
-    assert lines[3] == "| 60123456780 | Person A | owner |"
-    assert lines[-1] == "| 60123456780 | Person L | owner |"
+    assert lines[3] == "| 60100000000 | Person A | owner |"
+    assert lines[-1] == "| 60100000002 | Person L | owner |"
     assert len(lines) == 3 + 12
 
 
