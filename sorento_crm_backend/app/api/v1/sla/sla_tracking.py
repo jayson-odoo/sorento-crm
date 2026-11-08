@@ -73,6 +73,12 @@ SOURCE_TYPE_READERS = {
     "workflow_submission": ["workflow_forms.submissions.view"],
     "price_tag_request": ["dealer_kit.price_tag_requests.view"],
     "sample_request": ["projects.sample_requests.view"],
+    # The NPA's view-all slugs (new_product_application_service.actor_from_slugs).
+    "new_product_application": [
+        "procurement.new_product_applications.view",
+        "procurement.new_product_applications.approve",
+        "procurement.new_product_applications.open_code",
+    ],
     # A quotation line's drawing or photo request is keyed on a product, and the product page
     # has no SLA tab: like a conversation ticket, it is read by the SLA module alone (its side
     # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).

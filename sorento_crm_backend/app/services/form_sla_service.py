@@ -48,6 +48,8 @@ FORM_SLA_TYPES = (
     # Escalate on the general-enquiries route (no form_sla_configs row).
     "product_drawing",
     "product_photo",
+    # NPA-FORM-SLA: approval + purchasing stages, the SI's teams (PLAN-npa-form-sla-08nov).
+    "new_product_application",
 )
 
 #: The quotation line media requests among FORM_SLA_TYPES.
@@ -150,6 +152,7 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "sample_request": ("projects.sample_requests", "request_no", False),
     "product_drawing": ("products", "product_code", False),
     "product_photo": ("products", "product_code", False),
+    "new_product_application": ("new_product_applications", "application_no", False),
 }
 
 
@@ -244,6 +247,12 @@ _STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
     ("sponsorship_form", "project_sales"): {"resolution": "send the form for approval"},
     ("sponsorship_form", "project_sales_manager"): {"resolution": "approve or reject"},
     ("sponsorship_form", "customer_service"): {"resolution": "process the form (CS)"},
+    # NPA-FORM-SLA: the NPA rows ride the SI's team sets.
+    ("new_product_application", "project_sales"): {"resolution": "approve or reject"},
+    ("new_product_application", "purchasing"): {
+        "response": "send the purchasing response",
+        "resolution": "complete or reject the application",
+    },
     ("ticket", "it_admin"): {
         "response": "respond to the ticket",
         "resolution": "resolve the ticket",
@@ -279,6 +288,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/dealer-kit/price-tag-requests/{source_entity_id}"
     if source_entity_type == "sample_request":
         return f"/project-sales/sample-requests/{source_entity_id}"
+    if source_entity_type == "new_product_application":
+        return f"/procurement-management/new-product-applications/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"

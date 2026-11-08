@@ -542,6 +542,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     app.feedback_at = None
     for line in app.lines:
         line.cost_price = None
+    _void_sla(db, app, f"Revised: {reason}")
     db.flush()
     return "withdrawn" if was in AWAITING_REVIEW else None
 
@@ -558,6 +559,7 @@ def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     app.status = CANCELLED
     app.cancelled_at = datetime.utcnow()
     app.cancel_reason = _clean(reason)
+    _void_sla(db, app, "Cancelled by the applicant.")
     db.flush()
 
 
@@ -786,7 +788,8 @@ def save_purchasing_response(
     app.feedback_by = actor.user_id
     app.feedback_at = datetime.utcnow()
     db.flush()
-    return event
+    # NPA-FORM-SLA: a save is purchasing's answer, the SI's purchasing_respond (response clock).
+    return event or PURCHASING_RESPOND
 
 
 def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
@@ -1726,6 +1729,54 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     return out
 
 
+# ------------------------------------------------------------------ form SLA (NPA-FORM-SLA)
+
+#: The purchasing response save: stops the purchasing stage's response clock, tells nobody.
+PURCHASING_RESPOND = "purchasing_respond"
+#: The moves the Form SLA config listens to. The NPA's own move names are its SLA events
+#: (documentation/plans/procurement/PLAN-npa-form-sla-08nov.md stage map).
+SLA_EVENTS = ("submitted", "resubmitted", "approved", "rejected", "completed", PURCHASING_RESPOND)
+#: The moves whose "who acts next" notice the started stage's assignment notice replaces.
+STAGE_STARTS = ("submitted", "resubmitted", "approved")
+
+
+def _void_sla(db: Session, app: NewProductApplication, reason: str) -> None:
+    """Revise / Cancel: the open stage stops (voided, never resolved, so it never counts as
+    handled), in the move's own transaction. Who held it is kept on the instance for the
+    "withdrawn" notice, which goes out after the commit. Best effort: never blocks the move."""
+    app._sla_voided_to = set()  # noqa: SLF001
+    try:
+        from app.services.form_sla_service import FormSLAOrchestrator
+
+        voided = FormSLAOrchestrator(db).void_active_for_source(
+            ENTITY, str(app.id), reason=reason, void_reason="withdrawn"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application SLA void failed: %s (%s)", app.id, exc)
+        return
+    for tracker in voided:
+        for user_id in (tracker.assigned_to_id, getattr(tracker, "_voided_handled_by_id", None)):
+            if user_id:
+                app._sla_voided_to.add(str(user_id))  # noqa: SLF001
+
+
+def _emit_sla(db: Session, app: NewProductApplication, event: str, actor_id: Optional[str]) -> bool:
+    """Drive the Form SLA stages; True when a stage of this application is open afterwards
+    (its assignee was told by the engine). Errors never undo the committed move."""
+    try:
+        from app.services.form_sla_service import FormSLAOrchestrator, emit_form_event
+
+        emit_form_event(
+            db, ENTITY, str(app.id), event, contact_id=app.contact_id, actor_user_id=actor_id
+        )
+        return bool(FormSLAOrchestrator(db).active_trackers_for_source(ENTITY, str(app.id)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application SLA event failed: %s %s (%s)", event, app.id, exc)
+        if not db.is_active:
+            db.rollback()
+        return False
+
+
 # ------------------------------------------------------------------ notifications
 
 
@@ -1749,12 +1800,22 @@ def notify(
     db: Session, app: NewProductApplication, event: Optional[str], actor_id: Optional[str] = None
 ) -> int:
     """Tell the people who now have to act (card rule 8). Call AFTER the move commits; a
-    failure is logged and swallowed per recipient, so it never undoes the move."""
+    failure is logged and swallowed per recipient, so it never undoes the move.
+
+    NPA-FORM-SLA: the move first drives the Form SLA stages. When a stage started, its
+    assignee got the SI's assignment notice and the broadcast is skipped; a withdrawal tells
+    the voided stage's assignee. With no NPA stage configured, today's broadcast stands."""
+    stage_open = _emit_sla(db, app, event, actor_id) if event in SLA_EVENTS else False
     if event not in _EVENTS:
         return 0
+    if event in STAGE_STARTS and stage_open:
+        return 0
     phrase, audience = _EVENTS[event]
+    voided_to = getattr(app, "_sla_voided_to", None)
     try:
-        if audience == "approvers":
+        if event == "withdrawn" and voided_to:
+            recipients = [u for u in voided_to if u not in {str(actor_id or ""), str(app.applicant_id or "")}]
+        elif audience == "approvers":
             # Never the applicant, and never the person who just acted (an approver who
             # revised does not need to hear the request was withdrawn).
             recipients = _holders(db, APPROVE, app.company_id, exclude=[app.applicant_id, actor_id])
