@@ -236,7 +236,8 @@ describe('the Edit purchasing response button', () => {
 });
 
 describe('crew pass 8 Nov', () => {
-  it("(d) the dialog carries the stock inquiry's description line", async () => {
+  it("(d) the dialog carries the stock inquiry's description line when it can reply", async () => {
+    state.data = app({ can_reply: true });
     render(<Page />);
     const dialog = await openDialog();
     expect(
@@ -244,6 +245,30 @@ describe('crew pass 8 Nov', () => {
         'Save updates the record only. Update & Reply saves your text and sends it to the contact.',
       ),
     ).toBeVisible();
+  });
+
+  it('(d) owner re-test 9 Nov: with no reply, the line says why and names no missing button', async () => {
+    state.data = app({ can_reply: false });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(
+      within(dialog).getByText(
+        'Save updates the record only. No reply: this application was not raised from a stock inquiry conversation or in the portal.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Update & Reply/)).toBeNull();
+  });
+
+  it('(d) owner 9 Nov ~02:30: a portal-raised NPA replies through the portal, and says so', async () => {
+    state.data = app({ can_reply: true, reply_channel: 'portal' });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(
+      within(dialog).getByText(
+        'Save updates the record only. Update & Reply saves your text and notifies the applicant in the portal.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /update & reply/i })).toBeInTheDocument();
   });
 
   it('(c) a long PROJECT clamps, with the full text in its title and behind the eye button', async () => {

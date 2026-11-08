@@ -1119,3 +1119,80 @@ def test_a_worker_failure_marks_the_download_failed_with_the_fixed_sentence(worl
     world.db.refresh(row)
     assert row.status == "failed"
     assert row.error == export_tasks.EXPORT_FAILURE_MESSAGE  # never the raw exception text
+
+
+# ------------------------------------------------------------------ owner 9 Nov ~02:30: Update & Reply on a portal-raised NPA
+
+
+PORTAL_LINK = "https://crm.example.com/portal/acme/new-product-application/xyz"
+
+
+def _portal_approved(w):
+    """An NPA the salesperson raised in the portal (no stock inquiry, so no WhatsApp chat), approved."""
+    from app.models.new_product_application import NewProductApplication
+
+    from ._forms_chain_support import contact
+
+    d = world_draft = _draft(w, stock_inquiry_id=None)
+    row = w.db.get(NewProductApplication, world_draft["id"])
+    row.source = "portal"
+    row.contact_id = contact(w.db, kinds=("new_product_application",))
+    w.db.commit()
+    assert _act(w, d["id"], "submit", w.sales).status_code == 200
+    assert _act(w, d["id"], "approve", w.manager).status_code == 200
+    return d
+
+
+def _capture(monkeypatch):
+    from app.services import new_product_application_service as svc
+    from app.services.notification_service import NotificationService
+    from app.services.procurement_service import StockInquiryService
+
+    seen = {"notices": [], "whatsapp": []}
+    monkeypatch.setattr(svc, "portal_url", lambda db, app: PORTAL_LINK)
+    monkeypatch.setattr(
+        NotificationService, "create_with_channel_preferences", lambda self, **kw: seen["notices"].append(kw)
+    )
+    monkeypatch.setattr(
+        StockInquiryService, "enqueue_application_update_reply", lambda self, *a, **kw: seen["whatsapp"].append(kw)
+    )
+    return seen
+
+
+def test_a_portal_npa_can_reply(world, monkeypatch):
+    _capture(monkeypatch)
+    d = _portal_approved(world)
+    assert _get(world, d["id"], world.buyer)["can_reply"] is True
+
+
+def test_update_and_reply_on_a_portal_npa_notifies_the_applicant_with_the_text_and_the_portal_link(world, monkeypatch):
+    seen = _capture(monkeypatch)
+    d = _portal_approved(world)
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply",
+        json={"purchasing_response": "Supplier quotes 6 weeks, MOQ 50."},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["purchasing_response"] == "Supplier quotes 6 weeks, MOQ 50."
+    replies = [n for n in seen["notices"] if n["type"] == "new_product_application_purchasing_reply"]
+    assert [n["user_id"] for n in replies] == [world.sales]
+    (notice,) = replies
+    assert "Supplier quotes 6 weeks, MOQ 50." in notice["body"]
+    assert notice["data"]["link"] == PORTAL_LINK
+    assert notice["send_whatsapp"] is False
+    assert seen["whatsapp"] == []  # no WhatsApp send for a portal-raised NPA
+
+
+def test_a_staff_raised_npa_with_no_stock_inquiry_still_cannot_reply(world, monkeypatch):
+    seen = _capture(monkeypatch)
+    d = _approved(world)
+    from app.models.new_product_application import NewProductApplication
+
+    world.db.get(NewProductApplication, d["id"]).stock_inquiry_id = None
+    world.db.commit()
+    assert _get(world, d["id"], world.buyer)["can_reply"] is False
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "x"}
+    )
+    assert res.status_code == 422
+    assert seen["whatsapp"] == []

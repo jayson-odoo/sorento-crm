@@ -462,8 +462,25 @@ def save_purchasing_response_and_reply(
         svc.assert_can_view(app, actor)
         _gate(db, user, app, svc.save_purchasing_response)
         inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+        si_chat = inquiry is not None and bool(
+            si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        )
+        if not si_chat and svc.raised_in_portal(app):
+            # Owner 9 Nov ~02:30: a portal-raised NPA with no stock inquiry chat replies to its
+            # applicant through the portal that raised it (an in-app notice with the text and the
+            # link to that portal page; the response shows on that page). No WhatsApp send.
+            event = svc.save_purchasing_response(
+                db, app, actor=actor, data=payload.model_dump(exclude_unset=True)
+            )
+            detail = _done(db, app, event, actor.user_id)
+            svc.notify_purchasing_reply(db, app)
+            db.commit()
+            return detail
         if inquiry is None:
-            raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
+            raise refuse(
+                "Only an application raised from a stock inquiry or in the portal can reply.",
+                "stock_inquiry_id",
+            )
         # The SI's own refusals, BEFORE the save and the commit, so a reply that cannot go saves
         # nothing: its response stage gate (crew answer 8 Nov: same check, same sentence as the
         # SI's Update & Reply; Save only stays open, as on the SI), then its conversation.

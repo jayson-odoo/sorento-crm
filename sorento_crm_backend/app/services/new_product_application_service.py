@@ -1247,6 +1247,50 @@ def portal_url(db: Session, app: NewProductApplication) -> str:
     return (link or "").strip()
 
 
+def raised_in_portal(app: NewProductApplication) -> bool:
+    """Raised by a salesperson in the portal: the row carries their contact (owner 8 Nov 17:50)."""
+    return app.source == "portal" and bool(app.contact_id)
+
+
+def notify_purchasing_reply(db: Session, app: NewProductApplication) -> int:
+    """Update & Reply on a portal-raised NPA (owner 9 Nov ~02:30): tell the applicant, in the same
+    in-app (+ email) channel as the NPA's other applicant notices, with the response text and the
+    link to the NPA in the portal that raised it. No WhatsApp. Best effort, after the commit."""
+    if not app.applicant_id:
+        return 0
+    link = portal_url(db, app) or f"/procurement-management/new-product-applications/{app.id}"
+    text = (app.purchasing_response or "").strip()
+    title = f"{app.application_no}: purchasing replied"
+    try:
+        from app.services.notification_service import NotificationService
+
+        NotificationService(db).create_with_channel_preferences(
+            user_id=str(app.applicant_id),
+            type="new_product_application_purchasing_reply",
+            title=title,
+            body=f"{title}: {text}" if text else title,
+            data={
+                "application_id": str(app.id),
+                "application_no": app.application_no,
+                "link": link,
+            },
+            source_entity_type=ENTITY,
+            source_entity_id=str(app.id),
+            dedup_key=f"{app.id}:purchasing_reply:{app.feedback_at.isoformat() if app.feedback_at else ''}",
+            event_type="new_product_application_purchasing_reply",
+            send_in_app=True,
+            send_email=True,
+            send_whatsapp=False,
+            send_web_push=False,
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application reply notice not sent: %s (%s)", app.id, exc)
+        if not db.is_active:
+            db.rollback()
+        return 0
+
+
 def reply_message(db: Session, app: NewProductApplication) -> str:
     """The text "Update & Reply" sends to the salesperson through the stock inquiry's
     conversation: the application, the new code (when there is one) and purchasing's response."""
@@ -1693,8 +1737,16 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "purchasing_response": app.purchasing_response,
         # "Update & Reply" goes through the linked stock inquiry's conversation, as the SI's does,
         # and only while the SI takes a response (its own page's rule: inbox and response stage).
+        # Owner 9 Nov ~02:30: a portal-raised NPA without that chat replies through its portal.
         "can_reply": bool(
-            not portal and inquiry_inbox and is_response_status_allowed("stock_inquiry", inquiry[2])
+            not portal
+            and (
+                (inquiry_inbox and is_response_status_allowed("stock_inquiry", inquiry[2]))
+                or (not inquiry_inbox and raised_in_portal(app) and app.status in (APPROVED, COMPLETED))
+            )
+        ),
+        "reply_channel": (
+            None if portal else "whatsapp" if inquiry_inbox else "portal" if raised_in_portal(app) else None
         ),
         "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
         "feedback_at": _iso(app.feedback_at),

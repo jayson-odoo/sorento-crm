@@ -183,6 +183,8 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   purchasing_response?: string | null;
   /** Update & Reply is offered (the inquiry's conversation exists and is writable). */
   can_reply?: boolean;
+  /** Where Update & Reply goes (owner 9 Nov): the SI's WhatsApp chat, or the applicant's portal. */
+  reply_channel?: 'whatsapp' | 'portal' | null;
   /** The code purchasing typed when it is not in the catalogue yet. */
   new_code_text?: string | null;
   /** COST (MYR) of an application with no product rows. */
