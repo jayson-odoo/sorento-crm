@@ -223,7 +223,9 @@ def _resolve_product_codes(
     for m in resolved.matches:
         if link_check.ingest_printed(
             text, m.requested_code, m.via, getattr(m.product, "product_code", None)
-        ) and link_check.ingest_match_allowed(m.requested_code, m.via):
+        ) and link_check.ingest_match_allowed(
+            m.requested_code, m.via, getattr(m.product, "product_code", None)
+        ):
             matched.append((m.requested_code, m.product, m.via))
             kept.add(m.requested_code)
         elif m.requested_code not in rejected:

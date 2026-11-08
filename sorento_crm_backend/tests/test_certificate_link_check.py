@@ -78,12 +78,10 @@ def test_symbol_font_text_is_decoded(monkeypatch):
     assert "14a" in text["runs"] and text["runs"]["14a"] == "14A"
 
 
-@pytest.mark.parametrize(
-    "product_code",
-    ["SV-14A-CP", "CSK14A-BL", "14A"],
-)
-def test_found_when_printed_and_contained(span_text, product_code):
-    assert _verdict(span_text, "14A", product_code) == ("found", "14A")
+@pytest.mark.parametrize("product_code", ["SV-14A-CP", "CSK14A-BL", "14A"])
+def test_a_short_printed_code_is_check_never_found(span_text, product_code):
+    """Crew ruling 8 Nov (real SPAN file): a code of 3 or fewer characters is never auto-Found."""
+    assert _verdict(span_text, "14A", product_code) == ("check", "14A")
 
 
 @pytest.mark.parametrize("product_code", ["BRD7711CP", "BRHSD213C", "FUR-A11C"])
@@ -138,23 +136,27 @@ def test_scanned_and_no_file():
 
 
 @pytest.mark.parametrize(
-    "code,via,expect",
+    "code,via,product_code,expect",
     [
-        ("14A", "substring", True),
-        ("SV-14A-CP", "exact", True),
-        ("120", "substring", False),  # digits-only never fans out
-        ("120", "exact", True),
-        ("A1", "substring", False),  # too short
-        ("ABCD", "substring", False),  # no digit
-        ("SRTBV - BRASS", "prefix", False),  # family prefix is off for certificates
-        ("SET-1", "product_set", True),
-        ("A1 + B2", "plus_split", True),
+        ("14A", "substring", "SV-14A-CP", True),
+        ("14A", "substring", "114A-X", False),  # preceded by a digit
+        ("11C", "substring", "BRD7711CP", False),  # preceded by a digit
+        ("14A", "substring", "SV-14AB", False),  # followed by a letter inside the segment
+        ("CSK14A", "substring", "CSK14A-BL", True),
+        ("SV-14A-CP", "exact", "SV-14A-CP", True),
+        ("120", "substring", "SRT120-CP", False),  # digits-only never fans out
+        ("120", "exact", "120", True),
+        ("A1", "substring", "SRTA1-CP", False),  # too short
+        ("ABCD", "substring", "XABCD1", False),  # no digit
+        ("SRTBV - BRASS", "prefix", "SRTBV10", False),  # family prefix is off for certificates
+        ("SET-1", "product_set", "WB-8800", True),
+        ("A1 + B2", "plus_split", "A1", True),
     ],
 )
-def test_ingest_link_rule(code, via, expect):
+def test_ingest_link_rule(code, via, product_code, expect):
     from app.services.certificate_link_check import ingest_match_allowed
 
-    assert ingest_match_allowed(code, via) is expect
+    assert ingest_match_allowed(code, via, product_code) is expect
 
 
 def test_ingest_printed_rule(span_text):
@@ -232,3 +234,77 @@ def test_wanted_sets_cover_set_and_plus_lookups(sets_text):
     assert verdict(narrow, model_code="SRTSET-100", model_code_source="ai", product_code="WB-8800", set_codes={"srtset100"})[0] == "found"
     assert verdict(narrow, model_code="SRT100 + SRT200", model_code_source="ai", product_code="SRT200")[0] == "found"
     assert {"srt100", "srt200"} <= wanted_for_codes(["SRT100 + SRT200"])
+
+
+
+# ------------------------------------------------- crew ruling 8 Nov: real SPAN BPAI/1327-2024 shape
+# The real certificate is a ruled table whose model column prints, among others, 11C (row 14),
+# 13C (row 16) and 14A. Under the first rule every product containing "11C" or "13C" came out Found.
+SPAN_ROWS = ["11A", "11B", "11C", "12C", "13C", "14A", "15A", "CSK14A", "WB 1515"]
+
+
+def span_table_pdf() -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    top = 100
+    page.insert_text((60, top - 10), "Model", fontsize=10)
+    page.insert_text((200, top - 10), "Description", fontsize=10)
+    for i, code in enumerate(SPAN_ROWS):
+        y = top + 24 * i
+        page.draw_line((50, y), (545, y))
+        page.insert_text((60, y + 16), code, fontsize=10)
+        page.insert_text((200, y + 16), "STOP VALVE DN15 CHROME", fontsize=10)
+    page.draw_line((50, top + 24 * len(SPAN_ROWS)), (545, top + 24 * len(SPAN_ROWS)))
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.fixture(scope="module")
+def table_text():
+    from app.services.certificate_pdf_service import printed_runs
+
+    return printed_runs(span_table_pdf())
+
+
+@pytest.mark.parametrize(
+    "code,product_code,expect",
+    [
+        # Killed by the boundary rule: the printed code is preceded by a digit.
+        ("11C", "BRD7711CP", "not_found"),  # towel rail
+        ("13C", "BRHSD213C", "not_found"),  # hand shower
+        ("11C", "MGB5011C", "not_found"),  # glass-basin cabinet
+        ("11C", "GB3011C", "not_found"),  # glass-basin cabinet
+        # Followed by another letter inside the same segment.
+        ("14A", "SV-14AB", "not_found"),
+        # Boundary passes but the code is short: a person decides.
+        ("11C", "FUR-A11C", "check"),  # chair
+        ("14A", "SV-14A-CP", "check"),
+        ("14A", "CSK14A-BL", "check"),
+        # A longer printed code keeps the found rule.
+        ("CSK14A", "CSK14A-BL", "found"),
+        ("WB 1515", "SRTWB1515", "found"),
+    ],
+)
+def test_real_span_shape(table_text, code, product_code, expect):
+    assert _verdict(table_text, code, product_code)[0] == expect
+
+
+def test_no_code_on_the_real_shape_is_never_found_through_a_short_run(table_text):
+    """With no Code on certificate, a short run inside the product code is Check at best."""
+    assert _verdict(table_text, None, "BRD7711CP")[0] == "not_found"
+    assert _verdict(table_text, None, "MGB5011C")[0] == "not_found"
+    assert _verdict(table_text, None, "FUR-A11C")[0] == "check"
+    assert _verdict(table_text, None, "CSK14A-BL") == ("found", "CSK14A")
+
+
+def test_a_typed_short_code_still_counts(table_text):
+    """A person typed it: no boundary or length rule (owner Q1)."""
+    assert _verdict(table_text, "11C", "BRD7711CP", source="manual")[0] == "found"
+
+
+def test_none_of_the_over_linked_products_is_found(table_text):
+    """The crew's offline expectation, end to end: nothing is Found through 11C or 13C."""
+    over_linked = {"BRD7711CP": "11C", "BRHSD213C": "13C", "FUR-A11C": "11C", "MGB5011C": "11C", "GB3011C": "11C"}
+    for product, code in over_linked.items():
+        assert _verdict(table_text, code, product)[0] in ("check", "not_found"), product

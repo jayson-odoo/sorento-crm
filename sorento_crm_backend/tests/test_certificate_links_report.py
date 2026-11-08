@@ -91,13 +91,24 @@ def test_unchecked_links_read_checking_and_count_as_pending(env, files):
     assert body["summary"]["pending"] == 2
 
 
-def test_check_stamps_found_and_not_found(env, files):
+def test_check_stamps_found_check_and_not_found(env, files):
+    """Crew ruling 8 Nov: the short `14A` is Check, never Found; `11C` inside `BRD7711CP` is not on a
+    boundary; the longer `CSK14A` printed on its own row is Found."""
     cert = _certificate(
-        env, files, "RPT-2", ["SPAN stop valve", "Model 14A DN20"], ["14A", "BRD7711CP"], ["SV-14A-CP", "CSK14A-BL", "BRD7711CP"]
+        env,
+        files,
+        "RPT-2",
+        ["SPAN stop valve", "Model 14A DN20", "Model 11C DN15", "Model CSK14A"],
+        ["14A", "BRD7711CP", "CSK14A"],
+        ["SV-14A-CP", "CSK14A-BL", "BRD7711CP"],
     )
+    for link in env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id):
+        if link.product.product_code == "BRD7711CP":
+            link.model_code = "11C"
+    env.db.commit()
     _run_check(env)
-    rows = _by_code(_rows(env, certificate_ids=str(cert.id)))
-    assert rows["SV-14A-CP"]["verdict"] == "found"
+    rows = _by_code(_rows(env, certificate_ids=str(cert.id), verdict="found,check,not_found"))
+    assert rows["SV-14A-CP"]["verdict"] == "check"
     assert rows["CSK14A-BL"]["verdict"] == "found"
     assert rows["BRD7711CP"]["verdict"] == "not_found"
     row = rows["SV-14A-CP"]
@@ -117,15 +128,15 @@ def test_scanned_and_missing_files(env, files):
 
 def test_filters_by_verdict_certificate_and_source(env, files):
     a = _certificate(env, files, "RPT-5", ["Model 14A"], ["14A", "BRD7711CP"], ["SV-14A-CP", "BRD7711CP"])
-    b = _certificate(env, files, "RPT-6", ["Model 77B"], ["77B"], ["SV-77B-CP"])
+    b = _certificate(env, files, "RPT-6", ["Model 7788B"], ["7788B"], ["SV-7788B-CP"])
     _run_check(env)
     body = _rows(env, verdict="not_found")
     assert [row["product_code"] for row in body["data"]] == ["BRD7711CP"]
     assert body["pagination"]["total"] == 1
     assert {row["certificate_id"] for row in _rows(env, certificate_ids=str(b.id))["data"]} == {str(b.id)}
-    assert len(_rows(env, verdict="found,not_found")["data"]) == 3
+    assert len(_rows(env, verdict="found,not_found")["data"]) == 2
     assert _rows(env, source="manual")["data"] == []
-    assert _rows(env)["summary"] == {"found": 2, "check": 0, "not_found": 1, "scanned": 0, "no_file": 0, "pending": 0}
+    assert _rows(env)["summary"] == {"found": 1, "check": 1, "not_found": 1, "scanned": 0, "no_file": 0, "pending": 0}
     assert a.id
 
 
@@ -345,3 +356,17 @@ def test_a_certificate_already_checked_is_not_read_again(env, files, monkeypatch
     monkeypatch.setattr(report, "_read_current_text", lambda *a: reads.append(a) or None)
     assert report.check_certificates(env.db, [str(cert.id)]) == {"certificates": 0, "links": 0}
     assert reads == []
+
+
+def test_manual_links_are_checked_too_and_counted_outside_the_view(env, files):
+    """Crew pass 8 Nov: manual links sat at Checking because the AI-only view never asked for them."""
+    cert = _certificate(env, files, "RPT-21", ["Model SRTWB1515"], ["SRTWB1515"], ["SRTWB1515"])
+    (link,) = env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id).all()
+    link.source = "manual"
+    env.db.commit()
+    body = _rows(env, source="ai")
+    assert body["summary"]["pending"] == 0
+    assert body["pending_all"] == 1
+    _run_check(env)
+    assert _rows(env, source="manual")["data"][0]["verdict"] == "found"
+    assert _rows(env, source="ai")["pending_all"] == 0

@@ -3,12 +3,16 @@
 Pure rules over `certificate_pdf_service.printed_runs` output (card
 `documentation/plans/certificates/CARD-cert-link-cleanup-08nov.md` R2 + R8, owner answer Q1 8 Nov):
 
-- **found**: the printed code is a whole token on the PDF AND is contained in the product code as a
-  contiguous run of 3+ characters with a digit (`14A` inside `CSK14A-BL`, `WB 1515` inside `SRTWB1515`).
-  A code a person typed (`model_code_source = manual`) skips the containment rule. The exact tiers
-  the ingest keeps count too: the product's own code, a printed product-set code the product is a
-  member of, and each part of an `A + B` code (reviewer round 1).
-- **check**: as found, but the code is digits only (`120` is usually a quantity or a size).
+- **found**: the printed code is a whole token on the PDF AND sits in the product code as a contiguous
+  run of 4+ characters with a digit, on a boundary (`WB 1515` inside `SRTWB1515`, `CSK14A` inside
+  `CSK14A-BL`). Boundary (crew ruling 8 Nov, on the real SPAN BPAI/1327-2024 file): a printed code that
+  starts with a digit must not be preceded by a digit in the product code, and must not be followed by
+  another letter or digit unless that is the end of a dash/space segment (`11C` is not in `BRD7711CP`,
+  `MGB5011C`; `14A` is not in `SV-14AB`). A code a person typed (`model_code_source = manual`) skips
+  every product-side rule. The exact tiers the ingest keeps count too: the product's own code, a printed
+  product-set code the product is a member of, and each part of an `A + B` code (reviewer round 1).
+- **check**: as found, but the code is SHORT (3 or fewer letters and digits: `14A`, `11C`) or digits only
+  (`120`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
 - **not_found**: the PDF has text and the rule above fails.
 - **scanned**: the PDF has no text layer, cannot be checked. **no_file**: no readable current PDF.
 
@@ -28,6 +32,8 @@ VERDICT_NO_FILE = "no_file"
 VERDICTS = (VERDICT_FOUND, VERDICT_CHECK, VERDICT_NOT_FOUND, VERDICT_SCANNED, VERDICT_NO_FILE)
 
 MIN_CODE_LEN = 3
+#: A printed code this long or shorter is never auto-Found (crew ruling 8 Nov): `14A`, `11C`, `13C`.
+SHORT_CODE_LEN = 3
 
 #: Resolver tiers a printed certificate string may link through (Q2 (a), certificates only):
 #: substring stays, gated by `_containable`; the family-prefix tier is off.
@@ -45,14 +51,61 @@ def plus_parts(code: Optional[str]) -> list[str]:
     return parts if len(parts) > 1 else []
 
 
-def _backs(norm: str, product_norm: str, *, typed: bool, set_codes) -> bool:
-    """Does a printed `norm` back a link to this product? Exact code, a set it belongs to, a code a
-    person typed, or (Q1) a contained run of 3+ characters with a digit."""
+def _segments(product_code: Optional[str]) -> tuple[str, set[int]]:
+    """The normalised product code, and the indexes in it where a dash/space segment ends."""
+    chars: list[str] = []
+    ends: set[int] = set()
+    for ch in normalise_raw(product_code):
+        if ch.isspace() or ch in _SEPARATORS:
+            if chars:
+                ends.add(len(chars))
+            continue
+        chars.append(ch)
+    ends.add(len(chars))
+    return "".join(chars), ends
+
+
+def normalise_raw(value: Optional[str]) -> str:
+    """Case-folded and symbol-font decoded, separators KEPT (they mark segment ends)."""
+    from app.services.certificate_pdf_service import unshift
+
+    return unshift(value or "").lower()
+
+
+_SEPARATORS = set(" -.,;:()[]/")
+
+
+def on_boundary(norm: str, product_code: Optional[str]) -> bool:
+    """Is `norm` inside the product code at a place the crew boundary rule allows (see module doc)?"""
+    if not norm:
+        return False
+    product_norm, ends = _segments(product_code)
+    start = product_norm.find(norm)
+    while start != -1:
+        end = start + len(norm)
+        if not norm[0].isdigit():
+            return True
+        preceded = start > 0 and product_norm[start - 1].isdigit()
+        followed = end < len(product_norm) and end not in ends
+        if not preceded and not followed:
+            return True
+        start = product_norm.find(norm, start + 1)
+    return False
+
+
+def is_short(norm: str) -> bool:
+    return len(norm) <= SHORT_CODE_LEN
+
+
+def _backs(norm: str, product_code: Optional[str], *, typed: bool, set_codes) -> bool:
+    """Does a printed `norm` back a link to this product? A code a person typed, the exact code, a
+    set it belongs to, or a contained run of 3+ characters with a digit on a boundary."""
+    product_norm = normalise(product_code or "")
     return (
         typed
         or norm == product_norm
         or norm in set_codes
-        or (_containable(norm) and norm in product_norm)
+        or (_containable(norm) and on_boundary(norm, product_code))
     )
 
 
@@ -72,14 +125,16 @@ def ingest_printed(text: Optional[dict], code: Optional[str], via: str, product_
     return printed_on(text, code)
 
 
-def ingest_match_allowed(code: Optional[str], via: str) -> bool:
-    """R8: may this resolver match link a product to a certificate?"""
+def ingest_match_allowed(code: Optional[str], via: str, product_code: Optional[str]) -> bool:
+    """R8: may this resolver match link a product to a certificate? A substring match must also
+    sit on a boundary of the product code (crew ruling 8 Nov), so the ingest stops creating the
+    `11C` -> `BRD7711CP` links the report would only flag."""
     if via in _ALWAYS_TIERS:
         return True
     if via != "substring":
         return False
     norm = normalise(code or "")
-    return _containable(norm) and not norm.isdigit()
+    return _containable(norm) and not norm.isdigit() and on_boundary(norm, product_code)
 
 
 def verdict(
@@ -104,32 +159,33 @@ def verdict(
         typed = model_code_source == "manual"
         sets = set(set_codes or ())
         parts = plus_parts(model_code) or [normalise(model_code)]
-        backing = [p for p in parts if p and p in runs and _backs(p, product_norm, typed=typed, set_codes=sets)]
+        backing = [p for p in parts if p and p in runs and _backs(p, product_code, typed=typed, set_codes=sets)]
         if not backing:
             return VERDICT_NOT_FOUND, model_code
-        exact = any(p == product_norm or p in sets for p in backing)
-        if all(p.isdigit() for p in backing) and not exact:
+        if typed:
+            return VERDICT_FOUND, model_code
+        if all(is_short(p) or p.isdigit() for p in backing):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 
-    # No code on the link: the longest printed run that sits inside the product code. A lettered
-    # run beats a digits-only one of any length, so `check` is only the answer when nothing else is.
-    best: Optional[str] = None
-    best_digits: Optional[str] = None
+    # No code on the link: the longest printed run inside the product code that passes the boundary
+    # rule. Only a long lettered run is Found; a short or digits-only one is Check at best.
+    found: Optional[str] = None
+    checked: Optional[str] = None
     for start in range(len(product_norm)):
         for end in range(len(product_norm), start + MIN_CODE_LEN - 1, -1):
             piece = product_norm[start:end]
-            if piece in runs and _containable(piece):
-                if piece.isdigit():
-                    if best_digits is None or len(piece) > len(best_digits):
-                        best_digits = piece
-                elif best is None or len(piece) > len(best):
-                    best = piece
-                break
-    if best is not None:
-        return VERDICT_FOUND, runs[best]
-    if best_digits is not None:
-        return VERDICT_CHECK, runs[best_digits]
+            if piece not in runs or not _containable(piece) or not on_boundary(piece, product_code):
+                continue
+            if is_short(piece) or piece.isdigit():
+                if checked is None or len(piece) > len(checked):
+                    checked = piece
+            elif found is None or len(piece) > len(found):
+                found = piece
+    if found is not None:
+        return VERDICT_FOUND, runs[found]
+    if checked is not None:
+        return VERDICT_CHECK, runs[checked]
     return VERDICT_NOT_FOUND, None
 
 

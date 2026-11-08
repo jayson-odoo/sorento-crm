@@ -126,7 +126,9 @@ export default function CertificateLinksList() {
   // until the counts settle.
   const check = useCheckCertificateLinks();
   const asked = useRef(false);
-  const pending = data?.summary?.pending ?? 0;
+  // Every unchecked link in scope, not just this view's: a manual link is checked too while the
+  // view shows AI links only.
+  const pending = data?.pending_all ?? data?.summary?.pending ?? 0;
   useEffect(() => {
     if (pending > 0 && !asked.current) {
       asked.current = true;

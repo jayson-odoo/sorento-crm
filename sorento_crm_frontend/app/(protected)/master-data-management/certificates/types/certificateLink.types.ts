@@ -26,6 +26,8 @@ export interface CertificateLinksResponse {
   pagination: { total: number; page: number; limit: number };
   empty: boolean;
   summary: CertificateLinkSummary;
+  /** Unchecked links in scope under no filter: what the page queues the check job on. */
+  pending_all: number;
   /** Certificate types that have links in scope: the type filter's options. */
   types: { id: string; name: string }[];
 }

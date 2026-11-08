@@ -209,6 +209,9 @@ def list_links(
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
         "summary": summary,
+        # Every link in scope not yet checked, whatever the filters (a manual link is checked too,
+        # even while the view shows AI links only): the page queues the check job on this.
+        "pending_all": pending_link_count(db),
         "types": [{"id": str(type_id), "name": name} for type_id, name in types],
     }
 
@@ -234,6 +237,18 @@ def _serialize(cp, cert, product, type_name, verdict_value) -> dict:
 
 
 # ----------------------------------------------------------------------------- check
+
+
+def pending_link_count(db: Session) -> int:
+    """Links (in the caller's scope) not checked against their live key, under no other filter."""
+    return int(
+        db.query(func.count(CertificateProduct.id))
+        .join(Certificate, Certificate.id == CertificateProduct.certificate_id)
+        .join(Product, Product.id == CertificateProduct.product_id)
+        .filter(_verdict_expr() == PENDING)
+        .scalar()
+        or 0
+    )
 
 
 def pending_certificate_ids(db: Session) -> list[str]:

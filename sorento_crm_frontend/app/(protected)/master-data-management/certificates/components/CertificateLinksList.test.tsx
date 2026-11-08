@@ -166,6 +166,7 @@ function response(rows: CertificateLink[], summary: Partial<CertificateLinksResp
     empty: rows.length === 0,
     summary: { found: 2, check: 0, not_found: rows.length, scanned: 0, no_file: 0, pending: 0, ...summary },
     types: [{ id: 'type-1', name: 'Certification' }],
+    pending_all: summary.pending ?? 0,
   };
 }
 
@@ -209,6 +210,12 @@ describe('CertificateLinksList', () => {
 
   it('asks the worker to check once when links are not checked yet', async () => {
     svc.getCertificateLinks.mockResolvedValue(response([link({ verdict: 'pending' })], { pending: 3 }));
+    renderList();
+    await waitFor(() => expect(svc.checkCertificateLinks).toHaveBeenCalledTimes(1));
+  });
+
+  it('asks for a check when links outside the view are unchecked', async () => {
+    svc.getCertificateLinks.mockResolvedValue({ ...response([link()]), pending_all: 4 });
     renderList();
     await waitFor(() => expect(svc.checkCertificateLinks).toHaveBeenCalledTimes(1));
   });
