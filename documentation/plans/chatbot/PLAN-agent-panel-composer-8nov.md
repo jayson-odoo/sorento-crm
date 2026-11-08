@@ -1,6 +1,6 @@
 # PLAN: AI assistant side panel composer (multiline, attachments, voice)
 
-Status: Review fix round 1 (full track). Mock OK 8 Nov 15:23; Q1a-Q5a final 15:25.
+Status: Review done (full track): reviewer READY, security-reviewer READY, cloud browser pass done; waiting on the owner hand test (crew test copy) and live agent checks on the Mac. Mock OK 8 Nov 15:23; Q1a-Q5a final 15:25.
 Track: full (size L: new upload surface, file parsing, a data migration seeding one attachment type).
 Lane: AGENT-PANEL-COMPOSER. Owner ask 8 Nov 2026 ~15:10 MYT.
 
