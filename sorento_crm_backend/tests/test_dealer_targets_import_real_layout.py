@@ -145,7 +145,6 @@ def test_rate_naming_one_account_of_the_target_pays_only_that_account():
     a1 = _k(S, s_rows["ALPHA:A/C I"])
     q = _one(parsed, a1, "quarterly")
     assert _tiers(q, date(2026, 4, 1)) == [(D("400000"), None, False, {a1: D("3")})]
-    assert q.payout_code is None  # no single payee since lane TARGET-PER-ACCOUNT-PAYOUT
 
 
 def test_rate_naming_another_account_of_the_dealer_names_no_payee():
@@ -155,10 +154,9 @@ def test_rate_naming_another_account_of_the_dealer_names_no_payee():
     parsed, s_rows, _ = _parse()
     d1, d3 = _k(S, s_rows["DELTA:A/C I"]), _k(S, s_rows["DELTA:A/C III"])
     own = _one(parsed, d1, "quarterly")
-    assert own.codes == [d1] and own.payout_code is None
+    assert own.codes == [d1]
     paid = _one(parsed, d3, "quarterly")
     assert paid.codes == [d3]                     # counts A/C III
-    assert paid.payout_code is None               # and pays it its own share
     assert _tiers(paid, date(2026, 1, 1)) == [(D("80000"), D("2"), False, None)]
     assert PAY_TO_IGNORED in next(r for r in parsed.rows if r.key == d3).warnings
 

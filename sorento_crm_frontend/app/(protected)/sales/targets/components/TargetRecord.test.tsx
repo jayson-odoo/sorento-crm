@@ -831,11 +831,11 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     hooks.useSalesTarget.mockReturnValue({
       data: dealerDetail({
         threshold_unit: 'points',
-        periods: base.periods.map((p: { accounts: { customer_id: string }[] }) => ({
+        periods: base.periods.map((p) => ({
           ...p,
           point_ratio: 1.2,
           achieved_points: 208333.33,
-          accounts: p.accounts.map((a) => ({ ...a, achieved_points: a.customer_id === A1 ? 150000 : 58333.33 })),
+          accounts: ((p as { accounts?: { customer_id: string }[] }).accounts ?? []).map((a) => ({ ...a, achieved_points: a.customer_id === A1 ? 150000 : 58333.33 })),
         })),
       }),
       isLoading: false,
@@ -1286,7 +1286,7 @@ describe('TargetRecord: the RM Additional per account (lane TARGET-PER-ACCOUNT-P
       data: dealerDetail({
         tiers: [
           base.tiers[0],
-          { ...base.tiers[1], account_rates: [{ customer_id: A1, rate: 3, bonus_amount: 500 }] },
+          { ...(base.tiers[1] as object), account_rates: [{ customer_id: A1, rate: 3, bonus_amount: 500 }] },
         ],
       }),
       isLoading: false,

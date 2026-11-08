@@ -109,7 +109,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 # Each counted account's own share of the payout (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov:
                 # every account is its own payee), in the Dealers tab's account order with its label ("A/C I").
                 "_account_shares": [
-                    (ts.account_label(c), fig["by_account"].get(c.id, 0.0))
+                    (_share_label(c, dealer_accounts.get(target.id, [])), fig["by_account"].get(c.id, 0.0))
                     for c in dealer_accounts.get(target.id, [])
                 ] if target.subject_kind == "dealer" and has_commission else [],
                 "team": team.name if team else None,
@@ -132,6 +132,17 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
             }
         )
     return rows
+
+
+def _share_label(customer, accounts) -> str:
+    """The account as the Dealers tab prints it ("A/C I"); with its code when another counted account of the
+    target prints the same, so two accounts' shares never merge into one."""
+    from app.services.sales import target_service as ts
+
+    label = ts.account_label(customer)
+    if sum(1 for other in accounts if ts.account_label(other) == label) > 1:
+        return f"{label} ({customer.customer_code})"
+    return label
 
 
 def _below(pct) -> bool:

@@ -594,9 +594,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   for (const c of options?.categories ?? []) labels.current.set(c.id, c.label);
   for (const b of options?.brands ?? []) labels.current.set(b.id, b.label);
   for (const a of target?.accounts ?? []) labels.current.set(a.customer_id, `${a.code} - ${a.name}`);
-  if (target?.payout_account) {
-    labels.current.set(target.payout_account.customer_id, `${target.payout_account.code} - ${target.payout_account.name}`);
-  }
   const searchCustomers = useTargetCustomerSearch();
   const fetchCustomers = useCallback(
     async (query: string) => {

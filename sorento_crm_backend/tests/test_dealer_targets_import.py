@@ -73,7 +73,6 @@ def test_parse_p1_p2_p3_merged_accounts_named_rate_and_stacking_additionals():
     parsed = _parse()
     q = _scheme(parsed, "C-A1", "quarterly")
     assert q.codes == ["C-A1", "C-A3"]                      # P1: one target over both accounts
-    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
     assert (q.start, q.end, q.split_every, q.split_unit) == (date(2026, 1, 1), date(2026, 12, 31), 3, "month")
     assert q.threshold_unit == "amount"
     assert _tiers(q, date(2026, 1, 1)) == [                 # P3
@@ -102,7 +101,6 @@ def test_parse_p4_rate_per_account_deluxe_mastile_wply():
     ]
     # "-" is no scheme for Q2 to Q4.
     assert _tiers(q, date(2026, 4, 1)) == []
-    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
 
 
 def test_parse_p6_dec_to_nov_window():
@@ -412,7 +410,6 @@ def test_parse_rate_on_one_row_of_a_merged_target_is_that_accounts_rate():
     q = _scheme(parsed, "C-A3", "quarterly")
     assert q.codes == ["C-A3", "C-A1"]
     assert _tiers(q, date(2026, 1, 1)) == [(D("200000"), None, False, {"C-A1": D("3")})]
-    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
 
 
 def test_parse_merge_in_one_scheme_kind_does_not_join_the_other_kinds():

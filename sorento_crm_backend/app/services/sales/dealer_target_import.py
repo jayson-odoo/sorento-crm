@@ -259,7 +259,6 @@ class Scheme:
     rows: List[int]
     codes: List[str]
     names: List[str]
-    payout_code: Optional[str]
     start: date
     end: date
     split_every: Optional[int]
@@ -269,9 +268,6 @@ class Scheme:
     tiers: List[SchemeTier]
     #: "<dealer> <2026 | Dec 2025 to Nov 2026> <quarterly | monthly | yearly>", the kind last.
     name: str = ""
-    #: Paid to an account of the dealer with no row in the file, found by name + account. Always
-    #: None since lane TARGET-PER-ACCOUNT-PAYOUT (each account is its own payee).
-    payout_by_name: Optional["ByName"] = None
 
 
 @dataclass
@@ -325,7 +321,10 @@ class _Column:
 _KIND_NAME = {"Q": "quarterly", "M": "monthly", "Y": "yearly"}
 #: A PAY TO cell, or a rate naming an account the target does not count, no longer names a payee
 #: (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every counted account is paid its own share.
-PAY_TO_IGNORED = "PAY TO not used: each counted account is paid its own share"
+PAY_TO_IGNORED = (
+    "PAY TO not used: each counted account is paid its own share, and an RM bonus naming an "
+    "account the target does not count is paid to each counted account"
+)
 
 #: A header cell that names a row's own field, matched on the WHOLE cell so a title such as
 #: "SORENTO DEALER INCENTIVE 2026" is never read as the dealer column.
@@ -1249,7 +1248,6 @@ def _group_schemes(
             rows=list(ctx.rows),
             codes=list(codes),
             names=[results[r].name_in_file or "" for r in ctx.rows],
-            payout_code=None,
             start=start,
             end=end,
             split_every=split[0],
@@ -1870,12 +1868,9 @@ def run(
     parsed = parse_workbook(data, year=year, label_picks=label_picks)
     rows_by_key = {(r.sheet, r.row): r for r in parsed.rows}
 
-    # Codes the file names (a CUSTOMER CODE column, a PAY TO code), matched without regard to
-    # case or surrounding spaces. A code wins over the name when the row has one.
-    codes = {r.code for r in parsed.rows if r.code} | {
-        s.payout_code for s in parsed.schemes
-        if s.payout_code and "!" not in s.payout_code
-    }
+    # Codes the file names (a CUSTOMER CODE column), matched without regard to case or
+    # surrounding spaces. A code wins over the name when the row has one.
+    codes = {r.code for r in parsed.rows if r.code}
     wanted = sorted({code.strip().upper() for code in codes})
     by_code = {}
     if wanted:
@@ -1900,10 +1895,9 @@ def run(
         if valid_ids
         else {}
     )
-    by_name_payouts = [s.payout_by_name for s in parsed.schemes if s.payout_by_name is not None]
     index = (
         _CustomerIndex(db, company_id)
-        if by_name_payouts or any(r.status == "mapped" and not r.code for r in parsed.rows)
+        if any(r.status == "mapped" and not r.code for r in parsed.rows)
         else None
     )
 
@@ -1974,15 +1968,6 @@ def run(
                 if cand.id == c.id:
                     customer_by_key[key] = c
 
-    # Accounts paid by dealer name + account (no row of their own): one exact CRM match each.
-    by_name_customer: Dict[ByName, Customer] = {}
-    for payee in set(by_name_payouts):
-        exact, _suggestions, _capped, _why = index.match(payee.dealer, payee.label)
-        if exact is not None:
-            found = db.query(Customer).filter(Customer.id == exact.id).first()
-            if found is not None:
-                by_name_customer[payee] = found
-
     def customer_of(key: Optional[str]):
         if not key:
             return None
@@ -2011,9 +1996,8 @@ def run(
 
     new = updated = 0
     target_nos: Dict[str, str] = {}
-    key_to_row = {r.key: r for r in parsed.rows if r.key}
 
-    # Schemes that share a row, or whose pay-to account is another scheme's row, are one
+    # Schemes that share a row are one
     # dealer: they are created together or not at all (review S4: no partial dealer).
     parent = list(range(len(parsed.schemes)))
 
@@ -2026,9 +2010,6 @@ def run(
     owner: Dict[Tuple[str, int], int] = {}
     for i, scheme in enumerate(parsed.schemes):
         touched = [(scheme.sheet, r) for r in scheme.rows]
-        payee = key_to_row.get(scheme.payout_code)
-        if payee is not None:
-            touched.append((payee.sheet, payee.row))
         for place in touched:
             if place in owner:
                 parent[find(i)] = find(owner[place])
@@ -2055,10 +2036,6 @@ def run(
                     r.status, r.reason = "not_representable", reason
 
         broken = [r for r in all_rows if r.status != "mapped"]
-        for s in schemes:
-            payee_row = key_to_row.get(s.payout_code)
-            if payee_row is not None and payee_row.status != "mapped":
-                broken.append(payee_row)
         if broken:
             first = broken[0]
             why = {
