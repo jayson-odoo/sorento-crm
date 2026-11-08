@@ -643,8 +643,9 @@ def test_every_company_id_table_is_registered():
     #   inherit the partition through the product, like `product_combos` = 179.
     # + 1 (PRICETAG-ACCESSORY-DESIGNER, #2237): `dealer_kit.accessory_box_preset`, one company's
     #   saved accessories box designs; the name is unique per company ignoring case = 180.
-    # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log = 181.
-    expected_owned = 181
+    # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log. Main's
+    #   `quotation_document_certificates` landed at 180 without a bump, so the sum is 182.
+    expected_owned = 182
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
