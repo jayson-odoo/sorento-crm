@@ -1376,6 +1376,7 @@ def _run(
     batch_waiting: list[dict] = []
     batch_called = False
     previous_waiting: list[dict] | None = None
+    closed_rows: dict | None = None  # the rows of this conversation's decided cards (AGENT-DECIDED-CARDS)
 
     def batch_shown() -> bool:
         # The turn's reply is the code-built summary and tables, so the model's own answer text is not shown or checked.
@@ -1698,9 +1699,12 @@ def _run(
                     batch_called = True
                     if previous_waiting is None:
                         previous_waiting = _previous_waiting(db, conv, turn_id)
+                    if closed_rows is None:
+                        closed_rows = actions.closed_rows(db, conversation_id)
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
                         waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,
+                        closed=closed_rows,
                     )
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}

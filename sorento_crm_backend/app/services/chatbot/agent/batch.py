@@ -60,8 +60,10 @@ def schema_for(db, ctx) -> dict | None:
                 "rows (codes; 'all' = every listed account of that row; 'skip' = leave the row out), call this again "
                 "with the WHOLE table, every row's `row` kept and the picked codes in customer_codes (no "
                 "customer_names for those rows). Nothing changes until the user confirms. Call it again with "
-                "corrected "
-                "rows to replace the proposal."
+                "corrected rows to replace the proposal. Propose only the rows still open in the CURRENT request: "
+                "a row of a card the user already cancelled or confirmed (the history says 'Card cancelled' or "
+                "'Card confirmed') is closed; never send it again unless the user's latest message asks for that "
+                "row again. Such a row is not proposed and comes back as skipped."
             ),
             "parameters": {
                 "type": "object",
@@ -97,9 +99,47 @@ def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> s
     return None
 
 
+CLOSED_CANCELLED = (
+    "From your earlier cancelled table, so not proposed again; ask for it again (its phone or name) to include it."
+)
+CLOSED_DONE = "Already done on your earlier confirmed table."
+_PHONE_RUN = re.compile(r"\+?\d[\d\s().-]{5,}\d")
+_MATCH_DIGITS = 9
+
+
+def _asked_again(args: dict, key: Any, user_text: str) -> bool:
+    """Does the user's latest message name this row: its phone (the last 9 digits, any formatting) or its name
+    (whole words, any case)? Plain text, never the model's say-so."""
+    text = " ".join(str(user_text or "").split()).lower()
+    if not text:
+        return False
+    digits = re.sub(r"\D", "", str(key or ""))
+    if len(digits) >= _MATCH_DIGITS:
+        for run in _PHONE_RUN.findall(text):
+            said = re.sub(r"\D", "", run)
+            if len(said) >= _MATCH_DIGITS and said[-_MATCH_DIGITS:] == digits[-_MATCH_DIGITS:]:
+                return True
+    name = " ".join(str(args.get("name") or "").split()).lower()
+    return len(name) >= 3 and re.search(rf"(?<![0-9a-z]){re.escape(name)}(?![0-9a-z])", text) is not None
+
+
+def _closed_reason(write: str, args: dict, key: Any, closed: dict, user_text: str) -> str | None:
+    """The skip reason for a row the user already decided on an earlier card of this conversation (cancelled, or
+    done by a confirm), unless their latest message asks for it again; None when the row is open."""
+    if not closed:
+        return None
+    from app.services.chatbot.agent.actions import row_identity
+
+    ident = row_identity({"tool": write, "args": args})
+    found = closed.get(ident) if ident is not None else None
+    if found is None or _asked_again(args, key, user_text):
+        return None
+    return CLOSED_CANCELLED if found["status"] == "cancelled" else CLOSED_DONE
+
+
 def propose_rows(
     db, ctx, write: str, rows: list, *, seen_ids: set[str], user_text: str = "",
-    previous_waiting: list[dict] | None = None,
+    previous_waiting: list[dict] | None = None, closed: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -127,7 +167,9 @@ def propose_rows(
             skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
-            unlisted = _not_listed(args, key, previous_waiting or [], user_text)
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text) or _closed_reason(
+                write, args, key, closed or {}, user_text
+            )
             if unlisted:
                 skipped.append({"row": n, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
@@ -154,6 +196,7 @@ def propose(
     waiting_out: list[dict] | None = None,
     user_text: str = "",
     previous_waiting: list[dict] | None = None,
+    closed: dict | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -178,7 +221,8 @@ def propose(
     if any(not s.get("batch") for s in steps):
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")
     new_steps, skipped, waiting = propose_rows(
-        db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting
+        db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
+        closed=closed,
     )
     steps[:] = new_steps
     if skipped_out is not None:

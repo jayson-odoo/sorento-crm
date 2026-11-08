@@ -1,6 +1,6 @@
 # PLAN: decided Confirm cards must not come back on later cards (AGENT-DECIDED-CARDS)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: built, in review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 ## Problem
 
