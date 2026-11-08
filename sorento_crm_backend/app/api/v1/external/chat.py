@@ -53,8 +53,9 @@ from app.models.user import SystemSetting
 from app.dependencies import get_external_api_user
 from app.schemas.chatbot_turn import ChatbotTurnResponse
 from app.schemas.integration import IntegrationLogCreate
-# `panel_service`: the AI panel route (`system/ai_assistant.py`) comes through this doorway.
-from app.services.chatbot import complete_turn, inbox_queue, panel_service, run_turn  # noqa: F401
+# `panel_service` and `panel_files`: the AI panel route (`system/ai_assistant.py`) comes through this
+# doorway, for its turns and for its file uploads (AGENT-PANEL-COMPOSER).
+from app.services.chatbot import complete_turn, inbox_queue, panel_files, panel_service, run_turn  # noqa: F401
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
 from app.services.chatbot.engine import _send_actions, find_turn_for_message

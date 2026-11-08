@@ -24,14 +24,15 @@
  *       "tool": "<mcp tool name>" | null,
  *       "args_short": {...} | null,
  *       "crossdomain_rungs": ["<rung>", ...],
- *       "reveals_dropped": ["<field key>", ...]
+ *       "reveals_dropped": ["<field key>", ...],
+ *       "synthetic_envelope": true | false  // no real WhatsApp turn to borrow from
  *     },
  *     "actions": [{...}] | null  // raw TurnResult.actions - a `send_attachments`
  *                                 // entry's own file list, read via
  *                                 // `extractTurnAttachments`
  *   }
- *   404 `{code: "CHATBOT_CONSOLE_NO_ENVELOPE", ...}` - the contact has no prior chatbot
- *   turn to borrow a session shape from.
+ *   404 `{code: "CHATBOT_CONSOLE_NO_ENVELOPE", ...}` - no respond contact with this id. A
+ *   contact with no prior turn runs on a synthetic envelope instead (`synthetic_envelope`).
  *
  * GET /api/v1/system/chatbot/console/thread?contact_respond_id=&run_id=
  *   200 -> { turns: ConsoleThreadTurn[], pending_action: AgentPendingAction | null }
