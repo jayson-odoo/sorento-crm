@@ -55,7 +55,7 @@ def _refused(exc: QueryRefused) -> ToolResult:
     return ToolResult(_REFUSAL_STATUS.get(exc.code, "invalid"), message=exc.message)
 
 
-def _as_user(db, ctx, name: str, fn) -> ToolResult:
+def _as_user(db, ctx, name: str, fn, *, cap: bool = True) -> ToolResult:
     if getattr(ctx, "principal", "user") == "contact" or not ctx.user_id:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
     try:
@@ -64,14 +64,27 @@ def _as_user(db, ctx, name: str, fn) -> ToolResult:
         return _refused(exc)
     except Exception as exc:  # noqa: BLE001
         return writes._route_failure(exc)
+    if not cap:
+        return ToolResult("ok", data=data)
+    shaped, more = cap_result(data)
+    return ToolResult("ok", data=shaped, more=more)
+
+
+def query_result(data: Any, *, panel: bool) -> ToolResult:
+    """A crm_query result: the code-rendered table from EVERY row the query returned (crew live round 6: the size
+    cap for the model cut 50 rows to 49 before the table was drawn, "Top 49 of 88"), else the result capped."""
+    if isinstance(data, dict):
+        card = as_card(data, panel=panel)
+        if card is not None:
+            return card
     shaped, more = cap_result(data)
     return ToolResult("ok", data=shaped, more=more)
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
-    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args))
-    if out.status == "ok" and isinstance(out.data, dict):
-        return as_card(out.data, panel=staff_principal.current() is not None) or out
+    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args), cap=False)
+    if out.status == "ok":
+        return query_result(out.data, panel=staff_principal.current() is not None)
     return out
 
 
@@ -356,6 +369,14 @@ def _year_as_range(text: str, entries: list[dict]) -> str:
     return text
 
 
+def _user_named(args: dict, user_text: str | None) -> bool:
+    said = " ".join(str(user_text or "").split()).lower()
+    if not said:
+        return False
+    values = [args.get("agent")] + [f.get("value") for f in args.get("filters") or [] if isinstance(f, dict)]
+    return any(isinstance(v, str) and v.strip() and " ".join(v.split()).lower() in said for v in values)
+
+
 def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple[dict, str | None]:
     """The asking user's own name is not an agent filter unless they said "my" (or named themselves): crew live
     round 4, "payout per dealer" was first filtered by the asker's own name and found nothing."""
@@ -364,9 +385,12 @@ def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple
     if not own or re.search(r"\b(my|me|mine|myself|saya)\b", said):
         return args, None
 
+    words = set(own.split())
+
     def is_self(value: Any) -> bool:
+        # The asker's name, or part of it, in any order ("Teh", "teh jayson"); never one naming someone else too.
         v = " ".join(str(value or "").split()).lower()
-        return bool(v) and (v == own or v == own.split()[0]) and v not in said
+        return bool(v) and set(v.split()) <= words and v not in said
 
     out, dropped = dict(args), []
     if is_self(out.get("agent")):
@@ -402,7 +426,7 @@ def _names_a_subject(entity_key: str, args: dict) -> bool:
     return False
 
 
-def shape_reply(text: str, ledger: dict | None) -> str:
+def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
@@ -420,7 +444,11 @@ def shape_reply(text: str, ledger: dict | None) -> str:
         args = e.get("args") or {}
         entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
         named = _names_a_subject(entity, args)
-        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total"):
+        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total") and (
+            _user_named(args, user_text)
+        ):
+            # Only a name the USER asked about: an empty call on a name the model made up (the asker's own, crew
+            # live round 6) never hides the table a later call returned.
             missed.add(entity)
         if entity in missed and not named:
             # A whole table nobody asked for, after the named record was not found, is not shown, nor its notes
