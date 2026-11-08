@@ -515,8 +515,9 @@ def _assert_nothing_resolved(app: NewProductApplication, verb: str) -> None:
 
 
 def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> Optional[str]:
-    """Submitted / Approved -> Draft with a reason. Returns "withdrawn" from Submitted so the
-    approvers hear the request is gone (#1698 D3-D5); from Approved nobody is told."""
+    """Submitted / Approved -> Draft with a reason. Returns "withdrawn": whoever held the stage it
+    voided hears the request is gone (approval or purchasing alike, NPA-FORM-SLA); with no stage
+    open nobody is told."""
     if not (is_owner(app, actor) or actor.can_approve):
         raise _forbidden("Only the applicant or an approver can revise this application.")
     if app.status not in LOCKED:
@@ -528,7 +529,6 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     reason = _clean(reason)
     if not reason:
         raise _invalid("reason", "Say what changed, and why.")
-    was = app.status
     app.status = DRAFT
     app.revise_reason = reason
     app.decided_at = None
@@ -544,7 +544,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
         line.cost_price = None
     _void_sla(db, app, f"Revised: {reason}")
     db.flush()
-    return "withdrawn" if was in AWAITING_REVIEW else None
+    return "withdrawn"
 
 
 def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> None:

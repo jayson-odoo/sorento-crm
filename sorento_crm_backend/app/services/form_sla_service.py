@@ -1489,7 +1489,7 @@ class FormSLAOrchestrator:
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
         _FE_RECORD_ROUTES = {
             "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
-            "product_drawing", "product_photo",
+            "product_drawing", "product_photo", "new_product_application",
         }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link

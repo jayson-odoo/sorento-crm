@@ -526,6 +526,7 @@ function StaffNewProductApplicationDetail({
               {canAnswer && r.status === 'approved' && (
                 <RejectOutlineButton
                   disabled={workBusy}
+                  title={lockedTitle}
                   onClick={() => setAsking({ kind: 'purchasingReject' })}
                 />
               )}

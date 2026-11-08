@@ -53,7 +53,7 @@ not resolve it, so a withdrawn NPA never counts as handled in the KPIs.
 |------------------------------|---------------------------------------|----------------------------------------------------------|
 | Submit / Resubmit            | every `.approve` holder               | approval stage's assignee (SLA assignment notice) + the SI's team notice to the `lead_time_enquiries` / `project_sales` team |
 | Approve                      | every `.open_code` holder             | purchasing stage's assignee + the SI's team notice to the `purchasing` team |
-| Revise / withdraw            | every `.approve` holder               | whoever held the voided stage (assignee, lock holder)    |
+| Revise (from Submitted or Approved) | every `.approve` holder (from Submitted only) | whoever held the voided stage (assignee, lock holder); nobody when no stage was open |
 | Reject, purchasing Reject    | applicant                             | applicant (unchanged)                                    |
 | Complete                     | applicant                             | applicant (unchanged)                                    |
 | Overdue                      | nothing                               | escalation to the next tier team, as the SI              |
@@ -79,10 +79,23 @@ itself stays off until an admin ticks New Product Application in System Settings
 
 ## NPAs already open
 
-No backfill (owner Q1 a): an NPA submitted or approved before this ships has no tracker; it finishes under
-today's rules (no tracker = `assert_can_act_on_form` allows; notices fall back to the broadcast for
-that move only if no stage starts). The first NPA move after ship that starts a stage (a resubmit,
-an approve of an already-submitted one) starts it normally.
+No backfill (owner Q1 a): an NPA submitted or approved before this ships has no tracker; it finishes
+under today's rules (no tracker = `assert_can_act_on_form` allows). Its moves still send the SI's
+team notice; no stage notice goes, as for any move with no stage row. The first NPA move after ship
+that starts a stage (a resubmit, an approve of an already-submitted one) starts it normally.
+
+## Accepted gaps (review, 8 Nov; follow-ups, not this lane)
+
+- Undo after Completed (undo the new code or a line, or clear the outcome) moves the NPA back to
+  Approved, but its purchasing stage stays resolved: nothing restarts it, so it no longer escalates.
+  The SI has no undo, so there is no SI behaviour to copy; trigger for a follow-up: an owner report
+  of an undone NPA left without a task.
+- Revise / Cancel void the open stage but do not void a pending take-over request on it (the SI's
+  revision does, after its commit; the price tag re-escalation has the same gap).
+- The shared SLA Tracking tab shows a voided stage as Pending with time remaining: the tracker
+  response carries no `voided_at`. Same on the SI today (shared component). The backend is right
+  (voided, not resolved, out of the KPIs); the tab needs `voided_at` in the response and a Voided
+  status, for every form type.
 
 ## Seed
 
@@ -102,6 +115,11 @@ resolves on completed / rejected, because a Save only response comes before the 
 
 - `FormSLAConfigDialog` type list + `FORM_SLA_EVENT_OPTIONS` / `FORM_SLA_TYPE_LABELS` gain
   `new_product_application`.
+- My Pending, the SLA KPI dashboard task list, the Form SLA Tracking list and the SLA WhatsApp
+  `form_url` (`form_sla_service.py` `_FE_RECORD_ROUTES`) route an NPA task to the NPA.
+- The SI team-notice email's seeded row (`eml_0002_seed_layouts`) reads its button label from
+  the notice, only while the row is still exactly as seeded (same data migration).
+- The shared SLA tab names the record by its type label ("new product application").
 - NPA detail: an SLA Tracking tab rendering the SI's `FormSLATrackingTab` (view-all holders only,
   the same slugs the BE admits), the SI's `HandlingLockBanner` + release menu item, and the
   approver / purchasing buttons disabled while another person holds an escalated stage. The page

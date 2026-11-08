@@ -13,11 +13,16 @@ A row is inserted only while no NPA row holds that team set, and only from an ex
 a database without the SI's rows (CI, a fresh tenant) gets nothing and a second run adds nothing.
 `grace_seconds` is not copied: the NPA has no deferred-action path (form_action_dispatch).
 
+Also: the seeded `stock_inquiry_created` email row's button label becomes the notice's own
+`button_label` (the NPA sends that notice too), only while the row is exactly as seeded.
+
 Plan: documentation/plans/procurement/PLAN-npa-form-sla-08nov.md.
 
 Revision ID: npasla_0001_seed_configs
 Revises: npasi_0001_lineage
 """
+import json
+
 from alembic import op
 from sqlalchemy import text
 
@@ -55,12 +60,42 @@ def _insert(stage_code: str, team_set: str, start: str, respond, resolve: str) -
 SEED = tuple(_insert(*stage) for stage in STAGES)
 
 
+def _team_notice_layout(button_label: str) -> str:
+    """The SI team notice's block document (eml_0002_seed_layouts), with its button label."""
+    return json.dumps(
+        {
+            "blocks": [
+                {"type": "brand_header"},
+                {"text": "{{ heading }}", "type": "heading"},
+                {"text": "{{ intro }}", "type": "intro"},
+                {"label": button_label, "type": "button", "url": "{{ view_url }}"},
+                {"note": "This is a system-generated email. Please do not reply.", "type": "footer"},
+            ],
+            "version": 1,
+        }
+    )
+
+
+#: The NPA sends the SI's team notice too (owner 8 Nov), so the seeded `stock_inquiry_created`
+#: row's fixed "Open stock inquiry" button reads its `button_label` (the SI still passes "Open
+#: stock inquiry"). Only a row still carrying the seeded document is changed: an admin's edit
+#: is theirs.
+SEEDED_LAYOUT = _team_notice_layout("Open stock inquiry")
+LABELLED_LAYOUT = _team_notice_layout("{{ button_label or 'Open stock inquiry' }}")
+TEMPLATE_UPDATE = (
+    "UPDATE email_templates SET layout_json = CAST(:new AS jsonb), updated_at = now() "
+    "WHERE code = 'stock_inquiry_created' AND layout_json = CAST(:old AS jsonb)"
+)
+
+
 def upgrade() -> None:
     for statement in SEED:
         op.execute(text(statement))
+    op.get_bind().execute(text(TEMPLATE_UPDATE), {"new": LABELLED_LAYOUT, "old": SEEDED_LAYOUT})
 
 
 def downgrade() -> None:
+    op.get_bind().execute(text(TEMPLATE_UPDATE), {"new": SEEDED_LAYOUT, "old": LABELLED_LAYOUT})
     # Only the rows this revision names; an admin's own NPA rows (other stage codes) stay.
     op.execute(
         text(

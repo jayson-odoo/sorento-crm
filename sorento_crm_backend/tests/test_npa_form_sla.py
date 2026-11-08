@@ -601,3 +601,121 @@ def test_the_handling_tracker_read_hides_another_companys_npa(world, sla):
         "/api/v1/sla-management/form-sla-tracking", params={"source_entity_type": KIND, "source_entity_id": aid}
     )
     assert res.status_code == 404, res.text
+
+
+# ------------------------------------------------------------------ every stage move is gated (review B1)
+
+#: (stage it runs in, method, path after the application id, body); a body may name the first line.
+_GATED_MOVES = [
+    ("approval", "post", "reject", {"reason": "No"}),
+    ("approval", "post", "approve", None),
+    ("purchasing", "post", "purchasing-reject", {"reason": "No"}),
+    ("purchasing", "put", "purchasing-response", {"purchasing_response": "Quoting"}),
+    ("purchasing", "post", "purchasing-response/reply", {"purchasing_response": "Quoting"}),
+    ("purchasing", "put", "feedback", {"lead_time": "4 weeks"}),
+    ("purchasing", "post", "new-code/link", {"product_id": "PRODUCT"}),
+    ("purchasing", "post", "new-code/close", {"reason": "Not opening"}),
+    ("purchasing", "post", "new-code/undo", None),
+    ("purchasing", "post", "lines/LINE/link", {"product_id": "PRODUCT"}),
+    ("purchasing", "post", "lines/LINE/close", {"reason": "Not opening"}),
+    ("purchasing", "post", "lines/LINE/undo", None),
+]
+
+
+@pytest.mark.parametrize(
+    "stage,method,path,body", _GATED_MOVES, ids=[f"{m} {p}" for _s, m, p, _b in _GATED_MOVES]
+)
+def test_every_approver_and_purchasing_move_is_gated_by_the_lock(world, sla, stage, method, path, body):
+    settings_row(world.db, handling_lock_enabled_types=KIND)
+    d = _submitted(world) if stage == "approval" else _approved(world)
+    _escalate(world, d["id"])
+    user = world.manager if stage == "approval" else world.buyer
+    path = path.replace("LINE", d["lines"][0]["id"])
+    if body and body.get("product_id") == "PRODUCT":
+        body = {"product_id": world.product.id}
+    call = getattr(world.api.as_(user), method)
+    res = call(f"{NPA}/{d['id']}/{path}", json=body) if body is not None else call(f"{NPA}/{d['id']}/{path}")
+    assert res.status_code == 403, (path, res.status_code, res.text)
+    assert "escalated" in res.text or "handled by" in res.text
+    assert _get(world, d["id"])["status"] == ("submitted" if stage == "approval" else "approved")
+
+
+def test_the_applicants_own_moves_are_not_stage_work(world, sla):
+    """Submit / revise / cancel are the applicant's, never blocked by a lock they cannot claim."""
+    settings_row(world.db, handling_lock_enabled_types=KIND)
+    d = _submitted(world)
+    _escalate(world, d["id"])
+    assert _act(world, d["id"], "revise", world.sales, reason="Wrong finish").status_code == 200
+
+
+# ------------------------------------------------------------------ review S2 and S4
+
+
+def test_the_assignment_whatsapp_link_opens_the_npa(world, sla, monkeypatch):
+    """`_FE_RECORD_ROUTES` (must match MyPendingSLAWidget.ENTITY_ROUTES): an NPA task opens the
+    NPA, never `/?ticket=<tracker id>`."""
+    from app.services.notification_service import NotificationService
+
+    seen = []
+    monkeypatch.setattr(
+        NotificationService, "create_with_channel_preferences", lambda self, **kw: seen.append(kw)
+    )
+    d = _submitted(world)
+    (assigned,) = [kw for kw in seen if kw.get("type") == "form_sla"]
+    form_url = assigned["data"]["whatsapp_context_vars"]["form_url"]
+    assert form_url.endswith(f"/procurement-management/new-product-applications/{d['id']}")
+    assert assigned["data"]["whatsapp_context_vars"]["entity_number"] == d["application_no"]
+
+
+def test_revising_an_approved_npa_tells_the_purchasing_assignee(world, sla):
+    d = _approved(world)
+    res = _act(world, d["id"], "revise", world.sales, reason="Customer changed the size")
+    assert res.status_code == 200, res.text
+    purchasing = [t for t in trackers(world.db, KIND, d["id"]) if t.team_set_code == sla.purchasing.team_set]
+    assert len(purchasing) == 1 and purchasing[0].voided_at is not None
+    assert _to(world, d["id"], "new_product_application_withdrawn") == {sla.purchasing.tier1}
+
+
+# ------------------------------------------------------------------ review S1: the seeded team-notice email row
+
+
+def _template_row(db, layout_json):
+    db.execute(
+        text(
+            "INSERT INTO email_templates (id, code, name, subject, body_html, is_active, layout_json, created_at, updated_at) "
+            "VALUES (gen_random_uuid(), 'stock_inquiry_created', 'Stock inquiry team notice', '{{ heading }}', '', true, "
+            "CAST(:l AS jsonb), now(), now())"
+        ),
+        {"l": layout_json},
+    )
+    db.commit()
+
+
+def test_the_seeded_team_notice_row_names_the_npa_button(world):
+    from app.services.email_template_service import EmailTemplateService
+
+    module = _load_migration()
+    db = world.db
+    db.execute(text("DELETE FROM email_templates WHERE code = 'stock_inquiry_created'"))
+    _template_row(db, module.SEEDED_LAYOUT)
+    db.execute(text(module.TEMPLATE_UPDATE), {"new": module.LABELLED_LAYOUT, "old": module.SEEDED_LAYOUT})
+    db.commit()
+    ctx = {"heading": "H", "intro": "I", "view_url": "https://crm.example.com/x"}
+    npa = EmailTemplateService(db).render_code("stock_inquiry_created", {**ctx, "button_label": "Open new product application"})
+    si = EmailTemplateService(db).render_code("stock_inquiry_created", {**ctx, "button_label": "Open stock inquiry"})
+    assert "Open new product application" in npa["body_html"]
+    assert "Open stock inquiry" in si["body_html"]
+
+
+def test_an_admin_edited_team_notice_row_is_left_alone(world):
+    module = _load_migration()
+    db = world.db
+    db.execute(text("DELETE FROM email_templates WHERE code = 'stock_inquiry_created'"))
+    edited = module._team_notice_layout("See the request")
+    _template_row(db, edited)
+    db.execute(text(module.TEMPLATE_UPDATE), {"new": module.LABELLED_LAYOUT, "old": module.SEEDED_LAYOUT})
+    db.commit()
+    layout = db.execute(
+        text("SELECT layout_json FROM email_templates WHERE code = 'stock_inquiry_created'")
+    ).scalar()
+    assert layout["blocks"][3]["label"] == "See the request"
