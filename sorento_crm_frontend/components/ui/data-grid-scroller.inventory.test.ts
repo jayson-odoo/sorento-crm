@@ -152,6 +152,12 @@ describe('The grid is the only horizontal scrollport (S1-05)', () => {
  */
 const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   [
+    'app/(protected)/master-data-management/products/components/ListPriceHistoryDialog.tsx',
+    // LIST-PRICE-CHANGE-UI: the List Price cell's history lightbox, a server-paged DataGrid
+    // inside its own DialogBody (overflow-y-auto).
+    1,
+  ],
+  [
     'app/(protected)/complaint-management/_shared/LinkedComplaintsPanel.tsx',
     1, // the original site this rule copies - its own maxHeightClassName ScrollArea
   ],

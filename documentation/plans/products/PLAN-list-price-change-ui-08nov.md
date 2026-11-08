@@ -1,6 +1,6 @@
 # PLAN - Products list: list price changed-between filter, changed-at column, change-history lightbox
 
-Status: Plan (behaviour card posted as crew-ask; Track: small-fix candidate, decided once the diff is sized). Plan created 2026-11-08.
+Status: Build done, in review on PR #2260 (Track: full - carries a data migration). Plan created 2026-11-08.
 
 crew-lane: LIST-PRICE-CHANGE-UI. Base: main cffaece6 (#2228 list-price change notifications).
 
@@ -29,10 +29,36 @@ crew-lane: LIST-PRICE-CHANGE-UI. Base: main cffaece6 (#2228 list-price change no
   (`app/api/v1/audit/audit_logs.py:31`).
 - Lightbox: `components/ui/dialog.tsx` (every Dialog is a modal lightbox, `dialog.lightbox.test.tsx`).
 
-## Design (draft, pending the behaviour card answers)
+## Owner rulings (8 Nov ~21:20, answers to the behaviour card on #2260)
 
-- Column + sort + filter: `list_price_changed_at` = `products.list_price_notified_at`, exactly the discontinued seam.
-- Icon in the List Price cell when `list_price_changed_at` is set; opens a `Dialog` listing the product's list-price
-  audit rows newest first: date (dd/mm/yyyy), old -> new, % change, by (AutoCount sync / staff name / blank).
-- One read endpoint `GET /api/v1/master-data/products/{id}/list-price-history`, products view permission, product
-  loaded through the company-scoped ORM.
+- Q1 (a): backfill `list_price_notified_at` from the latest audited list-price change, only where NULL and not pending.
+- Q2 (a): the history icon shows only when "List price changed at" is set.
+- Q3: the lightbox is the STANDARD DataGrid list view with server-side pagination and sortable columns, dd/mm/yyyy.
+- Q4 (a): export column "List price changed at" (catalog seed row, like discontinued).
+- Q5: include the create-time price as an "Initial price" row (crew confirming the reading; one switch,
+  `INCLUDE_INITIAL_PRICE` in `app/services/product_list_price_history_service.py`).
+
+## Design (as built)
+
+- Column + sort + filter: `ProductResponse.list_price_changed_at` = `products.list_price_notified_at`; `sort_map`
+  key `list_price_changed_at`; `list_price_changed_from/_to` on GET products, `ListSearchRequest` and
+  `ListExportRequest`, through one `malaysia_day_range_filters` helper (`product_service.py`) that the
+  discontinued range now uses too.
+- History: `GET /api/v1/master-data/products/{id}/list-price-history?page&limit&sort&dir`, product loaded through the
+  company-scoped ORM first (404 otherwise, the `/purchase-history` gate). One SQL over `audit_logs` (UPDATE rows
+  carrying `list_price`, numeric no-ops skipped, plus the CREATE row as `kind: initial`), "by" from the #2228 rule
+  (`SYNC_SOURCE_LABEL` for an integration, the staff name for a user, nothing otherwise), every column sorted on the
+  server, nulls last, ties newest first. Shape `{data, pagination}`.
+- Migration `lpcui_0001_list_price_changed`: `backfill_changed_at()` + `seed()` (export-only catalog row, Malaysia
+  date on export); `scripts/bootstrap_env.py` replays `seed()`.
+- FE: "List price changed at" column right after List Price; "List price changed between" `DateRangePicker` with
+  its own chip beside the discontinued one (`activeSummary` array); history icon (lucide `History`, `Button`
+  icon mode) in the List Price cell; `ListPriceHistoryDialog` = `Dialog` + `DataGrid`/`DataGridTable`/
+  `DataGridPagination` with manual paging and sorting. The dead `getPriceHistory`/`useProductPriceHistory`
+  stubs (they called a `/price-history` route that never existed) now carry this endpoint; no parallel service.
+
+## Tests
+
+- `sorento_crm_backend/tests/test_product_list_price_change_ui.py`
+- `sorento_crm_frontend/app/(protected)/master-data-management/products/components/ProductsList.listPriceChange.test.tsx`
+- `sorento_crm_frontend/app/(protected)/master-data-management/products/components/ListPriceHistoryDialog.test.tsx`
