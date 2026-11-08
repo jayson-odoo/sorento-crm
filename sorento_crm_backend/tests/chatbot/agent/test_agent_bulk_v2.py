@@ -932,9 +932,11 @@ def test_14_the_closing_line_follows_what_is_ready_waiting_or_skipped():
         f"\n\n{pick} Or reply yes to confirm the ready rows now."
     )
     assert batch.preview_block([_item(1)], [_skip(2)], []).endswith("\n\nReply yes to go ahead, or tell me what to change.")
-    assert batch.preview_block([], [_skip(1)], []).endswith(
+    assert batch.preview_block([], [_skip(1), _skip(2)], []).endswith(
         "\n\nNothing can change yet; fix the rows above and send the table again."
     )
+    # One row is no table (AGENT-BATCH-NOTCHANGED): its closing line does not ask for the table again.
+    assert batch.preview_block([], [_skip(1)], []).endswith("\n\nNothing can change yet; fix what is above and ask again.")
 
 
 def _table_headers(block: str) -> list[list[str]]:
