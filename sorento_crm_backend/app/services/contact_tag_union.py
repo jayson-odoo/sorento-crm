@@ -48,18 +48,34 @@ def _split(sk: str) -> tuple[str, str]:
 # ------------------------------------------------------------------ seeding (old rule)
 
 
+def seed_each(db: Session, contacts: Iterable) -> set[str]:
+    """`ensure_seeded` one contact at a time, each in its own savepoint; the ids that failed."""
+    failed: set[str] = set()
+    for c in contacts:
+        if c.tag_settings_snapshot is not None:
+            continue
+        sp = db.begin_nested()
+        try:
+            ensure_seeded(db, [c])
+            sp.commit()
+        except Exception as exc:  # noqa: BLE001 - that contact's row reports the failure
+            sp.rollback()
+            failed.add(str(c.id))
+            logger.warning("seeding the tag snapshot of contact %s failed: %s", c.id, exc, exc_info=True)
+    return failed
+
+
 def ensure_seeded(db: Session, contacts: Iterable) -> None:
     """Give every contact whose snapshot is NULL the snapshot the OLD rule (intersect / AND, inactive
     tags counted) would have written, so a value that differs from it is kept as an own change (owner
-    Q3). For the pivot lists, `base` = what the contact holds outside that value. Old-rule conflicts
-    get no entry: the union decides them."""
+    Q3) and "Apply settings" can reset it. The pivot lists get an empty `base` (what the contact holds
+    outside the old value is an own change, not something underneath the tags). Old-rule conflicts get
+    no entry: the union decides them."""
     todo = [c for c in contacts if c.tag_settings_snapshot is None]
     if not todo:
         return
     ids = [str(c.id) for c in todo]
     tag_map = cts.tags_by_contact_with_settings(db, ids, include_inactive=True)
-    reader = cts._Reader(db, todo)
-    cat = cts.Catalog(db)
     for c in todo:
         cid = str(c.id)
         groups: dict[tuple[str, str], list] = {}
@@ -82,8 +98,7 @@ def ensure_seeded(db: Session, contacts: Iterable) -> None:
                 continue
             entry: dict[str, Any] = {"v": cts.to_json(expected)}
             if section in cts.PIVOT_SECTIONS and isinstance(expected, frozenset):
-                current = reader.current(cid, section, key, cat)
-                entry["base"] = cts.to_json(current - expected)
+                entry["base"] = cts.to_json(frozenset())
             snapshot[cts.snap_key(section, key)] = entry
         c.tag_settings_snapshot = snapshot
     db.flush()

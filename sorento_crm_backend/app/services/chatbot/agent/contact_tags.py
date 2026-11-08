@@ -23,7 +23,6 @@ EVENT = "contact.tags_agent"
 MAX_TAGS = 10
 MAX_CHOICES = 10
 NOT_APPLIED = "not applied (needs more access)"
-SETTINGS_FAILED = "settings not saved; apply them from the tag screen"
 
 
 def _fold(text: Any) -> str:
@@ -216,15 +215,13 @@ def _execute(db, user: dict, args: dict) -> dict:
 
     p = plan(db, user, args)
     cid = p["contact_id"]
-    result = ContactTagService(db).bulk_tag(
+    # TAG-UNION: the membership and the settings it grants are written together or not at all (a failed
+    # settings write raises and fails this row), so the preview's lines are what happened.
+    ContactTagService(db).bulk_tag(
         [cid], list(p["add"]), list(p["remove"]), False, str(user["id"]),
         apply_settings=bool(p["add"]), gates=_gates(db, user),
-    )["results"][0]
+    )
     lines = p["lines"]
-    if (result.get("settings") or {}).get("status") == "failed":
-        # The screen's service keeps the membership when a settings write fails (that contact's savepoint only):
-        # say so rather than report settings that were not saved.
-        lines = [line for line in lines if not line.startswith("settings: ")] + [SETTINGS_FAILED]
     # After the write (the screen's service commits the membership with its own "Tag added / removed" rows, and
     # audit rows are append-only), so this row says what really happened.
     audit_service.record(

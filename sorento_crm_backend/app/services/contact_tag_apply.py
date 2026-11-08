@@ -389,7 +389,7 @@ def apply_settings(
     found = {str(c.id): c for c in db.query(RespondContact).filter(RespondContact.id.in_(ids)).all()}
     # TAG-UNION: "Apply settings" resets the contact to its tags (drops own changes); the snapshot must
     # exist first so the written value is recorded as the tags' value.
-    contact_tag_union.ensure_seeded(db, list(found.values()))
+    unseeded = contact_tag_union.seed_each(db, list(found.values()))
     # The same redaction as the tag-settings read: a section the actor cannot read keeps its generic label
     # and no values or names (conflict tags included).
     redact = cts.unreadable_sections(can, is_superadmin)
@@ -402,6 +402,9 @@ def apply_settings(
             results.append(_row(cid, None, "failed", error="Contact not found"))
             continue
         label = contact_label(contact)
+        if cid in unseeded:
+            results.append(_row(cid, label, "failed", error=SAVE_FAILED))
+            continue
         items = evaluated[cid]["items"]
         if not items:
             results.append(_row(cid, label, "skipped"))
