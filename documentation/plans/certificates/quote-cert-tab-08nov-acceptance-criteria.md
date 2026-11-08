@@ -38,6 +38,9 @@ within [0, 1], w > 0, h > 0, x + w <= 1, y + h <= 1 (422 `certificate_box_invali
   (from `page.get_drawings()`, thin lines or rect edges), x span = outermost vertical rules of the
   table; no rules = the hit line widened by 2 pt. Every hit on every page is returned.
 - `has_text` false when the whole document yields no text characters (scan); then `boxes` is [].
+- Symbol-font decode (crew prod run, 8 Nov): before has_text, matching and suggestion, every character
+  in U+F020..U+F0FF is shifted back by 0xF000 (28 of 40 text SPAN files and all text WELPS/WEPLS
+  files store their text that way).
 - Unreadable / encrypted PDF: `has_text` false, no exception.
 - `suggest_code(pdf_bytes, product_code) -> str|None`: the printed code for a product (CERT-14):
   among word runs of 1 to 3 consecutive words whose normalised text has length >= 4, contains a
