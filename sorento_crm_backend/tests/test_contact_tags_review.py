@@ -259,7 +259,8 @@ def test_f6_agent_fields_are_validated_against_the_gated_field_owner(client, db,
 # ---------------------------------------------------------------- R1
 
 
-def test_r1_empty_brand_intersection_is_a_conflict_never_written(client, db, all_perms):
+def test_r1_disjoint_brands_add_up_and_match_a_contact_holding_both(client, db, all_perms):
+    # TAG-UNION (owner 8 Nov): no empty intersection any more; the brands add up.
     b1, b2 = _brand(db), _brand(db)
     t1 = _stag(client, db, {"brands": [b1.id]}, "ZZT-b1")
     t2 = _stag(client, db, {"brands": [b2.id]}, "ZZT-b2")
@@ -267,9 +268,9 @@ def test_r1_empty_brand_intersection_is_a_conflict_never_written(client, db, all
     contact.brand_ids = [b1.id, b2.id]
     db.flush()
     item = _item(_read(client, contact), "brands")
-    assert item["conflict"] is True and item["differs"] is True
+    assert item["conflict"] is False and item["differs"] is False
     row = _rows(_apply(client, [contact.id], dry_run=False))["results"][0]
-    assert any("rand" in c["label"] for c in row["conflicts"]), row["conflicts"]
+    assert row["conflicts"] == [] and row["status"] == "unchanged"
     assert sorted(_fresh(db, contact.id).brand_ids) == sorted([b1.id, b2.id])
 
 

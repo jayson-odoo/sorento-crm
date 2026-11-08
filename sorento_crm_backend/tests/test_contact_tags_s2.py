@@ -76,12 +76,24 @@ def _stag(client, db, settings: dict, name: str | None = None) -> dict:
     return _settings(db, _tag(client, name), settings)
 
 
+def _link(db, contact, tags) -> None:
+    """Membership written straight to the pivot, as the contacts on prod hold it before TAG-UNION:
+    no live recompute ran, so current and expected can differ. These suites test the merge (`evaluate`)
+    and "Apply settings"; the live recompute has its own suite (`test_contact_tags_union.py`)."""
+    for t in tags:
+        db.execute(
+            text("INSERT INTO respond_contact_tags (contact_id, tag_id) VALUES (:c, :t) ON CONFLICT DO NOTHING"),
+            {"c": str(contact.id), "t": t["id"]},
+        )
+    db.flush()
+
+
 def _holder(client, db, tags, **cols):
     c = _contact(db)
     for k, v in cols.items():
         setattr(c, k, v)
     db.flush()
-    _set_tags(client, c, tags)
+    _link(db, c, tags)
     return c
 
 
@@ -220,14 +232,15 @@ def test_t3_5_renaming_a_tag_whose_stored_settings_hold_agents_needs_no_agent_sl
 # ---------------------------------------------------------------- merge (expected value)
 
 
-def test_t3_4_bool_restrictive_off_wins_and_names_the_deciding_tag(client, db):
+def test_t3_4_bool_on_wins_and_names_the_deciding_tag(client, db):
+    # TAG-UNION: any tag on = on.
     on = _stag(client, db, {"portal_forms": {"purchase_request": True}}, "ZZT-on")
     off = _stag(client, db, {"portal_forms": {"purchase_request": False}}, "ZZT-off")
     other = _stag(client, db, {"chatbot": {"chatbot_stock_allowed": True}}, "ZZT-other")
     contact = _holder(client, db, [on, off, other])
     item = _item(_read(client, contact), "portal_forms", "purchase_request")
-    assert item["expected"] is False
-    assert item["decided_by"] == ["ZZT-off"]
+    assert item["expected"] is True
+    assert item["decided_by"] == ["ZZT-on"]
     assert item["conflict"] is False
 
 
@@ -238,14 +251,14 @@ def test_t3_4_eta_buffer_on_wins(client, db):
     assert item["expected"] is True
 
 
-def test_t3_4_no_order_values_conflict_naming_both_tags(client, db):
+def test_t3_4_preference_switches_add_up_too(client, db):
+    # TAG-UNION (owner Q2): every switch adds up, so these no longer conflict.
     a = _stag(client, db, {"chatbot": {"chatbot_skip_period_questions": True}}, "ZZT-a")
     b = _stag(client, db, {"chatbot": {"chatbot_skip_period_questions": False}}, "ZZT-b")
     body = _read(client, _holder(client, db, [a, b]))
     item = _item(body, "chatbot", "chatbot_skip_period_questions")
-    assert item["conflict"] is True and item["differs"] is True
-    assert sorted(t["name"] for t in item["conflict_tags"]) == ["ZZT-a", "ZZT-b"]
-    assert body["status"] == "differs"
+    assert item["conflict"] is False and item["expected"] is True
+    assert item["decided_by"] == ["ZZT-a"]
 
 
 def test_t3_4_tier_office_loses_dealer_vs_end_user_conflicts(client, db):
@@ -258,27 +271,31 @@ def test_t3_4_tier_office_loses_dealer_vs_end_user_conflicts(client, db):
     assert item["conflict"] is True
 
 
-def test_t3_4_memory_level_lowest_wins(client, db):
+def test_t3_4_memory_level_highest_wins(client, db):
+    # TAG-UNION (owner 8 Nov): tags add up, so the highest memory level wins.
     a = _stag(client, db, {"chatbot": {"memory_level": "full"}})
     b = _stag(client, db, {"chatbot": {"memory_level": "conversation"}})
     item = _item(_read(client, _holder(client, db, [a, b])), "chatbot", "memory_level")
-    assert "conversation" in str(item["expected"]).lower()
+    assert "full" in str(item["expected"]).lower()
 
 
-def test_t3_4_sets_intersect_and_all_brands_is_neutral(client, db):
+def test_t3_4_sets_union_and_all_brands_gives_all(client, db):
+    # TAG-UNION: lists add up; any tag "All brands" gives every brand.
     dealer, mocha = _atype(db, "d"), _atype(db, "m")
     brand = _brand(db)
-    a = _stag(client, db, {"access_types": [dealer.code, mocha.code], "brands": "all"})
+    a = _stag(client, db, {"access_types": [mocha.code], "brands": "all"})
     b = _stag(client, db, {"access_types": [dealer.code], "brands": [brand.id]})
     body = _read(client, _holder(client, db, [a, b]))
-    assert _is(_item(body, "access_types")["expected"], [dealer.code], [dealer.name])
-    assert _is(_item(body, "brands")["expected"], [brand.id], [brand.brand_name])
+    assert _is(_item(body, "access_types")["expected"], [dealer.code, mocha.code], [dealer.name, mocha.name])
+    assert _item(body, "brands")["expected"] == "All"
 
 
-def test_t3_4_disjoint_regions_conflict(client, db):
+def test_t3_4_disjoint_regions_add_up(client, db):
     a = _stag(client, db, {"regions": ["west"]})
     b = _stag(client, db, {"regions": ["east"]})
-    assert _item(_read(client, _holder(client, db, [a, b])), "regions")["conflict"] is True
+    item = _item(_read(client, _holder(client, db, [a, b])), "regions")
+    assert item["conflict"] is False
+    assert _is(item["expected"], ["West Malaysia", "East Malaysia"])
 
 
 def test_t3_4_stock_visibility_merge(client, db, perms):
@@ -289,27 +306,33 @@ def test_t3_4_stock_visibility_merge(client, db, perms):
     b = _stag(client, db, {"stock_visibility": {"mode": "availability", "warehouse_ids": [w2.id, w3.id],
                                                 "excluded_warehouse_ids": None, "hide_zero_locations": True}})
     body = _read(client, _holder(client, db, [a, b]))
-    assert _is(_item(body, "stock_visibility", "mode")["expected"], "availability")
-    assert _is(_item(body, "stock_visibility", "warehouse_ids")["expected"], [w2.id], [w2.warehouse_name])
-    assert _item(body, "stock_visibility", "hide_zero_locations")["expected"] is True
+    # TAG-UNION: loosest mode, locations shown add up, "hide empty" only when every tag hides.
+    assert _is(_item(body, "stock_visibility", "mode")["expected"], "compact")
+    assert _is(
+        _item(body, "stock_visibility", "warehouse_ids")["expected"],
+        [w1.id, w2.id, w3.id],
+        [w1.warehouse_name, w2.warehouse_name, w3.warehouse_name],
+    )
+    assert _item(body, "stock_visibility", "hide_zero_locations")["expected"] is False
 
     c = _stag(client, db, {"stock_visibility": {"mode": "availability", "warehouse_ids": None,
                                                 "excluded_warehouse_ids": [w4.id], "hide_zero_locations": False}})
     d = _stag(client, db, {"stock_visibility": {"mode": "compact", "warehouse_ids": None,
-                                                "excluded_warehouse_ids": [w5.id], "hide_zero_locations": False}})
+                                                "excluded_warehouse_ids": [w4.id, w5.id], "hide_zero_locations": False}})
     body = _read(client, _holder(client, db, [c, d]))
+    # Excluded only when every tag excludes it.
     assert _is(
         _item(body, "stock_visibility", "excluded_warehouse_ids")["expected"],
-        [w4.id, w5.id],
-        [w4.warehouse_name, w5.warehouse_name],
+        [w4.id],
+        [w4.warehouse_name],
     )
 
 
-def test_t3_4_media_monthly_limit_lowest_wins(client, db):
+def test_t3_4_media_monthly_limit_highest_wins(client, db):
     a = _stag(client, db, {"media": {"image": {"is_allowed": True, "monthly_limit": 10}}})
     b = _stag(client, db, {"media": {"image": {"is_allowed": True, "monthly_limit": 30}}})
     item = _item(_read(client, _holder(client, db, [a, b])), "media", "image", "monthly_limit")
-    assert item["expected"] == 10
+    assert item["expected"] == 30
 
 
 # ---------------------------------------------------------------- current value readers
