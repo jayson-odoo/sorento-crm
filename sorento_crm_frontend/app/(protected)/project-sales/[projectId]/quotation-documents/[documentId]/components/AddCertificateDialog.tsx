@@ -5,11 +5,12 @@ import * as React from 'react';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Label } from '@/components/ui/label';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useCertificates } from '@/app/(protected)/master-data-management/certificates/hooks/useCertificates';
 
 import { useQuotationCertificateMutations } from '../../../../_shared/hooks/useQuotationCertificates';
 
-const PARAMS = { pageIndex: 0, pageSize: 200, sorting: [], searchQuery: '', status: 'active' };
+const PAGE_SIZE = 50;
 
 /** Add certificate: one pick from the certificate register. */
 export function AddCertificateDialog({
@@ -27,7 +28,15 @@ export function AddCertificateDialog({
   listed: Set<string>;
 }) {
   const [picked, setPicked] = React.useState('');
-  const register = useCertificates(PARAMS);
+  // The register is searched on the server as the user types, so no certificate is out of reach.
+  const search = useDebouncedSearch();
+  const register = useCertificates({
+    pageIndex: 0,
+    pageSize: PAGE_SIZE,
+    sorting: [],
+    searchQuery: search.debouncedValue,
+    status: 'active',
+  });
   const { add } = useQuotationCertificateMutations(projectId, documentId);
   const id = React.useId();
 
@@ -71,6 +80,7 @@ export function AddCertificateDialog({
           value={picked}
           onChange={setPicked}
           options={options}
+          onSearchChange={search.setValue}
           placeholder="Pick a certificate"
           clearable
         />

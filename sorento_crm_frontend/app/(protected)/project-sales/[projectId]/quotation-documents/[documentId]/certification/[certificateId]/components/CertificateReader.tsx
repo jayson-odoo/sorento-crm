@@ -17,6 +17,8 @@ import { BoxOverlay } from '@/components/common/pdf-viewer/BoxOverlay';
 import type { PageBox } from '@/components/common/pdf-viewer/box-geometry';
 import { CoverageCodeEditor } from '@/app/(protected)/master-data-management/certificates/components/CoverageCodeEditor';
 
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { VALIDITY } from '../../../../../../_shared/lib/quotationCertificateDisplay';
 import { projectCrumbs } from '../../../../../../_shared/lib/crumbs';
 import {
   quotationCertificateKey,
@@ -261,15 +263,14 @@ export function CertificateReader({
         <aside className="flex min-w-0 flex-col gap-4 rounded-md border border-border p-3" aria-label="Products">
           <div className="flex flex-wrap items-center gap-1.5">
             {detail.certifying_body && <Badge variant="secondary" appearance="light" size="sm">{detail.certifying_body}</Badge>}
-            {detail.valid_until && (
-              <Badge
-                variant={detail.validity_state === 'expired' ? 'destructive' : 'success'}
-                appearance="light"
-                size="sm"
-              >
-                {detail.validity_state === 'expired' ? 'Expired' : 'Valid'} {detail.valid_until}
-              </Badge>
-            )}
+            <Badge
+              variant={VALIDITY[detail.validity_state].variant}
+              appearance="light"
+              size="sm"
+            >
+              {VALIDITY[detail.validity_state].label}
+              {detail.valid_until ? ` ${formatDateInMalaysia(detail.valid_until)}` : ''}
+            </Badge>
             {!detail.has_text && detail.has_file && (
               <Badge variant="secondary" appearance="light" size="sm">No text, draw the box</Badge>
             )}

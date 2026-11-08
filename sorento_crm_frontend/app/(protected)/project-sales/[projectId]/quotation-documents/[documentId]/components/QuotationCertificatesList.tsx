@@ -23,20 +23,13 @@ import {
 import {
   fetchQuotationCertificateFile,
   type CertificateRow,
-  type CertificateValidity,
   type MarkedState,
 } from '../../../../_shared/services/quotationCertificateService';
+import { VALIDITY } from '../../../../_shared/lib/quotationCertificateDisplay';
 import { AddCertificateDialog } from './AddCertificateDialog';
 
 const certificateHref = (projectId: string, documentId: string, certificateId: string) =>
   `/project-sales/${projectId}/quotation-documents/${documentId}/certification/${certificateId}`;
-
-const VALIDITY: Record<CertificateValidity, { label: string; variant: 'success' | 'warning' | 'destructive' | 'secondary' }> = {
-  valid: { label: 'Valid', variant: 'success' },
-  expiring: { label: 'Expiring', variant: 'warning' },
-  expired: { label: 'Expired', variant: 'destructive' },
-  unknown: { label: 'Unknown', variant: 'secondary' },
-};
 
 const MARKED_WORDS: Record<MarkedState, string> = {
   found: 'found',
@@ -147,9 +140,9 @@ export function QuotationCertificatesList({
   const onRemove = React.useCallback(
     (row: CertificateRow) =>
       run({
-        id: documentId,
+        // One countdown per certificate, so two removes on a quote coexist.
+        id: `${documentId}:${row.certificate_id}`,
         subject: `${row.scheme} ${row.certificate_number}`,
-        payload: { certificate_id: row.certificate_id },
       }),
     [run, documentId],
   );

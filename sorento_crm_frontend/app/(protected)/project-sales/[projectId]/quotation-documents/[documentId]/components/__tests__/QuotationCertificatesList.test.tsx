@@ -216,8 +216,8 @@ describe('QuotationCertificatesList', () => {
       expect.objectContaining({
         actionKey: 'quotation_certificate.remove',
         entityType: 'quotation_certificate',
-        entityId: 'd1',
-        payload: expect.objectContaining({ certificate_id: 'cert-1' }),
+        // One countdown per certificate: `<document id>:<certificate id>`.
+        entityId: 'd1:cert-1',
       }),
     );
     expect(confirm).not.toHaveBeenCalled();
