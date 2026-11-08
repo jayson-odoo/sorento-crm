@@ -417,6 +417,9 @@ class ProductResponse(ProductBase):
     # When the discontinue-notify scheduler last noticed this product (issue #1287).
     # Null while available or before the first tick after discontinuing.
     discontinued_at: Optional[datetime] = Field(default=None, validation_alias="discontinued_notified_at")
+    # When the list-price checker last reported a list price change (#2228's watermark,
+    # LIST-PRICE-CHANGE-UI). Null while the price has never changed since it was baselined.
+    list_price_changed_at: Optional[datetime] = Field(default=None, validation_alias="list_price_notified_at")
     # --- Variant graph (see PLAN-suggest-on-miss-variant-graph.md §1) ---
     # `is_variant` is derived from the (always-loaded) `variant_of_id` column, so
     # it is cheap on LIST rows too (no extra query). `variant_of` / `variants`
