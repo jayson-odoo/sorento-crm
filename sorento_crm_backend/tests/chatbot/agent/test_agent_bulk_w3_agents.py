@@ -573,3 +573,54 @@ def test_09_the_write_module_never_imports_an_autocount_writer():
     names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     names += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert names and not [m for m in names if "autocount" in m.lower()]
+
+
+# ------------------------------------------------------------------ fix round 2 (crew live x3, 8 Nov)
+
+
+def test_r2_a_partial_answer_keeps_the_other_rows_waiting_on_an_agent_and_on_a_customer(db):
+    """Crew live: replying for row 3 only dropped row 4 (waiting on a person name) to Not changed, because the row's
+    own written value, re-sent unchanged, was checked as a pick. A re-sent written value is not a pick."""
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    tiers(db, None, person)
+    names = f"ZZT Yee {uuid.uuid4().hex[:4]}"
+    pick = customer_(db, w.srt, f"{names} One")
+    customer_(db, w.srt, f"{names} Two")
+    other = f"ZZT Heng {uuid.uuid4().hex[:4]}"
+    customer_(db, w.srt, f"{other} One")
+    customer_(db, w.srt, f"{other} Two")
+    cust = customer_(db, w.srt, "ZZT Mike Waiting")
+    table = [
+        {**row_(name=names, agent=new.sales_agent), "row": 3},
+        {**row_(customer=cust.customer_code, agent=person), "row": 4},
+        {**row_(name=other, agent=new.sales_agent), "row": 5},
+        {**row_(customer="ZZTNOPE999", agent=new.sales_agent), "row": 6},
+    ]
+    _, skipped, waiting = propose_rows(db, w, table)
+    assert {x["row"] for x in waiting} == {3, 4, 5} and reason_of(skipped, 6)
+
+    again = [{**table[0], "customer_code": pick.customer_code}, *table[1:]]
+    steps, skipped, waiting = propose_rows(
+        db, w, again, previous_waiting=waiting, user_text=f"row 3: {pick.customer_code}"
+    )
+    assert [s["row"] for s in steps] == [3]
+    assert {x["row"] for x in waiting} == {4, 5}, skipped
+    assert {x["noun"] for x in waiting if x["row"] == 4} == {"agent"}
+    assert {x["noun"] for x in waiting if x["row"] == 5} == {"customer"}
+    assert [s["row"] for s in skipped] == [6]
+    assert reason_of(skipped, 6).startswith('No customer with the code "ZZTNOPE999"')
+
+
+def test_r2_a_written_value_changed_to_something_unlisted_is_still_refused(db):
+    w = world(db)
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    tiers(db, None, person)
+    stranger = agent_(db, w.srt, "Q")
+    cust = customer_(db, w.srt, "ZZT November Waiting")
+    first = {**row_(customer=cust.customer_code, agent=person), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    wrong = {**first, "agent": stranger.sales_agent}
+    steps, skipped, _ = propose_rows(db, w, [wrong], previous_waiting=waiting, user_text="row 1: the first one")
+    assert steps == [] and "pick from the list" in reason_of(skipped, 1)
