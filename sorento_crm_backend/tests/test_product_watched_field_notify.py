@@ -507,3 +507,67 @@ def test_source_through_the_real_audit_listener(db):
 
     _lp_run(db)
     assert _line_for(db, "REAL") == "- REAL Name REAL: RM 100.00 -> RM 125.00 (+25.0%), by real.staff"
+
+
+# --------------------------------------------------------------------------- WhatsApp parity
+# Owner (8 Nov, #2228): list price must reach users through exactly the channels the
+# discontinued notice uses, WhatsApp included. Both specs go through the one runner, so a
+# WhatsApp-only subscriber with a reachable contact gets a whatsapp delivery for either.
+
+
+def _wa_only_user(db, monkeypatch, *, disc=False, lp=False):
+    import app.services.respond_link_service as rls
+
+    monkeypatch.setattr(rls, "resolve_user_respond_io_id", lambda _db, _u: "respond-contact-1")
+    u = User(
+        id=str(uuid.uuid4()),
+        email="wa@x.com",
+        name="wa",
+        status="ACTIVE",
+        notify_whatsapp_on_product_discontinued=disc,
+        notify_whatsapp_on_product_list_price=lp,
+    )
+    db.add(u)
+    db.add(UserProductDiscontinuedScope(id=str(uuid.uuid4()), user_id=u.id))
+    return u
+
+
+def _channels(db, note):
+    from app.models.notification import NotificationDelivery
+
+    return {
+        d.channel
+        for d in db.query(NotificationDelivery).filter(NotificationDelivery.notification_id == note.id)
+    }
+
+
+@pytest.mark.parametrize("field", ["discontinued", "list_price"])
+def test_whatsapp_only_subscriber_gets_a_whatsapp_delivery_for_both_fields(db, monkeypatch, field):
+    if field == "discontinued":
+        _product(db, code="W1", discontinued=True)
+        _wa_only_user(db, monkeypatch, disc=True)
+    else:
+        _product(db, code="W1", price="110.00", notified="100.00")
+        _wa_only_user(db, monkeypatch, lp=True)
+    db.commit()
+
+    if field == "discontinued":
+        disc_svc.run_product_discontinued_check(db)
+    else:
+        _lp_run(db)
+
+    note = db.query(Notification).one()
+    assert "whatsapp" in _channels(db, note)
+    expected_case = "product_discontinued" if field == "discontinued" else "product_list_price_changed"
+    assert note.data["whatsapp_use_case"] == expected_case
+    # WhatsApp-only: the email toggle is off, so no email delivery.
+    assert "email" not in _channels(db, note)
+
+
+def test_list_price_whatsapp_toggle_does_not_follow_the_discontinued_one(db, monkeypatch):
+    """Per-field toggles, as discontinued has its own pair: a discontinued WhatsApp
+    subscriber is not a list-price recipient."""
+    _product(db, code="W2", price="110.00", notified="100.00")
+    _wa_only_user(db, monkeypatch, disc=True, lp=False)
+    db.commit()
+    assert _lp_run(db)["notified_users"] == 0
