@@ -42,9 +42,10 @@ CLIENT_MODULE = BACKEND / "app" / "services" / "integration_service.py"
 REAL_HOST = "api.respond.io"
 OVERRIDE = "https://api.respond.invalid"
 
-# The API host, or respond.io itself as a host (`//respond.io/...`). app.respond.io (inbox links)
-# and cdn.respond.io (media) are not the API and are not matched.
-_HOST_RE = re.compile(r"api\.respond\.io(?![A-Za-z0-9-])|//respond\.io/")
+# The API host (any regional `api-<x>` spelling), or respond.io itself as a host
+# (`//respond.io`). app.respond.io (inbox links) and cdn.respond.io (media) are not the API and
+# are not matched.
+_HOST_RE = re.compile(r"api(?:-[a-z0-9]+)?\.respond\.io(?![a-z0-9-])|//respond\.io(?![a-z0-9.-])", re.IGNORECASE)
 
 
 def _scanned_files() -> list[Path]:
@@ -76,7 +77,32 @@ def test_the_guard_scans_real_code():
     names = {p.name for p in _scanned_files()}
     assert {"procurement_service.py", "respond_io_tasks.py"} <= names
     assert _HOST_RE.search(f'"https://{REAL_HOST}/v2/contact"')
+    assert _HOST_RE.search('"HTTPS://API.RESPOND.IO"')
+    assert _HOST_RE.search('"https://respond.io"')
     assert not _HOST_RE.search('"https://app.respond.io/space/1/inbox/2"')
+    assert not _HOST_RE.search(OVERRIDE)
+
+
+def test_replay_tool_accepts_its_loopback_lookup_server_and_refuses_the_real_host():
+    """CHAT-INBOX-QUEUE's replay tool used to rewrite the workspace row's base_url to reach its
+    local lookup server; RESPOND_BASE_URL now beats that row, so the env must be allowed to name
+    the loopback server, and must still refuse the real host."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("zzt_replay", BACKEND / "scripts" / "inbox_queue_replay.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+
+    def respond_reasons(value):
+        env = {"RESPOND_BASE_URL": value} if value is not None else {}
+        return [r for r in tool.check_env(env) if "RESPOND_BASE_URL" in r]
+
+    assert respond_reasons("http://127.0.0.1:8399") == []
+    assert respond_reasons(OVERRIDE) == []
+    assert respond_reasons(f"https://{REAL_HOST}")
+    assert respond_reasons(None), "unset resolves to the real host and must be refused"
+    assert respond_reasons("http://127.0.0.1.example.com:8399")
+    assert tool.respond_base_url_of({"respond_base_url": "a", "RESPOND_BASE_URL": "b"}) in {"a", "b"}
 
 
 def test_the_client_module_holds_the_default(monkeypatch):

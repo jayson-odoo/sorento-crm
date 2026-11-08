@@ -24,9 +24,8 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact, TeamMember
 from app.models.tickets import Ticket
 from app.schemas.integration import IntegrationLogCreate
-from app.services.integration_service import IntegrationLogService, RespondClient
+from app.services.integration_service import IntegrationLogService, RespondClient, respond_endpoint
 from app.services.notification_service import NotificationService
-from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 

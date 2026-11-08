@@ -39,7 +39,10 @@ env checks and its refusals are prefixed `worker env <file>`; its DATABASE_URL (
 assignment across case variants) must name the same host, port and database as `--env-file`
 (credentials never compared or printed). A checked value the
 env file leaves out, or sets empty, is judged by its Settings default (RESPOND_BASE_URL falls
-back to the real Respond.io host, `RESPOND_DEFAULT_BASE_URL`, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
+back to the real Respond.io host, `RESPOND_DEFAULT_BASE_URL`, so it must be set to a `.invalid` host
+or a loopback URL). RESPOND_BASE_URL beats every workspace row's base_url, so for the drain's
+contact lookup to reach the local server, start the copy (backend and worker) with
+RESPOND_BASE_URL=http://127.0.0.1:`--port`; preflight warns when it is not. It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -261,6 +264,19 @@ def _neutral(value: Any) -> bool:
 PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
 
 
+def _loopback_url(value: Any) -> bool:
+    """An http(s) URL on a loopback host (the run's local lookup server)."""
+    text_value = str(value or "").strip()
+    return text_value.lower().startswith(("http://", "https://")) and _host(text_value) in LOOPBACK_HOSTS
+
+
+def respond_base_url_of(env: Any) -> str:
+    """RESPOND_BASE_URL as Settings reads it from ``env`` (last case variant wins), or ''."""
+    env = env or {}
+    values = [env[k] for k in _settings_keys(env, "RESPOND_BASE_URL") if env.get(k)]
+    return str(values[-1]).strip() if values else ""
+
+
 def _settings_default(key: str) -> str:
     """The Settings default a key left out of the env file falls back to (empty if none)."""
     from app.config import settings
@@ -314,6 +330,11 @@ def check_env(env: Any) -> list[str]:
         # Respond.io host, `integration_service.RESPOND_DEFAULT_BASE_URL`).
         present = [k for k in _settings_keys(env, key) if env.get(k)]
         for spelling in present:
+            if key == "RESPOND_BASE_URL" and _loopback_url(env[spelling]):
+                # The run's own lookup server: RESPOND_BASE_URL beats every workspace row
+                # (`integration_service.resolve_respond_base_url`), so this is how the drain's
+                # contact lookup reaches it. A loopback host never reaches respond.io.
+                continue
             need(f"env {spelling}", env[spelling])
         if not present:
             need(f"env {key} (unset, resolves to)", _settings_default(key), "so set it to a .invalid host")
@@ -768,6 +789,17 @@ class Replay:
             reasons = detect_leftover(db, state_file=self.args.state_file)
             reasons += check_neutralised(db, read_env_file(self.args.env_file))
             reasons += check_worker_env(resolve_env_file(self.args.env_file))
+            base = respond_base_url_of(read_env_file(self.args.env_file)).rstrip("/")
+            if base != self.local.base.rstrip("/"):
+                # Not a refusal: a `.invalid` host is still safe. But RESPOND_BASE_URL beats the
+                # workspace row this run rewrites, so the drain's contact lookups fail instead of
+                # reaching the local server, and the copy's backend and worker must be started
+                # with RESPOND_BASE_URL set to it for the scenarios to mean anything.
+                print(
+                    f"WARNING: RESPOND_BASE_URL is {base or '(unset)'!s}, not this run's lookup server "
+                    f"{self.local.base}: set RESPOND_BASE_URL={self.local.base} in the copy's env "
+                    "(and the worker's) and restart them, or contact lookups will not be answered."
+                )
             row = db.query(SystemSetting).first()
             if row is not None and len(self._existing_keys(row)) >= MAX_WEBHOOK_KEYS:
                 reasons.append(
