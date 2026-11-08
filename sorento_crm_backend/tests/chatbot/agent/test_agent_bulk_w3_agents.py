@@ -1,0 +1,454 @@
+"""AGENT-BULK-W3-AGENTS (PLAN-agent-bulk-w3-agents-8nov.md, UAC agent-bulk-w3-agents-8nov-acceptance-criteria.md):
+the agent assigns / changes the sales agent of customer accounts from a pasted table through `crm_batch_propose` over
+a new batchable row write, `crm_customer_agent`.
+
+Red tests, written before the code. Test numbers in the names are the UAC's brackets (01..09). Seeding comes from the
+#2226 / #2241 modules. Postgres only (blank schema); every test seeds its own chain. Codes and names are invented
+(public repo).
+
+Pinned shapes:
+- `crm_customer_agent` args: `company` (company code, optional), `customer_code`, `customer_name`, `agent` (agent
+  code or name as written).
+- A row that cannot apply is refused in `read_before` (4xx) with every reason joined by "; ". A customer given by
+  name only, or an agent written not exactly, makes the row wait: `contact_grant.NeedsChoice` with choices
+  {"written", "company", "candidates": [{"code", "name"}], "more", "noun": "account" | "agent", "kept": [...]}.
+- The step's summary / "Will change" cell: "agent <old or none> -> <new>"; a company whose `sales_agent_source` is
+  `customer` adds "Past invoiced sales of this customer move to <new> (RM x in the last 12 months)".
+- Confirm writes through `CustomerService.assign_sales_agent_many` (the route's path) and records one
+  `customer.sales_agent_agent` audit row per customer. No AutoCount write (Q1 (a)).
+"""
+from __future__ import annotations
+
+import uuid
+
+from app.models.audit import AuditLog
+from app.models.base import company_scope
+from app.models.company import Company
+from app.models.order import Customer
+from app.models.sales_agent import SalesAgent
+from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures are used by name)
+    AGENTS_EDIT,
+    BATCH,
+    EDIT,
+    GRANT,
+    STOCK_EDIT,
+    _listeners,
+    ctx_of,
+    db,
+    make_world,
+    store,
+)
+from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc
+
+WRITE = "crm_customer_agent"
+SLUG = "master_data.sales_agents.edit"
+EVENT = "customer.sales_agent_agent"
+NEEDS = "Needs your choice:"
+NOT_CHANGED = "Not changed:"
+READY = "I will make these changes when you confirm:"
+AGENT_TAIL = "Reply with the agent code for each row under Needs your choice, or skip."
+ALL = (EDIT, AGENTS_EDIT, STOCK_EDIT, SLUG)
+
+
+def world(db, slugs=ALL, superadmin=True):
+    return make_world(db, slugs=slugs, superadmin=superadmin)
+
+
+def code(stem: str) -> str:
+    return f"ZZT{stem}{uuid.uuid4().hex[:5]}".upper()
+
+
+def agent_(db, company_id, stem: str, *, label=None, active=True) -> SalesAgent:
+    with company_scope(db, None):
+        row = SalesAgent(id=str(uuid.uuid4()), sales_agent=code(stem), person_label=label, company_id=company_id,
+                         is_active=active)
+        db.add(row)
+        db.flush()
+    db.commit()
+    return row
+
+
+def customer_(db, company_id, name: str, agent=None) -> Customer:
+    with company_scope(db, None):
+        row = Customer(id=str(uuid.uuid4()), customer_code=code("C"), customer_name=name, company_id=company_id,
+                       sales_agent_id=agent.id if agent else None)
+        db.add(row)
+        db.flush()
+    db.commit()
+    return row
+
+
+def agent_of(db, customer) -> str | None:
+    db.expire_all()
+    with company_scope(db, None):
+        return db.get(Customer, str(customer.id)).sales_agent_id
+
+
+def row_(*, company="SRT", customer=None, name=None, agent=None) -> dict:
+    out = {}
+    if company is not None:
+        out["company"] = company
+    if customer is not None:
+        out["customer_code"] = customer
+    if name is not None:
+        out["customer_name"] = name
+    if agent is not None:
+        out["agent"] = agent
+    return out
+
+
+def propose_rows(db, w, rows, **kw):
+    from app.services.chatbot.agent import batch
+
+    return batch.propose_rows(db, ctx_of(db, w), WRITE, rows, seen_ids=set(), **kw)
+
+
+def reason_of(skipped, n: int) -> str:
+    found = [s for s in skipped if s["row"] == n]
+    assert found, f"row {n} was not skipped: {skipped}"
+    return found[0]["reason"]
+
+
+def confirm(db, w, steps):
+    from app.services.chatbot.agent import actions
+
+    action = store(db, w, steps)
+    return actions.confirm(db, w.respond_id, str(action.id), via="console")
+
+
+def say(db, w, rows, text_, final="Done."):
+    script = [round_of(tc(BATCH, {"write": WRITE, "rows": rows}, "b1")), answer_(final)]
+    return run_turn(db, w, script, text_=text_)[0]
+
+
+def set_source(db, company_id: str, source: str) -> None:
+    with company_scope(db, None):
+        db.get(Company, company_id).sales_agent_source = source
+    db.commit()
+
+
+# ------------------------------------------------------------------ T1 (01) registry and exposure
+
+
+def test_01_the_agent_write_is_registered_batchable_with_the_sales_agents_edit_slug():
+    from app.services.chatbot.agent import tools, writes
+
+    d = writes.WRITES[WRITE]
+    assert d.batchable is True and d.user_permission == SLUG and d.runs_as == "user"
+    props = d.schema["function"]["parameters"]["properties"]
+    assert {"company", "customer_code", "customer_name", "agent"} <= set(props)
+    assert WRITE in tools.TOOL_LABELS
+
+
+def test_01_the_batch_tool_offers_the_write_only_with_the_slug(db):
+    from app.services.chatbot.agent import batch
+
+    w = world(db, superadmin=False)
+    enum = batch.schema_for(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
+    assert WRITE in enum
+
+    without = world(db, slugs=(EDIT,), superadmin=False)
+    enum = batch.schema_for(db, ctx_of(db, without))["function"]["parameters"]["properties"]["write"]["enum"]
+    assert WRITE not in enum
+    steps = []
+    out = batch.propose(db, ctx_of(db, without), {"write": WRITE, "rows": [row_(customer="X", agent="Y")]}, steps,
+                        seen_ids=set())
+    assert out.status == "denied" and steps == []
+
+
+# ------------------------------------------------------------------ T2 (02) exact code end to end
+
+
+def test_02_exact_customer_code_and_agent_code_preview_then_confirm_moves_and_audits(db):
+    w = world(db)
+    old = agent_(db, w.srt, "JOHN")
+    new = agent_(db, w.srt, "SEAN")
+    cust = customer_(db, w.srt, "ZZT Ace Hardware", old)
+
+    steps, skipped, waiting = propose_rows(
+        db, w, [row_(customer=f"  {cust.customer_code.lower()} ", agent=new.sales_agent.lower())]
+    )
+    assert skipped == [] and waiting == [] and len(steps) == 1, (skipped, waiting)
+    step = steps[0]
+    change = f"agent {old.sales_agent} -> {new.sales_agent}"
+    assert change in step["summary"]
+    assert step["cells"]["Customer"] == cust.customer_code and step["cells"]["Name"] == "ZZT Ace Hardware"
+    assert change in step["cells"]["Will change"]
+    assert agent_of(db, cust) == old.id  # a preview writes nothing
+
+    outcome = confirm(db, w, steps)
+    assert outcome.status == "executed", outcome.steps
+    assert agent_of(db, cust) == new.id
+    rows = db.query(AuditLog).filter(AuditLog.entity_id == str(cust.id)).all()
+    assert len([a for a in rows if a.event == EVENT]) == 1
+    # the customer listener's own before / after row, as on screen
+    assert any(a.event != EVENT and "sales_agent_id" in str(a.new_values or {}) for a in rows)
+
+
+def test_02_an_agent_by_exact_person_label_and_a_customer_with_no_agent(db):
+    w = world(db)
+    new = agent_(db, w.srt, "LS", label="ZZT Lisa Tan")
+    cust = customer_(db, w.srt, "ZZT Bravo Trading")
+
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent="zzt  lisa tan")])
+    assert skipped == [] and waiting == []
+    assert f"agent none -> {new.sales_agent}" in steps[0]["summary"]
+    assert confirm(db, w, steps).status == "executed"
+    assert agent_of(db, cust) == new.id
+
+
+# ------------------------------------------------------------------ T3 (03) no fuzzy matching: picks
+
+
+def test_03_a_customer_by_name_only_waits_with_the_rows_company_accounts_even_one(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = f"ZZT Ace {uuid.uuid4().hex[:4]}"
+    one = customer_(db, w.srt, f"{stem} Hardware")
+    customer_(db, w.mch, f"{stem} Hardware Mocha")  # another company: never offered on an SRT row
+
+    steps, skipped, waiting = propose_rows(db, w, [row_(name=stem, agent=new.sales_agent)])
+    assert steps == [] and skipped == []
+    assert len(waiting) == 1 and waiting[0]["row"] == 1
+    assert [c["code"] for c in waiting[0]["candidates"]] == [one.customer_code]
+    assert (waiting[0].get("noun") or "account") == "account"
+
+
+def test_03_an_agent_not_written_exactly_waits_with_the_fitting_agents_and_is_never_auto_picked(db):
+    w = world(db)
+    stem = code("SE")
+    a1 = agent_(db, w.srt, "X")
+    a1.sales_agent = f"{stem}AN"
+    a2 = agent_(db, None, "Y")  # shared: fits every company
+    a2.sales_agent = f"{stem}BO"
+    other = agent_(db, w.mch, "Z")  # another company's: never offered for an SRT customer
+    other.sales_agent = f"{stem}CY"
+    db.commit()
+    cust = customer_(db, w.srt, "ZZT Delta Trading")
+
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=stem)])
+    assert steps == [] and skipped == []
+    assert waiting[0]["noun"] == "agent"
+    assert sorted(c["code"] for c in waiting[0]["candidates"]) == sorted([a1.sales_agent, a2.sales_agent])
+
+
+def test_03_the_pick_by_reply_proposes_the_row_and_an_unlisted_pick_is_refused(db):
+    w = world(db)
+    stem = code("SE")
+    a1 = agent_(db, w.srt, "X")
+    a1.sales_agent = f"{stem}AN"
+    a2 = agent_(db, w.srt, "Y")
+    a2.sales_agent = f"{stem}BO"
+    stranger = agent_(db, w.srt, "Q")
+    db.commit()
+    cust = customer_(db, w.srt, "ZZT Echo Trading")
+    first = {**row_(customer=cust.customer_code, agent=stem), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    assert waiting
+
+    picked = {**first, "agent": a2.sales_agent}
+    steps, skipped, _ = propose_rows(db, w, [picked], previous_waiting=waiting, user_text=f"row 1: {a2.sales_agent}")
+    assert skipped == [] and len(steps) == 1 and a2.sales_agent in steps[0]["summary"]
+
+    wrong = {**first, "agent": stranger.sales_agent}
+    steps, skipped, _ = propose_rows(db, w, [wrong], previous_waiting=waiting, user_text="row 1: the second one")
+    assert steps == [] and "pick from the list" in reason_of(skipped, 1)
+
+
+def test_03_a_customer_name_pick_keeps_the_written_name_and_takes_the_listed_code(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = f"ZZT Fox {uuid.uuid4().hex[:4]}"
+    c1 = customer_(db, w.srt, f"{stem} One")
+    customer_(db, w.srt, f"{stem} Two")
+    first = {**row_(name=stem, agent=new.sales_agent), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    assert len(waiting[0]["candidates"]) == 2
+
+    picked = {**first, "customer_code": c1.customer_code}
+    steps, skipped, _ = propose_rows(db, w, [picked], previous_waiting=waiting, user_text=f"1: {c1.customer_code}")
+    assert skipped == [] and len(steps) == 1
+    assert steps[0]["cells"]["Customer"] == c1.customer_code
+
+
+# ------------------------------------------------------------------ T4 (04) Not changed, every reason
+
+
+def test_04_unknown_customer_unknown_agent_inactive_other_company_and_already_set_are_not_changed(db):
+    w = world(db)
+    on = agent_(db, w.srt, "ON")
+    sleepy = agent_(db, w.srt, "OLD", active=False)
+    mocha = agent_(db, w.mch, "MOC")
+    cust = customer_(db, w.srt, "ZZT Golf Trading", on)
+    rows = [
+        row_(customer="ZZTNOPE999", agent=on.sales_agent),
+        row_(customer=cust.customer_code, agent="ZZTNOBODY999"),
+        row_(customer=cust.customer_code, agent=sleepy.sales_agent),
+        row_(customer=cust.customer_code, agent=mocha.sales_agent),
+        row_(customer=cust.customer_code, agent=on.sales_agent),
+    ]
+    for n, r in enumerate(rows, 1):
+        steps, skipped, waiting = propose_rows(db, w, [r])
+        assert steps == [] and waiting == [], (n, steps, waiting)
+        reason = reason_of(skipped, 1)
+        if n == 1:
+            assert reason.startswith('No customer with the code "ZZTNOPE999"')
+        elif n == 2:
+            assert 'No sales agent named "ZZTNOBODY999"' in reason
+        elif n == 3:
+            assert f'Sales agent "{sleepy.sales_agent}" is inactive' in reason
+        elif n == 4:
+            assert f'"{mocha.sales_agent}" is a MCH agent' in reason
+        else:
+            assert reason == f"Already under {on.sales_agent}; nothing to change."
+
+
+def test_04_no_customer_and_no_agent_say_what_to_give(db):
+    w = world(db)
+    steps, skipped, _ = propose_rows(db, w, [row_()])
+    assert steps == []
+    reason = reason_of(skipped, 1)
+    assert "Give the customer code" in reason and "Name the sales agent" in reason
+
+
+def test_04_a_customer_of_another_company_than_the_row_names_is_not_changed(db):
+    w = world(db)
+    new = agent_(db, None, "SH")
+    cust = customer_(db, w.mch, "ZZT Hotel Mocha")
+    steps, skipped, _ = propose_rows(db, w, [row_(company="SRT", customer=cust.customer_code, agent=new.sales_agent)])
+    assert steps == [] and "MCH customer" in reason_of(skipped, 1)
+
+
+def test_04_a_customer_outside_the_users_companies_is_not_found(db):
+    w = world(db)
+    new = agent_(db, None, "SH")
+    hidden = customer_(db, w.hidden, "ZZT India Hidden")
+    steps, skipped, _ = propose_rows(db, w, [row_(company=None, customer=hidden.customer_code, agent=new.sales_agent)])
+    assert steps == [] and reason_of(skipped, 1).startswith(f'No customer with the code "{hidden.customer_code}"')
+
+
+def test_04_the_same_customer_twice_is_skipped_as_the_same_row(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    cust = customer_(db, w.srt, "ZZT Juliet Trading")
+    steps, skipped, _ = propose_rows(db, w, [row_(customer=cust.customer_code, agent=new.sales_agent)] * 2)
+    assert len(steps) == 1 and reason_of(skipped, 2) == "Same as row 1."
+
+
+# ------------------------------------------------------------------ T5 (05) customer-source companies (Q2 (a))
+
+
+def test_05_a_customer_source_company_warns_that_past_sales_move_with_the_last_12_months_rm(db):
+    from datetime import date, timedelta
+
+    from tests._sales_unified_seed import doc
+
+    w = world(db)
+    set_source(db, w.mch, "customer")
+    new = agent_(db, w.mch, "LISA")
+    cust = customer_(db, w.mch, "ZZT Kilo Mocha")
+    today = date.today()
+    with company_scope(db, None):
+        doc(db, "invoice", "1000.50", today - timedelta(days=30), customer=cust, company_id=w.mch)
+        doc(db, "invoice", "250.00", today - timedelta(days=200), customer=cust, company_id=w.mch)
+        doc(db, "credit_note", "100.00", today - timedelta(days=10), customer=cust, company_id=w.mch)
+        doc(db, "invoice", "9999.00", today - timedelta(days=400), customer=cust, company_id=w.mch)  # older: out
+        doc(db, "invoice", "7777.00", today - timedelta(days=5), customer=cust, company_id=w.mch, status="cancelled")
+    db.commit()
+
+    steps, skipped, _ = propose_rows(db, w, [row_(company="MCH", customer=cust.customer_code, agent=new.sales_agent)])
+    assert skipped == []
+    cell = steps[0]["cells"]["Will change"]
+    assert f"Past invoiced sales of this customer move to {new.sales_agent}" in cell
+    assert "RM 1,150.50 in the last 12 months" in cell
+
+    srt_new = agent_(db, w.srt, "SEAN")
+    srt_cust = customer_(db, w.srt, "ZZT Lima Trading")
+    steps, _, _ = propose_rows(db, w, [row_(customer=srt_cust.customer_code, agent=srt_new.sales_agent)])
+    assert "Past invoiced sales" not in steps[0]["cells"]["Will change"]
+
+
+# ------------------------------------------------------------------ T6 (06) confirm rechecks
+
+
+def test_06_a_customer_moved_on_screen_since_the_preview_fails_alone(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    other = agent_(db, w.srt, "OTHER")
+    moved = customer_(db, w.srt, "ZZT Mike Trading")
+    calm = customer_(db, w.srt, "ZZT November Trading")
+    steps, skipped, _ = propose_rows(db, w, [row_(customer=c.customer_code, agent=new.sales_agent) for c in (moved, calm)])
+    assert len(steps) == 2 and skipped == []
+    with company_scope(db, None):
+        db.get(Customer, str(moved.id)).sales_agent_id = other.id
+    db.commit()
+
+    outcome = confirm(db, w, steps)
+    assert outcome.status == "partial", outcome.steps
+    assert agent_of(db, moved) == other.id and agent_of(db, calm) == new.id
+
+
+def test_06_an_agent_retired_since_the_preview_fails_the_row(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    cust = customer_(db, w.srt, "ZZT Oscar Trading")
+    steps, _, _ = propose_rows(db, w, [row_(customer=cust.customer_code, agent=new.sales_agent)])
+    with company_scope(db, None):
+        db.get(SalesAgent, str(new.id)).is_active = False
+    db.commit()
+    outcome = confirm(db, w, steps)
+    assert outcome.status != "executed"
+    assert agent_of(db, cust) is None
+
+
+# ------------------------------------------------------------------ T7 (07) the turn's tables
+
+
+def test_07_a_turn_shows_ready_needs_choice_and_not_changed_tables_and_writes_nothing(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = code("PK")
+    for suffix in ("A", "B"):
+        a = agent_(db, w.srt, "T")
+        a.sales_agent = f"{stem}{suffix}"
+    db.commit()
+    ready = customer_(db, w.srt, "ZZT Papa Trading")
+    waits = customer_(db, w.srt, "ZZT Quebec Trading")
+    rows = [
+        {**row_(customer=ready.customer_code, agent=new.sales_agent), "row": 1},
+        {**row_(customer=waits.customer_code, agent=stem), "row": 2},
+        {**row_(customer="ZZTNOPE999", agent=new.sales_agent), "row": 3},
+    ]
+    reply = say(db, w, rows, "assign these agents please")
+    assert READY in reply and NEEDS in reply and NOT_CHANGED in reply
+    assert "| # | Customer | Name |" in reply
+    assert "| Agent |" in reply or "| Agent" in reply
+    assert AGENT_TAIL in reply
+    assert agent_of(db, ready) is None and agent_of(db, waits) is None
+
+
+# ------------------------------------------------------------------ T8 (08) the not-found claim is backed
+
+
+def test_08_the_reply_may_say_the_agent_was_not_found(db):
+    from app.services.chatbot.agent import loop
+
+    ledger = {"b1": {"name": BATCH, "status": "invalid", "args": {}, "data": {
+        "skipped": [{"row": 1, "reason": 'No sales agent named "ZZTNOBODY".'}],
+    }}}
+    assert loop._not_found_backed("ZZTNOBODY", "b1", ledger, set())
+
+
+# ------------------------------------------------------------------ T9 (09) never AutoCount
+
+
+def test_09_the_write_module_never_imports_an_autocount_writer():
+    import ast
+    import inspect
+
+    from app.services.chatbot.agent import customer_agent
+
+    tree = ast.parse(inspect.getsource(customer_agent))
+    names = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+    names += [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
+    assert names and not [m for m in names if "autocount" in m.lower()]
