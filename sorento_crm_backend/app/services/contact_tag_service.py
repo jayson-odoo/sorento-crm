@@ -35,10 +35,22 @@ def tags_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[d
     return out
 
 
+def is_standard_owner_tag(tag: ContactTag, company_code: str) -> bool:
+    """Does the tag set exactly the company's template owner types and nothing else (UAC A15, order aside)?"""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    settings = tag.settings or {}
+    types = settings.get("access_types")
+    return (
+        set(settings) == {"access_types"} and isinstance(types, list)
+        and set(types) == set(TEMPLATE["owner_types"].get(company_code, ()))
+    )
+
+
 def owner_tag(db: Session, company_code: str) -> Optional[ContactTag]:
     """The active Business owner tag of the company (`TEMPLATE["owner_tags"]`, name matched case-insensitively);
-    None when it is missing, switched off, or sets anything but exactly the company's template owner types (UAC A15:
-    an edited tag never grants more than the template)."""
+    None when it is missing, switched off, or not standard (`is_standard_owner_tag`): an edited tag never grants more
+    than the template."""
     from app.services.contact_access_sheet_service import TEMPLATE
 
     name = TEMPLATE["owner_tags"].get(company_code)
@@ -50,11 +62,7 @@ def owner_tag(db: Session, company_code: str) -> Optional[ContactTag]:
         .order_by(ContactTag.id)
         .first()
     )
-    settings = (tag.settings or {}) if tag is not None else {}
-    types = settings.get("access_types")
-    if set(settings) != {"access_types"} or not isinstance(types, list):
-        return None
-    return tag if set(types) == set(TEMPLATE["owner_types"][company_code]) else None
+    return tag if tag is not None and is_standard_owner_tag(tag, company_code) else None
 
 
 def change_tags(

@@ -315,8 +315,14 @@ def plan(db, user: dict, args: dict) -> dict:
     if others and role == "owner":
         raise _refuse(OTHER_ACCOUNT)  # UAC A14: promotion is as restricted as demotion
     # The whole template is written whatever the confirming user could set by hand (UAC A5, owner Q2 a), except on a
-    # contact another account reaches too (A13).
-    skip = NON_ADDITIVE if others else frozenset()
+    # contact another account reaches too (A13): for anyone acting, so an own-scope console operator acting for a
+    # `.edit` user still writes only the additive facets (security review L2).
+    operator = str(user.get("operator_user_id") or "")
+    shared = bool(others) or (
+        contact is not None and bool(operator) and operator != uid and not writes._permitted(db, operator, EDIT)
+        and bool(writes._not_own_links(db, operator, str(contact.id)))
+    )
+    skip = NON_ADDITIVE if shared else frozenset()
     world = sheet._world(db, set(companies))
     if contact is not None:
         cid = str(contact.id)
@@ -354,6 +360,8 @@ def plan(db, user: dict, args: dict) -> dict:
     extra = [word for facet, word in _FACET_WORDS if facet in facets]
     if extra:
         lines.append("template: " + ", ".join(extra))
+    if shared:
+        lines.append("kept as they are: AI replies, stock, brands and media (another account also has this person)")
     # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row. Own scope:
     # another account's link is only counted (B3).
     before = {

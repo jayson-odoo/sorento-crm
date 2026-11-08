@@ -1023,6 +1023,7 @@ def test_C5_own_scope_update_never_names_another_salespersons_account(db, change
 # ------------------------------------------------------------------ review round 1 (UAC A12-A16, B3)
 
 NO_OWN_ACCOUNT = "Name one of your accounts for this person (code or name)."
+KEPT = "kept as they are: AI replies, stock, brands and media (another account also has this person)"
 
 
 def test_A12_an_own_scope_row_naming_no_account_is_refused_for_new_and_existing_contacts_and_both_roles(db):
@@ -1088,6 +1089,8 @@ def test_A13_an_own_scope_grant_on_a_contact_of_another_account_adds_only_the_ad
 
     assert skipped == [] and outcome.status == "executed", outcome.steps
     summary = steps[0]["summary"]
+    assert KEPT in summary
+    summary = summary.replace(KEPT, "")
     for word in ("AI replies", "stock replies", "ETA offset", "hand-over", "packing list", "stock check",
                  "stock locations", "brands", "image replies"):
         assert word not in summary, f"{word!r} is planned on another account's contact: {summary}"
@@ -1187,9 +1190,7 @@ def test_A16_a_new_phone_equal_to_a_users_contact_number_is_refused_as_staff(db,
     assert state(db, phone) is None
 
 
-def test_B3_the_job_normalises_the_phone_and_url_quotes_it_for_the_lookup(db, respond):
-    from urllib.parse import quote
-
+def test_B3_the_job_looks_the_phone_up_in_its_normalised_form(db, respond):
     phone = fake_phone()
     digits = phone.lstrip("+")
     contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"0{digits[2:5]}-{digits[5:]}", name="ZZT Quoted")
@@ -1199,12 +1200,10 @@ def test_B3_the_job_normalises_the_phone_and_url_quotes_it_for_the_lookup(db, re
     respond.job(str(contact.id))
 
     looked = [c for c in respond.calls if c[0] == "get_contact_by_phone"]
-    assert looked == [("get_contact_by_phone", quote(phone, safe=""))]
+    assert looked == [("get_contact_by_phone", phone)]  # +601..., no spaces, dashes or URL quoting
 
 
-def test_B3_create_contact_url_quotes_the_phone_in_the_path(monkeypatch):
-    from urllib.parse import quote
-
+def test_B3_create_contact_puts_the_normalised_phone_in_the_path(monkeypatch):
     from app.services.integration_service import RespondClient
 
     sent = {}
@@ -1226,7 +1225,7 @@ def test_B3_create_contact_url_quotes_the_phone_in_the_path(monkeypatch):
     out = RespondClient(api_key="zzt-key", base_url="https://respond.invalid").create_contact(phone, "ZZT Made")
 
     assert out == {"id": 900000124}
-    assert sent["url"] == f"https://respond.invalid/v2/contact/phone:{quote(phone, safe='')}"
+    assert sent["url"] == f"https://respond.invalid/v2/contact/phone:{phone}"
     assert sent["json"]["phone"] == phone and sent["json"]["firstName"] == "ZZT Made"
 
 
@@ -1274,3 +1273,98 @@ def test_B3_an_own_scope_stored_action_carries_own_link_ids_and_a_count_of_the_o
     stored = json.dumps(db.get(AgentAction, action.id).steps, default=str)
     assert str(o.theirs.id) not in stored
     assert state(db, person.phone_number)["links"] == sorted([str(w.cust_a.id), str(o.theirs.id), str(w.twin1.id)])
+
+
+# ------------------------------------------------------------------ review round 2 (B3 update tool, security L1/L2)
+
+
+@pytest.mark.parametrize("change", ["unlink own", "ai off"])
+def test_B3_own_scope_update_never_stores_the_id_of_another_salespersons_account(db, change):
+    from app.models.chatbot_agent import AgentAction
+
+    o = own_world(db)
+    w = o.w
+    person = ai_on(db, dealer(db, w, customers=(w.cust_a, o.theirs)))
+    hidden = str(o.theirs.id)
+    if change == "unlink own":
+        args, seen = {"contact_id": person.id, "unlink_customer_ids": [str(w.cust_a.id)]}, {person.id, w.cust_a.id}
+    else:
+        args, seen = {"contact_id": person.id, "chatbot_allowed": False}, {person.id}
+
+    res, step = update_step(db, w, args, seen=seen)
+    assert res.status == "proposed", f"{res.status}: {res.message}"
+    assert hidden not in json.dumps(step, default=str)
+    assert step["before"]["other_links"] == 1
+    action = store(db, w, [step])
+    audit_before = {str(i) for (i,) in db.query(AuditLog.id)}
+
+    outcome = confirm(db, w, action)
+
+    assert outcome.status == "executed", outcome.steps
+    db.expire_all()
+    stored = db.get(AgentAction, action.id).steps
+    contact_audit = [
+        a for a in db.query(AuditLog).all()
+        if str(a.id) not in audit_before and a.event == "contact.access_agent"
+    ]
+    assert contact_audit
+    for label, blob in (
+        ("stored steps", json.dumps(stored, default=str)),
+        ("confirm result", json.dumps(dataclasses.asdict(outcome), default=str)),
+        ("audit row", json.dumps([[a.old_values, a.new_values, a.description] for a in contact_audit], default=str)),
+    ):
+        assert hidden not in blob, f"the other account's id leaked into the {label}"
+    if change == "unlink own":
+        assert "another account" in json.dumps([a.old_values for a in contact_audit], default=str)
+
+
+def test_L1_a_demote_of_a_contact_holding_a_non_standard_owner_tag_is_refused(db):
+    w = own_world(db).w
+    tag = db.query(ContactTag).filter(ContactTag.name == SRT_TAG).one()
+    person = dealer(db, w, types=("dealer", "cabana_dealer", "end_user"), customers=(w.cust_a,))
+    tag_contact(db, person.id, tag)
+    with company_scope(db, None):
+        db.query(ContactTag).filter(ContactTag.id == tag.id).update(
+            {"settings": {"access_types": ["dealer", "cabana_dealer"], "chatbot": {"stock_allowed": True}}}
+        )
+    db.commit()
+
+    res, step = update_step(db, w, {"contact_id": person.id, "role": "employee"}, seen={person.id})
+
+    assert step is None and res.status in ("invalid", "denied")
+    assert f'The "{SRT_TAG}" tag is not the standard one; ask the office.' in (res.message or "")
+    assert tags_of(db, person.id) == [SRT_TAG]
+
+
+def test_L2_an_edit_own_console_operator_for_an_edit_user_grants_only_the_additive_facets(db):
+    from app.models.company import UserCompany
+    from app.services.chatbot.agent import actions, batch
+
+    w = make_world(db)  # the linked user: `.edit`, superadmin
+    op_contact = seed_plain_contact(db, "ZZT Operator")
+    operator = seed_user(db, contact_pk=op_contact, slugs=(EDIT_OWN,))
+    for company_id in (w.srt, w.mch):
+        db.add(UserCompany(user_id=operator, company_id=company_id))
+    op_agent = seed_sales_agent(db, op_contact, "OP")
+    with company_scope(db, None):
+        op_shop = seed_customer(db, unique_code("ZZT Operator Shop"), op_agent, company_id=w.srt)
+    db.commit()
+    person = dealer(db, w, customers=(w.cust_a,))  # the linked user's account: not the operator's own
+    with company_scope(db, None):
+        db.query(RespondContact).filter(RespondContact.id == person.id).update(
+            {"chatbot_allowed": False, "escalation_allowed": True, "packing_list_allowed": True}
+        )
+    db.commit()
+    kept = _settings_of(db, person.id)
+    ctx = dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
+
+    steps, skipped, _ = batch.propose_rows(
+        db, ctx, GRANT, [row_(person.phone_number, role="employee", codes=[op_shop.customer_code])], seen_ids=set()
+    )
+    assert skipped == [] and steps, skipped
+    assert KEPT in steps[0]["summary"]
+    outcome = actions.confirm(db, w.respond_id, str(store(db, w, steps).id), via="console", operator_user_id=operator)
+
+    assert outcome.status == "executed", outcome.steps
+    assert state(db, person.phone_number)["links"] == sorted([str(w.cust_a.id), str(op_shop.id)])
+    assert _settings_of(db, person.id) == kept

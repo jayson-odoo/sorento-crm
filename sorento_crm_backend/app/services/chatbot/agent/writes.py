@@ -1035,10 +1035,16 @@ def _contact_facts(db, contact, user_id: str) -> dict:
             str(cid) for (cid,) in db.query(RespondContactCustomer.customer_id)
             .filter(RespondContactCustomer.contact_id == contact.id)
         )
-    return {
+    out = {
         "types": types, "codes": codes, "template_codes": template_codes, "owner_codes": owner_codes,
         "role": role, "links": links,
     }
+    if not _permitted(db, user_id, CONTACT_EDIT):
+        # Own scope: another account's link is only counted, never carried by id (DEALER-ACCESS-PORTAL B3, C5).
+        others = _not_own_links(db, user_id, contact.id)
+        out["links"] = [c for c in links if c not in others]
+        out["other_links"] = len(others)
+    return out
 
 
 def _role_label(role: str, owner_codes: list[str]) -> str:
@@ -1160,7 +1166,6 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         if c not in facts["links"]:
             raise AppException(status_code=422, message=f"{codes[c]} was not linked.", code="VALIDATION_ERROR")
     phone = contact.phone_number
-    own_scope = not _permitted(db, uid, CONTACT_EDIT)
     add: set[str] = set()
     remove: set[str] = set()
     add_tags: list = []
@@ -1192,7 +1197,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
 
             # Business owner is the company's owner tag (DEALER-ACCESS-PORTAL C1, C2). Own scope: neither a promotion
             # nor a demotion while another account also reaches the person (C3, A14).
-            if own_scope and _not_own_links(db, uid, contact.id):
+            if facts.get("other_links"):
                 raise AppException(
                     status_code=422, code="VALIDATION_ERROR",
                     message="This person also has access through another account; ask the office to change their level.",
@@ -1210,13 +1215,21 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 new_label = _role_label("owner", template_codes)
             else:
                 from app.models.access import ContactTag
+                from app.services.contact_tag_service import is_standard_owner_tag
 
-                names = {TEMPLATE["owner_tags"][c].lower() for c in template_codes if c in TEMPLATE["owner_tags"]}
+                code_of = {TEMPLATE["owner_tags"][c].lower(): c for c in template_codes if c in TEMPLATE["owner_tags"]}
                 held = [t["id"] for t in tags_by_contact(db, [str(contact.id)]).get(str(contact.id), [])]
                 remove_tags = [
                     t for t in (db.query(ContactTag).filter(ContactTag.id.in_(held)).all() if held else [])
-                    if t.name.lower() in names
+                    if t.name.lower() in code_of
                 ]
+                for tag in remove_tags:
+                    # Removing an edited tag would take away more than the owner level (security review L1).
+                    if not is_standard_owner_tag(tag, code_of[tag.name.lower()]):
+                        raise AppException(
+                            status_code=422, code="VALIDATION_ERROR",
+                            message=f"The \"{tag.name}\" tag is not the standard one; ask the office.",
+                        )
                 add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
                 new_label = _role_label("employee", [])
             lines.append(f"{_role_label(facts['role'], facts['owner_codes'])} -> {new_label}")
@@ -1237,14 +1250,11 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
     from app.models.order import Customer
 
+    # Own scope: `facts["links"]` holds the user's own accounts only, so no other account is named (C5).
     known: dict = {}
     if facts["links"]:
         with _users_scope(db, uid):
             known = dict(db.query(Customer.id, Customer.customer_code).filter(Customer.id.in_(facts["links"])).all())
-    if own_scope:
-        # Another salesperson's account is never named, not even in the stored step or the audit row (C5).
-        others = _not_own_links(db, uid, contact.id)
-        known = {k: ("another account" if str(k) in others else v) for k, v in known.items()}
     return {
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
         "add_tags": add_tags, "remove_tags": remove_tags,
@@ -1254,10 +1264,13 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
 
 
 def _contact_state(contact, facts: dict) -> dict:
-    return {
+    out = {
         "role": facts["role"], "owner_companies": facts["owner_codes"],
         "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"],
     }
+    if "other_links" in facts:
+        out["other_links"] = facts["other_links"]
+    return out
 
 
 def _contact_read_before(db, user: dict, args: dict) -> dict:
@@ -1280,8 +1293,9 @@ def _on_off(value: Any) -> str:
     return "On" if value else "Off"
 
 
-def _link_words(ids: list, codes: dict) -> str:
-    return ", ".join(sorted(codes.get(str(i), "a customer") for i in ids)) or "none"
+def _link_words(ids: list, codes: dict, others: int = 0) -> str:
+    """The linked customers by code; `others` links (own scope) read "another account", never their code."""
+    return ", ".join([*sorted(codes.get(str(i), "a customer") for i in ids), *["another account"] * others]) or "none"
 
 
 def _contact_words(state: dict, codes: dict) -> dict:
@@ -1289,7 +1303,7 @@ def _contact_words(state: dict, codes: dict) -> dict:
     return {
         "Role": _role_label(state["role"], state["owner_companies"]),
         "AI replies": _on_off(state["chatbot_allowed"]),
-        "Customer links": _link_words(state["links"], codes),
+        "Customer links": _link_words(state["links"], codes, int(state.get("other_links") or 0)),
     }
 
 

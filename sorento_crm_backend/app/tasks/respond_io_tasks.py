@@ -873,13 +873,11 @@ def ensure_respond_contact(contact_id: str) -> dict:
     """Worker-side (DEALER-ACCESS-PORTAL B2, B3, V8): make a CRM contact the agent just granted access known to
     Respond.io at once, so the bot answers their first message instead of waiting for the 15 minute sync.
 
-    Looks the phone up (normalised, URL-quoted in the path); a 404 creates the contact there (phone and first name, no
+    Looks the phone up (normalised to +601..., the form the sync sends); a 404 creates the contact there (phone and first name, no
     message is ever sent). Stores the Respond.io id (and the name parts the CRM row lacks), then writes the
     `backend_id` custom field the sync writes. A contact that already has its id (a retry) only gets `backend_id`. No
     usable phone or no resolvable API key (dev, CI): returns without any HTTP call. Any other HTTP error raises so RQ
     retries."""
-    from urllib.parse import quote
-
     import httpx
 
     from app.database import SessionLocal
@@ -909,7 +907,7 @@ def ensure_respond_contact(contact_id: str) -> dict:
         status = "backend_id"
         if not respond_id:
             try:
-                payload = client.get_contact_by_phone(quote(phone, safe=""))
+                payload = client.get_contact_by_phone(phone)
                 status = "found"
             except httpx.HTTPStatusError as exc:
                 if exc.response is None or exc.response.status_code != 404:
