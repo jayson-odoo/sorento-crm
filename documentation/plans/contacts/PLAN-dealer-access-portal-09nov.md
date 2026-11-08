@@ -1,6 +1,6 @@
 # PLAN: Dealer access portal (salesperson self-service dealer user access)
 
-Status: Plan (behaviour card pending owner answers). Track: full (new screen, grants data access, likely migration).
+Status: Asked (behaviour card `CARD-dealer-access-portal-09nov.md` waits on owner answers). Track: full (new screen, grants data access, RBAC grant, Respond create).
 Lane: DEALER-ACCESS-PORTAL
 
 ## Journey
@@ -12,4 +12,4 @@ the right scope. Replaces the Google Form + Excel import + manual tag + manual a
 
 ## Pipeline map (today)
 
-Filled in by step 1; see the behaviour card posted on the PR.
+See `CARD-dealer-access-portal-09nov.md` sections 2-3 (file:line map).
