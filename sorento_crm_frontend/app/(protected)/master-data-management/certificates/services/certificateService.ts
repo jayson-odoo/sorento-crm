@@ -177,6 +177,25 @@ export async function removeCertificateProduct(id: string, coverageId: string): 
 }
 
 /**
+ * Set the code printed on the certificate for one covered product (QUOTE-CERT-TAB). `confirm`
+ * keeps the suggested text as typed by a person; `model_code` types it ("" clears it).
+ */
+export async function updateCertificateProductCode(
+  id: string,
+  coverageId: string,
+  body: { model_code?: string | null; confirm?: boolean },
+): Promise<void> {
+  const response = await apiFetch(`${BASE}/${id}/products/${coverageId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the code'));
+  }
+}
+
+/**
  * Product options for the coverage picker.
  *
  * Uses the shared products select endpoint rather than a certificate-specific
