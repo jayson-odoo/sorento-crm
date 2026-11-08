@@ -6,7 +6,8 @@ import type { SentFile } from '@/lib/aiAssistantChatApi';
 function detail(file: SentFile): string | null {
   if (file.kind === 'sheet') {
     const rows = file.rows_total ?? file.rows_read;
-    return rows != null ? `Sheet, ${rows} rows` : 'Sheet';
+    const label = file.sheet || 'Sheet';
+    return rows != null ? `${label}, ${rows} rows` : label;
   }
   if (file.kind === 'pdf' && file.pages != null) return `${file.pages} pages`;
   return null;

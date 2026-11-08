@@ -405,9 +405,9 @@ export default function AIAssistantBubble() {
       text: string,
       confirmAction?: 'confirm' | 'cancel',
       attachments: { id: string; sheet: string | null }[] = [],
-    ) => {
+    ): Promise<boolean> => {
       const trimmed = text.trim();
-      if ((!trimmed && attachments.length === 0) || isSending) return;
+      if ((!trimmed && attachments.length === 0) || isSending) return false;
       setInput('');
       const optimistic: AIAssistantMessage = {
         id: `temp-user-${Date.now()}`,
@@ -421,6 +421,7 @@ export default function AIAssistantBubble() {
       setIsSending(true);
       // The thread this send started on: an answer for a thread no longer open is dropped.
       const startedOn = openThreadRef.current;
+      let sent = true;
       try {
         const snapshot = getPageSnapshot();
         const conv = await sendAIAssistantMessage(
@@ -435,8 +436,9 @@ export default function AIAssistantBubble() {
           drawThread(conv.id, conv.messages || []);
         }
       } catch (err) {
+        sent = false;
         drawCountRef.current += 1;
-        if (openThreadRef.current !== startedOn) return;
+        if (openThreadRef.current !== startedOn) return false;
         const errorMessage: AIAssistantMessage = {
           id: `temp-error-${Date.now()}`,
           role: 'assistant',
@@ -448,6 +450,7 @@ export default function AIAssistantBubble() {
       } finally {
         setIsSending(false);
       }
+      return sent;
     },
     [drawThread, isSending],
   );
@@ -988,7 +991,10 @@ export default function AIAssistantBubble() {
                 ref={composerRef}
                 value={input}
                 onChange={setInput}
-                onSend={({ text, attachments }) => sendText(text, undefined, attachments)}
+                onSend={async ({ text, attachments }) => {
+                  // A failed send rejects so the composer keeps its file chips for a retry.
+                  if (!(await sendText(text, undefined, attachments))) throw new Error('Send failed');
+                }}
                 isSending={isSending}
                 canAttach={canAttach}
               />
