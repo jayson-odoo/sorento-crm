@@ -1,58 +1,71 @@
-# UAC - DEALER-ACCESS-PORTAL (draft on the card's (a) answers; final once the owner answers Q1-Q5)
+# UAC - DEALER-ACCESS-PORTAL v2 (owner answers 9 Nov ~00:50: Q1 b tags, Q2-Q5 a; agent path first)
 
-Card: `CARD-dealer-access-portal-09nov.md`. Mock: `dealer-access-portal-mock.html`. Plan: `PLAN-dealer-access-portal-09nov.md`.
+Card: `CARD-dealer-access-portal-09nov.md` section 0. Plan: `PLAN-dealer-access-portal-09nov.md`.
+"Own scope" = the acting user holds `user_management.contacts.edit_own` and NOT `user_management.contacts.edit`.
+"Own accounts" = active customers whose `sales_agent_id` is one of the user's own active sales agents
+(`writes._own_agent_ids`), in the user's granted companies.
 
-## Who and what they see
+## A. Grant (agent tool `crm_contact_grant`, single row and through `crm_batch_propose`)
 
-U1. A user with `user_management.contacts.edit_own` and at least one active sales agent linked to their contact
-    (`users.respond_contact_id` = `sales_agents.contact_id`) sees MY WORK > "Dealer access". A user without the
-    permission does not see the item, and every endpoint below answers 403.
-U2. The company tabs show only companies the user is granted. Each tab lists, for every active customer of that
-    company whose `sales_agent_id` is one of the user's agents, each linked contact (one row per contact per
-    account): name, phone, account code + name, level (Business Owner when the contact holds an owner type of that
-    company, else Employee), WhatsApp (Linked when `respond_io_id` is set, else Waiting), who added the link and when.
-U3. A customer of another salesperson's agent never appears, not in the list, the account picker, or any message.
-U4. Empty tab: heading "No dealer people yet", hint "People you add to your customers appear here.", no button.
+A1. An edit_own holder (no `.edit`) can propose and confirm `crm_contact_grant`. A user with neither slug cannot
+    (the tool is not offered and a direct propose is refused).
+A2. Own scope, customer codes: a code of an own account resolves; a code of an account that exists but is not own is
+    refused with exactly the same text as a code that does not exist: `No customer with the code "<code>" in your
+    accounts.` (no oracle).
+A3. Own scope, customer names: an exact name of exactly one own account resolves; a name fitting several own accounts
+    (phrase match) waits for the pick, and the candidates are own accounts only, even when other salespeople's
+    accounts carry the same name. Never linked on a name alone when more than one fits.
+A4. Word fallback (both scopes): a written name that no account contains as a phrase offers, as a pick, the active
+    accounts (own accounts in own scope) of the row's company whose name shares at least one significant word (3+
+    letters, company suffix words like sdn, bhd, berhad, enterprise, trading, co, company, plt ignored), ordered by
+    the number of shared words then code, at most 10 (+ "more"). With no such account: `No customer named "<name>"
+    in your accounts.` (own scope) / today's text (broad).
+A5. The whole 26 Oct template is written on confirm (Q2 a) whatever the confirming user could set by hand: a user
+    holding only edit_own (no superadmin, no `inventory.stock.edit`, no `user_management.access_agents.edit`) grants a
+    new phone and the contact ends with the company, the stock policy (availability, the template locations), the
+    three enquiry agents, `end_user`, the retail segment, image media, AI replies on.
+A6. Owner via tag: role owner adds the tag "Sorento Business Owner" (SRT) / "Mocha Business Owner" (MCH) to the
+    contact; after confirm the contact holds the tag and the tag's access types (`dealer`, `cabana_dealer` for SRT;
+    `mocha_dealer` for MCH). Employee: no owner tag, access types `end_user` only (plus whatever it held). The
+    preview names the level ("Business owner (Sorento)").
+A7. A missing or inactive owner tag refuses an owner row: `The "Sorento Business Owner" tag is missing; ask the
+    office.` An employee row still applies.
+A8. Re-granting the same person, level and accounts: `Already has this access; nothing to change.`
+A9. Staff phone refused (every scope): a phone that is any user's `respond_contact_id` contact or any
+    `sales_agents.contact_id` contact: `This number belongs to a staff member.`
+A10. Own scope, a phone already linked to an account that is not own: the row applies (add-only, link added, other
+    link untouched), the preview carries the line `also has access through another account`, and no other account's
+    code or name appears in the preview, the confirm result, the action record or the audit row.
+A11. One audit row per contact (event `contact.access_agent`, actor the confirming user); a created contact says so.
 
-## Grant
+## B. Respond.io (V8)
 
-U5. "Add people" opens the modal for the active tab's company. Accounts lists only the user's own active accounts
-    of that company, none pre-ticked; at least one is required.
-U6. 1..20 person rows, each Name (required, max 255), Phone (required), Access (Business Owner / Employee, required).
-U7. Phone is normalised to `+601XXXXXXXX`; a stored `01...` or `+60...` with the same digits is the same person.
-    A non-Malaysian-mobile phone is refused on its row: "<as typed>" is not a Malaysian mobile number.
-U8. Refused on its row: a phone held by two contacts; the user's own phone; a phone that is any CRM user's contact
-    or any sales agent's contact ("This number belongs to a staff member."); the same phone twice in one form.
-U9. Submit with any row refused writes nothing and shows each row's reason; otherwise every row applies in ONE
-    transaction.
-U10. A row applies the 26 Oct template for the company and level through `contact_setup_engine` (access types,
-    company, brands, stock, segment, image media, 3 enquiry agents, switches), the WHOLE template, regardless of
-    which of those facets the user could set by hand, add-only; and links the contact to every picked account
-    (`source = 'portal'`, `linked_by` = user). A new phone creates the contact (default workspace, default agents).
-U11. One audit row per person (`contact.dealer_access_grant`, entity `respond_contacts`, actor the user, before and
-    after per facet, "Contact: created" when new).
-U12. A person already linked to an account the user does not own shows "Also has access through another account." and
-    still applies; the other account is not named anywhere in the response.
-U13. Re-submitting the same people for the same accounts changes nothing and says so per row ("Already has this
-    access.").
+B1. Confirming a grant whose contact has no `respond_io_id` enqueues `ensure_respond_contact(contact_id)` on the
+    `respond_io` queue, after the commit. A contact that has one enqueues nothing.
+B2. The job: no Respond API key resolvable -> returns without any HTTP call. Found by phone -> stores `respond_io_id`.
+    Not found (404) -> creates the contact in Respond.io (POST, phone + first name), stores the returned id. Then
+    writes the `backend_id` custom field. It never calls a message-send endpoint. An HTTP error other than 404 raises
+    (RQ retries).
 
-## Respond.io
+## C. Change and remove (agent tool `crm_contact_access_update`)
 
-U14. After commit a job on the `respond_io` queue looks the phone up in Respond.io; found: stores `respond_io_id`;
-    not found: creates the Respond contact (phone, first name) and stores its id; then writes `backend_id` as the sync
-    does. No message is sent. Failure retries; the row stays "Waiting".
-U15. With no Respond.io API key configured (dev, tests, CI) the job is a logged no-op; no test calls Respond.io.
+C1. Role owner on a contact of an own account adds the company's owner tag (and so its access types); a missing tag
+    refuses as A7.
+C2. Role employee removes the owner tags of the contact's template companies and the owner access types; the contact
+    keeps `end_user`.
+C3. Own scope: demote is refused when the contact is linked to any account that is not own: `This person also has
+    access through another account; ask the office to change their level.`
+C4. Unlinking the contact's LAST customer link (counted across every company, not only the user's) also turns AI
+    replies off in the same change (preview line `AI replies on -> off`). Unlinking one of several links leaves AI
+    replies as they are.
 
-## Remove and change level
+## D. Permission
 
-U16. Remove on a row unlinks the contact from THAT account after the 5 s deferred window (Cancel restores); when it
-    was the contact's last customer link, `chatbot_allowed` becomes false. Audit row.
-U17. Change level Employee -> Business Owner adds that company's owner types. Business Owner -> Employee removes that
-    company's owner types, refused when the contact is linked to an account of that company outside the user's own
-    ("Ask the office: this person is also an owner for another account."). Audit row.
-U18. Remove and change are refused (403) for a contact not linked to any of the user's accounts.
+D1. Migration grants `user_management.contacts.edit_own` to role `salesperson` (idempotent) and seeds the two owner
+    tags when no tag of that name (case-insensitive) exists; an existing tag of that name is left untouched.
 
-## Not changed
+## E. Not changed
 
-U19. The admin access sheet upload and the WhatsApp agent `crm_contact_grant` behave exactly as before.
-U20. Usable and not clipped at 375px and 1280px.
+E1. `.edit` holders: grant, find and update behave as before except A4 (word fallback, offered picks only) and A5
+    (no facet is skipped any more) and A9.
+E2. The admin access sheet upload (`contact_access_sheet_service`) is unchanged.

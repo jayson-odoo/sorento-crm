@@ -1,6 +1,53 @@
 # CARD - DEALER-ACCESS-PORTAL: salespeople grant dealer users access themselves, instantly
 
-Status: Asked (owner answers pending). Lane DEALER-ACCESS-PORTAL, size L. Read of `origin/main` d8a74efc.
+Status: v2, answered 9 Nov ~00:50 (Q1 b tags, Q2 a, Q3 a, Q4 a, Q5 a; agent path FIRST, screen second). Lane
+DEALER-ACCESS-PORTAL, size L. Read of `origin/main` d8a74efc. Section 0 supersedes the v1 sections where they differ.
+
+## 0. v2: owner answers and the agent-first design
+
+Owner (9 Nov ~00:50): Business Owner vs Employee is only the dealer promotions, and it should be a TAG ("don't
+reinvent the wheel"). Q2 a, Q3 a, Q4 a (the salesperson can unlink), Q5 a. MAIN CHANNEL: the salesperson sends the
+same message they send the owner today (names, phones, Owner/Employee, which dealer) to the AI agent (WhatsApp or the
+agent panel); the agent proposes, the salesperson confirms, and access is granted or removed. Fused with the existing
+WhatsApp agent tools. The screen follows (one portal list page, company as a filter, portal add/edit design; mock v2
+then, on tags and a real masked case).
+
+Rules v2 (replace R1-R10 where they differ):
+- V1. The agent tools `crm_contact_grant` (pasted table / message, through `crm_batch_propose`), `crm_contacts_find`
+  and `crm_contact_access_update` serve `user_management.contacts.edit_own` holders; the `salesperson` role gets
+  that permission (migration). `.edit` holders keep every behaviour they have.
+- V2. A salesperson (edit_own, no `.edit`) only ever resolves to THEIR OWN accounts: a code, an exact name, and every
+  "which account?" pick list come from active customers whose sales agent is one of theirs, in the row's company.
+  Another salesperson's account is never named, offered or linked. A written name that fits several of their accounts
+  (a dealer usually has 3 to 9: A/C I, III, CERAMIC...) waits for the pick ("codes, or all"); nothing links on a name
+  alone. When the written name matches no account as a phrase, accounts sharing a significant word are offered as the
+  pick (still never linked without the pick).
+- V3. Level = tag. "Sorento Business Owner" (sets access types dealer + cabana_dealer) and "Mocha Business Owner"
+  (mocha_dealer), seeded by migration when absent, editable on the Tags screen. Employee = the template base only, no
+  tag. Granting an owner adds the company's tag (TAG-UNION live recompute); demoting removes the tag and the owner
+  types it granted.
+- V4. The whole template is written for every grant (Q2 a): companies, stock, enquiry agents included, whatever the
+  confirming user could set by hand. The template plus the two tags is the limit; the user only picks people, level
+  and their own accounts.
+- V5. Staff phones refused: a phone that is a CRM user's contact or a sales agent's contact is never granted.
+- V6. A person already linked to an account that is not the salesperson's: allowed, add-only, with the line "also has
+  access through another account"; the other account never named (Q5 a).
+- V7. Remove: unlink from the salesperson's own account(s) (the existing tool); when it was the person's last link
+  anywhere, AI replies go off in the same change. Demote Owner -> Employee is refused when the person is linked to an
+  account outside the salesperson's own ("ask the office").
+- V8. Instant: after a grant commits, a `respond_io` worker job looks the phone up in Respond.io and creates the
+  contact there when missing (no message sent), stores `respond_io_id`, writes `backend_id`. No key (dev, CI): no-op.
+- V9. Audit: the existing agent action log + one audit row per contact (event `contact.access_agent`), actor the
+  salesperson.
+
+Dev data (sorento_prod_1104, crew-data-response 9 Nov): 29 salesperson users reach customers through their agent rows,
+up to ~500 accounts each (SRT median 60 among those with any); every `sales_agents` row is shared (company NULL), so
+company comes from the customer; 117 linked contacts sit in both companies, 95 of them with DIFFERENT salespeople per
+company (V2, V6 are the common case, not an edge); every one of 546 contacts has a `respond_io_id` today (V8 is new);
+4 contacts are non-MY numbers (still refused by the grant, office handles them). Example: dealer CHO*** has Sorento
+300-N034..N036 (salesperson WT***) and Mocha 300-N026..N043, 9 accounts (salesperson JIM***): each salesperson grants
+on their side only, and the access adds up.
+
 Backend paths under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`. No names or phones in this
 file: dealer names are masked as the first 3 letters + `***`.
 

@@ -1,7 +1,7 @@
 # PLAN: Dealer access portal (salesperson self-service dealer user access)
 
-Status: Asked (card + mock v1 wait on owner answers; UAC drafted on the (a) answers). Track: full (new screen, grants
-data access, RBAC grant migration, Respond.io create).
+Status: Build, agent path (owner answered 9 Nov ~00:50: tags, Q2-Q5 a, agent first; screen second, mock v1 parked).
+Track: full (RBAC grant migration, data access grants, Respond.io create). Agent-path design: card section 0.
 Lane: DEALER-ACCESS-PORTAL. Card `CARD-dealer-access-portal-09nov.md`; UAC
 `dealer-access-portal-09nov-acceptance-criteria.md`; mock `dealer-access-portal-mock.html`.
 
