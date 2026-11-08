@@ -120,11 +120,18 @@ def _verdicts(db, certificate, data, families):
     return rows
 
 
-def _digit_led(used: str, product_code: str, set_codes) -> bool:
-    """A Found through a digit-led code that the rule does not explain: not the full product code and
-    not one of the product's set codes (those are Found by design)."""
+def _digit_led(used: str, product_code: str, set_codes, families) -> bool:
+    """A Found through a digit-led code that the rules do NOT explain: not the full product code, not
+    one of the product's set codes, and not a run only the product's own catalogue family contains
+    (rule B-cat). Every Found this lists is a false Found to look at; the expected count is 0."""
     norm = _key(used)
-    return bool(norm) and norm[0].isdigit() and norm != _key(product_code) and norm not in set_codes
+    return (
+        bool(norm)
+        and norm[0].isdigit()
+        and norm != _key(product_code)
+        and norm not in set_codes
+        and not families.only_family_of(norm, product_code)
+    )
 
 
 def main() -> int:
@@ -136,8 +143,9 @@ def main() -> int:
     parser.add_argument(
         "--digit-led-found",
         action="store_true",
-        help="List only AI links read Found through a code that starts with a digit, plus a total "
-        "(manual links are a person's decision and are only counted).",
+        help="List only AI links read Found through a digit-led code that no rule explains (not the full "
+        "product code, a set code, or a run only the product's own catalogue family contains), plus a "
+        "total; the expected total is 0. Manual links are a person's decision and are only counted.",
     )
     args = parser.parse_args()
     if args.pdf_dir and (args.certificate or args.pdf):
@@ -185,13 +193,15 @@ def main() -> int:
             counts = Counter(row[0] for row in rows)
             totals.update(counts)
             label = f"{certificate.scheme} {certificate.certificate_number}"
-            digit_found = [r for r in rows if r[0] == link_check.VERDICT_FOUND and _digit_led(r[3], r[1], r[6])]
+            digit_found = [
+                r for r in rows if r[0] == link_check.VERDICT_FOUND and _digit_led(r[3], r[1], r[6], families)
+            ]
             hits = [r for r in digit_found if r[4] != "manual"]
             manual_digit_led += len(digit_found) - len(hits)
             digit_led_found += [(label, *r[:6]) for r in hits]
             if args.digit_led_found:
                 if hits:
-                    print(f"\n{label} ({os.path.basename(path)}): {len(hits)} digit-led Found")
+                    print(f"\n{label} ({os.path.basename(path)}): {len(hits)} digit-led Found not explained")
                     for value, code, model_code, used, source, name, _sets in hits:
                         print(f"  {code:<20} {model_code:<14} {used:<12} {source:<7} {name}")
                 continue
@@ -204,7 +214,7 @@ def main() -> int:
                 print(f"  {value:<10} {code:<20} {model_code:<14} {used:<12} {source:<7} {name}")
 
         print("\nTOTAL " + ", ".join(f"{v} {totals.get(v, 0)}" for v in link_check.VERDICTS))
-        print(f"digit-led Found (AI links): {len(digit_led_found)}")
+        print(f"digit-led Found not explained by the rules (AI links): {len(digit_led_found)}")
         print(f"digit-led Found on manual or confirmed links (a person's decision): {manual_digit_led}")
         db.rollback()
         return 0
