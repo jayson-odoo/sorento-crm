@@ -19,17 +19,23 @@ case "$(uname -m)" in
 esac
 tarball="gitleaks_${GITLEAKS_VERSION}_${arch}.tar.gz"
 base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-# The release download is retried: GitHub's release CDN answered 504 on three PR gates in a row on
-# 8 Nov 2026 (PR #2249), failing the gate before any scan ran. curl retries 5xx/408/429 itself;
-# the sha256 check below still guards whatever arrives.
+# The release download is retried: GitHub's release CDN answered 504 on PR gates on 8 Nov 2026
+# (PR #2249). It stayed down past the retries (six 504s over 25 s), so when the release cannot be
+# fetched and verified, the SAME pinned version is built from the Go module proxy instead: a
+# different host, and `go install` checks the module against the Go checksum database, so the
+# fallback is no less verified than the sha256 check on the release tarball.
 fetch() { curl -sSfL --retry 5 --retry-delay 5 --retry-connrefused -O "$1"; }
-(
+from_release() (
   cd "$dir"
-  fetch "$base/$tarball"
-  fetch "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-  grep " ${tarball}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
-  tar -xzf "$tarball" gitleaks
+  fetch "$base/$tarball" &&
+    fetch "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" &&
+    grep " ${tarball}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c - &&
+    tar -xzf "$tarball" gitleaks
 )
+if ! from_release; then
+  echo "::warning title=gitleaks release download failed::building gitleaks v${GITLEAKS_VERSION} from the Go module proxy"
+  GOBIN="$dir" GOFLAGS=-mod=mod go install "github.com/zricethezav/gitleaks/v8@v${GITLEAKS_VERSION}"
+fi
 range="${RANGE:?RANGE is required}"
 echo "Scanning $range"
 # gitleaks reports "no leaks found" and exits 0 when git cannot resolve the
