@@ -86,6 +86,9 @@ export interface CertificateProduct {
   company_name: string | null;
   /** COV-2 / FE-7: rendered as colour, never as a per-row text badge. */
   source: CertificateSource;
+  /** QUOTE-CERT-TAB: the code as printed on the certificate; `ai` = Suggested, `manual` = confirmed. */
+  model_code?: string | null;
+  model_code_source?: 'ai' | 'manual' | null;
 }
 
 /** One expiry reminder that actually went out for this certificate (REM-3/REM-5). */

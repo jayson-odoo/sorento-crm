@@ -1513,6 +1513,11 @@ def _confirm_with_possible_rejects(
     THROUGH `confirm()`'s own `uncover_line_ids` parameter instead, which stays inside the
     journal exactly as an ordinary reconfirm does - undoable, as the plan states.
     """
+    # FP-EMAIL-ONE-TRIGGER (owner, 6 Nov 2026): this press is the ONE trigger of the purchasing
+    # email. Only a transaction marked here sends what its writes queued for purchasing.
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+    mark_purchasing_email_trigger(db)
     named = {str(entry.project_line_id) for entry in getattr(payload, "lines", []) or []}
     # DEDUPED (nit, fix round, review): a line named twice in `rejected_line_ids` is one
     # withdrawal, not two - `dict.fromkeys` keeps the FIRST occurrence's order, which

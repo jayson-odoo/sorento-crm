@@ -31,6 +31,21 @@ def agent_options(db: Any) -> List[Tuple[str, str]]:
     return options(db)
 
 
+def person_options(db: Any) -> List[Tuple[str, str]]:
+    """The distinct person labels (the `sales_person` filter's options): a person_label, else the agent's code."""
+    from app.models.base import get_company_scope
+    from app.models.sales_agent import SalesAgent
+    from app.services.scm.sales_agent_service import scope_filter
+
+    # Inactive agents too: a past person must stay pickable.
+    q = db.query(SalesAgent.sales_agent, SalesAgent.person_label)
+    predicate = scope_filter(get_company_scope(db))
+    if predicate is not None:
+        q = q.filter(predicate)
+    names = {(label or "").strip() or str(code) for code, label in q.all()}
+    return [(n, n) for n in sorted(names)]
+
+
 def brand_options(db: Any) -> List[Tuple[str, str]]:
     from app.services.reports.definitions.top_selling_items import brand_options as options
 

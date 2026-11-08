@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accessory card designer v3</title>
+<!--
+  PRICETAG-ACCESSORY-DESIGNER mock v3 (07/11/2026). Owner on v2: "the accesories are like variable and dynamic per product /
+  combo right, so when we are desigiing like chopping board or colander or drainer, how do we like make sure it applies to every
+  acceosries or specific acceosries caus some accesoreis got the dot, some don't have, some product / combo has 2 accesoreis,
+  some have 3". Card rules V6-V9 (CARD-pricetag-accessory-designer-07nov.md). Static; prices are placeholders.
+
+  Reuses (unchanged from v2's map): elements are ordinary TagLayer objects with a card binding (lib/dealer-kit/tag-template-types.ts);
+  "hide when empty" is the existing show_when idea on TagLayer (LayerShowWhen) applied per card; one layout function
+  accessoryBoxLayout (lib/dealer-kit/accessory-box.ts) feeds the canvas (KonvaTagLayer.tsx), the request preview and print
+  (TagSheetRenderer.tsx); the list per tag comes from accessoriesOf (accessory-box.ts) exactly as today.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eef4ff; --data:#047857; --databg:#ecfdf5; --warn:#b45309; --warnbg:#fffbeb; --canvas:#e9ecf1; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --databg:#0f2a20; --data:#34d399; --warnbg:#2b2110; --canvas:#0b0d11; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --databg:#0f2a20; --data:#34d399; --warnbg:#2b2110; --canvas:#0b0d11; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:30px 0 10px; }
+  h3 { font-size:15px; margin:0 0 8px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; max-width:1180px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+  .row > * { min-width:0; max-width:100%; }
+  .legendrow { display:flex; flex-wrap:wrap; gap:14px; font-size:13px; margin:8px 0 0; }
+  .key { display:inline-flex; gap:6px; align-items:center; }
+  .key i { width:18px; height:12px; border-radius:3px; display:inline-block; }
+  .key .once { border:2px dashed var(--primary); background:var(--sel); }
+  .key .data { border:2px solid var(--data); background:var(--databg); }
+  .scroll { overflow-x:auto; }
+  .stage { background:var(--canvas); border-radius:10px; padding:14px; }
+  .paper { position:relative; background:#fff; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.2); font-family:"DM Sans", system-ui, sans-serif; flex:none; }
+  .abs { position:absolute; }
+  .frm { position:absolute; border:1.3px solid #1f4d36; border-radius:10px; background:#f3f7f4; }
+  .lg { position:absolute; left:50%; transform:translateX(-50%); background:#fff; color:#1f4d36; font-weight:800; padding:0 6px; white-space:nowrap; }
+  .acard { position:absolute; background:#fff; border-radius:5px; }
+  .el { position:absolute; }
+  .el svg { width:100%; height:100%; display:block; }
+  .nm { font-weight:800; white-space:nowrap; }
+  .sp { white-space:nowrap; color:#333; }
+  .dots { display:flex; align-items:center; }
+  .dot { border-radius:50%; border:1px solid #444; flex:none; }
+  .mark-data { outline:1.5px solid var(--data); outline-offset:1px; }
+  .mark-once { outline:1.5px dashed var(--primary); outline-offset:2px; }
+  .hiddenel { outline:1.5px dashed #b45309; outline-offset:1px; }
+  .hidtag { position:absolute; font-size:9px; color:#b45309; white-space:nowrap; background:#fffbeb; padding:0 3px; border-radius:3px; }
+  .ph { position:absolute; border:1.5px dashed var(--primary); background:var(--sel); color:var(--primary); border-radius:4px; font-size:11px; display:flex; align-items:center; justify-content:center; text-align:center; padding:2px; }
+  .tbl { border-collapse:collapse; width:100%; font-size:13px; table-layout:fixed; min-width:560px; }
+  .tbl th, .tbl td { border-top:1px solid var(--line); padding:7px 6px; text-align:left; vertical-align:top; }
+  .tbl th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .yes { color:var(--data); font-weight:600; }
+  .no { color:var(--warn); }
+  .q { margin:6px 0; }
+</style>
+</head>
+<body>
+<h1>One card layout, any accessories: mock v3</h1>
+<div class="muted">07/11/2026. Answer to: "how do we make sure it applies to every accessory or specific accessories, some got the dot, some don't, some product / combo has 2 accessories, some have 3".</div>
+<div class="legendrow">
+  <span class="key"><i class="once"></i> You design this ONCE, in the Tag Template designer</span>
+  <span class="key"><i class="data"></i> Comes from the data (the product's / combo's own list), different on every tag</span>
+</div>
+
+<h2>1. What you design once: a card made of slots, not of a colander</h2>
+<div class="card">
+  <div class="row">
+    <div class="stage scroll"><div id="design"></div></div>
+    <div style="flex:1 1 320px">
+      <h3>You never design "the colander card"</h3>
+      <div style="font-size:13px">You design ONE card with slots. Each slot says which field of an accessory it shows:</div>
+      <ul style="font-size:13px;margin:6px 0;padding-left:18px">
+        <li><b>Picture</b> slot shows that accessory's picture</li>
+        <li><b>Name</b> slot shows its name</li>
+        <li><b>Spec lines</b> slot shows its spec lines</li>
+        <li><b>Colour dots</b> slot shows its colours</li>
+      </ul>
+      <div style="font-size:13px">On a tag, the box makes one card per accessory in that tag's list and fills the slots from each accessory. Whatever the product or combo lists, 1, 2, 3 or more, chopping board or colander, they all use this one card.</div>
+      <div class="muted" style="margin-top:8px">In the designer with no product previewed, sample text shows in the slots (as today). Pick a preview product to see real cards.</div>
+    </div>
+  </div>
+</div>
+
+<h2>2. The same box on two real tags</h2>
+<div class="row" id="tags"></div>
+
+<h2>3. Per accessory: which slot prints</h2>
+<div class="card scroll">
+  <table class="tbl">
+    <tr><th style="width:24%">Accessory (from data)</th><th>Picture</th><th>Name</th><th>Spec lines</th><th>Colour dots</th><th style="width:28%">What you see</th></tr>
+    <tr><td>CHOPPING BOARD</td><td class="yes">1 picture</td><td class="yes">yes</td><td class="no">empty</td><td class="no">no colours</td><td>Name only beside the picture; no dots, no blank dots space</td></tr>
+    <tr><td>COLANDER</td><td class="yes">Black + Grey</td><td class="yes">yes</td><td class="yes">2 lines</td><td class="yes">Black, Grey</td><td>Everything</td></tr>
+    <tr><td>DRAINER</td><td class="yes">Black + Grey</td><td class="yes">yes</td><td class="yes">2 lines</td><td class="yes">Black, Grey</td><td>Everything</td></tr>
+    <tr><td>PULL OUT DRAINER</td><td class="yes">1 picture</td><td class="yes">yes</td><td class="no">empty</td><td class="no">no colours</td><td>Like the chopping board</td></tr>
+    <tr><td>Accessory with no picture</td><td class="no">none</td><td class="yes">yes</td><td>...</td><td>...</td><td>Picture slot prints nothing; no grey box</td></tr>
+  </table>
+  <div class="muted" style="margin-top:8px">Rule: a slot whose field is empty for that accessory does not print. A slot sitting directly under it in the same column moves up into its space (V7). Every card in one box keeps the same height so the stack or row lines up (Q1).</div>
+</div>
+
+<h2>4. Questions</h2>
+<div class="card">
+  <div class="q"><b>Q1.</b> One accessory has less to show (chopping board: no spec, no dots). Card height? (a) <b>every card in a box the same height</b>, recommended: rows and stacks line up like your printed Dealer Kit box / (b) each card only as tall as its own content (vertical boxes only).</div>
+  <div class="q"><b>Q2.</b> One accessory needs to LOOK different (not just different text)? (a) <b>not now</b>, recommended: no real tag needs it yet; different wording or picture for one product is already the list-entry pencil (P1), and an empty field already hides its slot. Built when the first real tag needs it. / (b) build now: an "own card layout" for one accessory in the library.</div>
+</div>
+
+<script>
+(function () {
+  var PICS = {
+    board: '<svg viewBox="0 0 40 40"><rect x="6" y="9" width="28" height="22" rx="3" fill="#d6b98c" stroke="#7a5b2e"/><circle cx="29" cy="14" r="2" fill="#fff" stroke="#7a5b2e"/></svg>',
+    colander: '<svg viewBox="0 0 40 40"><path d="M6 14h28l-3 16H9z" fill="#1f2937" stroke="#000"/><g fill="#fff"><circle cx="13" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><circle cx="23" cy="20" r="1"/><circle cx="28" cy="20" r="1"/><circle cx="15" cy="25" r="1"/><circle cx="20" cy="25" r="1"/><circle cx="25" cy="25" r="1"/></g></svg>',
+    drainer: '<svg viewBox="0 0 40 40"><rect x="5" y="12" width="30" height="16" rx="2" fill="#1f2937" stroke="#000"/><g stroke="#6b7280"><line x1="10" y1="14" x2="10" y2="26"/><line x1="15" y1="14" x2="15" y2="26"/><line x1="20" y1="14" x2="20" y2="26"/><line x1="25" y1="14" x2="25" y2="26"/><line x1="30" y1="14" x2="30" y2="26"/></g></svg>',
+    pullout: '<svg viewBox="0 0 40 40"><rect x="8" y="10" width="24" height="20" rx="2" fill="none" stroke="#374151" stroke-width="2"/><line x1="8" y1="17" x2="32" y2="17" stroke="#374151"/><line x1="8" y1="23" x2="32" y2="23" stroke="#374151"/></svg>',
+    sink: '<svg viewBox="0 0 80 50"><rect x="2" y="6" width="76" height="38" rx="5" fill="#2b2f36" stroke="#000"/><rect x="8" y="11" width="40" height="28" rx="4" fill="#3d434d"/><rect x="52" y="11" width="21" height="28" rx="3" fill="#3d434d"/></svg>',
+    tap: '<svg viewBox="0 0 40 60"><path d="M18 58V22c0-10 16-12 16-2v4" fill="none" stroke="#333" stroke-width="4"/><rect x="12" y="52" width="16" height="6" fill="#333"/></svg>'
+  };
+  var BLACK = '#1f2937', GREY = '#9ca3af';
+  // The ONE card layout (card mm). Designed once.
+  var L = { w: 54, h: 24, pic: [1.5, 1.5, 16, 16], dots: [4.5, 18.5, 9, 3.6, 3], name: [20, 3, 32, 4.5], spec: [20, 8.5, 32, 8] };
+
+  function card(item, Z, x, y, w, marks) {
+    var k = Z, b = function (r) { return 'left:' + (r[0] * k) + 'px;top:' + (r[1] * k) + 'px;width:' + (r[2] * k) + 'px;height:' + (r[3] * k) + 'px'; };
+    var h = '<div class="acard" style="left:' + x + 'px;top:' + y + 'px;width:' + (w * k) + 'px;height:' + (L.h * k) + 'px">';
+    h += '<div class="el' + (marks ? ' mark-data' : '') + '" style="' + b(L.pic) + '">' + PICS[item.pic] + '</div>';
+    h += '<div class="el nm' + (marks ? ' mark-data' : '') + '" style="left:' + (L.name[0] * k) + 'px;top:' + (L.name[1] * k) + 'px;font-size:' + (3.6 * k) + 'px;line-height:' + (4.5 * k) + 'px">' + item.name + '</div>';
+    if (item.spec.length) {
+      h += '<div class="el' + (marks ? ' mark-data' : '') + '" style="left:' + (L.spec[0] * k) + 'px;top:' + (L.spec[1] * k) + 'px">' + item.spec.map(function (t) { return '<div class="sp" style="font-size:' + (2.8 * k) + 'px;line-height:' + (3.6 * k) + 'px">' + t + '</div>'; }).join('') + '</div>';
+    } else if (marks) {
+      h += '<div class="hidtag" style="left:' + (L.spec[0] * k) + 'px;top:' + ((L.spec[1] + 1) * k) + 'px">no spec: slot hidden</div>';
+    }
+    if (item.dots.length) {
+      h += '<div class="el dots' + (marks ? ' mark-data' : '') + '" style="left:' + (L.dots[0] * k) + 'px;top:' + (L.dots[1] * k) + 'px;gap:' + (0.8 * k) + 'px">' + item.dots.map(function (c) { return '<span class="dot" style="background:' + c + ';width:' + (L.dots[4] * k) + 'px;height:' + (L.dots[4] * k) + 'px"></span>'; }).join('') + '</div>';
+    } else if (marks) {
+      h += '<div class="hidtag" style="left:' + (L.dots[0] * k - 4) + 'px;top:' + (L.dots[1] * k) + 'px">no colours: hidden</div>';
+    }
+    return h + '</div>';
+  }
+
+  function box(items, Z, o) {
+    var head = 5.5, gap = 1.5, pad = 1.5, n = items.length;
+    var avail = o.h - head - pad - 1;
+    var s = Math.min(1, (avail - (n - 1) * gap) / (n * L.h));
+    var kz = Z * s;
+    var h = '<div class="abs mark-once" style="left:' + (o.x * Z) + 'px;top:' + (o.y * Z) + 'px;width:' + (o.w * Z) + 'px;height:' + ((head + 1 + n * (L.h * s + gap) - gap + pad) * Z) + 'px">';
+    h += '<div class="frm" style="left:0;right:0;bottom:0;top:' + (head / 2 * Z) + 'px;border-color:' + (o.color || '#1f4d36') + '"></div>';
+    h += '<div class="lg" style="top:0;font-size:' + (head * 0.72 * Z) + 'px;line-height:' + (head * Z) + 'px;color:' + (o.color || '#1f4d36') + '">' + o.header + '</div>';
+    for (var i = 0; i < n; i++) {
+      h += card(items[i], kz, pad * Z, (head + 1 + i * (L.h * s + gap)) * Z, (o.w - 2 * pad) / s, o.marks);
+    }
+    return { html: h + '</div>', s: s };
+  }
+
+  // Section 1: the design, slots only.
+  (function () {
+    var Z = 5, k = Z, w = 54;
+    var b = function (r) { return 'left:' + (r[0] * k) + 'px;top:' + (r[1] * k) + 'px;width:' + (r[2] * k) + 'px;height:' + (r[3] * k) + 'px'; };
+    var h = '<div class="paper" style="width:' + ((w + 6) * Z) + 'px;height:' + ((L.h + 12) * Z) + 'px">';
+    h += '<div class="frm" style="left:' + (1 * Z) + 'px;right:' + (1 * Z) + 'px;top:' + (3.5 * Z) + 'px;bottom:' + (1 * Z) + 'px"></div>';
+    h += '<div class="lg" style="top:' + (0.8 * Z) + 'px;font-size:' + (4 * Z) + 'px;line-height:' + (5.5 * Z) + 'px">ACCESSORIES INCLUDED</div>';
+    h += '<div class="acard mark-once" style="left:' + (3 * Z) + 'px;top:' + (8 * Z) + 'px;width:' + (w * Z) + 'px;height:' + (L.h * Z) + 'px">';
+    h += '<div class="ph" style="' + b(L.pic) + '">Picture</div>';
+    h += '<div class="ph" style="' + b([L.dots[0] - 2.5, L.dots[1], L.dots[2] + 5, 4.5]) + ';font-size:9px;white-space:nowrap">Colour dots</div>';
+    h += '<div class="ph" style="' + b(L.name) + '">Name</div>';
+    h += '<div class="ph" style="' + b(L.spec) + '">Spec lines</div>';
+    h += '</div></div>';
+    document.getElementById('design').innerHTML = h;
+  })();
+
+  // Section 2: two real tags, same box design.
+  var Z = 3;
+  function tag(title, body, note) {
+    var d = document.createElement('div');
+    d.className = 'card'; d.style.flex = '1 1 470px';
+    d.innerHTML = '<h3>' + title + '</h3><div class="stage scroll"><div class="paper" style="width:' + (148 * Z) + 'px;height:' + (105 * Z) + 'px">' + body + '</div></div><div class="muted" style="margin-top:8px">' + note + '</div>';
+    document.getElementById('tags').appendChild(d);
+  }
+  var S1 = [
+    { name: 'CHOPPING BOARD', spec: [], pic: 'board', dots: [] },
+    { name: 'COLANDER', spec: ['390x200x140', 'Depth: <b>160mm</b>'], pic: 'colander', dots: [BLACK, GREY] },
+    { name: 'DRAINER', spec: ['390x200x140', 'Depth: 160mm'], pic: 'drainer', dots: [BLACK, GREY] }
+  ];
+  var S2 = [
+    { name: 'DRAINER', spec: ['390x200x140', 'Depth: 160mm'], pic: 'drainer', dots: [BLACK, GREY] },
+    { name: 'PULL OUT DRAINER', spec: [], pic: 'pullout', dots: [] }
+  ];
+  function sinkBody(code, items, tap) {
+    var b = '<div class="abs mark-data" style="left:' + (4 * Z) + 'px;top:' + (3 * Z) + 'px;font-weight:800;font-size:' + (6 * Z) + 'px">' + code + '</div>';
+    b += '<div class="abs" style="left:' + (4 * Z) + 'px;top:' + (24 * Z) + 'px;width:' + (70 * Z) + 'px;height:' + (44 * Z) + 'px">' + PICS.sink + '</div>';
+    if (tap) b += '<div class="abs" style="left:' + (62 * Z) + 'px;top:' + (14 * Z) + 'px;width:' + (14 * Z) + 'px;height:' + (24 * Z) + 'px">' + PICS.tap + '</div>';
+    b += '<div class="abs" style="left:' + (4 * Z) + 'px;top:' + (88 * Z) + 'px;font-weight:800;font-size:' + (8 * Z) + 'px;color:#c2410c">RM 0,000</div>';
+    var r = box(items, Z, { x: 80, y: 4, w: 64, h: 96, header: 'ACCESSORIES INCLUDED', marks: true });
+    return { html: b + r.html, s: r.s };
+  }
+  var t1 = sinkBody('SRTKS7846', S1, false);
+  tag('SRTKS7846 (product list: 3 accessories)', t1.html,
+    '3 cards. Chopping board: no spec, no colours, so those slots do not print. Colander and drainer: everything. ' + (t1.s < 1 ? 'Cards shrink together to ' + Math.round(t1.s * 100) + '% to fit.' : 'All 3 fit at full size in this box; a smaller box would shrink them together.'));
+  var t2 = sinkBody('SRTKS7061-BL + 1 tap', S2, true);
+  tag('SRTKS7061-BL combo with 1 tap (combo list: 2 accessories)', t2.html,
+    'Same box, same card design, nothing redesigned. 2 cards; the box closes up from the bottom (as today). Drainer gets dots, pull out drainer does not.');
+})();
+</script>
+</body>
+</html>

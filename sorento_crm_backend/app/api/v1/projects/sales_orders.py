@@ -891,6 +891,11 @@ def publish_amendment(
         projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
+        # FP-EMAIL-ONE-TRIGGER Q4 (owner, 6 Nov 2026): Publish amendment keeps its purchasing
+        # email, the one exception beside the board Confirm.
+        from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+        mark_purchasing_email_trigger(db)
         body = service.publish_amendment(amendment_id, actor_user_id=current_user["id"])
         db.commit()
         return body

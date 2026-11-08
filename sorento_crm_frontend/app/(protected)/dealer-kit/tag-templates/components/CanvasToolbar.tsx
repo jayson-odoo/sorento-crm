@@ -15,6 +15,8 @@ import {
   BadgeCheck,
   Boxes,
   ChevronDown,
+  CircleDot,
+  Check,
   Copy,
   Expand,
   Group,
@@ -36,8 +38,11 @@ import {
   Undo2,
   Ungroup,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateService';
 import { Separator } from '@/components/ui/separator';
 import { shortcutLabel, useIsMac } from '@/lib/dealer-kit/canvas-input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -108,6 +113,16 @@ interface CanvasToolbarProps {
   onAddAlternativesRow: () => void;
   /** PRICETAG-ACCESSORIES: the data-driven "Accessories" box. Absent hides the button. */
   onAddAccessories?: () => void;
+  /** Saved accessories templates offered under the Accessories button (with Default box). */
+  accessoryTemplates?: AccessoryTemplateRecord[];
+  /** Present: the Accessories button opens a menu; absent: it stays a plain button. */
+  onInsertAccessoryTemplate?: (template: AccessoryTemplateRecord) => void;
+  /** Card / footer editing mode: the toolbar swaps to the element tools. */
+  accessoryEdit?: {
+    target: 'card' | 'footer';
+    onAddElement: (kind: 'picture' | 'text' | 'colour_dots' | 'shape') => void;
+    onDone: () => void;
+  };
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -230,6 +245,88 @@ export function ToolbarDropdownButton({
   );
 }
 
+/** "Accessories" as a menu: Default box, then the saved templates (searchable, used-in count). */
+function AccessoriesMenuButton({
+  templates,
+  onDefault,
+  onPick,
+}: {
+  templates: AccessoryTemplateRecord[];
+  onDefault: () => void;
+  onPick: (template: AccessoryTemplateRecord) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? templates.filter((t) => t.name.toLowerCase().includes(needle)) : templates;
+  const close = () => {
+    setOpen(false);
+    setQuery('');
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-8 w-auto shrink-0 gap-0.5 px-1.5">
+              <Sparkles className="size-4" />
+              <ChevronDown className="size-3" />
+              <span className="sr-only">Add Accessories</span>
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          Add Accessories
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent align="start" className="flex w-64 flex-col gap-1 p-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 justify-start px-2 text-xs"
+          onClick={() => {
+            close();
+            onDefault();
+          }}
+        >
+          Default box
+        </Button>
+        {templates.length > 0 && (
+          <>
+            <Input
+              className="h-7 px-2 text-xs"
+              placeholder="Search templates"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <div className="flex max-h-60 flex-col overflow-y-auto">
+              {shown.map((template) => (
+                <Button
+                  key={template.id}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 justify-between gap-2 px-2 text-xs"
+                  onClick={() => {
+                    close();
+                    onPick(template);
+                  }}
+                >
+                  <span className="truncate" title={template.name}>
+                    {template.name}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">{template.used_in}</span>
+                </Button>
+              ))}
+            </div>
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function CanvasToolbar({
   tool,
   onToolChange,
@@ -245,6 +342,9 @@ export function CanvasToolbar({
   onAddSet,
   onAddAlternativesRow,
   onAddAccessories,
+  accessoryTemplates,
+  onInsertAccessoryTemplate,
+  accessoryEdit,
   onUndo,
   onRedo,
   canUndo,
@@ -264,6 +364,49 @@ export function CanvasToolbar({
   trailing,
 }: CanvasToolbarProps) {
   const mac = useIsMac();
+  if (accessoryEdit) {
+    const tools = [
+      ...(accessoryEdit.target === 'card' ? [{ kind: 'picture' as const, label: 'Picture', icon: ImageIcon }] : []),
+      { kind: 'text' as const, label: 'Text', icon: Type },
+      { kind: 'colour_dots' as const, label: 'Colour dots', icon: CircleDot },
+      { kind: 'shape' as const, label: 'Shape', icon: Shapes },
+    ];
+    return (
+      <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+        <span className="shrink-0 px-1 text-xs font-medium">Editing {accessoryEdit.target}:</span>
+        {tools.map(({ kind, label, icon: Icon }) => (
+          <Button
+            key={kind}
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-1 px-2 text-xs"
+            onClick={() => accessoryEdit.onAddElement(kind)}
+          >
+            <Icon className="size-3.5" />
+            {label}
+          </Button>
+        ))}
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          className="h-8 shrink-0 gap-1 px-2 text-xs"
+          onClick={accessoryEdit.onDone}
+        >
+          <Check className="size-3.5" />
+          Done
+        </Button>
+        <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+        <ToolbarButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} shortcut={shortcutLabel('Z', mac)} />
+        <ToolbarButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} shortcut={shortcutLabel('Z', mac, true)} />
+        <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+        <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
+        <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
+        <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />
+      </div>
+    );
+  }
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
     // an `sr-only` span, which is `position: absolute`, and a static row is not
@@ -320,8 +463,16 @@ export function CanvasToolbar({
         label="Add Alternatives Row"
         onClick={onAddAlternativesRow}
       />
-      {onAddAccessories && (
-        <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} />
+      {onAddAccessories && onInsertAccessoryTemplate ? (
+        <AccessoriesMenuButton
+          templates={accessoryTemplates ?? []}
+          onDefault={onAddAccessories}
+          onPick={onInsertAccessoryTemplate}
+        />
+      ) : (
+        onAddAccessories && (
+          <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} />
+        )
       )}
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />

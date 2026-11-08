@@ -378,6 +378,49 @@ def test_h11_confirm_all_behaves_the_same(api, monkeypatch):
     _assert_cancel_balance_line(matches[0]["context"]["handover"]["lines"][0], row)
 
 
+def test_fp_email_one_trigger_confirm_all_of_two_orders_emails_each(api, monkeypatch):
+    """FP-EMAIL-ONE-TRIGGER (review S1): Confirm all commits each order on its own, so each
+    order's write is its own root transaction and the route marks each one. Two orders in one
+    press: each order's CANCEL BALANCE reaches purchasing, none is dropped by the gate."""
+    client, world, w, row, calls = _world_with_row(api, monkeypatch)
+    db = world.db
+    from . import test_so_cancel_line
+
+    # The pool stock row exists already; the second order's world reuses it.
+    monkeypatch.setattr(test_so_cancel_line, "_stock", lambda *a, **k: None)
+    w2 = _cb_world(world)
+    core_a2, mirror_a2, product_a2 = w2["a"]
+    w2["order"].autocount_doc_no = w2["core_so"].so_number
+    inquiry2 = _inquiry(db, world.company_id, w2["order"].id)
+    row2 = _oi_row(
+        db, world.company_id, inquiry2.id, mirror_a2.id, product_a2.product_code, "36",
+        delivery_date=DELIVERY,
+    )
+    db.commit()
+    calls.clear()
+
+    response = client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                dict(_cancel_body(w["a"][1]), pso_id=w["order"].id),
+                dict(_cancel_body(w2["a"][1]), pso_id=w2["order"].id),
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert all(r["ok"] for r in response.json()["results"]), response.json()
+    _reload(db, row, row2)
+    assert row.state == INQUIRY_CANCELLED and row2.state == INQUIRY_CANCELLED
+    told = {
+        line["item_code"]
+        for match in _handover_calls(calls)
+        for line in match["context"]["handover"]["lines"]
+    }
+    assert {row.item_code, row2.item_code} <= told, told
+
+
 # ---------------------------------------------------------------- AC-H12, H13
 
 

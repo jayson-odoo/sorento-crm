@@ -8,6 +8,7 @@
  * Everything is in millimetres inside the layer's own box; (0, 0) is its top-left corner.
  */
 import { formatTagPrice } from './price-badge';
+import { richOneLine } from './rich-text';
 import type {
   AccessoriesLayerProps,
   AccessoryTextStyle,
@@ -69,7 +70,7 @@ export function estimateHeaderWidth(text: string, fontSize_pt: number): number {
 // Which list (A3)
 // ---------------------------------------------------------------------------
 
-function partAtSlot(
+export function partAtSlot(
   slots: TagSlots | null | undefined,
   slot: SubjectSlot,
 ): TagPartData | null {
@@ -160,7 +161,7 @@ export interface AccessoryBoxLayout {
   badge: AccessoryRect | null;
 }
 
-type LayoutProps = Pick<
+export type LayoutProps = Pick<
   AccessoriesLayerProps,
   | 'direction'
   | 'headerText'
@@ -268,7 +269,8 @@ export function accessoryCardLines(item: TagAccessory): string[] {
     if (item.list_price != null) lines.push(`LP: ${formatTagPrice(item.list_price)}`);
     return lines;
   }
-  return [item.name, item.spec ?? ''].filter((line) => line && line.trim());
+  // A rich spec (the designed card reads the markup) prints as one plain line on the legacy card.
+  return [item.name, richOneLine(item.spec)].filter((line) => line && line.trim());
 }
 
 /** How many text lines every card in a box reserves: 3 once a product is listed, else 2. */
@@ -288,7 +290,7 @@ function textBlockHeight(
   );
 }
 
-function cardSize(props: LayoutProps, boxWidth_mm: number, lines: number): { w: number; h: number } {
+export function cardSize(props: LayoutProps, boxWidth_mm: number, lines: number): { w: number; h: number } {
   const image = Math.max(0, props.imageSize_mm);
   const text = textBlockHeight(props, lines);
   const h =
@@ -374,6 +376,28 @@ export function accessoryBoxLayout(
   const last = cards[shown - 1];
   const outW = props.direction === 'horizontal' ? last.x_mm + last.width_mm + pad : boxWidth_mm;
   const outH = props.direction === 'horizontal' ? boxHeight_mm : last.y_mm + last.height_mm + pad;
+  return {
+    cards,
+    shown,
+    dropped: total - shown,
+    boxWidth_mm: outW,
+    boxHeight_mm: outH,
+    ...accessoryChrome(props, outW, outH),
+  };
+}
+
+/**
+ * The box's frame, header band and "+" badge for a box closed up to `outW` x `outH`. Shared by the
+ * legacy layout and the designed-card layout (`cardBoxLayout`) so the two draw the same chrome.
+ */
+export function accessoryChrome(
+  props: LayoutProps & Pick<AccessoriesLayerProps, 'showFrame'>,
+  outW: number,
+  outH: number,
+): Pick<AccessoryBoxLayout, 'frame' | 'header' | 'badge'> {
+  const pad = ACCESSORY_BOX_PAD_MM;
+  const headerH = accessoryHeaderHeight(props);
+  const onBorder = Boolean(props.headerOnBorder) && headerH > 0;
   const frameTop = onBorder ? headerH / 2 : 0;
   const badgeSize = Math.max(3.5, headerH > 0 ? headerH : 4);
   // The header clears the badge (crew pass, 6 Nov: at 45 mm the "+" hid the first letter): the same
@@ -393,11 +417,6 @@ export function accessoryBoxLayout(
     ? Math.min(room, estimateLineWidth(props.headerText ?? '', headerPt, bold) + 2 * pad)
     : room;
   return {
-    cards,
-    shown,
-    dropped: total - shown,
-    boxWidth_mm: outW,
-    boxHeight_mm: outH,
     frame:
       props.showFrame === false
         ? null

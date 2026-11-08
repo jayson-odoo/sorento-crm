@@ -138,7 +138,8 @@ MAIN_LEFT_OUT = (
     "listing the CRM records you can read; change a customer ask; create an opportunity; "
     "change an opportunity; change a dealer contact; approve or reject a purchase request; "
     "take back a purchase request action; record a suggestion or wish for what the system should have or do, "
-    "an idea or a feature request; change one of your ideas"
+    "an idea or a feature request; change one of your ideas; grant a dealer contact access; add or remove contact tags; "
+    "assign sales agents to customers"
 )
 
 

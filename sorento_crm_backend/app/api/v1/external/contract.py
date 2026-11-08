@@ -6,7 +6,8 @@ autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
 entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5; v2.6 adds
 `billing_documents`, AutoCount invoices, cash sales, credit and debit notes into
 `finance.billing_documents`, finance S0 #1309; v2.11 adds `item_classes`, AutoCount ItemClass
-as a master entity, ITEM-CLASS-MASTER).
+as a master entity, ITEM-CLASS-MASTER; v2.13 adds `billing_documents` `lines.parent_line_ref` and
+`lines.line_type`, AutoCount item-package parent/child, SS-PACKAGE-LINES ss PR #226).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -61,6 +62,7 @@ from app.services.master_ref_resolver import (
     WARN_AGENT_CREATED,
     WARN_CUSTOMER_CREATED,
     WARN_CUSTOMER_UNRESOLVED,
+    WARN_LINE_PRODUCT_UNRESOLVED,
     WARN_REF_MISMATCH,
     WARN_SUPPLIER_AMBIGUOUS,
     WARN_SUPPLIER_CREATED,
@@ -327,7 +329,8 @@ STATUS_OPTIONAL: dict[str, bool] = {
 # replaced with the AutoCount line-set, so an ESB reading a verdict can tell a
 # supersede apart from a plain create; `deprecated_field` is retired code
 # (D15 end state) kept here so a pre-2.1 integration checking for it by name
-# still finds it documented.
+# still finds it documented. `line_product_unresolved` is a PREFIX: each
+# dropped line's entry carries `:doc=..:line_ref=..:line_no=..:product_code=..`.
 WARNINGS: list[str] = sorted(
     {
         WARN_CUSTOMER_CREATED,
@@ -338,6 +341,7 @@ WARNINGS: list[str] = sorted(
         WARN_REF_MISMATCH,
         WARN_UNCLASSIFIED_DEMAND,
         WARN_SUPPLIER_AMBIGUOUS,
+        WARN_LINE_PRODUCT_UNRESOLVED,
         WARN_CONTAINER_UNRESOLVED,
         WARN_RECEIVED_LOCKED,
         WARN_WAREHOUSE_INACTIVE,

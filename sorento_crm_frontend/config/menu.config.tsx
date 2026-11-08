@@ -730,6 +730,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/dealer-kit/tag-sizes',
             permission: 'dealer_kit.page.view',
           },
+          {
+            title: 'Accessory Templates',
+            path: '/dealer-kit/accessory-templates',
+            permission: 'dealer_kit.page.view',
+          },
         ],
       },
     ],
@@ -1530,6 +1535,14 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: MessageSquare,
     path: '/sla-management/conversations',
     permission: 'sla_management.conversations.view_own',
+    audience: 'salesperson',
+  },
+  {
+    // AI-TOOLS-WAVE2 (owner ruling 5 Nov): own agent targets with their commission.
+    title: 'My targets',
+    icon: TrendingUp,
+    path: '/sales/targets',
+    permission: 'sales.targets.view_own',
     audience: 'salesperson',
   },
   {

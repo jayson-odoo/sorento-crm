@@ -253,3 +253,37 @@ describe('WhatsAppBlocks: code slots (round 9, second pass)', () => {
     expect(container.querySelector('code')?.textContent).toBe('b');
   });
 });
+
+describe('WhatsAppBlocks: the agent result table (AI-TOOLS-WAVE2 crew pass, 5 Nov)', () => {
+  const reply = [
+    'Payout this month: RM 1,234.50.',
+    '',
+    'Commission payout by agent, Period 01/11/2026 to 30/11/2026',
+    '',
+    '| Agent | Commission payout |',
+    '|---|---|',
+    '| AG1 | 1,000.00 |',
+    '| AG2 | 234.50 |',
+    '| Total | 1,234.50 |',
+    '',
+    'Periods containing today (05/11/2026).',
+  ].join('\n');
+
+  it('renders the markdown table as a real table, not raw "|" text', () => {
+    const { container } = render(<WhatsAppBlocks text={reply} />);
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(Array.from(table!.querySelectorAll('th')).map((c) => c.textContent)).toEqual(['Agent', 'Commission payout']);
+    const rows = Array.from(table!.querySelectorAll('tbody tr')).map((r) => Array.from(r.querySelectorAll('td')).map((c) => c.textContent));
+    expect(rows).toEqual([['AG1', '1,000.00'], ['AG2', '234.50'], ['Total', '1,234.50']]);
+    expect(container.textContent).not.toContain('|');
+    expect(container.textContent).toContain('Payout this month: RM 1,234.50.');
+    expect(container.textContent).toContain('Periods containing today (05/11/2026).');
+  });
+
+  it('a "|" line with no separator row stays text', () => {
+    const { container } = render(<WhatsAppBlocks text={'a | b\n| just a pipe |'} />);
+    expect(container.querySelector('table')).toBeNull();
+    expect(container.textContent).toContain('| just a pipe |');
+  });
+});

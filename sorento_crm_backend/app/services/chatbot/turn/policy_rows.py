@@ -412,13 +412,15 @@ SPECIFICATION_KIND_ROW: dict[str, Any] = dict(
 
 # SUPPLIER-ASK (owner, 1 Nov 2026): the supplier a staff member names ("outstanding for
 # supplier X"), resolved through the shared resolver and the span pass's Supplier list.
+# `family_grouping` (migration `sfam_0001_supplier_ledger_family`, crew live check 7 Nov 2026):
+# supplier records of one name (HANLIM TRADING SDN BHD, 403-H007 and 400-H018) are one supplier.
 SUPPLIER_KIND_ROW: dict[str, Any] = dict(
     kind="supplier",
     label="Supplier",
     resolver_source="suppliers",
     did_you_mean=True,
     default_narrowing="optional_filter",
-    family_grouping=None,
+    family_grouping="ledger_family",
     base_property_words={},
     roster_cap=50,
 )

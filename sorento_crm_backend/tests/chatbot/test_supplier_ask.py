@@ -26,6 +26,7 @@ from app.services.chatbot.head import list_resolver
 from app.services.chatbot.head import lookup_lists as ll
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import gate as gate_mod
+from app.services.chatbot.lanes.business import report_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
@@ -638,7 +639,8 @@ def _seed_named(session_factory, name: str, code: str) -> str:
 
 
 def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
-               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True):
+               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True, embed=None,
+               party_side: bool = False, mcp_response: Any = None):
     import functools
 
     from app.services import contact_field_reveal_service
@@ -647,19 +649,19 @@ def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver
 
     monkeypatch.setattr(
         parser_mod, "ParserConfig",
-        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=supplier_ids),
+        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=supplier_ids, party_side=party_side),
     )
     monkeypatch.setattr(span_extract, "resolve_config", lambda db, **kw: span_extract.SpanConfig(
         "sys", 1, "openai", "gpt-zz", "ZZ-key", "label"))
     monkeypatch.setattr(span_extract, "extract", lambda config, message: span_extract.SpanAnswer([span], {}, 1))
-    monkeypatch.setattr(ll, "EMBED", meaning_embed({t.casefold() for t in near}))
+    monkeypatch.setattr(ll, "EMBED", embed or meaning_embed({t.casefold() for t in near}))
     monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: list(attributes))
     qf = qf or _ask(span.text, None)
     seen = _PickFirstSupplierId(qf)
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=text_body,
         msg_id=f"ZZT-supplier-span-{uuid.uuid4().hex[:10]}", attributes=list(attributes), real_resolver=True,
-        capture_user_block=seen,
+        capture_user_block=seen, mcp_response=mcp_response,
     )
     return ((result.reply or {}).get("text") or ""), captured, seen
 
@@ -771,19 +773,21 @@ def test_a_customer_typed_span_resolves_to_a_supplier_row_when_only_the_supplier
     )
 
 
-def test_two_suppliers_with_one_name_are_two_lines_each_with_its_code(session_factory, monkeypatch):
-    """Console pass 3 note a: "CO.,LTD" and "CO., LTD." were two companies on two lines nobody could tell apart, and
-    two suppliers with the very same name shared one line. Every supplier is its own line, named with its code."""
+def test_two_suppliers_with_one_name_are_one_supplier_never_asked(session_factory, monkeypatch):
+    """Console pass 3 note a (#2066) had "CO.,LTD" and "CO., LTD." as two companies on two lines, and two suppliers of
+    the very same name on one line nobody could pick from; it ruled every supplier its own line with its code. Crew
+    live check on #2120 (7 Nov, HANLIM TRADING SDN BHD 403-H007 + 400-H018) replaces that: records of one trading name
+    are one supplier, keyed as customer ledgers are (`ledger_family_key`: brackets, punctuation and legal-form words
+    ignored, so the note a pair is one supplier too). The PO list runs for every record and nothing is asked."""
     ids = _staff_world(session_factory)
     same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
     span = list_resolver.Span("taiyang", "supplier")
     reply, captured, _seen = _span_turn(
         session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", SUPPLIER}
     )
-    lines = [ln.split(". ", 1)[1] for ln in reply.splitlines() if ln[:1].isdigit()]
-    assert sorted(lines) == sorted([f"{SUPPLIER} (ZZTSUP-TY01)", f"{SUPPLIER} (ZZTSUP-TY09)"]), reply
-    assert not _po_calls(captured), captured
-    assert same != ids["ours"]
+    assert "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["ours"], same]), (reply, captured)
 
 
 
@@ -1048,13 +1052,17 @@ def test_the_envelope_names_its_supplier_subjects_with_their_codes():
 
 def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_codes():
     """Owner turn 3 (87fc44fc): the header read 'SRTW2600, XIAMEN TAIYANG TECHNOLOGY CO.,LTD' for three suppliers: the
-    customer-account rule folded two records of one name and dropped every code. A customer still folds."""
+    customer-account rule folded two records of one name and dropped every code. Customer ledgers fold only through
+    their customer group (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026)."""
+    from app.services.ledger_family import customer_groups
     from app.services.chatbot.turn.compose import _header_subjects
 
     a, b, c = f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)", "ZZT TAIYANG TECHNOLOGY CO., LTD. (400-X001)"
     assert _header_subjects(["SRTW2600", a, b, c], whole=[a, b, c]) == ["SRTW2600", a, b, c]
     ledgers = ["ZZT HARDWARE SDN BHD - [A/C I]", "ZZT HARDWARE SDN BHD - [A/C II]"]
-    assert len(_header_subjects(ledgers, whole=[a])) == 1
+    assert len(_header_subjects(ledgers, whole=[a])) == 2
+    with customer_groups({n: "ZZT HARDWARE SDN BHD" for n in ledgers}):
+        assert _header_subjects(ledgers, whole=[a]) == ["ZZT HARDWARE SDN BHD"]
 
 
 def test_the_owner_supplier_ask_with_a_product_and_a_year_stays_on_purchase_orders(session_factory, monkeypatch):
@@ -1980,3 +1988,902 @@ def test_crews_unknown_supplier_with_no_parser_entity_never_lists_the_po_book(se
 def test_a_hintless_entity_never_breaks_the_resolver_request():
     """Crew turn 36f11957: '太阳的' with hint null reached `allowed_entity_types` as None and the resolver request failed."""
     assert resolve_gate._allowed_entity_types({}, [{"raw": "太阳的", "hint": None}, {"raw": "x", "hint": "supplier"}]) == ["supplier"]
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up to #2066 (crew re-check at 8b759db7): 金百川 read "Kim Pak Chuan" placed KIM HOH HARDWARE (403-K032) ALONE
+# at exactly the supplier meaning floor; the turn listed KIM HOH's POs (turns ed977e5f, c5ffe95e). A lone row that only
+# just reaches the floor is never the answer: the turn asks among the near rows, or finds nothing.
+# --------------------------------------------------------------------------- #
+
+KIM_HOH = "ZZT KIM HOH HARDWARE"
+KIM_SENG = "ZZT KIM SENG TRADING"
+JINBAICHUAN = "ZZT JINBAICHUAN SANITARY CO LTD"
+KIM_READING = "Kim Pak Chuan"
+
+
+class _CosineEmbed:
+    """`cos[phrase][text]` is the cosine the phrase scores against that row text; every other text is orthogonal.
+    `model` None is a plain callable (the OpenAI floors)."""
+
+    def __init__(self, cos: dict[str, dict[str, float]], model: str | None = None) -> None:
+        import math
+
+        if model:
+            self.model = model
+        self.dim = 4096
+        texts = sorted({t.casefold() for row in cos.values() for t in row})
+        self.axis = {t: i for i, t in enumerate(texts)}
+        self.fixed: dict[str, list[float]] = {t: self._unit(i) for t, i in self.axis.items()}
+        rest = len(texts)
+        for phrase, row in cos.items():
+            v = [0.0] * self.dim
+            for t, c in row.items():
+                v[self.axis[t.casefold()]] = c
+            v[rest] = math.sqrt(max(0.0, 1 - sum(c * c for c in row.values())))
+            self.fixed[phrase.casefold()] = v
+
+    def _unit(self, i: int) -> list[float]:
+        v = [0.0] * self.dim
+        v[i] = 1.0
+        return v
+
+    def __call__(self, texts):
+        import hashlib
+
+        out = []
+        for t in texts:
+            v = self.fixed.get(t.casefold().strip())
+            if v is None:
+                v = self._unit(len(self.axis) + 1 + int(hashlib.md5(t.encode()).hexdigest(), 16) % (self.dim - len(self.axis) - 1))
+            out.append(v)
+        return out
+
+
+def _kim_rows():
+    return [
+        _sup_row("s-kh", KIM_HOH, "403-K032"), _sup_row("s-ks", KIM_SENG, "403-K040"),
+        _sup_row("s-jb", JINBAICHUAN, "403-J011"),
+    ]
+
+
+def test_a_lone_supplier_at_the_meaning_floor_is_asked_among_its_near_rows():
+    """Crew's emission: KIM HOH at exactly the gemini supplier floor (0.65), alone over it; KIM SENG just under."""
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: 0.651, KIM_SENG: 0.62}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)], _kim_rows(), embed=embed)[0]
+    assert res.status == "ambiguous", res
+    assert [c.row.key for c in res.candidates] == ["s-kh", "s-ks"], res
+
+
+def test_a_lone_supplier_at_the_meaning_floor_with_nothing_near_is_not_found():
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: 0.651}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)], _kim_rows(), embed=embed)[0]
+    assert res.status == "unresolved" and not res.candidates, res
+
+
+@pytest.mark.parametrize("cos", [0.67, 0.69])
+def test_a_lone_supplier_clearly_over_the_floor_still_binds(cos):
+    """The true reading's hits scored 0.687-0.692 (crew turn 659346ce): a clear lone match stays the answer."""
+    embed = _CosineEmbed({"Jin Bai Chuan": {JINBAICHUAN: cos, KIM_SENG: 0.62}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning="Jin Bai Chuan")], _kim_rows(), embed=embed)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s-jb", res
+
+
+@pytest.mark.parametrize("typed", ["kim hoh", "kimhoh hardware"])
+def test_a_lone_spelling_match_is_untouched_by_the_weak_meaning_rule(typed):
+    """"kimhoh hardware" spells KIM HOH alone at 0.636, under the floor plus the margin: only meaning is judged weak."""
+    embed = _CosineEmbed({}, model="gemini-embedding-001")  # the 0.65 floor, no meaning hits
+    res = list_resolver.resolve([list_resolver.Span(typed, "supplier")], _kim_rows(), embed=embed)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s-kh", res
+
+
+def test_a_lone_customer_at_its_meaning_floor_is_unchanged():
+    """Only the supplier list is measured near a wrong row; a customer's lone meaning match keeps resolving."""
+    rows = [ll.LookupRow("customer", "c1", "ZZT HARBOUR TILES", ("ZZT HARBOUR TILES",), homes=("label",))]
+    embed = _CosineEmbed({"port tiles": {"ZZT HARBOUR TILES": 0.75}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span("port tiles", "customer")], rows, embed=embed)[0]
+    assert res.status == "resolved", res
+
+
+NATIVE_JBC = "金百川"
+
+
+def test_crews_kim_pak_chuan_turn_never_lists_the_lone_floor_suppliers_pos(session_factory, monkeypatch):
+    """Crew turns ed977e5f / c5ffe95e end to end: "Outstanding for 金百川", the span pass reads it "Kim Pak Chuan", which
+    scores KIM HOH alone at the floor. The turn asks which supplier (KIM HOH beside KIM SENG) and lists nothing."""
+    _staff_world(session_factory)
+    kh = _seed_named(session_factory, KIM_HOH, "ZZTSUP-KH32")
+    ks = _seed_named(session_factory, KIM_SENG, "ZZTSUP-KS40")
+    floor = list_resolver._meaning_floor(_CosineEmbed({}), "supplier")
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: floor + 0.001, KIM_SENG: floor - 0.03}})
+    span = list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "Outstanding for 金百川", span, set(), qf=_ask(NATIVE_JBC, None), embed=embed,
+    )
+    assert not [a for n, a in captured if n == PO_TOOL and a.get("supplier_ids") == [kh]], (reply, captured)
+    assert KIM_HOH in reply and KIM_SENG in reply, reply
+    assert not _po_calls(captured), captured
+    assert ks
+
+
+def test_crews_kim_pak_chuan_turn_with_nothing_near_never_lists_that_supplier(session_factory, monkeypatch):
+    _staff_world(session_factory)
+    kh = _seed_named(session_factory, KIM_HOH, "ZZTSUP-KH32")
+    floor = list_resolver._meaning_floor(_CosineEmbed({}), "supplier")
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: floor + 0.001}})
+    span = list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "Outstanding for 金百川", span, set(), qf=_ask(NATIVE_JBC, None), embed=embed,
+    )
+    assert not [a for n, a in captured if n == PO_TOOL and kh in (a.get("supplier_ids") or [])], (reply, captured)
+    assert not [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and not a.get("supplier_ids")], (reply, captured)
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, 3 Nov 2026 (prod, after #2066 went live): "it keeps asking me to choose fullshun customer or supplier,
+# it is so clear that sales is talking about customer". The PARSER reads the side of a both-sides name from the whole
+# turn (`party_side`, behind `parser.PARTY_SIDE_LINE`); code reads no word of the message (owner rule, 28 Oct). Only
+# "unclear" (or a prompt without the line) asks.
+# --------------------------------------------------------------------------- #
+
+FULLSHUN = "ZZT FULLSHUN HARDWARE SDN BHD"
+
+
+def test_the_party_side_line_turns_the_schema_key_on_and_only_then():
+    from app.services.chatbot.head import parser as parser_mod
+
+    base = parser_mod._base_schema(parser_mod.ParserConfig("x", 1, "openai", "m", "k"))
+    assert "party_side" not in base["properties"] and "party_side" not in base["required"]
+    on = parser_mod._base_schema(parser_mod.ParserConfig("x", 1, "openai", "m", "k", party_side=True))
+    assert on["properties"]["party_side"] == {"type": ["string", "null"], "enum": ["customer", "supplier", "unclear", None]}
+    assert on["required"][-1] == "party_side"
+    assert parser_mod.with_party_side(base)["properties"].keys() - base["properties"].keys() == {"party_side"}
+
+
+def test_no_word_list_decides_the_side_in_code():
+    """Owner rule 28 Oct (#1947): meaning comes from the parser. The engine keeps no side word list or message read."""
+    from app.services.chatbot import engine as engine_mod
+
+    assert not hasattr(engine_mod, "_party_side")
+    assert not [n for n in dir(engine_mod) if n.endswith("_SIDE_WORDS") or n.endswith("_PARTY_WORDS")]
+
+
+@pytest.mark.parametrize("side,expect", [("customer", "customer"), ("supplier", "supplier")])
+def test_a_side_keeps_only_that_party_kind_of_a_both_sides_word(side, expect):
+    from app.services.chatbot.turn.reconcile import apply_reconciliation
+
+    entities = [{"raw": "fullshun", "hint": "supplier", "canonical_code": "sup-id", "current_message": True}]
+    hits = {"fullshun": {"customer": 1, "supplier": 1}}
+    asked = apply_reconciliation(entities, hits, exact={"fullshun": {}})
+    assert asked.kind_pick_options and {o["entity_type"] for o in asked.kind_pick_options} == {"customer", "supplier"}
+    sided = apply_reconciliation(entities, hits, exact={"fullshun": {}}, side=side)
+    assert sided.kind_pick_options is None, sided.kind_pick_options
+    assert sided.entities[0]["hint"] == expect
+    if expect == "customer":
+        assert sided.entities[0]["canonical_code"] is None, "a supplier's row id never binds the customer"
+
+
+def _fullshun_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["fs_customer"] = _seed_customer(session_factory, FULLSHUN)
+    ids["fs_supplier"] = _seed_named(session_factory, FULLSHUN, "ZZTSUP-FS01")
+    return ids
+
+
+def _fullshun_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, *, flag: bool = True,
+                   **parse):
+    qf = _parser_output(
+        entities=[{"raw": "fullshun", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("fullshun", hint), {"fullshun", FULLSHUN.casefold()},
+        qf=qf, attributes=OWNER_GRANTS, party_side=flag,
+    )
+
+
+#: The sales side's own next question for these asks (the kind, the basis, the period).
+_SALES_SIDE_REPLIES = (report_ask.KIND_QUESTION, "Invoiced, delivered, ordered or outstanding?", "Which period")
+
+_SALES_ASKS = {
+    "delivery for fullshun": dict(
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side="customer",
+    ),
+    "dealer fullshun oct sale": dict(party_side="customer",
+        domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None, date_mode="range", date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+    ),
+    "customer fullshun only": dict(
+        domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None, party_side="customer",
+    ),
+    "Outstanding order for fullshun": dict(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="customer",
+    ),
+}
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text", sorted(_SALES_ASKS))
+def test_owners_prod_sales_asks_over_a_both_sides_name_are_the_customer_never_asked(
+    session_factory, monkeypatch, text, hint
+):
+    """Prod 3 Nov: "delivery for hanlim", "dealer fullshun oct sale", "customer fullshun only" were each asked
+    "fullshun (customer) / fullshun (supplier)". A sales question is the customer's: no question, no PO list."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(session_factory, monkeypatch, text, hint, canonical, **_SALES_ASKS[text])
+    assert "(supplier)" not in reply and "Which one do you mean?" not in reply, reply
+    assert any(q in reply for q in _SALES_SIDE_REPLIES), reply  # the sales side's own next step, never an empty turn
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS]
+    assert all(ids["fs_supplier"] not in (a.get("supplier_ids") or []) for a in party), (reply, captured)
+    assert all(a.get("customer_ids") == [ids["fs_customer"]] for a in party if n_party(a)), (reply, captured)
+
+
+def n_party(args: dict[str, Any]) -> bool:
+    return bool(args.get("customer_ids") or args.get("supplier_ids"))
+
+
+_PURCHASE_ASKS = {
+    "PO for fullshun": dict(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"], party_side="supplier",
+    ),
+    "fullshun PO outstanding": dict(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, status="outstanding", document=["PO"],
+        party_side="supplier",
+    ),
+    "supplier fullshun outstanding": dict(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="supplier",
+    ),
+}
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text", sorted(_PURCHASE_ASKS))
+def test_a_purchase_ask_over_a_both_sides_name_is_the_supplier_never_asked(session_factory, monkeypatch, text, hint):
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(session_factory, monkeypatch, text, hint, canonical, **_PURCHASE_ASKS[text])
+    assert "(customer)" not in reply and "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["fs_supplier"]], (reply, captured)
+    assert not calls[0].get("customer_ids"), calls
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_a_both_sides_name_with_no_side_word_is_still_asked(session_factory, monkeypatch, hint):
+    """The #2066 rule stands where the message names no side ("Outstandinf for orionis"): asked, nothing listed."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(
+        session_factory, monkeypatch, "Outstandinf for fullshun", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="unclear",
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+@pytest.mark.parametrize("said", ["customer", "supplier"])
+def test_a_party_side_from_a_prompt_without_the_line_is_ignored_and_the_name_asked(session_factory, monkeypatch, said):
+    """Production today: no text carries `PARTY_SIDE_LINE`, so a stray key never decides; the #2066 question stands."""
+    ids = _fullshun_world(session_factory)
+    reply, captured, _seen = _fullshun_turn(
+        session_factory, monkeypatch, "delivery for fullshun", "supplier", ids["fs_supplier"], flag=False,
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side=said,
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_an_outstanding_order_ask_over_a_both_sides_name_reports_that_customer(session_factory, monkeypatch, hint):
+    """End to end: "Outstanding order for fullshun" asks the sales side's kind question (never customer or supplier),
+    and "Pending delivery" is the customer's DO report, filtered by that customer's id."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _s = _fullshun_turn(
+        session_factory, monkeypatch, "Outstanding order for fullshun", hint, canonical,
+        **_SALES_ASKS["Outstanding order for fullshun"],
+    )
+    assert report_ask.KIND_QUESTION in reply, reply
+    pend_qf = _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
+        reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
+        reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS["empty-DO"],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        attributes=OWNER_GRANTS,
+    )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and asks[0].get("customer_ids") == [ids["fs_customer"]], (reply, captured)
+    assert not _po_calls(captured), captured
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_a_delivery_ask_over_a_both_sides_name_names_the_customer(session_factory, monkeypatch, hint):
+    """Prod "delivery for hanlim": the sales side's period question names the customer, never "couldn't find a
+    supplier" (the round-9 guard counted the span model's supplier type as the subject)."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, _c, _s = _fullshun_turn(
+        session_factory, monkeypatch, "delivery for fullshun", hint, canonical, **_SALES_ASKS["delivery for fullshun"],
+    )
+    assert FULLSHUN in reply and "couldn't find" not in reply, reply
+
+
+def _parser_config_for(session_factory, monkeypatch, template: str):
+    """`test_eem_category_pick._config_for` over a parser with no other label (the session DB keeps earlier rows)."""
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_eem_category_pick import _config_for
+
+    db = session_factory()
+    db.query(AIPromptLabel).filter(AIPromptLabel.name == parser_mod.PROMPT_KEY).delete()
+    db.query(AIPromptVersion).filter(AIPromptVersion.name == parser_mod.PROMPT_KEY).delete()
+    db.commit()
+    db.close()
+    from app.services import ai_prompt_registry
+    from app.services import chatbot_prompt_vars as pv
+
+    ai_prompt_registry.bust_cache()
+    pv.clear_cache()
+    return _config_for(session_factory, monkeypatch, template)
+
+
+@pytest.mark.parametrize("gate", ["", "== CLOSED LISTS ==\n"])
+def test_a_prompt_with_the_party_side_line_offers_the_key_on_both_schema_paths(session_factory, monkeypatch, gate):
+    from app.services.chatbot.head import parser as parser_mod
+    on = _parser_config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n" + gate + parser_mod.PARTY_SIDE_LINE + "\n")
+    assert on.party_side is True
+    schema = on.json_schema or parser_mod._base_schema(on)
+    assert schema["properties"]["party_side"]["enum"] == ["customer", "supplier", "unclear", None], schema["properties"].keys()
+    assert "party_side" in schema["required"]
+
+
+def test_a_prompt_without_the_party_side_line_has_no_key(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+    off = _parser_config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n== CLOSED LISTS ==\n")
+    assert off.party_side is False
+    assert "party_side" not in (off.json_schema or parser_mod._base_schema(off))["properties"]
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE (owner, 5 Nov 2026, prod on parser v202 / label v71): "delivery to hanlim" still replied "Which
+# one do you mean? 1. hanlim (customer) 2. hanlim (supplier)" because #2120's code was not on main while the prompt
+# already carried its PARTY_SIDE section. The parser's party_side decides; only a message naming no side asks.
+# --------------------------------------------------------------------------- #
+
+HANLIM = "ZZT HANLIM ENTERPRISE SDN BHD"
+
+
+def _party_side_section(name: str) -> str:
+    """The PARTY_SIDE section as published in the prod text (md5 d29c1983 carries it verbatim), from its PROMPT doc
+    wherever the plan currently lives (plans/ or plans/_archive/)."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    homes = [root / "documentation" / "plans" / "chatbot", root / "documentation" / "plans" / "_archive" / "chatbot"]
+    found = [home / name for home in homes if (home / name).is_file()]
+    assert found, f"{name} not under {homes}"
+    text = found[0].read_text(encoding="utf-8")
+    return text.split("```text\n", 1)[1].split("```", 1)[0]
+
+
+def test_the_prod_party_side_section_carries_the_line_the_code_keys_on():
+    """The section v202 published (PROMPT-party-side-3nov.md Edit 1, 1315 bytes, md5 9fcfa92c) turns the key on."""
+    import hashlib
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    section = _party_side_section("PROMPT-party-side-3nov.md")
+    assert hashlib.md5(section.encode("utf-8")).hexdigest() == "9fcfa92c8b6045279b8889734c0fe4d8"
+    assert section.splitlines()[0] == parser_mod.PARTY_SIDE_LINE
+    for side in parser_mod.PARTY_SIDES:
+        assert f'"{side}"' in section, side
+
+
+def _hanlim_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["hl_customer"] = _seed_customer(session_factory, HANLIM)
+    ids["hl_supplier"] = _seed_named(session_factory, HANLIM, "ZZTSUP-HL01")
+    return ids
+
+
+def _hanlim_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, **parse):
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim", HANLIM.casefold()},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_delivery_to_hanlim_is_the_customer_never_asked(session_factory, monkeypatch, hint):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "delivery to hanlim", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side="customer",
+    )
+    assert "Which one do you mean?" not in reply and "(supplier)" not in reply, reply
+    assert HANLIM in reply and "couldn't find" not in reply, reply
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and n_party(a)]
+    assert all(a.get("customer_ids") == [ids["hl_customer"]] for a in party), (reply, captured)
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_po_from_hanlim_is_the_supplier_never_asked(session_factory, monkeypatch, hint):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "PO from hanlim", hint, canonical,
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"], party_side="supplier",
+    )
+    assert "Which one do you mean?" not in reply and "(customer)" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["hl_supplier"]], (reply, captured)
+    assert not calls[0].get("customer_ids"), calls
+
+
+@pytest.mark.parametrize("said", ["unclear", None])
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_hanlim_alone_is_still_asked(session_factory, monkeypatch, hint, said):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "hanlim", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status=None, party_side=said,
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+def test_a_customer_side_never_keeps_a_supplier_row_id_the_parser_put_on_a_customer_hint():
+    """Review nit (#2120): the model put a Supplier candidate's id on a customer-hinted both-sides entity."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _both_side_words
+
+    prep = SimpleNamespace(
+        party_suppliers={"hanlim": "sup-1"}, supplier_groups={"sup-1": [("sup-1", "HANLIM")]}, message=None,
+    )
+    verdict = {"party_side": "customer", "entities": [
+        {"raw": "hanlim", "hint": "customer", "canonical_code": "sup-1", "current_message": True},
+    ]}
+    out = _both_side_words(verdict, prep)["entities"][0]
+    assert out["hint"] == "customer" and out["canonical_code"] is None, out
+    kept = _both_side_words({**verdict, "entities": [{**verdict["entities"][0], "canonical_code": "cus-9"}]}, prep)
+    assert kept["entities"][0]["canonical_code"] == "cus-9", kept
+
+
+def test_a_weak_lone_supplier_offers_each_row_once():
+    """Review nit (#2120): one supplier with two texts near the span is one option, never two."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    rows = [
+        LookupRow("supplier", "s1", "S1", ("kim pak",)), LookupRow("supplier", "s1", "S1", ("kim pak chuan",)),
+        LookupRow("supplier", "s2", "S2", ("kim hoh",)),
+    ]
+    span = list_resolver.Span("kim pak chuan", "supplier")
+    meaning = {("supplier", 0): {span.text: 0.66}, ("supplier", 1): {span.text: 0.64}, ("supplier", 2): {span.text: 0.62}}
+    best = list_resolver.Candidate(rows[0], 0.66, "meaning")
+    res = list_resolver._weak_alone(
+        span, best, {"supplier": {"meaning": 0.65}}, {"supplier": SimpleNamespace(rows=rows)}, meaning,
+    )
+    assert res.status == "ambiguous" and [c.row.key for c in res.candidates] == ["s1", "s2"], res
+    assert res.candidates[0].score == 0.66, res
+    alone = list_resolver._weak_alone(
+        span, best, {"supplier": {"meaning": 0.65}}, {"supplier": SimpleNamespace(rows=rows[:2])},
+        {k: v for k, v in meaning.items() if k[1] < 2},
+    )
+    assert alone.status == "unresolved", alone
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live check (7 Nov 2026, db7ec534, parser v74 md5 d29c1983): HANLIM TRADING SDN BHD is a
+# customer AND two supplier records (403-H007, 400-H018). "PO for hanlim" read party_side=supplier and then asked
+# "Which one do you mean?" over the two supplier records of one name. Records of one name are one supplier, as ledgers
+# of one trading name are one customer (`chatbot_entity_kinds.family_grouping`, migration
+# `sfam_0001_supplier_ledger_family`): the PO list runs for both, never asked.
+# --------------------------------------------------------------------------- #
+
+HANLIM_TRADING = "HANLIM TRADING SDN BHD"
+
+
+def _hanlim_trading_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["hl_customer"] = _seed_customer(session_factory, HANLIM_TRADING)
+    ids["hl_sup_a"] = _seed_named(session_factory, HANLIM_TRADING, "403-H007")
+    ids["hl_sup_b"] = _seed_named(session_factory, HANLIM_TRADING, "400-H018")
+    return ids
+
+
+def _hanlim_trading_turn(session_factory, monkeypatch, text: str, hint: str, **parse):
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim", HANLIM_TRADING.casefold()},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+_PO_ASK = dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"])
+_OUTSTANDING_PO_AS_ORDER = dict(domain_hint="order", intent_hint="check_order", order_status="outstanding", document=[])
+
+
+@pytest.mark.parametrize(
+    "text,hint,parse",
+    [
+        ("PO for hanlim", "supplier", _PO_ASK),
+        ("PO for hanlim", "customer", _PO_ASK),
+        # Live run 3: party_side supplier, the entity hinted customer, the order domain's outstanding read.
+        ("outstanding PO hanlim", "customer", _OUTSTANDING_PO_AS_ORDER),
+        ("outstanding PO hanlim", "supplier", {**_PO_ASK, "order_status": "outstanding"}),
+    ],
+)
+def test_po_for_a_supplier_of_two_records_of_one_name_lists_both_never_asked(
+    session_factory, monkeypatch, text, hint, parse
+):
+    ids = _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(session_factory, monkeypatch, text, hint, party_side="supplier", **parse)
+    assert "Which one do you mean?" not in reply and "(customer)" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+    assert not calls[0].get("customer_ids"), calls
+
+
+def test_delivery_to_hanlim_trading_is_the_customer_never_asked(session_factory, monkeypatch):
+    ids = _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(
+        session_factory, monkeypatch, "delivery to hanlim", "customer", party_side="customer",
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"],
+    )
+    assert "Which one do you mean?" not in reply and "(supplier)" not in reply, reply
+    assert HANLIM_TRADING in reply, reply
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and n_party(a)]
+    assert all(a.get("customer_ids") == [ids["hl_customer"]] for a in party), (reply, captured)
+
+
+@pytest.mark.parametrize("said", ["unclear", None])
+def test_bare_hanlim_trading_is_asked_customer_or_supplier_once(session_factory, monkeypatch, said):
+    """Owner, 5 Nov: ask only when nothing in the message names a side. A bare name names none."""
+    _hanlim_trading_world(session_factory)
+    reply, captured, _seen = _hanlim_trading_turn(
+        session_factory, monkeypatch, "hanlim", "customer", party_side=said,
+        domain_hint="order", intent_hint="check_order", order_status=None,
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert reply.count("(supplier)") == 1, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+def test_the_supplier_kind_groups_records_of_one_name():
+    """The seed fallback and the migration agree: supplier records of one name are one family."""
+    from app.services.chatbot.turn import policy_rows
+
+    assert policy_rows.SUPPLIER_KIND_ROW["family_grouping"] == "ledger_family"
+
+
+def test_a_customer_group_never_merges_two_suppliers_of_different_names():
+    """Reviewer follow-up (#2120): the supplier family is the supplier's own trading name. A customer group that
+    happens to list both names (customer rows of the same names) never makes two different suppliers one choice."""
+    from app.services import ledger_family as lf
+    from app.services.chatbot.turn import narrow
+    from app.services.chatbot.turn.state import Focus, Profile
+
+    rows = [
+        {"uuid": str(uuid.uuid4()), "name": name, "canonical_code": name, "raw": name, "entity_type": "supplier"}
+        for name in ("ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD")
+    ]
+    focus = Focus(extra={"supplier": [{"raw": "zzt", "hint": "supplier", "current_message": True}]})
+    with lf.customer_groups({"ZZT ALPHA SDN BHD": "ZZT GROUP", "ZZT BETA SDN BHD": "ZZT GROUP"}):
+        outcome = narrow.decide(
+            kind="supplier", policy_value="optional_filter", focus=focus, profile=Profile(),
+            resolved_candidates=rows, family_grouping="ledger_family",
+        )
+    assert outcome.ask_kind == "supplier_pick", outcome
+    assert sorted(o["label"] for o in outcome.ask_options) == ["ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD"], outcome
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live re-run at 8b26ef80 (7 Nov 2026, dev copy sorento_prod_1104, parser v74 md5 d29c1983,
+# gemini-3.5-flash-lite, 3 runs each): HANLIM is 7 customer ledgers and 2 supplier records. With party_side supplier and
+# the word hinted customer, `apply.reconciled` was empty on all 6 PO turns: the untyped party read placed no single row,
+# so nothing bound a supplier. Run 1 (span typed supplier) answered "Could not find purchase order for customer hanlim";
+# runs 2 and 3 read the whole PO book with no supplier filter. The parser objects below are the live ones.
+# --------------------------------------------------------------------------- #
+
+HANLIM_LEDGERS = (
+    HANLIM_TRADING, f"{HANLIM_TRADING} [A/C II]", "HANLIM ENTERPRISE", "HANLIM HARDWARE SDN BHD", "HANLIM (JB) SDN BHD",
+    "HANLIM BUILDERS", "HANLIM TILES",
+)
+_LIVE_PO = dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"])
+_LIVE_OUTSTANDING_PO = dict(domain_hint="order", intent_hint="check_po", order_status="outstanding", document=["PO"])
+
+
+def _live_hanlim_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["ledgers"] = [_seed_customer(session_factory, name) for name in HANLIM_LEDGERS]
+    ids["hl_sup_a"] = _seed_named(session_factory, HANLIM_TRADING, "403-H007")
+    ids["hl_sup_b"] = _seed_named(session_factory, HANLIM_TRADING, "400-H018")
+    return ids
+
+
+def _live_turn(session_factory, monkeypatch, text: str, word: str, span_type: str | None, **parse):
+    qf = _parser_output(
+        entities=[{"raw": word, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        **parse,
+    )
+    near = {word, *(n.casefold() for n in HANLIM_LEDGERS)}
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span(word, span_type), near,
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+@pytest.mark.parametrize("span_type", ["customer", None, "supplier"])
+@pytest.mark.parametrize(
+    "text,parse",
+    [
+        ("PO for hanlim", _LIVE_PO),
+        ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO),  # live r1 / r3
+        ("outstanding PO hanlim", {**_LIVE_PO, "order_status": "outstanding"}),  # live r2
+    ],
+)
+def test_the_supplier_side_binds_the_supplier_over_many_customer_ledgers(
+    session_factory, monkeypatch, text, parse, span_type
+):
+    ids = _live_hanlim_world(session_factory)
+    reply, captured, _seen = _live_turn(
+        session_factory, monkeypatch, text, "hanlim", span_type, party_side="supplier", **parse
+    )
+    assert "Which one do you mean?" not in reply and "for customer" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+    assert not [n for n, a in captured if a.get("customer_ids")], captured
+
+
+@pytest.mark.parametrize("said", ["supplier", "unclear", None])
+@pytest.mark.parametrize("parse", [_LIVE_PO, {**_LIVE_PO, "order_status": "outstanding"}])
+def test_the_po_book_never_lists_without_a_supplier_for_a_named_party(session_factory, monkeypatch, parse, said):
+    """Crew rule B (7 Nov, live runs 2 and 3 read the whole PO book): with a party named, the PO tool never runs
+    without supplier_ids. A word only a customer row places is "couldn't find a supplier", never the whole book."""
+    ids = _live_hanlim_world(session_factory)
+    only_customer = _seed_customer(session_factory, "ZZT QQCUST SDN BHD")
+    reply, captured, _seen = _live_turn(
+        session_factory, monkeypatch, "PO for qqcust", "qqcust", "customer", party_side=said, **parse
+    )
+    assert not [a for a in _po_calls(captured) if not a.get("supplier_ids")], (reply, captured)
+    if said == "supplier":
+        assert "couldn't find a supplier" in reply.lower() and "qqcust" in reply, reply
+    assert only_customer not in str(captured) and ids["hl_sup_a"] not in str(captured), captured
+
+
+def test_a_named_party_scopes_the_po_book_alone():
+    """Crew rule B: a customer-hinted party of this message, and no supplier, scopes the PO book (only): an unfiltered
+    PO list is refused with "couldn't find a supplier"; the customer's own lists run as before."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _supplier_scope
+
+    verdict = {"entities": [{"raw": "hanlim", "hint": "customer", "current_message": True}]}
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    scope = _supplier_scope(state, state, verdict, ["purchase_order"], True)
+    assert scope is not None and scope["tools"] == [PO_TOOL] and '"hanlim"' in scope["line"], scope
+    trigger = {"tool": PO_TOOL, "entities": [], "contact_id": "c-1", "semantic_input": {"supplier_scope": scope}}
+    with pytest.raises(fetch_mod.SupplierScopeViolation):
+        fetch_mod.entity_ids_transformer(trigger, space_id=None)
+    fetch_mod.entity_ids_transformer({**trigger, "tool": "crm_outstanding_report"}, space_id=None)  # customer side runs
+    assert _supplier_scope(state, state, {"entities": []}, ["purchase_order"], True) is None
+    assert _supplier_scope(state, state, verdict, ["purchase_order"], False) is None
+
+
+def test_a_named_party_scopes_the_po_book_on_a_report_ask_turn_too():
+    """Review S3 (#2120): a turn that also carries a report object keeps the PO book's guard."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _supplier_scope
+
+    verdict = {
+        "report_ask": {"company": None},
+        "entities": [{"raw": "hanlim", "hint": "customer", "current_message": True}],
+    }
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    scope = _supplier_scope(state, state, verdict, ["purchase_order"], True)
+    assert scope is not None and scope["tools"] == [PO_TOOL], scope
+
+
+def test_the_supplier_side_never_binds_a_name_the_report_object_holds():
+    """Review S1 (#2120): REPORT-FILTER-ALL's rule holds on a supplier-side turn: a name the kept report object holds
+    is never bound as a supplier."""
+    from app.services.chatbot.engine import _SpanPrep, _side_suppliers
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    prep = _SpanPrep.__new__(_SpanPrep)
+    prep.supplier_ids, prep.message = True, "sorento PO"
+    prep.rows = [LookupRow("supplier", "s2", "SORENTO KITCHEN SUPPLY", ("sorento kitchen supply",))]
+    prep.supplier_groups = {"s9": [("s9", "NEAR (S9)")]}
+    entity = {"raw": "Sorento", "hint": "customer", "canonical_code": None, "current_message": True}
+    trace = SimpleNamespaceTrace()
+    out = _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace, frozenset({"sorento"}))
+    assert out["entities"][0] == entity, out
+    kept = _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace)
+    assert kept["entities"][0]["hint"] == "supplier" and kept["entities"][0]["canonical_code"] == "s2", kept
+    prep.supplier_groups["s2"] = [("s2", "SORENTO KITCHEN SUPPLY (X)"), ("s7", "SORENTA (Y)")]
+    _side_suppliers({"party_side": "supplier", "entities": [entity]}, prep, trace)
+    assert ("s7", "SORENTA (Y)") in prep.supplier_groups["s2"], "the span pass's close rows are merged, never dropped"
+
+
+class SimpleNamespaceTrace:
+    def add(self, *_args, **_kwargs) -> None:
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live re-run 2 at 73e1c41a (7 Nov): whenever the parser hinted the word customer, the supplier
+# never bound. (2) runs 2+3 "Could not find purchase order for customer hanlim"; (3) x3 stayed on the order domain
+# ("Sales order or delivery order?"). Reproduced here with the span pass giving no supplier rows (`supplier_ids=False`):
+# the side is the parser's top-level party_side (A2), a purchase order ask on the supplier side is the purchase_order
+# domain whatever domain_hint says (A3), and a supplier-side miss never says "customer" (A4). Parser fields only.
+# --------------------------------------------------------------------------- #
+
+
+def _round2_turn(session_factory, monkeypatch, text: str, word: str, *, supplier_ids: bool, **parse):
+    qf = _parser_output(
+        entities=[{"raw": word, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        party_side="supplier", **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span(word, "customer"), {word},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True, supplier_ids=supplier_ids,
+    )
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize(
+    "text,parse",
+    [("PO for hanlim", _LIVE_PO), ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO), ("PO for hanlim", _LIVE_OUTSTANDING_PO)],
+)
+def test_party_side_supplier_binds_the_supplier_whatever_the_hint(session_factory, monkeypatch, text, parse, supplier_ids):
+    ids = _live_hanlim_world(session_factory)
+    reply, captured, _seen = _round2_turn(session_factory, monkeypatch, text, "hanlim", supplier_ids=supplier_ids, **parse)
+    assert "customer" not in reply.lower() and "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize("parse", [_LIVE_PO, _LIVE_OUTSTANDING_PO])
+def test_a_supplier_side_miss_names_a_supplier_never_a_customer(session_factory, monkeypatch, parse, supplier_ids):
+    _live_hanlim_world(session_factory)
+    _seed_customer(session_factory, "ZZT QQCUST SDN BHD")
+    reply, captured, _seen = _round2_turn(
+        session_factory, monkeypatch, "outstanding PO qqcust", "qqcust", supplier_ids=supplier_ids, **parse
+    )
+    assert reply == 'Sorry, I couldn\'t find a supplier called "qqcust".', reply
+    assert not [n for n, _a in captured], captured
+
+
+#: The PO route's own empty body (`GET /procurement/purchase-orders/placed`), pushed through the real presenter.
+_PO_EMPTY = {"data": [], "pagination": {"total": 0, "page": 1, "limit": 0}, "empty": True}
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text,parse", [("PO for hanlim", _LIVE_PO), ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO)])
+def test_no_open_po_for_a_supplier_family_names_the_supplier(session_factory, monkeypatch, text, parse, hint, supplier_ids):
+    """Crew live re-run 2 (7 Nov, verdict (i)): every HANLIM PO line is closed, so the PO list is empty and correct. The
+    reply names the supplier once, by its trading name: never "customer", never a "did you mean" over its own records."""
+    ids = _live_hanlim_world(session_factory)
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+        party_side="supplier", **parse,
+    )
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim"}, qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, supplier_ids=supplier_ids, mcp_response=_PO_EMPTY,
+    )
+    assert "customer" not in reply.lower() and "did you mean" not in reply.lower(), reply
+    assert f"supplier: {HANLIM_TRADING}\n" in reply and "no purchase order" in reply.lower(), reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), captured
+
+
+@pytest.mark.parametrize("parse", [_LIVE_OUTSTANDING_PO, {**_LIVE_OUTSTANDING_PO, "intent_hint": "check_order"}])
+def test_a_supplier_side_po_ask_on_the_order_domain_reads_the_po_book(session_factory, monkeypatch, parse):
+    """Crew A3 (live re-run 2: domain_hint order, intent check_po, document [PO], party_side supplier): the parser read
+    a purchase order ask on the supplier side, so the turn is the purchase_order domain whatever domain_hint says, never
+    the sales side's "Sales order or delivery order?". Here no party is named, so A3 alone decides."""
+    _live_hanlim_world(session_factory)
+    qf = _parser_output(entities=[], party_side="supplier", **parse)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO", list_resolver.Span("outstanding PO", None), set(), qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, mcp_response=_PO_EMPTY,
+    )
+    assert "Sales order or delivery order?" not in reply, reply
+    assert _po_calls(captured), (reply, captured)
+    assert not [n for n, _a in captured if n != PO_TOOL], captured
+
+
+def test_a_supplier_side_po_ask_with_a_carried_customer_never_says_customer_purchase_orders(session_factory, monkeypatch):
+    """Review B1 (#2120 round 2): a customer word the parser carried (not typed now) keeps the turn off A3's swap, so
+    the reply is never "Could not find purchase order for customer ..."."""
+    _live_hanlim_world(session_factory)
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": False, "confident": True}],
+        party_side="supplier", **_LIVE_OUTSTANDING_PO,
+    )
+    reply, _captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO", list_resolver.Span("outstanding PO", None), set(), qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, supplier_ids=False, mcp_response=_PO_EMPTY,
+    )
+    assert "purchase order for customer" not in reply.lower(), reply
+
+
+def test_the_supplier_side_never_rewrites_a_word_the_user_did_not_type():
+    """Review S1 (#2120 round 2, fix round 8's rule): the parser echoes the asked word on a pick answer ("1"); that
+    echo is not this message's party word and is never re-sided."""
+    from app.services.chatbot.engine import _SpanPrep, _side_suppliers
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    prep = _SpanPrep.__new__(_SpanPrep)
+    prep.supplier_ids, prep.message, prep.supplier_groups = True, "1", {}
+    prep.rows = [LookupRow("supplier", "s1", HANLIM_TRADING, (HANLIM_TRADING.casefold(),))]
+    echo = {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True}
+    verdict = {"party_side": "supplier", "entities": [echo]}
+    assert _side_suppliers(verdict, prep, SimpleNamespaceTrace()) is verdict
+    prep.message = "PO for hanlim"
+    assert _side_suppliers(verdict, prep, SimpleNamespaceTrace())["entities"][0]["hint"] == "supplier"
+
+
+def test_the_supplier_side_po_read_waits_on_any_order_party_or_report_owned_word():
+    """Review round 3 (#2120): A3 never swaps a turn an order-side party word (a customer PO ref) or a report-owned word
+    still holds, the same rule the old supplier swap keeps."""
+    from app.services.chatbot.engine import _supplier_side_po_ask
+
+    base = {"party_side": "supplier", "domain_hint": "order", "intent_hint": "check_po", "document": ["PO"]}
+    assert _supplier_side_po_ask({**base, "entities": []})
+    ref = {"raw": "4500123", "hint": "customer_po_ref", "current_message": True}
+    assert not _supplier_side_po_ask({**base, "entities": [ref]})
+    own = {"raw": "Sorento", "hint": "supplier", "current_message": True}
+    assert _supplier_side_po_ask({**base, "entities": [own]})
+    assert not _supplier_side_po_ask({**base, "entities": [own]}, frozenset({"sorento"}))
+
+
+@pytest.mark.parametrize(
+    "intent,document",
+    [("check_po", []), ("check_order", ["PO"]), ("check_po", ["PO"])],
+)
+def test_a3_alone_reads_a_supplier_side_po_ask_on_the_order_domain_as_purchase_orders(intent, document):
+    """Crew round 3 (#2120): live never exercised A3 (the parser already read purchase_order), so it is proved here on
+    its own. The parser's own fields only: domain_hint order, party_side supplier, a PO intent or document, and no
+    party word at all (so no supplier entity, and the old supplier swap cannot fire)."""
+    from app.services.chatbot.engine import _supplier_side
+
+    verdict = {
+        "domain_hint": "order", "intent_hint": intent, "document": document, "order_status": "outstanding",
+        "party_side": "supplier", "entities": [],
+    }
+    out = _supplier_side(verdict, None, None, SimpleNamespaceTrace())
+    assert out["domain_hint"] == "purchase_order" and out["intent_hint"] == "check_po", out
+    assert out.get("sales_side_status") == "outstanding", out
+    for other in ({**verdict, "party_side": "customer"}, {**verdict, "party_side": None}, {**verdict, "intent_hint": "check_order", "document": []}):
+        assert _supplier_side(other, None, None, SimpleNamespaceTrace())["domain_hint"] == "order", other

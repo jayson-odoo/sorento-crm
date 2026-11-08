@@ -89,6 +89,7 @@ from app.services.master_ref_resolver import (
     WARN_UNCLASSIFIED_DEMAND,
     MasterRefResolver,
     dedupe_warnings,
+    line_product_unresolved_warning,
 )
 from app.services.scm.po_ref import po_ref_key
 from app.services.project_label_rules import (
@@ -650,6 +651,17 @@ class DocumentIngestService(MasterRefResolver):
                 ref = getattr(line, "source_ref", None)
                 if ref:
                     dropped_refs.append(ref)
+                # INGEST-DROP-WARN-CRM: say WHICH line was dropped and why, not
+                # only count it. Products match by code only (3 Oct ruling), so
+                # the code is the missing value, blank when none was sent.
+                warnings.append(
+                    line_product_unresolved_warning(
+                        getattr(payload, spec.number_field, None),
+                        ref,
+                        getattr(line, "line_number", None),
+                        getattr(line, "product_code", None),
+                    )
+                )
 
         if spec.entity_type == "sales_orders" and outcome is IngestOutcome.UPDATED:
             self._capture_planning_diff_before(header, payload)
@@ -1721,10 +1733,22 @@ class DocumentIngestService(MasterRefResolver):
                 # to be here too, not just at the matched-by-ref site above - an
                 # unconditional append would re-flag a row purchasing already
                 # re-confirmed on every later push of the same reduced document.
-                if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
-                    newly_cancelled_so_line_ids.append(row.id)
+                # FP-EMAIL-ONE-TRIGGER (crew, 7 Nov): a line AutoCount REMOVED (a header this
+                # push does not cancel) is not flagged either. Its rows are still live (Q1 (a)
+                # left them for the board) and the flag would acknowledge them by the system;
+                # they keep their state and ack until CS's Confirm retires them.
+                removed_so_line = id(row) in removed_ids and header.status != CANCELLED
                 if (
-                    id(row) in removed_ids
+                    spec.entity_type == "sales_orders"
+                    and prior_line_status != CANCELLED
+                    and not removed_so_line
+                ):
+                    newly_cancelled_so_line_ids.append(row.id)
+                # Only a PO line's removal acts here (its links are released below); a removed
+                # SO line waits on the board (FP-EMAIL-ONE-TRIGGER Q1 (a)).
+                if (
+                    spec.entity_type == "purchase_orders"
+                    and id(row) in removed_ids
                     and prior_line_status != CANCELLED
                     and header.status != CANCELLED
                 ):
@@ -1759,12 +1783,13 @@ class DocumentIngestService(MasterRefResolver):
         if removed_lines and (line_values or dropped_refs):
             from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-            oi_service = ProjectOrderInquiryService(self.db)
-            if spec.entity_type == "purchase_orders":
-                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
-            elif spec.entity_type == "sales_orders":
-                # Retire BEFORE the flag below, which then only meets actioned rows.
-                oi_service.retire_rows_for_removed_so_lines(removed_lines)
+            # A REMOVED SALES ORDER line retires nothing here (FP-EMAIL-ONE-TRIGGER Q1 (a),
+            # owner 6 Nov 2026; SO398322): the removal waits on the board as this push's
+            # planning-change `cancelled` row, and CS's Confirm retires its order inquiry rows
+            # and tells purchasing (`planning_change_service._retire_inquiry_rows`).
+            ProjectOrderInquiryService(self.db).release_removed_lines(
+                po_line_ids=[r.id for r in removed_lines]
+            )
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

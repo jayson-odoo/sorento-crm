@@ -46,7 +46,14 @@ from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import (
+    UNGROUPED_SUFFIX,
+    group_named,
+    ledger_family_key,
+    ledger_family_label,
+    trading_name_key,
+    without_ledger_marker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1166,7 +1173,8 @@ def measure_customer_picker(
     out["customer_probe_window_days"] = CUSTOMER_PROBE_DEFAULT_WINDOW_DAYS if probe_windowed else None
     bases = pickers.customer_bases_with_do(probe)
     out["customer_bases_with_do"] = sorted(bases) if bases is not None else None
-    out["customer_probe_hits"] = len(bases) if bases is not None else None
+    # Customers with a DO, counted once each (a set also carries each one's search-side entry).
+    out["customer_probe_hits"] = len(pickers.ledger_bases(bases)) if bases is not None else None
     if bases is not None:
         out["customer_probe_skip_reason"] = None
     elif pickers.probe_rows(probe) is None:
@@ -1360,8 +1368,15 @@ def narrow_by_account(
             # alone (crew ruling, 2 Oct 2026): the names merely carrying its words (SOON
             # GUAN HENG TRADING) are dropped for this word, so neither their levels nor
             # their rows answer it. No match of that exact name -> every match counts.
+            # A word that is a customer group's own name speaks for that group's ledgers; any
+            # other word matches by trading name (search only, CUSTOMER-GROUP-GATE).
+            group = group_named(typed)
             exact = (
-                [m for m in customers if ledger_family_key(_match_name(m)) == ledger_family_key(typed)]
+                [
+                    m for m in customers
+                    if (ledger_family_key(_match_name(m), m.get("uuid")) == group if group
+                        else trading_name_key(_match_name(m)) == trading_name_key(typed))
+                ]
                 if exact_names
                 else []
             )
@@ -1450,10 +1465,16 @@ def _no_such_account(
 ) -> str:
     """Q4: one trading name says which levels it has; several names say the word has none."""
     names = [_match_name(m) for m in customers]
-    if len({ledger_family_key(n) for n in names}) > 1:
+    # One customer group, or else one trading name (the typed word's own: search, not joining).
+    groups = {ledger_family_key(_match_name(m), m.get("uuid")) for m in customers}
+    if len(groups) == 1 and not next(iter(groups)).endswith(UNGROUPED_SUFFIX):
+        subject = ledger_family_label(names[0], customers[0].get("uuid"))
+    elif len({trading_name_key(n) for n in names}) == 1:
+        subject = without_ledger_marker(names[0])
+    else:
         return f'None of the customers matching "{typed}" has Account {account}.'
     have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})
-    line = f"{ledger_family_label(names[0])} has no Account {account}."
+    line = f"{subject} has no Account {account}."
     return f"{line} It has {_account_list(have)}." if have else line
 
 
@@ -1800,6 +1821,22 @@ def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str
     return groups.get(jsc.nullish_str(jsc.get(entity, "canonical_code")).strip()) or None
 
 
+def _supplier_family(name: str) -> str:
+    """A supplier line's trading-name key, the `ledger_family` rule with no customer group in play."""
+    from app.services.ledger_family import customer_groups, ledger_family_key
+
+    with customer_groups({}):
+        return ledger_family_key(str(name or ""))
+
+
+def _supplier_family_label(name: str) -> str:
+    """The trading name a family of supplier records is called by (its line without the bracketed code)."""
+    from app.services.ledger_family import customer_groups, ledger_family_label
+
+    with customer_groups({}):
+        return ledger_family_label(str(name or ""))
+
+
 def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:
     """SUPPLIER-ASK (owner ruling, 1 Nov 2026: "match by meaning"): each supplier entity the span pass placed joins
     the resolver's answer as one resolution holding its whole score group: one supplier binds, a near tie stays
@@ -1816,16 +1853,24 @@ def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: d
         # beside the suppliers, so the reconciliation asks "customer or supplier?" and neither is assumed.
         both = ctx.get("span_supplier_customers") if isinstance(ctx.get("span_supplier_customers"), dict) else {}
         customers = list(dict.fromkeys(c for key, _n in group for c in (both.get(key) or [])))
+        if parser.get("party_side") == "supplier":
+            customers = []  # SUPPLIER-PARTY-SIDE: the parser read the supplier side; no customer rides beside it
+        # SUPPLIER-PARTY-SIDE (crew live re-run 2, HANLIM TRADING SDN BHD 403-H007 + 400-H018): records of one trading
+        # name are one supplier (`chatbot_entity_kinds.family_grouping`), so the group is an exact match, never a near
+        # tie a miss would offer back as "did you mean".
+        one = len({_supplier_family(n) for _k, n in group}) == 1
         added.append({
             "raw": token,
             "token": token,
             "matches": [
                 {
-                    "entity_type": "supplier", "uuid": key, "canonical_code": name, "match_field": "span",
-                    "match_tier": "exact" if len(group) == 1 and not customers else "span",
-                    "display": {"supplier_name": name},
+                    "entity_type": "supplier", "uuid": key, "canonical_code": shown, "match_field": "span",
+                    "match_tier": "exact" if one and not customers else "span",
+                    "display": {"supplier_name": shown},
                 }
                 for key, name in group
+                # Several records of one name are named once, by that name (the same-key twins `gate` binds together).
+                for shown in [_supplier_family_label(name) if one and not customers and len(group) > 1 else name]
             ] + [
                 {
                     "entity_type": "customer", "uuid": key, "canonical_code": name, "match_field": "span",
@@ -1946,6 +1991,12 @@ def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any
     }
     if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
         return verdict
+    return as_purchase_orders(verdict)
+
+
+def as_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any]:
+    """An order-side verdict read as the purchase_order domain (`supplier_ask_reads_purchase_orders`, and the engine's
+    supplier-side PO ask, SUPPLIER-PARTY-SIDE). Returns a new verdict; the one passed in is not changed."""
     out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
     # Fix round 6: the order-side status set aside, so a "customer or supplier?" pick of the customer answers the same
     # outstanding ask on the sales side (`turn/apply._reconcile_step`).

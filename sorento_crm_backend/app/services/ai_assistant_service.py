@@ -398,6 +398,11 @@ class MCPRuntimeClient:
             headers["X-MCP-Scope"] = "staff"
             if self.staff_user_id:
                 headers["X-MCP-Staff-User"] = str(self.staff_user_id)
+                # The backend's own proof that it answers this staff member (`staff_proof`, AI-TOOLS-WAVE2): the
+                # MCP server relays it, and the CRM then gates the read on the staff member alone.
+                from app.services import staff_proof
+
+                headers["X-MCP-Staff-Proof"] = staff_proof.mint(str(self.staff_user_id))
         return headers
 
     def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:

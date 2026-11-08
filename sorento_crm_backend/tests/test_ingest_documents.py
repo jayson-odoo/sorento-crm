@@ -919,6 +919,67 @@ class TestUnresolvedReferences:
         assert entry["outcome"] == "created", res.text
         assert entry.get("lines", {}).get("dropped") == 1, entry
 
+    def test_a_line_with_no_product_code_is_named_in_the_warnings(self, env, caplog):
+        """INGEST-DROP-WARN-CRM (4 Nov): products match by CODE only since the
+        3 Oct PRODUCT-REF-COLLISION ruling, so a line that arrives without a
+        `product_code` is always dropped. The verdict must say WHICH line and
+        why, not only count it - and the operational log line must carry the
+        same words."""
+        import logging
+
+        record = _so_record(env)
+        record["lines"].append(
+            _so_line(env, ref="DROP-NOCODE-1", line_number=7, product_code=None)
+        )
+
+        with caplog.at_level(logging.INFO, logger=ingest_module.logger.name):
+            res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert entry["lines"]["dropped"] == 1, entry
+        expected = (
+            f"line_product_unresolved:doc={record['so_number']}"
+            ":line_ref=DROP-NOCODE-1:line_no=7:product_code="
+        )
+        assert expected in entry.get("warnings", []), entry
+        logged = [r.getMessage() for r in caplog.records if "ingest.record " in r.getMessage()]
+        assert any(expected in m and record["source_ref"] in m for m in logged), logged
+
+    def test_a_line_with_an_unknown_product_code_is_named_in_the_warnings(self, env):
+        """INGEST-DROP-WARN-CRM: an unknown code names the code it could not
+        find; two dropped lines give two entries, and the count is unchanged."""
+        record = _so_record(env)
+        record["lines"].append(_so_line(env, ref="DROP-UNK-1", product_code="ZZT-NO-SUCH-1"))
+        record["lines"].append(_so_line(env, ref="DROP-UNK-2", product_code="ZZT-NO-SUCH-2"))
+
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert entry["lines"]["dropped"] == 2, entry
+        warnings = entry.get("warnings", [])
+        doc = record["so_number"]
+        assert (
+            f"line_product_unresolved:doc={doc}:line_ref=DROP-UNK-1:line_no=:product_code=ZZT-NO-SUCH-1"
+            in warnings
+        ), warnings
+        assert (
+            f"line_product_unresolved:doc={doc}:line_ref=DROP-UNK-2:line_no=:product_code=ZZT-NO-SUCH-2"
+            in warnings
+        ), warnings
+
+    def test_a_clean_document_carries_no_line_product_warning(self, env):
+        record = _so_record(env)
+
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert not any(
+            w.startswith("line_product_unresolved") for w in entry.get("warnings", [])
+        ), entry
+
     def test_an_unknown_warehouse_ref_lands_null_with_a_warning(self, env):
         """v2 deviation (D10, AC-V1-7b): superseded 2026-09-05. A warehouse is
         optional and an unlocated line is a supported state, so an unresolved

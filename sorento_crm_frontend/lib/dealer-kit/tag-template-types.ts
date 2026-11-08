@@ -411,6 +411,72 @@ export interface AccessoriesLayerProps {
   subjectSlot?: SubjectSlot;
   /** D7: a request line's part (index into `parts`; -1 the main product) whose OWN list to read. */
   subjectPart?: number;
+  /**
+   * PRICETAG-ACCESSORY-DESIGNER: a designed card. Set = the box draws `card` for every accessory
+   * (`cardBoxLayout`); absent = the legacy card (`accessoryBoxLayout`), untouched.
+   */
+  card?: CardLayout;
+  /** The area under the cards (a note, colour dots). Absent = none. */
+  footer?: FooterLayout;
+  /**
+   * PRICETAG-ACCESSORY-DESIGNER S6 (card path only): a grid of this many columns, wrapping to rows;
+   * `auto` = as many as fit the box at full size. Absent = today's single column (vertical) or row.
+   */
+  columns?: 'auto' | 1 | 2 | 3 | 4;
+  /** Smallest scale the cards shrink to before whole cards are dropped. Absent = 0.7. */
+  shrinkMin?: number;
+  /** The saved accessories template this box follows (live link); absent = its own design. */
+  presetId?: string | null;
+}
+
+/** What a text or picture element of a designed card reads from the accessory. */
+export type CardField = 'picture' | 'name' | 'code' | 'spec' | 'remark' | 'price' | 'colours';
+
+export interface CardElement {
+  id: string;
+  kind: 'picture' | 'text' | 'colour_dots' | 'shape';
+  /** Inside the card (or footer), millimetres. */
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+  hidden?: boolean;
+  /** text: name|code|spec|remark|price, null = fixed `text`; picture: 'picture'; colour_dots: 'colours'. */
+  field?: CardField | null;
+  /** Fixed text, plain or rich (`lib/dealer-kit/rich-text.ts`). */
+  text?: string;
+  fontFamily?: string | null;
+  fontSize?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+  align?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  fit?: 'contain' | 'cover';
+  dotSize_mm?: number;
+  dotGap_mm?: number;
+  dotDirection?: 'row' | 'column';
+  dotOutline?: string;
+  /** Hand-picked hex colours; null or absent = from the data. */
+  colours?: string[] | null;
+  shape?: 'rect' | 'rounded_rect' | 'ellipse' | 'line';
+  fill?: string;
+  stroke?: string;
+  strokeWidth_mm?: number;
+  cornerRadius_mm?: number;
+}
+
+export interface CardLayout {
+  width_mm: number;
+  height_mm: number;
+  elements: CardElement[];
+}
+
+export interface FooterLayout {
+  show: boolean;
+  height_mm: number;
+  elements: CardElement[];
 }
 
 export interface GroupLayerProps {
@@ -742,6 +808,8 @@ export interface ProductTagData {
   drawing?: TagImage | null;
   /** PRICETAG-ACCESSORIES: the product's own list. Absent on an older payload. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
 }
 
 export interface ProductSetMemberTagData {
@@ -817,9 +885,24 @@ export interface TagAccessory {
   id: string;
   name: string;
   spec: string | null;
+  /** PRICETAG-ACCESSORY-DESIGNER: absent on a row pinned before it. */
+  remark?: string | null;
+  /** The chosen picture, else the first. */
   image: { attachment_id: string; url: string } | null;
+  /** Every picture, in order, each with its optional colour. */
+  images?: { attachment_id: string; url: string; colour_name: string | null; colour_hex: string | null }[];
+  /** Distinct colours of the pictures, in picture order. */
+  colours?: { name: string | null; hex: string }[];
   code?: string | null;
   list_price?: number | null;
+}
+
+/** A saved accessories template a product or combo names as its own "Accessories included" box style. */
+export interface TagAccessoryBoxStyle {
+  id: string;
+  name: string;
+  /** The box design (`accessoryDesign` shape); applied with `applyAccessoryDesign`. */
+  design: Record<string, unknown>;
 }
 
 /** The combo a tag's line names. Null on a line with no combo and on an older pin. */
@@ -830,6 +913,8 @@ export interface TagCombo {
   free_items: string | null;
   /** PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   choices: { role: string; options: TagComboOption[] }[];
   upgrades: TagComboUpgrade[];
 }
@@ -876,6 +961,8 @@ export interface TagPartData {
   drawing?: TagImage | null;
   /** PRICETAG-ACCESSORIES: this position's own product's list. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
 }
 
 /** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
@@ -939,6 +1026,8 @@ export interface LineTagData {
   /** PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's. Absent on a
    *  row pinned before the list existed. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;

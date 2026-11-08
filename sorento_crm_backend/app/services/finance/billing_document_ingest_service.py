@@ -64,6 +64,7 @@ from app.schemas.canonical_documents import (
     CanonicalBillingDocumentLine,
     billing_document_errors,
 )
+from app.services.finance.billing_subtotal_lines import mark_uncounted_lines
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
@@ -319,6 +320,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         warnings: list[str] = []
         header = self._header_values(payload, existing, warnings)
         lines = [self._line_values(line, warnings) for line in payload.lines]
+        mark_uncounted_lines(lines, header["net_total"])
         header["demand_class"] = self._demand_class(header, lines)
 
         if existing is None:
@@ -491,6 +493,8 @@ class BillingDocumentIngestService(MasterRefResolver):
             "from_doc_type": line.from_doc_type,
             "from_doc_no": line.from_doc_no,
             "from_line_ref": line.from_line_ref,
+            "parent_line_ref": line.parent_line_ref,
+            "line_type": line.line_type,
         }
 
     def _by_ref(self, model: type, ref: Optional[str]) -> Optional[str]:
@@ -833,6 +837,8 @@ class BillingDocumentReadService:
             "from_doc_type": line.from_doc_type,
             "from_doc_no": line.from_doc_no,
             "from_line_ref": line.from_line_ref,
+            "parent_line_ref": line.parent_line_ref,
+            "line_type": line.line_type,
         }
 
     def _ref_of(self, entity_type: str, entity_id: Optional[str]) -> Optional[str]:

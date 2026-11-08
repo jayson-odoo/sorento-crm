@@ -264,8 +264,12 @@ def _delete_sales_opportunity(db: Session, payload: dict):
 
 
 def _delete_sales_target(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import target_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_target.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return target_service.delete_target_by_id(db, _entity_id(payload))
 
 
@@ -1258,7 +1262,9 @@ def _delete_contact_tag(db: Session, payload: dict):
         (lambda slug: bool(actor) and perms.check_user_has_permission(str(actor), slug)),
         (lambda: bool(actor) and _is_superadmin(db, str(actor))),
     )
-    return ContactTagService(db).delete_tag(_entity_id(payload), gates=gates)
+    return ContactTagService(db).delete_tag(
+        _entity_id(payload), gates=gates, actor_id=str(actor) if actor else None
+    )
 
 
 def _delete_onboarding_request(db: Session, payload: dict):
@@ -1815,6 +1821,45 @@ register(
         # D9: the tag template slugs, no new grant.
         permission="dealer_kit.tag_templates.manage",
         label="Delete tag size",
+    )
+)
+
+
+def _delete_accessory_box_preset(db: Session, payload: dict):
+    """A saved accessories box design: the same service call as the immediate DELETE, which first
+    detaches every box linked to it (each keeps its current design)."""
+    from app.services.dealer_kit import accessory_template_service
+
+    return accessory_template_service.delete_preset(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="accessory_box_preset.delete",
+        entity_types=("accessory_box_preset",),
+        execute=_delete_accessory_box_preset,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Delete accessories template",
+    )
+)
+
+
+def _delete_accessory_image(db: Session, payload: dict):
+    """One picture of a library accessory (and its attachment): the same removal as the route."""
+    from app.services.accessory_service import AccessoryService
+
+    return AccessoryService(db).delete_picture_by_id(_entity_id(payload))
+
+
+register(
+    FormAction(
+        key="accessory_image.delete",
+        entity_types=("accessory_image",),
+        execute=_delete_accessory_image,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Remove accessory picture",
     )
 )
 
@@ -2878,6 +2923,63 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="projects.projects.edit",
         label="Reset page to template",
+    )
+)
+
+
+def split_certificate_remove_id(entity_id) -> tuple[str, str]:
+    """`quotation_certificate.remove` is keyed `<document id>:<certificate id>`, so two removes on
+    one quote each get their own countdown. 404 for anything else."""
+    from app.services.error_handler import handle_not_found
+
+    document_id, sep, certificate_id = str(entity_id or "").partition(":")
+    if not sep or not document_id or not certificate_id:
+        raise handle_not_found("Certificate", entity_id)
+    return document_id, certificate_id
+
+
+def assert_quotation_certificate_removable(db: Session, entity_id, user_id):
+    """Park-time and commit-time check of `quotation_certificate.remove`: the edit right, write
+    access to the project, and the certificate currently on the document's list. 404 otherwise.
+    Returns `(document, certificate_id)`."""
+    from app.models.projects import Project, ProjectQuotationDocument
+    from app.services import project_service
+    from app.services import quotation_certificate_service as certs
+    from app.services.error_handler import handle_not_found
+    from app.services.uuid_path_param import validate_uuid_path
+    from app.services.user_service import UserPermissionService
+
+    document_id, certificate_id = split_certificate_remove_id(entity_id)
+    validate_uuid_path(document_id, resource="Quotation")
+    validate_uuid_path(certificate_id, resource="Certificate")
+    document = db.get(ProjectQuotationDocument, document_id)
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if document is None or project is None:
+        raise handle_not_found("Quotation", document_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    certs.assert_removable(db, document, certificate_id)
+    return document, certificate_id
+
+
+def _remove_quotation_certificate(db: Session, payload: dict):
+    from app.services import quotation_certificate_service as certs
+
+    document, certificate_id = assert_quotation_certificate_removable(
+        db, _entity_id(payload), payload.get("requested_by_id")
+    )
+    certs.remove(db, document, certificate_id, payload.get("requested_by_id"))
+    return {"removed": True}
+
+
+register(
+    FormAction(
+        key="quotation_certificate.remove",
+        entity_types=("quotation_certificate",),
+        execute=_remove_quotation_certificate,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Remove certificate",
     )
 )
 

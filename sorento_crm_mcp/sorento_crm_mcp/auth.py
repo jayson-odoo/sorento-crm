@@ -42,7 +42,7 @@ CACHE_TTL_SECONDS = 30.0
 MISS_REFRESH_SECONDS = 5.0
 FETCH_TIMEOUT_SECONDS = 5.0
 # Request headers that mean something only once the caller proved it holds the token.
-AUTHENTICATED_ONLY_HEADERS = (b"x-mcp-scope", b"x-mcp-staff-user")
+AUTHENTICATED_ONLY_HEADERS = (b"x-mcp-scope", b"x-mcp-staff-user", b"x-mcp-staff-proof")
 
 TokenFetcher = Callable[[], Awaitable[Any]]
 

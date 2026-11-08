@@ -17,7 +17,6 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from app.models.project_so import (
-    INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     ProjectSalesOrderLine,
 )
@@ -174,7 +173,12 @@ def _assert_removed(env, header, line_x, row_id, expected_lines=3):
     assert len(env.so_lines(header["id"])) == expected_lines
 
 
-def test_a_genuine_removal_still_retires_and_hands_over(env, monkeypatch):
+def test_a_genuine_removal_waits_on_the_board_and_emails_nobody(env, monkeypatch):
+    """A real removal keeps today's ingest path, under FP-EMAIL-ONE-TRIGGER (#2220, owner 6 Nov):
+    the core line is cancelled under its old key, the OI row stays live, the removal waits on
+    the board as one `cancelled` planning change row, and ingest queues no handover."""
+    from app.models.planning_change import PlanningChangeRow
+
     record, header, x, y, line_x, mirror, row_id = _world(env)
     _register(None)
     calls = _captured_dispatches(monkeypatch)
@@ -182,8 +186,19 @@ def test_a_genuine_removal_still_retires_and_hands_over(env, monkeypatch):
     _repush(env, record, [y])
 
     _assert_removed(env, header, line_x, row_id, expected_lines=2)
-    assert _row_snapshot(env, row_id)["state"] == INQUIRY_CANCELLED
-    assert len(_handover_calls(calls)) == 1
+    snap = _row_snapshot(env, row_id)
+    assert snap["state"] == INQUIRY_RAISED, snap
+    assert "Removed in AutoCount" not in (snap["note"] or ""), snap
+    pending = (
+        env.db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.core_line_id == str(line_x["id"]),
+            PlanningChangeRow.kind == "cancelled",
+        )
+        .all()
+    )
+    assert len(pending) == 1, "the removal waits on the board as a cancelled row"
+    assert _handover_calls(calls) == []
 
 
 def test_a_different_seq_is_not_a_rekey(env):

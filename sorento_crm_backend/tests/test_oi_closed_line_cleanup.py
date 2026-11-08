@@ -149,14 +149,6 @@ def _cancelled_ids(out):
     return {str(r["row_id"]) for r in out["rows"] if r["action"] == "cancel"}
 
 
-def _handover_item_codes(calls):
-    return sorted(
-        entry["item_code"]
-        for call in _handover_calls(calls)
-        for entry in call["context"]["handover"]["lines"]
-    )
-
-
 def test_ac_11_dry_run_writes_nothing_and_reports_each_row_it_would_change(api, monkeypatch):
     w = _world(api, monkeypatch)
     before = _snapshot(w.db, w)
@@ -178,9 +170,11 @@ def test_ac_11_dry_run_writes_nothing_and_reports_each_row_it_would_change(api, 
     assert b["verb"] == IV_ORDER_BACK
 
 
-def test_ac_12_apply_cancels_dropped_order_rows_and_hands_them_over_in_one_email(
+def test_ac_12_apply_cancels_dropped_order_rows_and_emails_purchasing_nothing(
     api, monkeypatch
 ):
+    """FP-EMAIL-ONE-TRIGGER S7 (owner, 6 Nov 2026): a script is not the board Confirm, so it
+    cancels the rows and emails purchasing nothing. Supersedes "hands them over in one email"."""
     w = _world(api, monkeypatch)
     before = _snapshot(w.db, w)
 
@@ -195,11 +189,7 @@ def test_ac_12_apply_cancels_dropped_order_rows_and_hands_them_over_in_one_email
     # Placed, partly linked, actioned, plain open, and the CANCEL_BALANCE pair: untouched.
     for key in ("C", "D", "E", "F", "G", "H"):
         assert after[key] == before[key], key
-    handover = _handover_calls(w.calls)
-    assert len(handover) == 1, [c["trigger_type"] for c in w.calls]
-    assert _handover_item_codes(w.calls) == sorted(
-        [w.rows["A"].item_code, w.rows["B"].item_code]
-    )
+    assert _handover_calls(w.calls) == [], [c["trigger_type"] for c in w.calls]
 
 
 def test_ac_13_cancel_balance_item_also_cancels_its_cancel_balance_row_only(api, monkeypatch):
@@ -213,8 +203,7 @@ def test_ac_13_cancel_balance_item_also_cancels_its_cancel_balance_row_only(api,
     assert after["H"][2] == f"ZZT note H"
     assert str(w.rows["G"].id) in _cancelled_ids(out)
     assert after["A"][0] == INQUIRY_CANCELLED and after["B"][0] == INQUIRY_CANCELLED
-    assert len(_handover_calls(w.calls)) == 1
-    assert CB_ITEM in _handover_item_codes(w.calls)
+    assert _handover_calls(w.calls) == []
 
 
 def test_ac_14_a_second_apply_changes_nothing(api, monkeypatch):

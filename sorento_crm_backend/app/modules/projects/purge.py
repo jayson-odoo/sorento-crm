@@ -92,6 +92,7 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationDocumentCertificate,
     ProjectQuotationSpecSheet,
     ProjectQuotationVersion,
     ProjectSalesProfile,
@@ -204,6 +205,7 @@ PURGE_ORDER: List[Type] = [
     QuotationIssueView,
     # quotation_spec_sheets CASCADEs off the document and the issue (SPEC-SHEET-V2).
     ProjectQuotationSpecSheet,
+    ProjectQuotationDocumentCertificate,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

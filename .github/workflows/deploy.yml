@@ -258,8 +258,9 @@ jobs:
   #    LESSONS-LEARNT.md, or the PR template) AND no path matches
   #    `NOT_DOCS_RE`: the parts of documentation/ that tests READ as live
   #    inputs (`documentation/reference/*.md`, `plans/<domain>/fixtures/`,
-  #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`, and two
-  #    plan files whose text a test asserts against). A change there can
+  #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`,
+  #    `plans/(_archive/)?chatbot/` (prompt candidates a test hashes) and the few plan
+  #    files whose text a test asserts against). A change there can
   #    turn a test red, so it keeps the full pipeline. Nothing under the
   #    four service trees counts either, whatever its extension: `*.md`
   #    files inside them are test fixtures (tests/chatbot/replay_turns,
@@ -586,7 +587,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$|plans/(_archive/)?chatbot/|plans/sales/SQL-sales-subtotal-reconcile\.sql$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
@@ -1596,6 +1597,16 @@ jobs:
         if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
         run: python3 scripts/pii_guard.py
 
+      # AI-GATE (PLAN-ai-tools-standard-5nov.md 2.5, DoD line 6): a GET route
+      # this PR ADDS that takes `page` or `limit` must be in an assistant
+      # registry EntityDef.routes, or carry `# ai: not-for-assistant <reason>`
+      # directly above its decorators. Diff against main's head (merged into
+      # the PR head by the step above, so the merge base is that main). Stdlib
+      # only, parses the source by AST, a few seconds.
+      - name: Assistant coverage of new list routes
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        run: python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"
+
       # DOCS-SYNC-AUTO: every guide must publish to Outline on merge (the
       # automatic push in outline-user-guides-sync.yml). Fails on a guide
       # folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages would be
@@ -1611,10 +1622,24 @@ jobs:
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one
       # reverting it leave a tree that already passed; a merge commit lands
       # both).
+      # CI-GITLEAKS-RETRY (github.com release URLs 504'd every PR gate on
+      # 8 Nov 2026): a re-run of the same PR skips the download. Saved from the
+      # PR's own ref, so a new PR still downloads (retries + API fallback in the
+      # script). The key's version must match GITLEAKS_VERSION in
+      # scripts/ci_gitleaks.sh, which re-checks the sha256 of a cached tarball.
+      - name: Cache the gitleaks CLI
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gitleaks
+          key: gitleaks-8.30.1-${{ runner.arch }}
+
       - name: Secret scan (gitleaks)
         if: github.event_name == 'pull_request'
         env:
           RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          GITLEAKS_CACHE_DIR: ~/.cache/gitleaks
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci_gitleaks.sh
 
       - name: Select the changed test files to run
