@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 4, edit contacts from a pasted table keyed by phone (AGENT-BULK-W4-CONTACTS)
 
-Status: Waiting on owner (behaviour card crew-ask on PR #2256); W3 kept-reason fix done (red-first, kill-tested). Track: full (agent write path to contacts).
+Status: Review (owner answered all recommendations 8 Nov; `crm_contact_edit` built red-first, kill-tested; reviewer + security reviewer next). Track: full (agent write path to contacts).
 
 Wave 4 after AGENT-BULK-W3-AGENTS (#2253). Pattern: `crm_customer_agent` (`app/services/chatbot/agent/customer_agent.py`)
 through `crm_batch_propose` (`batch.py`) and one confirm card.
@@ -36,3 +36,24 @@ dropped, nothing new or changed) keeps the earlier reason. Structured arguments 
 `tests/chatbot/agent/test_agent_bulk_w3_agents.py::test_w4_*`.
 
 Also: three tests still called `batch.schema_for` after its rename to `batch_tool_schema` (#2244); renamed.
+
+## Decisions (owner, 8 Nov: "2256 all recs")
+
+Q1 (a) Name, the sponsorship switch and the Respond.io Workspace; Q2 (b) the phone is the key only; Q3 (a) a phone on
+two contacts is refused; Q4 (a) a blank cell is unchanged, nothing is cleared; Q5 (a) `contacts.edit` only.
+
+## Build
+
+- `app/services/chatbot/agent/contact_edit.py`: `crm_contact_edit` (`plan`, `_execute` through
+  `ContactService.update_contact`, audit event `contact.edit_agent`). Registered last in `writes.py` so the label
+  lists keep their order; label "edit contacts from a pasted table" (`tools.py`).
+- A name that differs only in case or spacing is the same name (not a change). Workspace by exact name (case and
+  spaces aside) or space id; two workspaces with one name: give the space id.
+- The confirm re-check compares contact id, name, sponsorship switch and workspace id: a contact edited on screen
+  since the preview fails alone.
+- Tests: `tests/chatbot/agent/test_agent_bulk_w4_contacts.py` (14). Kill tests: own-contact refusal, case fold,
+  audit row, Nothing to change, the name in `before`, the duplicate workspace: each caught by exactly one test.
+- Review follow-up on the kept-reason fix: the earlier args travel with the kept reason (third turn), stronger
+  tests, and a corrected row of a key-changing write is no longer carried twice (`carried_skips`).
+- Known red on main, not this lane: `test_ai_tools_wave2_round3.py::test_I1_the_entity_index_is_in_the_query_tools_description`
+  (stock_inquiry has no index hint).

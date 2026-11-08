@@ -152,7 +152,7 @@ def test_02_the_sponsorship_switch_and_the_workspace_change_and_the_name_stays(d
     change = steps[0]["cells"]["Will change"]
     assert "sponsorship rule off -> on" in change
     assert f"workspace {old_ws.name} -> {new_ws.name}" in change
-    assert "name" not in change.split(";")[0].split(" ")[0:1] or "name " not in change
+    assert 'name "' not in change  # case and spacing only: the same name
 
     assert confirm(db, w, steps).status == "executed"
     after = contact(db, person.id)

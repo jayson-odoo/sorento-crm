@@ -290,7 +290,7 @@ def test_01_the_batch_tool_is_offered_only_with_the_contacts_edit_slug_and_its_a
     assert fn["name"] == BATCH
     params = fn["parameters"]
     # AGENT-BULK-W2-TAGS added the second batchable write on the same slug.
-    assert params["properties"]["write"]["enum"] == [GRANT, "crm_contact_tags"]
+    assert params["properties"]["write"]["enum"] == [GRANT, "crm_contact_tags", "crm_contact_edit"]
     rows = params["properties"]["rows"]
     assert rows["type"] == "array" and rows["items"]["type"] == "object"
     for spec in rows["items"]["properties"].values():
