@@ -32,13 +32,15 @@ from .test_project_quotation_pdf import _attachment, _issue, _product, _setup
 from .test_project_spec_sheet import _client, _document, _line, _restore, _scope, _wc_set
 
 VIEW_ONLY = ["projects.projects.view"]
-EDIT_SLUGS = [
+EDIT_NO_CERT_VIEW = [
     "projects.projects.view",
     "projects.projects.edit",
     "projects.projects.manage",
     "projects.projects.delete",
 ]
-DEFAULTS = EDIT_SLUGS + ["master_data.certificates.edit", "master_data.certificates.view"]
+# Adding a certificate by hand also needs the register's view right (the picker reads the register).
+EDIT_SLUGS = EDIT_NO_CERT_VIEW + ["master_data.certificates.view"]
+DEFAULTS = EDIT_SLUGS + ["master_data.certificates.edit"]
 PENDING = "/api/v1/pending-actions"
 FUTURE = date.today() + timedelta(days=400)
 PAST = date.today() - timedelta(days=30)
@@ -233,14 +235,19 @@ def _lapse(db, parked_id):
     db.commit()
 
 
+def _remove_key(c, certificate_id):
+    """One pending action per certificate of a quote: `<document id>:<certificate id>`."""
+    return f"{c['document'].id}:{certificate_id}"
+
+
 def _park_remove(client, c, certificate_id):
     return client.post(
         PENDING,
         json={
             "action_key": "quotation_certificate.remove",
             "entity_type": "quotation_certificate",
-            "entity_id": c["document"].id,
-            "payload": {"certificate_id": certificate_id},
+            "entity_id": _remove_key(c, certificate_id),
+            "payload": {},
         },
     )
 
@@ -251,7 +258,7 @@ def _remove(client, db, c, certificate_id):
     _lapse(db, parked.json()["id"])
     current = client.get(
         f"{PENDING}/current",
-        params={"entity_type": "quotation_certificate", "entity_id": c["document"].id},
+        params={"entity_type": "quotation_certificate", "entity_id": _remove_key(c, certificate_id)},
     )
     assert current.status_code == 200, current.text
     db.expire_all()
@@ -423,7 +430,7 @@ def test_04_pending_remove_commits_included_false_for_auto_and_deletes_a_manual_
             assert parked.status_code == 202, parked.text
             assert auto.id in _ids(_items(client, c)), "nothing applies until the window lapses"
             _lapse(db, parked.json()["id"])
-            client.get(f"{PENDING}/current", params={"entity_type": "quotation_certificate", "entity_id": c["document"].id})
+            client.get(f"{PENDING}/current", params={"entity_type": "quotation_certificate", "entity_id": _remove_key(c, auto.id)})
             db.expire_all()
             row = next(r for r in _markers(db, c) if r["certificate_id"] == auto.id)
             assert row["included"] is False and row["source"] == "auto"
@@ -765,7 +772,6 @@ def test_07_reads_need_read_and_writes_need_edit(files):
             assert client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": []}).status_code == 403
             assert client.delete(_u(c, f"/{cr.id}/boxes"), params={"scope": "quote"}).status_code == 403
             assert client.patch(_u(c, f"/{cr.id}"), json={"send_to_customer": True}).status_code == 403
-            assert client.post(_u(c, "/export"), json={"issue_id": None}).status_code == 403
 
 
 def test_07_unknown_project_or_document_is_404(files):
@@ -1048,3 +1054,184 @@ def test_16_scans_manual_links_and_hand_added_rows_are_always_verified(files):
             assert by[scan.id]["verified"] is True and by[scan.id]["marked"]["state"] == "no_text"
             assert by[manual_link.id]["verified"] is True and by[manual_link.id]["marked"]["state"] == "not_found"
             assert by[added.id]["verified"] is True
+
+
+# ------------------------------------------------------------------ 11 fix round 1
+
+
+@pytest.fixture
+def reads(monkeypatch, files):
+    """Counts storage reads per attachment id on top of the `files` seam."""
+    from app.services.resources_service import AttachmentService
+
+    inner = AttachmentService.get_file_content_for
+    seen: list[str] = []
+
+    def counted(self, attachment):
+        seen.append(str(attachment.id))
+        return inner(self, attachment)
+
+    monkeypatch.setattr(AttachmentService, "get_file_content_for", counted)
+    return seen
+
+
+def test_b1_a_hand_added_certificate_on_a_draft_without_lines_lists(files):
+    from app.models.projects import ProjectQuotationLine
+
+    with blank_session() as db:
+        c = _draft(db)
+        db.query(ProjectQuotationLine).delete()
+        db.commit()
+        cr = _cert(db, c, files, pdf=_pdf("NOTHING 1"))
+        with _api(db, c) as client:
+            assert _items(client, c) == []
+            assert client.post(_u(c), json={"certificate_id": cr.id}).status_code == 201
+            assert _ids(_items(client, c)) == [cr.id]
+
+
+def test_m1_a_scan_and_a_text_file_with_no_suggestion_are_read_once(files, reads):
+    with blank_session() as db:
+        c = _draft(db)
+        scan = _cert(db, c, files, scheme="ZZT1", covers=[(c["a"], None, None)], pdf=image_only_pdf(), link_source="ai")
+        blank = _cert(db, c, files, scheme="ZZT2", covers=[(c["b"], None, None)], pdf=_pdf("ZZ 9", "QQ 12"), link_source="ai")
+        with _api(db, c) as client:
+            first = _items(client, c)
+            assert {str(scan.att.id), str(blank.att.id)} <= set(reads)
+            reads.clear()
+            second = _items(client, c)
+            assert reads == [], "the negative result is cached for the revision"
+            assert [(i["certificate_id"], i["marked"]["state"]) for i in first] == [
+                (i["certificate_id"], i["marked"]["state"]) for i in second
+            ]
+            by = {i["certificate_id"]: i for i in second}
+            assert by[scan.id]["marked"]["state"] == "no_text" and by[scan.id]["verified"] is True
+            assert by[blank.id]["verified"] is False
+
+
+def test_m1_the_detail_reuses_the_cached_page_count_and_text_flag(files, reads):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            _items(client, c)
+            reads.clear()
+            d = _detail(client, c, cr.id)
+            assert d["page_count"] == 1 and d["has_text"] is True
+            assert reads == []
+
+
+def test_m3_a_reader_can_queue_the_certificates_pdf(files, queued):
+    with blank_session() as db:
+        c = _draft(db)
+        _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c, VIEW_ONLY) as client:
+            r = client.post(_u(c, "/export"), json={"issue_id": None})
+            assert r.status_code == 202, r.text
+            assert len(queued) == 1
+
+
+def test_m2_the_heavy_routes_are_marked():
+    from app.api.v1.projects import quotation_certificates as routes
+
+    for name in ("list_certificates", "read_certificate", "read_certificate_file", "put_certificate_boxes"):
+        assert getattr(getattr(routes, name), "heavy", False) is True, name
+
+
+def test_m2_unreadable_file_is_treated_like_no_file(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], None, None)], pdf=_pdf("WB 1515"), link_source="ai")
+        del files[str(cr.att.id)]
+        with _api(db, c) as client:
+            row = _items(client, c)[0]
+            assert row["verified"] is True and row["marked"]["state"] == "no_file"
+
+
+def test_m5_clearing_the_send_flag_with_no_marker_creates_no_row(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.patch(_u(c, f"/{cr.id}"), json={"send_to_customer": None})
+            assert r.status_code == 200, r.text
+            assert _markers(db, c) == []
+
+
+def test_m6_the_issue_counts_only_certificates_with_a_file(files):
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        c = _draft(db)
+        _cert(db, c, files, scheme="ZZT1", covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        nofile = _cert(db, c, files, scheme="ZZT2", covers=[(c["b"], "WC 8355", "manual")], pdf=None)
+        with _api(db, c) as client:
+            assert client.patch(_u(c, f"/{nofile.id}"), json={"send_to_customer": True}).status_code == 200
+            db.commit()
+            issue = _issue(db, c["document"], c["owner"])
+            db.flush()
+            db.refresh(issue)
+            assert len(issue.certificates) == 2
+            assert qdocs.serialize_issue(db, issue)["certificates_count"] == 1
+
+
+@pytest.mark.parametrize("bad", [{"x": float("nan")}, {"w": float("inf")}, {"h": float("-inf")}, {"product_id": "x" * 40}, {"product_id": "not-a-uuid"}, {"page": 2001}])
+def test_l1_l2_non_finite_numbers_and_bad_ids_are_refused(bad):
+    from app.services import quotation_certificate_service as certs
+    from app.services.error_handler import AppException
+
+    with pytest.raises(AppException) as exc:
+        certs.validate_boxes([{**_box(), **bad}])
+    assert exc.value.status_code == 422 and exc.value.code == "certificate_box_invalid"
+
+
+def test_l1_infinity_on_the_wire_is_422(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            body = '{"scope":"quote","boxes":[{"page":1,"x":NaN,"y":0.1,"w":0.2,"h":0.1,"product_id":null}]}'
+            r = client.put(_u(c, f"/{cr.id}/boxes"), content=body, headers={"Content-Type": "application/json"})
+            assert r.status_code == 422, r.text
+
+
+def test_l2_a_box_page_beyond_the_file_is_422(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        with _api(db, c) as client:
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [_box(page=2)]})
+            assert r.status_code == 422, r.text
+            assert _code_of(r) == "certificate_box_invalid"
+            assert client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "quote", "boxes": [_box(page=1)]}).status_code == 200
+
+
+def test_l3_two_removes_on_one_quote_both_commit(files):
+    with blank_session() as db:
+        c = _draft(db)
+        one = _cert(db, c, files, scheme="ZZT1", covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        two = _cert(db, c, files, scheme="ZZT2", covers=[(c["b"], "WC 8355", "manual")], pdf=_pdf("WC 8355"))
+        keep = _cert(db, c, files, scheme="ZZT3", covers=[(c["ped"], "PED 1234", "manual")], pdf=_pdf("PED 1234"))
+        with _api(db, c) as client:
+            first = _park_remove(client, c, one.id)
+            second = _park_remove(client, c, two.id)
+            assert first.status_code == 202 and second.status_code == 202, (first.text, second.text)
+            assert first.json()["id"] != second.json()["id"]
+            for cert, parked in ((one, first), (two, second)):
+                _lapse(db, parked.json()["id"])
+                client.get(
+                    f"{PENDING}/current",
+                    params={"entity_type": "quotation_certificate", "entity_id": _remove_key(c, cert.id)},
+                )
+            db.expire_all()
+            assert _ids(_items(client, c)) == [keep.id]
+
+
+def test_l4_adding_a_certificate_needs_the_register_view_right(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(db, c, files, pdf=_pdf("NOTHING 1"))
+        with _api(db, c, EDIT_NO_CERT_VIEW) as client:
+            r = client.post(_u(c), json={"certificate_id": cr.id})
+            assert r.status_code == 403, r.text
+        with _api(db, c, EDIT_SLUGS) as client:
+            assert client.post(_u(c), json={"certificate_id": cr.id}).status_code == 201

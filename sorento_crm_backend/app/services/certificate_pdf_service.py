@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 RED = (0.88, 0.11, 0.28)
 _DROP = set(" -.,;:()[]/")
 _MAX_RUN = 4
+#: Parsing limits: a hostile or huge file must not pin a request thread.
+MAX_PAGES = 60
+MAX_WORDS_PER_PAGE = 20000
 _RULE_MIN_LEN = 10.0
 _THIN = 1.5
 _EDGE_PUNCT = ".,;:()[]/-"
@@ -64,7 +67,7 @@ def page_count(pdf_bytes: bytes) -> int | None:
 def _words(page) -> list[tuple[str, pymupdf.Rect, str]]:
     """Reading-order words as (normalised, displayed rect, printed), empty normalisations dropped."""
     matrix = page.rotation_matrix
-    raw = sorted(page.get_text("words"), key=lambda w: (w[5], w[6], w[7]))
+    raw = sorted(page.get_text("words")[:MAX_WORDS_PER_PAGE], key=lambda w: (w[5], w[6], w[7]))
     out = []
     for w in raw:
         norm = normalise(w[4])
@@ -114,12 +117,21 @@ def _rules(page) -> tuple[list[tuple[float, float, float]], list[tuple[float, fl
 
 def _band(word: pymupdf.Rect, rules) -> pymupdf.Rect:
     horizontal, vertical = rules
-    above = [y for y, x0, x1 in horizontal if y <= word.y0 + 0.5 and x0 <= word.x1 and x1 >= word.x0]
-    below = [y for y, x0, x1 in horizontal if y >= word.y1 - 0.5 and x0 <= word.x1 and x1 >= word.x0]
+    above = [r for r in horizontal if r[0] <= word.y0 + 0.5 and r[1] <= word.x1 and r[2] >= word.x0]
+    below = [r for r in horizontal if r[0] >= word.y1 - 0.5 and r[1] <= word.x1 and r[2] >= word.x0]
     if not above or not below:
         return pymupdf.Rect(word.x0 - 2, word.y0 - 2, word.x1 + 2, word.y1 + 2)
-    top, bottom = max(above), min(below)
-    xs = [x for x, y0, y1 in vertical if y0 < bottom and y1 > top]
+    top_rule, bottom_rule = max(above, key=lambda r: r[0]), min(below, key=lambda r: r[0])
+    top, bottom = top_rule[0], bottom_rule[0]
+    # Only the rules of THIS table: inside the span of the rules that close the row, and tall
+    # enough to cross the whole band (a neighbouring table's rules must not widen it).
+    span_x0 = min(top_rule[1], bottom_rule[1]) - 1
+    span_x1 = max(top_rule[2], bottom_rule[2]) + 1
+    xs = [
+        x
+        for x, y0, y1 in vertical
+        if span_x0 <= x <= span_x1 and y0 <= top + 1.5 and y1 >= bottom - 1.5
+    ]
     if xs:
         left, right = min(min(xs), word.x0 - 2), max(max(xs), word.x1 + 2)
     else:
@@ -154,14 +166,14 @@ def find_boxes(pdf_bytes: bytes, code: str) -> dict[str, Any]:
         has_text = False
         boxes: list[dict[str, Any]] = []
         seen: set[tuple] = set()
-        for index in range(len(doc)):
+        for index in range(min(len(doc), MAX_PAGES)):
             page = doc[index]
             words = _words(page)
             if not words:
                 continue
             has_text = True
             if not target:
-                continue
+                break  # a text check only: the first page with text answers it
             rules = _rules(page)
             skip_until = 0
             for i in range(len(words)):
@@ -206,7 +218,7 @@ def suggest_code(pdf_bytes: bytes, product_code: str) -> str | None:
         if not product_norm:
             return None
         best: tuple[int, str] | None = None
-        for index in range(len(doc)):
+        for index in range(min(len(doc), MAX_PAGES)):
             words = _words(doc[index])
             for i, n, acc in _runs(words, 3):
                 if len(acc) < 4 or not any(ch.isdigit() for ch in acc) or acc not in product_norm or acc == product_norm:

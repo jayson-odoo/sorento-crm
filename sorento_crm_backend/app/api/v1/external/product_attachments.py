@@ -224,8 +224,8 @@ def _store_printed_codes(db: Session, certificate_id: str, matched) -> None:
         )
         if row is None or row.model_code_source == "manual":
             continue
-        if row.model_code != text_code:
-            row.boxes = None
+        if row.model_code != text_code and not (isinstance(row.boxes, dict) and row.boxes.get("source") == "manual"):
+            row.boxes = None  # a person's drawn default boxes outlive a changed suggestion
         row.model_code = text_code
         row.model_code_source = "ai"
 

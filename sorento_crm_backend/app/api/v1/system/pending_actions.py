@@ -157,7 +157,6 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
     # The ss comment route is addressed by idea AND comment, and the row only holds the comment.
     "idea_comment.delete": ("idea_id",),
     "quotation_spec_sheet.reset_page": ("page_key",),
-    "quotation_certificate.remove": ("certificate_id",),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,
@@ -201,7 +200,6 @@ _UUID_ENTITY_ACTIONS = (
     "quotation_document.delete",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
-    "quotation_certificate.remove",
     "stock_debt_snapshot.delete",
 )
 
@@ -282,7 +280,7 @@ def _assert_entity_visible(
     elif action_key == "quotation_certificate.remove":
         from app.services.record_actions import assert_quotation_certificate_removable
 
-        assert_quotation_certificate_removable(db, entity_id, (payload or {}).get("certificate_id"), actor_id)
+        assert_quotation_certificate_removable(db, entity_id, actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 

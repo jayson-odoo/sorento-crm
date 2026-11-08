@@ -2925,32 +2925,48 @@ register(
 )
 
 
-def assert_quotation_certificate_removable(db: Session, document_id: str, certificate_id, user_id) -> None:
+def split_certificate_remove_id(entity_id) -> tuple[str, str]:
+    """`quotation_certificate.remove` is keyed `<document id>:<certificate id>`, so two removes on
+    one quote each get their own countdown. 404 for anything else."""
+    from app.services.error_handler import handle_not_found
+
+    document_id, sep, certificate_id = str(entity_id or "").partition(":")
+    if not sep or not document_id or not certificate_id:
+        raise handle_not_found("Certificate", entity_id)
+    return document_id, certificate_id
+
+
+def assert_quotation_certificate_removable(db: Session, entity_id, user_id):
     """Park-time and commit-time check of `quotation_certificate.remove`: the edit right, write
-    access to the project, and the certificate currently on the document's list. 404 otherwise."""
+    access to the project, and the certificate currently on the document's list. 404 otherwise.
+    Returns `(document, certificate_id)`."""
     from app.models.projects import Project, ProjectQuotationDocument
     from app.services import project_service
     from app.services import quotation_certificate_service as certs
     from app.services.error_handler import handle_not_found
+    from app.services.uuid_path_param import validate_uuid_path
     from app.services.user_service import UserPermissionService
 
+    document_id, certificate_id = split_certificate_remove_id(entity_id)
+    validate_uuid_path(document_id, resource="Quotation")
+    validate_uuid_path(certificate_id, resource="Certificate")
     document = db.get(ProjectQuotationDocument, document_id)
     project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
     if document is None or project is None:
         raise handle_not_found("Quotation", document_id)
     slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
     project_service.assert_can_write_project(db, project, user_id, slugs)
-    certs.assert_removable(db, document, str(certificate_id or ""))
-    return document
+    certs.assert_removable(db, document, certificate_id)
+    return document, certificate_id
 
 
 def _remove_quotation_certificate(db: Session, payload: dict):
     from app.services import quotation_certificate_service as certs
 
-    document = assert_quotation_certificate_removable(
-        db, _entity_id(payload), payload.get("certificate_id"), payload.get("requested_by_id")
+    document, certificate_id = assert_quotation_certificate_removable(
+        db, _entity_id(payload), payload.get("requested_by_id")
     )
-    certs.remove(db, document, str(payload.get("certificate_id")), payload.get("requested_by_id"))
+    certs.remove(db, document, certificate_id, payload.get("requested_by_id"))
     return {"removed": True}
 
 

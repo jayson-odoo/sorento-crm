@@ -22,11 +22,13 @@ from app.services import project_service as projects
 from app.services import quotation_certificate_service as certs
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.heavy_work import heavy
 
 router = APIRouter()
 
 BASE = "/projects/{project_id}/quotation-documents/{document_id}/certificates"
 DEFAULTS_SLUG = "master_data.certificates.edit"
+REGISTER_VIEW_SLUG = "master_data.certificates.view"
 
 
 class BoxIn(BaseModel):
@@ -85,11 +87,18 @@ def _fail(exc: Exception):
     return exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _commit_if_changed(db: Session) -> None:
+    """A read may fill the code/box cache; commit only when it did."""
+    if db.info.pop("qcert_dirty", False):
+        db.commit()
+
+
 def _with_rights(db: Session, project_id: str, user: dict, body: dict) -> dict:
     return {**body, "can_edit": _can_edit(db, project_id, user), "can_edit_defaults": _can_defaults(db, user)}
 
 
 @router.get(BASE)
+@heavy
 def list_certificates(
     project_id: str,
     document_id: str,
@@ -99,7 +108,7 @@ def list_certificates(
     try:
         document = _document(db, project_id, document_id)
         items = certs.list_rows(db, document)
-        db.commit()
+        _commit_if_changed(db)
         return {
             "can_edit": _can_edit(db, project_id, user),
             "can_edit_defaults": _can_defaults(db, user),
@@ -119,6 +128,10 @@ def add_certificate(
 ):
     try:
         _editable_project(db, project_id, current_user)
+        if REGISTER_VIEW_SLUG not in permission_slugs(db, current_user["id"]):
+            raise AppException(
+                status_code=403, message="You cannot pick from the certificate register.", code="permission_denied"
+            )
         document = _document(db, project_id, document_id)
         try:
             validate_uuid_path(payload.certificate_id, resource="Certificate")
@@ -136,7 +149,7 @@ def export_certificates(
     project_id: str,
     document_id: str,
     payload: ExportIn,
-    current_user: dict = Depends(require_permission(EDIT)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the merged "Certificates.pdf"; it appears in My Downloads when it is ready."""
@@ -187,6 +200,7 @@ def export_certificates(
 
 
 @router.get(f"{BASE}/{{certificate_id}}")
+@heavy
 def read_certificate(
     project_id: str,
     document_id: str,
@@ -197,13 +211,14 @@ def read_certificate(
     try:
         document = _document(db, project_id, document_id)
         body = certs.detail(db, document, _certificate_id(certificate_id))
-        db.commit()
+        _commit_if_changed(db)
         return _with_rights(db, project_id, user, body)
     except Exception as exc:
         raise _fail(exc)
 
 
 @router.get(f"{BASE}/{{certificate_id}}/file")
+@heavy
 def read_certificate_file(
     project_id: str,
     document_id: str,
@@ -224,6 +239,7 @@ def read_certificate_file(
 
 
 @router.put(f"{BASE}/{{certificate_id}}/boxes")
+@heavy
 def put_certificate_boxes(
     project_id: str,
     document_id: str,

@@ -369,3 +369,38 @@ def test_01_symbol_font_code_points_are_mapped_back_before_matching(monkeypatch)
     assert found["has_text"] is True and len(found["boxes"]) == 1
     assert found["boxes"][0]["y"] == pytest.approx((TOP + 30) / PAGE_H, abs=TOL)
     assert len(find_boxes(pdf, "4A")["boxes"]) == 1
+
+
+# ------------------------------------------------------------------ fix round 1
+
+
+def test_m2_only_the_first_sixty_pages_are_searched_but_the_text_flag_holds():
+    from app.services.certificate_pdf_service import MAX_PAGES, find_boxes
+
+    doc = pymupdf.open()
+    for n in range(61):
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        page.insert_text((60, 100), "ZZ 99" if n == 60 else f"filler {n}", fontsize=11)
+    pdf = doc.tobytes()
+    doc.close()
+    assert MAX_PAGES == 60
+    assert find_boxes(pdf, "ZZ 99") == {"has_text": True, "boxes": []}
+
+
+def test_m3_vertical_rules_of_a_neighbouring_table_do_not_widen_the_row():
+    from app.services.certificate_pdf_service import find_boxes
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    for x0, x1, code in ((40, 250, "AA 111"), (300, 550, "BB 222")):
+        ys = [100, 130, 160]
+        for y in ys:
+            page.draw_line((x0, y), (x1, y))
+        for x in (x0, x1):
+            page.draw_line((x, ys[0]), (x, ys[-1]))
+        page.insert_text((x0 + 10, 150), code, fontsize=11)
+    pdf = doc.tobytes()
+    doc.close()
+    (box,) = find_boxes(pdf, "AA 111")["boxes"]
+    assert box["x"] == pytest.approx(40 / PAGE_W, abs=TOL)
+    assert box["x"] + box["w"] == pytest.approx(250 / PAGE_W, abs=TOL)

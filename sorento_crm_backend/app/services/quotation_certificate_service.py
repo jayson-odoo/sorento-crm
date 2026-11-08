@@ -9,6 +9,8 @@ Contract: documentation/plans/certificates/quote-cert-tab-08nov-acceptance-crite
 from __future__ import annotations
 
 import logging
+import math
+import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -112,6 +114,8 @@ class _Group:
         self.coverage: Dict[str, tuple[CertificateProduct, Certificate]] = {}
         self._file: Any = False
         self._has_text: Optional[bool] = None
+        self._page_count: Optional[int] = None
+        self.unreadable = False  # a file is on record but the object could not be read
 
     @property
     def rev(self):
@@ -135,7 +139,24 @@ class _Group:
                     self._file = AttachmentService(db).get_file_content_for(att)
                 except Exception:  # noqa: BLE001 - an unreadable object is a state, not a crash
                     logger.warning("certificate file unreadable: %s", att.id, exc_info=True)
+                if self._file is None:
+                    self.unreadable = True
         return self._file
+
+    def learn(self, cache: Optional[dict]) -> None:
+        """Take the text flag and page count a current cache already knows, so no read is needed."""
+        if not cache:
+            return
+        if self._has_text is None and cache.get("has_text") is not None:
+            self._has_text = bool(cache["has_text"])
+        if self._page_count is None and cache.get("page_count") is not None:
+            self._page_count = int(cache["page_count"])
+
+    def page_count(self, db: Session) -> Optional[int]:
+        if self._page_count is None:
+            data = self.file(db)
+            self._page_count = pdfs.page_count(data) if data else None
+        return self._page_count
 
     def has_text(self, db: Session) -> bool:
         if self._has_text is None:
@@ -168,8 +189,10 @@ def _groups(db: Session, document, quoted: Dict[str, str], markers) -> List[_Gro
     # Coverage of manual certificates (they may still cover a quoted product through no auto path).
     all_cov = (
         db.query(CertificateProduct)
-        .filter(CertificateProduct.certificate_id.in_(list(certs)), CertificateProduct.product_id.in_(list(quoted) or [""]))
+        .filter(CertificateProduct.certificate_id.in_(list(certs)), CertificateProduct.product_id.in_(list(quoted)))
         .all()
+        if quoted
+        else []
     )
     by_key: Dict[str, List[Certificate]] = {}
     for cert in certs.values():
@@ -235,15 +258,32 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
         if group.attachment is None:
             continue
         cache = cp.boxes if isinstance(cp.boxes, dict) else None
-        manual_cache = bool(cache) and cache.get("source") == "manual" and cache.get("revision_id") == owner_rev_id
-        if not cp.model_code and not manual_cache:
+        current = bool(cache) and cache.get("revision_id") == owner_rev_id
+        manual_cache = current and cache.get("source") == "manual"
+        if current:
+            group.learn(cache)
+        if not cp.model_code and not manual_cache and not current:
+            # First look at this revision with no code: read once, then remember the answer
+            # (a suggestion, or the negative result) so no later read parses the file again.
             data = group.file(db)
-            if data and group.has_text(db):
-                suggestion = pdfs.suggest_code(data, quoted.get(pid, ""))
-                if suggestion:
-                    cp.model_code, cp.model_code_source, cp.boxes = suggestion, "ai", None
-                    cache, manual_cache = None, False
-                    entry["model_code"], entry["model_code_source"] = suggestion, "ai"
+            if data is None:
+                continue
+            has_text = group.has_text(db)
+            suggestion = pdfs.suggest_code(data, quoted.get(pid, "")) if has_text else None
+            if suggestion:
+                cp.model_code, cp.model_code_source, cp.boxes = suggestion, "ai", None
+                entry["model_code"], entry["model_code_source"] = suggestion, "ai"
+            else:
+                cp.boxes = {
+                    "revision_id": owner_rev_id,
+                    "code": None,
+                    "source": "auto",
+                    "has_text": has_text,
+                    "page_count": group.page_count(db),
+                    "boxes": [],
+                }
+            db.info["qcert_dirty"] = True
+            cache = cp.boxes if isinstance(cp.boxes, dict) else None
         code = cp.model_code
         entry["code_used"] = code
         entry["number_only"] = bool(code) and pdfs.is_number_only(code)
@@ -262,6 +302,7 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
             )
             if valid:
                 boxes, has_text = _tag(cache.get("boxes") or [], pid), bool(cache.get("has_text", True))
+                group.learn(cache)
             else:
                 data = group.file(db)
                 if data is None:
@@ -269,13 +310,16 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
                 found = pdfs.find_boxes(data, code)
                 has_text = found["has_text"]
                 boxes = _tag(found["boxes"], pid)
+                group._has_text = has_text
                 cp.boxes = {
                     "revision_id": owner_rev_id,
                     "code": code,
                     "source": "auto",
                     "has_text": has_text,
+                    "page_count": group.page_count(db),
                     "boxes": boxes,
                 }
+                db.info["qcert_dirty"] = True
             if not has_text:
                 entry["state"] = "no_text"
             elif boxes:
@@ -291,7 +335,7 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
         boxes, source = all_boxes, SCOPE_DEFAULT
     count = len(boxes)
 
-    if group.attachment is None:
+    if group.attachment is None or group.unreadable:
         state = "no_file"
     elif override is not None or any_manual:
         state = "edited"
@@ -396,12 +440,11 @@ def detail(db: Session, document, certificate_id: str) -> Dict[str, Any]:
     group = _find_group(groups, certificate_id)
     row = _row(db, group, quoted, markers)
     resolved = row["_resolved"]
-    data = group.file(db)
     out = _public(row)
     out.update(
         {
             "revision_id": str(group.rev.id) if group.rev is not None else None,
-            "page_count": pdfs.page_count(data) if data else None,
+            "page_count": group.page_count(db) if group.attachment is not None else None,
             "has_text": group.has_text(db),
             "box_source": resolved["box_source"],
             "boxes": resolved["boxes"],
@@ -487,25 +530,51 @@ def assert_removable(db: Session, document, certificate_id: str) -> None:
 def set_send(db: Session, document, certificate_id: str, value: Optional[bool], user_id: Optional[str]):
     _quoted, _markers_, groups = _context(db, document)
     group = _find_group(groups, certificate_id)
-    marker = _marker_for(db, document, str(group.rep.id), user_id)
+    existing = _markers_.get(str(group.rep.id))
+    if existing is None and value is None:
+        return get_row(db, document, certificate_id)  # nothing stored, nothing to clear
+    marker = existing or _marker_for(db, document, str(group.rep.id), user_id)
     marker.send_to_customer = value
     db.flush()
     return get_row(db, document, certificate_id)
 
 
-def validate_boxes(boxes: List[dict]) -> List[dict]:
+MAX_BOX_PAGE = 2000
+
+
+def _invalid(message: str = "A box is not valid.") -> AppException:
+    return AppException(status_code=422, message=message, code="certificate_box_invalid")
+
+
+def validate_boxes(boxes: List[dict], page_count: Optional[int] = None) -> List[dict]:
+    """Every box inside the page (fractions), finite, on a page that exists (the file's page count
+    when known, else at most 2000), with a UUID or null product."""
     if len(boxes) > MAX_BOXES:
-        raise AppException(status_code=422, message="Too many boxes.", code="certificate_box_invalid")
+        raise _invalid("Too many boxes.")
+    last_page = page_count if page_count else MAX_BOX_PAGE
     clean = []
     for box in boxes:
         try:
             page, x, y, w, h = int(box["page"]), float(box["x"]), float(box["y"]), float(box["w"]), float(box["h"])
-        except (KeyError, TypeError, ValueError):
-            raise AppException(status_code=422, message="A box is not valid.", code="certificate_box_invalid")
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise _invalid()
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            raise _invalid()
         eps = 1e-9
-        if page < 1 or not (0 <= x <= 1 and 0 <= y <= 1) or w <= 0 or h <= 0 or x + w > 1 + eps or y + h > 1 + eps:
-            raise AppException(status_code=422, message="A box is outside the page.", code="certificate_box_invalid")
-        clean.append({"page": page, "x": x, "y": y, "w": w, "h": h, "product_id": box.get("product_id")})
+        if page < 1 or page > last_page or not (0 <= x <= 1 and 0 <= y <= 1) or w <= 0 or h <= 0:
+            raise _invalid("A box is outside the page.")
+        if x + w > 1 + eps or y + h > 1 + eps:
+            raise _invalid("A box is outside the page.")
+        product_id = box.get("product_id")
+        if product_id is not None:
+            try:
+                if len(str(product_id)) > 36:
+                    raise ValueError
+                uuid.UUID(str(product_id))
+            except (TypeError, ValueError):
+                raise _invalid()
+            product_id = str(product_id)
+        clean.append({"page": page, "x": x, "y": y, "w": w, "h": h, "product_id": product_id})
     return clean
 
 
@@ -513,9 +582,9 @@ def put_boxes(
     db: Session, document, certificate_id: str, scope: str, boxes: List[dict], user_id: Optional[str]
 ) -> Dict[str, Any]:
     """`scope=default` is gated by the route (certificates.edit)."""
-    boxes = validate_boxes(boxes)
     quoted, _markers_, groups = _context(db, document)
     group = _find_group(groups, certificate_id)
+    boxes = validate_boxes(boxes, group.page_count(db))
     rep_id = str(group.rep.id)
     if scope == SCOPE_QUOTE:
         marker = _marker_for(db, document, rep_id, user_id)
@@ -536,6 +605,7 @@ def put_boxes(
                 "code": cp.model_code,
                 "source": "manual",
                 "has_text": has_text,
+                "page_count": group.page_count(db),
                 "boxes": [b for b in boxes if str(b["product_id"]) == pid],
             }
         marker = (

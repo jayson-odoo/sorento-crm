@@ -1300,7 +1300,7 @@ def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any
         "grand_total": Decimal(record.grand_total or 0),
         "scope_count": int(scope_count),
         # QUOTE-CERT-TAB: how many certificates went out with this revision (frozen at issue).
-        "certificates_count": len(record.certificates or []),
+        "certificates_count": len([c for c in (record.certificates or []) if c.get("attachment_id")]),
         # The acceptance lands HERE, on the thing the customer actually held and signed, while the
         # screen watching for it is the document. Without these the document panel says "not
         # counter-signed yet" forever on a quotation that is already won.

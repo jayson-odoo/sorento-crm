@@ -56,3 +56,19 @@ def test_ingest_never_overwrites_a_manual_code(env):
     assert again.status_code == 200, again.text
     (row,) = _coverage(env, "QCERT-ING-3")
     assert row.model_code == "MAN 1111" and row.model_code_source == "manual"
+
+
+def test_ingest_keeps_a_manual_default_box_cache_when_the_ai_code_changes(env):
+    attachment = env.attachment(env.attachment_type(is_certificate=True, name="Certification"), "qcert-cache")
+    product = env.product("QCACHE", code="ZZTQCACHE5555")
+    payload = _cert_payload(attachment, [product], certificate_number="QCERT-ING-4")
+    payload["products"] = ["ZZTQCACHE5555"]
+    assert env.client.post(EXTERNAL, json=payload).status_code == 200
+    (row,) = _coverage(env, "QCERT-ING-4")
+    cache = {"revision_id": "r", "code": "ZZTQCACHE5555", "source": "manual", "has_text": True, "boxes": []}
+    row.boxes = cache
+    env.db.commit()
+    payload["products"] = ["zztqcache5555"]
+    assert env.client.post(EXTERNAL, json=payload).status_code == 200
+    (row,) = _coverage(env, "QCERT-ING-4")
+    assert row.boxes == cache
