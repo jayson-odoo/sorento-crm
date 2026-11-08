@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { GripVertical, Plus, X } from 'lucide-react';
 import {
   DndContext,
@@ -36,6 +36,21 @@ const PRESET_NAMES: Record<string, string> = {
   '#2c3539': 'Gunmetal',
 };
 const DEFAULT_HEX = '#1f2937';
+
+/** What the picker may hand back, as a stored hex: `#rgb` expanded, lower case; null for anything else
+ *  (Transparent, half-typed text), which a colour dot cannot be. */
+export function normaliseHex(value: string): string | null {
+  const v = value.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(v)) return v;
+  if (/^#[0-9a-f]{3}$/.test(v)) return `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`;
+  return null;
+}
+
+/** The first preset colour the list does not use yet, else Black (validation says what is wrong). */
+function nextDefaultHex(colours: AccessoryColour[]): string {
+  const used = new Set(colours.map((c) => c.hex.toLowerCase()));
+  return Object.keys(PRESET_NAMES).find((hex) => !used.has(hex)) ?? DEFAULT_HEX;
+}
 const MAX_COLOURS = 12;
 
 export const presetNameOf = (hex: string): string => PRESET_NAMES[hex.toLowerCase()] ?? '';
@@ -57,11 +72,13 @@ function ColourRow({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const shown = colour.name || presetNameOf(colour.hex);
+  // A value the list cannot hold (Transparent) is refused; the picker is reopened on the old colour.
+  const [reset, setReset] = useState(0);
   return (
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-md border bg-background p-2 ${isDragging ? 'z-10 shadow-md' : ''}`}
+      className={`flex flex-wrap items-center gap-2 rounded-md border bg-background p-2 ${isDragging ? 'z-10 shadow-md' : ''}`}
     >
       {canEdit ? (
         <>
@@ -74,10 +91,19 @@ function ColourRow({
           >
             <GripVertical className="size-4" />
           </button>
-          <ColorPicker value={colour.hex} onChange={(hex) => onChange({ ...colour, hex: hex.toLowerCase() })} />
+          <ColorPicker
+            key={reset}
+            value={colour.hex}
+            ariaLabel={`Colour ${index + 1}`}
+            onChange={(picked) => {
+              const hex = normaliseHex(picked);
+              if (hex) onChange({ ...colour, hex });
+              else setReset((n) => n + 1);
+            }}
+          />
           <Input
             aria-label={`Colour name ${index + 1}`}
-            className="h-8 min-w-0 flex-1"
+            className="order-last h-8 min-w-0 basis-full sm:order-none sm:basis-0 sm:flex-1"
             maxLength={40}
             placeholder={presetNameOf(colour.hex)}
             value={colour.name ?? ''}
@@ -87,7 +113,7 @@ function ColourRow({
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0"
+            className="ml-auto shrink-0 sm:ml-0"
             aria-label={`Remove colour ${index + 1}`}
             onClick={onRemove}
           >
@@ -179,7 +205,7 @@ export function AccessoryColoursField({
           variant="outline"
           size="sm"
           disabled={colours.length >= MAX_COLOURS}
-          onClick={() => onChange([...colours, { name: null, hex: DEFAULT_HEX }])}
+          onClick={() => onChange([...colours, { name: null, hex: nextDefaultHex(colours) }])}
         >
           <Plus className="size-4" />
           Add colour

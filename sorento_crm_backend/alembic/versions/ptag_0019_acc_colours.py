@@ -42,7 +42,13 @@ DDL = [
 COPY_SQL = """
 WITH firsts AS (
     SELECT DISTINCT ON (i.accessory_id, lower(i.colour_hex))
-           i.accessory_id, i.colour_name, lower(i.colour_hex) AS hex, i.sort_order, i.created_at, i.id
+           i.accessory_id,
+           -- the first non-empty name any picture gave this hex
+           (SELECT i2.colour_name FROM accessory_images i2
+             WHERE i2.accessory_id = i.accessory_id AND lower(i2.colour_hex) = lower(i.colour_hex)
+               AND nullif(btrim(i2.colour_name), '') IS NOT NULL
+             ORDER BY i2.sort_order, i2.created_at, i2.id LIMIT 1) AS colour_name,
+           lower(i.colour_hex) AS hex, i.sort_order, i.created_at, i.id
     FROM accessory_images i
     WHERE i.colour_hex IS NOT NULL AND i.colour_hex ~ '^#[0-9a-fA-F]{6}$'
     ORDER BY i.accessory_id, lower(i.colour_hex), i.sort_order, i.created_at, i.id

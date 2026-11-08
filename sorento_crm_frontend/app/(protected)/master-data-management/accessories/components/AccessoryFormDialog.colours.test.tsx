@@ -8,7 +8,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const svc = vi.hoisted(() => ({ replaceAccessoryColours: vi.fn(), updateFn: vi.fn() }));
+const svc = vi.hoisted(() => ({
+  replaceAccessoryColours: vi.fn(),
+  updateFn: vi.fn(),
+  createFn: vi.fn(),
+}));
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/components/ui/rich-text-editor', () => {
@@ -28,7 +32,7 @@ vi.mock('../hooks/useAccessories', async (original) => {
   });
   return {
     ...(await original<typeof import('../hooks/useAccessories')>()),
-    useCreateAccessory: () => ({ ...quiet(), mutateAsync: vi.fn() }),
+    useCreateAccessory: () => ({ ...quiet(), mutateAsync: svc.createFn }),
     useUpdateAccessory: () => ({ ...quiet(), mutateAsync: svc.updateFn }),
     useAccessoryImage: quiet,
     useAccessoryPictures: quiet,
@@ -66,6 +70,7 @@ function mount(accessory: unknown = ACCESSORY) {
 beforeEach(() => {
   vi.clearAllMocks();
   svc.updateFn.mockResolvedValue({});
+  svc.createFn.mockResolvedValue({ id: 'new1' });
   svc.replaceAccessoryColours.mockResolvedValue([]);
 });
 
@@ -146,12 +151,51 @@ describe('AccessoryFormDialog pictures and colours', () => {
     await waitFor(() => expect(svc.replaceAccessoryColours).toHaveBeenCalled());
     const sent = svc.replaceAccessoryColours.mock.calls[0][1] as { hex: string }[];
     expect(sent).toHaveLength(3);
-    expect(sent[2].hex).toBe('#1f2937');
+    expect(sent[2].hex).toBe('#c0c0c0'); // the first preset not already listed (Black and Grey are)
   });
 
   it('an accessory with no colours saves an empty list', async () => {
     mount({ ...ACCESSORY, colours: [] });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(svc.replaceAccessoryColours).toHaveBeenCalledWith('a1', []));
+  });
+});
+
+describe('AccessoryFormDialog, a new accessory with colours', () => {
+  it('create then a failed colours save: the next Save updates the same record, never a second create', async () => {
+    svc.replaceAccessoryColours.mockRejectedValueOnce(new Error('422'));
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AccessoryFormDialog open onOpenChange={vi.fn()} accessory={null} canEdit />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'NEW ONE' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add colour' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add accessory' }));
+    await waitFor(() => expect(svc.replaceAccessoryColours).toHaveBeenCalledTimes(1));
+    expect(svc.createFn).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(svc.replaceAccessoryColours).toHaveBeenCalledTimes(2));
+    expect(svc.createFn).toHaveBeenCalledTimes(1);
+    expect(svc.updateFn).toHaveBeenCalledWith(expect.objectContaining({ id: 'new1' }));
+  });
+
+  it('refuses bad colours before creating anything', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AccessoryFormDialog open onOpenChange={vi.fn()} accessory={null} canEdit />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'DUP' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add colour' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add colour' }));
+    // Both default to different presets; make them equal through the hex box.
+    const hexes = screen.getAllByLabelText(/^Hex/);
+    fireEvent.change(hexes[1], { target: { value: '#1f2937' } });
+    fireEvent.keyDown(hexes[1], { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add accessory' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(svc.createFn).not.toHaveBeenCalled();
   });
 });

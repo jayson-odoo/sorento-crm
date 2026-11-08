@@ -550,6 +550,8 @@ class AccessoryService:
                 raise AppException(status_code=422, message=f"{hex_value} is listed twice")
             seen.add(hex_value)
             cleaned.append((name, hex_value))
+        # Serialise concurrent saves of the same list, as add_image does for the pictures.
+        self.db.query(Accessory.id).filter(Accessory.id == row.id).with_for_update().first()
         self.db.query(AccessoryColour).filter(AccessoryColour.accessory_id == row.id).delete(
             synchronize_session=False
         )

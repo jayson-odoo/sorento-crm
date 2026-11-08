@@ -133,3 +133,42 @@ describe('AccessoryColoursField', () => {
     expect(screen.getByText('Black')).toBeInTheDocument();
   });
 });
+
+describe('AccessoryColoursField, values and defaults', () => {
+  it('picking Transparent leaves the row unchanged', () => {
+    const spy = mount();
+    const before = spy.mock.calls.length;
+    const hex = within(rows()[0]).getAllByLabelText(/^Hex/)[0];
+    fireEvent.change(hex, { target: { value: 'transparent' } });
+    fireEvent.keyDown(hex, { key: 'Enter' });
+    expect(spy.mock.calls.length).toBe(before);
+    expect(within(rows()[0]).getByTitle('#1f2937')).toBeInTheDocument();
+  });
+
+  it('a short hex is expanded and lower-cased', () => {
+    const spy = mount();
+    const hex = within(rows()[1]).getAllByLabelText(/^Hex/)[0];
+    fireEvent.change(hex, { target: { value: '#FFF' } });
+    fireEvent.keyDown(hex, { key: 'Enter' });
+    expect(spy).toHaveBeenLastCalledWith([BLACK, { name: 'Grey', hex: '#ffffff' }]);
+  });
+
+  it('Add colour takes the first preset not already in the list', () => {
+    const spy = mount([BLACK, GREY]);
+    fireEvent.click(screen.getByRole('button', { name: 'Add colour' }));
+    expect((spy.mock.calls.at(-1)![0] as Colour[])[2].hex).toBe('#c0c0c0');
+  });
+
+  it('Add colour falls back to Black when every preset is used', () => {
+    const all = ['#1f2937', '#9ca3af', '#c0c0c0', '#ffffff', '#d4af37', '#2c3539'].map((hex) => ({ name: null, hex }));
+    const spy = mount(all);
+    fireEvent.click(screen.getByRole('button', { name: 'Add colour' }));
+    expect((spy.mock.calls.at(-1)![0] as Colour[])[6].hex).toBe('#1f2937');
+  });
+
+  it('each swatch is labelled "Colour N"', () => {
+    mount();
+    expect(screen.getByRole('button', { name: 'Colour 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Colour 2' })).toBeInTheDocument();
+  });
+});

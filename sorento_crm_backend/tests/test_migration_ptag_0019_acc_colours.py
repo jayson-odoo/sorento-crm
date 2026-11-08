@@ -184,3 +184,9 @@ def test_the_picture_colour_columns_stay_untouched(db):
     _copy(db)
     (image,) = db.query(AccessoryImage).filter(AccessoryImage.accessory_id == acc.id).all()
     assert (image.colour_name, image.colour_hex) == ("Black", "#1f2937")
+
+
+def test_the_first_non_empty_name_for_a_hex_wins_across_pictures(db):
+    acc = _accessory(db, [(None, "#1f2937"), ("Black", "#1f2937"), ("Other", "#1F2937")])
+    _copy(db)
+    assert _colours(db, acc) == [("Black", "#1f2937")]
