@@ -185,3 +185,102 @@ def test_history_carries_the_decision_after_the_proposing_turn(db):
     assert len(replies) == 1
     assert "Card cancelled" in replies[0]
     assert a.phone_number in replies[0] and d.phone_number in replies[0]
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def test_a_cancelled_person_asked_for_something_else_is_a_new_row(db):
+    """Cancel "A and D to customer X", then ask for the same two with another customer: both propose (B1)."""
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    a, d, _ = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    actions.cancel(db, w.respond_id, first.pending_action["id"])
+
+    other = [row_(p.phone_number, name=p.name, companies=["MCH"], codes=[w.cust_b.customer_code]) for p in (a, d)]
+    second, _ = _batch_turn(db, w, other, "do the same two with Mocha instead")
+
+    lines = _lines(second)
+    assert a.phone_number in lines and d.phone_number in lines
+    assert CANCELLED_REASON not in second.reply_text
+
+
+def test_a_confirmed_person_asked_for_more_is_a_new_row(db):
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    a, _, _ = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a), "grant access")
+    assert actions.confirm(db, w.respond_id, first.pending_action["id"], via="console").status == "executed"
+
+    more = [row_(a.phone_number, name=a.name, companies=["MCH"], codes=[w.cust_b.customer_code])]
+    second, _ = _batch_turn(db, w, more, "give them Mocha too")
+
+    assert a.phone_number in _lines(second)
+    assert DONE_REASON not in second.reply_text
+
+
+def test_a_pasted_list_of_phones_asks_for_every_one_of_them_again(db):
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    a, d, _ = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    actions.cancel(db, w.respond_id, first.pending_action["id"])
+
+    second, _ = _batch_turn(db, w, _rows(w, a, d), f"redo these:\n{local(a.phone_number)}\n{local(d.phone_number)}")
+
+    lines = _lines(second)
+    assert a.phone_number in lines and d.phone_number in lines
+
+
+def test_a_row_that_failed_on_a_confirmed_card_stays_open(db):
+    """A partial confirm: D's re-check fails (its companies moved), A is done. The next card keeps D, not A."""
+    from app.models.company import RespondContactCompany
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    a, d, c = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    db.add(RespondContactCompany(respond_contact_id=d.id, company_id=w.mch))
+    db.commit()
+    outcome = actions.confirm(db, w.respond_id, first.pending_action["id"], via="console")
+    assert outcome.status == "partial", outcome.steps
+
+    second, provider = _batch_turn(db, w, _rows(w, a, d, c), f"now {c.name} as well")
+
+    lines = _lines(second)
+    assert d.phone_number in lines and c.phone_number in lines
+    assert a.phone_number not in lines
+    assert "(failed" in _history_text(provider)
+
+
+def test_compaction_keeps_the_decision_of_a_folded_card(db):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.user import SystemSetting
+    from app.services.chatbot.agent import actions, memory
+    from tests.chatbot.agent._turns import seed_turn
+    from tests.chatbot.agent.test_agent_loop import plain
+
+    w = make_world(db)
+    a, d, _ = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    actions.cancel(db, w.respond_id, first.pending_action["id"])
+    conv = memory.latest_conversation(db, w.respond_id)
+    later = datetime.now(timezone.utc) + timedelta(minutes=1)
+    for i in range(8):
+        turn = seed_turn(db, conv, minute=i, text=f"question {i} " + "x" * 400, reply="answer " + "y" * 400)
+        turn.created_at = later + timedelta(minutes=i)
+    row = db.query(SystemSetting).first() or SystemSetting()
+    row.chatbot_agent_compact_tokens = 100
+    db.add(row)
+    db.commit()
+
+    _, provider = run_turn(db, w, [plain("Earlier: a cancelled table."), answer_("ok")], text_="thanks")
+
+    prompt = "\n".join(str(m.get("content") or "") for m in provider.seen[0]["messages"])
+    assert "Fold the earlier conversation" in prompt
+    assert "Card cancelled" in prompt and a.phone_number in prompt

@@ -1482,8 +1482,9 @@ def _run(
         # -- memory: compaction (only with time to spare), then history
         def summarize(old: str | None, folded: list[ChatbotTurn]) -> str:
             lines = []
+            notes = memory.decision_notes(db, conv)  # a decided card stays decided once folded (AGENT-DECIDED-CARDS)
             for t in folded:
-                msgs = memory._turn_messages(t)
+                msgs = memory._turn_messages(t, notes.get(str(t.id)))
                 created = t.created_at.date().isoformat() if t.created_at else ""
                 lines.append(f"[{created}] User: {msgs[0]['content']}\nAssistant: {msgs[1]['content']}")
             prompt = (
@@ -1700,7 +1701,7 @@ def _run(
                     if previous_waiting is None:
                         previous_waiting = _previous_waiting(db, conv, turn_id)
                     if closed_rows is None:
-                        closed_rows = actions.closed_rows(db, conversation_id)
+                        closed_rows = actions.closed_rows(db, contact_respond_id, conversation_id)
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
                         waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,

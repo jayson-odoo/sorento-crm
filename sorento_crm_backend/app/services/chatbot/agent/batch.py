@@ -108,17 +108,16 @@ _MATCH_DIGITS = 9
 
 
 def _asked_again(args: dict, key: Any, user_text: str) -> bool:
-    """Does the user's latest message name this row: its phone (the last 9 digits, any formatting) or its name
-    (whole words, any case)? Plain text, never the model's say-so."""
-    text = " ".join(str(user_text or "").split()).lower()
-    if not text:
-        return False
+    """Does the user's latest message name this row: its phone (the last 9 digits, any formatting, also inside a
+    pasted list of numbers) or its name (whole words, any case)? Plain text, never the model's say-so."""
+    raw = str(user_text or "")
     digits = re.sub(r"\D", "", str(key or ""))
     if len(digits) >= _MATCH_DIGITS:
-        for run in _PHONE_RUN.findall(text):
-            said = re.sub(r"\D", "", run)
-            if len(said) >= _MATCH_DIGITS and said[-_MATCH_DIGITS:] == digits[-_MATCH_DIGITS:]:
-                return True
+        tail = digits[-_MATCH_DIGITS:]
+        # Numbers on one line or one per line can run together here; a contained match still names the row.
+        if any(tail in re.sub(r"\D", "", run) for run in _PHONE_RUN.findall(raw)):
+            return True
+    text = " ".join(raw.split()).lower()
     name = " ".join(str(args.get("name") or "").split()).lower()
     return len(name) >= 3 and re.search(rf"(?<![0-9a-z]){re.escape(name)}(?![0-9a-z])", text) is not None
 

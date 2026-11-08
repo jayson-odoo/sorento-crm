@@ -545,28 +545,45 @@ DECIDED = ("cancelled", "executed", "partial", "rejected")
 _STEP_MARKS = {"done": "done", "failed": "failed", "skipped": "not run", "withdrawn": "withdrawn"}
 
 
+#: Argument keys that only echo the table and never change what a row asks for.
+_ECHO_KEYS = frozenset({"access_as_written"})
+
+
+def _canonical(value):
+    """A value compared across cards: text trimmed, whitespace collapsed and lowercased; a list order-free."""
+    if isinstance(value, str):
+        return " ".join(value.split()).lower()
+    if isinstance(value, (list, tuple, set)):
+        return sorted((_canonical(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True, default=str))
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    return value
+
+
 def row_identity(step: dict) -> tuple | None:
-    """Which table row a step is, across cards: the write and its `batch_key` (a grant's phone), else the write and
-    its arguments. None for a write that never batches."""
+    """Which table row a step is, across cards: the write, its `batch_key` (a grant's phone) and what it asks for
+    (every argument, compared without case, spacing or list order), so the same person asked for something else
+    is a different row. None for a write that never batches."""
     definition = writes.write_def(step.get("tool"))
     args = step.get("args") if isinstance(step.get("args"), dict) else {}
     if definition is None or not definition.batchable:
         return None
-    if definition.batch_key is not None:
-        key = definition.batch_key(args)
-        return (definition.name, key) if key is not None else None
-    plain = {k: v for k, v in args.items() if not str(k).startswith("_")}
-    return (definition.name, json.dumps(plain, sort_keys=True, ensure_ascii=False, default=str))
+    key = definition.batch_key(args) if definition.batch_key is not None else None
+    plain = {k: v for k, v in args.items() if not str(k).startswith("_") and k not in _ECHO_KEYS and k != "row"}
+    return (definition.name, key, json.dumps(_canonical(plain), sort_keys=True, ensure_ascii=False, default=str))
 
 
-def closed_rows(db, conversation_id: str) -> dict[tuple, dict]:
+def closed_rows(db, contact_respond_id: str, conversation_id: str) -> dict[tuple, dict]:
     """The table rows of this conversation the user already decided, by `row_identity`: {"status": "cancelled" |
     "done", "args"}. The newest card holding a row speaks for it, so a row the user asked for again (a newer card
     proposed it) is open again; a step that failed or did not run stays open."""
     out: dict[tuple, dict] = {}
     rows = (
         db.query(AgentAction)
-        .filter(AgentAction.conversation_id == str(conversation_id))
+        .filter(
+            AgentAction.contact_respond_id == str(contact_respond_id),  # the indexed column; same rows
+            AgentAction.conversation_id == str(conversation_id),
+        )
         .order_by(AgentAction.created_at, AgentAction.id)
         .all()
     )
@@ -603,7 +620,10 @@ def decision_note(action: AgentAction) -> str | None:
         f"{n}. {writes._line(s.get('summary'))} ({_STEP_MARKS.get(s.get('status'), s.get('status'))})"
         for n, s in enumerate(steps, 1)
     )
+    head = (
+        "Card confirmed by the user, but nothing ran" if action.status == "rejected" else "Card confirmed by the user"
+    )
     return (
-        f"[Card confirmed by the user. Rows: {rows}. Done rows are finished: never propose them again; a row marked "
-        "failed or not run may be proposed again only if the user asks.]"
+        f"[{head}. Rows: {rows}. Done rows are finished: never propose them again; a row marked failed or not run "
+        "may be proposed again only if the user asks.]"
     )

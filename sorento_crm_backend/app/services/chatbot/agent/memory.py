@@ -145,7 +145,11 @@ def decision_notes(db, conv: AgentConversation) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     rows = (
         db.query(AgentAction)
-        .filter(AgentAction.conversation_id == str(conv.id), AgentAction.status.in_(DECIDED))
+        .filter(
+            AgentAction.contact_respond_id == conv.contact_respond_id,  # the indexed column; same rows
+            AgentAction.conversation_id == str(conv.id),
+            AgentAction.status.in_(DECIDED),
+        )
         .order_by(AgentAction.created_at, AgentAction.id)
         .all()
     )
