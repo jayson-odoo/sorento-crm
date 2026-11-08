@@ -115,3 +115,13 @@ class EntityDef:
     default_window: str | None = None
     #: A computed entity's rows when the query sets no limit (`query.DEFAULT_ROWS` otherwise).
     default_limit: int | None = None
+    #: Fields that name one row of a computed entity: a group_by on any of them, or aggregates with no group_by,
+    #: is answered with the rows themselves (their totals row holds the sums), so a regroup never drops a row's
+    #: columns or merges same-name rows (crew live round 4: dealers grouped by name lost TGT and account).
+    row_identity: tuple[str, ...] = ()
+    #: Code-render the table from this many rows (`query_tools.CARD_MIN_ROWS` otherwise), so the model passes it
+    #: through instead of rewriting it.
+    card_min_rows: int | None = None
+    #: A computed entity's columns shown on every rows result, right after the label, whatever `fields` the
+    #: query asks for (crew live round 5: same-name dealer rows looked identical once the model chose columns).
+    always_fields: tuple[str, ...] = ()

@@ -1643,6 +1643,7 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
+                self_note = None
                 if ctx.principal == "contact" and not (
                     name in CONTACT_TOOLS or name == HANDOFF or name in dealer
                     or (name in (CONFIRM_ACTION, CANCEL_ACTION) and waiting is not None)
@@ -1669,11 +1670,19 @@ def _run(
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
+                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
+                        from app.models.user import User
+                        from app.services.chatbot.agent.query_tools import strip_self_agent
+
+                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                        args, self_note = strip_self_agent(args, asker, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
                         catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
                     )
+                if name == "crm_query" and self_note:
+                    out.message = f"{out.message} {self_note}".strip() if out.message else self_note
                 agents = found_agents(out.data) if name == "crm_resolve" and out.status == "ok" else []
                 if agents and any(sc.get("function", {}).get("name") == "crm_query" for sc in schemas):
                     out.message = (

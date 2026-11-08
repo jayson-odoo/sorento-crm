@@ -601,8 +601,7 @@ register(
              "team or a dealer, or per agent / team / dealer: one row per agent, team and dealer, highest payout "
              "first, totals row; no period = this year. One of them: agent=<code or name as said> (an agent, team or "
              "dealer); only dealers or teams: owner_kind eq dealer|team",
-        list_fields=("owner_kind", "target_no", "payout_account", "target_value", "achieved_value", "achieved_pct",
-                     "payout"),
+        list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
         window_field="period",
@@ -613,6 +612,9 @@ register(
         default_window="this_year",
         # Every agent, team and dealer of a normal window in one result (the table is rendered by code).
         default_limit=50,
+        row_identity=("owner", "target_no", "payout_account"),
+        card_min_rows=2,
+        always_fields=("target_no", "payout_account"),
     ),
     EntityDef(
         key="target_list",

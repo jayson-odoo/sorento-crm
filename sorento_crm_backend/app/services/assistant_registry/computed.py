@@ -323,6 +323,21 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    # The names the question used, read before any rewrite below, so a note answers only what was asked (W-A:
+    # next-tier lines; an aggregate on a next-tier field still counts once the query is turned back into rows).
+    used = {
+        *named,
+        *(f for f in _list(spec, "fields") if isinstance(f, str)),
+        *(i.get("field") for i in _list(spec, "sort", 4) if isinstance(i, dict)),
+        *((g.get("field") if isinstance(g, dict) else g) for g in group_by),
+        *(a.get("field") for a in aggregates if isinstance(a, dict)),
+    }
+    if entity.row_identity and (group_by or aggregates) and (
+        not group_by or any((g.get("field") if isinstance(g, dict) else g) in entity.row_identity for g in group_by)
+    ):
+        # Already one row per subject: the rows, ranked, with their totals row, never a regroup (crew live round 4).
+        group_by, aggregates = [], []
+        spec = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
     from app.services.assistant_registry.query import require_aggregate
 
     require_aggregate(entity, slugs, bool(group_by or aggregates))
@@ -357,14 +372,6 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     if own_only and entity.own_note:
         notes.append(entity.own_note)
     if entity.row_note:
-        # The names the question used, so a note answers only what was asked (W-A: next-tier lines).
-        used = {
-            *named,
-            *(f for f in _list(spec, "fields") if isinstance(f, str)),
-            *(i["field"] for i in sort),
-            *(g for g in group_by if isinstance(g, str)),
-            *(a.get("field") for a in aggregates if isinstance(a, dict)),
-        }
         said = entity.row_note(rows, used)
         if said:
             notes.append(said)
@@ -448,9 +455,10 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
             _field(entity, slugs, name)  # raises unknown_field (a restricted one is dropped below, as in SQL)
     from app.services.assistant_registry.query import MAX_COLUMNS
 
-    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    picked = [f for f in dict.fromkeys(asked or entity.list_fields or list(entity.fields)) if f not in entity.always_fields]
     dropped = picked[MAX_COLUMNS:]
-    wanted = list(dict.fromkeys([*entity.name_by, *picked[:MAX_COLUMNS]]))
+    # The always-shown columns come on top of the cap, so they never push an asked figure out.
+    wanted = list(dict.fromkeys([*entity.name_by, *entity.always_fields, *picked[:MAX_COLUMNS]]))
     shown = [f for f in wanted if not entity.fields[f].permission or entity.fields[f].permission in slugs]
     restricted = [f for f in wanted if f not in shown]
     order = []
