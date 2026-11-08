@@ -186,6 +186,7 @@ function turnBubbles(result: BubbleSource, fallbackId: string, stored = false): 
       branchKind: index === 0 ? result.branch_kind : undefined,
       promptVersion: result.prompt_version ?? null,
       routingLine: index === 0 ? (result.trace_summary?.routing_line ?? null) : undefined,
+      simulatedContact: index === 0 && result.trace_summary?.synthetic_envelope === true ? true : undefined,
       route: last ? (result.route ?? null) : undefined,
       quickReplies: last ? result.quick_replies : undefined,
       attachments: last && attachments.length > 0 ? attachments : undefined,

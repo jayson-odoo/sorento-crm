@@ -171,11 +171,19 @@ function MessageBubble({
             </button>
           </div>
         ) : null}
-        {message.branchKind || (!isUser && message.promptVersion != null) || (!isUser && message.turnId) ? (
+        {message.branchKind ||
+        (!isUser && message.promptVersion != null) ||
+        (!isUser && message.turnId) ||
+        (!isUser && message.simulatedContact) ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {message.branchKind ? (
               <Badge variant="secondary" size="sm">
                 {message.branchKind}
+              </Badge>
+            ) : null}
+            {!isUser && message.simulatedContact ? (
+              <Badge variant="outline" size="sm" data-testid="chatbot-console-simulated-badge">
+                simulated contact, no real WhatsApp history
               </Badge>
             ) : null}
             {!isUser && message.promptVersion != null ? (
