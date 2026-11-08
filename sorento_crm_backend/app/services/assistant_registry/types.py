@@ -101,3 +101,26 @@ class EntityDef:
     in_index: bool = True
     #: Said with every result of the entity (`scope_note`): a definition the answer must carry.
     always_note: str | None = None
+    #: Said with every result read under the own-only slug: what that reader cannot see (AGENT-COMMISSION-ALL Q4).
+    own_note: str | None = None
+    #: A computed entity's note from the rows it returns (rows -> one line or None), said with the result.
+    row_note: Callable[[list[dict]], str | None] | None = None
+    #: A computed entity's number field rows are ranked by, highest first, unless the query sorts (crew live x3,
+    #: 8 Nov: "payout per dealer" came back by name and cut at 20, the top dealer missing). Groups that sum it
+    #: rank by that sum; a cut result says "Top N of M by <field>".
+    rank_by: str | None = None
+    #: A computed entity's window when the query names none (a window name such as this_year), said in the note;
+    #: None = the periods containing today.
+    default_window: str | None = None
+    #: A computed entity's rows when the query sets no limit (`query.DEFAULT_ROWS` otherwise).
+    default_limit: int | None = None
+    #: Fields that name one row of a computed entity: a group_by on any of them, or aggregates with no group_by,
+    #: is answered with the rows themselves (their totals row holds the sums), so a regroup never drops a row's
+    #: columns or merges same-name rows (crew live round 4: dealers grouped by name lost TGT and account).
+    row_identity: tuple[str, ...] = ()
+    #: Code-render the table from this many rows (`query_tools.CARD_MIN_ROWS` otherwise), so the model passes it
+    #: through instead of rewriting it.
+    card_min_rows: int | None = None
+    #: A computed entity's columns shown on every rows result, right after the label, whatever `fields` the
+    #: query asks for (crew live round 5: same-name dealer rows looked identical once the model chose columns).
+    always_fields: tuple[str, ...] = ()
