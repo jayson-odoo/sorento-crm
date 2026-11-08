@@ -44,7 +44,7 @@ export function boughtToday(snapshot: TownSnapshot) {
 }
 
 export const SCENE_STALL_CAP = 5;
-export const SCENE_TAG_CAP = 5;
+export const SCENE_TAG_CAP = 3; // one tier each, so no two tags can ever cover each other
 
 /**
  * What the 3D town draws, so a day with sixty stalls stays readable: every top shop, at most five
@@ -78,7 +78,10 @@ export function townFrame(aspect: number, small: boolean): number {
 
 /** The tallest a name tag is drawn (a phone draws them larger), in world units. */
 export const TAG_HEIGHT_MAX = 3.1;
-export const TAG_TIER_GAP = 3.2; // at least one tag height, so two tiers never overlap
+// A vertical world unit shows on screen at cos(elevation) (the camera looks down at atan(70/80)),
+// so the gap between tiers is one tag height divided by that, plus a margin.
+export const TAG_SCREEN_SCALE = Math.cos(Math.atan2(70, 80));
+export const TAG_TIER_GAP = 4.3;
 const TAG_TIERS = 3;
 
 /**

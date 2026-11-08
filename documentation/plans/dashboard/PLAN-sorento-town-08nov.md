@@ -182,7 +182,8 @@ order: `[{"at": "HH:MM" (MYT, from `billing_documents.created_at`), "shop_key": 
 (`documentation/plans/dashboard/mock/sorento-town-mock.html`), nothing more. Gamification is a later phase.
 
 1. How much did we sell today? Scoreboard: RM (full variant only), invoices, change vs same weekday last week.
-2. Who bought today? Only shops with `today_docs` lit, with a tag; the rest grey; "+N more dealers bought today".
+2. Who bought today? Only shops with `today_docs` lit; name tags on the 3 busiest (one height tier each,
+   so tags never cover each other; browser pass 8 Nov); the rest grey; "+N more dealers bought today".
 3. What stock is low? One red "! N low" bubble on the warehouse district.
 4. What must go out? Lorries at the depot, "To deliver: N" (lorries drawn capped at 10).
 5. What needs a decision? Approvals office with a badge.

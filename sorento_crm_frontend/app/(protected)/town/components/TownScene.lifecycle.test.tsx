@@ -40,6 +40,7 @@ vi.mock('three', async (importOriginal) => {
 });
 
 import { TownScene } from './TownScene';
+import { SCENE_TAG_CAP } from '../lib/townFormat';
 
 const SNAPSHOT = {
   schema: 1, company_id: 'c', day: '2026-01-05', as_of: '2026-01-05T10:00:00+08:00', data_as_of: null, phase: 'day',
@@ -101,7 +102,7 @@ describe('TownScene lifecycle', () => {
 });
 
 describe('TownScene applies the crowding caps', () => {
-  it('draws the 30 shops and 5 stalls at most, with at most 5 shop tags, on a day of 60 lit stalls', () => {
+  it('draws the 30 shops and 5 stalls at most, with at most SCENE_TAG_CAP shop tags, on a day of 60 lit stalls', () => {
     const shops = Array.from({ length: 30 }, (_, i) => ({
       key: `shop${i}`, kind: 'shop', account_label: null, today_docs: 1 + (i % 3), rank: i + 1, name: `Shop ${i}`,
     }));
@@ -117,7 +118,7 @@ describe('TownScene applies the crowding caps', () => {
     const shopMesh = made.instanced[0]; // the shops are the first instanced mesh the scene builds
     expect(shopMesh.count).toBeLessThanOrEqual(35);
     // fixed labels: low stock, to deliver, approvals, and "+N more dealers"
-    expect(made.sprites - 4).toBeLessThanOrEqual(5);
+    expect(made.sprites - 4).toBeLessThanOrEqual(SCENE_TAG_CAP);
     expect(made.sprites - 4).toBeGreaterThan(0);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, TAG_HEIGHT_MAX, TAG_TIER_GAP, boughtToday, sceneSelection, tagTiers, townFrame,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, TAG_HEIGHT_MAX, TAG_SCREEN_SCALE, TAG_TIER_GAP, boughtToday, sceneSelection, tagTiers, townFrame,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -31,7 +31,7 @@ describe('sceneSelection', () => {
     expect(Math.min(...drawnStalls.map((s) => s.today_docs))).toBe(7);
   });
 
-  it('tags at most 5 lit buildings, busiest first, and counts the dealers it does not draw', () => {
+  it('tags at most 3 lit buildings, busiest first, and counts the dealers it does not draw', () => {
     const { drawn, tagged, others } = sceneSelection(snap);
     expect(tagged).toHaveLength(SCENE_TAG_CAP);
     expect(tagged.every((s) => s.today_docs === 7)).toBe(true);
@@ -94,7 +94,12 @@ describe('tagTiers', () => {
     expect(a).toEqual(b);
   });
 
-  it('keeps tiers at least one tag height apart', () => {
-    expect(TAG_TIER_GAP).toBeGreaterThanOrEqual(TAG_HEIGHT_MAX);
+  it('keeps tiers at least one tag height apart ON SCREEN (the camera foreshortens height)', () => {
+    expect(TAG_TIER_GAP * TAG_SCREEN_SCALE).toBeGreaterThanOrEqual(TAG_HEIGHT_MAX);
+  });
+
+  it('gives every tag its own tier, so no two tags share a height', () => {
+    const at3 = tagTiers([at(-40), at(0), at(40)].slice(0, SCENE_TAG_CAP)).map((p) => p.tier);
+    expect(new Set(at3).size).toBe(at3.length);
   });
 });
