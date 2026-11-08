@@ -803,6 +803,32 @@ def test_reply_is_purchasing_only(world, reply_spy):
     assert reply_spy == []
 
 
+def test_the_sis_own_update_and_reply_goes_through_the_shared_composer(world, reply_spy, monkeypatch):
+    """The other half of "cannot drift" (review nit): the SI's Update & Reply uses the same method."""
+    from app.schemas.procurement import StockInquiryUpdate
+    from app.services.procurement_service import StockInquiryService
+
+    calls = []
+    real = StockInquiryService.enqueue_update_reply
+
+    def spy(self, inquiry, **kw):
+        calls.append(kw["update_text"])
+        return real(self, inquiry, **kw)
+
+    monkeypatch.setattr(StockInquiryService, "enqueue_update_reply", spy)
+    inbox = "https://app.respond.io/space/1/inbox/901234"
+    # The SI rebuilds its inbox URL from contact + space; the fixture inquiry has neither.
+    monkeypatch.setattr(StockInquiryService, "_build_respond_inbox_url", lambda self, c, s: inbox)
+    world.inquiry.respond_inbox_url = inbox
+    world.inquiry.status = "pending_purchasing"
+    world.db.flush()
+    StockInquiryService(world.db).update_inquiry_and_reply(
+        str(world.inquiry.id), StockInquiryUpdate(purchasing_response="Supplier can do it."), respond_user_id="u-1"
+    )
+    assert calls == ["Supplier can do it."]
+    assert len(reply_spy) == 1
+
+
 def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy):
     world.inquiry.respond_inbox_url = None  # the SI's own refusal: no conversation to reply into
     world.db.flush()
