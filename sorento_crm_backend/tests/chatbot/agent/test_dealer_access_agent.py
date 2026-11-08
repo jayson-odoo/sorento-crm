@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import delete, func, insert, select
 
 import app.main  # noqa: F401  register every model and the app's listeners
 from app.audit_context import clear_actor
@@ -142,13 +142,23 @@ def add_customer(db, w: W, name: str, agent=None, *, company: str | None = None)
 
 
 def owner_tag(db, name: str = SRT_TAG, *, active: bool = True, types=None) -> ContactTag:
-    tag = ContactTag(
-        id=str(uuid.uuid4()), name=name, is_active=active,
-        settings={"access_types": list(types if types is not None else TAG_TYPES[name])},
-    )
-    db.add(tag)
+    """The tag of that name (any case), set to exactly this name, state and settings; created when missing. The
+    template world (`ensure_template_world`) seeds both owner tags already and names are unique case-insensitively."""
+    settings = {"access_types": list(types if types is not None else TAG_TYPES.get(name) or TAG_TYPES[SRT_TAG])}
+    tag = db.query(ContactTag).filter(func.lower(ContactTag.name) == name.lower()).first()
+    if tag is None:
+        tag = ContactTag(id=str(uuid.uuid4()), name=name, is_active=active, settings=settings)
+        db.add(tag)
+    else:
+        tag.name, tag.is_active, tag.settings = name, active, settings
     db.commit()
     return tag
+
+
+def drop_tag(db, name: str) -> None:
+    """UAC A7: the owner tag deleted (the template world seeds it)."""
+    db.execute(delete(ContactTag).where(func.lower(ContactTag.name) == name.lower()))
+    db.commit()
 
 
 def owner_tags(db) -> None:
@@ -502,6 +512,8 @@ def test_A7_a_missing_or_inactive_owner_tag_refuses_the_owner_row_and_the_employ
     owner_tag(db, MCH_TAG)
     if which == "inactive":
         owner_tag(db, SRT_TAG, active=False)
+    else:
+        drop_tag(db, SRT_TAG)
     owner_phone, employee_phone = fake_phone(), fake_phone()
 
     steps, skipped, _ = propose(db, w, [
@@ -836,6 +848,7 @@ def test_C1_role_owner_on_an_own_accounts_contact_adds_the_sorento_owner_tag_and
 def test_C1_role_owner_with_the_owner_tag_missing_is_refused_with_the_a7_text(db):
     w = own_world(db).w
     owner_tag(db, MCH_TAG)
+    drop_tag(db, SRT_TAG)
     person = dealer(db, w, customers=(w.cust_a,))
 
     res, step = update_step(db, w, {"contact_id": person.id, "role": "owner"}, seen={person.id})

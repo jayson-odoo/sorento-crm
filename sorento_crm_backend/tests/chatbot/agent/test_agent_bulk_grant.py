@@ -21,13 +21,14 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 import app.main  # noqa: F401  register every model and the app's listeners
 from app.audit_context import clear_actor
 from app.models.access import (
     AccessAgent,
     ContactAccessType,
+    ContactTag,
     MarketSegment,
     RespondContact,
     RespondContactCustomer,
@@ -101,9 +102,20 @@ def _company(db, code: str, name: str) -> str:
         return str(row.id)
 
 
+OWNER_TAGS = {"Sorento Business Owner": ["dealer", "cabana_dealer"], "Mocha Business Owner": ["mocha_dealer"]}
+
+
+def ensure_owner_tags(db) -> None:
+    """The two Business owner tags `dap_0001_dealer_access` seeds (UAC A6), when no tag of that name exists."""
+    for name, types in OWNER_TAGS.items():
+        if db.query(ContactTag).filter(func.lower(ContactTag.name) == name.lower()).first() is None:
+            db.add(ContactTag(id=str(uuid.uuid4()), name=name, is_active=True, settings={"access_types": list(types)}))
+    db.flush()
+
+
 def ensure_template_world(db) -> tuple[str, str]:
     """What the 26 Oct template needs: SRT, MCH, their stock locations, the three enquiry agents, the retail
-    segment and the access types. Returns (srt id, mch id)."""
+    segment, the access types and the owner tags. Returns (srt id, mch id)."""
     srt = _company(db, "SRT", "ZZT Sorento Co")
     mch = _company(db, "MCH", "ZZT Mocha Co")
     with company_scope(db, None):
@@ -122,6 +134,7 @@ def ensure_template_world(db) -> tuple[str, str]:
             if db.get(ContactAccessType, code) is None:
                 db.add(ContactAccessType(code=code, name=f"ZZT {code}", is_active=True, sort_order=1))
         db.flush()
+    ensure_owner_tags(db)
     return srt, mch
 
 
@@ -657,7 +670,7 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
 # ------------------------------------------------------------------ 7. security review round 1
 
 
-def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
+def test_07_a_console_operator_with_only_the_contacts_slug_still_grants_the_whole_template(db):
     """B1: a superadmin linked user, an operator holding only the contacts slug. UAC A5 / Q2 a (DEALER-ACCESS-PORTAL):
     the whole template is written now, company, stock and enquiry agents included."""
     import dataclasses
