@@ -3006,13 +3006,12 @@ def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> d
     groups = {(str(g), str(c)) for _i, _n, g, c in given if g}
     found: set[str] = set()
     if groups:
-        found |= {
-            str(r[0])
-            for r in db.query(Customer.id).filter(
-                or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
-            ).all()
-        }
-    found |= _same_entry_ids(db, [row for row in given if row[2]])
+        members = db.query(Customer.id, Customer.customer_name, Customer.customer_group_id, Customer.company_id).filter(
+            or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
+        ).all()
+        found |= {str(r[0]) for r in members}
+        # Every member's name, not only the given rows': a stray joins through any member's trading name.
+        found |= _same_entry_ids(db, list(members))
     own = None if linked is None else {str(i) for i in jsc.array(linked)}
     added = [i for i in found if i not in ids and (own is None or i in own)]
     return {**args, "customer_ids": [*ids, *sorted(added)]} if added else args

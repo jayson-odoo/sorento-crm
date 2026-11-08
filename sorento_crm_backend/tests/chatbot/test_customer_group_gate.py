@@ -370,3 +370,29 @@ def test_the_picker_line_of_an_ungrouped_family_keeps_an_inner_parenthesis():
     out = _order_gate(rows)
     titles = [c.get("title") for c in out["compatible_entities"] if c["entity_type"] == "customer"]
     assert "ZZT HANLIM TRADING (JB) SDN BHD (SRT)" in titles, titles
+
+
+def test_the_report_widens_a_held_group_member_to_a_stray_of_another_members_name():
+    """Re-land review round 3: the report path (`report_ask.with_customer_groups`) holds ONE ledger of a group; the
+    group's other member has another trading name, and an ungrouped ledger of THAT name joins the group's answer (Q1).
+    The report covers the whole group and the stray, as the typed path does; another shop is never added."""
+    from app.services.chatbot.lanes.business import report_ask
+    from app.services.customer_group_service import family_maps
+
+    hardware, homemart = "ZZTRW CHIN HARDWARE SDN BHD", "ZZTRW CHIN HOMEMART SDN BHD"
+    with blank_session() as db:
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        held, member, stray, other = seed_ledgers(
+            db,
+            [
+                (f"{hardware} [A/C I]", hardware),
+                (f"{homemart} [A/C I]", hardware),
+                (f"{homemart} [A/C II]", None),
+                ("ZZTRW CHIN TILES SDN BHD", None),
+            ],
+        )
+        names, ids = family_maps(db)
+        with lf.customer_groups(names, ids=ids):
+            out = report_ask.with_customer_groups(db, {"customer_ids": [str(held)]})
+    assert set(out["customer_ids"]) == {str(held), str(member), str(stray)}, out
+    assert str(other) not in out["customer_ids"]

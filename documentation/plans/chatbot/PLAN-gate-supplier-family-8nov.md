@@ -1,6 +1,6 @@
 # PLAN: Re-land #2144 + same-name supplier fix (GATE-SUPPLIER-FAMILY)
 
-Status: built, in review (standard track: re-land of a ~900-line change; no migration, no
+Status: built, review READY (standard track: re-land of a ~900-line change; no migration, no
 auth/RBAC change, no new ingest surface). Ships in the release after 9 Nov, once crew has run the
 replay corpus and supplier_ask on the head.
 
