@@ -1,6 +1,6 @@
 # PLAN: GATE-SUPPLIER-FAMILY (same-name supplier family counts as one)
 
-Status: in progress (small fix track: no migration, no auth/RBAC, no new ingest surface).
+Status: built, in review (small fix track: no migration, no auth/RBAC, no new ingest surface).
 
 ## Problem
 
