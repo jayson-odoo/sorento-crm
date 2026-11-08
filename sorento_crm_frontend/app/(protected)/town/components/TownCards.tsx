@@ -151,7 +151,7 @@ export function TownCards({
         </span>
         <span className="text-sm text-muted-foreground">
           {approvals.purchase_requests} purchase request{approvals.purchase_requests === 1 ? '' : 's'} ·{' '}
-          {approvals.quotation_documents} quotations
+          {approvals.quotation_documents} quotation{approvals.quotation_documents === 1 ? '' : 's'}
         </span>
       </Card>
     </div>

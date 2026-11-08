@@ -7,6 +7,10 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTit
 import { isPending, type TownPayload, type TownSnapshot } from '@/types/town.types';
 import { boughtToday, count, rm, shopLabel, shopToday } from '../lib/townFormat';
 
+/** The sheet's close button is 16px; on a touch screen its hit area grows to 44px (as COARSE_HIT_TARGET_CLASS does). */
+const CLOSE_HIT_AREA =
+  "[&_[data-slot=sheet-close]]:pointer-coarse:after:absolute [&_[data-slot=sheet-close]]:pointer-coarse:after:left-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:top-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:min-h-11 [&_[data-slot=sheet-close]]:pointer-coarse:after:min-w-11 [&_[data-slot=sheet-close]]:pointer-coarse:after:-translate-x-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:-translate-y-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:content-['']";
+
 export type TownTarget =
   | { kind: 'sales' }
   | { kind: 'bought' }
@@ -158,11 +162,13 @@ export function TownPanel({
       <SheetContent
         side="right"
         overlay={false}
-        className="inset-3 start-auto h-auto max-h-[85dvh] gap-0 rounded-lg p-4 sm:inset-y-24 sm:w-80 sm:max-w-none"
+        className={`inset-3 start-auto h-auto max-h-[85dvh] gap-0 rounded-lg p-4 sm:inset-y-24 sm:w-80 sm:max-w-none ${CLOSE_HIT_AREA}`}
       >
         <SheetHeader className="space-y-0 pe-8 text-start">
           <SheetTitle>{shown?.title}</SheetTitle>
-          {shown?.meta ? <SheetDescription className="text-xs">{shown.meta}</SheetDescription> : null}
+          <SheetDescription className={shown?.meta ? 'text-xs' : 'sr-only'}>
+            {shown?.meta || shown?.title}
+          </SheetDescription>
         </SheetHeader>
         <SheetBody className="p-0">{shown?.content}</SheetBody>
       </SheetContent>

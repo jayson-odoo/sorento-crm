@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { changePercent, count, rm0, sceneSelection, shopLabel, townFrame } from '../lib/townFormat';
+import { changePercent, count, rm0, sceneSelection, shopLabel, TAG_TIER_GAP, tagTiers, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -109,7 +109,7 @@ function mountScene(
 
   const placeCam = () => {
     cam.position.set(Math.cos(yawRef.current) * 80, 70, Math.sin(yawRef.current) * 80);
-    cam.lookAt(0, 3, 0);
+    cam.lookAt(0, 3, 0); // the island's centre on screen: its ellipse and the scoreboard above it
     invalidate();
   };
   const resize = () => {
@@ -264,15 +264,13 @@ function mountScene(
   shopMesh.count = slot.length;
   scene.add(shopMesh);
   pickables.push([shopMesh, (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key })]);
-  slot
-    .filter((o) => tagged.includes(o.s))
-    .forEach((o, k) => {
-      const amount = o.s.today_amount ? `  ${rm0(o.s.today_amount)}` : '';
-      label(`${shopLabel(o.s)}${amount}`, o.x, o.h + 2.6 + (k % 3) * 1.9, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
-    });
+  tagTiers(slot.filter((o) => tagged.includes(o.s))).forEach(({ item: o, tier }) => {
+    const amount = o.s.today_amount ? `  ${rm0(o.s.today_amount)}` : '';
+    label(`${shopLabel(o.s)}${amount}`, o.x, 5.8 + tier * TAG_TIER_GAP, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
+  });
   if (others) {
     const [x, z] = polar(24, 30);
-    label(`+${others} more dealers bought today`, x, 2.5, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
+    label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
   }
 
   // (3) warehouse district: a few calm buildings, one red "!" bubble
@@ -501,28 +499,31 @@ export function TownScene({
 
   return (
     <div
-      className={`relative aspect-square min-h-[20rem] overflow-hidden sm:aspect-auto sm:h-[70dvh] sm:max-h-[41rem] rounded-xl border border-border ${
+      className={`flex flex-col overflow-hidden rounded-xl border border-border sm:h-[70dvh] sm:max-h-[41rem] ${
         snapshot.phase === 'night' ? 'bg-slate-800' : 'bg-sky-50 dark:bg-slate-800'
       }`}
     >
-      <canvas ref={canvasRef} aria-label="Town" className="absolute inset-0 block size-full touch-none" />
-      {snapshot.phase === 'night' ? (
-        <Badge variant="secondary" size="lg" className="absolute start-1/2 top-2.5 -translate-x-1/2">
-          Closed for the day
-        </Badge>
-      ) : null}
-      {hint ? (
-        <div className="pointer-events-none absolute start-1/2 top-3 -translate-x-1/2 rounded-lg border border-border bg-background/80 px-3.5 py-2 text-sm font-semibold backdrop-blur">
-          Tap any building
-        </div>
-      ) : null}
+      <div className="relative aspect-[3/2] sm:aspect-auto sm:min-h-0 sm:flex-1">
+        <canvas ref={canvasRef} aria-label="Town" className="absolute inset-0 block size-full touch-none" />
+        {snapshot.phase === 'night' ? (
+          <Badge variant="secondary" size="lg" className="absolute start-1/2 top-2.5 -translate-x-1/2">
+            Closed for the day
+          </Badge>
+        ) : null}
+        {hint ? (
+          <div className="pointer-events-none absolute start-1/2 top-3 -translate-x-1/2 rounded-lg border border-border bg-background/80 px-3.5 py-2 text-sm font-semibold backdrop-blur">
+            Tap any building
+          </div>
+        ) : null}
+      </div>
       <div
-        className="absolute bottom-2.5 start-2.5 grid gap-1 rounded-lg border border-border bg-background/80 px-2.5 py-2 text-xs backdrop-blur"
+        role="group"
+        className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border bg-background/80 px-3 py-2 text-xs sm:flex sm:flex-wrap"
         aria-label="Legend"
       >
         {LEGEND.map(([tone, text]) => (
           <div key={text} className="flex items-center gap-2">
-            <span aria-hidden="true" className={`inline-block size-3 rounded-sm ${tone}`} />
+            <span aria-hidden="true" className={`inline-block size-3 shrink-0 rounded-sm ${tone}`} />
             {text}
           </div>
         ))}

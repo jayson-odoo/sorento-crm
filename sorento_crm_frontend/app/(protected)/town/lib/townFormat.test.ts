@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
-import { SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, sceneSelection, townFrame } from './townFormat';
+import {
+  SCENE_STALL_CAP, SCENE_TAG_CAP, TAG_HEIGHT_MAX, TAG_TIER_GAP, boughtToday, sceneSelection, tagTiers, townFrame,
+} from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
   return { key: `k${kind}${i}`, kind, account_label: null, today_docs: docs, rank: kind === 'shop' ? i : null, today_amount: amount };
@@ -56,17 +58,43 @@ describe('boughtToday', () => {
 });
 
 describe('townFrame', () => {
-  it('fits the island width at every canvas shape, wide or narrow', () => {
-    for (const aspect of [0.5, 0.67, 1, 1.5, 2, 2.5]) {
+  it('fits the island and its labels at 90% of the limiting dimension at every canvas shape', () => {
+    for (const aspect of [0.67, 1, 1.16, 1.5, 2, 2.5]) {
       for (const small of [false, true]) {
         const half = townFrame(aspect, small);
-        expect(half * aspect).toBeGreaterThanOrEqual(small ? 42 : 36);
-        expect(half).toBeGreaterThanOrEqual(30);
+        // the content (half height 21, half width 31 or 35) is inside the view, and fills 90% of the tighter side
+        expect(half).toBeGreaterThanOrEqual(21 / 0.9 - 1e-9);
+        expect(half * aspect).toBeGreaterThanOrEqual((small ? 35 : 31) / 0.9 - 1e-9);
+        const fillH = 21 / half;
+        const fillW = (small ? 35 : 31) / (half * aspect);
+        expect(Math.max(fillH, fillW)).toBeCloseTo(0.9, 5);
       }
     }
   });
 
-  it('is not zoomed out further than the island needs on a wide canvas', () => {
-    expect(townFrame(2.5, false)).toBe(30);
+  it('is height limited on a wide canvas and width limited on a narrow one', () => {
+    expect(townFrame(3, false)).toBeCloseTo(21 / 0.9, 5);
+    expect(townFrame(1, true)).toBeCloseTo(35 / 0.9, 5);
+  });
+});
+
+describe('tagTiers', () => {
+  const at = (deg: number) => ({ x: Math.cos((deg * Math.PI) / 180) * 20, z: Math.sin((deg * Math.PI) / 180) * 20, deg });
+
+  it('deals tiers 0, 1, 2 in angle order so neighbours never share a height', () => {
+    const placed = tagTiers([at(40), at(-70), at(10), at(70), at(-20)]);
+    expect(placed.map((p) => p.item.deg)).toEqual([-70, -20, 10, 40, 70]);
+    expect(placed.map((p) => p.tier)).toEqual([0, 1, 2, 0, 1]);
+    for (let i = 1; i < placed.length; i++) expect(placed[i].tier).not.toBe(placed[i - 1].tier);
+  });
+
+  it('is stable for the same buildings in any input order', () => {
+    const a = tagTiers([at(40), at(-70), at(10)]).map((p) => [p.item.deg, p.tier]);
+    const b = tagTiers([at(10), at(40), at(-70)]).map((p) => [p.item.deg, p.tier]);
+    expect(a).toEqual(b);
+  });
+
+  it('keeps tiers at least one tag height apart', () => {
+    expect(TAG_TIER_GAP).toBeGreaterThanOrEqual(TAG_HEIGHT_MAX);
   });
 });

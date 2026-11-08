@@ -63,11 +63,30 @@ export function sceneSelection(snapshot: TownSnapshot) {
   return { drawn, tagged, others: Math.max(0, snapshot.today.dealer_customer_count - lit.length) };
 }
 
-const HALF_HEIGHT = 30; // the island's ellipse plus the scoreboard above it, in world units
-const HALF_WIDTH = 36; // the island's radius plus the half width of an outer tag
-const HALF_WIDTH_SMALL = 42; // tags are drawn larger on a phone
+// The camera is orthographic at a fixed elevation (atan(70/80), 41 degrees), so the island's
+// projected size is known: its width is 2R (R = 28), its height 2R * sin(elevation) = 37 plus the
+// scoreboard and the label tiers above it. Half of that, with the outer labels, and 90% fill.
+const HALF_HEIGHT = 21;
+const HALF_WIDTH = 31; // the island's radius plus the half width of an outer tag
+const HALF_WIDTH_SMALL = 35; // tags are drawn larger on a phone
+const FILL = 0.9;
 
-/** Half the visible height, in world units, that fits the whole island in a canvas of this shape. */
+/** Half the visible height, in world units, that fits the island and its labels in a canvas of this shape. */
 export function townFrame(aspect: number, small: boolean): number {
-  return Math.max(HALF_HEIGHT, (small ? HALF_WIDTH_SMALL : HALF_WIDTH) / aspect);
+  return Math.max(HALF_HEIGHT, (small ? HALF_WIDTH_SMALL : HALF_WIDTH) / aspect) / FILL;
+}
+
+/** The tallest a name tag is drawn (a phone draws them larger), in world units. */
+export const TAG_HEIGHT_MAX = 3.1;
+export const TAG_TIER_GAP = 3.2; // at least one tag height, so two tiers never overlap
+const TAG_TIERS = 3;
+
+/**
+ * A tier (0, 1, 2) for each tagged building: sorted by angle round the island and dealt out in turn,
+ * so two neighbours never share a height. Stable for the same buildings.
+ */
+export function tagTiers<T extends { x: number; z: number }>(items: T[]): { item: T; tier: number }[] {
+  return [...items]
+    .sort((a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x))
+    .map((item, index) => ({ item, tier: index % TAG_TIERS }));
 }

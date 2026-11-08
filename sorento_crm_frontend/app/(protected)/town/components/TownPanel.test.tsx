@@ -28,4 +28,21 @@ describe('TownPanel', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('gives the dialog a description, so Radix has nothing to warn about', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<TownPanel snapshot={SNAPSHOT as never} target={{ kind: 'sales' }} onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.getAttribute('aria-describedby')).toBeTruthy();
+    const logged = [...warn.mock.calls, ...error.mock.calls].flat().join(' ');
+    expect(logged).not.toMatch(/Missing `Description`/);
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  it('grows the close button hit area to 44px on a touch screen', () => {
+    render(<TownPanel snapshot={SNAPSHOT as never} target={{ kind: 'low' }} onClose={() => undefined} />);
+    expect(screen.getByRole('dialog').className).toContain('sheet-close]]:pointer-coarse:after:min-h-11');
+  });
 });
