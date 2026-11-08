@@ -807,4 +807,4 @@ def test_09_row_numbers_and_counts_the_batch_produced_are_not_flagged_as_unverif
     result, _ = run_turn(db, w, script, text_="grant access to these people")
 
     assert "not verified" not in result.reply_text
-    assert "rows 1 and 2" in result.reply_text
+    assert result.reply_text.startswith("Rows from your table: 2 ready to confirm, 1 not changed.")
