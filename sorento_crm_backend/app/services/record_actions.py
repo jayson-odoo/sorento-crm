@@ -284,6 +284,24 @@ register(
     )
 )
 
+def _delete_point_ratio(db: Session, payload: dict):
+    from app.services.sales import target_service
+
+    return target_service.delete_point_ratio(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="point_ratio.delete",
+        entity_types=("point_ratio",),
+        execute=_delete_point_ratio,
+        window=WINDOW_DESTRUCTIVE,
+        # Ratio writes are `.edit` (add and edit too): who can set a ratio can remove one.
+        permission="sales.targets.edit",
+        label="Delete point ratio",
+    )
+)
+
 register(
     FormAction(
         key="sales_target.delete",

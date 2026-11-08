@@ -1,4 +1,5 @@
-/** Point ratio (lane SALES-TARGET-DEALER, UAC D4-4): the dated history and adding a ratio. */
+/** Point ratio (lane SALES-TARGET-DEALER, UAC D4-4; lane POINT-RATIO-EDIT): the dated history,
+ * adding a ratio, and each row's Edit (in place) and Delete (deferred, D7). */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -18,9 +19,27 @@ const ratios = vi.hoisted(() => ({
     { id: 'r1', effective_from: '2026-01-01', rm_per_point: 1.2 },
   ],
 }));
+const update = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
+const deletion = vi.hoisted(() => ({
+  run: vi.fn(),
+  targetId: null as string | null,
+  isPending: false,
+  countdown: null as React.ReactNode,
+}));
+const deferredInput = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: (input: Record<string, unknown>) => {
+    deferredInput.current = input;
+    return deletion;
+  },
+}));
 vi.mock('../hooks/useSalesTargets', () => ({
+  POINT_RATIOS_KEY: ['sales-target-point-ratios'],
+  SALES_TARGETS_KEY: ['sales-targets'],
+  SALES_TARGET_KEY: ['sales-target'],
   usePointRatios: () => ({ data: ratios, isLoading: false }),
   useSavePointRatio: () => save,
+  useUpdatePointRatio: () => update,
 }));
 
 import PointRatioDialog from './PointRatioDialog';
@@ -28,6 +47,11 @@ import PointRatioDialog from './PointRatioDialog';
 beforeEach(() => {
   save.mutateAsync.mockReset();
   save.mutateAsync.mockResolvedValue({ id: 'r3' });
+  update.mutateAsync.mockReset();
+  update.mutateAsync.mockResolvedValue({ id: 'r1' });
+  deletion.run.mockReset();
+  deletion.targetId = null;
+  deletion.countdown = null;
 });
 
 describe('PointRatioDialog', () => {
@@ -47,5 +71,54 @@ describe('PointRatioDialog', () => {
     await waitFor(() =>
       expect(save.mutateAsync).toHaveBeenCalledWith({ effective_from: '2026-10-01', rm_per_point: 1.35 }),
     );
+  });
+
+  it('edits a row in place and saves the new value with its date', async () => {
+    render(<PointRatioDialog open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit ratio from 01/01/2026' }));
+    const input = screen.getByLabelText('Edit RM per point') as HTMLInputElement;
+    expect(input.value).toBe('1.2');
+    const saveRow = screen.getByRole('button', { name: 'Save ratio' }) as HTMLButtonElement;
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(saveRow.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: '1.25' } });
+    fireEvent.click(saveRow);
+    await waitFor(() =>
+      expect(update.mutateAsync).toHaveBeenCalledWith({ id: 'r1', effective_from: '2026-01-01', rm_per_point: 1.25 }),
+    );
+    await waitFor(() => expect(screen.queryByLabelText('Edit RM per point')).toBeNull());
+  });
+
+  it('cancelling an edit leaves the row as it was', () => {
+    render(<PointRatioDialog open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit ratio from 01/10/2026' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
+    expect(screen.queryByLabelText('Edit RM per point')).toBeNull();
+    expect(update.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('deletes a row through the deferred point_ratio.delete action, no confirm dialog', () => {
+    render(<PointRatioDialog open onOpenChange={() => {}} />);
+    expect(deferredInput.current).toMatchObject({
+      actionKey: 'point_ratio.delete',
+      entityType: 'point_ratio',
+      surface: 'inline',
+    });
+    // Deleting refreshes the ratio list and the targets that read it, as Add does.
+    expect(deferredInput.current?.invalidateKeys).toEqual(
+      expect.arrayContaining([['sales-target-point-ratios'], ['sales-targets'], ['sales-target']]),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Delete ratio from 01/10/2026' }));
+    expect(deletion.run).toHaveBeenCalledWith({ id: 'r2', subject: 'the ratio from 01/10/2026' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('shows the countdown in the row being deleted', () => {
+    deletion.targetId = 'r2';
+    deletion.countdown = <span>Deleting in 10s</span>;
+    render(<PointRatioDialog open onOpenChange={() => {}} />);
+    expect(screen.getByText('Deleting in 10s')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Delete ratio from 01/10/2026' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete ratio from 01/01/2026' })).toBeTruthy();
   });
 });

@@ -633,3 +633,117 @@ def test_the_dealer_list_reads_each_replacing_target_once(api, monkeypatch):
     replaced = [r for r in rows if r["name"] == "ZZT yearly" and r["commission_earned"] == 0]
     assert len(replaced) >= 4
     assert len(calls) <= 2
+
+
+# --------------------------------------------------------------------------------------- #
+# POINT-RATIO-EDIT: a ratio row can be edited and deleted (owner, 8 Nov)
+# --------------------------------------------------------------------------------------- #
+
+
+def _ratio_audits(db, ratio_id):
+    from sqlalchemy import text
+
+    return db.execute(
+        text("SELECT action FROM audit_logs WHERE entity_type = 'sales_point_ratios' AND entity_id = :i "
+             "ORDER BY changed_at"),
+        {"i": str(ratio_id)},
+    ).scalars().all()
+
+
+def test_point_ratio_edit_changes_value_and_date(api):
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    res = client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-02-01", "rm_per_point": 1.25})
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": rid, "effective_from": "2026-02-01", "rm_per_point": 1.25}
+    rows = client.get(RATIOS).json()["rows"]
+    assert [(r["id"], r["effective_from"], r["rm_per_point"]) for r in rows] == [(rid, "2026-02-01", 1.25)]
+    assert _ratio_audits(db, rid) == ["CREATE", "UPDATE"]
+
+
+def test_point_ratio_edit_onto_another_rows_date_is_refused(api):
+    client, db, company_id = api
+    client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2})
+    rid = client.post(RATIOS, json={"effective_from": "2026-10-01", "rm_per_point": 1.3}).json()["id"]
+    res = client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-01-01", "rm_per_point": 1.3})
+    assert res.status_code == 409, res.text
+    assert "01/01/2026" in res.text
+    # Its own date again is fine (only the value changes).
+    assert client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-10-01", "rm_per_point": 1.4}).status_code == 200
+    assert [r["rm_per_point"] for r in client.get(RATIOS).json()["rows"]] == [1.4, 1.2]
+
+
+def test_point_ratio_edit_refusals(api):
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    assert client.patch(f"{RATIOS}/{rid}", json={"effective_from": "2026-01-01", "rm_per_point": 0}).status_code == 422
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert client.patch(f"{RATIOS}/{missing}", json={"effective_from": "2026-01-01", "rm_per_point": 1}).status_code == 404
+
+
+def test_point_ratio_edit_needs_edit_permission(world):
+    db, company_id = world
+    from .test_sales_targets_s1 import _client as make_client
+
+    client, originals = make_client(db, ["sales.targets.view"])
+    try:
+        from app.services.sales import target_service
+
+        row = target_service.save_point_ratio(db, date(2026, 1, 1), 1.2)
+        res = client.patch(f"{RATIOS}/{row.id}", json={"effective_from": "2026-01-01", "rm_per_point": 2})
+        assert res.status_code == 403
+    finally:
+        _restore(originals)
+
+
+def test_point_ratio_delete_is_a_deferred_record_action():
+    import app.services.record_actions  # noqa: F401
+    from app.api.v1.system import pending_actions
+    from app.models.sales import SalesPointRatio
+    from app.services.form_action_grace import WINDOW_DESTRUCTIVE
+    from app.services.form_action_registry import get_action
+
+    action = get_action("point_ratio.delete")
+    assert action is not None
+    assert action.entity_types == ("point_ratio",)
+    assert action.permission == "sales.targets.edit"
+    assert action.window == WINDOW_DESTRUCTIVE
+    # Parked under the caller's company scope, like every company-owned record.
+    assert pending_actions._PARK_SCOPED_MODELS["point_ratio.delete"] is SalesPointRatio
+
+
+def test_point_ratio_delete_then_the_older_ratio_applies(api):
+    import app.services.record_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2})
+    rid = client.post(RATIOS, json={"effective_from": "2026-10-01", "rm_per_point": 1.3}).json()["id"]
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) == Decimal("1.3")
+
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    db.flush()
+    assert [r["effective_from"] for r in client.get(RATIOS).json()["rows"]] == ["2026-01-01"]
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) == Decimal("1.2")
+    assert _ratio_audits(db, rid) == ["CREATE", "DELETE"]
+
+
+def test_point_ratio_delete_last_row_leaves_no_ratio(api):
+    import app.services.record_actions  # noqa: F401
+    from app.services.form_action_registry import get_action
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    rid = client.post(RATIOS, json={"effective_from": "2026-01-01", "rm_per_point": 1.2}).json()["id"]
+    get_action("point_ratio.delete").execute(db, {"entity_id": rid})
+    db.flush()
+    assert client.get(RATIOS).json()["rows"] == []
+    # Points targets then read as "ratio missing", the state before the first ratio was added.
+    assert target_service.ratio_on(target_service.point_ratios(db), date(2026, 10, 31)) is None
+    missing = "00000000-0000-0000-0000-000000000000"
+    import pytest
+    from app.services.error_handler import AppException
+
+    with pytest.raises(AppException):
+        get_action("point_ratio.delete").execute(db, {"entity_id": missing})
