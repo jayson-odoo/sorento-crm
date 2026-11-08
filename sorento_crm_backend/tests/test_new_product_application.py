@@ -419,7 +419,8 @@ def test_ac05_prefill_leaves_a_non_numeric_quantity_and_bad_date_empty(world):
 
 
 def test_ac10_submit_needs_at_least_one_line(world):
-    d = _draft(world, lines=[])
+    # A STANDALONE application (no stock inquiry): one raised from an SI needs no rows (owner, 8 Nov).
+    d = _draft(world, lines=[], stock_inquiry_id=None)
     res = _act(world, d["id"], "submit", world.sales)
     assert res.status_code == 422
     assert _get(world, d["id"])["status"] == "draft"
@@ -673,7 +674,10 @@ def test_ac31_product_search_ignores_dashes_and_case_and_only_lists(world):
     assert res.status_code == 200, res.text
     codes = [p["product_code"] for p in res.json()]
     assert "ZZT-KS2433" in codes
-    assert world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": ""}).json() == []
+    # NPA-FROM-SI owner hand test (8 Nov 20:45): an empty search lists active products to pick from
+    # (the NPA search only; the sample request keeps its empty-search rule).
+    empty = world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": ""}).json()
+    assert 0 < len(empty) <= 20
     inactive = world.api.as_(world.buyer).get(f"{NPA}/products", params={"q": world.inactive.product_code})
     assert world.inactive.product_code not in [p["product_code"] for p in inactive.json()]
 
@@ -1102,7 +1106,8 @@ def test_ac72_a_product_with_only_a_type_submits(world):
 
 
 def test_ac72_submit_needs_at_least_one_product(world):
-    d = _draft(world, lines=[])
+    # A STANDALONE application (no stock inquiry): one raised from an SI needs no rows (owner, 8 Nov).
+    d = _draft(world, lines=[], stock_inquiry_id=None)
     assert _act(world, d["id"], "submit", world.sales).status_code == 422
 
 

@@ -1,4 +1,3 @@
-import { useMemo, useRef } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   useMutation,
@@ -9,11 +8,10 @@ import {
 import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
-import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type { LookupFetcher } from '@/components/common/NewProductApplicationLines';
-import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
+import type { ProductFetcher } from '@/components/common/NewProductApplicationProductCodes';
 import type {
   NewProductApplicationFeedbackWrite,
+  NewProductApplicationPurchasingResponseWrite,
   NewProductApplicationWrite,
 } from '@/types/newProductApplication';
 import {
@@ -23,10 +21,19 @@ import {
   createNewProductApplication,
   getNewProductApplication,
   getNewProductApplicationPrefill,
+  getNewProductApplicationReuseSuggestions,
   getNewProductApplications,
+  getProductLineage,
+  searchNewProductApplicationProducts,
   getStockInquiryApplications,
   linkNewProductApplicationLine,
+  linkNewProductApplicationNewCode,
+  closeNewProductApplicationNewCode,
+  undoNewProductApplicationNewCode,
+  purchasingRejectNewProductApplication,
+  replyNewProductApplicationPurchasingResponse,
   rejectNewProductApplication,
+  saveNewProductApplicationPurchasingResponse,
   reviseNewProductApplication,
   saveNewProductApplicationFeedback,
   submitNewProductApplication,
@@ -149,32 +156,36 @@ export function useStockInquiryApplicationsQuery(
   });
 }
 
-const matches = (label: string, q: string) =>
-  label.toLowerCase().includes(q.trim().toLowerCase());
-
-/**
- * The one select of the paper sheet: brand, from the master-data select hook (read once,
- * filtered here). The portal passes its own lookup to the same sheet.
- */
-export function useNewProductApplicationLookups(): { brands: LookupFetcher } {
-  const brands = useBrandSelectQuery();
-  // The fetcher stays the same function between renders, so an open dropdown is not
-  // refetched each time the query settles; it reads what the hook last returned.
-  const latest = useRef<SearchableSelectOption[]>([]);
-  latest.current = (brands.data ?? []).map((b) => ({
-    value: b.id,
-    label: b.brand_name,
-    code: b.brand_code,
+/** Catalogue codes for the Product code cell: value = product id, label = code. */
+export const staffProductOptions: ProductFetcher = async (q) =>
+  (await searchNewProductApplicationProducts(q)).map((h) => ({
+    value: h.id,
+    label: h.product_code,
+    description: h.product_name,
   }));
-  return useMemo(
-    () => ({
-      brands: async (q: string) =>
-        latest.current.filter(
-          (o) => !q.trim() || matches(`${o.label} ${o.code ?? ''}`, q),
-        ),
-    }),
-    [],
-  );
+
+/** A product's lineage (the product page tab); `enabled` is false outside view mode. */
+export function useProductLineageQuery(
+  productId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['new-product-applications', 'lineage', productId],
+    queryFn: () => getProductLineage(productId as string),
+    enabled: enabled && !!productId,
+    retry: false,
+  });
+}
+
+/** The lookups of the paper sheet: the PRODUCT CODES search and the earlier-codes check. */
+export function useNewProductApplicationLookups(): {
+  products: ProductFetcher;
+  reuse: typeof getNewProductApplicationReuseSuggestions;
+} {
+  return {
+    products: staffProductOptions,
+    reuse: getNewProductApplicationReuseSuggestions,
+  };
 }
 
 export function useNewProductApplicationMutations() {
@@ -264,6 +275,49 @@ export function useNewProductApplicationMutations() {
     }) => closeNewProductApplicationLine(id, lineId, reason),
     ...move('Failed to close the line'),
   });
+  const linkNewCode = useMutation({
+    mutationFn: ({ id, productId }: { id: string; productId: string }) =>
+      linkNewProductApplicationNewCode(id, productId),
+    ...move('Failed to link the product', 'Product linked'),
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to link the product');
+      refresh();
+    },
+  });
+  const closeNewCode = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      closeNewProductApplicationNewCode(id, reason),
+    ...move('Failed to save the reason'),
+  });
+  const undoNewCode = useMutation({
+    mutationFn: (id: string) => undoNewProductApplicationNewCode(id),
+    ...move('Failed to undo the code'),
+  });
+  const purchasingReject = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      purchasingRejectNewProductApplication(id, reason),
+    ...move('Failed to reject the application', 'Application rejected'),
+  });
+  const purchasingReply = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: NewProductApplicationPurchasingResponseWrite;
+    }) => replyNewProductApplicationPurchasingResponse(id, data),
+    ...move('Failed to send the reply', 'Reply sent'),
+  });
+  const purchasingResponse = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: NewProductApplicationPurchasingResponseWrite;
+    }) => saveNewProductApplicationPurchasingResponse(id, data),
+    ...move('Failed to save the response', 'Purchasing response saved'),
+  });
   const feedback = useMutation({
     mutationFn: ({
       id,
@@ -292,5 +346,11 @@ export function useNewProductApplicationMutations() {
     close,
     undo,
     feedback,
+    linkNewCode,
+    closeNewCode,
+    undoNewCode,
+    purchasingResponse,
+    purchasingReject,
+    purchasingReply,
   };
 }

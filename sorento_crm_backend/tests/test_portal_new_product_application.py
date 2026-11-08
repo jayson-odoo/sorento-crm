@@ -369,7 +369,9 @@ def test_lookups_list_the_brands_and_nothing_the_paper_form_dropped(portal):
 def test_someone_elses_application_is_404(portal):
     d = _create(portal)
     c = _as(portal, portal.granted_b)
-    assert c.get(f"{BASE}/{d['id']}").status_code == 404
+    # NPA-FROM-SI crew call (owner "just like the SI"): opening another contact's application is
+    # the SI's 403 OWNER_MISMATCH, so a View link offers the owner's sign-in; writes stay 404.
+    assert c.get(f"{BASE}/{d['id']}").status_code == 403
     assert c.put(f"{BASE}/{d['id']}", json={"remark": "x"}).status_code == 404
     assert c.post(f"{BASE}/{d['id']}/submit").status_code == 404
     listed = c.get(BASE).json()

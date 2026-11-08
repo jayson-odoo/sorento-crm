@@ -10,7 +10,7 @@
  * path goes through the injected client (`lib/submission-client`), the portal's own without one.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Loader2, XCircle } from 'lucide-react';
@@ -34,10 +34,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import {
-  NewProductApplicationLines,
-  type LookupFetcher,
-} from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
+import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import {
   EMPTY_FORM,
   blankLine,
@@ -48,6 +50,7 @@ import {
   stockInquiryLabel,
   type FormState,
 } from '@/lib/new-product-application-form';
+import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
@@ -55,10 +58,7 @@ import { isAwaitingReview } from '@/lib/submission-status';
 import { submitVerb, type PortalAttachment } from '../lib/portal-client';
 import * as portalNewProductApplication from '../lib/new-product-application-service';
 import type {
-  NewProductApplicationService,
-  PortalCustomerHit,
   PortalInquiryHit,
-  PortalLookupKind,
 } from '../lib/new-product-application-service';
 import {
   clientEmbedded,
@@ -66,25 +66,10 @@ import {
   clientService,
   useSubmissionClient,
 } from '../lib/submission-client';
+import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
+import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { AttachmentDropzone } from './AttachmentDropzone';
-
-const LOCK_SENTENCE =
-  'Locked: Revise to change it; it goes back to Draft and needs approval again.';
-
-/** The select fetcher for one portal lookup list (the server filters by `q`). */
-const portalLookup =
-  (
-    service: () => NewProductApplicationService,
-    kind: PortalLookupKind,
-    label: (hit: { code: string; name: string }) => string,
-  ): LookupFetcher =>
-  async (q) =>
-    (await service().lookupNewProductApplication(kind, q)).map((hit) => ({
-      value: hit.id,
-      label: label(hit),
-      code: hit.code,
-    }));
 
 function ReasonDialog({
   title,
@@ -161,13 +146,19 @@ export default function NewProductApplicationForm({
   const paths = clientPaths(client);
   // Inside a CRM page its header carries the title and Back.
   const embedded = clientEmbedded(client);
-  const brands = useMemo<LookupFetcher>(
-    () =>
-      portalLookup(
-        () => clientService(client, 'newProductApplication', portalNewProductApplication),
-        'brands',
-        (h) => h.name,
-      ),
+  const products = useCallback(
+    async (q: string): Promise<SearchableMultiSelectOption[]> =>
+      (await service().searchNewProductApplicationProducts(q)).map((h) => ({
+        value: h.id,
+        label: h.product_code,
+        description: h.product_name,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client],
+  );
+  const reuse = useCallback(
+    (ids: string[]) => service().getNewProductApplicationReuseSuggestions(ids),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [client],
   );
   const [application, setApplication] =
@@ -185,6 +176,7 @@ export default function NewProductApplicationForm({
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState<'revise' | 'cancel' | null>(null);
+  const [tab, setTab] = useState('details');
 
   const backPath = paths
     ? paths.home('new_product_application')
@@ -201,7 +193,9 @@ export default function NewProductApplicationForm({
     setAttachments((d.attachments ?? []) as PortalAttachment[]);
     const loaded = stateFromDetail(d);
     setState(
-      loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
+      loaded.lines.length || loaded.stock_inquiry_id
+        ? loaded
+        : { ...loaded, lines: [blankLine()] },
     );
   }, []);
 
@@ -213,7 +207,18 @@ export default function NewProductApplicationForm({
       .then((d) => {
         if (!cancelled) load(d);
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        // No / expired session (a View link opened cold) or another contact's session: the OTP
+        // verify page for this application, exactly as the stock inquiry form (shared rule).
+        const verify = portalSessionRedirectPath(e, {
+          slug,
+          type: 'new_product_application',
+          id: applicationId,
+        });
+        if (verify) {
+          router.replace(verify);
+          return;
+        }
         // Someone else's application and a removed one both answer 404: one state for both.
         if (!cancelled) setNotFound(true);
       })
@@ -223,14 +228,16 @@ export default function NewProductApplicationForm({
     return () => {
       cancelled = true;
     };
-  }, [applicationId, load, client]);
+  }, [applicationId, load, client, router, slug]);
 
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
   const readOnly = !editable;
   const locked = isAwaitingReview(status) || status === 'approved';
   const anyResolved = Boolean(
-    application?.lines.some((l) => l.opened_product_id || l.closed_reason),
+    application?.new_product_id ||
+      application?.new_code_closed_reason ||
+      application?.lines.some((l) => l.opened_product_id || l.closed_reason),
   );
   const canRevise = locked && !anyResolved;
   const canCancel =
@@ -483,11 +490,6 @@ export default function NewProductApplicationForm({
         </p>
       )}
 
-      {locked && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {LOCK_SENTENCE}
-        </p>
-      )}
       {status === 'rejected' && (
         <RejectionReasonBanner reason={application?.reject_reason} />
       )}
@@ -502,11 +504,28 @@ export default function NewProductApplicationForm({
         </p>
       )}
 
+      {application && (
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {application && tab === 'stock_inquiry' ? (
+        <NewProductApplicationStockInquiry inquiry={application.stock_inquiry} />
+      ) : (
+        <>
       <Card className="border-2 shadow-sm">
         <CardContent className="pt-6 pb-8 px-5 sm:px-10">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <Badge variant="secondary">New Product Application</Badge>
-            <Badge status={status}>
+            <Badge
+              status={
+                application?.display_status ?? status
+              }
+            >
               {application?.status_label ?? 'Draft'}
             </Badge>
           </div>
@@ -545,12 +564,45 @@ export default function NewProductApplicationForm({
                 <span>{application.stock_inquiry_number || '-'}</span>
               )
             }
+            productCodesField={
+              <NewProductApplicationProductCodes
+                value={state}
+                onChange={setState}
+                products={products}
+                reuse={reuse}
+                readOnly={readOnly}
+              />
+            }
+            newCodeField={
+              <NewProductApplicationNewCodeValue
+                code={application?.new_code_text ?? application?.new_product_code}
+                active={application?.new_product_active}
+                closedReason={application?.new_code_closed_reason}
+                supplier={application?.new_product_facts?.opened_supplier_name}
+              />
+            }
+            purchasingResponseField={
+              application ? (
+                <InquiryReadValue>
+                  {application.purchasing_response}
+                </InquiryReadValue>
+              ) : undefined
+            }
+            costField={
+              application && application.lines.length === 0 ? (
+                <InquiryReadValue>
+                  {application.cost_price == null || application.cost_price === ''
+                    ? ''
+                    : `MYR ${application.cost_price}`}
+                </InquiryReadValue>
+              ) : undefined
+            }
             customerField={
               <>
                 {readOnly ? (
                   <span>{state.customer_name || '-'}</span>
                 ) : (
-                  <AsyncCombobox<PortalCustomerHit>
+                  <CustomerDebtorCombobox
                     ariaLabel="Customer"
                     value={state.customer_name}
                     onChange={(v, item) =>
@@ -560,12 +612,7 @@ export default function NewProductApplicationForm({
                         customer_name: v,
                       }))
                     }
-                    fetchOptions={(q) =>
-                      service().lookupNewProductApplicationCustomers(q)
-                    }
-                    optionValue={(o) => o.debtor_name}
-                    optionLabel={(o) => o.debtor_name}
-                    optionMeta={(o) => o.customer_code}
+                    lookup={(q) => client.lookupDebtors(q, 20, undefined)}
                     placeholder="Customer name"
                   />
                 )}
@@ -577,54 +624,41 @@ export default function NewProductApplicationForm({
               </>
             }
           />
+          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
+          {(!state.stock_inquiry_id || state.lines.length > 0) && (
           <div className="mt-6">
             <NewProductApplicationLines
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={brands}
               errors={errors}
-              readOnly={readOnly}
+              readOnly={readOnly || Boolean(state.stock_inquiry_id && application)}
               showCost={Boolean(application)}
               renderOpenedAs={
-                application
+                application?.lines.some(
+                  (l) => l.opened_product_id || l.closed_reason,
+                )
                   ? (draftLine) => {
                       const l = application.lines.find(
                         (x) => x.id === draftLine.id,
                       );
                       if (!l) return null;
-                      return (
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {l.opened_product_id ? (
-                              <>
-                                <Badge status="completed">Opened</Badge>
-                                <span className="font-medium">
-                                  {l.opened_product_code}
-                                </span>
-                              </>
-                            ) : l.closed_reason ? (
-                              <>
-                                <Badge status="cancelled">Not opening</Badge>
-                                <span>{l.closed_reason}</span>
-                              </>
-                            ) : (
-                              <span className="text-muted-foreground">
-                                Not yet
-                              </span>
-                            )}
-                          </div>
-                          {l.opened_supplier_name && (
-                            <p className="text-xs text-muted-foreground">
-                              Supplier: {l.opened_supplier_name}
-                            </p>
-                          )}
-                        </div>
+                      return l.opened_product_id ? (
+                        <span className="break-words font-medium">
+                          {l.opened_product_code}
+                        </span>
+                      ) : l.closed_reason ? (
+                        <span className="break-words">
+                          Rejected: {l.closed_reason}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
                       );
                     }
                   : undefined
               }
             />
           </div>
+          )}
           <div className="mt-6">
             <AttachmentDropzone
               kind="new_product_application"
@@ -664,6 +698,8 @@ export default function NewProductApplicationForm({
             {submitVerb(status)}
           </Button>
         </div>
+      )}
+        </>
       )}
 
       {asking === 'revise' && (

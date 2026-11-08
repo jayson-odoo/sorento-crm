@@ -16,10 +16,12 @@ import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
   type NewProductApplicationPrefill,
+  type NewProductApplicationProductHit,
+  type NewProductApplicationSuggestion,
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
 } from '@/types/newProductApplication';
-import { portalFetch, type PortalSubmissionSummary } from './portal-client';
+import { portalFetch, throwIfOwnerMismatch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/new_product_application';
 const OWN = '/api/v1/public/portal/new-product-application';
@@ -40,6 +42,7 @@ async function unwrap<T>(res: Response, fallback: string): Promise<T> {
     message,
     typeof body?.code === 'string' ? body.code : null,
     typeof body?.details?.field === 'string' ? body.details.field : null,
+    res.status,
   );
 }
 
@@ -86,6 +89,31 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
     return unwrap<NewProductApplicationPrefill>(
       res,
       'Failed to load the stock inquiry',
+    );
+  }
+
+  /** Catalogue codes of the contact's company, for the Product code cell. An empty search goes
+   *  to the server too, which lists the first active products of the company (owner 8 Nov). */
+  async function searchNewProductApplicationProducts(
+    q: string,
+  ): Promise<NewProductApplicationProductHit[]> {
+    const res = await fetcher(`${OWN}/products?q=${encodeURIComponent(q)}`);
+    return unwrap<NewProductApplicationProductHit[]>(
+      res,
+      'Failed to search products',
+    );
+  }
+
+  async function getNewProductApplicationReuseSuggestions(
+    productIds: string[],
+  ): Promise<NewProductApplicationSuggestion[]> {
+    if (productIds.length === 0) return [];
+    const res = await fetcher(
+      `${OWN}/reuse-suggestions?product_ids=${encodeURIComponent(productIds.join(','))}`,
+    );
+    return unwrap<NewProductApplicationSuggestion[]>(
+      res,
+      'Failed to load earlier codes',
     );
   }
 
@@ -148,6 +176,8 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
     id: string,
   ): Promise<NewProductApplicationDetail> {
     const res = await fetcher(`${BASE}/${at(id)}`);
+    // Another contact's application: the SI portal's owner mismatch (the owner's verify card).
+    await throwIfOwnerMismatch(res);
     return unwrap<NewProductApplicationDetail>(
       res,
       'Failed to load the application',
@@ -226,6 +256,8 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
   return {
     listMyRespondedInquiries,
     getNewProductApplicationPrefill,
+    searchNewProductApplicationProducts,
+    getNewProductApplicationReuseSuggestions,
     lookupNewProductApplication,
     lookupNewProductApplicationCustomers,
     listNewProductApplications,
@@ -247,6 +279,8 @@ export type NewProductApplicationService = ReturnType<
 export const {
   listMyRespondedInquiries,
   getNewProductApplicationPrefill,
+  searchNewProductApplicationProducts,
+  getNewProductApplicationReuseSuggestions,
   lookupNewProductApplication,
   lookupNewProductApplicationCustomers,
   listNewProductApplications,

@@ -420,6 +420,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "path": "/master-data-management/certificates",
             "title": "Certificates",
           },
+          {
+            "path": "/master-data-management/certificates/links",
+            "title": "Certificate Links",
+          },
         ],
         "title": "Reference Data",
       },
