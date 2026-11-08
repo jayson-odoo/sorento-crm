@@ -1881,7 +1881,13 @@ def _run(
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()
-            reply = f"{reply}\n\nI could not store the proposed changes, so nothing will be changed."
+            failed = "I could not store the proposed changes, so nothing will be changed."
+            if batch_shown():
+                reply = f"{batch.summary_line(steps, batch_skipped, batch_waiting)}\n\n{failed}"
+                if confirm_notes:
+                    reply = f"{reply}\n\n" + "\n".join(confirm_notes)
+            else:
+                reply = f"{reply}\n\n{failed}"
 
     turn = db.get(ChatbotTurn, turn_id) or turn
     turn.status = "failed" if status == "failed" else "done"
