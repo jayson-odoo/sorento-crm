@@ -18,6 +18,7 @@ No network: the Respond.io HTTP client is replaced by an httpx MockTransport.
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -162,19 +163,29 @@ def test_stock_inquiry_send_with_override_makes_zero_calls_to_the_real_host(monk
         "_resolve_workspace_credentials",
         lambda *a, **k: ("zzt-key", f"https://{REAL_HOST}", "1"),
     )
-    # The CRM's own n8n mirror is not Respond.io and is not under test.
+    # The CRM's own n8n mirror and local thread mirror are not Respond.io and are not under test
+    # (and would leave rows behind).
+    from app.services import conversation_thread_service
+
     monkeypatch.setattr(
         crm_chat_outbound_webhook, "enqueue_crm_chat_outbound_webhook", lambda *a, **k: None
     )
+    monkeypatch.setattr(conversation_thread_service, "mirror_outgoing_send", lambda *a, **k: None)
 
     seen: list[str] = []
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         if request.url.path.endswith("/message/list"):
-            return httpx.Response(200, json={"items": []})
+            # The contact wrote a minute ago: the 24h window is open, so the job sends a text
+            # (the window check AND the send, the two attempts the crew copy saw).
+            mid = int((time.time() - 60) * 1_000_000)  # respond.io ids are epoch microseconds
+            return httpx.Response(200, json={"items": [{"traffic": "incoming", "messageId": mid, "status": []}]})
         return httpx.Response(200, json={"messageId": 1, "contactId": 1})
 
+    from app.services import respond_messaging_service
+
+    monkeypatch.setattr(respond_messaging_service, "_window_cache", {})
     monkeypatch.setattr(
         RespondClient,
         "_http",
@@ -183,19 +194,16 @@ def test_stock_inquiry_send_with_override_makes_zero_calls_to_the_real_host(monk
 
     inquiry_id = str(uuid.uuid4())
     try:
-        try:
-            respond_io_tasks.send_stock_inquiry_respond_message(
-                inquiry_id,
-                f"9{uuid.uuid4().int % 10**8:08d}",  # unknown contact: the kill switch fails open
-                "ZZT stock inquiry received",
-                "1",
-                None,
-                "1",
-                False,
-                None,
+        outcome = respond_io_tasks.send_stock_inquiry_respond_message(
+            inquiry_id,
+            f"9{uuid.uuid4().int % 10**8:08d}",  # unknown contact: the kill switch fails open
+            "ZZT stock inquiry received",
+            "1",
+            None,
+            "1",
+            False,
+            None,
             )
-        except Exception:  # noqa: BLE001 - a downstream failure still must not reach the real host
-            pass
     finally:
         db = SessionLocal()
         try:
@@ -214,4 +222,8 @@ def test_stock_inquiry_send_with_override_makes_zero_calls_to_the_real_host(monk
     assert not [u for u in seen if REAL_HOST in u], f"real Respond.io host was called: {seen}"
     assert all(u.startswith(OVERRIDE + "/") for u in seen), seen
     # The outbox row names the URL actually used, not a hard-coded real one.
+    assert outcome["status"] == "success", outcome
+    posts = [u for u in seen if u.endswith("/message")]
+    assert posts, f"no message was sent, only {seen}"
     assert labels and all(REAL_HOST not in (label or "") for label in labels), labels
+    assert any(label.startswith(OVERRIDE + "/") for label in labels), labels
