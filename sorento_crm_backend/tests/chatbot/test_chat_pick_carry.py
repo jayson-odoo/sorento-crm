@@ -35,15 +35,16 @@ DEALER_B = "ZZ DEMO BATH SDN BHD (PROJECT)"
 STRANGER = "ZZ STRANGER HARDWARE SDN BHD - [A/C I]"
 #: The account code option 1 carries: the first picked ledger's, and in the other company a different customer's.
 SHARED_CODE = "300-ZZ10"
-#: Option 1 as the roster prints it: the group's name and its companies.
-OPTION_LABEL = f"{DEALER_A} (SRT, MCH)"
+#: Option 1 as the roster prints it: the group's name. A group is ONE company's (CUSTOMER-GROUP-GATE,
+#: owner ruling 3 Nov 2026), so dealer A's three ledgers sit in its Sorento group.
+OPTION_LABEL = DEALER_A
 
 PICKED = ("project", "ac1", "iborn")
 
 
-def _seed(session_factory) -> dict[str, str]:
-    """Dealer A: three ledgers in its customer group of each company. Dealer B: one ledger. The stranger: the other
-    company's row of dealer A's project ledger code, in no group, nothing to do with dealer A."""
+def _seed(session_factory, dealer_b_in_mocha: bool = False) -> dict[str, str]:
+    """Dealer A: three ledgers in its Sorento customer group. Dealer B: one ledger. The stranger: the other company's
+    row of dealer A's project ledger code, in no group, nothing to do with dealer A."""
     from sqlalchemy import text as sql_text
 
     from app.models.order import CustomerGroup
@@ -58,14 +59,14 @@ def _seed(session_factory) -> dict[str, str]:
                  "SELECT gen_random_uuid(), id, :company FROM respond_contacts WHERE respond_io_id = :cid"),
         {"cid": str(CONTACT_ID), "company": MOCHA_ID},
     )
-    groups = {company: CustomerGroup(name=DEALER_A, company_id=company) for company in (DEFAULT_COMPANY_ID, MOCHA_ID)}
+    groups = {DEFAULT_COMPANY_ID: CustomerGroup(name=DEALER_A, company_id=DEFAULT_COMPANY_ID)}
     db.add_all(groups.values())
     db.flush()
     rows = {
         "project": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} (PROJECT)"),
         "ac1": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} [A/C I]"),
-        "iborn": customer(db, company_id=MOCHA_ID, name=f"{DEALER_A} - [IBORN]"),
-        "dealer_b": customer(db, company_id=DEFAULT_COMPANY_ID, name=DEALER_B),
+        "iborn": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} - [IBORN]"),
+        "dealer_b": customer(db, company_id=MOCHA_ID if dealer_b_in_mocha else DEFAULT_COMPANY_ID, name=DEALER_B),
         "stranger": customer(db, company_id=MOCHA_ID, name=STRANGER),
     }
     for key in PICKED:
@@ -76,7 +77,7 @@ def _seed(session_factory) -> dict[str, str]:
     return ids
 
 
-def _services(ids: dict[str, str]) -> ResolveGateServices:
+def _services(ids: dict[str, str], dealer_b_in_mocha: bool = False, label_rows: int = 3) -> ResolveGateServices:
     """The word finds both customers. The shared code finds its row in each company, as the live resolver does for a code."""
 
     def hit(key: str, code: str, name: str, company: str = "SRT") -> dict[str, Any]:
@@ -85,16 +86,17 @@ def _services(ids: dict[str, str]) -> ResolveGateServices:
 
     project = hit("project", SHARED_CODE, f"{DEALER_A} (PROJECT)")
     ac1 = hit("ac1", "300-ZZ04", f"{DEALER_A} [A/C I]")
-    iborn = hit("iborn", "300-ZZ33", f"{DEALER_A} - [IBORN]", "MCH")
+    iborn = hit("iborn", "300-ZZ33", f"{DEALER_A} - [IBORN]")
 
     def _resolve(body: dict[str, Any]) -> dict[str, Any]:
         tokens = body.get("tokens") or []
         found = {
             SHARED_CODE.casefold(): [project, hit("stranger", SHARED_CODE, STRANGER, "MCH")],
-            OPTION_LABEL.casefold(): [project, ac1, iborn],
+            OPTION_LABEL.casefold(): [project, ac1, iborn][:label_rows],
+            f"{OPTION_LABEL} (SRT)".casefold(): [project, ac1, iborn][:label_rows],
             DEALER_A.casefold(): [project, ac1, iborn],
         }
-        everyone = [project, ac1, iborn, hit("dealer_b", "300-ZZ59", DEALER_B)]
+        everyone = [project, ac1, iborn, hit("dealer_b", "300-ZZ59", DEALER_B, "MCH" if dealer_b_in_mocha else "SRT")]
         return {
             "tokens": tokens,
             "resolutions": [{"token": t, "matches": found.get(str(t).casefold(), everyone)} for t in tokens],
@@ -266,3 +268,24 @@ def test_u6_guard_a_settled_row_of_another_code_stays_dropped_when_the_resolver_
 def test_u7_guard_a_kind_the_resolver_did_not_answer_falls_back_to_the_plan():
     out = _entities_for(_plan("customer", ("c1", U1)), [_row("product", "p1", U2)])
     assert sorted(_uuids(out)) == sorted([U1, U2]), out
+
+
+# ------------------------------------------------------------------ review: a company-tagged option label
+
+
+@pytest.mark.parametrize("current", [True, False], ids=["said-current", "said-carried"])
+def test_p3_a_company_tagged_label_echoed_beside_the_pick_keeps_every_ledger(chat, session_factory, current):
+    """CUSTOMER-GROUP-GATE review: with dealer B in Mocha the lines' companies differ, so option 1 prints
+    "<dealer A> (SRT)". That tagged label echoed beside the pick, and resolving to ONE of the group's ledgers,
+    still reports exactly the group's three: the option's own `uuids` carry the pick, not a lookup by label."""
+    ids = _seed(session_factory, dealer_b_in_mocha=True)
+    services = _services(ids, dealer_b_in_mocha=True, label_rows=1)
+    chat(_t1(), "Dealer zz demo oct total sales", f"ZZT-pc-p3-{current}-1", resolve_services=services)
+    options = (chat.session().get("open_question") or {}).get("options") or []
+    assert [o["label"] for o in options] == [f"{OPTION_LABEL} (SRT)", f"{DEALER_B} (MCH)"], options
+    second, captured = chat(_t2(_echo(f"{OPTION_LABEL} (SRT)", current=current)), "1", f"ZZT-pc-p3-{current}-2",
+                            resolve_services=services)
+    assert _reply(second).strip() == BASIS_QUESTION, _reply(second)
+    _third, captured = chat(_t3(), "invoiced", f"ZZT-pc-p3-{current}-3", resolve_services=services)
+    (args,) = _report_calls(captured)
+    _assert_the_pick(ids, args)

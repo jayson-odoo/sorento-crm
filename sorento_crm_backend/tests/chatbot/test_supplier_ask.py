@@ -1052,13 +1052,17 @@ def test_the_envelope_names_its_supplier_subjects_with_their_codes():
 
 def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_codes():
     """Owner turn 3 (87fc44fc): the header read 'SRTW2600, XIAMEN TAIYANG TECHNOLOGY CO.,LTD' for three suppliers: the
-    customer-account rule folded two records of one name and dropped every code. A customer still folds."""
+    customer-account rule folded two records of one name and dropped every code. Customer ledgers fold only through
+    their customer group (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026)."""
+    from app.services.ledger_family import customer_groups
     from app.services.chatbot.turn.compose import _header_subjects
 
     a, b, c = f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)", "ZZT TAIYANG TECHNOLOGY CO., LTD. (400-X001)"
     assert _header_subjects(["SRTW2600", a, b, c], whole=[a, b, c]) == ["SRTW2600", a, b, c]
     ledgers = ["ZZT HARDWARE SDN BHD - [A/C I]", "ZZT HARDWARE SDN BHD - [A/C II]"]
-    assert len(_header_subjects(ledgers, whole=[a])) == 1
+    assert len(_header_subjects(ledgers, whole=[a])) == 2
+    with customer_groups({n: "ZZT HARDWARE SDN BHD" for n in ledgers}):
+        assert _header_subjects(ledgers, whole=[a]) == ["ZZT HARDWARE SDN BHD"]
 
 
 def test_the_owner_supplier_ask_with_a_product_and_a_year_stays_on_purchase_orders(session_factory, monkeypatch):

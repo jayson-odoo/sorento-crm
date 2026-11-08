@@ -181,7 +181,8 @@ def test_a_level_no_family_of_the_word_has_is_refused_with_the_word_quoted(sessi
 
 
 def test_no_account_leaves_the_picker_unchanged(session_factory, monkeypatch) -> None:
-    """AC-5 regression: the family picker lists the two families, not narrowed to a level."""
+    """AC-5 regression: the picker is not narrowed to a level. Re-pinned to CUSTOMER-GROUP-GATE (owner ruling
+    3 Nov 2026): no group in this book, so every ledger is its own line."""
     _seed_contact(session_factory, variables={})
     # V1-DOC-SCOPE slice 3: plays an office role, unlinked != customer.
     make_office_access_type(session_factory, CONTACT_ID)
@@ -192,7 +193,7 @@ def test_no_account_leaves_the_picker_unchanged(session_factory, monkeypatch) ->
     )
     assert captured == [], captured
     lines = _picker_lines(reply)
-    assert len(lines) == 2, lines
+    assert len(lines) == len(ALL_NAMES), lines
     assert any("SOON HENG HARDWARE" in line for line in lines), lines
     assert any("SOON HENG TRADING" in line for line in lines), lines
     assert "has no Account" not in reply
