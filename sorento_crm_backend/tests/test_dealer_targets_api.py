@@ -530,3 +530,31 @@ def _yearly(accounts, tiers, **extra):
     )
 
 
+def _stacking_pair(client, db, company_id, a3_sales):
+    """A combined dealer target (A/C I + A/C III, 2M at 2% / 2.5%) and A/C I's own ladder
+    (300k at 0.5%, 700k at 1%); A/C I sells 800k. They stack (owner 8 Nov)."""
+    pid = _product_id(db, company_id)
+    a1 = _customer(db, company_id, "ZZT STACK A/C I", level=1)
+    a3 = _customer(db, company_id, "ZZT STACK A/C III", level=3)
+    _sale(db, company_id, a1, 800000, date(2026, 3, 1), product_id=pid)
+    _sale(db, company_id, a3, a3_sales, date(2026, 3, 1), product_id=pid)
+    dealer = client.post(BASE, json=_yearly([a1, a3], [
+        {"threshold": 2000000, "rate": 0, "account_rates": [
+            {"customer_id": a1.id, "rate": 2}, {"customer_id": a3.id, "rate": 2.5},
+        ]},
+    ]))
+    assert dealer.status_code == 201, dealer.text
+    own = client.post(BASE, json=_yearly([a1], [{"threshold": 300000, "rate": 0.5}, {"threshold": 700000, "rate": 1}]))
+    assert own.status_code == 201, own.text
+    return dealer.json(), own.json()
+
+
+def test_a_reached_dealer_tier_and_the_account_s_own_tier_both_pay(api):
+    """Owner 8 Nov: A/C I sells 800k (its own Tier 2 at 1% = 8,000); the dealer sells 2.1M
+    combined, past its 2M tier (A/C I 2% = 16,000, A/C III 2.5% = 32,500). Both pay."""
+    client, db, company_id = api
+    dealer, own = _stacking_pair(client, db, company_id, 1300000)
+    assert dealer["periods"][0]["commission_earned"] == 16000 + 32500
+    assert [a["commission_earned"] for a in dealer["periods"][0]["accounts"]] == [16000, 32500]
+    assert own["periods"][0]["commission_earned"] == 8000
+
