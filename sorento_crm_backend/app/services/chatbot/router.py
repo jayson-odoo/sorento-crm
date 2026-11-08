@@ -90,8 +90,7 @@ def decide_route(
         return RouteDecision("chat", "open_question")
 
     settings = db.query(SystemSetting).first()
-    cap = _daily_cap(contact, settings)
-    if cap > 0 and _agent_turns_today(db, contact_respond_id) >= cap:
+    if daily_cap_reached(db, contact_respond_id, contact, settings):
         return RouteDecision("chat", "daily_cap")
 
     if not text.strip() or len(text.strip()) > MAX_TEXT_CHARS:
@@ -174,6 +173,12 @@ def trace_record(decision: RouteDecision) -> dict[str, Any]:
         "error": None,
         "raw": None,
     }
+
+
+def daily_cap_reached(db, contact_respond_id: str, contact, settings=None) -> bool:
+    """Has this contact (or, on the panel, this user) used today's agent turns?"""
+    cap = _daily_cap(contact, settings if settings is not None else db.query(SystemSetting).first())
+    return cap > 0 and _agent_turns_today(db, contact_respond_id) >= cap
 
 
 def _daily_cap(contact, settings) -> int:

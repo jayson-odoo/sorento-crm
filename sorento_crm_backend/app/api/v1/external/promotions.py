@@ -19,6 +19,7 @@ from app.schemas.marketing import PromotionResponse
 from app.models.base import set_company_scope
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
+from app.services.entity_attachment_service import exclude_private_types
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
 from app.services.marketing_service import (
     clamp_discount_percent_for_db,
@@ -156,7 +157,7 @@ def create_promotion(
     if _attachment_ids:
         _att_company_ids = {
             row.company_id
-            for row in db.query(Attachment.company_id)
+            for row in exclude_private_types(db.query(Attachment.company_id))
             .filter(Attachment.id.in_(_attachment_ids))
             .all()
             if row.company_id
@@ -258,7 +259,7 @@ def create_promotion(
     if _attachment_ids:
         _filename_by_id = {
             str(row[0]): row[1]
-            for row in db.query(Attachment.id, Attachment.original_filename)
+            for row in exclude_private_types(db.query(Attachment.id, Attachment.original_filename))
             .filter(Attachment.id.in_(_attachment_ids))
             .all()
         }
@@ -418,7 +419,7 @@ def create_promotion(
     attachment_ids = _attachment_ids_from_promotion_payload(payload)
     if attachment_ids:
         created_by_uuid = created_by
-        found = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+        found = exclude_private_types(db.query(Attachment)).filter(Attachment.id.in_(attachment_ids)).all()
         existing_attachment_ids = {a.id for a in found}
         missing = [aid for aid in attachment_ids if aid not in existing_attachment_ids]
         if missing:

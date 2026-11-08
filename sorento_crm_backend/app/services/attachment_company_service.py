@@ -45,6 +45,7 @@ from app.models.company import Company
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentDirectory
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
+from app.services.entity_attachment_service import exclude_private_types
 from app.services.error_handler import (
     AppException,
     handle_conflict,
@@ -152,11 +153,10 @@ class AttachmentCompanyService:
         company decision."""
         if not ids:
             return []
-        rows = (
-            self.db.query(model)
-            .filter(model.id.in_(ids), model.is_deleted == False)  # noqa: E712
-            .all()
-        )
+        query = self.db.query(model)
+        if model is Attachment:
+            query = exclude_private_types(query)  # a panel file is a stranger's: the same 404 as an unknown id
+        rows = query.filter(model.id.in_(ids), model.is_deleted == False).all()  # noqa: E712
         found = {str(r.id) for r in rows}
         missing = next((i for i in ids if i not in found), None)
         if missing is not None:
@@ -194,7 +194,7 @@ class AttachmentCompanyService:
         if not folders:
             return {}
         rows = (
-            self.db.query(Attachment)
+            exclude_private_types(self.db.query(Attachment))
             .filter(
                 Attachment.directory_id.in_(list(folders.keys())),
                 Attachment.is_deleted == False,  # noqa: E712
