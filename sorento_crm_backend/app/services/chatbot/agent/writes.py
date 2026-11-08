@@ -2689,4 +2689,4 @@ WRITES[CREATE_TICKET] = WriteDef(
 from app.services.chatbot.agent import query_tools  # noqa: E402,F401
 
 # AGENT-BULK-ACTIONS: the contact grant row write and the generic batch tool; imported last for the same reason.
-from app.services.chatbot.agent import batch, contact_grant  # noqa: E402,F401
+from app.services.chatbot.agent import batch, contact_grant, contact_tags  # noqa: E402,F401
