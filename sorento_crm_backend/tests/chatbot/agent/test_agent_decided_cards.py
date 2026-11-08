@@ -284,3 +284,25 @@ def test_compaction_keeps_the_decision_of_a_folded_card(db):
     prompt = "\n".join(str(m.get("content") or "") for m in provider.seen[0]["messages"])
     assert "Fold the earlier conversation" in prompt
     assert "Card cancelled" in prompt and a.phone_number in prompt
+
+
+def test_a_cancelled_row_re_sent_with_the_phone_and_name_written_differently_stays_closed(db):
+    """Review round 2 (R1): the model rebuilds the table from memory and reformats the phone or shortens the name."""
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    a, d, c = _three(db, w)
+    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    actions.cancel(db, w.respond_id, first.pending_action["id"])
+
+    resent = [
+        row_(local(a.phone_number), name="Ahmad", codes=[w.cust_a.customer_code]),
+        row_(d.phone_number, name="devi", codes=[w.cust_a.customer_code]),
+        *_rows(w, c),
+    ]
+    second, _ = _batch_turn(db, w, resent, "Tag the new one with that customer too")
+
+    lines = _lines(second)
+    assert c.phone_number in lines
+    assert a.phone_number not in lines and d.phone_number not in lines
+    assert CANCELLED_REASON in second.reply_text

@@ -545,8 +545,10 @@ DECIDED = ("cancelled", "executed", "partial", "rejected")
 _STEP_MARKS = {"done": "done", "failed": "failed", "skipped": "not run", "withdrawn": "withdrawn"}
 
 
-#: Argument keys that only echo the table and never change what a row asks for.
-_ECHO_KEYS = frozenset({"access_as_written"})
+#: Argument keys that never change what a row asks for: the access cell's echo, the person's label, and the phone
+#: (compared, normalised, as the `batch_key`), so a row re-sent with the phone or name written differently still
+#: matches.
+_ECHO_KEYS = frozenset({"access_as_written", "name", "phone"})
 
 
 def _canonical(value):
