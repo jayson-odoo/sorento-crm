@@ -38,7 +38,7 @@ def batchable_writes(db, ctx) -> list[writes.WriteDef]:
     return [w for w in writes.permitted_writes(db, ctx) if w.batchable]
 
 
-def schema_for(db, ctx) -> dict | None:
+def batch_tool_schema(db, ctx) -> dict | None:
     """The tool schema, or None when no batchable write is permitted. A row object carries the properties of every
     permitted batchable write; each row is checked against the chosen write's own schema."""
     defs = batchable_writes(db, ctx)

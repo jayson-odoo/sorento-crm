@@ -2364,9 +2364,10 @@ def _party_side_section(name: str) -> str:
     wherever the plan currently lives (plans/ or plans/_archive/)."""
     import pathlib
 
-    docs = pathlib.Path(__file__).resolve().parents[3] / "documentation" / "plans"
-    found = sorted(docs.glob(f"**/chatbot/{name}"))
-    assert found, f"{name} not under {docs}"
+    root = pathlib.Path(__file__).resolve().parents[3]
+    homes = [root / "documentation" / "plans" / "chatbot", root / "documentation" / "plans" / "_archive" / "chatbot"]
+    found = [home / name for home in homes if (home / name).is_file()]
+    assert found, f"{name} not under {homes}"
     text = found[0].read_text(encoding="utf-8")
     return text.split("```text\n", 1)[1].split("```", 1)[0]
 
