@@ -16,7 +16,7 @@ from app.services.chatbot.turn.state import (
 # names a customer-less ask by it too, and core may not import this package. `compose.py`
 # and `session_state.py` keep reading the two names from here.
 from app.services.ledger_family import (
-    customer_group_of,
+    entry_group,
     customer_groups,
     ledger_family_key,
     ledger_family_label,
@@ -219,7 +219,7 @@ def _options(
             option["stamp"] = stamp
         if family:
             exact_of[id(option)] = str(name or c.get("raw") or code or "").strip()
-            grouped_of[id(option)] = kind != "supplier" and customer_group_of(exact_of[id(option)], _uuid_of(c)) is not None
+            grouped_of[id(option)] = kind != "supplier" and entry_group(exact_of[id(option)], _uuid_of(c)) is not None
         by_label[key] = option
         companies_of[id(option)] = list(codes)
         built.append(option)

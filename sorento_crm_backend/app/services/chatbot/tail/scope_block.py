@@ -21,7 +21,7 @@ import re
 from typing import Any, Mapping
 
 from app.services.chatbot.turn.state import focus_row_label, token_key
-from app.services.ledger_family import customer_group_of, customer_header_words
+from app.services.ledger_family import customer_header_words, entry_group
 
 # NARROWED (main, captain ruling 2026-08-24, ported verbatim): this header describes
 # a DELIVERY ORDER search specifically - it used to gate on "domains the CRM
@@ -164,7 +164,7 @@ def _axis_words(
             return _SKIP
         named = [_printable(row.get("display_name")) for row in rows]
         if all(named):
-            return customer_header_words([(n, customer_group_of(n)) for n in named]) or None
+            return customer_header_words([(n, entry_group(n)) for n in named]) or None
     resolutions = resolver_json.get("resolutions") if isinstance(resolver_json, Mapping) else None
     for res in resolutions or []:
         if not isinstance(res, dict):
@@ -184,7 +184,7 @@ def _axis_words(
     if not words and axis["label"] == "Customer":
         # The group's name once per customer company, never ledger by ledger.
         names = [_printable(row.get("display_name") or row.get("title") or row.get("code")) for row in rows]
-        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
+        return customer_header_words([(n, entry_group(n)) for n in names if n]) or None
     if not words:
         for row in rows:
             # Hand pass 12 round 3, Group F (owner ruling): a customer row's own
@@ -260,7 +260,7 @@ def _focus_words(rows: Any, *, customer: bool = False) -> str | None:
         kept = [row for row in rows or [] if isinstance(row, Mapping)]
         named = [_printable(row.get("display_name") or row.get("name")) for row in kept]
         if kept and all(named):
-            return customer_header_words([(n, customer_group_of(n)) for n in named]) or None
+            return customer_header_words([(n, entry_group(n)) for n in named]) or None
     typed = _one_typed_word(rows)
     if typed:
         return typed
@@ -268,7 +268,7 @@ def _focus_words(rows: Any, *, customer: bool = False) -> str | None:
         names = [
             _printable(focus_row_label(row)) for row in rows or [] if isinstance(row, Mapping)
         ]
-        return customer_header_words([(n, customer_group_of(n)) for n in names if n]) or None
+        return customer_header_words([(n, entry_group(n)) for n in names if n]) or None
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue

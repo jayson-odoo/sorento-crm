@@ -36,7 +36,7 @@ from app.services.chatbot import jsc, label_catalog, quick_reply_guard
 from app.services.chatbot.composers import misses as composers_misses
 from app.services.chatbot.head.grounding import NEAR_PICK_KEY
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
-from app.services.ledger_family import customer_group_of, customer_header_words
+from app.services.ledger_family import customer_header_words, entry_group
 from app.services.product_spec_registry import SPEC_ACRONYMS
 from app.services.chatbot.tail.scope_block import live_brand_words, search_scope_header
 from app.services.chatbot.turn import refer
@@ -3625,7 +3625,7 @@ def not_found_error_message(
                 else:
                     name = customer if jsc.truthy(customer) else ""
                 if jsc.truthy(customer) and composers.enabled():
-                    group_words = customer_header_words([(jsc.js_string(customer), customer_group_of(jsc.js_string(customer)))])
+                    group_words = customer_header_words([(jsc.js_string(customer), entry_group(jsc.js_string(customer)))])
                     if group_words:
                         shown_by_uuid.setdefault(
                             jsc.get(match, "uuid"),
@@ -3940,7 +3940,7 @@ def not_found_error_message(
             )
             if entity_type == "customer" and composers.enabled():
                 # CHAT-COMPOSER (R3): a customer is named by its group, with no "(+N more)".
-                group_words = customer_header_words([(b, customer_group_of(b)) for b in named_codes])
+                group_words = customer_header_words([(b, entry_group(b)) for b in named_codes])
                 if group_words:
                     rendered, extra = group_words, ""
             # ATTACHMENT-MULTI R5: "• attachment type:", never the raw `attachment_type` key.
@@ -3975,7 +3975,7 @@ def not_found_error_message(
                     return _NO_LINE
                 named = [jsc.nullish_str(jsc.get(row, "display_name")).strip() for row in rows]
                 if all(named):
-                    return customer_header_words([(n, customer_group_of(n)) for n in named])
+                    return customer_header_words([(n, entry_group(n)) for n in named])
             words: list[str] = []
             for res in jsc.array(jsc.get(r, "resolutions")):  # 1. the customer's own token
                 matches = jsc.get(res, "matches")
@@ -4008,7 +4008,7 @@ def not_found_error_message(
                     ).strip()
                     for row in rows
                 ]
-                return customer_header_words([(n, customer_group_of(n)) for n in names if n])
+                return customer_header_words([(n, entry_group(n)) for n in names if n])
             if not words:  # 3. last resort: the gate's own label
                 for row in rows:
                     # Hand pass 12, Group F: a multi-ledger customer pick's own rows
@@ -4583,7 +4583,7 @@ def not_found_error_message(
                         if jsc.truthy(customer) and composers.enabled():
                             # CHAT-COMPOSER H2: the order's customer as its group (R3).
                             customer = customer_header_words(
-                                [(jsc.js_string(customer), customer_group_of(jsc.js_string(customer)))]
+                                [(jsc.js_string(customer), entry_group(jsc.js_string(customer)))]
                             ) or customer
                         label = jsc.js_string(jsc.get(order_match, "canonical_code")) + (
                             f" ({jsc.js_string(customer)})" if jsc.truthy(customer) else ""

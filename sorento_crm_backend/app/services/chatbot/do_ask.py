@@ -22,7 +22,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.composers import status as composers_status
-from app.services.ledger_family import customer_group_of, customer_header_words
+from app.services.ledger_family import customer_header_words, entry_group
 
 #: Owner Q1 (a), 2 Oct 2026: at most 31 days, both ends included.
 MAX_DAYS = 31
@@ -76,7 +76,7 @@ def _subject(entities: list[Any]) -> str | None:
         if isinstance(e, dict) and e.get("entity_type") == "customer"
     ]
     names = [n for n in names if n]
-    return customer_header_words([(n, customer_group_of(n)) for n in names]) or None
+    return customer_header_words([(n, entry_group(n)) for n in names]) or None
 
 
 def _names_an_order(entities: list[Any]) -> bool:

@@ -2984,8 +2984,8 @@ def document_list_args(args: dict[str, Any], outcome: rf.Outcome) -> dict[str, A
 def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> dict[str, Any]:
     """Owner R3 (round 7d): the ONE point the report ask's customer ids are final for the route (both paths pass it,
     after `route_args`). A customer the office grouped is one customer: each id widens to every ledger of its explicit
-    `customer_group_id` in the same company (read from `customers` on the turn's company-scoped session, never a name
-    rule). `linked` (a dealer's own customers): a widened ledger outside them is left out (the route's own cap stays
+    `customer_group_id` in the same company (read from `customers` on the turn's company-scoped session), and to the
+    ungrouped ledgers its group's entry answers with (`_same_entry_ids`, owner Q1 9 Nov 2026). `linked` (a dealer's own customers): a widened ledger outside them is left out (the route's own cap stays
     behind it). Args without customer ids, or ids in no group, are returned as they are, less any id that is no UUID (no
     row: the route would refuse it, the query would raise)."""
     from app.services.chatbot.lanes.business.fetch import is_uuid
@@ -3000,19 +3000,55 @@ def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> d
 
     from app.models.order import Customer
 
-    groups = {
-        (str(g), str(c))
-        for g, c in db.query(Customer.customer_group_id, Customer.company_id).filter(Customer.id.in_(ids)).all()
-        if g
-    }
-    if not groups:
-        return args
-    rows = db.query(Customer.id).filter(
-        or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
+    given = db.query(Customer.id, Customer.customer_name, Customer.customer_group_id, Customer.company_id).filter(
+        Customer.id.in_(ids)
     ).all()
+    groups = {(str(g), str(c)) for _i, _n, g, c in given if g}
+    found: set[str] = set()
+    if groups:
+        found |= {
+            str(r[0])
+            for r in db.query(Customer.id).filter(
+                or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
+            ).all()
+        }
+    found |= _same_entry_ids(db, [row for row in given if row[2]])
     own = None if linked is None else {str(i) for i in jsc.array(linked)}
-    added = [str(r[0]) for r in rows if str(r[0]) not in ids and (own is None or str(r[0]) in own)]
+    added = [i for i in found if i not in ids and (own is None or i in own)]
     return {**args, "customer_ids": [*ids, *sorted(added)]} if added else args
+
+
+def _same_entry_ids(db: Any, given: list[Any]) -> set[str]:
+    """Owner Q1, 9 Nov 2026 ("we should treat it as part of group also"): for GROUPED given rows, the ledgers of the
+    same company that are the same customer entry (`ledger_family_key` under the turn's customer groups), i.e. an
+    ungrouped ledger of the group's trading name. The gate's path already holds them, so the report path widens to them
+    as it widens to the group, and the two never differ. An ungrouped given row is left as it is: an account the asker
+    named ("Account II") stays narrowed. Read on the turn's company-scoped session; only names carrying the entry's
+    words are read (a LIKE prefilter), then the key decides."""
+    from sqlalchemy import func, or_
+
+    from app.models.order import Customer
+    from app.services.ledger_family import ledger_family_key, trading_name_key
+
+    keys: set[tuple[str, str]] = set()
+    words: set[str] = set()
+    for i, name, _g, company in given:
+        key = ledger_family_key(str(name or ""), str(i))
+        if not key:
+            continue
+        keys.add((key, str(company)))
+        for text in (key, trading_name_key(str(name or ""))):
+            longest = max(text.split(), key=len, default="")
+            if longest:
+                words.add(longest)
+    if not keys or not words:
+        return set()
+    companies = sorted({c for _k, c in keys})
+    rows = db.query(Customer.id, Customer.customer_name, Customer.company_id).filter(
+        Customer.company_id.in_(companies),
+        or_(*[func.upper(Customer.customer_name).contains(w) for w in sorted(words)]),
+    ).all()
+    return {str(i) for i, name, c in rows if (ledger_family_key(str(name or ""), str(i)), str(c)) in keys}
 
 
 #: SALES-UNIFIED (contract section 7): a billing line has no warehouse, so the route answers an
