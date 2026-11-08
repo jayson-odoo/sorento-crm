@@ -79,7 +79,10 @@ def test_a_hand_edited_type_is_not_overwritten_by_a_second_run(db):
 
 
 def test_ensure_attachment_type_agrees_with_the_migration_and_is_idempotent(db):
-    from app.services.chatbot.panel_files import ATTACHMENT_TYPE_CODE, ensure_attachment_type
+    # Through the AI panel's doorway (`external/chat.py`), not the chatbot package directly (AC-002).
+    from app.api.v1.external.chat import panel_files
+
+    ATTACHMENT_TYPE_CODE, ensure_attachment_type = panel_files.ATTACHMENT_TYPE_CODE, panel_files.ensure_attachment_type
 
     first = ensure_attachment_type(db)
     second = ensure_attachment_type(db)
@@ -102,6 +105,8 @@ def test_r5_the_migration_seeds_the_type_without_the_n8n_webhook(db):
 
 
 def test_r5_ensure_attachment_type_creates_it_without_the_n8n_webhook(db):
-    from app.services.chatbot.panel_files import ensure_attachment_type
+    from app.api.v1.external.chat import panel_files
+
+    ensure_attachment_type = panel_files.ensure_attachment_type
 
     assert ensure_attachment_type(db).triggers_n8n_webhook is False

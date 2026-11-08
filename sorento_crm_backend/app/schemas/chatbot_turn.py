@@ -158,6 +158,9 @@ class ConsoleTraceSummary(BaseModel):
     # An escalation turn's draw in one line (team, brand, source, assignee); None on
     # every other turn.
     routing_line: str | None = None
+    # CONSOLE-SYNTH-ENVELOPE: the turn ran on a synthetic base envelope, because the
+    # contact has no real WhatsApp turn to borrow one from.
+    synthetic_envelope: bool = False
 
 
 class ConsoleRoute(BaseModel):
