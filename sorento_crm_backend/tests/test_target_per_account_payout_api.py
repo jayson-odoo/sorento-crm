@@ -275,3 +275,20 @@ def test_the_statement_names_the_account_of_a_per_account_rm_additional(api):
     label = statements[0]["accounts"][2]["label"]
     assert any(c.endswith(f"{label} + RM 100.00") for c in cells), cells
     assert f"{label} RM 100.00" in cells, cells
+
+
+def test_a_legacy_tier_level_rm_amount_on_a_combined_target_is_shown_as_unpaid(api):
+    """Owner 8 Nov 23:59: a legacy tier-level RM amount on a combined target (the API refuses new
+    ones, so the row is written directly) pays nothing, and the reached tier carries no Additional."""
+    from app.models.sales import SalesTargetCommissionTier
+
+    client, db, company_id = api
+    (_a1, _a2, _a3), combined = _deluxe(client, db, company_id)
+    tier = db.query(SalesTargetCommissionTier).filter(SalesTargetCommissionTier.target_id == combined["id"]).one()
+    tier.bonus_amount = 500
+    db.flush()
+    period = client.get(f"{BASE}/{combined['id']}").json()["periods"][0]
+    assert period["tier_reached"] == 1
+    assert period["bonus_earned"] == 0
+    assert period["commission_earned"] == 16341.11
+    assert period["tier_additional"] is None

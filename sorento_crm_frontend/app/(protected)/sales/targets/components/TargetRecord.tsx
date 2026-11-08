@@ -2438,8 +2438,16 @@ function TiersGrid({
       id: 'additional',
       accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
       header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
-      cell: ({ row }) =>
-        tierAdditionalText(row.original.tier, target) || '-',
+      cell: ({ row }) => {
+        const text = tierAdditionalText(row.original.tier, target);
+        return text ? (
+          <span className="block truncate" title={text}>
+            {text}
+          </span>
+        ) : (
+          '-'
+        );
+      },
       size: 130,
       meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
     });
