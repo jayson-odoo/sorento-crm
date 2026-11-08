@@ -177,6 +177,17 @@ else
 fi
 rm -f /tmp/pii-guard.$$
 
+# --- e2b. assistant coverage of new list routes (AI-GATE; same check as the PR gate) ---
+if git rev-parse --verify -q origin/main >/dev/null; then
+  if python3 "$REPO_ROOT/scripts/ci_ai_coverage.py" --head HEAD >/tmp/ai-coverage.$$ 2>&1; then
+    ok "ai-coverage"
+  else
+    fail "ai-coverage"
+    grep -v '^::error' /tmp/ai-coverage.$$ | sed 's/^/pre-push:   /'
+  fi
+  rm -f /tmp/ai-coverage.$$
+fi
+
 # --- e3. backend copy of the MCP catalog -----------------------------------
 # The backend image has no sorento_crm_mcp/, so the backend carries a verbatim
 # copy (tests/test_mcp_catalog_in_image.py, in the release core tier). A
