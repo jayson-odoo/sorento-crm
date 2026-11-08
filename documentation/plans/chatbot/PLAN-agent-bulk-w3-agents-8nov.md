@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 3, sales agent -> customers from a pasted table (AGENT-BULK-W3-AGENTS)
 
-Status: Built (PR #2253); reviewer fix round 1 applied (pick check by row number, hidden-company guards); crew live run pending (laneboard/scripts/2253.md) + router gate. Track: full (agent write path; no migration, no new permission, no new ingest surface).
+Status: Merge-ready pending crew live run (laneboard/scripts/2253.md) + router gate; PR #2253, reviewer READY after fix round 1 (pick check by row number, hidden-company guards). Track: full (agent write path; no migration, no new permission, no new ingest surface).
 
 Wave 3 after AGENT-BULK-W2-TAGS (#2247). Owner wave order (8 Nov): 2 contact tags (#2247), 3 sales agent ->
 customers (this lane), 4 contact edits keyed by phone, 5 product fields, 6 supplier fields.
