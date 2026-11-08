@@ -1,6 +1,6 @@
 # PLAN: Sorento Town (2.5D daily overview, cached snapshot)
 
-Status: mock v3 APPROVED (owner 8 Nov 15:51, "keep the solution simple and straightforward"). Phase 0 built and reviewed; Phase 0 extension (compare, deliveries) + Phase 1 screen in progress, tester-first. Track: L.
+Status: Phase 0 + Phase 1 (mock v3) built, reviewed (reviewer, security reviewer READY), browser-verified on masked data; PR #2248 waiting for the owner hand test and merge (squash). Track: L.
 
 Lane: SORENTO-TOWN. Owner go: 8 Nov 2026 ~13:35 MYT. Research: crew report of 8 Nov (embedded in the lane brief).
 
