@@ -19,7 +19,7 @@ Also: the seeded `stock_inquiry_created` email row's button label becomes the no
 Plan: documentation/plans/procurement/PLAN-npa-form-sla-08nov.md.
 
 Revision ID: npasla_0001_seed_configs
-Revises: npasi_0001_lineage
+Revises: lpcui_0001_list_price_changed
 """
 import json
 
@@ -28,7 +28,7 @@ from sqlalchemy import text
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "npasla_0001_seed_configs"
-down_revision = "npasi_0001_lineage"
+down_revision = "lpcui_0001_list_price_changed"
 branch_labels = None
 depends_on = None
 
