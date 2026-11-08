@@ -14,3 +14,5 @@ Owner answers 8 Nov ("2256 all recs"). Tests: `sorento_crm_backend/tests/chatbot
 7. Confirm writes through `ContactService.update_contact` (the screen's service), one audit row per contact
    ("Agent contact edit for <phone> from a pasted table"); a contact changed on screen since the preview fails alone;
    the slug removed before Confirm fails every row.
+8. The workspace is an ACTIVE one, and the cell needs `system.respond_workspaces.view` (the screen's picker slug)
+   for the user and the console operator; without it: `You cannot change a contact's Respond.io workspace.`

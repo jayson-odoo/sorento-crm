@@ -24,6 +24,10 @@ EVENT = "contact.edit_agent"
 NOTHING = "Nothing to change."
 GIVE_ONE = "Give a name, the sponsorship rule or the workspace to change."
 OWN = "That is your own contact; change it on the contacts screen."
+#: The Edit Contact form's workspace picker reads `/system/respond-workspaces/select` (this slug); without it the
+#: picker is empty, so the cell is refused with one message whatever the name (security review S2).
+WORKSPACE_VIEW = "system.respond_workspaces.view"
+NO_WORKSPACE = "You cannot change a contact's Respond.io workspace."
 
 
 def _fold(text: Any) -> str:
@@ -44,8 +48,10 @@ def _workspace(db, written: str, problems: list[str]):
     from app.models.respond_workspace import RespondWorkspace
 
     norm = func.lower(func.regexp_replace(func.trim(func.coalesce(RespondWorkspace.name, "")), r"\s+", " ", "g"))
+    # Active only: the screen's picker lists active workspaces (`list_active_select`); an inactive one is not found.
     rows = db.query(RespondWorkspace).filter(
-        or_(norm == written.lower(), func.lower(func.trim(RespondWorkspace.space_id)) == written.lower())
+        RespondWorkspace.is_active.is_(True),
+        or_(norm == written.lower(), func.lower(func.trim(RespondWorkspace.space_id)) == written.lower()),
     ).order_by(RespondWorkspace.id).limit(2).all()
     if not rows:
         problems.append(f'No Respond.io workspace named "{written}".')
@@ -76,7 +82,13 @@ def plan(db, user: dict, args: dict) -> dict:
     rule = args.get("sponsorship_registered_project")
     rule = rule if isinstance(rule, bool) else None
     said_ws = _clean(args.get("workspace"))
-    workspace = _workspace(db, said_ws, problems) if said_ws else None
+    workspace = None
+    if said_ws:
+        acting = [str(i) for i in (user.get("id"), user.get("operator_user_id")) if i]
+        if all(writes.holds(db, i, WORKSPACE_VIEW) for i in acting):
+            workspace = _workspace(db, said_ws, problems)
+        else:
+            problems.append(NO_WORKSPACE)
     if problems:
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     contact = _find_contact(db, phone)
@@ -118,6 +130,8 @@ def plan(db, user: dict, args: dict) -> dict:
             "name": contact.name,
             "requires_registered_project": held_rule,
             "workspace_id": str(contact.workspace_id) if contact.workspace_id else None,
+            # The workspace the card names: a rename or swap before Confirm fails the row (security review N1).
+            "to_workspace_id": fields.get("workspace_id"),
         },
     }
 
@@ -151,8 +165,7 @@ def _execute(db, user: dict, args: dict) -> dict:
     from app.services.contact_service import ContactService
 
     p = plan(db, user, args)
-    # The Edit Contact screen's service: its checks, its commit, and the contact listener's before / after row.
-    ContactService(db).update_contact(p["contact_id"], RespondContactUpdate(**p["fields"]))
+    # The pasted-table audit row first, so the service's single commit writes it with the change (review N2).
     audit_service.record(
         db,
         event=EVENT,
@@ -162,7 +175,8 @@ def _execute(db, user: dict, args: dict) -> dict:
         new_values=p["new"],
         description=f"Agent contact edit for {p['phone']} from a pasted table",
     )
-    db.commit()
+    # The Edit Contact screen's service: its checks, its commit, and the contact listener's before / after row.
+    ContactService(db).update_contact(p["contact_id"], RespondContactUpdate(**p["fields"]))
     return {"id": p["contact_id"], "after": {"old": p["old"], "new": p["new"]}}
 
 

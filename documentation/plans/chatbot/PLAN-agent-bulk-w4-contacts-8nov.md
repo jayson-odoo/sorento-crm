@@ -57,3 +57,10 @@ two contacts is refused; Q4 (a) a blank cell is unchanged, nothing is cleared; Q
   tests, and a corrected row of a key-changing write is no longer carried twice (`carried_skips`).
 - Known red on main, not this lane: `test_ai_tools_wave2_round3.py::test_I1_the_entity_index_is_in_the_query_tools_description`
   (stock_inquiry has no index hint).
+
+## Review round (8 Nov)
+
+Reviewer READY. Security reviewer fixes: S1 inactive workspaces are not found (the screen lists active only); S2 the
+workspace cell needs `system.respond_workspaces.view` for the user and the operator (the screen's picker slug), else
+one fixed refusal; N1 the target workspace is in `before` (a rename before Confirm fails the row); N2 the audit row
+commits with the change. Tests `test_06_*`, each kill-tested. Open for the owner: the case-only rename (crew-ask).

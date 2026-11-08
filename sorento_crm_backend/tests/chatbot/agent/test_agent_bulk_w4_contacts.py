@@ -317,3 +317,59 @@ def test_05_the_write_is_named_in_the_tool_labels():
     from app.services.chatbot.agent import tools
 
     assert tools.TOOL_LABELS[WRITE] == "edit contacts from a pasted table"
+
+
+# ------------------------------------------------------------------ 6. security review (8 Nov): workspace gates
+
+WS_VIEW = "system.respond_workspaces.view"
+NO_WS = "You cannot change a contact's Respond.io workspace."
+
+
+def test_06_an_inactive_workspace_is_never_offered(db):
+    """S1: the screen's picker lists active workspaces only; an inactive one reads as not found."""
+    w = make_world(db)
+    ws = workspace_(db, f"ZZT Retired WS {uuid.uuid4().hex[:4]}")
+    with company_scope(db, None):
+        db.get(RespondWorkspace, ws.id).is_active = False
+    db.commit()
+    person = dealer(db, w)
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, workspace=ws.name),
+                                             row_(dealer(db, w).phone_number, workspace=ws.space_id)])
+    assert steps == []
+    assert reason_of(skipped, 1) == f'No Respond.io workspace named "{ws.name}".'
+    assert reason_of(skipped, 2) == f'No Respond.io workspace named "{ws.space_id}".'
+
+
+def test_06_the_workspace_needs_the_workspace_view_slug_and_the_refusal_says_nothing_about_the_name(db):
+    """S2: without the slug the screen's picker is empty; the agent refuses the cell with one fixed message, the
+    same whether the name exists or not. The other cells of a user without it still apply."""
+    w = make_world(db, slugs=(EDIT,), superadmin=False)
+    ws = workspace_(db, f"ZZT Real WS {uuid.uuid4().hex[:4]}")
+    a, b, c = dealer(db, w), dealer(db, w), dealer(db, w, name="ZZT Old C")
+    steps, skipped, _ = propose_rows(db, w, [
+        row_(a.phone_number, workspace=ws.name),
+        row_(b.phone_number, workspace="ZZT No Such Space"),
+        row_(c.phone_number, name="ZZT New C"),
+    ])
+    assert [s["row"] for s in steps] == [3]
+    assert reason_of(skipped, 1) == NO_WS and reason_of(skipped, 2) == NO_WS
+
+    seen = make_world(db, slugs=(EDIT, WS_VIEW), superadmin=False)
+    steps, skipped, _ = propose_rows(db, seen, [row_(dealer(db, seen).phone_number, workspace=ws.name)])
+    assert skipped == [] and len(steps) == 1
+
+
+def test_06_a_target_workspace_renamed_before_confirm_fails_the_row(db):
+    """N1: the card's target workspace is part of the confirm re-check."""
+    w = make_world(db)
+    first, other = workspace_(db, f"ZZT First WS {uuid.uuid4().hex[:4]}"), workspace_(db, f"ZZT Other WS {uuid.uuid4().hex[:4]}")
+    person = dealer(db, w)
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, workspace=first.name)])
+    with company_scope(db, None):
+        name = first.name
+        db.get(RespondWorkspace, first.id).name = f"{name} Old"
+        db.get(RespondWorkspace, other.id).name = name
+    db.commit()
+    outcome = confirm(db, w, steps)
+    assert outcome.status != "executed"
+    assert contact(db, person.id).workspace_id is None
