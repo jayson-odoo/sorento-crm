@@ -48,7 +48,7 @@ from tests.chatbot._panel_files_helpers import (
     upload,
     xlsx_bytes,
 )
-from tests.chatbot.test_panel_agent_side import answer_, note_write  # noqa: F401
+from tests.chatbot.test_panel_agent_side import answer_, audit_listeners, note_write, round_of, tc  # noqa: F401
 from tests.chatbot.test_panel_principal import (  # noqa: F401  (fixtures and helpers)
     AGENT,
     USE,
@@ -829,3 +829,57 @@ def test_r9_a_not_on_the_brain_refusal_creates_no_conversation(panel):
 
     assert resp.status_code == 422
     assert _conversation_count(panel) == before
+
+
+# --------------------------------------------------------------------------- #
+# R3b: a model that calls confirm_action anyway on a file turn decides nothing
+# --------------------------------------------------------------------------- #
+
+
+def _proposal_status(session_factory, action_id: str) -> str:
+    from tests.chatbot.test_panel_agent_side import action_status
+
+    return action_status(session_factory, action_id).status
+
+
+def test_r3b_confirm_action_called_on_a_file_turn_leaves_the_pending_change_pending(
+    panel, monkeypatch, session_factory, note_write, audit_listeners
+):
+    from tests.chatbot.test_panel_agent_side import NOTE_SLUG, seed_proposal
+
+    panel.grants.update({AGENT, NOTE_SLUG})
+    action_id = seed_proposal(session_factory, panel.staff)
+    provider = SeenProvider([
+        round_of(tc("confirm_action", {"action_id": action_id}, "c1")),
+        answer_("ZZT nothing was confirmed."),
+    ])
+    _install_real_loop(panel, monkeypatch, provider)
+    sheet = up(panel, "d.xlsx", dealers_xlsx())
+
+    resp = send(panel, [{"id": sheet["id"], "sheet": "Dealers"}], message="yes do it")
+
+    assert resp.status_code == 200, resp.text
+    assert agent_loop.CONFIRM_ACTION not in provider.calls[0]["tool_names"], "harness: it was not offered"
+    assert _proposal_status(session_factory, action_id) == "proposed", "a file turn decided the pending change"
+    assert note_write == [], "the proposed write ran"
+
+
+def test_r3b_the_same_script_on_a_plain_turn_still_confirms(
+    panel, monkeypatch, session_factory, note_write, audit_listeners
+):
+    from tests.chatbot.test_panel_agent_side import NOTE_SLUG, seed_proposal
+
+    panel.grants.update({AGENT, NOTE_SLUG})
+    action_id = seed_proposal(session_factory, panel.staff)
+    provider = SeenProvider([
+        round_of(tc("confirm_action", {"action_id": action_id}, "c1")),
+        answer_("ZZT done."),
+    ])
+    _install_real_loop(panel, monkeypatch, provider, side="agent")
+
+    resp = send(panel, None, message="yes do it")
+
+    assert resp.status_code == 200, resp.text
+    assert agent_loop.CONFIRM_ACTION in provider.calls[0]["tool_names"]
+    assert _proposal_status(session_factory, action_id) != "proposed", "harness: a plain yes no longer confirms"
+    assert len(note_write) == 1

@@ -411,5 +411,124 @@ def test_r2_a_long_sheet_that_declares_a_full_width_is_not_padded_to_16384_colum
     finished, taken, value = _bounded(_read_it, bomb, seconds=30.0)
 
     assert finished
-    assert value[1] == 30_000
+    assert 0 < value[1] <= panel_files.MAX_SCAN_ROWS_PER_SHEET  # R2b: a sheet is scanned up to its cap
     assert taken < 2.0, f"read_sheet took {taken:.1f}s on a sheet that declares {16384} columns"
+
+
+# --------------------------------------------------------------------------- #
+# R2b (security re-check): rows that REALLY have a cell at column XFD, and a budget across sheets
+# --------------------------------------------------------------------------- #
+
+_CT = (
+    '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Override PartName="/xl/workbook.xml" '
+    'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>%s</Types>'
+)
+_WS_CT = (
+    '<Override PartName="/xl/worksheets/sheet%d.xml" '
+    'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+)
+_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+
+def _book(nrows: int, nsheets: int = 1, *, far_cell: bool) -> bytes:
+    """A hand-written xlsx of `nsheets` sheets, each with a header and `nrows` data rows. With `far_cell` every
+    row also holds a REAL cell at column XFD (the 16384th), and the dimension claims a full worksheet."""
+    head = '<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="B1" t="inlineStr"><is><t>phone</t></is></c></row>'
+    body = []
+    for i in range(2, nrows + 2):
+        tail = f'<c r="XFD{i}"><v>1</v></c>' if far_cell else f'<c r="B{i}"><v>{i}</v></c>'
+        body.append(f'<row r="{i}"><c r="A{i}"><v>{i}</v></c>{tail}</row>')
+    sheet = (
+        f'<?xml version="1.0"?><worksheet xmlns="{_NS}"><dimension ref="A1:XFD1048576"/><sheetData>'
+        + head + "".join(body) + "</sheetData></worksheet>"
+    )
+    ids = range(1, nsheets + 1)
+    root_rels = (
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/></Relationships>'
+    )
+    workbook = (
+        f'<?xml version="1.0"?><workbook xmlns="{_NS}" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+        + "".join(f'<sheet name="S{i}" sheetId="{i}" r:id="rId{i}"/>' for i in ids) + "</sheets></workbook>"
+    )
+    wb_rels = (
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + "".join(
+            f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            f'Target="worksheets/sheet{i}.xml"/>' for i in ids
+        )
+        + "</Relationships>"
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CT % "".join(_WS_CT % i for i in ids))
+        z.writestr("_rels/.rels", root_rels)
+        z.writestr("xl/workbook.xml", workbook)
+        z.writestr("xl/_rels/workbook.xml.rels", wb_rels)
+        for i in ids:
+            z.writestr(f"xl/worksheets/sheet{i}.xml", sheet)
+    return out.getvalue()
+
+
+def test_r2b_the_scan_budgets_are_pinned():
+    assert panel_files.MAX_SCAN_ROWS_PER_SHEET == 10_000
+    assert panel_files.MAX_SCAN_ROWS_TOTAL == 20_000
+
+
+def test_r2b_read_sheet_is_fast_when_every_row_really_has_a_cell_at_xfd():
+    # Measured before the fix: 20,000 such rows took about 1.9 s, so 30,000 take about 3 s. Reading only the
+    # first 100 columns (and stopping at the per-sheet cap) is an order of magnitude less.
+    data = _book(30_000, far_cell=True)
+
+    finished, taken, value = _bounded(_read_it, data, seconds=30.0)
+
+    assert finished
+    assert taken < 1.0, f"read_sheet took {taken:.2f}s on rows with a real cell at XFD"
+    assert value[1] <= panel_files.MAX_SCAN_ROWS_PER_SHEET
+
+
+def test_r2b_list_sheets_is_fast_when_every_row_really_has_a_cell_at_xfd():
+    data = _book(30_000, far_cell=True)
+
+    finished, taken, value = _bounded(_list_it, data, seconds=30.0)
+
+    assert finished
+    assert taken < 1.0, f"list_sheets took {taken:.2f}s on rows with a real cell at XFD"
+    assert value and value[0]["rows"] <= panel_files.MAX_SCAN_ROWS_PER_SHEET
+
+
+def test_r2b_the_far_cell_is_not_part_of_what_is_read():
+    got = read_sheet(_book(5, far_cell=True), "xlsx")
+
+    assert len(got.header) <= 100
+    assert got.total_rows == 5
+    assert all(len(r) <= 100 for r in got.rows)
+
+
+def test_r2b_one_sheet_counts_at_most_the_per_sheet_cap():
+    data = _book(12_000, far_cell=False)
+
+    assert read_sheet(data, "xlsx").total_rows == panel_files.MAX_SCAN_ROWS_PER_SHEET
+    assert list_sheets(data, "xlsx") == [{"name": "S1", "rows": panel_files.MAX_SCAN_ROWS_PER_SHEET}]
+
+
+def test_r2b_list_sheets_counts_at_most_the_total_budget_across_sheets():
+    data = _book(12_000, nsheets=3, far_cell=False)
+
+    listed = list_sheets(data, "xlsx")
+
+    assert listed, "a workbook of real data listed no sheet"
+    assert all(s["rows"] <= panel_files.MAX_SCAN_ROWS_PER_SHEET for s in listed)
+    assert sum(s["rows"] for s in listed) <= panel_files.MAX_SCAN_ROWS_TOTAL
+    assert listed[0] == {"name": "S1", "rows": panel_files.MAX_SCAN_ROWS_PER_SHEET}
+
+
+def test_r2b_a_workbook_under_the_budget_is_counted_in_full():
+    data = _book(300, nsheets=3, far_cell=False)
+
+    assert list_sheets(data, "xlsx") == [{"name": f"S{i}", "rows": 300} for i in (1, 2, 3)]

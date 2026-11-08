@@ -248,3 +248,253 @@ def test_r6_a_size_limit_below_ten_still_applies(panel):
     two_mb = b"Phone,Name\n" + b"x" * (2 * 1024 * 1024)
 
     assert upload(panel.client, "two.csv", two_mb, "text/csv").status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# R1b (security re-check): one shared rule on every route that takes attachment ids directly
+#
+# Helpers pinned by the coder: `entity_attachment_service.is_private_to_others(attachment, viewer_id)` for a
+# row already loaded and `entity_attachment_service.exclude_private_types(query)` for a query over
+# `Attachment`. These tests go through HTTP, so they do not depend on the names.
+# --------------------------------------------------------------------------- #
+
+from types import SimpleNamespace
+
+from sqlalchemy import text
+
+from app.models.entity_attachment import EntityAttachmentLink
+from app.rbac.permission_registry import PERMISSION_REGISTRY
+
+ALL_ATTACHMENT_SLUGS = {e["slug"] for e in PERMISSION_REGISTRY if e["slug"].startswith("resource.attachment")}
+
+
+def raw_row(db, attachment_id: str):
+    """The whole `attachments` row as a dict (None when it is gone), for an exact before/after comparison."""
+    got = db.execute(text("SELECT * FROM attachments WHERE id = :i"), {"i": attachment_id}).mappings().first()
+    return dict(got) if got else None
+
+
+@pytest.fixture()
+def drive(world, monkeypatch):
+    """B holds every attachment slug; extra targets (a folder, a second type) exist for the move and type routes."""
+    from app.models.resources import AttachmentDirectory
+    from app.services.user_service import UserPermissionService
+
+    world.p.grants.update(ALL_ATTACHMENT_SLUGS)
+    monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", lambda self, uid: set(world.p.grants))
+    db = world.p.factory()
+    folder = AttachmentDirectory(id=str(uuid.uuid4()), name=f"ZZT folder {uuid.uuid4().hex[:6]}")
+    other_type = AttachmentType(
+        id=str(uuid.uuid4()), type_name=f"ZZT other {uuid.uuid4().hex[:6]}", allowed_extensions="csv", max_file_size_mb=10
+    )
+    db.add_all([folder, other_type])
+    db.commit()
+    world.folder_id = str(folder.id)
+    world.other_type_id = str(other_type.id)
+    return world
+
+
+def _cases(w):
+    from app.services.contact_access_type_service import _FALLBACK_DEFAULT_CODES
+
+    level = _FALLBACK_DEFAULT_CODES[0]
+    return {
+        "bulk-attachment-type": lambda ids: ("post", f"{ATT}/bulk-attachment-type",
+                                             {"attachment_ids": ids, "attachment_type_id": w.other_type_id}),
+        "bulk-move": lambda ids: ("post", f"{ATT}/bulk-move", {"attachment_ids": ids, "directory_id": w.folder_id}),
+        "bulk-access-levels": lambda ids: ("post", f"{ATT}/bulk-access-levels/apply",
+                                           {"attachment_ids": ids, "access_levels": [level]}),
+        "bulk-archive": lambda ids: ("post", f"{ATT}/bulk-archive", {"attachment_ids": ids}),
+        "bulk-delete": lambda ids: ("post", f"{ATT}/bulk-delete", {"attachment_ids": ids}),
+        "reorder": lambda ids: ("post", f"{ATT}/reorder", {"attachment_ids": ids}),
+        "bulk-company": lambda ids: ("post", f"{ATT}/bulk-company",
+                                     {"attachment_ids": ids, "company_id": w.other.company_a}),
+    }
+
+
+CASE_NAMES = [
+    "bulk-attachment-type", "bulk-move", "bulk-access-levels", "bulk-archive", "bulk-delete", "reorder", "bulk-company",
+]
+
+
+@pytest.mark.parametrize("name", CASE_NAMES)
+def test_r1b_the_route_works_for_an_ordinary_file(drive, name):
+    """Harness check: B holds the slugs, so a refusal of the panel file below is the type's doing."""
+    as_reader(drive)
+    method, url, body = _cases(drive)[name]([drive.control_id])
+
+    resp = getattr(drive.p.client, method)(url, json=body)
+
+    assert resp.status_code < 300, f"{name}: {resp.status_code} {resp.text[:300]}"
+
+
+@pytest.mark.parametrize("name", CASE_NAMES)
+def test_r1b_another_users_panel_file_is_left_untouched(drive, name):
+    before = raw_row(drive.p.factory(), drive.panel_id)
+    as_reader(drive)
+    method, url, body = _cases(drive)[name]([drive.panel_id])
+
+    resp = getattr(drive.p.client, method)(url, json=body)
+
+    after = raw_row(drive.p.factory(), drive.panel_id)
+    assert after is not None, f"{name} deleted another user's panel file (status {resp.status_code})"
+    assert after == before, {k: (before[k], after[k]) for k in before if before[k] != after[k]}
+    assert drive.p.store.deleted == [], f"{name} removed stored bytes"
+
+
+@pytest.mark.parametrize("name", CASE_NAMES)
+def test_r1b_a_mixed_selection_changes_only_the_files_the_caller_may_touch(drive, name):
+    before = raw_row(drive.p.factory(), drive.panel_id)
+    as_reader(drive)
+    method, url, body = _cases(drive)[name]([drive.control_id, drive.panel_id])
+
+    getattr(drive.p.client, method)(url, json=body)
+
+    assert raw_row(drive.p.factory(), drive.panel_id) == before
+
+
+# ---- bulk download ------------------------------------------------------------
+
+
+@pytest.fixture()
+def queued(monkeypatch):
+    """The bulk-download job is recorded, not queued."""
+    from app.services import queue_service
+
+    jobs: list = []
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda func, *a, **k: jobs.append((a, k)) or SimpleNamespace(id="zzt-rq"))
+    return jobs
+
+
+def _download_jobs(w):
+    from app.models.job import ImportJob
+
+    return w.p.factory().query(ImportJob).filter(ImportJob.job_type == "attachment_bulk_download").all()
+
+
+def test_r1b_bulk_download_of_another_users_panel_file_alone_is_refused_and_queues_nothing(drive, queued):
+    as_reader(drive)
+
+    resp = drive.p.client.post(f"{ATT}/bulk-download", json={"attachment_ids": [drive.panel_id]})
+
+    assert resp.status_code == 404, resp.text
+    assert queued == [] and _download_jobs(drive) == []
+
+
+def test_r1b_bulk_download_leaves_another_users_panel_file_out_of_a_mixed_job(drive, queued):
+    as_reader(drive)
+
+    resp = drive.p.client.post(
+        f"{ATT}/bulk-download", json={"attachment_ids": [drive.control_id, drive.panel_id]}
+    )
+
+    assert resp.status_code in (200, 202), resp.text
+    (job,) = _download_jobs(drive)
+    ids = (job.job_metadata or {}).get("attachment_ids")
+    assert ids == [drive.control_id], f"the job would zip {ids}"
+
+
+def test_r1b_the_uploader_can_still_bulk_download_their_own_panel_file(drive, queued):
+    as_uploader(drive)
+
+    resp = drive.p.client.post(f"{ATT}/bulk-download", json={"attachment_ids": [drive.panel_id]})
+
+    assert resp.status_code in (200, 202), resp.text
+    assert (_download_jobs(drive)[0].job_metadata or {}).get("attachment_ids") == [drive.panel_id]
+
+
+# ---- the external link routes -----------------------------------------------------
+
+EXT = "/api/v1/external"
+UNKNOWN_ID_PHRASES = ("invalid attachment", "attachment not found")
+
+
+@pytest.fixture()
+def external(drive, monkeypatch):
+    """The integration's principal is B; its endpoint permission check is open."""
+    from app.api.v1.external import permissions as ext_permissions
+    from app.dependencies import get_external_api_user
+    from app.main import app
+
+    monkeypatch.setattr(ext_permissions, "_holds_external_permission", lambda service, user, slug: True)
+    app.dependency_overrides[get_external_api_user] = lambda: {"id": drive.other.user_id, "name": "ZZT integration"}
+    return drive
+
+
+def _external_calls(attachment_id: str):
+    code = f"ZZT-{uuid.uuid4().hex[:8]}"
+    return {
+        "product-attachments/link-products": (
+            f"{EXT}/product-attachments/link-products",
+            {"attachment_id": attachment_id, "products": ["ZZT-NO-SUCH-PRODUCT"]},
+        ),
+        "product-attachments": (
+            f"{EXT}/product-attachments/",
+            {"attachment_id": attachment_id, "product_code": "ZZT-NO-SUCH-PRODUCT"},
+        ),
+        "forms": (
+            f"{EXT}/forms/",
+            {"form": {"code": code, "name": "ZZT form", "attachment_id": attachment_id}},
+        ),
+        "packing-lists": (
+            f"{EXT}/packing-lists/",
+            {"packing_list": {"shipment_date": "2026-11-08", "attachment_id": attachment_id}, "packing_list_products": []},
+        ),
+        "promotions": (
+            f"{EXT}/promotions/",
+            {
+                "start_date": "2026-11-01", "end_date": "2026-11-30", "attachment_id": attachment_id,
+                "promotion_products": [{"product_code": "ZZT-NO-SUCH-PRODUCT"}],
+            },
+        ),
+    }
+
+
+EXTERNAL_ROUTES = ["product-attachments/link-products", "product-attachments", "forms", "packing-lists", "promotions"]
+
+
+def _links_to(w, attachment_id: str) -> dict:
+    db = w.p.factory()
+    one = lambda sql: db.execute(text(sql), {"i": attachment_id}).scalar()  # noqa: E731
+    return {
+        "product": one("SELECT count(*) FROM product_attachments WHERE attachment_id = :i"),
+        "promotion": one("SELECT count(*) FROM promotion_attachments WHERE attachment_id = :i"),
+        "form": one("SELECT count(*) FROM forms WHERE attachment_id = :i"),
+        "shipment": one("SELECT count(*) FROM inbound_shipments WHERE attachment_id = :i"),
+        "entity": one("SELECT count(*) FROM entity_attachment_links WHERE attachment_id = :i AND entity_type NOT LIKE 'ai_assistant_%%'"),
+    }
+
+
+@pytest.mark.parametrize("route", EXTERNAL_ROUTES)
+def test_r1b_an_external_route_still_resolves_an_ordinary_attachment_id(external, route):
+    """Harness check: the same call with an ordinary file is not answered as an unknown id."""
+    url, body = _external_calls(external.control_id)[route]
+
+    resp = external.p.client.post(url, json=body)
+
+    assert not any(p in resp.text.lower() for p in UNKNOWN_ID_PHRASES), f"{route}: {resp.status_code} {resp.text[:300]}"
+
+
+#: What each route already says for an id that matches no attachment. The promotions route checks existence only
+#: after matching products and an active company, which this harness cannot reach, so it is held to "no link, 4xx".
+UNKNOWN_ID_MESSAGE = {
+    "product-attachments/link-products": "invalid attachment_id",
+    "product-attachments": "invalid attachment_id",
+    "forms": "attachment not found",
+    "packing-lists": "invalid attachment_id",
+    "promotions": None,
+}
+
+
+@pytest.mark.parametrize("route", EXTERNAL_ROUTES)
+def test_r1b_an_external_route_answers_a_panel_file_id_like_an_unknown_id_and_links_nothing(external, route):
+    before = _links_to(external, external.panel_id)
+    url, body = _external_calls(external.panel_id)[route]
+
+    resp = external.p.client.post(url, json=body)
+
+    assert resp.status_code in (400, 404, 422), f"{route}: {resp.status_code} {resp.text[:300]}"
+    expected = UNKNOWN_ID_MESSAGE[route]
+    if expected:
+        assert expected in resp.text.lower(), f"{route} refused for another reason: {resp.text[:300]}"
+    assert _links_to(external, external.panel_id) == before, f"{route} linked another user's panel file"
