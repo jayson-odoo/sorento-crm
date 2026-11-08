@@ -1764,7 +1764,14 @@ def _emit_sla(db: Session, app: NewProductApplication, event: str, actor_id: Opt
         from app.services.form_sla_service import emit_form_event
 
         emit_form_event(
-            db, ENTITY, str(app.id), event, contact_id=app.contact_id, actor_user_id=actor_id
+            db,
+            ENTITY,
+            str(app.id),
+            event,
+            contact_id=app.contact_id,
+            actor_user_id=actor_id,
+            # The NPA's own company routes its stages (not its contact's, as on the SI).
+            company_id=str(app.company_id) if app.company_id else None,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("new product application SLA event failed: %s %s (%s)", event, app.id, exc)

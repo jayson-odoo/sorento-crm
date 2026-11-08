@@ -508,3 +508,96 @@ def test_the_team_notice_links_the_npa_not_a_stock_inquiry(world, monkeypatch):
 def test_without_the_team_nobody_gets_a_team_notice(world):
     d = _submitted(world)
     assert _team_notices(world, d["id"]) == set()
+
+
+# ------------------------------------------------------------------ the NPA's own company routes it (security B1)
+
+
+def test_the_stage_routes_by_the_npas_own_company_not_its_contact(world, sla):
+    """The SI takes its company from its contact (it has no company column); the NPA carries one,
+    and its stage, team and lock eligibility must follow it, contact or none."""
+    from app.models.access import AgentTeam, Team, TeamMember
+    from app.models.new_product_application import NewProductApplication
+
+    from ._forms_chain_support import uid as _uid, user as _user
+    from ._sample_request_seed import second_company
+
+    db = world.db
+    other = second_company(db)
+    member = _user(db, "other company approver")
+    for tier in (1, 2):
+        team_id = _uid()
+        db.add(Team(id=team_id, name=f"ZZT other co t{tier} {team_id[:6]}", company_id=other))
+        db.add(AgentTeam(id=_uid(), agent_id=sla.approval.config and _agent_id(db, sla), code=sla.approval.team_set,
+                         team_id=team_id, tier=tier, company_id=other))
+        db.flush()
+        db.add(TeamMember(id=_uid(), team_id=team_id, user_id=member, sort_order=0))
+    d = _draft(world)
+    row = db.get(NewProductApplication, d["id"])
+    row.company_id = other
+    row.status = "submitted"
+    db.commit()
+
+    from app.services import new_product_application_service as svc
+
+    svc.notify(db, row, "submitted")
+    tracker = open_tracker(db, KIND, d["id"])
+    assert str(tracker.company_id) == str(other)
+    assert tracker.assigned_to_id == member
+
+
+def _agent_id(db, sla):
+    from app.models.access import AccessAgent
+
+    return db.query(AccessAgent.id).filter(AccessAgent.code == sla.approval.config.agent_code).scalar()
+
+
+# ------------------------------------------------------------------ tracker reads follow the NPA's own read (security S1, S2)
+
+
+def _moved_to_other_company(w):
+    """A submitted NPA with its stage open, then moved to another company: the caller's scope
+    (Sorento) can no longer open the NPA, so it must not read its trackers either."""
+    from app.models.new_product_application import NewProductApplication
+
+    from ._sample_request_seed import second_company
+
+    d = _submitted(w)
+    tracker = open_tracker(w.db, KIND, d["id"])
+    row = w.db.get(NewProductApplication, d["id"])
+    row.company_id = second_company(w.db)
+    w.db.commit()
+    return d["id"], str(tracker.id)
+
+
+def test_by_source_hides_another_companys_npa_trackers(world, sla):
+    aid, _tid = _moved_to_other_company(world)
+    res = world.api.as_(world.viewer).get(
+        "/api/v1/sla-management/conversation-sla-tracking/by-source",
+        params={"source_entity_type": KIND, "source_entity_id": aid},
+    )
+    assert res.status_code == 404, res.text
+
+
+def test_one_tracker_read_hides_another_companys_npa(world, sla):
+    _aid, tid = _moved_to_other_company(world)
+    res = world.api.as_(world.viewer).get(f"/api/v1/sla-management/conversation-sla-tracking/{tid}")
+    assert res.status_code == 404, res.text
+
+
+def test_the_handling_tracker_read_needs_an_npa_reader_slug(world, sla):
+    d = _submitted(world)
+    url = "/api/v1/sla-management/form-sla-tracking"
+    params = {"source_entity_type": KIND, "source_entity_id": d["id"]}
+    assert world.api.as_(world.stranger).get(url, params=params).status_code == 403
+    res = world.api.as_(world.viewer).get(url, params=params)
+    assert res.status_code == 200, res.text
+    assert len(res.json()["data"]) == 1
+
+
+def test_the_handling_tracker_read_hides_another_companys_npa(world, sla):
+    aid, _tid = _moved_to_other_company(world)
+    res = world.api.as_(world.viewer).get(
+        "/api/v1/sla-management/form-sla-tracking", params={"source_entity_type": KIND, "source_entity_id": aid}
+    )
+    assert res.status_code == 404, res.text

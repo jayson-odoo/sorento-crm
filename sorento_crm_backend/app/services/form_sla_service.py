@@ -383,11 +383,16 @@ class FormSLAOrchestrator:
         *,
         contact_id: Optional[str] = None,
         actor_user_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> None:
         """Evaluate every active config for this form type and dispatch matching action.
 
         Errors are logged but never propagated - SLA orchestration must not block
         the underlying state transition.
+
+        ``company_id``: a form that carries its own company (the New Product Application)
+        names it, and its stages route in that company. Without it the company comes from
+        the contact (AC-E4), which is the only signal a stock inquiry has.
         """
         if not source_entity_type or not source_entity_id or not event_name:
             return
@@ -430,7 +435,7 @@ class FormSLAOrchestrator:
             try:
                 if _matches(config.start_event):
                     self._start_for_config(
-                        config, source_entity_id, contact_id=contact_id
+                        config, source_entity_id, contact_id=contact_id, company_id=company_id
                     )
                 if _matches(config.respond_event):
                     self._respond_for_active(
@@ -443,6 +448,7 @@ class FormSLAOrchestrator:
                         actor_user_id=actor_user_id,
                         contact_id=contact_id,
                         resolve_event=event_name,
+                        company_id=company_id,
                     )
             except Exception as e:
                 logger.warning(
@@ -932,6 +938,7 @@ class FormSLAOrchestrator:
         source_entity_id: str,
         *,
         contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> Optional[ConversationSLATracking]:
         """Idempotent: skip if active tracker for this stage already exists."""
         from app.services.user_service import AccessAgentService
@@ -967,7 +974,8 @@ class FormSLAOrchestrator:
         # arbitrarily" rule as conversation routing.
         from app.services.company_routing_service import company_for_contact
 
-        company_id = company_for_contact(self.db, contact_id=contact_id)
+        # A form with its own company column names it (see emit_event).
+        company_id = company_id or company_for_contact(self.db, contact_id=contact_id)
 
         # Default-approver override: for the PR/SF APPROVAL stage (resolves on
         # 'approved'), if the form's configured default approver is a member of the
@@ -1396,6 +1404,7 @@ class FormSLAOrchestrator:
         actor_user_id: Optional[str] = None,
         contact_id: Optional[str] = None,
         resolve_event: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> None:
         from app.schemas.sla import ConversationSLATrackingUpdate
         from app.services.sla_service import ConversationSLATrackingService
@@ -1440,7 +1449,7 @@ class FormSLAOrchestrator:
             )
             if next_cfg:
                 self._start_for_config(
-                    next_cfg, source_entity_id, contact_id=carry_contact_id
+                    next_cfg, source_entity_id, contact_id=carry_contact_id, company_id=company_id
                 )
 
     def _notify_assignee(
@@ -1638,6 +1647,7 @@ def emit_form_event(
     *,
     contact_id: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    company_id: Optional[str] = None,
 ) -> None:
     """Module-level helper: thin wrapper for callers that don't hold an orchestrator."""
     FormSLAOrchestrator(db).emit_event(
@@ -1646,4 +1656,5 @@ def emit_form_event(
         event_name,
         contact_id=contact_id,
         actor_user_id=actor_user_id,
+        company_id=company_id,
     )
