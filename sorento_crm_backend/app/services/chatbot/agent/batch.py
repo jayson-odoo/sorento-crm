@@ -24,13 +24,25 @@ NEEDS_HEAD = "Needs your choice:"
 PREVIEW_TAIL = "Reply yes to go ahead, or tell me what to change."
 CHOICE_TAIL = "Reply with the account code(s) for each row under Needs your choice, all, or skip."
 TAG_CHOICE_TAIL = "Reply with the tag name(s) for each row under Needs your choice, all, or skip."
-#: The arguments whose values are picks from a Needs your choice list (grant: account codes; tags: tag names).
-PICK_ARGS = ("customer_codes", "tags_add", "tags_remove")
+CUSTOMER_CHOICE_TAIL = "Reply with the customer code for each row under Needs your choice, or skip."
+AGENT_CHOICE_TAIL = "Reply with the agent code for each row under Needs your choice, or skip."
+MIXED_CHOICE_TAIL = "Reply with your pick for each row under Needs your choice, or skip."
+#: The arguments whose values are picks from a Needs your choice list (grant: account codes; tags: tag names;
+#: customer agent: the customer code and the agent code).
+PICK_ARGS = ("customer_codes", "tags_add", "tags_remove", "customer_code", "agent")
 READY_NOW = " Or reply yes to confirm the ready rows now."
 NOTHING_TAIL = "Nothing can change yet; fix the rows above and send the table again."
 NOTHING_ONE_TAIL = "Nothing can change yet; fix what is above and ask again."  # a one-row request is no table
 MORE_NOTE = "more than 10 accounts match; give a longer name or the code"
 TAG_MORE_NOTE = "more than 10 tags match; give a longer name"
+AGENT_MORE_NOTE = "more than 10 agents match; give a longer name or the code"
+#: Per waiting noun: (the pick column's header, the closing line, the more-than-10 note).
+_NOUNS = {
+    "account": ("Account", CHOICE_TAIL, MORE_NOTE),
+    "tag": ("Tag", TAG_CHOICE_TAIL, TAG_MORE_NOTE),
+    "customer": ("Account", CUSTOMER_CHOICE_TAIL, MORE_NOTE),
+    "agent": ("Agent", AGENT_CHOICE_TAIL, AGENT_MORE_NOTE),
+}
 
 
 def batchable_writes(db, ctx) -> list[writes.WriteDef]:
@@ -66,6 +78,9 @@ def batch_tool_schema(db, ctx) -> dict | None:
                 "with the WHOLE table, every row's `row` kept and the picked codes in customer_codes (no "
                 "customer_names for those rows). A tag name that is not exactly a tag waits the same way with the "
                 "tags containing it; the picked tag names go in tags_add / tags_remove, the row's other tags kept. "
+                "A customer-agent row whose customer is given by name, or whose agent is not written exactly, waits "
+                "the same way: put the picked customer code in customer_code (keep customer_name as written) and the "
+                "picked agent code in agent. "
                 "Nothing changes until the user confirms. Call it again with "
                 "corrected rows to replace the proposal. Send EVERY row of the current request: ready, waiting and "
                 "not changed alike, so the user sees the whole table. Leave out only a row of an earlier card the "
@@ -90,15 +105,35 @@ def _cells(definition: writes.WriteDef, args: Any, shown: dict | None, summary: 
     return {"Change": summary} if shown is not None else {}
 
 
-def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> str | None:
-    """The skip reason when a row picks a code that neither the last table turn listed for this phone nor the user
-    typed this turn; None when every code is allowed (or the row picks nothing)."""
-    codes = [c for name in PICK_ARGS if isinstance(args.get(name), list) for c in args[name]]
+def _not_listed(
+    args: dict, key: Any, previous: list[dict], user_text: str, row: Any = None, write: str | None = None,
+) -> str | None:
+    """The skip reason when a row picks a code that neither the last table turn listed for this row nor the user
+    typed this turn; None when every code is allowed (or the row picks nothing). The row is found by its key (a
+    grant's phone); for a write whose key a pick may change (`pick_changes_key`, a customer-agent row) also by its
+    table row number on that same write's earlier list, so a changed key cannot escape the check (review 8 Nov). Pass
+    `write` only for such a write."""
+    codes = [
+        c for name in PICK_ARGS
+        for c in (args[name] if isinstance(args.get(name), list) else [args[name]] if isinstance(args.get(name), str) else [])
+        if str(c).strip()
+    ]
     mine = [p for p in previous if key is not None and p.get("key") == key]
+    if not mine and row is not None and write is not None:
+        mine = [p for p in previous if p.get("row") == row and p.get("write") == write]
     if not mine or not codes:
         return None
-    # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick.
-    listed = {" ".join(str(c).split()).lower() for p in mine for c in [*(p.get("codes") or []), *(p.get("kept") or [])]}
+    # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick; so is the text an
+    # agent or tag row is still waiting on (`written`), re-sent unchanged in that same pick argument when the user
+    # answers only other rows (crew live 8 Nov): that row waits again rather than dropping to Not changed. Not for a
+    # customer row: its written text is a NAME, which must never pass as a code (review 8 Nov).
+    listed = {
+        " ".join(str(c).split()).lower()
+        for p in mine for c in [
+            *(p.get("codes") or []), *(p.get("kept") or []),
+            (p.get("written") or "") if p.get("noun") in ("agent", "tag") else "",
+        ]
+    }
     typed = " ".join(str(user_text or "").split()).lower()
     for code in codes:
         said = " ".join(str(code).split())
@@ -174,7 +209,8 @@ def propose_rows(
             skipped.append({"row": n, "key": key, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
-            unlisted = _not_listed(args, key, previous_waiting or [], user_text) or _closed_reason(
+            by_row = write if definition.pick_changes_key else None
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text, n, by_row) or _closed_reason(
                 write, args, key, closed or {}, user_text
             )
             if unlisted:
@@ -184,7 +220,9 @@ def propose_rows(
         if step is None:
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
-                waiting += [{"row": n, "key": key, "cells": _cells(definition, args, None), **c} for c in choices]
+                waiting += [
+                    {"row": n, "key": key, "write": write, "cells": _cells(definition, args, None), **c} for c in choices
+                ]
                 if key is not None:
                     keys[key] = n
                 continue
@@ -298,7 +336,7 @@ def propose(
                 "invalid", data=data,
                 message=(
                     "No row is ready. The user sees the tables of rows that need a choice and rows not changed. "
-                    "Ask which account(s) or tag(s) to use for each waiting row (codes or tag names, or all); do not "
+                    "Ask which account(s), tag(s) or agent to use for each waiting row (codes or tag names, or all); do not "
                     "repeat the tables."
                 ),
             )
@@ -309,7 +347,7 @@ def propose(
         message=(
             "Proposed, not done. The user sees the preview table and must confirm in a later message. "
             "Say in one line how many rows will change and how many are skipped or waiting; do not repeat the "
-            "table. When needs_choice is not empty, ask which account(s) or tag(s) to use for each waiting row (codes or tag names, or all)."
+            "table. When needs_choice is not empty, ask which account(s), tag(s) or agent to use for each waiting row (codes or tag names, or all)."
         ),
     )
 
@@ -342,7 +380,7 @@ def summary_line(steps: list[dict], skipped: list[dict], waiting: list[dict] | t
 
 
 #: The cells every table starts with, whatever order a stored step's cells come back in (JSONB keeps no key order).
-LEAD_CELLS = ("Phone", "Name")
+LEAD_CELLS = ("Phone", "Customer", "Name")
 
 
 def _heads(cells: list[dict]) -> list[str]:
@@ -359,7 +397,10 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
         body = [[s.get("row", n)] + [(s.get("cells") or {"Change": s.get("summary")}).get(h, "") for h in headers]
                 for n, s in enumerate(steps, 1)]
         parts += [PREVIEW_HEAD, _table(["#", *headers], body, uncapped=("Will change",))]
-    tags = bool(waiting) and all(w.get("noun") == "tag" for w in waiting)
+    nouns = {w.get("noun") or "account" for w in waiting}
+    header, tail, _more = _NOUNS.get(next(iter(nouns)), _NOUNS["account"]) if len(nouns) == 1 else (
+        "Pick", MIXED_CHOICE_TAIL, MORE_NOTE
+    )
     if waiting:
         heads = _heads([w.get("cells") or {} for w in waiting])
         rows: list[list[Any]] = []
@@ -370,14 +411,14 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
                 rows.append([w["row"], *cells] if first else [w["row"], *[""] * len(heads)])
                 rows[-1] += [w["written"] if first else "", f"{c['code']} {c['name']}".strip()]
             if w.get("more"):
-                rows.append([w["row"], *[""] * len(heads), "", MORE_NOTE if not tags else TAG_MORE_NOTE])
-        parts += [NEEDS_HEAD, _table(["#", *heads, "You wrote", "Tag" if tags else "Account"], rows)]
+                rows.append([w["row"], *[""] * len(heads), "", _NOUNS.get(w.get("noun") or "account", _NOUNS["account"])[2]])
+        parts += [NEEDS_HEAD, _table(["#", *heads, "You wrote", header], rows)]
     if skipped:
         heads = _heads([s.get("cells") or {} for s in skipped])
         rows = [[s["row"]] + [(s.get("cells") or {}).get(h, "") for h in heads] + [s["reason"]] for s in skipped]
         parts += [SKIPPED_HEAD, _table(["#", *heads, "Why"], rows)]
     if waiting:
-        parts.append((TAG_CHOICE_TAIL if tags else CHOICE_TAIL) + (READY_NOW if steps else ""))
+        parts.append(tail + (READY_NOW if steps else ""))
     else:
         one_row = len({s.get("row") for s in skipped}) <= 1
         parts.append(PREVIEW_TAIL if steps else NOTHING_ONE_TAIL if one_row else NOTHING_TAIL)
