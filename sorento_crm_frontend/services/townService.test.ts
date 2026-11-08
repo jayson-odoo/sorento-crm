@@ -18,7 +18,7 @@ vi.mock('@/lib/api-client', () => ({
 
 import { getSnapshot } from './townService';
 
-const BODY = { schema: 1, today: { invoice_count: 237 } };
+const BODY = { schema: 1, today: { invoice_count: 321 } };
 
 function response(status: number, body?: unknown, etag?: string) {
   return {

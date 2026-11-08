@@ -88,10 +88,10 @@ def fake_full(day: date = DAY, company_id: str = DEFAULT_COMPANY_ID, *, phase: s
         "as_of": "2026-11-03T15:42:00+08:00",
         "data_as_of": None,
         "phase": phase,
-        "today": {"amount": "512345.60", "invoice_count": 237, "credit_note_count": 1, "customer_count": 110},
+        "today": {"amount": "512345.60", "invoice_count": 321, "credit_note_count": 2, "customer_count": 140},
         "shops": [
-            {"key": str(uuid.uuid4()), "code": "ZZT-S001", "name": "ZZT Tiling One SDN BHD [A/C III]",
-             "account_label": "A/C III", "kind": "shop", "rank": 1,
+            {"key": str(uuid.uuid4()), "code": "ZZT-S001", "name": "ZZT Tiling One SDN BHD [A/C II]",
+             "account_label": "A/C II", "kind": "shop", "rank": 1,
              "ninety_day_amount": "123456.78", "today_amount": "20111.40", "today_docs": 3},
             {"key": str(uuid.uuid4()), "code": "ZZT-S002", "name": "ZZT Tiling Two SDN BHD",
              "account_label": None, "kind": "shop", "rank": 2,
@@ -101,7 +101,7 @@ def fake_full(day: date = DAY, company_id: str = DEFAULT_COMPANY_ID, *, phase: s
              "ninety_day_amount": "512.25", "today_amount": "333.33", "today_docs": 1},
         ],
         "warehouses": [{"pool": "ZZT-WH01", "on_hand": 800000, "available": 900000, "locations": 24}],
-        "reorder": {"below_count": 1749, "set_count": 11307},
+        "reorder": {"below_count": 1234, "set_count": 9876},
         "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0},
     }
 

@@ -139,7 +139,7 @@ def test_ac3_user_without_sales_reports_view_gets_counts_and_no_amount_in_the_bo
     assert not (all_keys(body) & AMOUNT_KEYS)
     for figure in FAKE_RM_FIGURES:
         assert figure not in r.text
-    assert body["today"]["invoice_count"] == 237
+    assert body["today"]["invoice_count"] == 321
     assert body["shops"][0]["today_docs"] == 3
 
 

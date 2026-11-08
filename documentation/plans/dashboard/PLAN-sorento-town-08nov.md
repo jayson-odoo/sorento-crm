@@ -114,15 +114,15 @@ the auth allowlist (sessions, users, roles, permissions, company grants).
   "schema": 1, "company_id": "...", "day": "2026-11-03",
   "as_of": "2026-11-03T15:42:00+08:00", "data_as_of": "<max billing_documents.last_synced_at, ISO or null>",
   "phase": "day | night",                       // night when as_of >= 22:00 MYT
-  "today": {"amount": "512345.60", "invoice_count": 237, "credit_note_count": 1, "customer_count": 110},
+  "today": {"amount": "512345.60", "invoice_count": 321, "credit_note_count": 2, "customer_count": 140},
   "shops": [
-    {"key": "<customer_id>", "code": "300-X001", "name": "EXAMPLE TILES SDN BHD [A/C III]",
-     "account_label": "A/C III", "kind": "shop", "rank": 1,
+    {"key": "<customer_id>", "code": "DEMO-001", "name": "EXAMPLE TILES SDN BHD [A/C II]",
+     "account_label": "A/C II", "kind": "shop", "rank": 1,
      "ninety_day_amount": "123456.78", "today_amount": "20111.40", "today_docs": 3}
     // kind "stall": Dealer-type customer invoiced today, outside the top 30; rank null
   ],
   "warehouses": [{"pool": "WH01", "on_hand": 800000, "available": 900000, "locations": 24}],
-  "reorder": {"below_count": 1749, "set_count": 11307},
+  "reorder": {"below_count": 1234, "set_count": 9876},
   "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}
 }
 ```

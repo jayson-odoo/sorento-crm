@@ -20,23 +20,23 @@ const FULL = {
   data_as_of: null,
   phase: 'day',
   today: {
-    amount: '671985.50',
-    invoice_count: 237,
-    credit_note_count: 1,
-    customer_count: 110,
+    amount: '560000.00',
+    invoice_count: 321,
+    credit_note_count: 2,
+    customer_count: 140,
     dealer_customer_count: 88,
   },
-  compare: { label: 'Tue 27 Oct', last_week_amount: '600000.00', last_week_invoice_count: 201 },
+  compare: { label: 'Tue 27 Oct', last_week_amount: '500000.00', last_week_invoice_count: 201 },
   shops: [
     {
       key: '5f0c2c1e-8a4b-4f6e-9a57-1f3f7b0a9c11',
       code: 'ZZT-S001',
-      name: 'ZZT Tiling One SDN BHD [A/C III]',
-      account_label: 'A/C III',
+      name: 'ZZT Tiling One SDN BHD [A/C II]',
+      account_label: 'A/C II',
       kind: 'shop',
       rank: 1,
-      ninety_day_amount: '148214.94',
-      today_amount: '27028.40',
+      ninety_day_amount: '150000.00',
+      today_amount: '30000.00',
       today_docs: 3,
     },
     {
@@ -62,8 +62,8 @@ const FULL = {
       today_docs: 1,
     },
   ],
-  warehouses: [{ pool: 'ZZT-BRW', on_hand: 901681, available: 900000, locations: 24 }],
-  reorder: { below_count: 1749, set_count: 11307 },
+  warehouses: [{ pool: 'ZZT-WH01', on_hand: 800000, available: 790000, locations: 24 }],
+  reorder: { below_count: 1234, set_count: 9876 },
   deliveries: { to_deliver: 17 },
   approvals: { total: 1, purchase_requests: 1, quotation_documents: 0 },
 };
@@ -71,10 +71,10 @@ const FULL = {
 /** What the server sends a user without sales.reports.view (redact(): no amount, anonymous shops). */
 const REDACTED = {
   ...FULL,
-  today: { invoice_count: 237, credit_note_count: 1, customer_count: 110, dealer_customer_count: 88 },
+  today: { invoice_count: 321, credit_note_count: 2, customer_count: 140, dealer_customer_count: 88 },
   compare: { label: 'Tue 27 Oct', last_week_invoice_count: 201 },
   shops: [
-    { key: 's1', account_label: 'A/C III', kind: 'shop', today_docs: 3 },
+    { key: 's1', account_label: 'A/C II', kind: 'shop', today_docs: 3 },
     { key: 's2', account_label: null, kind: 'shop', today_docs: 0 },
     { key: 's3', account_label: null, kind: 'stall', today_docs: 1 },
   ],
@@ -110,14 +110,14 @@ describe('TownCards, full snapshot', () => {
   it('shows the RM amount, the invoice count and the change against the compare label', () => {
     const { container } = render(<TownCards snapshot={FULL as never} />);
     const text = container.textContent ?? '';
-    expect(text).toMatch(/RM\s?671,985\.50/);
-    expect(text).toMatch(/237\s+invoices/);
-    expect(text).toMatch(/\+12%/); // (671985.50 - 600000) / 600000
+    expect(text).toMatch(/RM\s?560,000\.00/);
+    expect(text).toMatch(/321\s+invoices/);
+    expect(text).toMatch(/\+12%/); // (560000 - 500000) / 500000
     expect(text).toContain('vs Tue 27 Oct');
   });
 
   it('shows a fall as a negative percentage', () => {
-    const lower = { ...FULL, compare: { ...FULL.compare, last_week_amount: '800000.00' } };
+    const lower = { ...FULL, compare: { ...FULL.compare, last_week_amount: '666666.67' } };
     const { container } = render(<TownCards snapshot={lower as never} />);
     expect(container.textContent).toMatch(/-16%/);
   });
@@ -134,7 +134,7 @@ describe('TownCards, full snapshot', () => {
   it('shows the low-stock count, the to-deliver count and the approvals total', () => {
     const { container } = render(<TownCards snapshot={FULL as never} />);
     const text = container.textContent ?? '';
-    expect(text).toMatch(/1,749\s+products/);
+    expect(text).toMatch(/1,234\s+products/);
     expect(text).toMatch(/17\s+to deliver/);
     expect(text).toMatch(/1\s+waiting/);
   });
@@ -172,8 +172,8 @@ describe('TownCards, redacted snapshot (no sales.reports.view)', () => {
     const { container } = render(<TownCards snapshot={REDACTED as never} />);
     for (const q of QUESTIONS) expect(screen.getByText(q)).toBeTruthy();
     const text = container.textContent ?? '';
-    expect(text).toMatch(/237\s+invoices/);
-    expect(text).toMatch(/1,749\s+products/);
+    expect(text).toMatch(/321\s+invoices/);
+    expect(text).toMatch(/1,234\s+products/);
     expect(text).toMatch(/17\s+to deliver/);
     expect(text).toMatch(/1\s+waiting/);
     expect(text).toMatch(/88\s+dealers/);

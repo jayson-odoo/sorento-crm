@@ -26,10 +26,10 @@ def test_redact_keeps_counts_and_everything_else():
 
     full = fake_full()
     out = redact(full)
-    assert out["today"] == {"invoice_count": 237, "credit_note_count": 1, "customer_count": 110}
+    assert out["today"] == {"invoice_count": 321, "credit_note_count": 2, "customer_count": 140}
     assert [s["today_docs"] for s in out["shops"]] == [3, 0, 1]
     assert [s["kind"] for s in out["shops"]] == ["shop", "shop", "stall"]
-    assert [s["account_label"] for s in out["shops"]] == ["A/C III", None, None]
+    assert [s["account_label"] for s in out["shops"]] == ["A/C II", None, None]
     assert out["warehouses"] == full["warehouses"]
     assert out["reorder"] == full["reorder"]
     assert out["approvals"] == full["approvals"]
