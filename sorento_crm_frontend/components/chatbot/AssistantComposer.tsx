@@ -259,15 +259,21 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
                           chip.status === 'error' ? 'text-destructive' : 'text-muted-foreground',
                         )}
                       >
-                        {chip.status === 'error'
-                          ? chip.error
-                          : chip.status === 'uploading'
-                            ? `${formatSize(chip.size)}, uploading`
-                            : picked
-                              ? `${formatSize(chip.size)}, ${picked.rows} rows`
-                              : chip.file?.kind === 'pdf' && chip.file.pages != null
-                                ? `${formatSize(chip.size)}, ${chip.file.pages} pages`
-                                : formatSize(chip.size)}
+                        {chip.status === 'error' ? (
+                          chip.error
+                        ) : chip.status === 'uploading' ? (
+                          `${formatSize(chip.size)}, uploading`
+                        ) : picked ? (
+                          <>
+                            <span>{formatSize(chip.size)}</span>, <span>{picked.rows} rows</span>
+                          </>
+                        ) : chip.file?.kind === 'pdf' && chip.file.pages != null ? (
+                          <>
+                            <span>{formatSize(chip.size)}</span>, <span>{chip.file.pages} pages</span>
+                          </>
+                        ) : (
+                          formatSize(chip.size)
+                        )}
                       </span>
                     </div>
                     <button
