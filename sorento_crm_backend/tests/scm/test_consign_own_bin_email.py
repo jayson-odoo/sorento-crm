@@ -26,6 +26,10 @@ from .test_consign_plan import _consign_world
 from .test_dealer_segment_planning import _dealer_pool
 from .test_project_supply_service_ladder import _seed_line, _world
 
+# FP-EMAIL-ONE-TRIGGER: this suite pins the email's content; its writes stand in for the
+# board Confirm, the one trigger of the purchasing email (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("as_board_confirm")
+
 __all__ = ["emails"]
 
 

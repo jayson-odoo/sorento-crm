@@ -51,6 +51,7 @@ export function useProducts(params: GetProductsParams) {
       params.item_type,
       params.variant_filter,
       params.discontinued_batch_id,
+      params.list_price_batch_id,
     ],
     queryFn: () => getProducts(params),
     gcTime: 1000 * 60 * 60, // 60 minutes

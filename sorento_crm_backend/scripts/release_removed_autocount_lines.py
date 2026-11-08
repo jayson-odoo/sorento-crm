@@ -51,8 +51,8 @@ SAFETY
 ------
 `--apply` is required to write; the default prints the report and rolls back. The report
 names document number, DtlKey, product code, quantities and a row count, never a customer.
-One commit at the end of each kind. The SO retire runs with `notify=False` (AC-RL-44): these
-removals are weeks old, so no purchasing handover email or other notification is sent.
+One commit at the end of each kind. The SO retire sends no purchasing handover email or other
+notification (AC-RL-44): only the board Confirm emails purchasing (FP-EMAIL-ONE-TRIGGER).
 
 USAGE
 -----
@@ -405,7 +405,7 @@ def run(
                 cores = db.query(SalesOrderLine).filter(
                     SalesOrderLine.id.in_([c["id"] for c in so])
                 ).all()
-                service.retire_rows_for_removed_so_lines(cores, notify=False)
+                service.retire_rows_for_removed_so_lines(cores)
                 db.commit()
         else:
             db.rollback()

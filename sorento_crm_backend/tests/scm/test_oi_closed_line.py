@@ -48,6 +48,12 @@ from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
 )
 from tests.test_ingest_documents import env  # noqa: F401  (fixture)
 
+import pytest
+
+# FP-EMAIL-ONE-TRIGGER: this suite pins the email's content; its writes stand in for the
+# board Confirm, the one trigger of the purchasing email (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("as_board_confirm")
+
 IN_WINDOW = date.today() + timedelta(days=30)
 
 

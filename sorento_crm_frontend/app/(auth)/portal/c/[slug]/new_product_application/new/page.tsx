@@ -5,9 +5,17 @@ import NewProductApplicationForm from '../../../../components/NewProductApplicat
 
 export default function PortalSlugNewProductApplicationNewPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ stock_inquiry_id?: string }>;
 }) {
   const { slug } = use(params);
-  return <NewProductApplicationForm slug={slug} />;
+  const { stock_inquiry_id } = use(searchParams);
+  return (
+    <NewProductApplicationForm
+      slug={slug}
+      startFromInquiryId={stock_inquiry_id}
+    />
+  );
 }

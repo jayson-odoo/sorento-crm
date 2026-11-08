@@ -350,7 +350,7 @@ def test_run_extract_narrows_schema_by_field_subset(monkeypatch):
     def _resolve(self):
         return _FakeProvider(), "openai", "gpt-4o"
 
-    def _capture_messages(self, form_key, schema, guidance):
+    def _capture_messages(self, form_key, schema, guidance, **_kwargs):
         captured["names"] = [s.name for s in schema]
         return [{"role": "system", "content": "x"}, {"role": "user", "content": "y"}]
 

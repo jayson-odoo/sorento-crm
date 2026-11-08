@@ -32,6 +32,8 @@ def test_ingest_stores_the_requested_code_as_an_ai_model_code(env):
 
 
 def test_ingest_does_not_store_a_code_for_a_prefix_match(env):
+    """The family prefix still links its products as the last resort (owner 8 Nov, ruling #440 R7), and
+    a prefix match names a family, not a printed code, so no model code is stored (CERT-14)."""
     attachment = env.attachment(env.attachment_type(is_certificate=True, name="Certification"), "qcert-pfx")
     env.product("QPFX", code="ZZTFAMILY7-RL")
     payload = _cert_payload(attachment, [], certificate_number="QCERT-ING-2")

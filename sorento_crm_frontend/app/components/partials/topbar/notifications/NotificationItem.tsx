@@ -231,7 +231,9 @@ export default function NotificationItem({
           <div className="text-xs text-muted-foreground break-words">
             <div
               ref={bodyRef}
-              className={expanded ? '' : 'line-clamp-2'}
+              // whitespace-pre-line: digest bodies (e.g. list price changes) carry one
+              // product per line; without it the lines collapse into one paragraph.
+              className={`whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}
             >
               <LinkifiedBody
                 text={item.body}

@@ -160,7 +160,7 @@ def test_the_tool_asks_for_every_row_of_the_current_request(db):
     from tests.chatbot.agent.test_agent_bulk_grant import ctx_of
 
     w = make_world(db)
-    text = batch.schema_for(db, ctx_of(db, w))["function"]["description"]
+    text = batch.batch_tool_schema(db, ctx_of(db, w))["function"]["description"]
     assert "EVERY row of the current request" in text
     assert "not changed" in text
     assert "Propose only the rows still open" not in text

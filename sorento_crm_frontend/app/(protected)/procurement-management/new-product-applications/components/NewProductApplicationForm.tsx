@@ -17,11 +17,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
   blankLine,
+  isBlankLine,
   numberErrors,
   payloadFromState,
   stateFromDetail,
@@ -98,7 +101,9 @@ function StaffNewProductApplicationForm({
     if (applicationId && existing.data) {
       const loaded = stateFromDetail(existing.data);
       setState(
-        loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
+        loaded.lines.length || loaded.stock_inquiry_id
+          ? loaded
+          : { ...loaded, lines: [blankLine()] },
       );
       setHydrated(true);
     } else if (!applicationId && prefill.data) {
@@ -244,10 +249,21 @@ function StaffNewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
+                    // An inquiry replaces the product rows, unless some were already filled in.
+                    lines: prev.lines.every(isBlankLine) ? [] : prev.lines,
                   }))
                 }
               />
             }
+            productCodesField={
+              <NewProductApplicationProductCodes
+                value={state}
+                onChange={setState}
+                products={lookups.products}
+                reuse={lookups.reuse}
+              />
+            }
+            newCodeField={<NewProductApplicationNewCodeValue />}
             customerField={
               <>
                 <AsyncCombobox<CustomerLookupItem>
@@ -274,14 +290,17 @@ function StaffNewProductApplicationForm({
               </>
             }
           />
-          <div className="mt-6">
-            <NewProductApplicationLines
-              lines={state.lines}
-              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={lookups.brands}
-              errors={errors}
-            />
-          </div>
+          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
+          {(!state.stock_inquiry_id || state.lines.length > 0) && (
+            <div className="mt-6">
+              <NewProductApplicationLines
+                lines={state.lines}
+                onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
+                errors={errors}
+                readOnly={Boolean(state.stock_inquiry_id && applicationId)}
+              />
+            </div>
+          )}
 
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button

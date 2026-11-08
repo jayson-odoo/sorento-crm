@@ -54,6 +54,10 @@ PARAM_VARIABLES = (
     # can also be mapped via ``portal_url`` for templates that reuse the link slot.
     "discontinued_count",
     "discontinued_link",
+    # Product list-price change batch notification (PRODUCT-FIELD-CHANGE-NOTIFY): same
+    # shape as the discontinued pair; ``list_price_link`` is also on ``portal_url``.
+    "list_price_count",
+    "list_price_link",
     # Generic helpers usable by any template: today's date (DD/MM/YYYY, Malaysia) and
     # the CRM base URL. Each use case's service must supply these in context_vars.
     "today_date",
@@ -102,6 +106,13 @@ PARAM_VARIABLES = (
     "idea_number",
     "status_label",
     "track_url",
+    # New Product Application update (``new_product_application_update``): the stock
+    # inquiry it was raised from, the ONE new product code and purchasing's lead time.
+    # ``entity_number`` / ``customer`` / ``project`` / ``product_code`` (the current codes)
+    # are filled from the application by new_product_application_service.template_vars.
+    "inquiry_number",
+    "new_product_code",
+    "lead_time",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message

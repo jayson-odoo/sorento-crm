@@ -14,12 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, require_any_permission, require_permission
 from app.schemas.new_product_application import (
     FeedbackIn,
     AttachmentLinkIn,
     LinkIn,
     NewProductApplicationWrite,
+    PurchasingResponseIn,
     ReasonIn,
 )
 from app.services import new_product_application_service as svc
@@ -28,6 +29,9 @@ from app.services.error_handler import AppException
 from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+
+#: The product page's own view slug: its Lineage tab reads this route.
+PRODUCTS_VIEW = "master_data.products.view"
 
 router = APIRouter()
 
@@ -92,10 +96,42 @@ def prefill(
 @router.get("/products")
 def search_products(
     q: str = Query(""),
-    _user: dict = Depends(require_permission(svc.OPEN_CODE)),
+    # The applicant picks current codes here too (NPA-FROM-SI rule 4), purchasing the new code.
+    _user: dict = Depends(require_any_permission([svc.CREATE, svc.OPEN_CODE])),
     db: Session = Depends(get_db),
 ):
     return svc.search_products(db, q)
+
+
+def _id_list(raw: str) -> list:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()][:20]
+
+
+@router.get("/reuse-suggestions")
+def reuse_suggestions(
+    product_ids: str = Query(""),
+    _user: dict = Depends(
+        require_any_permission([svc.CREATE, svc.VIEW, svc.APPROVE, svc.OPEN_CODE])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 6: codes created before from exactly these current codes (a suggestion).
+    The earlier application's remark only for NPA view-all holders (security review round 3)."""
+    actor = svc.actor_from_slugs(_user["id"], permission_slugs(db, _user["id"]))
+    return svc.reuse_suggestions(db, _id_list(product_ids), full_why=actor.can_view_all)
+
+
+@router.get("/lineage")
+def product_lineage(
+    product_id: str = Query(...),
+    user: dict = Depends(
+        require_any_permission([svc.VIEW, svc.APPROVE, svc.OPEN_CODE, PRODUCTS_VIEW])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 5: a product's lineage. Application links only for NPA viewers."""
+    actor = svc.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+    return svc.lineage(db, product_id, can_view_applications=actor.can_view_all)
 
 
 @router.get("")
@@ -282,6 +318,116 @@ def undo_line(
     db: Session = Depends(get_db),
 ):
     return _line_move(db, user, application_id, line_id, svc.undo_line)
+
+
+@router.post("/{application_id}/new-code/link")
+def link_new_code(
+    application_id: str,
+    payload: LinkIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI: the ONE new product code (owner, mock v3)."""
+    return _move(db, user, application_id, svc.link_new_code, product_id=payload.product_id)
+
+
+@router.post("/{application_id}/new-code/close")
+def close_new_code(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _move(db, user, application_id, svc.close_new_code, reason=payload.reason)
+
+
+@router.post("/{application_id}/new-code/undo")
+def undo_new_code(application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _move(db, user, application_id, svc.undo_new_code)
+
+
+@router.post("/{application_id}/purchasing-reject")
+def purchasing_reject(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 09:30: purchasing's Reject, as on the stock inquiry page."""
+    return _move(db, user, application_id, svc.purchasing_reject, reason=payload.reason)
+
+
+@router.post("/{application_id}/purchasing-response/reply")
+def save_purchasing_response_and_reply(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 15:10: the stock inquiry's "Update & Reply" on the NPA. Saves like Save only,
+    then replies through the linked stock inquiry's conversation on the SI's send path, with the
+    NPA's OWN template use case (owner 8 Nov 17:35: new_product_application_update)."""
+    from app.api.v1.procurement.stock_inquiries import _respond_user_id_from_current_user
+    from app.models.procurement import StockInquiry
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import StockInquiryService
+    from app.services.response_gate import assert_response_write_allowed
+
+    def refuse(message: str, field: str) -> AppException:
+        return AppException(status_code=422, message=message, code="VALIDATION_ERROR", details={"field": field})
+
+    if not (payload.purchasing_response or "").strip():
+        raise refuse("Enter a purchasing response first.", "purchasing_response")
+    si_service = StockInquiryService(db)
+    try:
+        app = _load(db, application_id, for_update=True)
+        actor = _actor(db, user)
+        svc.assert_can_view(app, actor)
+        inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+        if inquiry is None:
+            raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
+        # The SI's own refusals, BEFORE the save and the commit, so a reply that cannot go saves
+        # nothing: its response stage gate (crew answer 8 Nov: same check, same sentence as the
+        # SI's Update & Reply; Save only stays open, as on the SI), then its conversation.
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
+        identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        if not identifier:
+            raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
+        respond_user_id = _respond_user_id_from_current_user(user)
+        message_body = svc.reply_message(db, app)
+        update_text = app.purchasing_response or ""
+        link = svc.portal_url(db, app)
+        template_vars = svc.template_vars(db, app)
+        detail = _done(db, app, event, actor.user_id)
+    except Exception:
+        db.rollback()
+        raise
+    si_service.enqueue_application_update_reply(
+        inquiry,
+        app,
+        identifier=identifier,
+        update_text=update_text,
+        message_body=message_body,
+        portal_url=link,
+        template_vars=template_vars,
+        respond_user_id=respond_user_id,
+        crm_sender_user_id=user.get("id"),
+    )
+    return detail
+
+
+@router.put("/{application_id}/purchasing-response")
+def save_purchasing_response(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov: purchasing's one dialog (outcome, lead time, cost)."""
+    return _move(
+        db, user, application_id, svc.save_purchasing_response, data=payload.model_dump(exclude_unset=True)
+    )
 
 
 @router.put("/{application_id}/feedback")
