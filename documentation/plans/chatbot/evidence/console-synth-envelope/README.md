@@ -10,6 +10,7 @@ Messaging > Chatbot Console. Contact picked from the Contact select, then "MWB24
 | --- | --- | --- |
 | 01-simulated-badge | 1280 | PASS. No 404 toast. The reply bubble wears "simulated contact, no real WhatsApp history" next to `trace`. |
 | 02-simulated-badge | 375 | PASS. Badge wraps under the reply, nothing clipped. |
+| 03-ai-replies-off | 1280 | PASS (crew pass fix 2). Same contact with `chatbot_allowed=false`: branch `ai_not_allowed`, the bubble reads "AI replies are OFF for this contact; live, the bot would not answer." instead of "(no reply)". The switch is not bypassed. |
 
 DB after the pass: every turn for 900000777 is `ingress=console`, `is_test=true`,
 `envelope.synthetic_envelope=true`, no `message.channel`; zero webhook or non-test rows;

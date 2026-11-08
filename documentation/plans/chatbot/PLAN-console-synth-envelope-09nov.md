@@ -27,6 +27,15 @@ message and types a question. Today the console answers 404 `CHATBOT_CONSOLE_NO_
   (`synthetic_envelope`), and the console shows a small badge
   "simulated contact, no real WhatsApp history".
 
+## Crew pass fixes (9 Nov)
+
+- Real history includes the CRM's own respond.io webhook turns (`ingress='respond_webhook'`,
+  `DIRECT_INGRESS`), not only n8n's `webhook`; a direct-ingress contact borrows its turn and
+  gets no badge.
+- A turn stopped by the contact's AI replies switch (`ai_not_allowed`) shows
+  "AI replies are OFF for this contact; live, the bot would not answer." instead of
+  "(no reply)". Owner ruling: no bypass, no "simulate as if AI on" option.
+
 ## Tests (see acceptance criteria)
 
 `console-synth-envelope-acceptance-criteria.md`.
