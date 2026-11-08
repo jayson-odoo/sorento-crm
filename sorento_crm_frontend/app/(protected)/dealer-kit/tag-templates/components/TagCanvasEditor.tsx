@@ -35,17 +35,23 @@ import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
 import {
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  lazy,
+  Suspense,
+  type MutableRefObject,
   type ReactNode,
 } from 'react';
 
 import type Konva from 'konva';
 import { Konva as KonvaGlobal } from 'konva/lib/Global';
 import type {
+  AccessoriesLayerProps,
+  CardElement,
   GroupBinding,
   ImageSource,
   PolygonPoint,
@@ -252,6 +258,25 @@ import {
   accessoryBoxLayout,
   accessoryLineCount,
 } from '@/lib/dealer-kit/accessory-box';
+import {
+  accessoryDesign,
+  accessoryDesignChanged,
+  accessoryEditItems,
+  effectiveBoxProps,
+  designKey,
+  linkCorrectionPatches,
+  type AccessoryDesign,
+  type LayerPropsPatch,
+  applyAccessoryDesign,
+  cardDropped,
+  cardFromLegacy,
+  newCardElement,
+  type CardEditTarget,
+} from '@/lib/dealer-kit/accessory-card';
+import { AccessoryEditOverlay } from './AccessoryEditOverlay';
+import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
+import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateService';
+import { QueryClientContext } from '@tanstack/react-query';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -541,6 +566,20 @@ interface TagCanvasEditorProps {
    * popover renders with no Done button.
    */
   onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>;
+  /**
+   * What editing a box linked to a saved accessories template does. `live` (default, the template
+   * editor): the link stays and the host pushes the design to the template. `detach` (the request
+   * designer): the box is detached first, so a request never edits a template other tags follow.
+   */
+  linkedAccessoryBoxes?: 'live' | 'detach';
+  /**
+   * The host fills this with a function that corrects live accessories boxes (follow the server's
+   * design, or detach) as ONE history step, with no remount, touching only boxes whose design still
+   * equals the one the correction was worked out from.
+   */
+  layerPatchesRef?: MutableRefObject<((patches: LayerPropsPatch[]) => void) | null>;
+  /** Called after a saved template is inserted, with the design that was used (the host's baseline). */
+  onAccessoryTemplateInserted?: (presetId: string, design: AccessoryDesign, updatedAt: string) => void;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -583,6 +622,11 @@ const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
   dimensions: '',
 }));
 
+// Loaded on first use: it carries the saved-template queries, which only a host with a query client has.
+const AccessoryTemplatesBridge = lazy(() =>
+  import('./AccessoryTemplatesBridge').then((m) => ({ default: m.AccessoryTemplatesBridge })),
+);
+
 export function TagCanvasEditor({
   doc,
   onChange,
@@ -599,6 +643,9 @@ export function TagCanvasEditor({
   reviewPins,
   onReviewPinResolve,
   specSheet = false,
+  linkedAccessoryBoxes = 'live',
+  layerPatchesRef,
+  onAccessoryTemplateInserted,
 }: TagCanvasEditorProps) {
   // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
   const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
@@ -1549,6 +1596,326 @@ export function TagCanvasEditor({
     });
   }, []);
 
+  // -- Accessories card editing (PRICETAG-ACCESSORY-DESIGNER) -----------------
+
+  /** The box being edited, which part of it, and the element selected inside. */
+  const [accessoryEdit, setAccessoryEdit] = useState<{
+    layerId: string;
+    target: CardEditTarget;
+    elementId: string | null;
+  } | null>(null);
+  const applyExternalLayerPropsRef = useRef<(patches: LayerPropsPatch[]) => void>(() => {});
+  /** Line counts of the previewed lists, set once `accessoryFits` is computed below. */
+  const accessoryLinesRef = useRef(new Map<string, number>());
+  const [accessoryTemplates, setAccessoryTemplates] = useState<AccessoryTemplateRecord[]>([]);
+  const [saveTemplateRequest, setSaveTemplateRequest] = useState<SaveTemplateRequest | null>(null);
+  // A host with no query client (a bare canvas) simply has no saved templates.
+  const hasQueryClient = Boolean(useContext(QueryClientContext));
+
+  const handleAccessoryTemplates = useCallback((next: AccessoryTemplateRecord[]) => {
+    setAccessoryTemplates((prev) =>
+      prev.length === next.length && prev.every((row, i) => row.id === next[i].id && row.name === next[i].name && row.used_in === next[i].used_in)
+        ? prev
+        : next,
+    );
+  }, []);
+
+  /** Edit one box's props as one history step. */
+  const patchAccessoryProps = useCallback(
+    (layerId: string, fn: (props: AccessoriesLayerProps) => AccessoriesLayerProps) => {
+      setLayers((prev) => {
+        const next = prev.map((l) =>
+          l.id === layerId && l.props.kind === 'accessories' ? { ...l, props: fn(l.props) } : l,
+        );
+        history.pushState(next);
+        return next;
+      });
+    },
+    [history],
+  );
+
+  const enterAccessoryEdit = useCallback(
+    (layerId: string, target: CardEditTarget) => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer || layer.props.kind !== 'accessories') return;
+      const detach = linkedAccessoryBoxes === 'detach' && Boolean(layer.props.presetId);
+      if (layer.props.card && detach) {
+        commit(
+          layers.map((l) => (l.id === layerId ? { ...l, props: { ...l.props, presetId: null } as TagLayerProps } : l)),
+          new Set([layerId]),
+        );
+      } else if (layer.props.card) {
+        setSelectedIds(new Set([layerId]));
+      } else {
+        // A box with no designed card gets one built from its legacy settings: one undo step.
+        const card = cardFromLegacy(
+          layer.props,
+          accessoryLinesRef.current.get(layerId) ?? 2,
+          layer.width_mm,
+        );
+        commit(
+          layers.map((l) =>
+            l.id === layerId
+              ? { ...l, props: { ...l.props, card, ...(detach ? { presetId: null } : {}) } as TagLayerProps }
+              : l,
+          ),
+          new Set([layerId]),
+        );
+      }
+      setAccessoryEdit({ layerId, target, elementId: null });
+    },
+    [layers, commit, linkedAccessoryBoxes],
+  );
+
+  const addAccessoryElement = useCallback(
+    (kind: CardElement['kind']) => {
+      if (!accessoryEdit) return;
+      const layer = layers.find((l) => l.id === accessoryEdit.layerId);
+      if (!layer || layer.props.kind !== 'accessories') return;
+      const { target, layerId } = accessoryEdit;
+      const props = layer.props;
+      const area =
+        target === 'card'
+          ? { w: props.card?.width_mm ?? 30, h: props.card?.height_mm ?? 20 }
+          : { w: Math.max(5, layer.width_mm - 3), h: props.footer?.height_mm ?? 6 };
+      const id = `el-${Math.random().toString(36).slice(2, 9)}`;
+      const element = newCardElement(kind, target, area, id);
+      patchAccessoryProps(layerId, (p) =>
+        target === 'card' && p.card
+          ? { ...p, card: { ...p.card, elements: [...p.card.elements, element] } }
+          : {
+              ...p,
+              footer: {
+                height_mm: 6,
+                ...p.footer,
+                show: true,
+                elements: [...(p.footer?.elements ?? []), element],
+              },
+            },
+      );
+      setAccessoryEdit({ layerId, target, elementId: id });
+    },
+    [accessoryEdit, layers, patchAccessoryProps],
+  );
+
+  const updateAccessoryElement = useCallback(
+    (elementId: string, patch: Partial<CardElement>) => {
+      if (!accessoryEdit) return;
+      const { target, layerId } = accessoryEdit;
+      const apply = (elements: CardElement[]) =>
+        elements.map((el) => (el.id === elementId ? { ...el, ...patch } : el));
+      patchAccessoryProps(layerId, (p) =>
+        target === 'card' && p.card
+          ? { ...p, card: { ...p.card, elements: apply(p.card.elements) } }
+          : p.footer
+            ? { ...p, footer: { ...p.footer, elements: apply(p.footer.elements) } }
+            : p,
+      );
+    },
+    [accessoryEdit, patchAccessoryProps],
+  );
+
+  /** Arrow keys while a card is edited move the selected element, in card millimetres. */
+  const nudgeAccessoryElement = useCallback(
+    (dx: number, dy: number) => {
+      if (!accessoryEdit?.elementId) return;
+      const layer = layers.find((l) => l.id === accessoryEdit.layerId);
+      if (!layer || layer.props.kind !== 'accessories') return;
+      const elements =
+        accessoryEdit.target === 'card' ? layer.props.card?.elements : layer.props.footer?.elements;
+      const element = elements?.find((el) => el.id === accessoryEdit.elementId);
+      if (!element) return;
+      updateAccessoryElement(element.id, {
+        x_mm: Math.round((element.x_mm + dx) * 100) / 100,
+        y_mm: Math.round((element.y_mm + dy) * 100) / 100,
+      });
+    },
+    [accessoryEdit, layers, updateAccessoryElement],
+  );
+
+  const deleteAccessoryElement = useCallback(() => {
+    if (!accessoryEdit?.elementId) return;
+    const { target, layerId, elementId } = accessoryEdit;
+    const keep = (elements: CardElement[]) => elements.filter((el) => el.id !== elementId);
+    patchAccessoryProps(layerId, (p) =>
+      target === 'card' && p.card
+        ? { ...p, card: { ...p.card, elements: keep(p.card.elements) } }
+        : p.footer
+          ? { ...p, footer: { ...p.footer, elements: keep(p.footer.elements) } }
+          : p,
+    );
+    setAccessoryEdit({ layerId, target, elementId: null });
+  }, [accessoryEdit, patchAccessoryProps]);
+
+  // Leaving: Done, Escape, or the selection moving off the box (a click outside it).
+  useEffect(() => {
+    if (!accessoryEdit) return;
+    const edited = layers.find((l) => l.id === accessoryEdit.layerId);
+    // Also over when the box is gone or lost its card (an undo of the conversion).
+    const stillThere =
+      selectedIds.size === 1 &&
+      selectedIds.has(accessoryEdit.layerId) &&
+      edited?.props.kind === 'accessories' &&
+      Boolean(edited.props.card);
+    if (!stillThere) setAccessoryEdit(null);
+  }, [accessoryEdit, selectedIds, layers]);
+
+  /** Reads one template fresh; set by the bridge, which owns the query client. */
+  const templateFetcherRef = useRef<((id: string) => Promise<AccessoryTemplateRecord | null>) | null>(null);
+  const handleTemplateFetcher = useCallback(
+    (fetcher: (id: string) => Promise<AccessoryTemplateRecord | null>) => {
+      templateFetcherRef.current = fetcher;
+    },
+    [],
+  );
+
+  /**
+   * Inserting a saved template: a default box carrying its design, linked by `presetId`. The design is
+   * read fresh first (the menu list may be stale); one that is gone is refused.
+   */
+  const handleInsertAccessoryTemplate = useCallback(
+    async (template: AccessoryTemplateRecord) => {
+      let current: AccessoryTemplateRecord | null = template;
+      if (templateFetcherRef.current) {
+        try {
+          current = await templateFetcherRef.current(template.id);
+        } catch {
+          current = template;
+        }
+      }
+      if (!current) {
+        toast.error('That accessories template no longer exists');
+        return;
+      }
+      // An older box of the same template already on this tag follows the fresh design, so the insert
+      // can never leave a stale box to be pushed over a newer template.
+      const followers = linkCorrectionPatches(layersRef.current, [
+        { kind: 'set', id: current.id, design: current.design },
+      ]);
+      if (followers.length > 0) applyExternalLayerPropsRef.current(followers);
+      addLayer({
+        ...makeBaseLayer(
+          'accessories',
+          ACCESSORY_DEFAULT_BOX_MM.width_mm,
+          ACCESSORY_DEFAULT_BOX_MM.height_mm,
+        ),
+        props: applyAccessoryDesign(defaultAccessoriesProps(), current.design, current.id),
+      });
+      onAccessoryTemplateInserted?.(current.id, current.design, current.updated_at);
+    },
+    [addLayer, makeBaseLayer, onAccessoryTemplateInserted],
+  );
+
+  /**
+   * Host corrections to linked boxes (follow the template, detach): applied only where the box is as the
+   * host last saw it, and with NO undo step. The correction is written into the current state and into
+   * every undo / redo snapshot, so Cmd+Z reverts the user's own edit and never a correction.
+   */
+  const applyExternalLayerProps = useCallback(
+    (patches: LayerPropsPatch[]) => {
+      setLayers((prev) => {
+        // layer id -> [patch, the preset the box is linked to NOW]: a snapshot is amended only where its
+        // box is still linked to that same preset (never relink a snapshot where it was detached).
+        const applied = new Map<string, [LayerPropsPatch, string | null]>();
+        const withDesign = (layer: TagLayer, patch: LayerPropsPatch): TagLayer => ({
+          ...layer,
+          props: applyAccessoryDesign(
+            layer.props as AccessoriesLayerProps,
+            accessoryDesign(patch.props),
+            patch.props.presetId ?? null,
+          ) as TagLayerProps,
+        });
+        const next = prev.map((layer) => {
+          const patch = patches.find((candidate) => candidate.layerId === layer.id);
+          if (!patch || layer.props.kind !== 'accessories') return layer;
+          if (designKey(accessoryDesign(layer.props)) !== patch.expectedKey) return layer;
+          applied.set(layer.id, [patch, layer.props.presetId ?? null]);
+          return withDesign(layer, patch);
+        });
+        if (applied.size === 0) return prev;
+        history.amend((snapshot) =>
+          snapshot.map((layer) => {
+            const hit = applied.get(layer.id);
+            return hit && layer.props.kind === 'accessories' && (layer.props.presetId ?? null) === hit[1]
+              ? withDesign(layer, hit[0])
+              : layer;
+          }),
+        );
+        return next;
+      });
+    },
+    [history],
+  );
+  applyExternalLayerPropsRef.current = applyExternalLayerProps;
+  useEffect(() => {
+    if (!layerPatchesRef) return;
+    layerPatchesRef.current = applyExternalLayerProps;
+    return () => {
+      layerPatchesRef.current = null;
+    };
+  }, [layerPatchesRef, applyExternalLayerProps]);
+
+  const accessoryTemplateOf = useCallback(
+    (layer: TagLayer | null | undefined) => {
+      if (!layer || layer.props.kind !== 'accessories' || !layer.props.presetId) return null;
+      const presetId = layer.props.presetId;
+      const found = accessoryTemplates.find((t) => t.id === presetId);
+      return found ? { name: found.name, usedIn: found.used_in } : null;
+    },
+    [accessoryTemplates],
+  );
+
+  /** Inspector edits of a box: in the request designer a change to a linked box's design detaches it first. */
+  const updateLayerPropsLinked = (id: string, changes: Partial<TagLayerProps>) => {
+    const layer = layers.find((l) => l.id === id);
+    const linked = layer?.props.kind === 'accessories' ? layer.props.presetId : null;
+    // The inspector sends the whole props; only a change that leaves `presetId` as it is is a design edit.
+    const keepsLink = !('presetId' in changes) || (changes as { presetId?: unknown }).presetId === linked;
+    // "Reads from" (subjectSlot / subjectPart) is per box and never links: only a DESIGN change detaches.
+    const designChanged =
+      layer?.props.kind === 'accessories' &&
+      accessoryDesignChanged(layer.props, changes as Partial<AccessoriesLayerProps>);
+    if (linkedAccessoryBoxes === 'detach' && linked && keepsLink && designChanged) {
+      updateLayerProps(id, { ...changes, presetId: null } as Partial<TagLayerProps>);
+    } else {
+      updateLayerProps(id, changes);
+    }
+  };
+
+  /** What the canvas draws for a layer: the box under edit shows its previewed list (samples when it has
+   *  none), card 1 as the editable frame. */
+  const displayFor = (layer: TagLayer) => {
+    const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    if (accessoryEdit?.layerId !== layer.id) return display;
+    // Under edit the box's OWN design is what is edited, never a previewed owner's override.
+    return {
+      ...display,
+      accessories: accessoryEditItems(display?.accessories),
+      accessoryEditing: true,
+      accessoryBoxStyle: null,
+    };
+  };
+  /** "Box style from <combo or product>: <name>" while the previewed owner overrides this box. */
+  const boxStyleNoteOf = (layer: TagLayer | null | undefined): string | null => {
+    if (!layer || layer.props.kind !== 'accessories') return null;
+    const data = dataOf(layer);
+    const style = layerDisplay(layer, data, assetUrls, library.featureIcons)?.accessoryBoxStyle;
+    if (!style || !data) return null;
+    const source =
+      data.kind === 'line'
+        ? (data.line.combo?.name ?? data.line.code)
+        : data.kind === 'product'
+          ? (data.product.combo?.name ?? data.product.code)
+          : '';
+    return `Box style from ${source}: ${style.name}`;
+  };
+  const drawnLayer = (layer: TagLayer): TagLayer => {
+    if (accessoryEdit?.layerId !== layer.id || accessoryEdit.target !== 'footer') return layer;
+    if (layer.props.kind !== 'accessories') return layer;
+    const footer = { height_mm: 6, elements: [], ...layer.props.footer, show: true };
+    return { ...layer, props: { ...layer.props, footer } };
+  };
+
   const handleLayerDoubleClick = useCallback(
     (rawId: string) => {
       const targetId = resolveTarget(rawId);
@@ -1563,6 +1930,11 @@ export function TagCanvasEditor({
         if (embedded?.readOnly) return;
         if (embedded?.onEditField?.(target.id)) return;
         setEditingLayerId(target.id);
+        return;
+      }
+      // An accessories box steps into its card (card rule V1).
+      if (target.props.kind === 'accessories' && !specSheet && !embedded?.readOnly) {
+        enterAccessoryEdit(target.id, 'card');
         return;
       }
       // A polygon enters edit-points mode (S5): select mode (a single click)
@@ -1597,7 +1969,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm, embedded],
+    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit, specSheet],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -2217,7 +2589,9 @@ export function TagCanvasEditor({
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedIds, layers, scale, view]);
+    // `dataOf`: an accessories box closes up around whatever the preview lists, so its selection
+    // frame is measured again whenever the preview data changes (not only when the layers do).
+  }, [selectedIds, layers, scale, view, dataOf]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).
@@ -3167,6 +3541,34 @@ export function TagCanvasEditor({
         setSpaceHeld(true);
         return;
       }
+      // Leaving a card / footer edit comes first: Escape steps out of the box, it does not deselect.
+      if (e.key === 'Escape' && accessoryEdit) {
+        e.preventDefault();
+        setAccessoryEdit(null);
+        return;
+      }
+      // While a card is edited, box-level keys never reach the box: Delete removes the selected
+      // element (or nothing), arrows nudge it, duplicate and cut do nothing.
+      if (accessoryEdit) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          if (accessoryEdit.elementId) deleteAccessoryElement();
+          return;
+        }
+        if (modifier && (e.key === 'd' || e.key === 'D' || e.key === 'x' || e.key === 'X')) {
+          e.preventDefault();
+          return;
+        }
+        const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+          e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+        ];
+        if (arrow) {
+          e.preventDefault();
+          const step = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
+          nudgeAccessoryElement(arrow[0] * step, arrow[1] * step);
+          return;
+        }
+      }
       if (e.key === 'Escape') {
         e.preventDefault();
         // Crop mode (S8) outranks everything else Escape does: it is its
@@ -3207,6 +3609,15 @@ export function TagCanvasEditor({
       // Enter toggles edit-points mode (S5) on the eligible selection -
       // in, if select mode is showing the Transformer's anchors; back out,
       // if the vertex/edge handles are already up.
+      // Enter on a selected accessories box steps into its card.
+      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && !specSheet && selectedIds.size === 1) {
+        const only = layers.find((l) => selectedIds.has(l.id));
+        if (only && only.props.kind === 'accessories') {
+          e.preventDefault();
+          enterAccessoryEdit(only.id, 'card');
+          return;
+        }
+      }
       if (e.key === 'Enter' && cornerHandleLayer && !enterOnButton) {
         e.preventDefault();
         setEditingPointsId(editingPoints ? null : cornerHandleLayer.id);
@@ -3342,6 +3753,12 @@ export function TagCanvasEditor({
     cropEditingLayerId,
     cancelCropMode,
     commitCrop,
+    accessoryEdit,
+    deleteAccessoryElement,
+    nudgeAccessoryElement,
+    enterAccessoryEdit,
+    specSheet,
+    layers,
   ]);
 
   // -- System clipboard (DESIGNER-PASTE) -------------------------------------
@@ -3583,16 +4000,25 @@ export function TagCanvasEditor({
     let dropped = 0;
     for (const layer of layers) {
       if (layer.props.kind !== 'accessories' || layer.visible === false) continue;
-      const items = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.accessories;
+      const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+      const items = display?.accessories;
       if (!items) continue;
       const fit = { count: items.length, lines: accessoryLineCount(items) };
       fits.set(layer.id, fit);
-      dropped += accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines)
-        .dropped;
+      // The previewed owner's box style, when it names one, is what prints (and what can overflow).
+      const props = effectiveBoxProps(layer.props, display?.accessoryBoxStyle);
+      dropped += props.card
+        ? cardDropped(fit.count, props, layer.width_mm, layer.height_mm)
+        : accessoryBoxLayout(fit.count, props, layer.width_mm, layer.height_mm, fit.lines).dropped;
     }
     return { fits, dropped };
   }, [layers, dataOf, assetUrls, library.featureIcons]);
   useAccessoryDropToast(accessoryFits.dropped);
+  useEffect(() => {
+    accessoryLinesRef.current = new Map(
+      Array.from(accessoryFits.fits, ([id, fit]) => [id, fit.lines] as [string, number]),
+    );
+  }, [accessoryFits]);
 
   /**
    * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
@@ -4008,10 +4434,10 @@ export function TagCanvasEditor({
                       .map((layer) => (
                         <KonvaTagLayer
                           key={`${layer.id}-ghost`}
-                          layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
+                          layer={{ ...drawnLayer(withPolygonPreview(layer)), id: `${layer.id}-ghost` }}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
-                          draggable={!handMode}
+                          display={displayFor(layer)}
+                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
                           listening={
                             !handMode &&
                             !(layer.props.kind === 'group' && entered.has(layer.id))
@@ -4048,10 +4474,10 @@ export function TagCanvasEditor({
                       {sortedLayers.map((layer) => (
                         <KonvaTagLayer
                           key={layer.id}
-                          layer={withPolygonPreview(layer)}
+                          layer={drawnLayer(withPolygonPreview(layer))}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
-                          draggable={!handMode}
+                          display={displayFor(layer)}
+                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
                           listening={
                             !handMode &&
                             !(layer.props.kind === 'group' && entered.has(layer.id))
@@ -4147,6 +4573,25 @@ export function TagCanvasEditor({
                         />
                       ),
                     )}
+
+                    {/* Card / footer editing: the elements of card 1 as handles (PRICETAG-ACCESSORY-DESIGNER). */}
+                    {accessoryEdit &&
+                      (() => {
+                        const editedLayer = layers.find((l) => l.id === accessoryEdit.layerId);
+                        return editedLayer && editedLayer.props.kind === 'accessories' ? (
+                          <AccessoryEditOverlay
+                            layer={editedLayer}
+                            target={accessoryEdit.target}
+                            elementId={accessoryEdit.elementId}
+                            count={displayFor(editedLayer)?.accessories?.length}
+                            scale={scale}
+                            onSelectElement={(elementId) =>
+                              setAccessoryEdit((prev) => (prev ? { ...prev, elementId } : prev))
+                            }
+                            onUpdateElement={updateAccessoryElement}
+                          />
+                        ) : null;
+                      })()}
 
                     {/* ONE Transformer, after every layer, for the selection. */}
                     <Transformer
@@ -4779,6 +5224,19 @@ export function TagCanvasEditor({
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
         onAddAccessories={specSheet ? undefined : handleAddAccessories}
+        accessoryTemplates={accessoryTemplates}
+        onInsertAccessoryTemplate={
+          specSheet || !hasQueryClient ? undefined : handleInsertAccessoryTemplate
+        }
+        accessoryEdit={
+          accessoryEdit
+            ? {
+                target: accessoryEdit.target,
+                onAddElement: addAccessoryElement,
+                onDone: () => setAccessoryEdit(null),
+              }
+            : undefined
+        }
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={history.canUndo}
@@ -4797,6 +5255,47 @@ export function TagCanvasEditor({
         selectionIsGroup={selectionIsGroup}
         trailing={toolbarTrailing}
       />
+
+      {hasQueryClient && (
+        <Suspense fallback={null}>
+        <AccessoryTemplatesBridge
+          onTemplates={handleAccessoryTemplates}
+          onFetcher={handleTemplateFetcher}
+          request={saveTemplateRequest}
+          onClose={() => setSaveTemplateRequest(null)}
+          onSaved={(layerId, saved) => {
+            // The box now follows the template it just created.
+            updateLayerProps(layerId, { presetId: saved.id } as Partial<TagLayerProps>);
+            toast.success('Accessories template saved');
+          }}
+        />
+        </Suspense>
+      )}
+
+      {/* Editing a linked box edits the saved template for every tag template using it. */}
+      {accessoryEdit && linkedAccessoryBoxes === 'live' &&
+        (() => {
+          const editedLayer = layers.find((l) => l.id === accessoryEdit.layerId);
+          const linked = accessoryTemplateOf(editedLayer);
+          if (!editedLayer || !linked) return null;
+          return (
+            <div className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-3 py-1 text-xs">
+              <span className="min-w-0 truncate">
+                Linked to {linked.name}: changes here update {linked.usedIn} tag template
+                {linked.usedIn === 1 ? '' : 's'}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 shrink-0 px-2 text-xs"
+                onClick={() => updateLayerProps(editedLayer.id, { presetId: null } as Partial<TagLayerProps>)}
+              >
+                Detach
+              </Button>
+            </div>
+          );
+        })()}
 
       {/* Preview combo (AC-5.1): template editor only - the request designer already
           has its line's combo on the canvas. */}
@@ -4992,7 +5491,7 @@ export function TagCanvasEditor({
             <InspectorPanel
               layer={selectedLayer}
               onUpdate={updateLayer}
-              onUpdateProps={updateLayerProps}
+              onUpdateProps={updateLayerPropsLinked}
               layers={layers}
               resolvedText={selectedResolvedText}
               bindingLabel={selectedBindingLabel}
@@ -5025,6 +5524,22 @@ export function TagCanvasEditor({
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
               accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
+              onEditAccessoryCard={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'card')}
+              onEditAccessoryFooter={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'footer')}
+              onSaveAccessoryTemplate={
+                specSheet || !hasQueryClient
+                  ? undefined
+                  : (id) => {
+                      const target = layers.find((l) => l.id === id);
+                      if (target && target.props.kind === 'accessories') {
+                        setSaveTemplateRequest({ layerId: id, design: accessoryDesign(target.props) });
+                      }
+                    }
+              }
+              accessoryTemplate={accessoryTemplateOf(selectedLayer)}
+              accessoryEdit={accessoryEdit}
+              onUpdateAccessoryElement={updateAccessoryElement}
+              accessoryBoxStyleNote={boxStyleNoteOf(selectedLayer)}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

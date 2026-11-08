@@ -68,6 +68,13 @@ class ProductCombo(Base):
     image_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
+    # PRICETAG-ACCESSORY-DESIGNER S6: this combo's own box style (a saved accessories template); NULL =
+    # the tag template's own box. A combo never inherits its host's.
+    accessory_box_preset_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.accessory_box_preset.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # PRICETAG-COMBO: the combo's own text and prices. A blank price means the
     # tag prints no price at all (never a sum of the parts).
     description = Column(Text, nullable=True)

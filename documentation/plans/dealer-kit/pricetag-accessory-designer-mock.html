@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accessory card designer</title>
+<!--
+  PRICETAG-ACCESSORY-DESIGNER mock v1 (07/11/2026). Card: CARD-pricetag-accessory-designer-07nov.md (D1-D8, A1-A4, P1, F1-F3).
+  Static, no data fetch. Tags drawn at 3 px per mm. Prices other than SRTW5000 LP are placeholders; pictures are line drawings.
+
+  Element -> existing component it reuses (repo paths; NEW only where named):
+  1  Designer shell, toolbar, layers, inspector: sorento_crm_frontend/app/(protected)/dealer-kit/tag-templates/components/
+       TagCanvasEditor.tsx, CanvasToolbar.tsx, LayersPanel.tsx, InspectorPanel.tsx (AccessoriesInspector :1937)
+  2  Step inside the box (double-click / Enter / "Edit card"): the group-enter mechanism, TagCanvasEditor.tsx `entered` :1461,
+       `enterSelectedGroup` :2084, `resolveTarget` :1476. Card elements are ordinary TagLayer objects stored on the box
+       (lib/dealer-kit/tag-template-types.ts TagLayer :444) with NEW card bindings (picture, name, code, spec, remark, price, colours)
+  3  Card Text element: TextLayerProps (tag-template-types.ts :168) + rich runs lib/dealer-kit/rich-text.ts + InlineTextEditor.tsx;
+       inspector = the text layer's TypographyControls in InspectorPanel.tsx
+  4  Card Picture element: ImageLayerProps (:102), fit/crop/mask unchanged; source = the accessory picture (NEW binding)
+  5  Colour dots element: NEW small layer kind 'colour_dots' (dot size, gap, direction, outline) drawn by KonvaTagLayer.tsx and
+       TagSheetRenderer.tsx; colours from ColorPicker components/common/ColorPicker.tsx palette
+  6  Box frame / header on border / badge / direction: unchanged AccessoriesLayerProps (:371) + accessoryBoxLayout
+       lib/dealer-kit/accessory-box.ts :319 (gains the uniform shrink, F1)
+  7  Fit warning: InspectorPanel.tsx :2209 + the canvas warning from PR #2235 + sheet toast lib/dealer-kit/accessory-drops.ts
+  8  "Save as accessories template" dialog: SaveAsSizeDialog.tsx (price-tag-requests/[id]/design/components/) shape;
+       NEW table dealer_kit.accessory_box_preset modelled on TagSizePreset (sorento_crm_backend/app/models/dealer_kit.py :907),
+       NEW service modelled on app/(protected)/dealer-kit/services/tagSizeService.ts
+  9  Accessories menu with saved templates + delete: TagSizeControl.tsx (dealer-kit/components/) "Saved sizes" group and
+       deferred-action delete; SearchableSelect components/common/SearchableSelect.tsx
+  10 Accessory modal: app/(protected)/master-data-management/accessories/components/AccessoryFormDialog.tsx;
+       pictures = AccessoryPictureControl.tsx repeated, ordered with @dnd-kit (as LayersPanel.tsx); spec/remark =
+       components/ui/rich-text-editor.tsx (the combo description editor, ProductCombosSection.tsx)
+  11 Per-use override: app/(protected)/master-data-management/products/[id]/components/AccessoryListField.tsx row pencil
+       opens a Dialog (components/ui/dialog) with the same rich-text-editor and a picture choice
+  12 Print + request preview: KonvaTagLayer.tsx AccessoriesContent :1151, TagSheetRenderer.tsx :1334 (same layout function)
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eef4ff;
+          --warn:#b45309; --warnbg:#fffbeb; --danger:#dc2626; --dangerbg:#fef2f2; --ok:#047857; --okbg:#ecfdf5; --canvas:#e9ecf1; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --dangerbg:#2a1414; --okbg:#0f2a20; --canvas:#0b0d11; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --dangerbg:#2a1414; --okbg:#0f2a20; --canvas:#0b0d11; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:32px 0 8px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1180px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; }
+  .row > * { min-width:0; max-width:100%; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; white-space:nowrap; cursor:pointer; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn.sm { padding:3px 8px; font-size:12px; }
+  .btn.on { background:var(--sel); border-color:var(--primary); color:var(--primary); }
+  .input { border:1px solid var(--line); border-radius:8px; padding:6px 10px; background:var(--card); color:var(--fg); font-size:13px; min-height:32px; display:flex; align-items:center; gap:6px; }
+  .lbl { display:block; font-size:12px; font-weight:500; margin:10px 0 4px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; background:var(--sel); color:var(--primary); white-space:nowrap; }
+  .pill.warn { background:var(--warnbg); color:var(--warn); }
+  .note { border-radius:8px; padding:8px 10px; font-size:12px; }
+  .note.warn { background:var(--warnbg); color:var(--warn); }
+  .note.info { background:var(--sel); color:var(--primary); }
+  /* designer shell */
+  .shell { display:grid; grid-template-columns: 180px minmax(0,1fr) 270px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--card); }
+  @media (max-width: 900px) { .shell { grid-template-columns: minmax(0,1fr); } .shell .side { border:0; border-top:1px solid var(--line); } }
+  .toolbar { grid-column:1/-1; display:flex; gap:6px; flex-wrap:wrap; padding:8px; border-bottom:1px solid var(--line); align-items:center; position:relative; }
+  .side { padding:10px; border-right:1px solid var(--line); font-size:12px; min-width:0; }
+  .side.right { border-right:0; border-left:1px solid var(--line); }
+  .shell > * { min-width:0; }
+  .stage { background:var(--canvas); padding:20px; overflow:auto; min-width:0; display:flex; justify-content:safe center; align-items:flex-start; min-height:380px; }
+  .layer { padding:3px 6px; border-radius:6px; display:flex; gap:6px; align-items:center; }
+  .layer.sel { background:var(--sel); color:var(--primary); }
+  .layer.child { margin-left:14px; }
+  .crumb { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .crumb b { color:var(--fg); }
+  .menu { position:absolute; top:44px; left:8px; z-index:5; width:280px; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.15); padding:6px; font-size:13px; }
+  .menu .grp { font-size:11px; color:var(--muted); padding:6px 8px 2px; text-transform:uppercase; letter-spacing:.04em; }
+  .menu .it { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; }
+  .menu .it:hover, .menu .it.hl { background:var(--sel); }
+  .menu .it .thumb { width:34px; height:26px; border:1px solid var(--line); border-radius:4px; background:#fff; flex:none; }
+  .menu .it .x { margin-left:auto; color:var(--muted); font-size:12px; }
+  /* tag paper (always light, it is print) */
+  .tag { position:relative; background:#fff; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.2); flex:none; font-family: "DM Sans", system-ui, sans-serif; }
+  .tag .t { position:absolute; white-space:nowrap; }
+  .box { position:absolute; }
+  .frame { position:absolute; border:1.2px solid #1f4d36; border-radius:9px; background:#f3f7f4; }
+  .legend { position:absolute; left:50%; transform:translateX(-50%); background:#fff; color:#1f4d36; font-weight:800; padding:0 6px; white-space:nowrap; }
+  .acard { position:absolute; background:#fff; border-radius:5px; overflow:hidden; }
+  .acard .pic { position:absolute; display:flex; align-items:center; justify-content:center; }
+  .acard .pic svg { width:100%; height:100%; }
+  .acard .nm { position:absolute; font-weight:800; white-space:nowrap; }
+  .acard .sp { position:absolute; white-space:nowrap; color:#333; }
+  .dots { position:absolute; display:flex; gap:3px; align-items:center; }
+  .dot { border-radius:50%; border:1px solid #555; flex:none; }
+  .faded { opacity:.45; }
+  .editing { outline:2px solid var(--primary); outline-offset:1px; }
+  .elsel { outline:1.5px dashed var(--primary); }
+  .handle { position:absolute; width:6px; height:6px; background:#fff; border:1px solid var(--primary); }
+  .footer { position:absolute; font-size:6.5px; color:#333; display:flex; gap:4px; align-items:center; white-space:nowrap; }
+  .boxsel { outline:1.5px solid var(--primary); outline-offset:2px; }
+  .warnbadge { position:absolute; right:-4px; bottom:-14px; background:#b45309; color:#fff; font-size:10px; border-radius:6px; padding:1px 6px; white-space:nowrap; }
+  /* dialogs */
+  .dlg { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:16px; width:380px; max-width:100%; box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  .dlg.wide { width:560px; }
+  .dlg .foot { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  .pics { display:flex; gap:8px; flex-wrap:wrap; }
+  .picbox { width:92px; border:1px solid var(--line); border-radius:8px; padding:6px; font-size:11px; text-align:center; position:relative; }
+  .picbox.chosen { border-color:var(--primary); box-shadow:0 0 0 2px var(--sel); }
+  .picbox .img { height:48px; background:#fff; border-radius:6px; display:flex; align-items:center; justify-content:center; }
+  .picbox .img svg { width:44px; height:44px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:50%; border:1px solid #555; vertical-align:-1px; }
+  .rte { border:1px solid var(--line); border-radius:8px; }
+  .rte .bar { display:flex; gap:4px; padding:4px 6px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); flex-wrap:wrap; }
+  .rte .body { padding:8px 10px; font-size:13px; min-height:44px; }
+  .list { border:1px solid var(--line); border-radius:8px; }
+  .li { display:flex; align-items:center; gap:10px; padding:8px 10px; border-top:1px solid var(--line); }
+  .li:first-child { border-top:0; }
+  .li .txt { flex:1; min-width:0; }
+  .li .txt b { display:block; font-size:13px; }
+  .li .txt span { font-size:12px; color:var(--muted); }
+  .grip { color:var(--muted); }
+  table.map { border-collapse:collapse; width:100%; font-size:12px; table-layout:fixed; }
+  table.map td, table.map th { border-top:1px solid var(--line); padding:6px; text-align:left; vertical-align:top; word-break:break-word; }
+  table.map th { color:var(--muted); font-weight:500; border-top:0; }
+  .scroll { overflow-x:auto; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:3px 8px; font-size:12px; }
+  .seg span.on { background:var(--sel); color:var(--primary); }
+</style>
+</head>
+<body>
+<h1>Accessory card layout, designed inside the Tag Template designer</h1>
+<div class="muted">Mock v1, 07/11/2026. Card D1-D8, A1-A4, P1, F1-F3. One designer, one canvas: you step INTO the accessories box like a group. Click the state buttons to walk through it.</div>
+
+<h2>1. Tag Template designer: SRTKS7846, 148 x 105 mm</h2>
+<div class="card">
+  <div class="tabs" id="stateTabs">
+    <button class="btn on" data-s="box">A. Box selected</button>
+    <button class="btn" data-s="inside">B. Inside the card (double-click the box)</button>
+    <button class="btn" data-s="footer">C. Footer note selected</button>
+    <button class="btn" data-s="menu">D. Toolbar Accessories menu</button>
+  </div>
+  <div class="shell">
+    <div class="toolbar">
+      <button class="btn sm">Text</button><button class="btn sm">Image</button><button class="btn sm">Shape</button>
+      <button class="btn sm">Field</button><button class="btn sm">Feature icons</button>
+      <button class="btn sm" id="accBtn">Accessories &#9662;</button>
+      <span id="insideTools" style="display:none; gap:6px; align-items:center;">
+        <span class="muted">| Add to card:</span>
+        <button class="btn sm">Picture</button><button class="btn sm">Text</button><button class="btn sm">Colour dots</button><button class="btn sm">Shape</button>
+        <button class="btn sm">Done (Esc)</button>
+      </span>
+      <div class="menu" id="accMenu" style="display:none">
+        <div class="input" style="margin:2px 2px 6px"><span class="muted">Search accessories templates</span></div>
+        <div class="it"><span class="thumb"></span>Default box</div>
+        <div class="grp">Saved accessories templates</div>
+        <div class="it hl"><span class="thumb" style="border-color:#1f4d36"></span>Dealer Kit included (vertical)<span class="x" title="Rename">&#9998;</span><span class="x" title="Delete">&#128465;</span></div>
+        <div class="it"><span class="thumb" style="border-color:#c2410c"></span>FREE vertical<span class="x">&#9998;</span><span class="x">&#128465;</span></div>
+        <div class="it"><span class="thumb" style="border-color:#1f4d36"></span>Included row (horizontal)<span class="x">&#9998;</span><span class="x">&#128465;</span></div>
+        <div class="muted" style="padding:6px 8px">Delete starts the 10s countdown with Cancel (no confirm). Boxes already using it keep their design.</div>
+      </div>
+    </div>
+    <div class="side">
+      <div style="font-weight:600;margin-bottom:6px">Layers</div>
+      <div class="layer">Photo (main)</div>
+      <div class="layer">Code</div>
+      <div class="layer">Price</div>
+      <div class="layer" id="lyBox">&#9638; Accessories box</div>
+      <div id="lyKids" style="display:none">
+        <div class="layer child">Card: Picture</div>
+        <div class="layer child">Card: Colour dots</div>
+        <div class="layer child" id="lyName">Card: Name</div>
+        <div class="layer child">Card: Spec lines</div>
+        <div class="layer child" id="lyFoot">Footer: note + dots</div>
+      </div>
+      <div class="layer">Feature icons</div>
+    </div>
+    <div class="stage"><div id="designerTag"></div></div>
+    <div class="side right" id="inspector"></div>
+  </div>
+</div>
+
+<h2>2. Save as accessories template (from the box inspector)</h2>
+<div class="row">
+  <div class="dlg">
+    <h3>Save as accessories template</h3>
+    <label class="lbl">Name</label>
+    <div class="input">Dealer Kit included (vertical)</div>
+    <div class="muted" style="margin-top:8px">Saves the frame, header, footer, direction, card layout and fit settings. Not saved: where the box sits on this tag and which list it reads.</div>
+    <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+  <div class="dlg">
+    <h3>Save as accessories template</h3>
+    <label class="lbl">Name</label>
+    <div class="input" style="border-color:var(--danger)">FREE vertical</div>
+    <div style="color:var(--danger);font-size:12px;margin-top:4px">A saved accessories template is already called "FREE vertical".</div>
+    <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+</div>
+
+<h2>3. Using it in another template: "Sink combo 1 tap", box picked from the menu, then tweaked in place</h2>
+<div class="card">
+  <div class="row" style="align-items:flex-start">
+    <div style="background:var(--canvas);padding:16px;border-radius:8px;max-width:100%;overflow-x:auto"><div id="otherTag"></div></div>
+    <div style="flex:1 1 260px;min-width:0">
+      <div class="side right" style="border:1px solid var(--line);border-radius:10px" id="otherInspector"></div>
+    </div>
+  </div>
+  <div class="muted" style="margin-top:8px">Q1 recommendation (a): applying copies the design. When "FREE vertical" is later changed and saved, this box shows the blue note; nothing changes until somebody clicks Update. Published tags never move by surprise.</div>
+</div>
+
+<h2>4. Real cases as they print (one layout function for canvas, request preview and print)</h2>
+<div class="row" id="cases"></div>
+
+<h2>5. Accessory modal (Master Data &gt; Products &gt; Accessories): several pictures with a colour, rich spec, remark</h2>
+<div class="row">
+  <div class="dlg wide">
+    <h3>Edit accessory</h3>
+    <label class="lbl">Name *</label><div class="input">COLANDER</div>
+    <label class="lbl">Pictures (drag to order; the first is the default)</label>
+    <div class="pics">
+      <div class="picbox chosen"><div class="img" data-pic="colander-black"></div><div style="margin-top:4px"><span class="sw" style="background:#1f2937"></span> Black</div><div class="muted">Default</div></div>
+      <div class="picbox"><div class="img" data-pic="colander-grey"></div><div style="margin-top:4px"><span class="sw" style="background:#9ca3af"></span> Grey</div><div class="muted">&nbsp;</div></div>
+      <div class="picbox" style="border-style:dashed;display:flex;align-items:center;justify-content:center;min-height:92px;color:var(--muted)">+ Add picture</div>
+    </div>
+    <div class="muted" style="margin-top:6px">Colour per picture: Black, Grey, Silver, White, Gold, Gunmetal or a custom swatch. The colour dots on a tag are these colours, in this order.</div>
+    <label class="lbl">Spec lines</label>
+    <div class="rte"><div class="bar"><b>B</b><i>I</i><u>U</u><span>Colour</span><span>Align</span></div><div class="body">390x200x140<br>Depth: <b>160mm</b></div></div>
+    <label class="lbl">Remark</label>
+    <div class="rte"><div class="bar"><b>B</b><i>I</i><u>U</u><span>Colour</span></div><div class="body"><span class="muted">Optional, e.g. Colour follows sink</span></div></div>
+    <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+</div>
+
+<h2>6. Per use: the entry on a list (combo SRTWB7065 + SRTWT7202, "Accessories included")</h2>
+<div class="row">
+  <div class="card" style="flex:1 1 340px;max-width:520px">
+    <h3>Accessories included</h3>
+    <div class="list">
+      <div class="li"><span class="grip">&#8942;&#8942;</span><div class="pic" data-pic="waste" style="width:36px;height:36px;border:1px solid var(--line);border-radius:6px;background:#fff"></div>
+        <div class="txt"><b>SRTW5000 <span class="pill">Product</span> <span class="pill warn">Own text here</span></b><span>Pop-up waste 80mm, brass &middot; LP: RM 68</span></div>
+        <button class="btn sm" title="Edit for this list">&#9998;</button><button class="btn sm" title="Remove">&#215;</button></div>
+    </div>
+    <div class="input" style="margin-top:8px"><span class="muted">Add accessory or product...</span></div>
+  </div>
+  <div class="dlg wide">
+    <h3>SRTW5000 on this combo</h3>
+    <div class="muted">Only for this list. Leave blank to use the product's own Price tag description.</div>
+    <label class="lbl">Picture</label>
+    <div class="pics">
+      <div class="picbox chosen"><div class="img" data-pic="waste"></div><div class="muted" style="margin-top:4px">Lead photo</div></div>
+    </div>
+    <label class="lbl">Description on this tag</label>
+    <div class="rte"><div class="bar"><b>B</b><i>I</i><u>U</u><span>Colour</span></div><div class="body">Pop-up waste 80mm, <b>brass</b></div></div>
+    <div class="muted" style="margin-top:4px">Product's own: Popup Waste 80mm (w/o Overflow) Brass</div>
+    <label class="lbl">Remark</label>
+    <div class="rte"><div class="bar"><b>B</b><i>I</i></div><div class="body"><span class="muted">Optional</span></div></div>
+    <div class="foot"><button class="btn">Use product's own</button><button class="btn">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+</div>
+
+<h2>7. Fit: cards shrink together, then whole cards only, never cut (F1-F2)</h2>
+<div class="row" id="fits"></div>
+
+<h2>8. Questions (also in the card)</h2>
+<div class="card">
+  <ol style="margin:0;padding-left:18px">
+    <li><b>Saved template changed:</b> (a) copy on apply + "update this box" note, recommended / (b) live link with Detach / (c) (a) plus "also update the N templates" tick.</li>
+    <li><b>Shrink minimum:</b> (a) 70%, recommended / (b) 50% / (c) no shrink, warn only.</li>
+    <li><b>Which colour picture prints:</b> (a) chosen on the list entry, default first; dots show all, recommended / (b) match product colour (needs product colour first).</li>
+    <li><b>Footer dots:</b> (a) all colours in the box, de-duplicated, recommended / (b) picked by hand.</li>
+    <li><b>Where saved templates are managed:</b> (a) only the designer's Accessories menu, recommended / (b) also a list page like Tag Sizes.</li>
+  </ol>
+</div>
+
+<h2>9. Element to existing component map</h2>
+<div class="card scroll">
+<table class="map">
+  <tr><th style="width:28%">Element</th><th>Reuses (repo path)</th></tr>
+  <tr><td>Designer shell, toolbar, layers, inspector</td><td>sorento_crm_frontend/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx, CanvasToolbar.tsx, LayersPanel.tsx, InspectorPanel.tsx (AccessoriesInspector)</td></tr>
+  <tr><td>Step inside the box, Esc out</td><td>Group enter: TagCanvasEditor.tsx `entered`, `enterSelectedGroup`, `resolveTarget`</td></tr>
+  <tr><td>Card Text / Picture / Shape elements</td><td>Ordinary TagLayer (lib/dealer-kit/tag-template-types.ts) with new card bindings; text = TextLayerProps + lib/dealer-kit/rich-text.ts + InlineTextEditor.tsx; picture = ImageLayerProps</td></tr>
+  <tr><td>Colour dots element</td><td>NEW layer kind 'colour_dots', drawn in KonvaTagLayer.tsx and TagSheetRenderer.tsx; swatches components/common/ColorPicker.tsx</td></tr>
+  <tr><td>Frame, header on border, badge, direction</td><td>AccessoriesLayerProps + accessoryBoxLayout (lib/dealer-kit/accessory-box.ts), gains uniform shrink</td></tr>
+  <tr><td>Fit warning</td><td>InspectorPanel.tsx accessories warning, canvas warning from PR #2235, lib/dealer-kit/accessory-drops.ts toast</td></tr>
+  <tr><td>Save as accessories template dialog</td><td>price-tag-requests/[id]/design/components/SaveAsSizeDialog.tsx; NEW dealer_kit.accessory_box_preset like TagSizePreset (sorento_crm_backend/app/models/dealer_kit.py); NEW service like dealer-kit/services/tagSizeService.ts</td></tr>
+  <tr><td>Accessories menu, saved templates, rename / delete</td><td>dealer-kit/components/TagSizeControl.tsx "Saved sizes" + deferred-action delete; components/common/SearchableSelect.tsx</td></tr>
+  <tr><td>Accessory modal: pictures, spec, remark</td><td>master-data-management/accessories/components/AccessoryFormDialog.tsx, AccessoryPictureControl.tsx (repeated, @dnd-kit order as LayersPanel.tsx), components/ui/rich-text-editor.tsx</td></tr>
+  <tr><td>Per-use override</td><td>master-data-management/products/[id]/components/AccessoryListField.tsx row pencil + components/ui/dialog</td></tr>
+  <tr><td>Print and request preview</td><td>KonvaTagLayer.tsx AccessoriesContent, app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx</td></tr>
+</table>
+</div>
+
+<script>
+(function () {
+  var MM = 3; // px per mm
+  var PICS = {
+    'board': '<svg viewBox="0 0 40 40"><rect x="6" y="9" width="28" height="22" rx="3" fill="#d6b98c" stroke="#7a5b2e"/><circle cx="29" cy="14" r="2" fill="#fff" stroke="#7a5b2e"/></svg>',
+    'colander-black': '<svg viewBox="0 0 40 40"><path d="M6 14h28l-3 16H9z" fill="#1f2937" stroke="#000"/><g fill="#fff"><circle cx="13" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><circle cx="23" cy="20" r="1"/><circle cx="28" cy="20" r="1"/><circle cx="15" cy="25" r="1"/><circle cx="20" cy="25" r="1"/><circle cx="25" cy="25" r="1"/></g></svg>',
+    'colander-grey': '<svg viewBox="0 0 40 40"><path d="M6 14h28l-3 16H9z" fill="#9ca3af" stroke="#4b5563"/><g fill="#fff"><circle cx="13" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><circle cx="23" cy="20" r="1"/><circle cx="28" cy="20" r="1"/><circle cx="15" cy="25" r="1"/><circle cx="20" cy="25" r="1"/><circle cx="25" cy="25" r="1"/></g></svg>',
+    'drainer': '<svg viewBox="0 0 40 40"><rect x="5" y="12" width="30" height="16" rx="2" fill="#1f2937" stroke="#000"/><g stroke="#6b7280"><line x1="10" y1="14" x2="10" y2="26"/><line x1="15" y1="14" x2="15" y2="26"/><line x1="20" y1="14" x2="20" y2="26"/><line x1="25" y1="14" x2="25" y2="26"/><line x1="30" y1="14" x2="30" y2="26"/></g></svg>',
+    'pullout': '<svg viewBox="0 0 40 40"><rect x="8" y="10" width="24" height="20" rx="2" fill="none" stroke="#374151" stroke-width="2"/><line x1="8" y1="17" x2="32" y2="17" stroke="#374151"/><line x1="8" y1="23" x2="32" y2="23" stroke="#374151"/></svg>',
+    'waste': '<svg viewBox="0 0 40 40"><ellipse cx="20" cy="13" rx="11" ry="4" fill="#d4a017" stroke="#7a5b00"/><rect x="16" y="13" width="8" height="18" fill="#c9a227" stroke="#7a5b00"/></svg>',
+    'sink': '<svg viewBox="0 0 80 50"><rect x="2" y="6" width="76" height="38" rx="5" fill="#2b2f36" stroke="#000"/><rect x="8" y="11" width="40" height="28" rx="4" fill="#3d434d"/><rect x="52" y="11" width="21" height="28" rx="3" fill="#3d434d"/><circle cx="28" cy="25" r="2.5" fill="#888"/></svg>',
+    'tap': '<svg viewBox="0 0 40 60"><path d="M18 58V22c0-10 16-12 16-2v4" fill="none" stroke="#333" stroke-width="4"/><rect x="12" y="52" width="16" height="6" fill="#333"/></svg>',
+    'basin': '<svg viewBox="0 0 80 50"><ellipse cx="40" cy="28" rx="34" ry="18" fill="#f3f4f6" stroke="#9ca3af"/><ellipse cx="40" cy="28" rx="26" ry="12" fill="#fff" stroke="#d1d5db"/></svg>'
+  };
+  document.querySelectorAll('[data-pic]').forEach(function (el) { el.innerHTML = PICS[el.getAttribute('data-pic')] || ''; });
+
+  var BLACK = '#1f2937', GREY = '#9ca3af';
+  var SRTKS7846 = [
+    { name: 'CHOPPING BOARD', spec: [], pic: 'board', dots: [] },
+    { name: 'COLANDER', spec: ['390x200x140', 'Depth: <b>160mm</b>'], pic: 'colander-black', dots: [BLACK, GREY] },
+    { name: 'DRAINER', spec: ['390x200x140', 'Depth: 160mm'], pic: 'drainer', dots: [BLACK, GREY] }
+  ];
+
+  // One card layout (design size 54 x 25 mm): picture left with dots under it, name + spec right.
+  function cardHtml(item, w, h, s, opts) {
+    opts = opts || {};
+    var p = function (v) { return (v * s * MM) + 'px'; };
+    var html = '<div class="acard' + (opts.cls ? ' ' + opts.cls : '') + '" style="left:' + opts.x + 'px;top:' + opts.y + 'px;width:' + (w * s * MM) + 'px;height:' + (h * s * MM) + 'px">';
+    html += '<div class="pic' + (opts.sel === 'pic' ? ' elsel' : '') + '" style="left:' + p(1.5) + ';top:' + p(1.5) + ';width:' + p(17) + ';height:' + p(17) + '">' + (PICS[item.pic] || '') + '</div>';
+    if (item.dots.length) {
+      html += '<div class="dots" style="left:' + p(4) + ';top:' + p(19.6) + '">';
+      item.dots.forEach(function (c) { html += '<span class="dot" style="background:' + c + ';width:' + p(3) + ';height:' + p(3) + '"></span>'; });
+      html += '</div>';
+    }
+    html += '<div class="nm' + (opts.sel === 'name' ? ' elsel' : '') + '" style="left:' + p(21) + ';top:' + p(4) + ';font-size:' + p(3.6) + '">' + item.name + '</div>';
+    item.spec.forEach(function (line, i) {
+      html += '<div class="sp" style="left:' + p(21) + ';top:' + p(9.5 + i * 3.6) + ';font-size:' + p(2.8) + '">' + line + '</div>';
+    });
+    if (opts.sel === 'name') {
+      var L = 21 * s * MM, T = 4 * s * MM;
+      html += '<span class="handle" style="left:' + (L - 3) + 'px;top:' + (T - 3) + 'px"></span><span class="handle" style="left:' + (L + 90) + 'px;top:' + (T - 3) + 'px"></span>';
+    }
+    return html + '</div>';
+  }
+
+  // Box: legend header on border, vertical cards, optional footer. Returns html + fit info.
+  function boxHtml(items, o) {
+    var CW = o.cardW || 54, CH = o.cardH || 25, gap = 1.5, headerH = 5, footH = o.footer ? 6 : 0;
+    var avail = o.h - headerH - 2 - footH - 1.5;
+    var need = items.length * CH + (items.length - 1) * gap;
+    var s = Math.min(1, avail / need);
+    var shown = items.length;
+    if (s < 0.7) { s = 0.7; shown = Math.max(0, Math.floor((avail + gap) / (CH * s + gap))); }
+    var html = '<div class="box' + (o.boxSel ? ' boxsel' : '') + '" style="left:' + (o.x * MM) + 'px;top:' + (o.y * MM) + 'px;width:' + (o.w * MM) + 'px;height:' + (o.h * MM) + 'px">';
+    html += '<div class="frame" style="left:0;top:' + (headerH / 2 * MM) + 'px;right:0;bottom:0;border-color:' + (o.color || '#1f4d36') + '"></div>';
+    html += '<div class="legend" style="top:0;font-size:' + (headerH * 0.8 * MM) + 'px;line-height:' + (headerH * MM) + 'px;color:' + (o.color || '#1f4d36') + '">' + o.header + '</div>';
+    var cardW = (o.w - 3) / s; // cards span the inner width at their scale
+    for (var i = 0; i < shown; i++) {
+      var y = (headerH + 1 + i * (CH * s + gap)) * MM;
+      var cls = o.inside ? (i === 0 ? 'editing' : 'faded') : '';
+      html += cardHtml(items[i], cardW, CH, s, { x: 1.5 * MM, y: y, cls: cls, sel: (o.inside && i === 0) ? o.sel : null });
+    }
+    if (o.footer) {
+      var fy = (o.h - footH + 0.5) * MM;
+      html += '<div class="footer' + (o.footSel ? ' elsel' : '') + (o.inside ? ' faded' : '') + '" style="left:' + (2 * MM) + 'px;top:' + fy + 'px">* Accessories Color Follow Kitchen Sink Color <span class="dot" style="background:' + BLACK + ';width:7px;height:7px"></span><span class="dot" style="background:' + GREY + ';width:7px;height:7px"></span></div>';
+    }
+    if (shown < items.length) html += '<div class="warnbadge">' + (items.length - shown) + ' of ' + items.length + ' do not fit</div>';
+    html += '</div>';
+    return { html: html, scale: s, shown: shown };
+  }
+
+  function tagHtml(w, h, body) {
+    return '<div class="tag" style="width:' + (w * MM) + 'px;height:' + (h * MM) + 'px">' + body + '</div>';
+  }
+
+  function sinkTag(o) {
+    var b = '<div class="t" style="left:9px;top:8px;font-weight:800;font-size:22px">SRTKS7846</div>';
+    b += '<div class="t" style="left:9px;top:36px;font-size:11px;color:#555">Granite kitchen sink 2 bowls</div>';
+    b += '<div class="t" style="left:9px;top:60px;width:230px;height:150px">' + PICS.sink + '</div>';
+    b += '<div class="t" style="left:9px;top:250px;font-size:11px;color:#555">LP RM 0,000</div>';
+    b += '<div class="t" style="left:9px;top:266px;font-weight:800;font-size:26px;color:#c2410c">RM 0,000</div>';
+    var box = boxHtml(SRTKS7846, Object.assign({ x: 84, y: 8, w: 60, h: 92, header: 'ACCESSORIES INCLUDED', footer: true }, o || {}));
+    return { html: tagHtml(148, 105, b + box.html), box: box };
+  }
+
+  // ---------- section 1: states ----------
+  var insp = document.getElementById('inspector');
+  var INSPECTORS = {
+    box: function (fit) {
+      return '<div class="crumb"><b>Accessories box</b></div>' +
+        '<label class="lbl">Accessories template</label><div class="input">Dealer Kit included (vertical) &#9662;</div>' +
+        '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn sm">Edit card</button><button class="btn sm">Save as accessories template</button></div>' +
+        '<label class="lbl">Reads from</label><div class="input">This tag\'s list (combo or product) &#9662;</div>' +
+        '<label class="lbl">Direction</label><div class="seg"><span class="on">Vertical</span><span>Horizontal</span></div>' +
+        '<label class="lbl">Header</label><div class="input">ACCESSORIES INCLUDED</div>' +
+        '<div class="muted" style="margin-top:4px">On the border &#10003; &nbsp; Show &#10003; &nbsp; "+" badge &#10007;</div>' +
+        '<label class="lbl">Footer</label><div class="muted">Shown &#10003; (step inside to edit)</div>' +
+        '<label class="lbl">Frame</label><div class="muted">Fill, border, corner radius (unchanged controls)</div>' +
+        '<div class="note info" style="margin-top:10px">3 cards fit at ' + Math.round(fit.scale * 100) + '% of their design size.</div>';
+    },
+    inside: function () {
+      return '<div class="crumb">Accessories box &rsaquo; Card &rsaquo; <b>Name</b></div>' +
+        '<label class="lbl">Shows</label><div class="input">Name &#9662;</div>' +
+        '<div class="muted" style="margin-top:4px">Picture, Name, Code, Spec lines, Remark, Price (LP), Colours, or fixed text</div>' +
+        '<label class="lbl">Font</label><div class="input">DM Sans &#9662;</div>' +
+        '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><span class="input" style="width:60px">10.5</span><button class="btn sm on"><b>B</b></button><button class="btn sm"><i>I</i></button><button class="btn sm"><u>U</u></button><span class="sw" style="background:#111;width:22px;height:22px;border-radius:6px"></span></div>' +
+        '<label class="lbl">Align</label><div class="seg"><span class="on">Left</span><span>Centre</span><span>Right</span></div>' +
+        '<label class="lbl">Position in card (mm)</label><div style="display:flex;gap:6px"><span class="input" style="width:70px">X 21</span><span class="input" style="width:70px">Y 4</span></div>' +
+        '<div class="note info" style="margin-top:10px">Card design size 54 x 25 mm. Every card in this box uses this layout; the faded cards follow as you edit.</div>';
+    },
+    footer: function () {
+      return '<div class="crumb">Accessories box &rsaquo; <b>Footer</b></div>' +
+        '<label class="lbl">Text</label><div class="rte"><div class="bar"><b>B</b><i>I</i><u>U</u><span>Colour</span></div><div class="body" style="font-size:12px">* Accessories Color Follow Kitchen Sink Color</div></div>' +
+        '<label class="lbl">Colour dots</label><div class="input">All colours in this box &#9662;</div>' +
+        '<div class="muted" style="margin-top:4px">Q4 (a): Black, Grey from COLANDER and DRAINER, de-duplicated</div>' +
+        '<label class="lbl">Dot size</label><div class="input" style="width:80px">2.5 mm</div>';
+    },
+    menu: function () { return '<div class="muted">Pick a saved accessories template to add a box with that design, then move and tweak it here.</div>'; }
+  };
+  function setState(s) {
+    document.querySelectorAll('#stateTabs .btn').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-s') === s); });
+    var inside = s === 'inside' || s === 'footer';
+    var t = sinkTag({ boxSel: s === 'box' || s === 'menu', inside: inside, sel: s === 'inside' ? 'name' : null, footSel: s === 'footer' });
+    document.getElementById('designerTag').innerHTML = t.html;
+    if (s === 'footer') document.querySelectorAll('#designerTag .acard').forEach(function (c) { c.classList.add('faded'); c.classList.remove('editing'); });
+    insp.innerHTML = INSPECTORS[s](t.box);
+    document.getElementById('accMenu').style.display = s === 'menu' ? 'block' : 'none';
+    document.getElementById('insideTools').style.display = inside ? 'inline-flex' : 'none';
+    document.getElementById('lyKids').style.display = inside ? 'block' : 'none';
+    document.getElementById('lyBox').classList.toggle('sel', s === 'box' || s === 'menu');
+    document.getElementById('lyName').classList.toggle('sel', s === 'inside');
+    document.getElementById('lyFoot').classList.toggle('sel', s === 'footer');
+  }
+  document.querySelectorAll('#stateTabs .btn').forEach(function (b) { b.addEventListener('click', function () { setState(b.getAttribute('data-s')); }); });
+  document.getElementById('accBtn').addEventListener('click', function () { setState('menu'); });
+  setState('box');
+
+  // ---------- section 3: other template ----------
+  var DRAINERS = [
+    { name: 'DRAINER', spec: ['390x200x140'], pic: 'drainer', dots: [BLACK] },
+    { name: 'PULL OUT DRAINER', spec: [], pic: 'pullout', dots: [] }
+  ];
+  function comboTag(boxSel) {
+    var b = '<div class="t" style="left:9px;top:8px;font-weight:800;font-size:18px">SRTKS7061-BL + TAP</div>';
+    b += '<div class="t" style="left:9px;top:40px;width:190px;height:120px">' + PICS.sink + '</div>';
+    b += '<div class="t" style="left:205px;top:40px;width:40px;height:90px">' + PICS.tap + '</div>';
+    b += '<div class="t" style="left:9px;top:262px;font-weight:800;font-size:24px;color:#c2410c">RM 0,000</div>';
+    var box = boxHtml(DRAINERS, { x: 88, y: 46, w: 56, h: 56, header: 'FREE', color: '#c2410c', boxSel: boxSel });
+    return tagHtml(148, 105, b + box.html);
+  }
+  document.getElementById('otherTag').innerHTML = comboTag(true);
+  document.getElementById('otherInspector').innerHTML =
+    '<div class="crumb"><b>Accessories box</b></div>' +
+    '<label class="lbl">Accessories template</label><div class="input">FREE vertical &#9662;</div>' +
+    '<div class="note info" style="margin-top:8px">"FREE vertical" was changed on 08/11/2026. <button class="btn sm" style="margin-left:4px">Update this box</button></div>' +
+    '<div class="muted" style="margin-top:8px">Moved and made smaller here (56 x 56 mm); position, size and Reads from are this template\'s own.</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm">Edit card</button><button class="btn sm">Save as accessories template</button></div>';
+
+  // ---------- section 4: cases ----------
+  var cases = document.getElementById('cases');
+  function caseCard(title, html, note) {
+    var d = document.createElement('div');
+    d.className = 'card'; d.style.maxWidth = '100%'; d.style.minWidth = '0';
+    d.innerHTML = '<h3>' + title + '</h3><div style="overflow-x:auto">' + html + '</div><div class="muted" style="margin-top:8px">' + note + '</div>';
+    cases.appendChild(d);
+  }
+  var s1 = sinkTag({});
+  caseCard('SRTKS7846, "ACCESSORIES INCLUDED" vertical + footer', s1.html,
+    '3 cards do not fit at their design size, so all shrink to ' + Math.round(s1.box.scale * 100) + '% and print whole (today COLANDER is cut).');
+  var WB = [{ name: 'SRTW5000', spec: ['Pop-up waste 80mm, <b>brass</b>', 'LP: RM 68'], pic: 'waste', dots: [] }];
+  var b2 = '<div class="t" style="left:9px;top:8px;font-weight:800;font-size:18px">SRTWB7065 + SRTWT7202</div>';
+  b2 += '<div class="t" style="left:9px;top:44px;width:200px;height:125px">' + PICS.basin + '</div>';
+  b2 += '<div class="t" style="left:150px;top:30px;width:34px;height:70px">' + PICS.tap + '</div>';
+  b2 += '<div class="t" style="left:9px;top:262px;font-weight:800;font-size:24px;color:#c2410c">RM 0,000</div>';
+  b2 += boxHtml(WB, { x: 76, y: 64, w: 68, h: 34, header: 'FREE', color: '#c2410c' }).html;
+  caseCard('Wash basin combo, "FREE" box with a real product', tagHtml(148, 105, b2),
+    'SRTW5000 is a product entry: code, this combo\'s own description (P1 override), LP: RM 68.');
+  caseCard('Combo + 1 tap, "FREE vertical" saved template', comboTag(false),
+    'Inserted from the Accessories menu into this template, made smaller in place.');
+
+  // ---------- section 7: fits ----------
+  var fits = document.getElementById('fits');
+  function fitCard(title, items, h, note) {
+    var r = boxHtml(items, { x: 2, y: 2, w: 60, h: h, header: 'ACCESSORIES INCLUDED' });
+    var d = document.createElement('div');
+    d.className = 'card'; d.style.flex = '0 1 auto';
+    d.innerHTML = '<h3>' + title + '</h3><div style="position:relative;width:' + (64 * MM) + 'px;height:' + ((h + 8) * MM) + 'px;background:#fff;border-radius:6px">' + r.html + '</div><div class="muted" style="margin-top:8px;max-width:' + (64 * MM) + 'px">' + note + ' Scale ' + Math.round(r.scale * 100) + '%, ' + r.shown + ' of ' + items.length + ' shown.</div>';
+    fits.appendChild(d);
+  }
+  fitCard('Fits at design size', SRTKS7846, 88, 'Nothing changes.');
+  fitCard('Shrinks together', SRTKS7846, 66, 'Pictures and text scale as one.');
+  var FIVE = SRTKS7846.concat([{ name: 'SOAP DISPENSER', spec: ['300ml'], pic: 'waste', dots: [] }, { name: 'BASKET STRAINER', spec: [], pic: 'pullout', dots: [] }]);
+  fitCard('Too many at 70%', FIVE, 66, 'Whole cards only; warning on canvas, inspector, request preview and print toast.');
+})();
+</script>
+</body>
+</html>
