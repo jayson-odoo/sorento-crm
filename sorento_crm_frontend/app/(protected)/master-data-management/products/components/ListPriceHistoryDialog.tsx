@@ -74,7 +74,8 @@ function HistoryGrid({ productId }: { productId: string }) {
             {row.original.changed_at ? formatDateInMalaysia(row.original.changed_at) : ''}
           </span>
         ),
-        size: 110,
+        // A full dd/mm/yyyy plus the edge padding, unclipped at 375 px too.
+        size: 130,
         meta: { headerTitle: 'Date', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -172,13 +173,15 @@ export default function ListPriceHistoryDialog({
   product: ListPriceHistoryProduct | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const title = `List price history${
+    product ? `: ${codeWithName(product.product_code, product.product_name ?? '')}` : ''
+  }`;
   return (
     <Dialog open={!!product} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle className="truncate">
-            List price history
-            {product ? `: ${codeWithName(product.product_code, product.product_name ?? '')}` : ''}
+          <DialogTitle className="truncate" title={title}>
+            {title}
           </DialogTitle>
         </DialogHeader>
         <DialogBody>{product && <HistoryGrid key={product.id} productId={product.id} />}</DialogBody>

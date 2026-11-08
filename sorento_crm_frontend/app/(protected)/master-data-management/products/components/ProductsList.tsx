@@ -697,7 +697,8 @@ const ProductsList = () => {
             </div>
           );
         },
-        size: 140,
+        // Room for a five-figure price AND the history icon without clipping either.
+        size: 170,
         meta: {
           headerTitle: 'List Price',
           skeleton: <Skeleton className="h-4 w-20" />,
