@@ -569,6 +569,13 @@ export default function NewProductApplicationForm({
                 supplier={application?.new_product_facts?.opened_supplier_name}
               />
             }
+            purchasingResponseField={
+              application ? (
+                <InquiryReadValue>
+                  {application.purchasing_response}
+                </InquiryReadValue>
+              ) : undefined
+            }
             costField={
               application && application.lines.length === 0 ? (
                 <InquiryReadValue>

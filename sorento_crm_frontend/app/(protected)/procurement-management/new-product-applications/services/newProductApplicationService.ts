@@ -214,6 +214,18 @@ export async function saveNewProductApplicationPurchasingResponse(
   return read<NewProductApplicationDetail>(res, 'Failed to save the response');
 }
 
+/** The same save, then the response is sent to the contact (Update & Reply). */
+export async function replyNewProductApplicationPurchasingResponse(
+  id: string,
+  data: NewProductApplicationPurchasingResponseWrite,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${BASE}/${at(id)}/purchasing-response/reply`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to send the reply');
+}
+
 /** Lists matches only (dashes, spaces and case ignored); a person picks one. */
 export async function searchNewProductApplicationProducts(
   q: string,

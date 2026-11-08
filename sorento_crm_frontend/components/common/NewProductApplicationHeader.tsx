@@ -36,6 +36,8 @@ export interface NewProductApplicationHeaderProps {
   newCodeField: ReactNode;
   /** COST (MYR) of an application with no product rows; omitted when the table carries the costs. */
   costField?: ReactNode;
+  /** PURCHASING RESPONSE, read-only: the text purchasing saved. */
+  purchasingResponseField?: ReactNode;
   feedback?: { editable: boolean; onSave?: () => void; saving?: boolean };
 }
 
@@ -51,6 +53,7 @@ export function NewProductApplicationHeader({
   productCodesField,
   newCodeField,
   costField,
+  purchasingResponseField,
   feedback,
 }: NewProductApplicationHeaderProps) {
   const patch = (next: Partial<FormState>) => onChange({ ...value, ...next });
@@ -154,6 +157,14 @@ export function NewProductApplicationHeader({
       </InquiryFormTableRow>
       {costField !== undefined && (
         <InquiryFormTableRow label="COST:">{costField}</InquiryFormTableRow>
+      )}
+      {purchasingResponseField !== undefined && (
+        <InquiryFormTableRow
+          label="PURCHASING RESPONSE:"
+          labelClassName="items-start pt-3"
+        >
+          {purchasingResponseField}
+        </InquiryFormTableRow>
       )}
     </ProductInquiryFormLayout>
   );

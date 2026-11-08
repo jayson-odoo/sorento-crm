@@ -39,6 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { PurchasingResponseDialog } from '@/components/common/PurchasingResponseDialog';
 import { NewProductApplicationBanners } from '@/components/common/NewProductApplicationBanners';
 import { RejectOutlineButton } from '@/components/common/RejectOutlineButton';
 import {
@@ -974,131 +975,79 @@ function StaffStockInquiryDetail({
         />
       )}
 
-      <Dialog
+      <PurchasingResponseDialog
         open={editPurchasingResponseOpen}
         onOpenChange={(open) => {
           setEditPurchasingResponseOpen(open);
           if (!open) setResponseAttachmentFiles([]);
         }}
+        response={editPurchasingResponseValue}
+        onResponseChange={setEditPurchasingResponseValue}
+        canReply={Boolean(inquiry.respond_inbox_url && responseWritable)}
+        saving={
+          updateInquiryMutation.isPending ||
+          uploadResponseAttachmentsMutation.isPending
+        }
+        replying={openingReplySheet || updateAndReplyMutation.isPending}
+        replyDisabled={
+          updateInquiryMutation.isPending ||
+          uploadResponseAttachmentsMutation.isPending ||
+          !businessCtasEnabled
+        }
+        replyTitle={lockedCtaTitle}
+        saveGuideTarget="procurement.stock-inquiries.save-response-button"
+        replyGuideTarget="procurement.stock-inquiries.update-and-reply-button"
+        onSave={async () => {
+          const uploaded = await uploadStagedResponseAttachments();
+          if (!uploaded) return;
+          try {
+            await updateInquiryMutation.mutateAsync({
+              id: inquiryId,
+              data: {
+                purchasing_response: editPurchasingResponseValue.trim(),
+                npa_requested: editNpaRequested,
+              },
+            });
+            setEditPurchasingResponseOpen(false);
+          } catch {
+            // toast from mutation
+          }
+        }}
+        onReply={async () => {
+          const uploaded = await uploadStagedResponseAttachments();
+          if (!uploaded) return;
+          setOpeningReplySheet(true);
+          try {
+            await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue, {
+              npaRequested: editNpaRequested,
+            });
+            setEditPurchasingResponseOpen(false);
+          } catch {
+            // toast from mutation
+          } finally {
+            setOpeningReplySheet(false);
+          }
+        }}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit purchasing response</DialogTitle>
-            <DialogDescription>
-              Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="edit-purchasing-response">Purchasing response</Label>
-            <Textarea
-              id="edit-purchasing-response"
-              value={editPurchasingResponseValue}
-              onChange={(e) => setEditPurchasingResponseValue(e.target.value)}
-              placeholder="Response text..."
-              rows={5}
-              className="resize-none"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="edit-npa-requested"
-              checked={editNpaRequested}
-              onCheckedChange={(v) => setEditNpaRequested(v === true)}
-            />
-            <Label htmlFor="edit-npa-requested">
-              Salesperson must create a New Product Application
-            </Label>
-          </div>
-          <div className="space-y-2">
-            <Label>Attachments</Label>
-            <ResponseAttachmentDropzone
-              files={responseAttachmentFiles}
-              onFilesChange={setResponseAttachmentFiles}
-              disabled={uploadResponseAttachmentsMutation.isPending}
-            />
-          </div>
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={closeEditPurchasingResponse}>
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              data-guide-target="procurement.stock-inquiries.save-response-button"
-              // Blank response = nothing to save or send. Disable up front instead
-              // of accepting the click and rejecting it with a toast afterwards.
-              disabled={
-                !editPurchasingResponseValue.trim() ||
-                updateInquiryMutation.isPending ||
-                uploadResponseAttachmentsMutation.isPending
-              }
-              title={
-                !editPurchasingResponseValue.trim()
-                  ? 'Enter a purchasing response first.'
-                  : undefined
-              }
-              onClick={async () => {
-                const uploaded = await uploadStagedResponseAttachments();
-                if (!uploaded) return;
-                try {
-                  await updateInquiryMutation.mutateAsync({
-                    id: inquiryId,
-                    data: {
-                      purchasing_response: editPurchasingResponseValue.trim(),
-                      npa_requested: editNpaRequested,
-                    },
-                  });
-                  setEditPurchasingResponseOpen(false);
-                } catch {
-                  // toast from mutation
-                }
-              }}
-            >
-              {updateInquiryMutation.isPending || uploadResponseAttachmentsMutation.isPending
-                ? 'Saving…'
-                : 'Save only'}
-            </Button>
-            {inquiry.respond_inbox_url && responseWritable && (
-                <Button
-                  variant="primary"
-                  data-guide-target="procurement.stock-inquiries.update-and-reply-button"
-                  disabled={
-                    !editPurchasingResponseValue.trim() ||
-                    updateInquiryMutation.isPending ||
-                    openingReplySheet ||
-                    updateAndReplyMutation.isPending ||
-                    uploadResponseAttachmentsMutation.isPending ||
-                    !businessCtasEnabled
-                  }
-                  title={
-                    !editPurchasingResponseValue.trim()
-                      ? 'Enter a purchasing response first.'
-                      : lockedCtaTitle
-                  }
-                  onClick={async () => {
-                    const uploaded = await uploadStagedResponseAttachments();
-                    if (!uploaded) return;
-                    setOpeningReplySheet(true);
-                    try {
-                      await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue, {
-                        npaRequested: editNpaRequested,
-                      });
-                      setEditPurchasingResponseOpen(false);
-                    } catch {
-                      // toast from mutation
-                    } finally {
-                      setOpeningReplySheet(false);
-                    }
-                  }}
-                >
-                  <Send className="size-4 mr-1" />
-                  {openingReplySheet || updateAndReplyMutation.isPending
-                    ? 'Sending…'
-                    : 'Update & Reply'}
-                </Button>
-              )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="edit-npa-requested"
+            checked={editNpaRequested}
+            onCheckedChange={(v) => setEditNpaRequested(v === true)}
+          />
+          <Label htmlFor="edit-npa-requested">
+            Salesperson must create a New Product Application
+          </Label>
+        </div>
+        <div className="space-y-2">
+          <Label>Attachments</Label>
+          <ResponseAttachmentDropzone
+            files={responseAttachmentFiles}
+            onFilesChange={setResponseAttachmentFiles}
+            disabled={uploadResponseAttachmentsMutation.isPending}
+          />
+        </div>
+      </PurchasingResponseDialog>
 
       {inquiry.status === 'rejected' && (
         <RejectionReasonBanner

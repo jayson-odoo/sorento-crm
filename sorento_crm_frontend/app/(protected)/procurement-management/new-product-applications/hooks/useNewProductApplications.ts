@@ -31,6 +31,7 @@ import {
   closeNewProductApplicationNewCode,
   undoNewProductApplicationNewCode,
   purchasingRejectNewProductApplication,
+  replyNewProductApplicationPurchasingResponse,
   rejectNewProductApplication,
   saveNewProductApplicationPurchasingResponse,
   reviseNewProductApplication,
@@ -297,6 +298,16 @@ export function useNewProductApplicationMutations() {
       purchasingRejectNewProductApplication(id, reason),
     ...move('Failed to reject the application', 'Application rejected'),
   });
+  const purchasingReply = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: NewProductApplicationPurchasingResponseWrite;
+    }) => replyNewProductApplicationPurchasingResponse(id, data),
+    ...move('Failed to send the reply', 'Reply sent'),
+  });
   const purchasingResponse = useMutation({
     mutationFn: ({
       id,
@@ -340,5 +351,6 @@ export function useNewProductApplicationMutations() {
     undoNewCode,
     purchasingResponse,
     purchasingReject,
+    purchasingReply,
   };
 }

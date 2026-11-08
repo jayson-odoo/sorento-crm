@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   link: vi.fn(),
   purchasing: vi.fn(),
   purchasingReject: vi.fn(),
+  purchasingReply: vi.fn(),
   closeCode: vi.fn(),
   undoCode: vi.fn(),
   undoLine: vi.fn(),
@@ -116,6 +117,11 @@ vi.mock('../hooks/useNewProductApplications', () => ({
       },
       undo: { mutate: state.undoLine, mutateAsync: state.undoLine, isPending: false },
       undoNewCode: { mutate: state.undoCode, mutateAsync: state.undoCode, isPending: false },
+      purchasingReply: {
+        mutate: state.purchasingReply,
+        mutateAsync: state.purchasingReply,
+        isPending: false,
+      },
       purchasingReject: {
         mutate: state.purchasingReject,
         mutateAsync: state.purchasingReject,

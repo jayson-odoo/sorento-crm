@@ -589,6 +589,11 @@ function StaffNewProductApplicationDetail({
                       />
                     }
                     newCodeField={<NewCodeResult application={r} />}
+                    purchasingResponseField={
+                      <InquiryReadValue>
+                        {r.purchasing_response}
+                      </InquiryReadValue>
+                    }
                     costField={
                       r.lines.length === 0 ? (
                         <InquiryReadValue>

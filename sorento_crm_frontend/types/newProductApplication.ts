@@ -176,6 +176,10 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   suggestions?: NewProductApplicationSuggestion[];
   /** The ONE new product code purchasing links (an older Not opening reason reads Rejected). */
   new_product_id?: string | null;
+  /** Purchasing's written answer, like the stock inquiry's. */
+  purchasing_response?: string | null;
+  /** Update & Reply is offered (the inquiry's conversation exists and is writable). */
+  can_reply?: boolean;
   /** The code purchasing typed when it is not in the catalogue yet. */
   new_code_text?: string | null;
   /** COST (MYR) of an application with no product rows. */
@@ -202,9 +206,10 @@ export interface NewProductApplicationPage {
   limit: number;
 }
 
-/** PUT /purchasing-response: purchasing's one save. A key left out is unchanged; outcome null clears. */
+/** PUT /purchasing-response: purchasing's one save. A key left out is unchanged; */
 export interface NewProductApplicationPurchasingResponseWrite {
-  outcome?: 'link' | 'new' | null;
+  purchasing_response?: string;
+  outcome?: 'link' | 'new';
   product_id?: string;
   new_code?: string;
   reason?: string;
