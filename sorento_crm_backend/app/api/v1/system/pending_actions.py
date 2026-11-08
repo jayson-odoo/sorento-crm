@@ -197,11 +197,11 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternative.unlink",
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
-    "quotation_certificate.remove",
     "quotation_document.delete",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
+    "certificate_link.remove",
 )
 
 
@@ -432,6 +432,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_alternative.unlink",
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
+    "quotation_certificate.remove",
     "quotation_document.delete",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
