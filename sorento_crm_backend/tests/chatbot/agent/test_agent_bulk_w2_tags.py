@@ -139,11 +139,11 @@ def test_01_the_batch_tool_offers_both_writes_with_the_slug_and_neither_without(
     from app.services.chatbot.agent import batch
 
     w = make_world(db, superadmin=False)
-    enum = batch.schema_for(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
+    enum = batch.batch_tool_schema(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
     assert set(enum) == {GRANT, TAGS}
 
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.schema_for(db, ctx_of(db, own)) is None
+    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
     steps = []
     out = batch.propose(db, ctx_of(db, own), {"write": TAGS, "rows": [row_(fake_phone(), add=["x"])]}, steps,
                         seen_ids=set())
