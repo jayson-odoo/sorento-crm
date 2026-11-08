@@ -1347,3 +1347,25 @@ describe('TargetRecord: a legacy tier-level RM amount on a combined target (owne
     expect(patchHeader.mutateAsync).not.toHaveBeenCalled();
   });
 });
+
+describe('TargetRecord: the Accounts grid fits a full account code (crew pass on 7f14c3d5)', () => {
+  it('gives Code room for "300-D093" at 1280 (it clipped to "300-D0..." at 100 px)', () => {
+    const base = dealerDetail();
+    hooks.useSalesTarget.mockReturnValue({
+      data: dealerDetail({
+        accounts: ((base as { accounts?: Record<string, unknown>[] }).accounts ?? []).map((a, i) => ({
+          ...a,
+          code: i === 0 ? '300-D093' : '300-D094',
+        })),
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    openTab('Accounts');
+    const table = screen.getByRole('group', { name: 'Counted accounts' });
+    const header = within(table).getAllByRole('columnheader').find((h) => h.textContent?.trim() === 'Code') as HTMLElement;
+    expect(parseInt(header.style.width, 10)).toBeGreaterThanOrEqual(120);
+    expect(within(table).getByText('300-D093')).toBeTruthy();
+  });
+});

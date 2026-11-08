@@ -2766,7 +2766,7 @@ function AccountsGrid({
         accessorFn: (r) => r.account?.code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         cell: ({ row }) => row.original.account?.code ?? '',
-        size: 100,
+        size: 120,
         meta: { headerTitle: 'Code' },
       },
       {
@@ -2778,7 +2778,7 @@ function AccountsGrid({
             {row.original.account?.name ?? ''}
           </span>
         ),
-        size: 140,
+        size: 120,
         meta: { headerTitle: 'Customer' },
       },
       {
