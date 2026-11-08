@@ -50,6 +50,7 @@ LOCK_SECONDS = 240
 _RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
 STATEMENT_TIMEOUT_MS = 5000
 RANKING_TIMEOUT_MS = 30000
+FAILED_RANKING_TTL_SECONDS = 30 * 60
 OPEN_MINUTE = 7 * 60
 NIGHT_MINUTE = 22 * 60
 CLOSE_MINUTE = 22 * 60 + 5
@@ -121,10 +122,10 @@ def compute_ranking(db: Session, company_id: str, day: date) -> list:
     code. The heavy query: it runs once per company per day (`ranking_for`), with 30 s allowed."""
     previous = db.execute(sa.text("SHOW statement_timeout")).scalar() or "0"
     db.execute(sa.text(f"SET LOCAL statement_timeout = {RANKING_TIMEOUT_MS}"))
-    try:
-        rows = _dealer_rows(db, company_id, day - timedelta(days=WINDOW_DAYS - 1), day, today=None)
-    finally:
-        db.execute(sa.text("SELECT set_config('statement_timeout', :v, true)"), {"v": str(previous)})
+    rows = _dealer_rows(db, company_id, day - timedelta(days=WINDOW_DAYS - 1), day, today=None)
+    # RELEASE of the caller's savepoint keeps a SET LOCAL, so the success path restores it itself;
+    # a failure rolls the savepoint back, which undoes it.
+    db.execute(sa.text("SELECT set_config('statement_timeout', :v, true)"), {"v": str(previous)})
     ranked = sorted(rows, key=lambda r: (-Decimal(r[3] or 0), r[1] or ""))[:SHOP_LIMIT]
     return [
         {
@@ -135,8 +136,8 @@ def compute_ranking(db: Session, company_id: str, day: date) -> list:
     ]
 
 
-def store_ranking(redis: Any, company_id: str, day: date, ranking: list) -> None:
-    redis.set(_key(company_id, day, "ranking"), _gzip_json(ranking), ex=TTL_SECONDS)
+def store_ranking(redis: Any, company_id: str, day: date, ranking: list, ttl: int = TTL_SECONDS) -> None:
+    redis.set(_key(company_id, day, "ranking"), _gzip_json(ranking), ex=ttl)
 
 
 def load_ranking(redis: Any, company_id: str, day: date) -> Optional[list]:
@@ -145,13 +146,22 @@ def load_ranking(redis: Any, company_id: str, day: date) -> Optional[list]:
 
 
 def ranking_for(db: Session, company_id: str, day: date) -> list:
-    """The day's ranking from Redis, computed and cached when the day's first build finds none."""
+    """The day's ranking from Redis, computed and cached when the day's first build finds none.
+    A failed ranking (the 30 s query timing out) leaves the town with today's figures and stalls
+    only, and an empty ranking is cached for 30 minutes so the next ticks do not rerun it."""
     from app.services.queue_service import redis_conn
 
     ranking = load_ranking(redis_conn, company_id, day)
-    if ranking is None:
-        ranking = compute_ranking(db, company_id, day)
-        store_ranking(redis_conn, company_id, day, ranking)
+    if ranking is not None:
+        return ranking
+    try:
+        with db.begin_nested():
+            ranking = compute_ranking(db, company_id, day)
+    except Exception:  # noqa: BLE001 - the town still shows today without a ranking
+        logger.exception("town ranking failed for company %s", company_id)
+        store_ranking(redis_conn, company_id, day, [], ttl=FAILED_RANKING_TTL_SECONDS)
+        return []
+    store_ranking(redis_conn, company_id, day, ranking)
     return ranking
 
 
@@ -169,22 +179,10 @@ def _shops(db: Session, company_id: str, day: date) -> list:
         out.append({**entry, "kind": "shop", "today_amount": _money(amount), "today_docs": int(docs)})
     ranked_keys = {e["key"] for e in ranking}
     stalls = {k: v for k, v in today.items() if k not in ranked_keys}
-    ninety = dict(
-        db.execute(
-            sa.select(BillingDocument.customer_id, sa.func.sum(inv.signed_amount()))
-            .where(
-                inv.posted(), BillingDocument.company_id == company_id,
-                BillingDocument.customer_id.in_(list(stalls)),
-                BillingDocument.doc_date >= day - timedelta(days=WINDOW_DAYS - 1),
-                BillingDocument.doc_date <= day,
-            )
-            .group_by(BillingDocument.customer_id)
-        ).all()
-    ) if stalls else {}
     for key, (code, name, amount, docs) in sorted(stalls.items(), key=lambda kv: kv[1][0] or ""):
         out.append({
             "key": key, "code": code, "name": name, "account_label": _account_label(name),
-            "kind": "stall", "rank": None, "ninety_day_amount": _money(ninety.get(key)),
+            "kind": "stall", "rank": None, "ninety_day_amount": None,
             "today_amount": _money(amount), "today_docs": int(docs),
         })
     return out

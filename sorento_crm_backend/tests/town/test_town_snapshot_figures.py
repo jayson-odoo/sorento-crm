@@ -210,6 +210,68 @@ def test_ac5_second_build_reads_the_cached_ranking_and_does_not_recompute_it(db,
     assert shop["today_amount"] == "50.00" and shop["today_docs"] == 1
 
 
+def _through_the_five_second_session(db, monkeypatch):
+    """Run the REAL build_snapshot on `_build_session` (the tick's 5 s path), recording
+    `statement_timeout` inside the ranking query and again at the warehouses step."""
+    from contextlib import contextmanager
+
+    from app.services.town import snapshot as town
+
+    @contextmanager
+    def fake_scheduler_session(name="scheduler"):
+        yield db
+
+    monkeypatch.setattr(town, "scheduler_session", fake_scheduler_session)
+    seen: dict = {}
+    real_rows, real_wh = town._dealer_rows, town._warehouses
+
+    def rows(session, company_id, since, until, *, today):
+        if today is None:
+            seen["ranking"] = session.execute(sa.text("show statement_timeout")).scalar_one()
+        return real_rows(session, company_id, since, until, today=today)
+
+    def warehouses(session, company_id):
+        seen["after"] = session.execute(sa.text("show statement_timeout")).scalar_one()
+        return real_wh(session, company_id)
+
+    monkeypatch.setattr(town, "_dealer_rows", rows)
+    monkeypatch.setattr(town, "_warehouses", warehouses)
+    return town, seen
+
+
+def test_ranking_runs_with_30s_and_the_build_returns_to_5s(db, monkeypatch):
+    town, seen = _through_the_five_second_session(db, monkeypatch)
+    dealer_doc(db, cust(db, name="ZZT Timeout Shop"), "10.00", DAY - timedelta(days=1))
+    with town._build_session() as session:
+        town.build_snapshot(session, DEFAULT_COMPANY_ID, DAY, now=NOW)
+    assert seen["ranking"] in ("30s", "30000ms"), seen
+    assert seen["after"] in ("5s", "5000ms"), seen
+
+
+def test_a_failed_ranking_is_logged_cached_briefly_and_the_town_still_builds(db, monkeypatch, caplog):
+    from sqlalchemy.exc import OperationalError
+
+    from app.services.queue_service import redis_conn
+
+    town, seen = _through_the_five_second_session(db, monkeypatch)
+    dealer_doc(db, cust(db, name="ZZT Today Only"), "10.00", DAY)
+
+    def timed_out(session, company_id, day):
+        session.execute(sa.text("SET LOCAL statement_timeout = 30000"))
+        raise OperationalError("select", {}, Exception("canceling statement due to statement timeout"))
+
+    monkeypatch.setattr(town, "compute_ranking", timed_out)
+    with caplog.at_level("ERROR"), town._build_session() as session:
+        snap = town.build_snapshot(session, DEFAULT_COMPANY_ID, DAY, now=NOW)
+    assert not [s for s in snap["shops"] if s["kind"] == "shop"]
+    assert [s["kind"] for s in snap["shops"]] == ["stall"]  # today's figures survive
+    assert snap["today"]["amount"] == "10.00"
+    key = f"town:{DEFAULT_COMPANY_ID}:{DAY.isoformat()}:ranking"
+    assert redis_conn.exists(key) and 0 < redis_conn.ttl(key) <= 1800
+    assert "statement timeout" in caplog.text
+    assert seen["after"] in ("5s", "5000ms"), seen  # the savepoint rollback undid the 30 s
+
+
 def test_ac5_ninety_day_window_includes_day_minus_89_excludes_day_minus_90(db):
     inside = cust(db, name="ZZT Inside")
     outside = cust(db, name="ZZT Outside")
