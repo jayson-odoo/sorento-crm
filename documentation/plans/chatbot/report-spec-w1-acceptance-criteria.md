@@ -2,8 +2,8 @@
 
 Plan: `PLAN-report-spec-w1-8nov.md`. Source: `ARCH-report-engine-7nov.md` 3.0, 3.2 (W1), 3.2.1.
 
-- W1-1: `tests/chatbot/golden/report_turns.jsonl` holds the 78 turns of 4c1b310a as expectation rows, the 3 step-18
-  re-runs on 289da7e5 as expectation rows, and the 78 turns of 2a8e6f7c as seed rows; keys
+- W1-1: `tests/chatbot/golden/report_turns.jsonl` holds the 78 turns of 4c1b310a as expectation rows, the 9 step-18
+  re-run rows (x3 on 289da7e5) as expectation rows (pending crew, dev cap), and the 78 turns of 2a8e6f7c as seed rows; keys
   (head, run, step, turn_id) are unique.
 - W1-2: every row has `held`; a non-null value is one line starting `Held report`, and its JSON equals `held_spec`.
 - W1-3: for every expectation row with a recorded `held`, the engine prints that same line when the run is replayed

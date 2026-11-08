@@ -47,12 +47,8 @@ PROMPTS = {  # md5 -> the pinned text (never edited in place)
 HELD_PREFIX = "Held report"  # turn/context.py HELD_REPORT_PREFIX
 EXPECTATION_HEAD, SEED_HEAD = "4c1b310a", "2a8e6f7c"
 STEPS_PER_RUN, RUNS_PER_HEAD = 26, 3
-STEP18_RERUN = 3  # the step-18 turns re-run on 289da7e5 (crew, plan 3.2.1)
-STEP18_PENDING = (
-    "pending: the step-18 re-run x3 on 289da7e5 (runs r1-r3, head = the main sha replayed) needs live agent turns on "
-    "a dev copy; crew schedules it after the dev agent daily cap resets (8 Nov) and commits it to "
-    "golden/report_turns.recorded.jsonl"
-)
+STEP18_RERUN = 9  # the step-18 sequence (18.1 / 18.2 / 18.4) re-run x3 on 289da7e5, head f3d4789f, runs r1-r3 (crew 8 Nov)
+STEP18_PENDING = "pending crew re-run x3 on 289da7e5 (dev cap)"
 
 ROWS: list[dict[str, Any]] = [json.loads(ln) for ln in CORPUS.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
