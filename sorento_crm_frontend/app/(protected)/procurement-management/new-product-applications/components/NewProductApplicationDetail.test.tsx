@@ -168,6 +168,39 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
   },
 }));
 
+// NPA-FORM-SLA: the SI's handling lock and SLA tab, mocked so each test sets the lock state.
+const lock = vi.hoisted(() => ({
+  enabled: true,
+  input: null as null | Record<string, unknown>,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
+  useHandlingLock: (input: Record<string, unknown>) => {
+    lock.input = input;
+    return {
+      state: lock.enabled ? 'not_escalated' : 'other_holds',
+      businessCtasEnabled: lock.enabled,
+      tracker: lock.enabled ? null : { handled_by_name: 'Purchasing Manager' },
+      banner: null,
+      claim: vi.fn(),
+      takeOver: vi.fn(),
+      release: vi.fn(),
+      refresh: vi.fn(),
+      isMutating: false,
+    };
+  },
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockBanner', () => ({
+  HandlingLockBanner: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockActions', () => ({
+  HandlingLockReleaseMenuItem: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/FormSLATrackingTab', () => ({
+  default: (p: { sourceEntityType: string; sourceEntityId: string }) => (
+    <div data-testid="sla-tab">{`${p.sourceEntityType}:${p.sourceEntityId}`}</div>
+  ),
+}));
+
 import NewProductApplicationDetail from './NewProductApplicationDetail';
 
 function Page() {
@@ -885,5 +918,50 @@ describe('Stock inquiry tab status is a Badge (NPA-FROM-SI)', () => {
     const badge = pill.closest('[data-slot="badge"]');
     expect(badge).not.toBeNull();
     expect(badge!.textContent).toContain('Responded');
+  });
+});
+
+
+describe('NPA-FORM-SLA: the SI\'s SLA tab and handling lock', () => {
+  beforeEach(() => {
+    lock.enabled = true;
+    lock.input = null;
+  });
+
+  it('offers SLA Tracking to a view-all holder and renders the SI tracker tab for this NPA', () => {
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    expect(screen.getByTestId('sla-tab')).toHaveTextContent('new_product_application:a-1');
+    expect(lock.input).toMatchObject({ sourceEntityType: 'new_product_application', enabled: true });
+  });
+
+  it('hides SLA Tracking from an applicant without a view-all slug, and reads no tracker', () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail();
+    render(<Page />);
+    expect(screen.queryByRole('tab', { name: 'SLA Tracking' })).not.toBeInTheDocument();
+    expect(lock.input).toMatchObject({ enabled: false, sourceEntityId: null });
+  });
+
+  it('disables Approve and Reject while another person holds the escalated stage', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    const approve = screen.getByRole('button', { name: 'Approve' });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAttribute('title', 'Being handled by Purchasing Manager - take over to act');
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+  });
+
+  it('disables Edit purchasing response while the purchasing stage is held by someone else', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = detail({ status: 'approved', status_label: 'Approved', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeDisabled();
   });
 });
