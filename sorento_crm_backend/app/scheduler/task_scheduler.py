@@ -635,6 +635,18 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
+def _panel_draft_purge_tick():
+    """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
+    Owns its own DB session; best-effort and never raises."""
+    try:
+        from app.services.chatbot.panel_files import purge_drafts
+
+        with scheduler_session("panel_draft_purge") as db:
+            purge_drafts(db)
+    except Exception as e:
+        logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
+
+
 def _chat_facts_sweep_tick():
     """APScheduler tick: backfill chat analytics facts the live hook missed (CA-1).
     The hook writes a fact as each turn closes and never fails a turn, so a fault leaves a
@@ -896,6 +908,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=24),
         id="ai_trace_sweep",
         name="AI assistant trace retention sweep",
+        replace_existing=True,
+    )
+
+    # AI panel draft files (AGENT-PANEL-COMPOSER P1): hourly, drafts older than 24 hours.
+    scheduler.add_job(
+        _panel_draft_purge_tick,
+        trigger=IntervalTrigger(hours=1),
+        id="panel_draft_purge",
+        name="AI panel draft file purge",
         replace_existing=True,
     )
 

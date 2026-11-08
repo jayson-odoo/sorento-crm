@@ -1036,6 +1036,14 @@ def _fetch_catalog() -> dict:
     )
 
 
+def agent_provider_name(db) -> str:
+    """The provider the agent will call (`gemini` unless an admin picked another), without its key."""
+    from app.services import ai_prompt_registry
+
+    name, _model = ai_prompt_registry.agent_model(db, PROMPT_KEY)
+    return name or DEFAULT_PROVIDER
+
+
 def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
     """(provider client, provider name, model, reasoning effort). Raises _AgentUnavailable."""
     from app.models.ai_assistant import AIAssistantConfig
@@ -1249,8 +1257,11 @@ def run_agent_turn(
     is_test: bool = True,
     context_before: str = "",
     context_after: str = "",
+    images: list | None = None,
+    files: list[dict] | None = None,
 ) -> AgentTurnResult:
-    """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
+    """`images` ride every model call of the turn but the history summary (the panel's pictures and
+    PDFs); `files` is what the turn read, recorded on its envelope. `is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
     operator behind it, its rate limit keys on the contact.
 
     `context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
@@ -1264,7 +1275,7 @@ def run_agent_turn(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
-            context_after=context_after,
+            context_after=context_after, images=images, files=files,
         )
 
 
@@ -1336,7 +1347,7 @@ def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    is_test=True, context_before="", context_after="",
+    is_test=True, context_before="", context_after="", images=None, files=None,
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -1355,6 +1366,8 @@ def _run(
         envelope["operator_user_id"] = str(operator_user_id)
     if staff_principal.current() is not None:
         envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
+    if files:
+        envelope["files"] = list(files)  # what the turn read, for the audit
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
@@ -1405,8 +1418,9 @@ def _run(
             raise TimeoutError("the turn ran out of time")
         started = clock()
         try:
+            extra = {"images": images} if images and kind != "compaction" else {}
             result = send(
-                messages, tools=tools, model=model, timeout=timeout,
+                messages, tools=tools, model=model, timeout=timeout, **extra,
                 # The summary of older turns is a side call: it neither thinks nor shows thoughts.
                 reasoning_effort=None if kind == "compaction" else effort,
                 include_thoughts=kind != "compaction",

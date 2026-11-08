@@ -628,8 +628,13 @@ def create_response_attachment(
     content_type: Optional[str],
     uploaded_by: Optional[str],
     commit: bool = True,
+    attachment_type_code: str = RESPONSE_ATTACHMENT_TYPE_CODE,
+    key_prefix: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upload + link a staff response attachment (``response_attachment`` type, D9).
+
+    ``attachment_type_code`` and ``key_prefix`` let another staff upload surface (the AI panel's
+    drafts) reuse these steps under its own type and storage folder.
 
     Mirrors the portal upload path (app/api/v1/public/portal.py::portal_upload_attachment)
     but scoped to its own attachment type so staff and contact uploads never
@@ -638,7 +643,7 @@ def create_response_attachment(
     shape shared by the stock-inquiry and complaint response-attachment routes.
     """
     service = EntityAttachmentService(db)
-    attachment_type = service.get_attachment_type_by_code(RESPONSE_ATTACHMENT_TYPE_CODE)
+    attachment_type = service.get_attachment_type_by_code(attachment_type_code)
 
     # `attachments.uploaded_by` / `entity_attachment_links.created_by` are UUID
     # columns while `users.id` is a String, and this route also accepts an API-key
@@ -656,7 +661,8 @@ def create_response_attachment(
     service.check_quota(attachment_type, entity_type, entity_id, incoming_size, extension)
 
     safe_ext = f".{extension}" if extension else ""
-    key = f"response_attachments/{entity_type}/{entity_id}/{uuid.uuid4()}{safe_ext}"
+    folder = key_prefix or f"response_attachments/{entity_type}/{entity_id}"
+    key = f"{folder}/{uuid.uuid4()}{safe_ext}"
 
     from app.services.storage_router import default_provider, get_backend
 
@@ -683,7 +689,7 @@ def create_response_attachment(
         file_url=key,
         file_name=filename or os.path.basename(key),
         file_size_bytes=incoming_size,
-        attachment_type_code=RESPONSE_ATTACHMENT_TYPE_CODE,
+        attachment_type_code=attachment_type_code,
         created_by=uploader_id,
         thumbnail_path=thumbnail_path,
         storage_provider=provider,
