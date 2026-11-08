@@ -82,13 +82,77 @@ def test_a_row_the_model_does_send_again_is_rechecked_not_duplicated(db):
 
 def test_a_new_table_with_nothing_waiting_before_it_inherits_no_rows(db):
     w, f, h, (pf, ph, pr), _ = picker_world(db)
-    say(db, w, [tag(row_(pr.phone_number, names=[NO_SUCH]), 1)], "grant this one")
+    say(db, w, [tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], "grant this one")
 
     other = dealer(db, w)
     r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], "now grant this one")
 
     assert r2.reply_text.startswith("Rows from your table: 1 ready to confirm.")
     assert NO_SUCH not in r2.reply_text
+
+
+def test_an_unrelated_table_after_waiting_rows_inherits_no_rows(db):
+    """Rows waited, then the user sent a different list instead of a pick: none of its rows was waiting."""
+    w, f, h, (pf, ph, pr) = _first_table(db)
+
+    other = dealer(db, w)
+    r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], "actually just this one")
+
+    assert r2.reply_text.startswith("Rows from your table: 1 ready to confirm.")
+    assert NO_SUCH not in r2.reply_text
+
+
+def test_another_write_after_waiting_rows_inherits_no_rows(db):
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import numbered, stem, tag_
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import row_ as tag_row
+    from tests.chatbot.agent.test_agent_bulk_w2_tags import say as tag_say
+
+    w, f, h, (pf, ph, pr) = _first_table(db)
+    office = tag_(db, f"{stem()} Office Staff")
+
+    # The same phone as waiting row 1, but a tags table: another request.
+    r2 = tag_say(db, w, [numbered(tag_row(pf.phone_number, add=[office.name]), 1)], "tag this person")
+
+    assert NO_SUCH not in r2.reply_text
+    assert "No customer named" not in r2.reply_text
+
+
+def test_a_renumbered_follow_up_still_keeps_the_not_changed_row(db):
+    """Row 1 is not changed, rows 2 and 3 wait. The model sends the two picks with no row number, so they fall back
+    to positions 1 and 2: the earlier row 1 is matched by its phone, not by its number, and still listed."""
+    w, f, h, (pf, ph, pr), _ = picker_world(db)
+    first = [
+        tag(row_(pr.phone_number, names=[NO_SUCH]), 1),
+        tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 2),
+        tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 3),
+    ]
+    say(db, w, first, "grant access to these ppl")
+
+    picked = [
+        row_(pf.phone_number, companies=["SRT"], codes=[f[0].customer_code]),
+        row_(ph.phone_number, companies=["MCH"], codes=[h[0].customer_code]),
+    ]
+    r2 = say(db, w, picked, f"row 2: {f[0].customer_code}, row 3: {h[0].customer_code}")
+
+    assert r2.reply_text.startswith("Rows from your table: 2 ready to confirm, 1 not changed.")
+    assert NO_SUCH in r2.reply_text.split("Not changed:", 1)[1]
+
+
+def test_the_result_counts_include_the_carried_row(db):
+    from app.services.chatbot.agent import batch
+    from tests.chatbot.agent.test_agent_bulk_grant import ctx_of
+
+    w, f, h, (pf, ph, pr) = _first_table(db)
+    previous = stored(db, say(db, w, [tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1),
+                                      tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 2),
+                                      tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], "again"))
+    table = {"write": previous["batch_write"], "waiting": previous["batch_waiting"], "skipped": previous["batch_skipped"]}
+    rows = [tag(row_(pf.phone_number, companies=["SRT"], codes=[f[0].customer_code]), 1)]
+    out = batch.propose(db, ctx_of(db, w), {"write": GRANT, "rows": rows}, [], seen_ids=set(),
+                        user_text=f"row 1: {f[0].customer_code}", previous_waiting=table["waiting"], previous=table)
+
+    assert out.data["rows_total"] == 2 and out.data["rows_skipped"] == 1 and out.data["rows_proposed"] == 1
+    assert [s["row"] for s in out.data["skipped"]] == [3]
 
 
 def test_the_tool_asks_for_every_row_of_the_current_request(db):

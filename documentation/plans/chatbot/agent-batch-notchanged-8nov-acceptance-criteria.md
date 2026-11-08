@@ -4,7 +4,8 @@
   model sends only rows 1 and 2, the reply shows row 3 under "Not changed:" with its reason, and the first line
   reads "Rows from your table: 2 ready to confirm, 1 not changed."
 - AC-2: The Confirm card holds only the 2 ready rows; nothing is written before Confirm.
-- AC-3: A new table sent when no earlier table turn left rows waiting carries no rows from earlier turns.
+- AC-3: A new table carries no rows from earlier turns: when no earlier table turn left rows waiting, when none of
+  its rows is a waiting row, or when it is another write (a tags table after a grant table).
 - AC-4: The batch tool description asks for every row of the current request (ready, waiting and not changed).
 - AC-5: The same holds for the tags write: a 5-row tags table, row 3 waiting, rows 4-5 not changed; the pick of row
   3 keeps rows 4 (Already tagged) and 5 (No tag named ...) under "Not changed:".

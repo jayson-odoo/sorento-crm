@@ -171,14 +171,14 @@ def propose_rows(
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
         if key is not None and key in keys:
-            skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
+            skipped.append({"row": n, "key": key, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
             unlisted = _not_listed(args, key, previous_waiting or [], user_text) or _closed_reason(
                 write, args, key, closed or {}, user_text
             )
             if unlisted:
-                skipped.append({"row": n, "reason": unlisted, "cells": _cells(definition, args, None)})
+                skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
         out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
         if step is None:
@@ -189,7 +189,7 @@ def propose_rows(
                     keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
-            skipped.append({"row": n, "reason": reason, "cells": _cells(definition, args, None)})
+            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None)})
             continue
         if key is not None:
             keys[key] = n
@@ -198,21 +198,45 @@ def propose_rows(
     return steps, skipped, waiting
 
 
+def _sent_keys(definition: writes.WriteDef, rows: list) -> set:
+    """The batch keys (normalised phones) of the rows this call sent; rows without one are left out."""
+    if definition.batch_key is None:
+        return set()
+    out = set()
+    for r in rows:
+        if isinstance(r, dict):
+            key = definition.batch_key({k: v for k, v in r.items() if k != "row"})
+            if key is not None:
+                out.add(key)
+    return out
+
+
 def carried_skips(
-    steps: list[dict], skipped: list[dict], waiting: list[dict],
-    previous_waiting: list[dict] | None, previous_skipped: list[dict] | None,
+    write: str, sent_keys: set, steps: list[dict], skipped: list[dict], waiting: list[dict],
+    previous: dict | None,
 ) -> list[dict]:
-    """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on the
-    pick follow-up, i.e. that turn left rows waiting: the current request is still that table, so its not-changed
-    rows stay listed with their earlier reason, whatever rows the model chose to send. A new table inherits none."""
-    if not previous_waiting or not previous_skipped:
+    """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on that
+    table's pick follow-up: the same write, and at least one row of this call is a row that turn left waiting. The
+    current request is then still that table, so its not-changed rows stay listed with their earlier reason,
+    whatever rows the model chose to send. A new table, or another write, inherits none. A row this call sent
+    (same phone, or same row number when the row has no phone) is never carried: it was checked again."""
+    previous = previous or {}
+    earlier = previous.get("skipped") or []
+    if not earlier or previous.get("write") != write:
         return []
-    sent = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
-    return [
-        {"row": s["row"], "reason": s["reason"], "cells": dict(s.get("cells") or {})}
-        for s in previous_skipped
-        if isinstance(s, dict) and s.get("row") not in sent and s.get("reason")
-    ]
+    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
+    if not (waiting_keys & sent_keys):
+        return []
+    sent_rows = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
+    out = []
+    for s in earlier:
+        if not isinstance(s, dict) or not s.get("reason"):
+            continue
+        key = s.get("key")
+        if (key in sent_keys) if key is not None else (s.get("row") in sent_rows):
+            continue
+        out.append({"row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {})})
+    return out
 
 
 def propose(
@@ -221,7 +245,7 @@ def propose(
     user_text: str = "",
     previous_waiting: list[dict] | None = None,
     closed: dict | None = None,
-    previous_skipped: list[dict] | None = None,
+    previous: dict | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -249,7 +273,8 @@ def propose(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed,
     )
-    carried = carried_skips(new_steps, skipped, waiting, previous_waiting, previous_skipped)
+    # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting).
+    carried = carried_skips(write, _sent_keys(definition, rows), new_steps, skipped, waiting, previous)
     skipped += carried
     steps[:] = new_steps
     if skipped_out is not None:

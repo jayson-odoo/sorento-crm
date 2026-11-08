@@ -14,7 +14,7 @@ the CURRENT request" reads to the model as "drop the rows that were not changed"
 
 1. Code, deterministic: a table turn stores its not-changed rows (`batch_skipped`: row, reason, cells) next to
    `batch_waiting` on the turn response (`loop.py`). On the pick follow-up (the newest earlier table turn left rows
-   waiting), `batch.propose` puts back every not-changed row of that turn whose row number the model did not send,
+   waiting, this call is the same write (`batch_write`) and at least one row it sends is a waiting row by phone), `batch.propose` puts back every not-changed row of that turn whose phone (or, with no phone, row number) the model did not send,
    with its earlier reason. The model never decides whether such a row is shown.
    The guard sits in `batch.propose`, so it covers every batchable write: grants (P5 run 1) and tags (#2247 S2,
    `row 3: Retail Salesperson` dropped rows 4-5 in 2 of 3 runs).
