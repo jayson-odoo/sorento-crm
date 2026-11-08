@@ -651,3 +651,25 @@ def test_r1_a_user_who_may_not_list_contacts_gets_no_tag_candidates(db):
     assert steps == [] and waiting == []
     reason = reason_of(skipped, 1)
     assert reason == 'No tag named "salesperson".' and "Retail" not in reason
+
+
+# ------------------------------------------------------------------ after #2250: decided tag rows stay closed
+
+
+def test_r2_a_cancelled_tag_card_does_not_bring_its_rows_back_on_the_next_table(db):
+    from app.services.chatbot.agent import actions, batch
+
+    w = make_world(db)
+    t = tag_(db, f"{stem()} Office Staff")
+    a, b, c = dealer(db, w), dealer(db, w), dealer(db, w)
+    first = say(db, w, [numbered(row_(a.phone_number, add=[t.name]), 1), numbered(row_(b.phone_number, add=[t.name]), 2)],
+                "tag these two")
+    actions.cancel(db, w.respond_id, first.pending_action["id"])
+
+    rows = [numbered(row_(x.phone_number, add=[t.name]), n) for n, x in enumerate((a, b, c), 1)]
+    second = say(db, w, rows, "and tag the third one too")
+
+    step_rows = [s["row"] for s in action_rows(db, w.respond_id)[-1].steps]
+    assert step_rows == [3]
+    assert second.reply_text.count(batch.CLOSED_CANCELLED) == 2
+    assert held(db, a) == [] and held(db, b) == [] and held(db, c) == []
