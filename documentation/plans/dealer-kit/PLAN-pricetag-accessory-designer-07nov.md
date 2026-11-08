@@ -245,3 +245,30 @@ value. Tests must prove it on the SAVED and reloaded layout (the bug that lost t
     keeping the box's position, size and "Reads from". The editor canvas shows the override too when previewing that
     product / combo, with an inspector note "Box style from <product or combo>: <name>".
 - Deleting a saved accessories template clears the overrides (SET NULL); those tags fall back to the template's box.
+
+## S7 Pictures and colours are independent (owner hand test FAIL, 08/11/2026 ~09:30)
+
+Owner: "you tie the picture to the colour, I don't really want this coupling though, it can be same picture, only 1
+picture, but the dots there are two colour, and the custom colour picker must be like the colour picker instead of need
+me type in". Rule: an accessory has TWO independent ordered lists.
+
+- **Pictures**: 1..n images, no colour on them (the picture UI loses its colour select; `accessory_images.colour_name`
+  / `colour_hex` stay in the DB, unread, additive).
+- **Colours**: 0..n entries `{name (optional, max 40), hex (#rrggbb)}`, max 12, ordered, no duplicate hex per
+  accessory. The card's colour dots = this list (one dot per colour), whatever the pictures.
+- Migration `ptag_0019_acc_colours` (additive, idempotent): table `accessory_colours` (`id`, `accessory_id` FK
+  CASCADE, `name` VARCHAR(40) NULL, `hex` VARCHAR(7) NOT NULL CHECK `^#[0-9a-fA-F]{6}$`, `sort_order`, `created_at`;
+  unique `(accessory_id, lower(hex))`); data step copies each accessory's picture colours (distinct hex, in picture
+  order, name kept) into it, skipping any already there.
+- API (`/api/v1/master-data`, products view / edit): `AccessoryOut.colours: [{id, name, hex}]`;
+  `PUT /accessories/{id}/colours {colours: [{name?, hex}]}` replaces the ordered list (422 bad hex, more than 12,
+  duplicate hex; 404 other company). The picture PATCH no longer takes colour fields (ignored if sent).
+- Tag payload: `TagAccessory.colours` = the colours list (`{name, hex}`), no longer derived from pictures; `images[]`
+  keep `colour_name/colour_hex` keys as null for older readers. Pins unchanged (a pin made before keeps what it froze).
+- Per product / combo overrides: the entry's `image_id` picks a picture only; nothing referenced picture colours, so no
+  override change. Box style unaffected.
+- UI (Master Data > Accessories modal): a "Colours" section under Pictures: rows of [colour swatch button opening
+  `components/common/ColorPicker.tsx` (the tag designer's picker: spectrum, hue, eyedropper, swatches)] + name input
+  (placeholder from a preset when the hex matches Black #1f2937 / Grey #9ca3af / Silver #c0c0c0 / White #ffffff /
+  Gold #d4af37 / Gunmetal #2c3539) + remove; "Add colour" adds a row (default Black); drag to order; saved with the
+  dialog's Save. No typed-hex-only control anywhere.
