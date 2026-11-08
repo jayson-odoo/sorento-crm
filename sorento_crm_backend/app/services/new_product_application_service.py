@@ -40,6 +40,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
 from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
+from app.services.response_gate import is_response_status_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -1623,8 +1624,11 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "lead_time": app.lead_time,
         "cost_price": _money(app.cost_price),
         "purchasing_response": app.purchasing_response,
-        # "Update & Reply" goes through the linked stock inquiry's conversation, as the SI's does.
-        "can_reply": bool(not portal and inquiry_inbox),
+        # "Update & Reply" goes through the linked stock inquiry's conversation, as the SI's does,
+        # and only while the SI takes a response (its own page's rule: inbox and response stage).
+        "can_reply": bool(
+            not portal and inquiry_inbox and is_response_status_allowed("stock_inquiry", inquiry[2])
+        ),
         "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
         "feedback_at": _iso(app.feedback_at),
         "decided_at": _iso(app.decided_at),

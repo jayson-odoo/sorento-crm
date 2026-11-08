@@ -371,6 +371,7 @@ def save_purchasing_response_and_reply(
     from app.models.procurement import StockInquiry
     from app.services.error_handler import AppException
     from app.services.procurement_service import StockInquiryService
+    from app.services.response_gate import assert_response_write_allowed
 
     def refuse(message: str, field: str) -> AppException:
         return AppException(status_code=422, message=message, code="VALIDATION_ERROR", details={"field": field})
@@ -382,11 +383,14 @@ def save_purchasing_response_and_reply(
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
-        event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
         inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
         if inquiry is None:
             raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
-        # The SI's own refusal, BEFORE the commit, so a reply that cannot go saves nothing.
+        # The SI's own refusals, BEFORE the save and the commit, so a reply that cannot go saves
+        # nothing: its response stage gate (crew answer 8 Nov: same check, same sentence as the
+        # SI's Update & Reply; Save only stays open, as on the SI), then its conversation.
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
         identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
         if not identifier:
             raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")

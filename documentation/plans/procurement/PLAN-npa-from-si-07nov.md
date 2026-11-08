@@ -125,3 +125,7 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
 - `new_product_applications.project_name` is TEXT, as the SI's (SI26-0139 is 586 characters): one widening statement
   in the unmerged `npasi_0001_lineage`, never narrowed on downgrade. The detail's PROJECT clamps to two lines with
   the full name behind the eye button (`TruncatedTextCell`).
+- Crew answer on a36de9009 (same component as the SI): the NPA reply refuses outside the SI's response stage with
+  the SI's own guard (`response_gate.assert_response_write_allowed("stock_inquiry", ...)`, same sentence), before the
+  save, so nothing is saved or queued; `can_reply` follows the SI page's rule (inbox AND response stage), so the
+  button is not drawn on a closed SI. Save only stays allowed, as on the SI.

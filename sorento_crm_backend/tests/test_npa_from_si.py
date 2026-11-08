@@ -829,6 +829,52 @@ def test_the_sis_own_update_and_reply_goes_through_the_shared_composer(world, re
     assert len(reply_spy) == 1
 
 
+def _closed_si_refusal(world, monkeypatch):
+    """The SI's own Update & Reply on a closed inquiry: its 422 sentence."""
+    from app.schemas.procurement import StockInquiryUpdate
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import StockInquiryService
+
+    with pytest.raises(AppException) as refused:
+        StockInquiryService(world.db).update_inquiry_and_reply(
+            str(world.inquiry.id), StockInquiryUpdate(purchasing_response="x"), respond_user_id="u-1"
+        )
+    world.db.rollback()
+    assert refused.value.status_code == 422
+    return refused.value.message
+
+
+def test_update_and_reply_refuses_like_the_si_outside_its_response_stage(world, reply_spy, monkeypatch):
+    """Crew answer 8 Nov (same component as the SI): the SI's guard, the SI's sentence, nothing saved or queued."""
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    d = _si_approved(world)
+    assert _get(world, d["id"])["can_reply"] is True
+    world.inquiry.status = "closed"
+    world.db.commit()
+    # As the SI's page: Update & Reply is drawn only while the SI takes a response.
+    assert _get(world, d["id"])["can_reply"] is False
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Code opened.", "lead_time": "9 weeks"}
+    )
+    assert res.status_code == 422, res.text
+    after = _get(world, d["id"])
+    assert (after["purchasing_response"], after["lead_time"]) == (None, None)
+    assert reply_spy == []
+    si_message = _closed_si_refusal(world, monkeypatch)
+    assert si_message and res.json()["message"] == si_message
+
+
+def test_save_only_stays_allowed_on_a_closed_si(world, reply_spy):
+    d = _si_approved(world)
+    world.inquiry.status = "closed"
+    world.db.commit()
+    res = _respond(world, d["id"], purchasing_response="Noted for the record.")
+    assert res.status_code == 200, res.text
+    assert res.json()["purchasing_response"] == "Noted for the record."
+    assert reply_spy == []
+
+
 def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy):
     world.inquiry.respond_inbox_url = None  # the SI's own refusal: no conversation to reply into
     world.db.flush()
