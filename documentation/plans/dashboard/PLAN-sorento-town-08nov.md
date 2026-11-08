@@ -1,6 +1,6 @@
 # PLAN: Sorento Town (2.5D daily overview, cached snapshot)
 
-Status: Step 1 (behaviour card) posted to the owner, revised with dev data 8 Nov, waiting on answers. Track: L (feature lane; new screen + new background job + new table). No code yet.
+Status: card answered 8 Nov 13:55 MYT (1a 2a 3a 4a 5a 6a, all recommendations). Step 2 (mock) and Phase 0 (snapshot backend, tester-first) in progress. Track: L (feature lane; new screen + new background job + new table). No code yet.
 
 Lane: SORENTO-TOWN. Owner go: 8 Nov 2026 ~13:35 MYT. Research: crew report of 8 Nov (embedded in the lane brief).
 
@@ -56,7 +56,110 @@ The real figures (one full day, top dealers, examples) live with the owner via c
   RSW, HQ ...). Recommendation: **one building per pool** (sub-locations folded in), so ~6-8 warehouse
   buildings, not 67.
 
-## Phase 0 sketch (to be confirmed after the card)
+## Owner answers (8 Nov ~13:55 MYT: "All follow your rec")
+
+1a amounts for `sales.reports.view` holders + superadmin/admin, server-side redaction, a full and a
+redacted snapshot per company. 2a top 30 Dealer-type customers by 90-day invoiced sales, one shop per
+AutoCount account labelled with its [A/C] suffix, plus a day stall for any Dealer-type customer invoiced
+today. 3a approvals = pending PRs + quotation documents awaiting approval, one number with a per-kind
+breakdown, "All clear" at 0, PR count on every company's town. 4a wallboard shows no customer names.
+5a one "!" with a count on the warehouse district -> existing SCM reorder list; per-warehouse bars show
+volume. 6a one building per warehouse pool, sub-locations folded in.
+
+Decision taken without an ask (simplest thing): the town itself needs only a signed-in staff session (no
+new permission slug); everything sensitive is either redacted (amounts) or already visible to staff.
+
+## Phase 0 contract (snapshot backend)
+
+### Honest scope of "no DB call per viewer"
+
+Staff tokens are opaque sessions resolved on every request (`get_current_user`, `app/dependencies.py`)
+and the company scope resolver reads the session too (`company_scope_resolver.py:478`). Those auth
+lookups are paid by every endpoint and stay. The guarantee is: **the town route reads NO business table**
+(no billing, customer, stock, warehouse, reorder, PR or quotation row); the snapshot comes from Redis
+only. The no-DB test records every SQL statement during the request and fails on any statement outside
+the auth allowlist (sessions, users, roles, permissions, company grants).
+
+### Service: `app/services/town/snapshot.py`
+
+- `build_snapshot(db, company_id: str, day: date, *, now: datetime) -> dict` - the FULL variant.
+- `redact(snapshot: dict) -> dict` - a deep copy with every amount key removed (`today.amount`,
+  `shops[].today_amount`, `shops[].ninety_day_amount`); counts stay.
+- `strip_names(snapshot: dict) -> dict` - wallboard: `shops[].name` and `shops[].code` removed
+  (rank, account label, kind, counts stay).
+- `store(redis, company_id, day, full: dict) -> str` - writes gzip JSON under
+  `town:{company_id}:{day}:full` and `town:{company_id}:{day}:redacted` plus
+  `town:{company_id}:{day}:version` (sha1 hex of the full JSON, sorted keys); TTL 36 h; returns version.
+- `load(redis, company_id, day, variant) -> tuple[bytes, str] | None` - (gzip bytes, version).
+- `run_town_snapshot_tick(now=None)` - the scheduler job: does nothing outside 07:00-22:05 MYT; takes
+  a Redis lock `town:lock` (SET NX EX 240) and returns if held; for each active company: build on a
+  session from the read replica when `TOWN_REPLICA_DATABASE_URL` is set (else primary) with
+  `SET LOCAL statement_timeout = 5000`, then store; a failure of one company is logged and the next
+  company still runs. The first tick at or after 22:00 MYT also upserts the `town_days` row.
+- Registered leader-only in `start_scheduler` (`app/scheduler/task_scheduler.py:851`) as an
+  `IntervalTrigger(minutes=3)` job.
+
+### Snapshot JSON (full variant), schema version 1
+
+```json
+{
+  "schema": 1, "company_id": "...", "day": "2026-11-03",
+  "as_of": "2026-11-03T15:42:00+08:00", "data_as_of": "<max billing_documents.last_synced_at, ISO or null>",
+  "phase": "day | night",                       // night when as_of >= 22:00 MYT
+  "today": {"amount": "671985.50", "invoice_count": 237, "credit_note_count": 1, "customer_count": 110},
+  "shops": [
+    {"key": "<customer_id>", "code": "300-Y020", "name": "YI HONG TILING SDN BHD [A/C III]",
+     "account_label": "A/C III", "kind": "shop", "rank": 1,
+     "ninety_day_amount": "148214.94", "today_amount": "27028.40", "today_docs": 3}
+    // kind "stall": Dealer-type customer invoiced today, outside the top 30; rank null
+  ],
+  "warehouses": [{"pool": "BRW", "on_hand": 901681, "available": 900000, "locations": 24}],
+  "reorder": {"below_count": 1749, "set_count": 11307},
+  "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}
+}
+```
+
+Rules, each a test:
+- `today.amount` is the SUM of `invoiced_sales.signed_amount()` over `posted()` documents of the company
+  with `doc_date = day` (all sales types). It equals the line figure (`signed_line_amount()` over
+  `counted_line()`), so a document with a subtotal line is not double counted. Amounts are decimal
+  strings with 2 places.
+- `invoice_count` counts posted IV + CS (+ DN) documents; `credit_note_count` counts CN; `customer_count`
+  distinct `customer_id`.
+- Shops: top 30 by `signed_amount()` over the 90 days ending on `day` (day-89 .. day) among documents
+  whose `sales_type()` is `dealer`, grouped by `customer_id` (= one AutoCount account); ties by code.
+  `account_label` is the `[A/C ...]` suffix parsed from the name, else null. Stalls: Dealer-type
+  customers with a posted document today not in the top 30. Name = `coalesce(customers.customer_name,
+  billing_documents.customer_name)` as the Invoiced report shows it.
+- Warehouses: active warehouses of the company folded onto their pool (`pool_warehouse_id`, else
+  itself); `on_hand` / `available` = sums of `stock.quantity_on_hand` / `quantity_available`.
+- Reorder: `scm.reorder_level` rows of the company with `warehouse_id IS NULL`, `is_active`, `level > 0`
+  (`set_count`); `below_count` = those whose product's summed `quantity_available` over warehouses with
+  `is_active AND counts_as_available` is below `level` (no stock row = 0).
+- Approvals: `purchase_requests.approval_status = 'pending'` and not voided (no company column: same
+  count on every town); quotation documents of the company whose approval status key is
+  `pending_approval` or `resubmitted` (`project_quotation_approval_service.py:60-62`).
+
+### Table `town_days` (migration)
+
+`id uuid pk, company_id uuid not null, day date not null, snapshot jsonb not null, events jsonb not null,
+created_at, updated_at`, unique (company_id, day). `events` = the day's posted documents in creation
+order: `[{"at": "HH:MM", "shop_key": "<customer_id or null if not a shop>", "kind": "invoice|credit_note",
+"amount": "..."}]` (replay, phase 2). Company scoped (`CompanyScopedMixin`).
+
+### Endpoint `GET /api/v1/town/snapshot?mode=wallboard`
+
+- Signed-in staff user (`get_current_user`); variant = full if the user holds `sales.reports.view` or is
+  superadmin/admin, else redacted; `mode=wallboard` additionally strips names (from the cached bytes,
+  no DB).
+- Today's MYT date, the user's active company. Redis only. No snapshot yet -> 200 `{"pending": true}`.
+- `ETag: "<version>-<variant>[-wb]"`; `If-None-Match` equal -> 304, empty body.
+- Body served as the stored gzip bytes with `Content-Encoding: gzip`, `Content-Type: application/json`,
+  `Cache-Control: private, no-cache`.
+- Rate limit 30 requests/minute per user (Redis INCR `town:rl:{user_id}:{epoch_minute}`, EX 120) -> 429.
+- Router mounted in `app/api/v1/__init__.py`.
+
+## Phase 0 sketch (superseded by the contract above)
 
 - `app/services/town/snapshot.py`: build(company_id, day) -> dict, reads via optional replica URL (5 s statement timeout, fall back to primary), sales via `services/sales/invoiced_sales.py`.
 - Leader-only APScheduler job in `app/scheduler/task_scheduler.py`, every 3 min 07:00-22:00 MYT, skip if a run is in flight.
