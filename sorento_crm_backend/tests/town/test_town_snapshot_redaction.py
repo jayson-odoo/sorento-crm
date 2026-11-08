@@ -28,12 +28,27 @@ def test_redact_keeps_counts_and_everything_else():
     out = redact(full)
     assert out["today"] == {"invoice_count": 237, "credit_note_count": 1, "customer_count": 110}
     assert [s["today_docs"] for s in out["shops"]] == [3, 0, 1]
-    assert [s["rank"] for s in out["shops"]] == [1, 2, None]
-    assert out["shops"][0]["name"] == full["shops"][0]["name"]  # names stay on the personal view
+    assert [s["kind"] for s in out["shops"]] == ["shop", "shop", "stall"]
+    assert [s["account_label"] for s in out["shops"]] == ["A/C III", None, None]
     assert out["warehouses"] == full["warehouses"]
     assert out["reorder"] == full["reorder"]
     assert out["approvals"] == full["approvals"]
     assert out["schema"] == 1 and out["phase"] == "day" and out["day"] == full["day"]
+
+
+def test_redact_hides_dealer_identity_and_ranking_and_every_customer_id():
+    from app.services.town.snapshot import redact
+
+    full = fake_full()
+    out = redact(full)
+    for shop in out["shops"]:
+        assert not ({"name", "code", "rank"} & set(shop))
+    assert [s["key"] for s in out["shops"]] == ["s1", "s2", "s3"]
+    text = json.dumps(out)
+    for shop in full["shops"]:
+        assert shop["key"] not in text and shop["name"] not in text and shop["code"] not in text
+    # the full variant carries all of it
+    assert {"name", "code", "rank", "key"} <= set(full["shops"][0])
 
 
 def test_redact_is_a_deep_copy_and_leaves_the_input_alone():
@@ -43,7 +58,7 @@ def test_redact_is_a_deep_copy_and_leaves_the_input_alone():
     before = deep(full)
     out = redact(full)
     assert full == before
-    out["shops"][0]["name"] = "changed"
+    out["shops"][0]["kind"] = "changed"
     out["today"]["invoice_count"] = -1
     assert full == before
 
@@ -60,7 +75,7 @@ def test_strip_names_removes_name_and_code_from_every_shop():
         assert shop["name"] not in text and shop["code"] not in text
 
 
-def test_strip_names_keeps_rank_label_kind_counts_and_amounts():
+def test_strip_names_keeps_rank_label_kind_and_counts_but_no_per_shop_amount_or_customer_id():
     from app.services.town.snapshot import strip_names
 
     full = fake_full()
@@ -68,9 +83,13 @@ def test_strip_names_keeps_rank_label_kind_counts_and_amounts():
     out = strip_names(full)
     assert full == before  # input untouched
     for kept, original in zip(out["shops"], full["shops"]):
-        for field in ("rank", "account_label", "kind", "today_docs", "today_amount", "ninety_day_amount"):
+        for field in ("rank", "account_label", "kind", "today_docs"):
             assert kept[field] == original[field]
-    assert out["today"] == full["today"]
+        assert not ({"name", "code", "today_amount", "ninety_day_amount"} & set(kept))
+    assert [s["key"] for s in out["shops"]] == ["s1", "s2", "s3"]
+    for shop in full["shops"]:
+        assert shop["key"] not in json.dumps(out)
+    assert out["today"] == full["today"]  # the banner total stays on a full-variant wallboard
 
 
 def test_redact_then_strip_names_composes_for_a_wallboard_without_amounts():
@@ -78,4 +97,5 @@ def test_redact_then_strip_names_composes_for_a_wallboard_without_amounts():
 
     out = strip_names(redact(fake_full()))
     assert not (all_keys(out) & (AMOUNT_KEYS | {"name", "code"}))
-    assert [s["rank"] for s in out["shops"]] == [1, 2, None]
+    assert [s["kind"] for s in out["shops"]] == ["shop", "shop", "stall"]
+    assert not any("rank" in s for s in out["shops"])

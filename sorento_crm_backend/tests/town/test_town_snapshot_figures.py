@@ -135,7 +135,14 @@ def test_data_as_of_is_the_newest_last_synced_at(db):
     second.last_synced_at = datetime(2026, 11, 3, 14, 30, 0)
     db.flush()
     stamp = _build(db)["data_as_of"]
-    assert stamp is not None and stamp.startswith("2026-11-03T14:30")
+    assert stamp is not None and stamp.startswith("2026-11-03T14:30") and stamp.endswith("+00:00")
+
+
+def test_data_as_of_ignores_documents_older_than_a_week(db):
+    old = doc(db, "invoice", "10.00", DAY - timedelta(days=30), customer=cust(db))
+    old.last_synced_at = datetime(2026, 10, 4, 9, 0, 0)
+    db.flush()
+    assert _build(db)["data_as_of"] is None
 
 
 # --------------------------------------------------------------------------- AC-5
@@ -172,6 +179,35 @@ def test_ac5_top_30_by_90_day_amount_cut_and_project_account_never_a_shop(db):
     assert top["name"] == dealers[30].customer_name
     assert top["ninety_day_amount"] == "1300.00"
     assert top["today_amount"] == "0.00" and top["today_docs"] == 0
+
+
+def test_ac5_the_31st_account_not_invoiced_today_is_absent_entirely(db):
+    dealers = _dealers(db, 31)
+    keys = {s["key"] for s in _build(db)["shops"]}
+    assert dealers[0].id not in keys  # neither a shop (31st) nor a stall (no document today)
+
+
+def test_ac5_second_build_reads_the_cached_ranking_and_does_not_recompute_it(db, monkeypatch):
+    from app.services.town import snapshot as town
+
+    mine = cust(db, name="ZZT Cached")
+    dealer_doc(db, mine, "100.00", DAY - timedelta(days=2))
+    first = _build(db)
+    assert [s["key"] for s in first["shops"]] == [mine.id]
+    from app.services.queue_service import redis_conn
+
+    assert redis_conn.exists(f"town:{DEFAULT_COMPANY_ID}:{DAY.isoformat()}:ranking")
+    assert redis_conn.ttl(f"town:{DEFAULT_COMPANY_ID}:{DAY.isoformat()}:ranking") > 35 * 3600
+
+    def boom(*a, **k):
+        raise AssertionError("ranking recomputed")
+
+    monkeypatch.setattr(town, "compute_ranking", boom)
+    dealer_doc(db, mine, "50.00", DAY)  # today's figures are still live
+    second = _build(db)
+    shop = second["shops"][0]
+    assert shop["ninety_day_amount"] == "100.00"  # the cached nightly ranking figure
+    assert shop["today_amount"] == "50.00" and shop["today_docs"] == 1
 
 
 def test_ac5_ninety_day_window_includes_day_minus_89_excludes_day_minus_90(db):

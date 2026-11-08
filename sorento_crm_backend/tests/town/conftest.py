@@ -1,21 +1,25 @@
-"""Town tests share one real local Redis (queue_service.redis_conn). Every key the town feature
-writes starts with `town:`, so the suite clears exactly that prefix before and after each test
-and touches nothing else."""
+"""Town tests share a real local Redis, but never the dev db 0: `queue_service.redis_conn` (and
+the town route's by-name import of it) is pointed at db 15 for every test, and that db is flushed
+before and after. Nothing else is touched."""
 from __future__ import annotations
 
 import pytest
+import redis
 
-
-def _clear_town_keys() -> None:
-    from app.services.queue_service import redis_conn
-
-    for key in redis_conn.scan_iter(match="town:*", count=500):
-        redis_conn.delete(key)
+TEST_REDIS_DB = 15
 
 
 @pytest.fixture(autouse=True)
 def _town_redis_clean(monkeypatch):
-    monkeypatch.delenv("TOWN_REPLICA_DATABASE_URL", raising=False)
-    _clear_town_keys()
+    from app.api.v1 import town as town_route
+    from app.config import settings
+    from app.services import queue_service
+
+    client = redis.Redis.from_url(settings.redis_url, db=TEST_REDIS_DB, decode_responses=False)
+    monkeypatch.setattr(queue_service, "redis_conn", client)
+    monkeypatch.setattr(town_route, "redis_conn", client)
+    monkeypatch.setattr(settings, "town_replica_database_url", None)
+    client.flushdb()
     yield
-    _clear_town_keys()
+    client.flushdb()
+    client.close()

@@ -118,11 +118,20 @@ def test_a_tick_builds_and_stores_every_active_company_and_skips_inactive(env):
     assert _keys_for(INACTIVE_ID) == []
 
 
-def test_the_tick_takes_the_lock_with_a_240_second_expiry(env):
+def test_the_lock_has_a_240_second_expiry_during_the_build_and_is_gone_after(env):
+    from app.services.town import snapshot as town
+
+    during: list[int] = []
+
+    def probe(session, company_id, day, *, now):
+        during.append(_redis().ttl("town:lock"))
+        return fake_full(day, company_id)
+
+    env.patch.setattr(town, "build_snapshot", probe)
     _redis().delete("town:lock")
     env.town.run_town_snapshot_tick(now=myt(DAY, 10, 0))
-    ttl = _redis().ttl("town:lock")
-    assert 0 < ttl <= 240
+    assert during and all(0 < ttl <= 240 for ttl in during)
+    assert not _redis().exists("town:lock")  # released, so the next 3 minute tick runs
 
 
 def test_a_held_lock_means_no_build(env):
@@ -236,3 +245,13 @@ def test_ac9_a_second_22_tick_updates_the_row_rather_than_duplicating(env):
     assert len(rows) == 1 and rows[0].id == row_id
     assert rows[0].snapshot["today"]["invoice_count"] != first_count  # carries the later build
     assert len(_town_days(env.db, MOCHA_ID)) == 1  # one row per company
+
+
+def test_ac9_event_time_is_the_created_at_instant_in_malaysia_time(env):
+    """`created_at` is naive UTC: 02:15 UTC is 10:15 in Malaysia."""
+    d = doc(env.db, "invoice", "10.00", DAY, customer=cust(env.db))
+    d.created_at = datetime(2026, 11, 3, 2, 15)
+    env.db.flush()
+    _tick(env, myt(DAY, 22, 0))
+    (row,) = _town_days(env.db, DEFAULT_COMPANY_ID)
+    assert [e["at"] for e in row.events] == ["10:15"]

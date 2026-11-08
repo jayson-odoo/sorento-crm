@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -39,7 +39,10 @@ def _rate_limit(user_id: str) -> None:
         raise AppException(status_code=429, message="Too many requests", code="town_rate_limited")
 
 
-def _company_id(db: Session) -> str:
+def _company_id(request: Request, db: Session) -> str:
+    # A staff session plus the shared key would resolve the company through the key path.
+    if request.headers.get("x-api-key"):
+        raise AppException(status_code=400, message="Choose a company first", code="company_required")
     scope = get_company_scope(db)
     if isinstance(scope, frozenset) and len(scope) == 1:
         return next(iter(scope))
@@ -54,13 +57,14 @@ def _matches(header: Optional[str], etag: str) -> bool:
 
 @router.get("/snapshot")
 def get_snapshot(
+    request: Request,
     mode: Optional[str] = Query(None),
     if_none_match: Optional[str] = Header(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     _rate_limit(str(current_user["id"]))
-    company_id = _company_id(db)
+    company_id = _company_id(request, db)
     variant = "full" if holds_permission(db, current_user, INVOICED_SLUG) else "redacted"
     wallboard = mode == "wallboard"
     day = datetime.now(town.MYT).date()

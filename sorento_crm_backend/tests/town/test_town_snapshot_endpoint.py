@@ -136,6 +136,18 @@ def test_ac3_user_without_sales_reports_view_gets_counts_and_no_amount_in_the_bo
     assert body["shops"][0]["today_docs"] == 3
 
 
+def test_ac3_redacted_body_has_no_dealer_identity_ranking_or_customer_id(db, stored):
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal, allow=()) as client:
+        r = client.get(URL)
+    body = r.json()
+    for shop in body["shops"]:
+        assert not ({"name", "code", "rank"} & set(shop))
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", r.text.replace(DEFAULT_COMPANY_ID, ""))
+    for text in ("ZZT Tiling One", "ZZT-S001", "ZZT Stall Three"):
+        assert text not in r.text
+
+
 def test_ac3_sales_reports_view_holder_gets_amounts(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
     with _client(db, principal, allow=(SLUG,)) as client:
@@ -302,3 +314,85 @@ def test_unauthenticated_request_is_401():
     app.dependency_overrides.clear()
     r = TestClient(app).get(URL)
     assert r.status_code == 401
+
+
+# --------------------------------------------------------------------------- isolation (route level)
+
+
+def _bearer(user_id):
+    """A token the real company scope resolver accepts (its JWT path)."""
+    from jose import jwt
+
+    from app.config import settings
+
+    return {"Authorization": "Bearer " + jwt.encode({"sub": user_id}, settings.jwt_secret, algorithm=settings.jwt_algorithm)}
+
+
+@contextmanager
+def _resolver_client(db, principal, allow=(SLUG,)):
+    """The real `apply_company_scope` (not overridden): the scope comes from the bearer's user grants."""
+    from app.services.user_service import UserPermissionService
+
+    def _override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: principal
+    original = UserPermissionService.check_user_has_permission
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: slug in allow
+    try:
+        yield TestClient(app)
+    finally:
+        UserPermissionService.check_user_has_permission = original
+        app.dependency_overrides.clear()
+
+
+def test_a_user_granted_only_company_a_gets_a_and_never_b(db):
+    from app.services.queue_service import redis_conn
+    from app.services.town.snapshot import store
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    principal = _user(db, MOCHA_ID)
+    store(redis_conn, DEFAULT_COMPANY_ID, _today(), fake_full(_today(), DEFAULT_COMPANY_ID))
+    store(redis_conn, MOCHA_ID, _today(), fake_full(_today(), MOCHA_ID))
+    with _resolver_client(db, principal) as client:
+        r = client.get(URL, headers=_bearer(principal["id"]))
+    assert r.status_code == 200
+    assert r.json()["company_id"] == MOCHA_ID
+    assert DEFAULT_COMPANY_ID not in r.text
+
+
+def test_a_user_with_no_company_grant_gets_400(db):
+    principal = _user(db)
+    with _resolver_client(db, principal) as client:
+        r = client.get(URL, headers=_bearer(principal["id"]))
+    assert r.status_code == 400
+
+
+def test_an_api_key_alone_is_401(db, stored):
+    app.dependency_overrides.clear()
+    r = TestClient(app).get(URL, headers={"X-API-Key": "ZZT-not-a-session"})
+    assert r.status_code == 401
+
+
+def test_a_portal_token_is_401(db, stored):
+    from datetime import timedelta
+
+    from app.models.portal import PortalToken
+
+    token = f"ZZT-{uuid.uuid4().hex}"
+    db.add(PortalToken(id=str(uuid.uuid4()), token=token, contact_id=str(uuid.uuid4()),
+                       space_id="ZZT-space", expires_at=datetime.utcnow() + timedelta(days=1)))
+    db.flush()
+    with _resolver_client(db, None) as client:
+        app.dependency_overrides.pop(get_current_user, None)
+        r = client.get(URL, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+def test_a_staff_session_with_the_shared_key_header_is_refused(db, stored):
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal, allow=(SLUG,)) as client:
+        r = client.get(URL, headers={"X-API-Key": "ZZT-anything"})
+    assert r.status_code == 400

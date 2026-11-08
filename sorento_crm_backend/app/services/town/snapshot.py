@@ -46,10 +46,10 @@ SHOP_LIMIT = 30
 WINDOW_DAYS = 90
 LOCK_KEY = "town:lock"
 LOCK_SECONDS = 240
-# After a finished run the lock shrinks, so the next 3 minute tick is not skipped by a lock
-# that only exists to stop two runs overlapping.
-LOCK_AFTER_RUN_SECONDS = 120
+# Compare-and-delete: only the run that took the lock may drop it.
+_RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
 STATEMENT_TIMEOUT_MS = 5000
+RANKING_TIMEOUT_MS = 30000
 OPEN_MINUTE = 7 * 60
 NIGHT_MINUTE = 22 * 60
 CLOSE_MINUTE = 22 * 60 + 5
@@ -87,13 +87,13 @@ def _today_figures(db: Session, company_id: str, day: date) -> dict:
     }
 
 
-def _shops(db: Session, company_id: str, day: date) -> list:
-    """Dealer-type customers over the 90 days ending `day`: the top 30 are shops, any other
-    one invoiced today is a stall. One query: the sales type is computed once per document
-    (`document_sales_type()`), then aggregated per customer (= one AutoCount account)."""
+def _dealer_rows(db: Session, company_id: str, since: date, until: date, *, today: Optional[date]) -> list:
+    """Dealer-type customers (one row per AutoCount account) over `since..until`: id, code, name,
+    signed amount, and, when `today` is given, that day's amount and document count. The sales
+    type is computed once per document (`document_sales_type()`), then aggregated."""
     sales_type = inv.document_sales_type()
-    on_day = BillingDocument.doc_date == day
-    rows = db.execute(
+    on_day = BillingDocument.doc_date == today
+    return db.execute(
         sa.select(
             Customer.id,
             Customer.customer_code,
@@ -108,28 +108,84 @@ def _shops(db: Session, company_id: str, day: date) -> list:
         .where(
             inv.posted(),
             BillingDocument.company_id == company_id,
-            BillingDocument.doc_date >= day - timedelta(days=WINDOW_DAYS - 1),
-            BillingDocument.doc_date <= day,
+            BillingDocument.doc_date >= since,
+            BillingDocument.doc_date <= until,
             sales_type.c.value == inv.DEALER,
         )
         .group_by(Customer.id, Customer.customer_code, Customer.customer_name)
     ).all()
-    ranked = sorted(rows, key=lambda r: (-Decimal(r[3] or 0), r[1] or ""))
+
+
+def compute_ranking(db: Session, company_id: str, day: date) -> list:
+    """The top 30 Dealer-type accounts by invoiced sales over the 90 days ending `day`, ties by
+    code. The heavy query: it runs once per company per day (`ranking_for`), with 30 s allowed."""
+    previous = db.execute(sa.text("SHOW statement_timeout")).scalar() or "0"
+    db.execute(sa.text(f"SET LOCAL statement_timeout = {RANKING_TIMEOUT_MS}"))
+    try:
+        rows = _dealer_rows(db, company_id, day - timedelta(days=WINDOW_DAYS - 1), day, today=None)
+    finally:
+        db.execute(sa.text("SELECT set_config('statement_timeout', :v, true)"), {"v": str(previous)})
+    ranked = sorted(rows, key=lambda r: (-Decimal(r[3] or 0), r[1] or ""))[:SHOP_LIMIT]
+    return [
+        {
+            "key": str(key), "code": code, "name": name, "account_label": _account_label(name),
+            "rank": index + 1, "ninety_day_amount": _money(ninety),
+        }
+        for index, (key, code, name, ninety, _a, _d) in enumerate(ranked)
+    ]
+
+
+def store_ranking(redis: Any, company_id: str, day: date, ranking: list) -> None:
+    redis.set(_key(company_id, day, "ranking"), _gzip_json(ranking), ex=TTL_SECONDS)
+
+
+def load_ranking(redis: Any, company_id: str, day: date) -> Optional[list]:
+    raw = redis.get(_key(company_id, day, "ranking"))
+    return None if raw is None else json.loads(gzip.decompress(raw))
+
+
+def ranking_for(db: Session, company_id: str, day: date) -> list:
+    """The day's ranking from Redis, computed and cached when the day's first build finds none."""
+    from app.services.queue_service import redis_conn
+
+    ranking = load_ranking(redis_conn, company_id, day)
+    if ranking is None:
+        ranking = compute_ranking(db, company_id, day)
+        store_ranking(redis_conn, company_id, day, ranking)
+    return ranking
+
+
+def _shops(db: Session, company_id: str, day: date) -> list:
+    """The cached top 30 (shops) carrying today's figures, then a stall for every other Dealer-type
+    account invoiced today. Only today's documents pay for the sales type here."""
+    ranking = ranking_for(db, company_id, day)
+    today = {
+        str(key): (code, name, amount, docs)
+        for key, code, name, _ninety, amount, docs in _dealer_rows(db, company_id, day, day, today=day)
+    }
     out = []
-    for index, (key, code, name, ninety, today, docs) in enumerate(ranked):
-        shop = index < SHOP_LIMIT
-        if not shop and not docs:
-            continue
+    for entry in ranking:
+        _code, _name, amount, docs = today.get(entry["key"], (None, None, 0, 0))
+        out.append({**entry, "kind": "shop", "today_amount": _money(amount), "today_docs": int(docs)})
+    ranked_keys = {e["key"] for e in ranking}
+    stalls = {k: v for k, v in today.items() if k not in ranked_keys}
+    ninety = dict(
+        db.execute(
+            sa.select(BillingDocument.customer_id, sa.func.sum(inv.signed_amount()))
+            .where(
+                inv.posted(), BillingDocument.company_id == company_id,
+                BillingDocument.customer_id.in_(list(stalls)),
+                BillingDocument.doc_date >= day - timedelta(days=WINDOW_DAYS - 1),
+                BillingDocument.doc_date <= day,
+            )
+            .group_by(BillingDocument.customer_id)
+        ).all()
+    ) if stalls else {}
+    for key, (code, name, amount, docs) in sorted(stalls.items(), key=lambda kv: kv[1][0] or ""):
         out.append({
-            "key": str(key),
-            "code": code,
-            "name": name,
-            "account_label": _account_label(name),
-            "kind": "shop" if shop else "stall",
-            "rank": index + 1 if shop else None,
-            "ninety_day_amount": _money(ninety),
-            "today_amount": _money(today),
-            "today_docs": int(docs),
+            "key": key, "code": code, "name": name, "account_label": _account_label(name),
+            "kind": "stall", "rank": None, "ninety_day_amount": _money(ninety.get(key)),
+            "today_amount": _money(amount), "today_docs": int(docs),
         })
     return out
 
@@ -207,14 +263,16 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
     """The FULL variant (schema 1) for one company and one MYT day."""
     now_myt = now.astimezone(MYT)
     data_as_of = db.execute(
-        sa.select(sa.func.max(BillingDocument.last_synced_at)).where(BillingDocument.company_id == company_id)
+        sa.select(sa.func.max(BillingDocument.last_synced_at)).where(
+            BillingDocument.company_id == company_id, BillingDocument.doc_date >= day - timedelta(days=7)
+        )
     ).scalar_one()
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
         "day": day.isoformat(),
         "as_of": now_myt.isoformat(timespec="seconds"),
-        "data_as_of": data_as_of.isoformat() if data_as_of else None,
+        "data_as_of": data_as_of.replace(tzinfo=timezone.utc).isoformat() if data_as_of else None,
         "phase": "night" if now_myt.hour * 60 + now_myt.minute >= NIGHT_MINUTE else "day",
         "today": _today_figures(db, company_id, day),
         "shops": _shops(db, company_id, day),
@@ -250,25 +308,32 @@ def day_events(db: Session, company_id: str, day: date, shop_keys: set) -> list:
 
 # ---------------------------------------------------------------------- redaction and wallboard
 
-_AMOUNT_KEYS = ("today_amount", "ninety_day_amount")
+def _opaque_keys(out: dict) -> None:
+    """Replace each shop's customer id with its position, so a viewer cannot correlate customers."""
+    for index, shop in enumerate(out.get("shops", []), start=1):
+        shop["key"] = f"s{index}"
 
 
 def redact(snapshot: dict) -> dict:
-    """A deep copy with every amount removed; counts stay."""
+    """The variant for a user without the sales reports permission: no amount, and no dealer
+    identity or ranking either (name, code, rank, customer id). Counts and kinds stay."""
     out = copy.deepcopy(snapshot)
     out.get("today", {}).pop("amount", None)
     for shop in out.get("shops", []):
-        for key in _AMOUNT_KEYS:
+        for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
+    _opaque_keys(out)
     return out
 
 
 def strip_names(snapshot: dict) -> dict:
-    """Wallboard: a deep copy without shop names and codes (rank, label, kind, counts stay)."""
+    """Wallboard (rank numbers and the total only): no shop name, code, per-shop amount or customer
+    id. Rank, label, kind and counts stay; `today.amount` follows the viewer's variant."""
     out = copy.deepcopy(snapshot)
     for shop in out.get("shops", []):
-        shop.pop("name", None)
-        shop.pop("code", None)
+        for key in ("name", "code", "today_amount", "ninety_day_amount"):
+            shop.pop(key, None)
+    _opaque_keys(out)
     return out
 
 
@@ -384,6 +449,4 @@ def run_town_snapshot_tick(now: Optional[datetime] = None) -> None:
             except Exception:  # noqa: BLE001 - one company must not stop the next
                 logger.error("town snapshot failed for company %s", company_id, exc_info=True)
     finally:
-        held = redis_conn.get(LOCK_KEY)
-        if held is not None and held.decode() == token:
-            redis_conn.expire(LOCK_KEY, LOCK_AFTER_RUN_SECONDS)
+        redis_conn.eval(_RELEASE, 1, LOCK_KEY, token)
