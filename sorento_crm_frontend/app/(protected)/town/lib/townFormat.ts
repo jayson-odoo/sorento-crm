@@ -76,20 +76,22 @@ export function townFrame(aspect: number, small: boolean): number {
   return Math.max(HALF_HEIGHT, (small ? HALF_WIDTH_SMALL : HALF_WIDTH) / aspect) / FILL;
 }
 
-/** The tallest a name tag is drawn (a phone draws them larger), in world units. */
-export const TAG_HEIGHT_MAX = 3.1;
-// A vertical world unit shows on screen at cos(elevation) (the camera looks down at atan(70/80)),
-// so the gap between tiers is one tag height divided by that, plus a margin.
-export const TAG_SCREEN_SCALE = Math.cos(Math.atan2(70, 80));
-export const TAG_TIER_GAP = 4.3;
-const TAG_TIERS = 3;
-
 /**
- * A tier (0, 1, 2) for each tagged building: sorted by angle round the island and dealt out in turn,
- * so two neighbours never share a height. Stable for the same buildings.
+ * Screen-space stacking for the name tags. Each tag has `y`, its anchor's height on screen (the
+ * anchor projected on the camera's up axis), and `h`, its height on screen. Tags are taken bottom to
+ * top and each one is raised just enough to clear the one below it, so no two tags ever cover each
+ * other whatever the camera angle or the buildings' depth (tags at different depths are why fixed
+ * world-height tiers still overlapped). Returns how far to raise each tag, on screen, in input order.
  */
-export function tagTiers<T extends { x: number; z: number }>(items: T[]): { item: T; tier: number }[] {
-  return [...items]
-    .sort((a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x))
-    .map((item, index) => ({ item, tier: index % TAG_TIERS }));
+export function stackTags(tags: { y: number; h: number }[], margin = 0.3): number[] {
+  const order = tags.map((tag, index) => ({ ...tag, index })).sort((a, b) => a.y - b.y);
+  const raise = new Array<number>(tags.length).fill(0);
+  let top = -Infinity;
+  for (const tag of order) {
+    const bottom = Math.max(tag.y - tag.h / 2, top + margin);
+    raise[tag.index] = bottom + tag.h / 2 - tag.y;
+    top = bottom + tag.h;
+  }
+  return raise;
 }
+

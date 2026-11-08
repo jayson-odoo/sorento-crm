@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, TAG_HEIGHT_MAX, TAG_SCREEN_SCALE, TAG_TIER_GAP, boughtToday, sceneSelection, tagTiers, townFrame,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, sceneSelection, stackTags, townFrame,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -78,28 +78,25 @@ describe('townFrame', () => {
   });
 });
 
-describe('tagTiers', () => {
-  const at = (deg: number) => ({ x: Math.cos((deg * Math.PI) / 180) * 20, z: Math.sin((deg * Math.PI) / 180) * 20, deg });
+describe('stackTags', () => {
+  const overlaps = (tags: { y: number; h: number }[], raise: number[]) => {
+    const boxes = tags.map((t, i) => [t.y + raise[i] - t.h / 2, t.y + raise[i] + t.h / 2]).sort((x, y) => x[0] - y[0]);
+    return boxes.some((box, i) => i > 0 && box[0] < boxes[i - 1][1]);
+  };
 
-  it('deals tiers 0, 1, 2 in angle order so neighbours never share a height', () => {
-    const placed = tagTiers([at(40), at(-70), at(10), at(70), at(-20)]);
-    expect(placed.map((p) => p.item.deg)).toEqual([-70, -20, 10, 40, 70]);
-    expect(placed.map((p) => p.tier)).toEqual([0, 1, 2, 0, 1]);
-    for (let i = 1; i < placed.length; i++) expect(placed[i].tier).not.toBe(placed[i - 1].tier);
+  it('raises tags just enough that none covers another, whatever their anchors', () => {
+    const tags = [{ y: 5, h: 2 }, { y: 5.5, h: 2 }, { y: 4.8, h: 2.4 }];
+    const raise = stackTags(tags);
+    expect(overlaps(tags, raise)).toBe(false);
+    expect(Math.min(...raise)).toBe(0);
   });
 
-  it('is stable for the same buildings in any input order', () => {
-    const a = tagTiers([at(40), at(-70), at(10)]).map((p) => [p.item.deg, p.tier]);
-    const b = tagTiers([at(10), at(40), at(-70)]).map((p) => [p.item.deg, p.tier]);
-    expect(a).toEqual(b);
+  it('leaves tags that are already apart where they are', () => {
+    expect(stackTags([{ y: 0, h: 2 }, { y: 10, h: 2 }])).toEqual([0, 0]);
   });
 
-  it('keeps tiers at least one tag height apart ON SCREEN (the camera foreshortens height)', () => {
-    expect(TAG_TIER_GAP * TAG_SCREEN_SCALE).toBeGreaterThanOrEqual(TAG_HEIGHT_MAX);
-  });
-
-  it('gives every tag its own tier, so no two tags share a height', () => {
-    const at3 = tagTiers([at(-40), at(0), at(40)].slice(0, SCENE_TAG_CAP)).map((p) => p.tier);
-    expect(new Set(at3).size).toBe(at3.length);
+  it('never lowers a tag', () => {
+    const raise = stackTags([{ y: 3, h: 1 }, { y: 2, h: 1 }, { y: 2.2, h: 1 }]);
+    raise.forEach((r) => expect(r).toBeGreaterThanOrEqual(0));
   });
 });

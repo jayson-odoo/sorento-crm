@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { changePercent, count, rm0, sceneSelection, shopLabel, TAG_TIER_GAP, tagTiers, townFrame } from '../lib/townFormat';
+import { changePercent, count, rm0, sceneSelection, shopLabel, stackTags, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -107,9 +107,19 @@ function mountScene(
     if (!frameId && !disposed) frameId = requestAnimationFrame(frame);
   };
 
+  // name tags: re-stacked in screen space whenever the camera turns, so they never cover each other
+  const tagSprites: { sprite: THREE.Sprite; anchor: THREE.Vector3 }[] = [];
+  const layoutTags = () => {
+    if (!tagSprites.length) return;
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+    const raise = stackTags(tagSprites.map(({ sprite, anchor }) => ({ y: anchor.dot(up), h: sprite.scale.y })));
+    tagSprites.forEach(({ sprite, anchor }, i) => sprite.position.set(anchor.x, anchor.y + raise[i] / up.y, anchor.z));
+  };
   const placeCam = () => {
     cam.position.set(Math.cos(yawRef.current) * 80, 70, Math.sin(yawRef.current) * 80);
     cam.lookAt(0, 3, 0); // the island's centre on screen: its ellipse and the scoreboard above it
+    cam.updateMatrixWorld();
+    layoutTags();
     invalidate();
   };
   const resize = () => {
@@ -264,9 +274,11 @@ function mountScene(
   shopMesh.count = slot.length;
   scene.add(shopMesh);
   pickables.push([shopMesh, (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key })]);
-  tagTiers(slot.filter((o) => tagged.includes(o.s))).forEach(({ item: o, tier }) => {
+  slot.filter((o) => tagged.includes(o.s)).forEach((o) => {
     const amount = o.s.today_amount ? `  ${rm0(o.s.today_amount)}` : '';
-    label(`${shopLabel(o.s)}${amount}`, o.x, 5.8 + tier * TAG_TIER_GAP, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
+    const anchor = new THREE.Vector3(o.x, o.h + 2.6, o.z);
+    const sprite = label(`${shopLabel(o.s)}${amount}`, anchor.x, anchor.y, anchor.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
+    tagSprites.push({ sprite, anchor });
   });
   if (others) {
     const [x, z] = polar(24, 30);
