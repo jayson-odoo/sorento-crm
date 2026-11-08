@@ -250,3 +250,35 @@ class TestSyntheticAnswersMatchBorrowed:
         assert synthetic_reads["scope"] and set(synthetic_reads["scope"][0]) == {DEFAULT_COMPANY_ID, MOCHA_ID}
         assert synthetic_reads["profile"] and synthetic_reads["profile"][0][0] is False
         assert respond_sends == []
+
+
+class TestDirectIngressCountsAsRealHistory:
+    """Crew pass #2269: the CRM's own respond.io webhook (`DIRECT_INGRESS`, 'respond_webhook')
+    is a real WhatsApp turn too. Contact 573391060 had four of them and still got the
+    synthetic envelope and the 'no real WhatsApp history' badge."""
+
+    def test_a_respond_webhook_row_is_borrowed_not_synthesised(self, session_factory):
+        from app.services.chatbot.contracts import DIRECT_INGRESS
+
+        _contact_only(session_factory)
+        db = session_factory()
+        envelope = json.loads(_envelope().model_dump_json())
+        envelope["contact"]["custom_fields"].append({"name": "ZZT-direct", "value": "1"})
+        db.add(
+            ChatbotTurn(
+                contact_respond_id=str(CONTACT_ID),
+                message_id="ZZT-direct-msg",
+                ingress=DIRECT_INGRESS,
+                envelope=envelope,
+                is_test=False,
+                status="done",
+                stage="sent",
+                branch_kind="business_query",
+            )
+        )
+        db.commit()
+
+        base = console_service._borrow_envelope(session_factory(), str(CONTACT_ID))
+
+        assert "synthetic_envelope" not in base
+        assert {"name": "ZZT-direct", "value": "1"} in base["contact"]["custom_fields"]

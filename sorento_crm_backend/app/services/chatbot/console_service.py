@@ -50,7 +50,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import run_turn
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
-from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
+from app.services.chatbot.contracts import BRANCH_KINDS, DIRECT_INGRESS, TurnRequest
 from app.services.chatbot.lanes.escalation import routing_line
 from app.services.chatbot.router import RouteDecision, decide_route, trace_record
 from app.services.error_handler import AppException
@@ -127,9 +127,9 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     is filled in from `respond_contacts` when the borrowed envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
 
-    **Only a `webhook` ingress row that is not a test.** A console turn stores its OWN
-    envelope back onto `chatbot.turns`, so borrowing "the newest row of any kind" makes
-    the console borrow from itself: one hand-built or in-process envelope with a thin
+    **Only a real delivery (`webhook` or `respond_webhook`) that is not a test.** A
+    console turn stores its OWN envelope back onto `chatbot.turns`, so borrowing "the
+    newest row of any kind" makes the console borrow from itself: one hand-built or in-process envelope with a thin
     `contact` block poisons every console turn for that contact afterwards, and the
     fields it is missing are read as ABSENT rather than as never-recorded. Measured on
     the hand-pass clone (16 Sep 2026): an in-process smoke turn wrote
@@ -151,7 +151,8 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
         .filter(
             ChatbotTurn.contact_respond_id == str(contact_respond_id),
             ChatbotTurn.envelope.isnot(None),
-            ChatbotTurn.ingress == "webhook",
+            # A real WhatsApp delivery, by n8n's webhook or the CRM's own (`DIRECT_INGRESS`).
+            ChatbotTurn.ingress.in_(("webhook", DIRECT_INGRESS)),
             ChatbotTurn.is_test.is_(False),
         )
         .order_by(ChatbotTurn.created_at.desc())
