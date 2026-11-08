@@ -3,8 +3,9 @@
 Plan: `PLAN-agent-bulk-v2-8nov.md`. Crew answers on the card (8 Nov): Q1 (a) list candidates, the owner picks, "all"
 is one choice, never auto-link; Q3 (a) Confirm the ready rows now, waiting rows listed and left out; Q4 (b)
 accounts only, no customer-group candidate (the dev DB groups are name-seeded by `cust_group_0001`, not office-made, and
-miss accounts, so a group candidate would be name matching by the back door); Q5 next wave = contact tags. Q2 (how the owner picks: chat
-reply vs buttons) is with the owner; the pick rows are added after that answer.
+miss accounts, so a group candidate would be name matching by the back door); Q5 next wave = contact tags. Q2 (a), owner 8 Nov ~10:40 "Ok for all rec": the owner picks by chat reply
+("row 1: 300-F004, row 2 all, row 3 skip"); the agent re-proposes the whole table into a new Confirm card; no buttons
+(V16-V21).
 
 Tests: `sorento_crm_backend/tests/chatbot/agent/test_agent_bulk_v2.py` (test number in brackets).
 #2226's UAC (`agent-bulk-actions-7nov-acceptance-criteria.md`, B1-B17) still holds except where a row below replaces it.
@@ -27,3 +28,9 @@ Tests: `sorento_crm_backend/tests/chatbot/agent/test_agent_bulk_v2.py` (test num
 | V13 | The batch tool result the model reads | carries `needs_choice: [{row, written, company, candidates: [{code, name}]}]` and counts `rows_waiting`, so the model can ask which account; its counts back the reply's numbers (08) |
 | V14 | A reply that says a row's customer was not found, after a batch call | accepted without a repair round (a batch skip backs the not-found wording) (09) |
 | V15 | Every rule above | permission, audit and per-row confirm of #2226 unchanged (B1, B2, B12-B17 still green) |
+| V16 | Turn 1 left rows waiting; the owner replies with a code per row ("row 1: F-1, row 2: H-2") | the agent re-proposes the whole table with those codes; ONE new Confirm card holds the picked rows (and any rows ready before); the earlier card, if any, is expired (10) |
+| V17 | The owner replies "row 2 all" | row 2 links every account LISTED for it (not more than the 10 shown) (10) |
+| V18 | The owner replies "row 3 skip", or skips row 1 | that row is left out; every other row keeps the row number of the pasted table in the preview (batch rows carry `row`, the table's row number) (11) |
+| V19 | A re-proposed row picks a code that was neither listed for that row last turn nor typed in the owner's message this turn | the row is skipped: `"CODE" was not in the list for "X" (row N); pick from the list` (never linked) (11) |
+| V20 | A code the owner typed in this turn's message, listed or not (e.g. a fresh table with the code in the Customer column) | accepted as an explicit link (11) |
+| V21 | A table turn that leaves rows waiting, with or without ready rows | the waiting rows (row, phone, written name, listed codes) are kept on the turn (`response.batch_waiting`) and read by the next batch call of the same conversation; only the immediately previous table turn counts (12) |
