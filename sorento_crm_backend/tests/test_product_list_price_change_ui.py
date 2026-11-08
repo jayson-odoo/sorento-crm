@@ -132,7 +132,24 @@ def db():
 
 
 @pytest.fixture
-def api(db):
+def granted(monkeypatch):
+    """The slugs the test principal holds; the history route checks the products view grant
+    (security review on #2260: the same grant `/audit/logs` asks for a product's trail)."""
+    from app.services.user_service import UserPermissionService
+
+    slugs = {"master_data.products.view"}
+    asked: list[str] = []
+
+    def _check(self, uid, slug):
+        asked.append(slug)
+        return slug in slugs
+
+    monkeypatch.setattr(UserPermissionService, "check_user_has_permission", _check)
+    return slugs, asked
+
+
+@pytest.fixture
+def api(db, granted):
     def _override_get_db():
         yield db
 
@@ -476,6 +493,31 @@ def test_history_limit_is_bounded(api, db):
     db.commit()
     assert _history(api, pid, limit=101).status_code == 422
     assert _history(api, pid, page=0).status_code == 422
+
+
+def test_history_requires_the_products_view_grant(api, db, granted):
+    slugs, asked = granted
+    pid = _mk_product(db, f"{STEM}-PERM")
+    _audit(db, pid, old="10.00", new="12.00")
+    db.commit()
+
+    assert _history(api, pid).status_code == 200
+    assert "master_data.products.view" in asked
+
+    slugs.clear()
+    resp = _history(api, pid)
+    assert resp.status_code == 403, resp.text
+
+
+def test_history_by_product_code_reads_that_products_trail(api, db):
+    """The gate resolves a code as well as an id (`resolve_identifier`); the trail must be
+    read for the RESOLVED product, not the raw path value (security review nit on #2260)."""
+    code = f"{STEM}-SKU-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, code)
+    _audit(db, pid, old="10.00", new="12.00")
+    db.commit()
+    rows = _history(api, code).json()["data"]
+    assert [(r["old_price"], r["new_price"]) for r in rows] == [(10.0, 12.0)]
 
 
 def test_history_unknown_product_is_404(api, db):

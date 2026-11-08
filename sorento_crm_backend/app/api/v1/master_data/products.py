@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.utils.multi_value import multi_values
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
 from app.services import product_list_price_history_service
@@ -320,6 +324,7 @@ def get_product_purchase_history(
         raise handle_internal_error(str(e))
 
 
+# ai: not-for-assistant one product's audit-trail drill-down for the List Price lightbox; the assistant reads list_price_changed_at on the products entity
 @router.get("/{product_id}/list-price-history")
 def get_product_list_price_history(
     product_id: str,
@@ -327,7 +332,8 @@ def get_product_list_price_history(
     limit: int = Query(10, ge=1, le=100),
     sort: Optional[str] = Query("changed_at"),
     dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
+    # The grant `/audit/logs` asks for a product's trail (security review on #2260).
+    current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
 ):
     """This product's list-price history from the audit trail, paged and sorted on the server
@@ -337,9 +343,11 @@ def get_product_list_price_history(
     returns 404 here too, exactly like ``/purchase-history``.
     """
     try:
-        ProductService(db).get_product(product_id)   # visibility gate (404s on miss)
+        # Visibility gate (404s on miss). Read the trail of the RESOLVED product: the gate
+        # also accepts a product code.
+        product = ProductService(db).get_product(product_id)
         return product_list_price_history_service.list_price_history(
-            db, product_id, page=page, limit=limit, sort=sort or "changed_at", direction=dir or "desc"
+            db, str(product.id), page=page, limit=limit, sort=sort or "changed_at", direction=dir or "desc"
         )
     except HTTPException:
         raise
