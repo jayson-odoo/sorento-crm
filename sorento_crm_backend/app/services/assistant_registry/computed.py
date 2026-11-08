@@ -301,6 +301,8 @@ def _sorted(items: list[dict], order: list[tuple[str, str]]) -> list[dict]:
 
 
 def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set[str], spec: dict) -> dict:
+    if entity.spec_hook is not None:
+        spec = entity.spec_hook(spec)
     asked = _list(spec, "filters", MAX_FILTERS)
     date_from, date_to, rest, period = _window(entity, asked)
     notes = []
@@ -311,6 +313,12 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         date_from, date_to, rest, period = _window(entity, [*asked, default])
         shown = _display_date(date_from.isoformat(), "date"), _display_date(date_to.isoformat(), "date")
         notes.append(f"No period named: {entity.default_window.replace('_', ' ')}, {shown[0]} to {shown[1]}.")
+    if spec.get("next_tier") and date_from <= _today() <= date_to:
+        # How far from the next tier is a question about today's periods: one period basis for every figure of
+        # the answer, never a year's sums beside the current quarter's next tier (crew live x3 on bb85f8b5, X1/W9).
+        date_from = date_to = _today()
+        period, defaulted = None, False
+        notes = [n for n in notes if not n.startswith("No period named")]
     named = {f.get("field") for f in rest}
     for field, op, value, note in entity.default_filters:
         if field not in named:

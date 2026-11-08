@@ -727,18 +727,23 @@ def final_reply(
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
         text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
+    # What was not done, said by code; a reply the code builds whole keeps these as they are (`shape_reply`).
+    admitted: list[str] = []
     if bad_not_found:
         missing = "; ".join(bad_not_found)
-        text = f"I did not search for {missing}, so I cannot say it does not exist. {text}".strip()
+        admitted.append(f"I did not search for {missing}, so I cannot say it does not exist.")
+        text = f"{admitted[-1]} {text}".strip()
     if not_checked:
-        text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
+        admitted.append(f"Not checked: {'; '.join(not_checked)}.")
+        text = f"{text}\n\n{admitted[-1]}".strip()
     left = open_parts(args, plan or [], on_limit)
     if left:
-        text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
+        admitted.append(f"I did not get to: {'; '.join(left)}.")
+        text = f"{text}\n\n{admitted[-1]}".strip()
     # Records by their label, the result's scope note, dates as dd/mm/yyyy: decided in code (`query_tools`).
     from app.services.chatbot.agent.query_tools import shape_reply
 
-    text = shape_reply(text, ledger, user_text)
+    text = shape_reply(text, ledger, user_text, admitted=admitted)
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
@@ -1730,11 +1735,6 @@ def _run(
 
                         asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
                         args, self_note = strip_self_agent(args, asker, text)
-                    if name == "crm_query":
-                        # A distance-to-the-next-tier question's columns and ranking, decided by code (W-A shape).
-                        from app.services.chatbot.agent.query_tools import next_tier_args
-
-                        args = next_tier_args(args, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),

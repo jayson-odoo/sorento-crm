@@ -45,6 +45,50 @@ NEXT_TIER_FIELDS = {
 }
 
 
+#: `next_tier` (crm_query): what a next-tier question asks, said by the model from the user's meaning in any language.
+NEXT_TIER_KINDS = ("distance", "closest", "furthest")
+#: `subjects`: whose ranking a closest / furthest question asks for.
+NEXT_TIER_SUBJECTS = ("agent", "dealer", "team", "all")
+#: The columns of every next-tier answer, whatever else the call listed (crew live x3 on 0c5c7b78: X2 run 3 and W4
+#: run 2 dropped them). TGT and payout account come with them (`always_fields`).
+NEXT_TIER_COLUMNS = (
+    "owner_kind", "to_next_tier", "next_tier", "next_tier_at", "next_tier_payout", "next_tier_gain", "payout",
+)
+
+
+def _next_tier_spec(spec: dict) -> dict:
+    """`agent_target_summary`'s `next_tier` / `subjects` arguments as the spec it runs (crew live x3, owner rule:
+    the model states the question kind as an argument, code never reads the message): one row per subject (no
+    regroup), the next-tier columns, ranked by what is still to sell (furthest first for `furthest`), only the asked
+    subjects. closest / furthest without `subjects` is refused so the model asks the user, never guesses."""
+    from app.services.assistant_registry.query import QueryRefused
+
+    kind, subjects = spec.get("next_tier"), spec.get("subjects")
+    if kind is None:
+        if subjects is not None:
+            raise QueryRefused("invalid", "`subjects` goes with `next_tier` closest or furthest.")
+        return spec
+    if kind not in NEXT_TIER_KINDS:
+        raise QueryRefused("invalid", "`next_tier` is one of distance, closest, furthest.")
+    if subjects is not None and subjects not in NEXT_TIER_SUBJECTS:
+        raise QueryRefused("invalid", "`subjects` is one of agent, dealer, team, all.")
+    if kind != "distance" and subjects is None:
+        raise QueryRefused(
+            "invalid",
+            f"`next_tier` {kind} needs `subjects`: agent, dealer, team or all. If the user did not say whose "
+            "ranking they want, ask them one short question (agents, dealers or teams?) instead of querying.",
+        )
+    out = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
+    out["fields"] = list(NEXT_TIER_COLUMNS)
+    out["sort"] = [{"field": "to_next_tier", "dir": "desc" if kind == "furthest" else "asc"}]
+    if subjects in ("agent", "dealer", "team"):
+        filters = [
+            f for f in out.get("filters") or [] if not (isinstance(f, dict) and f.get("field") == "owner_kind")
+        ]
+        out["filters"] = [*filters, {"field": "owner_kind", "op": "eq", "value": subjects}]
+    return out
+
+
 def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
     from sqlalchemy import or_, select
 
@@ -611,13 +655,15 @@ register(
         hint="COMMISSION PAYOUT / TARGET vs ACHIEVED / NEXT TIER (how far to it, what it would pay) for an agent, a "
              "team or a dealer, or per agent / team / dealer: one row per agent, team and dealer, highest payout "
              "first, totals row; no period = this year. One of them: agent=<code or name as said> (an agent, team or "
-             "dealer); only dealers or teams: owner_kind eq dealer|team",
+             "dealer); only dealers or teams: owner_kind eq dealer|team. Next tier (how far, closest, what it would "
+             "pay or earn there): set next_tier, and subjects for closest / furthest",
         list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
         window_field="period",
         brand_blind=True,
         own_note="You see only your own agents' targets: team and dealer payouts are not visible to you.",
+        spec_hook=_next_tier_spec,
         row_note=_summary_note,
         rank_by="payout",
         default_window="this_year",

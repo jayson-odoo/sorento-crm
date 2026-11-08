@@ -125,3 +125,6 @@ class EntityDef:
     #: A computed entity's columns shown on every rows result, right after the label, whatever `fields` the
     #: query asks for (crew live round 5: same-name dealer rows looked identical once the model chose columns).
     always_fields: tuple[str, ...] = ()
+    #: A computed entity's own query arguments turned into the spec it runs (spec -> spec), before anything else
+    #: reads it; refuses with QueryRefused (AGENT-COMMISSION-WA: `next_tier` / `subjects`).
+    spec_hook: Callable[[dict], dict] | None = None

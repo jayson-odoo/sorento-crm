@@ -41,7 +41,9 @@ OPS = (
 )
 BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
-SPEC_KEYS = ("entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit")
+SPEC_KEYS = (
+    "entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit", "next_tier", "subjects",
+)
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
 _DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
@@ -639,6 +641,8 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    if entity.spec_hook is None and (spec.get("next_tier") is not None or spec.get("subjects") is not None):
+        raise QueryRefused("invalid", "`next_tier` and `subjects` are for agent_target_summary only.")
     spec = shorthands(entity, spec)
     if entity.compute is not None:
         from app.services.assistant_registry.computed import run_computed
