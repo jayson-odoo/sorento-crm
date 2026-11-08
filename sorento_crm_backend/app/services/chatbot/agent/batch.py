@@ -22,7 +22,9 @@ PREVIEW_HEAD = "I will make these changes when you confirm:"
 SKIPPED_HEAD = "Not changed:"
 NEEDS_HEAD = "Needs your choice:"
 PREVIEW_TAIL = "Reply yes to go ahead, or tell me what to change."
-CHOICE_TAIL = "Reply with the account code(s) to use for each row above, or all, or tell me what to change."
+CHOICE_TAIL = "Reply with the account code(s) for each row under Needs your choice, all, or skip."
+READY_NOW = " Or reply yes to confirm the ready rows now."
+NOTHING_TAIL = "Nothing can change yet; fix the rows above and send the table again."
 MORE_NOTE = "more than 10 accounts match; give a longer name or the code"
 
 
@@ -218,16 +220,28 @@ def propose(
 MAX_CELL_CHARS = 200
 
 
-def _cell(value: Any) -> str:
+def _cell(value: Any, cap: bool = True) -> str:
     """A table cell: one line, no pipe, no markdown link brackets (a cell may hold the model's copy of the paste)."""
     text = writes._line(value).replace("|", "/").replace("[", "(").replace("]", ")")
-    return (text if len(text) <= MAX_CELL_CHARS else f"{text[:MAX_CELL_CHARS]}...") or " "
+    return (text if not cap or len(text) <= MAX_CELL_CHARS else f"{text[:MAX_CELL_CHARS]}...") or " "
 
 
-def _table(headers: list[str], rows: list[list[Any]]) -> str:
+def _table(headers: list[str], rows: list[list[Any]], uncapped: tuple[str, ...] = ()) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
-    lines += ["| " + " | ".join(_cell(v) for v in row) + " |" for row in rows]
+    lines += [
+        "| " + " | ".join(_cell(v, headers[i] not in uncapped) for i, v in enumerate(row)) + " |" for row in rows
+    ]
     return "\n".join(lines)
+
+
+def summary_line(steps: list[dict], skipped: list[dict], waiting: list[dict] | tuple = ()) -> str:
+    """The reply's first line: how many distinct table rows are ready, need a choice, or were not changed."""
+    counts = (
+        (len({s.get("row") for s in steps}), "ready to confirm"),
+        (len({w["row"] for w in waiting}), "need your choice"),
+        (len({s["row"] for s in skipped}), "not changed"),
+    )
+    return "Rows from your table: " + ", ".join(f"{n} {word}" for n, word in counts if n) + "."
 
 
 def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | tuple = ()) -> str:
@@ -238,7 +252,7 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
         headers = list(dict.fromkeys(k for s in steps for k in (s.get("cells") or {"Change": s.get("summary")})))
         body = [[s.get("row", n)] + [(s.get("cells") or {"Change": s.get("summary")}).get(h, "") for h in headers]
                 for n, s in enumerate(steps, 1)]
-        parts += [PREVIEW_HEAD, _table(["#", *headers], body)]
+        parts += [PREVIEW_HEAD, _table(["#", *headers], body, uncapped=("Will change",))]
     if waiting:
         heads = list(dict.fromkeys(k for w in waiting for k in w.get("cells") or {}))
         rows: list[list[Any]] = []
@@ -255,5 +269,8 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
         heads = list(dict.fromkeys(k for s in skipped for k in s.get("cells") or {}))
         rows = [[s["row"]] + [(s.get("cells") or {}).get(h, "") for h in heads] + [s["reason"]] for s in skipped]
         parts += [SKIPPED_HEAD, _table(["#", *heads, "Why"], rows)]
-    parts.append(PREVIEW_TAIL if steps else CHOICE_TAIL)
+    if waiting:
+        parts.append(CHOICE_TAIL + (READY_NOW if steps else ""))
+    else:
+        parts.append(PREVIEW_TAIL if steps else NOTHING_TAIL)
     return "\n\n".join(parts)

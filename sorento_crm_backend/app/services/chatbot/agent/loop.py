@@ -589,13 +589,15 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return False
     low = _fold_text(what)
     if entry["name"] == batch.BATCH and isinstance(entry.get("data"), dict):
-        # Only a skipped row's "No customer ..." part backs the claim, for exactly the term it quotes.
+        # Only a skipped row's "No customer ..." part backs the claim, for the term it quotes: the claim is that
+        # term, quotes it, or repeats the whole part.
         prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "')
         for item in entry["data"].get("skipped") or []:
             for part in str(item.get("reason") or "").split("; "):
                 for prefix in prefixes:
                     if part.startswith(prefix) and '"' in part[len(prefix):]:
-                        if _fold_text(part[len(prefix):].split('"', 1)[0]) == low:
+                        term = _fold_text(part[len(prefix):].split('"', 1)[0])
+                        if low == term or f'"{term}"' in low or _fold_text(part.rstrip(".")) in low:
                             return True
         return False
     if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
@@ -1269,6 +1271,12 @@ def _channel(is_test: bool) -> str:
     return "console" if is_test else "whatsapp"
 
 
+def _batch_reply(steps: list[dict], skipped: list[dict], waiting: list[dict], confirm_notes: list[str]) -> str:
+    """A table turn's whole reply, built by code: the counts, then the tables (the model's own text is dropped)."""
+    reply = f"{batch.summary_line(steps, skipped, waiting)}\n\n{batch.preview_block(steps, skipped, waiting)}"
+    return f"{reply}\n\n" + "\n".join(confirm_notes) if confirm_notes else reply
+
+
 def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
     """The `batch_waiting` of the newest EARLIER turn of this conversation that kept one (a plain turn in between
     does not hide it)."""
@@ -1329,6 +1337,10 @@ def _run(
     batch_waiting: list[dict] = []
     batch_called = False
     previous_waiting: list[dict] | None = None
+
+    def batch_shown() -> bool:
+        # The turn's reply is the code-built summary and tables, so the model's own answer text is not shown or checked.
+        return batch_called and (any(s.get("batch") for s in steps) or bool(batch_skipped) or bool(batch_waiting))
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1528,7 +1540,7 @@ def _run(
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             nonlocal forced_args
             args = forced_args = answer_of(res)
-            bad_numbers, bad_nf = verify_answer(args, ledger, text)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
@@ -1718,8 +1730,8 @@ def _run(
             if answer_idx is not None:
                 args = calls[answer_idx].get("arguments")
                 args = scrub(args if isinstance(args, dict) else {})
-                bad_numbers, bad_nf = verify_answer(args, ledger, text)
-                empty_text = not _answer_parts(args)[0]
+                bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)
+                empty_text = not _answer_parts(args)[0] and not batch_shown()
                 trace.add(
                     "agent_answer",
                     {"unbacked_numbers": bad_numbers, "unbacked_not_found": bad_nf, "repaired": repaired},
@@ -1756,7 +1768,7 @@ def _run(
                 break
 
         if final_args is not None:
-            bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(final_args, ledger, text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
         gaps = no_tool_items(final_args if final_args is not None else forced_args)
         if gaps:
@@ -1846,7 +1858,7 @@ def _run(
     pending = None
     if status != "failed" and not steps and (batch_skipped or batch_waiting):
         # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
-        reply = f"{reply}\n\n{batch.preview_block([], batch_skipped, batch_waiting)}"
+        reply = _batch_reply([], batch_skipped, batch_waiting, confirm_notes)
         try:
             # The old confirm card no longer matches what the user was just shown.
             actions.expire_previous(db, ctx, [], test=is_test)
@@ -1863,7 +1875,7 @@ def _run(
             lines = actions.proposal_lines(stored)
             pending = actions.pending_dict(stored)
             if all(s.get("batch") for s in stored.steps or []):
-                reply = f"{reply}\n\n{batch.preview_block(stored.steps, batch_skipped, batch_waiting)}"
+                reply = _batch_reply(stored.steps, batch_skipped, batch_waiting, confirm_notes)
             else:
                 reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
