@@ -293,3 +293,123 @@ def test_c5_a_formula_is_never_evaluated():
     got = read_sheet(buf.getvalue(), "xlsx")
 
     assert got.rows[0][1] != "2", "a formula was evaluated"
+
+
+# --------------------------------------------------------------------------- #
+# R2 (review round 1): reading is bounded however large a sheet DECLARES itself
+# --------------------------------------------------------------------------- #
+
+import multiprocessing
+import time
+import zipfile
+
+
+def _declare_huge(data: bytes, ref: str = "A1:XFD1048576") -> bytes:
+    """The same workbook with every sheet's `<dimension>` rewritten to claim a full worksheet."""
+    import re
+
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            body = src.read(item.filename)
+            if item.filename.startswith("xl/worksheets/sheet"):
+                body = re.sub(rb'<dimension ref="[^"]*"\s*/>', f'<dimension ref="{ref}"/>'.encode(), body)
+                assert ref.encode() in body, "the fixture did not declare the huge dimension"
+            dst.writestr(item, body)
+    return out.getvalue()
+
+
+def _in_child(fn, data: bytes, queue) -> None:
+    try:
+        queue.put(("ok", fn(data)))
+    except BaseException as exc:  # noqa: BLE001
+        queue.put(("error", repr(exc)))
+
+
+def _bounded(fn, data: bytes, seconds: float = 10.0):
+    """`(finished, seconds taken, result)`; a run past `seconds` is killed so a regression cannot hang the suite."""
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=_in_child, args=(fn, data, queue))
+    started = time.monotonic()
+    proc.start()
+    proc.join(seconds)
+    taken = time.monotonic() - started
+    if proc.is_alive():
+        proc.kill()
+        proc.join()
+        return False, taken, None
+    status, value = queue.get(timeout=2)
+    assert status == "ok", value
+    return True, taken, value
+
+
+def _read_it(data: bytes):
+    got = read_sheet(data, "xlsx")
+    return got.rows, got.total_rows
+
+
+def _list_it(data: bytes):
+    return list_sheets(data, "xlsx")
+
+
+def test_r2_read_sheet_ignores_a_declared_full_worksheet_dimension():
+    small = xlsx({"Dealers": [["Phone", "Name"], ["601", "Ali"], ["602", "Bob"], ["603", "Cai"]]})
+    bomb = _declare_huge(small)
+    assert len(bomb) < 5_000
+
+    finished, taken, value = _bounded(_read_it, bomb)
+
+    assert finished, "read_sheet did not return within 10 s on a sheet that declares A1:XFD1048576"
+    assert taken < 2.0, f"read_sheet took {taken:.1f}s"
+    assert value == ([["601", "Ali"], ["602", "Bob"], ["603", "Cai"]], 3)
+
+
+def test_r2_list_sheets_ignores_a_declared_full_worksheet_dimension():
+    small = xlsx({"Dealers": [["Phone", "Name"], ["601", "Ali"], ["602", "Bob"], ["603", "Cai"]]})
+
+    finished, taken, value = _bounded(_list_it, _declare_huge(small))
+
+    assert finished, "list_sheets did not return within 10 s on a sheet that declares A1:XFD1048576"
+    assert taken < 2.0, f"list_sheets took {taken:.1f}s"
+    assert value == [{"name": "Dealers", "rows": 3}]
+
+
+def test_r2_at_most_100_columns_are_read():
+    wide = xlsx({"Wide": [[f"H{i}" for i in range(150)], [f"v{i}" for i in range(150)]]})
+
+    got = read_sheet(wide, "xlsx")
+
+    assert len(got.header) <= 100
+    assert len(got.rows[0]) <= 100
+
+
+def test_r2_at_most_20_sheets_are_scanned():
+    many = xlsx({f"S{i:02d}": [["Phone", "Name"], ["601", f"P{i}"]] for i in range(25)})
+
+    listed = list_sheets(many, "xlsx")
+
+    assert len(listed) == 20
+    assert [s["name"] for s in listed] == [f"S{i:02d}" for i in range(20)]
+
+
+def test_r2_a_sheet_past_the_scan_limit_is_not_read_by_name_either():
+    many = xlsx({f"S{i:02d}": [["Phone", "Name"], ["601", f"P{i}"]] for i in range(25)})
+
+    got = read_sheet(many, "xlsx", "S24")
+
+    # Not in the first 20, so S6 applies: unknown sheet -> the first non-empty one.
+    assert got.name == "S00"
+
+
+def test_r2_a_long_sheet_that_declares_a_full_width_is_not_padded_to_16384_columns():
+    """The cost an attacker controls: every real row padded out to the declared width."""
+    rows = [["Phone", "Name"]] + [[f"601{i}", f"P{i}"] for i in range(30_000)]
+    bomb = _declare_huge(xlsx({"Dealers": rows}))
+
+    finished, taken, value = _bounded(_read_it, bomb, seconds=30.0)
+
+    assert finished
+    assert value[1] == 30_000
+    assert taken < 2.0, f"read_sheet took {taken:.1f}s on a sheet that declares {16384} columns"
