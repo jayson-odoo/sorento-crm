@@ -1,6 +1,6 @@
 # PLAN: target per-account payout (08 Nov 2026)
 
-Status: Built, reviewed (reviewer READY after fixes), browser-passed in the cloud sandbox; awaiting owner hand test. Track: full (migration). Lane TARGET-PER-ACCOUNT-PAYOUT, PR #2262.
+Status: Built, reviewed (blocker and should-fixes addressed, no re-review yet), browser-passed in the cloud sandbox; awaiting owner hand test. Track: full (migration). Lane TARGET-PER-ACCOUNT-PAYOUT, PR #2262.
 
 UAC: `target-per-account-payout-08nov-acceptance-criteria.md` (alongside).
 
