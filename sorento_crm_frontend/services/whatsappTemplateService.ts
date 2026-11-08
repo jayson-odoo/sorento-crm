@@ -80,6 +80,7 @@ export type UseCase =
   | 'form_action_voided'
   | 'form_action_reopened'
   | 'product_discontinued'
+  | 'product_list_price_changed'
   | 'ticket_resolved'
   | 'price_tag_update'
   | 'quotation_approval'
@@ -104,6 +105,8 @@ export type ParamVariable =
   | 'resolved_last_24h'
   | 'discontinued_count'
   | 'discontinued_link'
+  | 'list_price_count'
+  | 'list_price_link'
   | 'today_date'
   | 'system_url'
   | 'respond_due_at'
@@ -349,6 +352,12 @@ export const USE_CASES: {
       'Batch alert sent to subscribed staff when products are newly discontinued. Map params to "Discontinued count" and "Discontinued link" (the deep link to the filtered product list).',
   },
   {
+    key: 'product_list_price_changed',
+    label: 'Product List Price Changed',
+    description:
+      'Batch alert sent to subscribed staff when product list prices change. Map params to "List price change count" and "List price change link" (the deep link to the filtered product list).',
+  },
+  {
     key: 'ticket_resolved',
     label: 'Ticket Resolved (closing message)',
     description:
@@ -413,6 +422,8 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'resolved_last_24h', label: 'Resolved (24h)', description: 'Conversations the staff member resolved in the last 24h' },
   { key: 'discontinued_count', label: 'Discontinued count', description: 'Number of products newly discontinued in this batch' },
   { key: 'discontinued_link', label: 'Discontinued link', description: 'Deep link to the product list filtered to that batch' },
+  { key: 'list_price_count', label: 'List price change count', description: 'Number of products whose list price changed in this batch' },
+  { key: 'list_price_link', label: 'List price change link', description: 'Deep link to the product list filtered to that batch' },
   { key: 'today_date', label: "Today's date", description: 'Date the message is sent (DD/MM/YYYY, Malaysia time)' },
   { key: 'system_url', label: 'System URL', description: 'CRM base URL (e.g. https://fe-sorento.foundryx.my)' },
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },

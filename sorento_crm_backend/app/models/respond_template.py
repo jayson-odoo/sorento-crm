@@ -96,6 +96,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
+    # Product list price changed - batch notification to subscribed staff
+    # (PRODUCT-FIELD-CHANGE-NOTIFY). Map params to ``list_price_count`` +
+    # ``list_price_link`` (deep link to the product list filtered to that batch);
+    # ``today_date`` (DD/MM/YYYY) and ``message`` are also available.
+    "product_list_price_changed",
     # One closing message per resolved conversation ticket
     # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
     # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.

@@ -54,6 +54,10 @@ PARAM_VARIABLES = (
     # can also be mapped via ``portal_url`` for templates that reuse the link slot.
     "discontinued_count",
     "discontinued_link",
+    # Product list-price change batch notification (PRODUCT-FIELD-CHANGE-NOTIFY): same
+    # shape as the discontinued pair; ``list_price_link`` is also on ``portal_url``.
+    "list_price_count",
+    "list_price_link",
     # Generic helpers usable by any template: today's date (DD/MM/YYYY, Malaysia) and
     # the CRM base URL. Each use case's service must supply these in context_vars.
     "today_date",

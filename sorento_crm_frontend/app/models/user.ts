@@ -91,6 +91,11 @@ export interface User {
   notify_email_on_product_discontinued?: boolean | null;
   notifyWhatsappOnProductDiscontinued?: boolean | null;
   notify_whatsapp_on_product_discontinued?: boolean | null;
+  /** Product list-price change batch notification opt-in (admin-configured). */
+  notifyEmailOnProductListPrice?: boolean | null;
+  notify_email_on_product_list_price?: boolean | null;
+  notifyWhatsappOnProductListPrice?: boolean | null;
+  notify_whatsapp_on_product_list_price?: boolean | null;
   /** Which (company, brand) slices this user is notified about. Empty = nothing. */
   productDiscontinuedScopes?: ProductDiscontinuedScope[] | null;
   product_discontinued_scopes?: ProductDiscontinuedScope[] | null;
