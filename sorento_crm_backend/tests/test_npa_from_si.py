@@ -397,6 +397,7 @@ def test_lineage_hides_application_detail_from_a_product_viewer(world, monkeypat
         ("get", "/products?q=x", 403),
         ("get", "/reuse-suggestions?product_ids=", 403),
         ("post", "/{aid}/new-code/link", 404),
+        ("post", "/{aid}/purchasing-response/reply", 404),
     ],
 )
 def test_own_only_staff_are_refused_the_new_staff_routes_by_the_guard(world, method, path, code):
@@ -415,7 +416,7 @@ def test_own_only_staff_are_refused_the_new_staff_routes_by_the_guard(world, met
     UserPermissionService.check_user_has_any_permission = lambda self, uid, ss: bool(held & set(ss))
     try:
         url = f"{NPA}{path.format(aid=d['id'])}"
-        kw = {"json": {"product_id": world.product.id}} if method == "post" else {}
+        kw = {"json": {"product_id": world.product.id, "purchasing_response": "x"}} if method == "post" else {}
         res = getattr(world.api.as_(world.stranger), method)(url, **kw)
     finally:
         for n, f in saved.items():
