@@ -570,7 +570,9 @@ def test_baseline_the_real_loop_answers_a_typed_message(panel, monkeypatch):
     resp = send(panel, None, message="hello there")
 
     assert resp.status_code == 200, resp.text
-    assert "ZZT typed reply." in resp.json()["messages"][-1]["content"]
+    # By role, not position: in this test both rows share one transaction's now(), so their order ties.
+    replies = [m["content"] for m in resp.json()["messages"] if m["role"] == "assistant"]
+    assert any("ZZT typed reply." in r for r in replies), replies
     assert len(_turn_rows(panel)) == 1
 
 
