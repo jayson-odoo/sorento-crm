@@ -25,6 +25,11 @@ Computed per period from the target's tiers, never stored:
   is the target's: sen (0.01, default) or ringgit (1). The marginal main line is the sum of its
   slices, rounded once, as before.
 - Bonus (the RM Additional): the reached main tier's `bonus_amount`, once per period.
+- Each account's share (`Payout.by_account`, lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every
+  account of a dealer target is its own payee. A line paid per account gives each account its own
+  rounded amount; the marginal main line and the bonus, which have no per-account figure, split
+  pro rata to each account's sales (rounding remainder on the largest). Shares add up to
+  commission + bonus.
 - `rate` is a % of the achieved amount on an amount target, RM per unit on a quantity target.
 - `none` returns null commission and bonus.
 """
@@ -65,10 +70,31 @@ class Payout(NamedTuple):
     #: 1-based position of the main tier reached among the main tiers, None below the first.
     tier_reached: Optional[int]
     ratio_missing: bool
+    #: Each account's share of commission + bonus (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov:
+    #: every account of a dealer target is its own payee). Adds up to commission + bonus.
+    by_account: Optional[Dict[Hashable, Decimal]] = None
 
 
 def _round(value: Decimal, unit: Decimal = CENT) -> Decimal:
     return value.quantize(unit, rounding=ROUND_HALF_UP)
+
+
+def _pro_rata(amount: Decimal, weights: Dict[Hashable, Decimal], unit: Decimal) -> Dict[Hashable, Decimal]:
+    """`amount` split by `weights` (each account's sales), each share rounded, the rounding
+    remainder on the largest weight so the shares add up to `amount` exactly. Owner 8 Nov (card
+    Q3): the marginal method and the RM Additional have no per-account figure of their own."""
+    keys = list(weights)
+    if not keys:
+        return {}
+    total = sum(weights.values(), Decimal("0"))
+    if total <= 0:
+        shares = {key: Decimal("0") for key in keys}
+        shares[keys[0]] = amount
+        return shares
+    shares = {key: _round(amount * weights[key] / total, unit) for key in keys}
+    largest = max(keys, key=lambda key: weights[key])
+    shares[largest] += amount - sum(shares.values(), Decimal("0"))
+    return shares
 
 
 def threshold_in_rm(
@@ -103,7 +129,7 @@ def payout_for(
     """The period's payout from its tiers and its achievement per account."""
     ratio_missing = threshold_unit == "points" and rm_per_point is None
     if method == "none" or not tiers:
-        return Payout(None, None, [], None, ratio_missing)
+        return Payout(None, None, [], None, ratio_missing, {})
     unit = UNITS.get(rounding, CENT)
     target_value = Decimal(target_value or 0)
     by_account = {key: max(Decimal(v or 0), Decimal("0")) for key, v in achieved.items()}
@@ -112,23 +138,25 @@ def payout_for(
     def pay(rate: Decimal, base: Decimal) -> Decimal:
         return base * rate if metric == "quantity" else base * rate / HUNDRED
 
+    shares: Dict[Hashable, Decimal] = {key: Decimal("0") for key in by_account}
+
     def line_amount(tier: Tier, extra: Optional[Decimal] = None) -> Decimal:
-        # Each account's amount rounded on its own, then added (ruling 3). `extra`: pay this
-        # rate instead, on the same accounts the tier pays (its Additional).
+        # Each account's amount rounded on its own, then added (ruling 3); each account keeps
+        # its own amount as its share (owner 8 Nov). `extra`: pay this rate instead, on the
+        # same accounts the tier pays (its Additional).
         if extra is not None:
             keys = by_account.keys() if tier.account_rates is None else tier.account_rates.keys()
-            return sum(
-                (_round(pay(Decimal(extra), by_account.get(key, Decimal("0"))), unit) for key in keys),
-                Decimal("0"),
-            )
-        if tier.account_rates is not None:
-            return sum(
-                (_round(pay(Decimal(rate), by_account.get(key, Decimal("0"))), unit)
-                 for key, rate in tier.account_rates.items()),
-                Decimal("0"),
-            )
-        rate = Decimal(tier.rate or 0)
-        return sum((_round(pay(rate, base), unit) for base in by_account.values()), Decimal("0"))
+            rates = {key: Decimal(extra) for key in keys}
+        elif tier.account_rates is not None:
+            rates = {key: Decimal(rate) for key, rate in tier.account_rates.items()}
+        else:
+            rates = {key: Decimal(tier.rate or 0) for key in by_account}
+        amount = Decimal("0")
+        for key, rate in rates.items():
+            each = _round(pay(rate, by_account.get(key, Decimal("0"))), unit)
+            shares[key] = shares.get(key, Decimal("0")) + each
+            amount += each
+        return amount
 
     def at(tier: Tier) -> Optional[Decimal]:
         return threshold_in_rm(tier, threshold_unit, target_value, rm_per_point)
@@ -165,7 +193,10 @@ def payout_for(
             if top > low:
                 slices += pay(Decimal(tier.rate or 0), top - low)
         if hit or slices:
-            lines.append(PayLine("main", _rm(at(main[hit[-1]])) if hit else None, _round(slices, unit)))
+            amount = _round(slices, unit)
+            lines.append(PayLine("main", _rm(at(main[hit[-1]])) if hit else None, amount))
+            for key, each in _pro_rata(amount, by_account, unit).items():
+                shares[key] = shares.get(key, Decimal("0")) + each
     if hit and main[hit[-1]].additional_rate:
         top = main[hit[-1]]
         lines.append(PayLine("additional", _rm(at(top)), line_amount(top, top.additional_rate)))
@@ -176,8 +207,10 @@ def payout_for(
         lines.append(PayLine("additional", _rm(at(tier)), line_amount(tier)))
 
     commission = sum((line.amount for line in lines), Decimal("0"))
-    bonus = Decimal(main[hit[-1]].bonus_amount or 0) if hit else Decimal("0")
-    return Payout(_round(commission, unit), _round(bonus, unit), lines, tier_reached, ratio_missing)
+    bonus = _round(Decimal(main[hit[-1]].bonus_amount or 0) if hit else Decimal("0"), unit)
+    for key, each in _pro_rata(bonus, by_account, unit).items():
+        shares[key] = shares.get(key, Decimal("0")) + each
+    return Payout(_round(commission, unit), bonus, lines, tier_reached, ratio_missing, shares)
 
 
 class FoldRow(NamedTuple):
