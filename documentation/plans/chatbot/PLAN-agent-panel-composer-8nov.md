@@ -1,11 +1,11 @@
 # PLAN: AI assistant side panel composer (multiline, attachments, voice)
 
-Status: Step 1 done (map + mock + behaviour card), waiting on the owner's answers and mock OK. No code yet.
+Status: Build (Phase 1 FE + Phase 2 tester-first BE). Mock OK 8 Nov 15:23; Q1a-Q5a final 15:25.
 Track: full (size L: new upload surface, file parsing, a data migration seeding one attachment type).
 Lane: AGENT-PANEL-COMPOSER. Owner ask 8 Nov 2026 ~15:10 MYT.
 
 Mock: `agent-panel-composer-8nov-mock.html`. Behaviour card: `agent-panel-composer-8nov-behaviour-card.md`.
-UAC: written after the owner answers (`agent-panel-composer-8nov-acceptance-criteria.md`).
+UAC: `agent-panel-composer-8nov-acceptance-criteria.md`.
 
 ## Owner journey
 
