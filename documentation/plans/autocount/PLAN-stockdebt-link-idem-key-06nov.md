@@ -1,6 +1,6 @@
 # PLAN: Stock Debt PO link retryable after an AutoCount refusal (lane STOCKDEBT-LINK-IDEM-KEY)
 
-Status: Review (reviewer READY at 46ed548b; should-fix 1 and nits 2, 3, 5, 6 taken). Track: small fix (no migration, no auth/RBAC change, no new ingest surface).
+Status: Merge-ready candidate (reviewer READY at 46ed548b; should-fix 1 and nits 2, 3, 5, 6 taken in 2b9b0502; second reviewer READY on the full lane diff at 70427948, nits 1 and 4 taken). Track: small fix (no migration, no auth/RBAC change, no new ingest surface).
 Feature switch "AutoCount links from Stock Debt" stays OFF.
 
 ## Facts (main at 61e9d217)

@@ -45,6 +45,7 @@ def _client() -> Optional[Any]:
 
         return redis.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1)
     except Exception:  # noqa: BLE001
+        logger.warning("AutoCount attempt store unavailable; refused writes keep their key", exc_info=True)
         return None
 
 
