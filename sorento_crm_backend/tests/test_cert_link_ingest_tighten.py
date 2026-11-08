@@ -2,7 +2,7 @@
 
 A string the reader returns links a product only when (1) it is printed as a whole token on the PDF,
 when the PDF has text, and (2) it resolves through exact, product set or `+` split, or as a contained
-run of 3+ characters with a digit (never digits only). The family-prefix tier is off for certificates.
+run of 3+ characters with a digit (never digits only). The family-prefix tier stays as the last\nresort (owner 8 Nov, ruling #440 R7), its family head printed on the PDF.
 A string that fails is reported in the revision's unmatched list, never dropped silently.
 Reuses the ingest harness of tests/test_certificate_api.py.
 """
@@ -81,12 +81,25 @@ def test_a_string_not_printed_on_the_pdf_links_nothing_and_is_reported(env, pdf_
     assert "BRD7711CP" in body["skipped_product_codes"]
 
 
-def test_the_family_prefix_tier_is_off_for_certificates(env, pdf_bytes):
-    pdf_bytes["data"] = _pdf(["ZZTFAMILY7 - FAMILY NAME"])
-    env.product("T", code="ZZTFAMILY7-RL")
-    _post(env, "TIGHT-3", ["ZZTFAMILY7 - FAMILY NAME"])
-    assert _covered_codes(env, "TIGHT-3") == set()
-    assert _unmatched(env, "TIGHT-3") == ["ZZTFAMILY7 - FAMILY NAME"]
+def test_a_family_prefix_links_its_family_as_the_last_resort(env, pdf_bytes):
+    """Owner 8 Nov 21:00, applying ruling #440 R7: the family-prefix tier stays ON for certificates
+    as the LAST resort. A certificate printing "SRTBV - BRASS BALL VALVE", with no exact or substring
+    hit, still links the SRTBV family."""
+    pdf_bytes["data"] = _pdf(["SRTBV - BRASS BALL VALVE"])
+    for code in ("SRTBV10", "SRTBV20-CP", "XSRTBV30"):
+        env.product("T", code=code)
+    _post(env, "TIGHT-3", ["SRTBV - BRASS BALL VALVE"])
+    assert _covered_codes(env, "TIGHT-3") == {"SRTBV10", "SRTBV20-CP"}
+    assert _unmatched(env, "TIGHT-3") == []
+
+
+def test_a_family_prefix_not_printed_links_nothing(env, pdf_bytes):
+    """The prefix tier keeps the printed check: the family head must be on the PDF."""
+    pdf_bytes["data"] = _pdf(["Model WB 1515 wash basin"])
+    env.product("T", code="SRTBV10")
+    _post(env, "TIGHT-3B", ["SRTBV - BRASS BALL VALVE"])
+    assert _covered_codes(env, "TIGHT-3B") == set()
+    assert _unmatched(env, "TIGHT-3B") == ["SRTBV - BRASS BALL VALVE"]
 
 
 def test_a_digits_only_string_never_fans_out(env, pdf_bytes):

@@ -43,6 +43,17 @@ SHORT_CODE_LEN = 3
 #: Resolver tiers a printed certificate string may link through (Q2 (a), certificates only):
 #: substring stays, gated by `_containable`; the family-prefix tier is off.
 _ALWAYS_TIERS = ("exact", "product_set", "plus_split")
+#: The family-prefix tier stays ON for certificates as the LAST resort (owner 8 Nov 21:00, applying
+#: ruling #440 R7 "SRTBV is fixed in the ONE resolver as a last-resort tier"): the resolver reaches it
+#: only when tiers 1-4 find nothing, and keeps its own guard rails (head length, fan-out cap).
+VIA_PREFIX = "prefix"
+
+
+def family_head(code: Optional[str]) -> str:
+    """The family part of a prefix-tier string, as the resolver reads it ("SRTBV - BRASS..." -> SRTBV)."""
+    from app.services.product_code_resolution import _prefix_head
+
+    return _prefix_head((code or "").strip())
 
 
 def _containable(norm: str) -> bool:
@@ -193,6 +204,9 @@ def ingest_printed(text: Optional[dict], code: Optional[str], via: str, product_
     separate table cells): the part that names this product must be printed."""
     if via == "plus_split":
         return printed_on(text, code) or printed_on(text, product_code)
+    if via == VIA_PREFIX:
+        # The family head must be printed; the description after it can run past the 4-word run.
+        return printed_on(text, code) or printed_on(text, family_head(code))
     return printed_on(text, code)
 
 
@@ -200,7 +214,7 @@ def ingest_match_allowed(code: Optional[str], via: str, product_code: Optional[s
     """R8: may this resolver match link a product to a certificate? A substring match must also
     sit on a boundary of the product code (crew ruling 8 Nov), so the ingest stops creating the
     `11C` -> `BRD7711CP` links the report would only flag."""
-    if via in _ALWAYS_TIERS:
+    if via in _ALWAYS_TIERS or via == VIA_PREFIX:
         return True
     if via != "substring":
         return False
@@ -289,6 +303,7 @@ def wanted_for_codes(codes, product_codes=()) -> set[str]:
     for code in list(codes) + list(product_codes):
         out.add(normalise(code or ""))
         out.update(plus_parts(code))
+        out.add(normalise(family_head(code)))
     out.discard("")
     return out
 

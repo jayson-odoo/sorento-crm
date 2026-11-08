@@ -191,11 +191,11 @@ def _resolve_product_codes(
     product-set expansion live in ``app.services.product_code_resolution`` so this path and the
     promotion path cannot drift apart.
 
-    CERT-LINK-CLEANUP (R8, owner answer Q2 (a), 8 Nov): a certificate links only what it prints.
-    The family-prefix tier is OFF here (it linked a 14A stop-valve certificate to 158 products),
-    a substring match needs a contained run of 3+ characters with a digit and never digits only,
-    and when the PDF has text the string must be printed on it as a whole token
-    (``certificate_link_check``). Every string that fails is returned in ``unmatched``, so it lands
+    CERT-LINK-CLEANUP (R8, 8 Nov): a certificate links only what it prints. A substring match needs a
+    contained run of 3+ characters with a digit on a boundary and never digits only, and when the PDF
+    has text the string must be printed on it as a whole token (``certificate_link_check``). The
+    family-prefix tier stays ON as the LAST resort (owner 8 Nov 21:00, applying ruling #440 R7): the
+    resolver reaches it only when tiers 1-4 find nothing, and its family head must be printed. Every string that fails is returned in ``unmatched``, so it lands
     in the revision's unmatched list and its review flag, never dropped silently.
 
     Company isolation still comes from the session: the caller pinned it to the attachment's
@@ -203,7 +203,7 @@ def _resolve_product_codes(
     """
     from app.services import certificate_link_check as link_check
 
-    resolved = _resolve_codes(db, codes, allow_prefix=False)
+    resolved = _resolve_codes(db, codes, allow_prefix=True)
     text = (
         _certificate_text(
             db,

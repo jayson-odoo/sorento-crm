@@ -148,7 +148,7 @@ def test_scanned_and_no_file():
         ("120", "exact", "120", True),
         ("A1", "substring", "SRTA1-CP", False),  # too short
         ("ABCD", "substring", "XABCD1", False),  # no digit
-        ("SRTBV - BRASS", "prefix", "SRTBV10", False),  # family prefix is off for certificates
+        ("SRTBV - BRASS", "prefix", "SRTBV10", True),  # last resort, owner 8 Nov (ruling #440 R7)
         ("SET-1", "product_set", "WB-8800", True),
         ("A1 + B2", "plus_split", "A1", True),
     ],
@@ -586,3 +586,17 @@ def test_b_cat_needs_the_one_family_to_be_the_linked_products_own(cat_text, fami
 
     assert _cat(cat_text, "162-QT", "XYZ162-QT", families) == "check"
     assert verdict(cat_text, model_code=None, model_code_source=None, product_code="XYZ162-QT", families=families)[0] == "check"
+
+
+
+def test_the_prefix_tier_checks_the_family_head_is_printed():
+    """Owner 8 Nov: a prefix match is checked on its family HEAD (the text before ` - `), since the
+    description after it may run past the 4-word run the matcher reads."""
+    from app.services.certificate_link_check import ingest_printed, wanted_for_codes
+    from app.services.certificate_pdf_service import printed_runs
+
+    code = "SRTBV - BRASS BALL VALVE FULL BORE PN16"
+    text = printed_runs(text_pdf(["SRTBV - BRASS BALL VALVE FULL BORE PN16"]), wanted_for_codes([code]))
+    assert ingest_printed(text, code, "prefix", "SRTBV10") is True
+    other = printed_runs(text_pdf(["Model WB 1515"]), wanted_for_codes([code]))
+    assert ingest_printed(other, code, "prefix", "SRTBV10") is False

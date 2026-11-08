@@ -77,7 +77,7 @@ MGB5011C and GB3011C read Found.
 | Verdict rule (pure) | `sorento_crm_backend/app/services/certificate_link_check.py` |
 | Offline proof (read-only) | `sorento_crm_backend/scripts/cert_link_verdicts.py` |
 | Printed runs, read once, only the wanted strings | `certificate_pdf_service.printed_runs` |
-| Ingest tightening (prefix off, gated substring, printed check, `+` per part) | `app/api/v1/external/product_attachments.py` `_resolve_product_codes` |
+| Ingest tightening (prefix as last resort, gated substring, printed check, `+` per part) | `app/api/v1/external/product_attachments.py` `_resolve_product_codes` |
 | Stored verdict + key | `certificate_products.check_verdict/check_code/check_key/checked_at`, migration `clink_0001_link_checks` |
 | Report, check queue, Confirm, Remove handler | `app/services/certificate_link_report_service.py` |
 | Routes | `app/api/v1/master_data/certificate_links.py` (`GET /`, `POST /check`, `POST /confirm`) |
@@ -106,6 +106,15 @@ MGB5011C and GB3011C read Found.
   product code, source). To re-read everything after a catalogue change, run
   `UPDATE certificate_products SET check_key = NULL;`. Trigger to automate this: a catalogue change leaves
   a wrong Found that someone acts on.
+
+## Owner ruling, 8 Nov 21:00: keep #2249, family prefix back as the last resort
+
+"keep #2249". One change, applying the owner's earlier ruling #440 (31 Aug, R7: "SRTBV is fixed in the
+ONE resolver as a last-resort tier"): the certificate ingest keeps the family-prefix tier ON as the LAST
+resort, reached only when tiers 1-4 find nothing, as #440 built it. This lane had turned it off for
+certificates; it is restored. A prefix match must have its family head printed on the PDF (a text PDF),
+and stores no Code on certificate (it names a family, not a printed code). Every other #2249 rule stays:
+whole-token, boundary, short and digit-led codes are Check, rule B-cat, the report and bulk actions.
 
 ## Deploy notes
 

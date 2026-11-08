@@ -22,7 +22,7 @@ Plan: `PLAN-cert-link-cleanup-08nov.md`. Card: `CARD-cert-link-cleanup-08nov.md`
 
 - I1 A printed short code links only products that contain it on a boundary (`11C` never links `BRD7711CP`).
 - I2 A string not printed on a text PDF links nothing and is listed as unmatched / skipped.
-- I3 The family-prefix tier is off for certificates; digits-only and short strings never fan out.
+- I3 The family-prefix tier is the LAST resort (owner 8 Nov, ruling #440 R7): a certificate printing `SRTBV - BRASS BALL VALVE` with no exact or substring hit links the SRTBV family; an unprinted family head links nothing. Digits-only and short strings never fan out.
 - I4 A scanned PDF skips the printed check only. A renewal adds only printed links. `A + B` parts are checked separately.
 
 ## Report and actions (tests: `tests/test_certificate_links_report.py`, FE `CertificateLinksList.test.tsx`)
