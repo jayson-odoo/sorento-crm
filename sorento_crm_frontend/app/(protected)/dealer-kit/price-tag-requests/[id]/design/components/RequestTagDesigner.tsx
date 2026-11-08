@@ -99,6 +99,14 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
+import {
+  applyLinkActions,
+  linkCorrectionPatches,
+  linkedPresetIds,
+  linkRefreshActions,
+  type LayerPropsPatch,
+  type LinkAction,
+} from '@/lib/dealer-kit/accessory-card';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
@@ -995,15 +1003,73 @@ export function RequestTagDesigner({
   // stray autosave answers 409 and the indicator read "Save failed" after a
   // perfectly good Mark ready for collection. Read through a ref so a status
   // change lands in the very next save, pending ones included.
+  // Linked accessories boxes: a request never edits a saved template, so its copies take the template's
+  // CURRENT design when the sheet loads and before each autosave (a deleted template detaches them,
+  // keeping the design). Corrections reach the live canvas as patches, the other tags through `tags`.
+  const linkPatchesRef = useRef<((patches: LayerPropsPatch[]) => void) | null>(null);
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
+  const selectedIdRef = useRef(selectedRequestTagId);
+  selectedIdRef.current = selectedRequestTagId;
+  const refreshLinkedBoxes = useCallback(async (persist: boolean) => {
+    const current = tagsRef.current;
+    const linked = Object.entries(current).filter(([, tag]) => linkedPresetIds(tag.layers).length > 0);
+    if (linked.length === 0) return;
+    // Loaded on first use: most requests carry no linked box.
+    const { findAccessoryTemplate } = await import('../../../../services/accessoryTemplateService');
+    const fixes: Record<string, LinkAction[]> = {};
+    // Each template is read once per refresh, however many tags carry a box of it.
+    const reads = new Map<string, ReturnType<typeof findAccessoryTemplate>>();
+    const readOnce = (id: string) => {
+      if (!reads.has(id)) reads.set(id, findAccessoryTemplate(id));
+      return reads.get(id)!;
+    };
+    for (const [tagId, tag] of linked) {
+      const actions = await linkRefreshActions(tag.layers, readOnce);
+      if (actions.length > 0) fixes[tagId] = actions;
+    }
+    const ids = Object.keys(fixes);
+    if (ids.length === 0) return;
+    const selected = selectedIdRef.current;
+    const live = selected && fixes[selected] ? linkPatchesRef.current : null;
+    // Loading the sheet is the page's doing, not an edit: neither the live patch (which reaches `tags`
+    // through the canvas's own change stream) nor the state update below may schedule a save. The guard
+    // is consumed by the next `doc` change, and dropped shortly after in case nothing changed.
+    if (!persist) {
+      autoCloneRef.current = true;
+      setTimeout(() => {
+        autoCloneRef.current = false;
+      }, 100);
+    }
+    if (live && selected) live(linkCorrectionPatches(tagsRef.current[selected].layers, fixes[selected]));
+    setTags((prev) => {
+      const next = { ...prev };
+      for (const tagId of ids) {
+        if (tagId === selected && live) continue;
+        const tag = next[tagId];
+        if (tag) next[tagId] = { ...tag, layers: applyLinkActions(tag.layers, fixes[tagId]) };
+      }
+      return next;
+    });
+  }, []);
+  const loadRefreshedRef = useRef(false);
+  useEffect(() => {
+    if (templatesStatus !== 'loaded' || loadRefreshedRef.current) return;
+    loadRefreshedRef.current = true;
+    void refreshLinkedBoxes(false).catch(() => undefined);
+  }, [templatesStatus, refreshLinkedBoxes]);
+
   const designableRef = useRef(isDesignableRequest(request));
   designableRef.current = isDesignableRequest(request);
   const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
     useCallback(
-      (next: TagSheetDoc) =>
-        designableRef.current
-          ? onAutosave(next, { keepalive: teardownRef.current })
-          : Promise.resolve(),
-      [onAutosave],
+      async (next: TagSheetDoc) => {
+        if (!designableRef.current) return;
+        // Not on the way out: a closing page only has time for the save itself.
+        if (!teardownRef.current) await refreshLinkedBoxes(true).catch(() => undefined);
+        await onAutosave(next, { keepalive: teardownRef.current });
+      },
+      [onAutosave, refreshLinkedBoxes],
     ),
   );
 
@@ -1808,6 +1874,8 @@ export function RequestTagDesigner({
                   selectedRequestTagId && setPickerLineId(selectedRequestTagId)
                 }
                 hideSaveBar
+                linkedAccessoryBoxes="detach"
+                layerPatchesRef={linkPatchesRef}
                 docId={selectedTag.id}
                 toolbarTrailing={toolbarTrailing}
                 reviewPins={canvasPins}

@@ -21,6 +21,7 @@ import type {
   FeatureIconsLayerProps,
   LayerPadding,
   TagAccessory,
+  TagAccessoryBoxStyle,
   TagLayer,
   TagLayerProps,
   TextLayerProps,
@@ -64,6 +65,19 @@ import {
   sampleAccessories,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
+import {
+  boxColours,
+  effectiveBoxProps,
+  cardBoxLayout,
+  cardElementsFor,
+  cardElementsForDesign,
+  cardTextProps,
+  colourDotLayout,
+  DEFAULT_DOT_OUTLINE,
+  fitCardTextProps,
+  footerElementsFor,
+  type ResolvedCardElement,
+} from '@/lib/dealer-kit/accessory-card';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -419,6 +433,8 @@ function LayerContent({
           scale={scale}
           props={props}
           accessories={display?.accessories}
+          editing={display?.accessoryEditing}
+          boxStyle={display?.accessoryBoxStyle}
         />
       );
 
@@ -1159,8 +1175,10 @@ function AccessoriesContent({
   widthMm,
   heightMm,
   scale,
-  props,
+  props: ownProps,
   accessories,
+  editing,
+  boxStyle,
 }: {
   w: number;
   h: number;
@@ -1169,7 +1187,26 @@ function AccessoriesContent({
   scale: number;
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
+  editing?: boolean;
+  boxStyle?: TagAccessoryBoxStyle | null;
 }) {
+  // The previewed product / combo may name its own box style: it replaces the design, not the place.
+  const props = effectiveBoxProps(ownProps, boxStyle);
+  // A box with a designed card takes its own path; one without keeps the legacy cards below.
+  if (props.card) {
+    return (
+      <DesignedAccessoriesContent
+        w={w}
+        h={h}
+        widthMm={widthMm}
+        heightMm={heightMm}
+        scale={scale}
+        props={props}
+        accessories={accessories}
+        editing={editing}
+      />
+    );
+  }
   const items = accessories ?? sampleAccessories();
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
@@ -1319,6 +1356,329 @@ function AccessoriesContent({
         </Group>
       )}
     </>
+  );
+}
+
+/**
+ * PRICETAG-ACCESSORY-DESIGNER: a box with a designed `card`. The frame, header and badge are the
+ * legacy ones; each shown card is drawn at the layout's `scale` with the elements
+ * `cardElementsFor` resolves for that accessory; the footer follows the cards. The print page
+ * draws the same layout (`cardBoxLayout`), so the two cannot disagree.
+ */
+function DesignedAccessoriesContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  accessories,
+  editing,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: AccessoriesLayerProps;
+  accessories: TagAccessory[] | undefined;
+  editing?: boolean;
+}) {
+  const items = accessories ?? sampleAccessories();
+  const box = cardBoxLayout(items.length, props, widthMm, heightMm);
+  if (box.shown === 0) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Text
+          width={w}
+          height={h}
+          text="Accessories"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const px = (mm: number) => mm2px(mm, scale);
+  const header = accessoryHeaderStyle(props);
+  const shownItems = items.slice(0, box.shown);
+  return (
+    <>
+      {box.frame && (
+        <Rect
+          y={px(box.frame.y_mm)}
+          width={px(box.frame.width_mm)}
+          height={px(box.frame.height_mm)}
+          fill={props.fill}
+          stroke={props.stroke}
+          strokeWidth={px(props.strokeWidth_mm)}
+          cornerRadius={px(props.cornerRadius_mm)}
+        />
+      )}
+      {box.header?.onBorder && (
+        <Rect
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          fill={props.headerBackground || '#ffffff'}
+        />
+      )}
+      {box.header && (
+        <Text
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          text={props.headerText}
+          align={box.header.onBorder ? 'center' : header.align}
+          verticalAlign="middle"
+          fontStyle={konvaFontStyle(header)}
+          textDecoration={konvaDecoration(header)}
+          fontFamily={header.fontFamily ?? undefined}
+          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+          fontSize={px(ptToMm(box.header.fontSize_pt))}
+          fill={header.color}
+          wrap="none"
+        />
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        return (
+          <Group
+            key={`${item.id}-${i}`}
+            x={px(card.x_mm)}
+            y={px(card.y_mm)}
+            // While a card is edited the first one is the editable frame; the rest follow, faded.
+            opacity={editing && i > 0 ? 0.45 : 1}
+          >
+            <Rect
+              width={px(card.width_mm)}
+              height={px(card.height_mm)}
+              fill={props.cardFill}
+              cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
+            />
+            {(editing && i === 0
+              ? cardElementsForDesign(item, props.card!)
+              : cardElementsFor(item, props.card!)
+            ).map((element) => (
+              <CardElementNode
+                key={element.id}
+                element={element}
+                factor={box.scale}
+                scale={scale}
+                boxFont={props.fontFamily}
+              />
+            ))}
+          </Group>
+        );
+      })}
+      {box.footer && props.footer && (
+        <Group x={px(box.footer.x_mm)} y={px(box.footer.y_mm)}>
+          {footerElementsFor(boxColours(shownItems), props.footer).map((element) => (
+            <CardElementNode
+              key={element.id}
+              element={element}
+              factor={1}
+              scale={scale}
+              boxFont={props.fontFamily}
+            />
+          ))}
+        </Group>
+      )}
+      {box.badge && (
+        <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
+          <Ellipse
+            x={px(box.badge.width_mm / 2)}
+            y={px(box.badge.height_mm / 2)}
+            radiusX={px(box.badge.width_mm / 2)}
+            radiusY={px(box.badge.height_mm / 2)}
+            fill={props.badgeColor}
+          />
+          <Text
+            width={px(box.badge.width_mm)}
+            height={px(box.badge.height_mm)}
+            text="+"
+            align="center"
+            verticalAlign="middle"
+            fontStyle="bold"
+            fontSize={px(box.badge.height_mm * 0.9)}
+            fill="#ffffff"
+          />
+        </Group>
+      )}
+    </>
+  );
+}
+
+/** One resolved card (or footer) element at `factor` (the card's shrink), `scale` px per mm. */
+function CardElementNode({
+  element,
+  factor,
+  scale,
+  boxFont,
+}: {
+  element: ResolvedCardElement;
+  factor: number;
+  scale: number;
+  boxFont?: string;
+}) {
+  const px = (mm: number) => mm2px(mm * factor, scale);
+  const x = px(element.x_mm);
+  const y = px(element.y_mm);
+  const wMm = element.width_mm * factor;
+  const hMm = element.height_mm * factor;
+  switch (element.kind) {
+    case 'picture':
+      if (element.placeholder) {
+        // Designer only: where a picture goes, never printed.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            fill="#e5e7eb"
+            stroke="#9ca3af"
+            strokeWidth={1}
+            listening={false}
+          />
+        );
+      }
+      return (
+        <Group x={x} y={y}>
+          <ImageContent
+            w={px(element.width_mm)}
+            h={px(element.height_mm)}
+            url={element.src ?? null}
+            fit={element.fit ?? 'contain'}
+            maskShape="none"
+          />
+        </Group>
+      );
+    case 'text':
+      return (
+        <Group x={x} y={y}>
+          <CardTextNode
+            element={element}
+            widthMm={wMm}
+            heightMm={hMm}
+            factor={factor}
+            scale={scale}
+            boxFont={boxFont}
+          />
+        </Group>
+      );
+    case 'colour_dots': {
+      const colours = element.colours ?? [];
+      const dots = colourDotLayout(element, colours.length, factor);
+      return (
+        <Group x={x} y={y}>
+          {dots.map((dot, i) => (
+            <Ellipse
+              key={i}
+              x={mm2px(dot.x_mm + dot.d_mm / 2, scale)}
+              y={mm2px(dot.y_mm + dot.d_mm / 2, scale)}
+              radiusX={mm2px(dot.d_mm / 2, scale)}
+              radiusY={mm2px(dot.d_mm / 2, scale)}
+              fill={colours[i]}
+              stroke={element.dotOutline || DEFAULT_DOT_OUTLINE}
+              strokeWidth={mm2px(0.15 * factor, scale)}
+            />
+          ))}
+        </Group>
+      );
+    }
+    case 'shape': {
+      const w = px(element.width_mm);
+      const h = px(element.height_mm);
+      const stroke = element.stroke || undefined;
+      const strokeWidth = px(element.strokeWidth_mm ?? 0.2);
+      if (element.shape === 'ellipse') {
+        return (
+          <Ellipse
+            x={x + w / 2}
+            y={y + h / 2}
+            radiusX={w / 2}
+            radiusY={h / 2}
+            fill={element.fill || undefined}
+            stroke={stroke}
+            strokeWidth={stroke ? strokeWidth : 0}
+          />
+        );
+      }
+      if (element.shape === 'line') {
+        // A rule along the longer side, in the stroke colour.
+        const thick = Math.min(Math.max(strokeWidth, 1), Math.max(w, h));
+        const horizontal = w >= h;
+        return (
+          <Rect
+            x={x}
+            y={horizontal ? y + (h - thick) / 2 : y}
+            width={horizontal ? w : thick}
+            height={horizontal ? thick : h}
+            fill={element.stroke || element.fill || '#111827'}
+          />
+        );
+      }
+      return (
+        <Rect
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          fill={element.fill || undefined}
+          stroke={stroke}
+          strokeWidth={stroke ? strokeWidth : 0}
+          cornerRadius={element.shape === 'rounded_rect' ? px(element.cornerRadius_mm ?? 1) : 0}
+        />
+      );
+    }
+  }
+}
+
+/** A text element: plain or rich, shrunk until it sits inside its rect (never spills, never cut). */
+function CardTextNode({
+  element,
+  widthMm,
+  heightMm,
+  factor,
+  scale,
+  boxFont,
+}: {
+  element: ResolvedCardElement;
+  widthMm: number;
+  heightMm: number;
+  factor: number;
+  scale: number;
+  boxFont?: string;
+}) {
+  const epoch = useFontsEpoch();
+  const text = element.text ?? '';
+  const props = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
+  }, [element, factor, boxFont, text, widthMm, heightMm, epoch]);
+  const w = mm2px(widthMm, scale);
+  const h = mm2px(heightMm, scale);
+  if (isRich(text)) {
+    return (
+      <RichTextContent
+        props={props}
+        w={w}
+        h={h}
+        widthMm={widthMm}
+        heightMm={heightMm}
+        scale={scale}
+        blocks={parseRichText(text)}
+      />
+    );
+  }
+  return (
+    <TextContent props={props} w={w} h={h} widthMm={widthMm} heightMm={heightMm} scale={scale} text={text} />
   );
 }
 
