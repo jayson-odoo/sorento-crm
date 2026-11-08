@@ -125,15 +125,16 @@ def test_preview_equals_apply_and_second_apply_is_unchanged_with_no_writes(clien
 
 
 def test_t3_4_conflict_is_listed_not_written(client, db, all_perms):
-    a = _stag(client, db, {"chatbot": {"chatbot_skip_period_questions": True}}, "ZZT-a")
-    b = _stag(client, db, {"chatbot": {"chatbot_skip_period_questions": False}}, "ZZT-b")
-    contact = _holder(client, db, [a, b], chatbot_skip_period_questions=False)
+    # TAG-UNION: switches add up now; the tier (dealer beside end user) is still a conflict.
+    a = _stag(client, db, {"chatbot": {"tier": "dealer"}}, "ZZT-a")
+    b = _stag(client, db, {"chatbot": {"tier": "end_user"}}, "ZZT-b")
+    contact = _holder(client, db, [a, b], chatbot_profile={"language": "en", "tier": "office"})
     body = _rows(_apply(client, [contact.id], dry_run=False))
     row = body["results"][0]
     assert len(row["conflicts"]) == 1
     assert sorted(t["name"] for t in row["conflicts"][0]["tags"]) == ["ZZT-a", "ZZT-b"]
     assert body["counts"]["conflicts"] == 1
-    assert _fresh(db, contact.id).chatbot_skip_period_questions is False
+    assert _fresh(db, contact.id).chatbot_profile["tier"] == "office"
 
 
 def test_t3_5_a_section_the_actor_may_not_write_is_not_applied_the_rest_is(client, db, perms):
@@ -300,7 +301,8 @@ def test_tag_apply_covers_every_holder_ordered_by_name_and_only_this_tags_keys(c
     assert _fresh(db, c_b.id).chatbot_eta_offset_applied is True  # set only by the other tag
 
 
-def test_bulk_tags_apply_settings_true_adds_and_applies_false_only_links(client, db, all_perms):
+def test_bulk_tags_apply_settings_either_way_adds_and_applies(client, db, all_perms):
+    # TAG-UNION: a tag change recomputes the contact live; apply_settings no longer decides anything.
     tag = _stock_tag(client, db)
     with_apply = _contact(db)
     without = _contact(db)
@@ -315,7 +317,7 @@ def test_bulk_tags_apply_settings_true_adds_and_applies_false_only_links(client,
     assert row["settings"]["status"] in ("changed", "unchanged")
     assert _fresh(db, with_apply.id).chatbot_stock_allowed is False
     assert _rows(post(without, False))["results"][0]["status"] == "changed"
-    assert _fresh(db, without.id).chatbot_stock_allowed is True
+    assert _fresh(db, without.id).chatbot_stock_allowed is False
     held = db.execute(text("SELECT count(*) FROM respond_contact_tags WHERE contact_id = :c"), {"c": without.id}).scalar()
     assert held == 1
 
@@ -374,7 +376,8 @@ def test_spec_visibility_with_both_include_and_exclude_is_422_naming_the_section
     assert client.get(f"{TAGS}/{tag['id']}").json()["settings"] == {}
 
 
-def test_include_on_one_tag_and_exclude_on_another_is_a_stock_conflict_not_written_not_failed(client, db, all_perms):
+def test_include_on_one_tag_and_exclude_on_another_resolves_to_the_exclude_list(client, db, all_perms):
+    # TAG-UNION: "w1, or everything but w2" is stored as the exclude list {w2} minus {w1} = {w2}.
     w1, w2 = _wh(db), _wh(db)
     inc = _stag(client, db, {"stock_visibility": {"mode": "compact", "warehouse_ids": [w1.id],
                                                   "excluded_warehouse_ids": None, "hide_zero_locations": False}}, "ZZT-inc")
@@ -382,15 +385,15 @@ def test_include_on_one_tag_and_exclude_on_another_is_a_stock_conflict_not_writt
                                                   "excluded_warehouse_ids": [w2.id], "hide_zero_locations": False}}, "ZZT-exc")
     contact = _holder(client, db, [inc, exc])
     read = _read(client, contact)
-    conflicts = [i for i in read["items"] if i["section"] == "stock_visibility" and i["conflict"]]
-    assert conflicts, read["items"]
-    assert sorted(t["name"] for t in conflicts[0]["conflict_tags"]) == ["ZZT-exc", "ZZT-inc"]
+    assert not [i for i in read["items"] if i["section"] == "stock_visibility" and i["conflict"]], read["items"]
+    assert not [i for i in read["items"] if i["key"] == "warehouse_ids"], read["items"]
 
     row = _rows(_apply(client, [contact.id], dry_run=False))["results"][0]
-    assert row["status"] != "failed", row
-    assert any("tock" in c["label"] for c in row["conflicts"]), row["conflicts"]
-    assert db.execute(text("SELECT count(*) FROM stock_visibility_policies WHERE contact_id = :c"),
-                      {"c": contact.id}).scalar() == 0
+    assert row["status"] == "changed", row
+    assert row["conflicts"] == []
+    pol = db.execute(text("SELECT warehouse_ids, excluded_warehouse_ids FROM stock_visibility_policies "
+                          "WHERE contact_id = :c"), {"c": contact.id}).one()
+    assert pol[0] is None and [str(w) for w in pol[1]] == [str(w2.id)]
 
 
 # ---------------------------------------------------------------- R2: sibling keys in the preview

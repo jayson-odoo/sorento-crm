@@ -3,7 +3,7 @@
 import { Badge } from '@/components/ui/badge';
 import type { RespondContact } from '../types/contact.types';
 
-/** The Tag settings column of the contacts list: Matches, "Differs: n" (labels in the title), or a dash. */
+/** The Tag settings column of the contacts list: Matches, "Own changes: n" (labels in the title), or a dash. */
 export default function ContactTagSettingsCell({
   contact,
 }: {
@@ -24,7 +24,7 @@ export default function ContactTagSettingsCell({
       <Badge
         variant="warning"
         appearance="light"
-      >{`Differs: ${ts.differ_count}`}</Badge>
+      >{`Own changes: ${ts.differ_count}`}</Badge>
     </span>
   );
 }

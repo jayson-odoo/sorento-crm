@@ -38,7 +38,7 @@ export default function ContactTagFilters({
         options={[
           { value: 'any', label: 'Tag settings: Any' },
           { value: 'matches', label: 'Tag settings: Matches' },
-          { value: 'differs', label: 'Tag settings: Differs' },
+          { value: 'differs', label: 'Tag settings: Own changes' },
         ]}
         placeholder="Tag settings"
         triggerClassName="w-52"
