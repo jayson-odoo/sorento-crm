@@ -49,7 +49,7 @@ import NewProductApplicationsList from './NewProductApplicationsList';
 
 const STAFF = ['procurement.new_product_applications.view', 'procurement.new_product_applications.create'];
 // The grid's own titles, Number to Date (NewProductApplicationsList.tsx columns).
-const COLUMNS = ['Number', 'Status', 'Inquiry', 'Customer', 'First line', 'Lines', 'Done', 'Needed by', 'Date'];
+const COLUMNS = ['Number', 'Rev', 'Status', 'Inquiry', 'Customer', 'Salesperson', 'Assigned To', 'Handled By', 'Print Count', 'Needed by', 'Date'];
 
 beforeEach(() => {
   cleanup();
