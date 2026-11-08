@@ -591,7 +591,8 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
     if entry["name"] == batch.BATCH and isinstance(entry.get("data"), dict):
         # Only a skipped row's "No customer ..." / "No tag named ..." part backs the claim, for the term it quotes: the claim is that
         # term, quotes it, or repeats the whole part.
-        prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "', 'No tag named "')
+        prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "', 'No tag named "',
+                    'No sales agent named "')
         for item in entry["data"].get("skipped") or []:
             for part in str(item.get("reason") or "").split("; "):
                 for prefix in prefixes:
@@ -1968,7 +1969,8 @@ def _run(
         # The rows still waiting for a pick, read by the next table turn to check the codes it is given.
         turn.response["batch_waiting"] = [
             {"row": w["row"], "key": w.get("key"), "written": w["written"], "codes": [c["code"] for c in w["candidates"]],
-             "kept": list(w.get("kept") or [])}
+             "kept": list(w.get("kept") or []), "write": w.get("write"),
+             "noun": w.get("noun")}
             for w in batch_waiting
         ]
         # The rows not changed, read by the pick follow-up so they stay listed when the model leaves them out.
