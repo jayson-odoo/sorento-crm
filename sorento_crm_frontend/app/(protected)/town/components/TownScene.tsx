@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { changePercent, count, rm0, sceneSelection, shopLabel, stackTags, townFrame } from '../lib/townFormat';
+import { changePercent, count, rm0, sceneSelection, stackTags, tagLabel, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -20,6 +20,10 @@ import type { TownTarget } from './TownPanel';
 const HINT_KEY = 'town_hint_seen';
 const HINT_MS = 6000;
 const LORRY_CAP = 10;
+const BOARD_Y = 9.2; // the scoreboard's height above the plaza, and its size
+const BOARD_W = 16.4;
+const BOARD_H = 6.4;
+const BOARD_LOOK_Y = 3; // what the camera looks at: the island's centre on screen
 
 const polar = (r: number, deg: number): [number, number] => [
   Math.cos((deg * Math.PI) / 180) * r,
@@ -107,17 +111,34 @@ function mountScene(
     if (!frameId && !disposed) frameId = requestAnimationFrame(frame);
   };
 
-  // name tags: re-stacked in screen space whenever the camera turns, so they never cover each other
+  // name tags: re-stacked in screen space whenever the camera turns or the view resizes, so they never
+  // cover each other, the scoreboard or the "+N more dealers" pill, and none is clipped at the top.
+  // They are in priority order (busiest first); the lowest priority is dropped before one is clipped.
   const tagSprites: { sprite: THREE.Sprite; anchor: THREE.Vector3 }[] = [];
+  let pill: THREE.Sprite | null = null;
   const layoutTags = () => {
     if (!tagSprites.length) return;
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
-    const raise = stackTags(tagSprites.map(({ sprite, anchor }) => ({ y: anchor.dot(up), h: sprite.scale.y })));
-    tagSprites.forEach(({ sprite, anchor }, i) => sprite.position.set(anchor.x, anchor.y + raise[i] / up.y, anchor.z));
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+    const box = (position: THREE.Vector3, sprite: THREE.Sprite) => ({
+      x: position.dot(right), y: position.dot(up), w: sprite.scale.x, h: sprite.scale.y,
+    });
+    const obstacles = [
+      // the scoreboard: always facing the camera, 16.4 wide, 6.4 tall (foreshortened by the elevation), centred 9.2 up
+      { x: 0, y: BOARD_Y * up.y, w: BOARD_W, h: BOARD_H * up.y },
+      ...(pill ? [box(pill.position, pill)] : []),
+    ];
+    const top = BOARD_LOOK_Y * up.y + cam.top - 0.3;
+    const raise = stackTags(tagSprites.map(({ sprite, anchor }) => box(anchor, sprite)), 0.3, { obstacles, top });
+    tagSprites.forEach(({ sprite, anchor }, i) => {
+      const lift = raise[i];
+      sprite.visible = lift !== null;
+      if (lift !== null) sprite.position.set(anchor.x, anchor.y + lift / up.y, anchor.z);
+    });
   };
   const placeCam = () => {
     cam.position.set(Math.cos(yawRef.current) * 80, 70, Math.sin(yawRef.current) * 80);
-    cam.lookAt(0, 3, 0); // the island's centre on screen: its ellipse and the scoreboard above it
+    cam.lookAt(0, BOARD_LOOK_Y, 0); // the island's centre on screen: its ellipse and the scoreboard above it
     cam.updateMatrixWorld();
     layoutTags();
     invalidate();
@@ -134,6 +155,7 @@ function mountScene(
     cam.top = z;
     cam.bottom = -z;
     cam.updateProjectionMatrix();
+    layoutTags();
     invalidate();
   };
 
@@ -182,6 +204,8 @@ function mountScene(
       g.fill();
       g.fillStyle = fg;
       g.font = '600 52px Inter, sans-serif';
+      const wide = g.measureText(text).width;
+      if (wide > c.width - 48) g.font = `600 ${Math.floor((52 * (c.width - 48)) / wide)}px Inter, sans-serif`;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText(text, c.width / 2, 58);
@@ -238,10 +262,11 @@ function mountScene(
     ),
   );
   const boardFace = new THREE.Mesh(
-    new THREE.PlaneGeometry(16.4, 6.4),
+    new THREE.PlaneGeometry(BOARD_W, BOARD_H),
     new THREE.MeshBasicMaterial({ map: boardTex, transparent: true }),
   );
-  boardFace.position.y = 9.2;
+  boardFace.position.y = BOARD_Y;
+  boardFace.renderOrder = 5; // under every label (10), so a tag never ends up behind the scoreboard
   boardGroup.add(boardFace);
   scene.add(boardGroup);
   pickables.push([boardFace, () => select({ kind: 'sales' })]);
@@ -274,15 +299,17 @@ function mountScene(
   shopMesh.count = slot.length;
   scene.add(shopMesh);
   pickables.push([shopMesh, (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key })]);
-  slot.filter((o) => tagged.includes(o.s)).forEach((o) => {
-    const amount = o.s.today_amount ? `  ${rm0(o.s.today_amount)}` : '';
-    const anchor = new THREE.Vector3(o.x, o.h + 2.6, o.z);
-    const sprite = label(`${shopLabel(o.s)}${amount}`, anchor.x, anchor.y, anchor.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
-    tagSprites.push({ sprite, anchor });
-  });
+  [...tagged]
+    .map((shop) => slot.find((o) => o.s === shop))
+    .forEach((o) => {
+      if (!o) return;
+      const anchor = new THREE.Vector3(o.x, o.h + 2.6, o.z);
+      const sprite = label(tagLabel(o.s), anchor.x, anchor.y, anchor.z, 'rgba(255,251,235,0.97)', '#92400e', 480, 0.85);
+      tagSprites.push({ sprite, anchor });
+    });
   if (others) {
     const [x, z] = polar(24, 30);
-    label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
+    pill = label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
   }
 
   // (3) warehouse district: a few calm buildings, one red "!" bubble

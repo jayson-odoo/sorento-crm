@@ -8,6 +8,7 @@ import { isPending, type TownPayload } from '@/types/town.types';
 import {
   boughtToday,
   changePercent,
+  compactCount,
   count,
   rm,
   shopLabel,
@@ -34,14 +35,14 @@ function Card({
       type="button"
       onClick={onClick}
       className={cn(
-        'grid grid-cols-[2.125rem_1fr] items-start gap-x-3 gap-y-0.5 rounded-lg border border-border bg-card p-3 text-start',
+        'grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-0.5 rounded-lg border border-border bg-card p-3 text-start',
         PRESSED_CLASS,
         COARSE_HIT_TARGET_CLASS,
       )}
     >
       <span
         className={cn(
-          'row-span-3 grid size-[2.125rem] place-items-center rounded-lg text-sm font-bold text-white',
+          'row-span-3 grid min-h-[2.125rem] min-w-[2.125rem] w-auto place-items-center rounded-lg px-1.5 text-sm font-bold text-white',
           tone,
         )}
         aria-hidden="true"
@@ -102,20 +103,20 @@ export function TownCards({
       </Card>
       <Card
         question="Who bought today?"
-        icon={bought.length + others}
+        icon={compactCount(bought.length + others)}
         tone="bg-amber-500"
         onClick={open({ kind: 'bought' })}
       >
         <span className="text-xl font-bold tracking-tight">
           {count(today.dealer_customer_count || bought.length)} dealers
         </span>
-        <span className="mt-1.5 grid gap-1 text-sm">
+        <span className="mt-1.5 grid min-w-0 gap-1 text-sm">
           {bought.slice(0, 5).map((shop) => (
-            <span key={shop.key} className="flex justify-between gap-2">
-              <span className="truncate" title={shopLabel(shop)}>
+            <span key={shop.key} className="flex min-w-0 justify-between gap-2">
+              <span className="min-w-0 truncate" title={shopLabel(shop)}>
                 {shopLabel(shop)}
               </span>
-              <span className="tabular-nums">{shopToday(shop)}</span>
+              <span className="shrink-0 whitespace-nowrap tabular-nums">{shopToday(shop)}</span>
             </span>
           ))}
         </span>
@@ -131,7 +132,7 @@ export function TownCards({
       </Card>
       <Card
         question="What must go out?"
-        icon={deliveries ? deliveries.to_deliver : '-'}
+        icon={deliveries ? compactCount(deliveries.to_deliver) : '-'}
         tone="bg-blue-600"
         onClick={open({ kind: 'deliver' })}
       >
@@ -142,7 +143,7 @@ export function TownCards({
       </Card>
       <Card
         question="What needs a decision?"
-        icon={approvals.total}
+        icon={compactCount(approvals.total)}
         tone="bg-violet-600"
         onClick={open({ kind: 'approve' })}
       >

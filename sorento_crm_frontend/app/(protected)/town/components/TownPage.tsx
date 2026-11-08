@@ -61,9 +61,9 @@ export function TownPage() {
       ) : null}
       {isLoading && !snapshot ? <SectionSkeleton rows={5} className="mt-4" label="Loading town" /> : null}
       {snapshot ? (
-        <div className="mt-4 grid gap-4 pb-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 pb-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
           {ready && sceneAvailable ? <TownScene snapshot={ready} onSelect={setTarget} /> : null}
-          <div className={ready && sceneAvailable ? '' : 'lg:col-span-2'}>
+          <div className={ready && sceneAvailable ? 'min-w-0' : 'min-w-0 lg:col-span-2'}>
             <TownCards snapshot={snapshot} onOpen={setTarget} />
           </div>
         </div>

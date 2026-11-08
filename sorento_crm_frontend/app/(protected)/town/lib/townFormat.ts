@@ -64,34 +64,94 @@ export function sceneSelection(snapshot: TownSnapshot) {
 }
 
 // The camera is orthographic at a fixed elevation (atan(70/80), 41 degrees), so the island's
-// projected size is known: its width is 2R (R = 28), its height 2R * sin(elevation) = 37 plus the
-// scoreboard and the label tiers above it. Half of that, with the outer labels, and 90% fill.
+// projected size is known: its ground disc is 56 wide (R = 28) and 37 high on screen, the scoreboard
+// and the labels add to the height, and the outer name tags reach past the disc's edge. The view is
+// sized so that content fills 95% of the tighter dimension (the approved mock fills about 95%).
 const HALF_HEIGHT = 21;
-const HALF_WIDTH = 31; // the island's radius plus the half width of an outer tag
-const HALF_WIDTH_SMALL = 35; // tags are drawn larger on a phone
-const FILL = 0.9;
+const HALF_WIDTH = 30; // the island's radius plus the part of an outer tag that sticks out
+const HALF_WIDTH_SMALL = 33.5; // tags are drawn larger on a phone
+const FILL = 0.95;
 
 /** Half the visible height, in world units, that fits the island and its labels in a canvas of this shape. */
 export function townFrame(aspect: number, small: boolean): number {
   return Math.max(HALF_HEIGHT, (small ? HALF_WIDTH_SMALL : HALF_WIDTH) / aspect) / FILL;
 }
 
-/**
- * Screen-space stacking for the name tags. Each tag has `y`, its anchor's height on screen (the
- * anchor projected on the camera's up axis), and `h`, its height on screen. Tags are taken bottom to
- * top and each one is raised just enough to clear the one below it, so no two tags ever cover each
- * other whatever the camera angle or the buildings' depth (tags at different depths are why fixed
- * world-height tiers still overlapped). Returns how far to raise each tag, on screen, in input order.
- */
-export function stackTags(tags: { y: number; h: number }[], margin = 0.3): number[] {
-  const order = tags.map((tag, index) => ({ ...tag, index })).sort((a, b) => a.y - b.y);
-  const raise = new Array<number>(tags.length).fill(0);
-  let top = -Infinity;
-  for (const tag of order) {
-    const bottom = Math.max(tag.y - tag.h / 2, top + margin);
-    raise[tag.index] = bottom + tag.h / 2 - tag.y;
-    top = bottom + tag.h;
-  }
-  return raise;
+const TAG_NAME_MAX = 22;
+
+/** A tag's text: the short name capped at 22 characters with an ellipsis, always followed by the amount. */
+export function tagLabel(shop: TownShop): string {
+  const name = shopLabel(shop);
+  const capped = name.length > TAG_NAME_MAX ? `${name.slice(0, TAG_NAME_MAX - 1).trimEnd()}\u2026` : name;
+  return shop.today_amount ? `${capped}  ${rm0(shop.today_amount)}` : capped;
 }
 
+/** A count for the small icon tile: exact up to 999, then "2.2k" (the big number on the card stays exact). */
+export function compactCount(value: number): string {
+  if (value < 1000) return String(value);
+  const thousands = (value / 1000).toFixed(1).replace(/\.0$/, '');
+  return `${thousands}k`;
+}
+
+export interface TagBox {
+  /** The anchor's height on screen, and its centre across the screen (optional: without it, every
+   * box counts as in the way of every other). */
+  y: number;
+  h: number;
+  x?: number;
+  w?: number;
+}
+
+const apart = (a: TagBox, b: TagBox) =>
+  a.x !== undefined && a.w !== undefined && b.x !== undefined && b.w !== undefined
+    ? Math.abs(a.x - b.x) >= (a.w + b.w) / 2
+    : false;
+
+/**
+ * Screen-space stacking for the name tags. Tags are taken bottom to top and each one is raised just
+ * enough to clear every box already placed that it overlaps across the screen: the tags below it and
+ * the fixed `obstacles` (the scoreboard, the "+N more dealers" pill), which never move. No two tags
+ * cover each other or an obstacle whatever the camera angle or the buildings' depth.
+ *
+ * `top` is the highest a tag may reach on screen. When a tag would pass it, the lowest priority tag
+ * (the last in the input) is dropped and the rest are stacked again, rather than clip one at the edge.
+ * Returns how far to raise each tag, on screen, in input order; null for a dropped tag.
+ */
+export function stackTags(
+  tags: TagBox[],
+  margin = 0.3,
+  options: { obstacles?: TagBox[]; top?: number } = {},
+): (number | null)[] {
+  const { obstacles = [], top = Infinity } = options;
+  const layout = (active: number[]) => {
+    const placed = obstacles.map((box) => ({ box, bottom: box.y - box.h / 2 }));
+    const raise = new Map<number, number>();
+    let highest = -Infinity;
+    for (const index of [...active].sort((a, b) => tags[a].y - tags[b].y)) {
+      const tag = tags[index];
+      let bottom = tag.y - tag.h / 2;
+      for (let moved = true; moved; ) {
+        moved = false;
+        for (const other of placed) {
+          if (apart(tag, other.box)) continue;
+          const otherTop = other.bottom + other.box.h;
+          if (bottom < otherTop + margin && bottom + tag.h > other.bottom - margin) {
+            bottom = otherTop + margin;
+            moved = true;
+          }
+        }
+      }
+      placed.push({ box: tag, bottom });
+      raise.set(index, bottom + tag.h / 2 - tag.y);
+      highest = Math.max(highest, bottom + tag.h);
+    }
+    return { raise, highest };
+  };
+  const active = tags.map((_, index) => index);
+  let result = layout(active);
+  while (result.highest > top && active.length > 0) {
+    active.pop();
+    result = layout(active);
+  }
+  return tags.map((_, index) => result.raise.get(index) ?? null);
+}
