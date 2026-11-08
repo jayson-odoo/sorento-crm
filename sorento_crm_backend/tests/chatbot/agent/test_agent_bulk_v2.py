@@ -753,3 +753,87 @@ def test_12_a_plain_turn_between_two_table_turns_does_not_hide_the_earlier_waiti
 
     assert len(result.pending_action["lines"]) == 1
     assert "was not in the list" not in result.reply_text
+
+
+# ------------------------------------------------------------------ picker fix round (P1 to P3)
+
+
+def test_11_a_typed_code_counts_only_as_a_whole_token_not_as_a_prefix_of_another_code(db):
+    w = make_world(db)
+    account(db, "ZZT DEALER C TRADING (A/C I)", "ZC10", w.srt)
+    account(db, "ZZT DEALER C CERAMIC (A/C II)", "ZC11", w.srt)
+    account(db, "ZZT UNRELATED SHOP", "ZC1", w.srt)  # a real account, not in the list, "zc1" starts "zc10"
+    person = dealer(db, w)
+    say(db, w, [tag(row_(person.phone_number, companies=["SRT"], names=["ZZT Dealer C"]), 1)], "grant access")
+
+    result = say(db, w, [tag(row_(person.phone_number, companies=["SRT"], codes=["ZC1"]), 1)], "row 1: ZC10")
+
+    assert result.pending_action is None
+    assert '"ZC1" was not in the list for "ZZT Dealer C" (row 1); pick from the list' in result.reply_text
+    assert state(db, person.phone_number)["links"] == []
+
+
+def test_11_a_code_not_listed_for_row_two_is_refused_though_it_is_inside_the_users_text(db):
+    w = make_world(db)
+    account(db, "ZZT DEALER C TRADING (A/C I)", "ZC10", w.srt)
+    account(db, "ZZT DEALER C CERAMIC (A/C II)", "ZC11", w.srt)
+    account(db, "ZZT UNRELATED SHOP", "ZC1", w.srt)
+    family(db, "D", w.srt, 2, "ZD")
+    p1, p2 = dealer(db, w), dealer(db, w)
+    say(db, w, [
+        tag(row_(p1.phone_number, companies=["SRT"], names=["ZZT Dealer C"]), 1),
+        tag(row_(p2.phone_number, companies=["SRT"], names=["ZZT Dealer D"]), 2),
+    ], "grant access")
+
+    result = say(db, w, [
+        tag(row_(p1.phone_number, companies=["SRT"], codes=["ZC10"]), 1),
+        tag(row_(p2.phone_number, companies=["SRT"], codes=["ZC1"]), 2),
+    ], "row 1: ZC10, row 2 all")
+
+    assert len(result.pending_action["lines"]) == 1
+    assert '"ZC1" was not in the list for "ZZT Dealer D" (row 2); pick from the list' in result.reply_text
+    assert state(db, p2.phone_number)["links"] == []
+
+
+def test_11_row_numbers_repeated_in_one_call_are_all_ignored_for_the_positions(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    dealer_h(db, w.mch)
+    a, b, c = dealer(db, w), dealer(db, w, companies=(w.mch,)), dealer(db, w)
+    steps, waiting = [], []
+
+    out = batch.propose(db, ctx_of(db, w), {"write": GRANT, "rows": [
+        tag(row_(a.phone_number, codes=[w.cust_a.customer_code]), 2),
+        tag(waiting_row(w, b), 2),
+        tag(row_(c.phone_number, names=["ZZT Nowhere Stores"]), 7),
+    ]}, steps, seen_ids=set(), skipped_out=[], waiting_out=waiting)
+
+    assert [s["row"] for s in steps] == [1]
+    assert [x["row"] for x in waiting] == [2]
+    assert [s["row"] for s in out.data["skipped"]] == [3]
+    assert out.data["rows_waiting"] == 1 and [n["row"] for n in out.data["needs_choice"]] == [2]
+
+
+def test_12_the_previous_waiting_rows_are_read_without_loading_every_turn(db, monkeypatch):
+    import sys
+
+    from app.services.chatbot.agent import loop, memory
+
+    assert hasattr(loop, "_previous_waiting")
+    real = memory.conversation_turns
+
+    def guarded(*args, **kw):
+        if sys._getframe(1).f_code.co_name == "_previous_waiting":
+            raise AssertionError("_previous_waiting must be one query, not every turn of the conversation")
+        return real(*args, **kw)
+
+    monkeypatch.setattr(memory, "conversation_turns", guarded)
+    w, f, h, (pf, ph, pr), first = picker_world(db)
+    say(db, w, first[:2], "grant access to these people")
+
+    codes = [a.customer_code for a in h]
+    result = say(db, w, [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)], "row 2 all")
+
+    assert len(result.pending_action["lines"]) == 1
+    assert "was not in the list" not in result.reply_text
