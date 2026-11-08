@@ -33,9 +33,41 @@ export function changePercent(snapshot: TownSnapshot): number | null {
 
 export const signedPercent = (pct: number) => `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
 
-/** The shops that bought today, and the dealers beyond them that the scene has no building for. */
+const byToday = (a: TownShop, b: TownShop) =>
+  b.today_docs - a.today_docs || Number(b.today_amount ?? 0) - Number(a.today_amount ?? 0);
+
+/** The shops that bought today, busiest first, and the dealers beyond them with no building. */
 export function boughtToday(snapshot: TownSnapshot) {
-  const bought = snapshot.shops.filter((shop) => shop.today_docs > 0);
+  const bought = snapshot.shops.filter((shop) => shop.today_docs > 0).sort(byToday);
   const others = Math.max(0, snapshot.today.dealer_customer_count - bought.length);
   return { bought, others };
+}
+
+export const SCENE_STALL_CAP = 5;
+export const SCENE_TAG_CAP = 5;
+
+/**
+ * What the 3D town draws, so a day with sixty stalls stays readable: every top shop, at most five
+ * stalls (busiest first), a name tag on at most five lit buildings (busiest first), and "+N more
+ * dealers" for the invoiced dealers that have no building drawn.
+ */
+export function sceneSelection(snapshot: TownSnapshot) {
+  const shops = snapshot.shops.filter((shop) => shop.kind === 'shop');
+  const stalls = snapshot.shops
+    .filter((shop) => shop.kind !== 'shop')
+    .sort(byToday)
+    .slice(0, SCENE_STALL_CAP);
+  const drawn = [...shops, ...stalls];
+  const lit = drawn.filter((shop) => shop.today_docs > 0);
+  const tagged = [...lit].sort(byToday).slice(0, SCENE_TAG_CAP);
+  return { drawn, tagged, others: Math.max(0, snapshot.today.dealer_customer_count - lit.length) };
+}
+
+const HALF_HEIGHT = 30; // the island's ellipse plus the scoreboard above it, in world units
+const HALF_WIDTH = 36; // the island's radius plus the half width of an outer tag
+const HALF_WIDTH_SMALL = 42; // tags are drawn larger on a phone
+
+/** Half the visible height, in world units, that fits the whole island in a canvas of this shape. */
+export function townFrame(aspect: number, small: boolean): number {
+  return Math.max(HALF_HEIGHT, (small ? HALF_WIDTH_SMALL : HALF_WIDTH) / aspect);
 }

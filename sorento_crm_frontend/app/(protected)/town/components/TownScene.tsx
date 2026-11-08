@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { boughtToday, changePercent, count, rm0, shopLabel } from '../lib/townFormat';
+import { changePercent, count, rm0, sceneSelection, shopLabel, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -109,7 +109,7 @@ function mountScene(
 
   const placeCam = () => {
     cam.position.set(Math.cos(yawRef.current) * 80, 70, Math.sin(yawRef.current) * 80);
-    cam.lookAt(0, 2, 0);
+    cam.lookAt(0, 3, 0);
     invalidate();
   };
   const resize = () => {
@@ -118,7 +118,7 @@ function mountScene(
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     const a = w / h;
-    const z = a < 1 ? 26 / a : 25;
+    const z = townFrame(a, w < 640);
     cam.left = -z * a;
     cam.right = z * a;
     cam.top = z;
@@ -238,11 +238,9 @@ function mountScene(
   const faceBoard = () => boardGroup.rotation.set(0, Math.atan2(cam.position.x, cam.position.z), 0);
 
   // (2) dealer shops in one calm crescent: grey unless bought today; lit ones get a tag
-  const shops = snapshot.shops.filter((s) => s.kind === 'shop');
-  const list = [...shops];
-  snapshot.shops
-    .filter((s) => s.kind !== 'shop')
-    .forEach((s, k) => list.splice(Math.min(list.length, 4 + k * 9), 0, s));
+  const { drawn, tagged, others } = sceneSelection(snapshot);
+  const list = drawn.filter((s) => s.kind === 'shop');
+  drawn.filter((s) => s.kind !== 'shop').forEach((s, k) => list.splice(Math.min(list.length, 4 + k * 9), 0, s));
   const slot = list.map((s, i) => {
     const a = -78 + i * (156 / Math.max(1, list.length - 1));
     const [x, z] = polar(i % 2 ? 22 : 18.5, a);
@@ -266,9 +264,8 @@ function mountScene(
   shopMesh.count = slot.length;
   scene.add(shopMesh);
   pickables.push([shopMesh, (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key })]);
-  const { others } = boughtToday(snapshot);
   slot
-    .filter((o) => o.lit)
+    .filter((o) => tagged.includes(o.s))
     .forEach((o, k) => {
       const amount = o.s.today_amount ? `  ${rm0(o.s.today_amount)}` : '';
       label(`${shopLabel(o.s)}${amount}`, o.x, o.h + 2.6 + (k % 3) * 1.9, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95);
@@ -504,7 +501,7 @@ export function TownScene({
 
   return (
     <div
-      className={`relative h-[70dvh] max-h-[41rem] min-h-[27.5rem] overflow-hidden rounded-xl border border-border ${
+      className={`relative aspect-square min-h-[20rem] overflow-hidden sm:aspect-auto sm:h-[70dvh] sm:max-h-[41rem] rounded-xl border border-border ${
         snapshot.phase === 'night' ? 'bg-slate-800' : 'bg-sky-50 dark:bg-slate-800'
       }`}
     >

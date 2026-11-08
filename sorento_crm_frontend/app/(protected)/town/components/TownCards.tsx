@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { Receipt } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { isPending, type TownPayload } from '@/types/town.types';
 import {
   boughtToday,
@@ -32,7 +33,11 @@ function Card({
     <button
       type="button"
       onClick={onClick}
-      className="grid grid-cols-[2.125rem_1fr] items-start gap-x-3 gap-y-0.5 rounded-lg border border-border bg-card p-3 text-start"
+      className={cn(
+        'grid grid-cols-[2.125rem_1fr] items-start gap-x-3 gap-y-0.5 rounded-lg border border-border bg-card p-3 text-start',
+        PRESSED_CLASS,
+        COARSE_HIT_TARGET_CLASS,
+      )}
     >
       <span
         className={cn(

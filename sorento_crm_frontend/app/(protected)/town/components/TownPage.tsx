@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { useTownSnapshot } from '@/hooks/useTownSnapshot';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -33,7 +34,7 @@ function useSceneAvailable(): boolean {
 export function TownPage() {
   const [wallboard, setWallboard] = useState(false);
   const [target, setTarget] = useState<TownTarget | null>(null);
-  const { snapshot, error } = useTownSnapshot(wallboard ? { mode: 'wallboard' } : undefined);
+  const { snapshot, error, isLoading } = useTownSnapshot(wallboard ? { mode: 'wallboard' } : undefined);
   const sceneAvailable = useSceneAvailable();
   const ready = snapshot && !isPending(snapshot) ? snapshot : null;
 
@@ -58,6 +59,7 @@ export function TownPage() {
       {error && !snapshot ? (
         <p className="mt-4 text-sm text-destructive">{error instanceof Error ? error.message : 'Failed to load the town'}</p>
       ) : null}
+      {isLoading && !snapshot ? <SectionSkeleton rows={5} className="mt-4" label="Loading town" /> : null}
       {snapshot ? (
         <div className="mt-4 grid gap-4 pb-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
           {ready && sceneAvailable ? <TownScene snapshot={ready} onSelect={setTarget} /> : null}

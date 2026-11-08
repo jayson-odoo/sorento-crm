@@ -2,8 +2,8 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { isPending, type TownPayload, type TownSnapshot } from '@/types/town.types';
 import { boughtToday, count, rm, shopLabel, shopToday } from '../lib/townFormat';
 
@@ -53,7 +53,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
     case 'sales':
       return {
         title: "Today's sales",
-        meta: 'Same figure as the sales report',
+        meta: '',
         content: (
           <>
             <Rows
@@ -151,23 +151,21 @@ export function TownPanel({
   target: TownTarget | null;
   onClose: () => void;
 }) {
-  if (!target || isPending(snapshot)) return null;
-  const { title, meta, content } = body(snapshot, target);
+  const shown = target && !isPending(snapshot) ? body(snapshot, target) : null;
+  // Not modal and no scrim: the town behind stays tappable. Escape closes, focus moves in.
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-50 max-h-[55dvh] overflow-auto rounded-lg border border-border bg-background p-4 shadow-lg sm:inset-x-auto sm:end-4 sm:top-24 sm:bottom-auto sm:w-80">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="absolute end-2 top-2"
-        aria-label="Close panel"
-        onClick={onClose}
+    <Sheet open={shown !== null} onOpenChange={(open) => !open && onClose()} modal={false}>
+      <SheetContent
+        side="right"
+        overlay={false}
+        className="inset-3 start-auto h-auto max-h-[85dvh] gap-0 rounded-lg p-4 sm:inset-y-24 sm:w-80 sm:max-w-none"
       >
-        <X className="size-4" />
-      </Button>
-      <h2 className="pe-8 text-base font-semibold">{title}</h2>
-      {meta ? <p className="text-xs text-muted-foreground">{meta}</p> : null}
-      {content}
-    </aside>
+        <SheetHeader className="space-y-0 pe-8 text-start">
+          <SheetTitle>{shown?.title}</SheetTitle>
+          {shown?.meta ? <SheetDescription className="text-xs">{shown.meta}</SheetDescription> : null}
+        </SheetHeader>
+        <SheetBody className="p-0">{shown?.content}</SheetBody>
+      </SheetContent>
+    </Sheet>
   );
 }
