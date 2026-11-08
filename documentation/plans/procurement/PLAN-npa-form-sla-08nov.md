@@ -1,6 +1,6 @@
 # Plan: NPA approval and purchasing through Form SLA config (NPA-FORM-SLA)
 
-Status: Review (built; owner answered Q1-Q5 8 Nov 21:45 and the team-notice follow-up), 8 Nov 2026. Size M, full track (data-only migration, RBAC gate
+Status: Merge-ready pending CI (built; reviewer READY, security CLEAN, crew pass items fixed, owner access ruling a), 9 Nov 2026. Size M, full track (data-only migration, RBAC gate
 change on approve / reject / purchasing moves). Owner ask 8 Nov ("2233 sla a + same teams"): the
 New Product Application's approver / processor flow works like the Stock Inquiry's, through Form SLA
 config, same component and same engine.
@@ -104,8 +104,8 @@ assignee) and the purchasing tier-1 role held no NPA permission, while on the SI
 slugs. The data migration copies the grants from the SI's own holders (as `npa_0001` did for
 `create`): `procurement.stock_inquiries.project_sales_approve` -> NPA `view` + `approve`,
 `procurement.stock_inquiries.purchasing_reject` -> NPA `view` + `open_code`. Additive, idempotent,
-no role named; the downgrade leaves grants alone. Owner answer to the crew-ask pending (option a
-recommended); built so it can ship on a yes.
+no role named, `ON CONFLICT DO NOTHING`; each added grant carries an `npasla-` id and the
+downgrade removes only those (owner ruling 9 Nov: option a).
 
 An applicant with only `create` + `view_own` is limited: like the SI, they see the portal form, no
 tab strip and so no SLA tab.

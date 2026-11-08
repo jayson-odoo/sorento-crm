@@ -826,3 +826,77 @@ def test_the_grants_are_additive_inserts_only():
         upper = " ".join(statement.split()).upper()
         assert upper.startswith("INSERT INTO USER_ROLE_PERMISSIONS"), statement
         assert "NOT EXISTS" in upper
+
+
+def _real_slugs(db):
+    """The user's grants as the tables hold them (the harness swaps permission checks per caller)."""
+
+    def slugs(self, user_id):
+        return {
+            r[0]
+            for r in db.execute(
+                text(
+                    "SELECT p.slug FROM user_role_assignments a "
+                    "JOIN user_role_permissions urp ON urp.role_id = a.role_id "
+                    "JOIN user_permissions p ON p.id = urp.permission_id WHERE a.user_id = :u"
+                ),
+                {"u": user_id},
+            )
+        }
+
+    return slugs
+
+
+def test_after_the_migration_the_si_stage_actors_open_and_work_the_npa(world, monkeypatch):
+    """Owner ruling (a): the Project Sales Manager (SI project_sales_approve) and the purchasing
+    member (SI purchasing_reject) open the NPA and do their stage's move once the migration ran."""
+    from app.services.user_service import UserPermissionService
+
+    from ._sample_request_seed import MARKER, make_user
+    from .test_new_product_application import _grant
+
+    db = world.db
+    for slug in (VIEW, APPROVE, OPEN_CODE):
+        _role_with(db, slug)
+    psm = make_user(db, f"{MARKER} project sales manager")
+    buyer = make_user(db, f"{MARKER} purchasing product")
+    _grant(db, psm, {"procurement.stock_inquiries.view", "procurement.stock_inquiries.project_sales_approve"}, world.company_id)
+    _grant(db, buyer, {"procurement.stock_inquiries.purchasing_reject"}, world.company_id)
+    db.commit()
+    monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", _real_slugs(db))
+
+    d = _submitted(world)
+    assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 403
+    assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 403
+
+    module = _load_migration()
+    for statement in module.GRANTS:
+        db.execute(text(statement))
+    db.commit()
+
+    assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 200
+    assert _act(world, d["id"], "approve", psm).status_code == 200
+    assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 200
+    res = world.api.as_(buyer).put(f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Quoting"})
+    assert res.status_code == 200, res.text
+
+
+def test_the_downgrade_removes_only_the_grants_it_added(world, monkeypatch):
+    db = world.db
+    for slug in (VIEW, APPROVE, OPEN_CODE):
+        _role_with(db, slug)
+    # A role an admin already gave NPA view by hand keeps it after the downgrade.
+    by_hand = _role_with(db, "procurement.stock_inquiries.project_sales_approve", VIEW)
+    fresh = _role_with(db, "procurement.stock_inquiries.purchasing_reject")
+    db.commit()
+    module = _load_migration()
+    for _ in range(2):
+        for statement in module.GRANTS:
+            db.execute(text(statement))
+    db.commit()
+    assert {VIEW, APPROVE} <= _role_slugs(db, by_hand)
+    assert {VIEW, OPEN_CODE} <= _role_slugs(db, fresh)
+    db.execute(text(module.UNGRANT))
+    db.commit()
+    assert VIEW in _role_slugs(db, by_hand) and APPROVE not in _role_slugs(db, by_hand)
+    assert not _role_slugs(db, fresh) & {VIEW, OPEN_CODE}

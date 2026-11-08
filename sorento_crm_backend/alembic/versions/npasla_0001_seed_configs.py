@@ -15,7 +15,8 @@ a database without the SI's rows (CI, a fresh tenant) gets nothing and a second 
 
 Grants: every role holding the SI's project_sales_approve gets NPA view + approve, every role
 holding the SI's purchasing_reject gets NPA view + open_code (crew pass 8 Nov: the assignees
-could not open the NPA). The downgrade leaves grants alone: they may have been set by hand since.
+could not open the NPA; owner ruling (a)). Each added grant carries an `npasla-` id; the downgrade
+removes those rows only, never a grant that existed before or was made by hand.
 
 Also: the seeded `stock_inquiry_created` email row's button label becomes the notice's own
 `button_label` (the NPA sends that notice too), only while the row is exactly as seeded.
@@ -92,7 +93,7 @@ TEMPLATE_UPDATE = (
 )
 
 
-#: Crew pass 8 Nov (owner answer pending, option a): whoever acts on the SI stage acts on the NPA
+#: Crew pass 8 Nov, owner ruling (a): whoever acts on the SI stage acts on the NPA
 #: stage. (SI slug its holders have, NPA slug they get.) Copied from the SI's own holders, as
 #: npa_0001 did for `create`; no role is named. Additive and idempotent.
 _GRANT_FROM_SI = (
@@ -103,20 +104,27 @@ _GRANT_FROM_SI = (
 )
 
 
+#: The id prefix of every grant this revision adds, so the downgrade removes those and nothing
+#: else (a grant an admin made by hand has its own id and is never touched).
+GRANT_ID_PREFIX = "npasla-"
+
+
 def _grant(src: str, tgt: str) -> str:
     return (
         "INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
-        "SELECT DISTINCT ON (urp.role_id) gen_random_uuid()::text, urp.role_id, tgt.id, now() "
+        f"SELECT '{GRANT_ID_PREFIX}' || md5(urp.role_id || ':' || tgt.id), urp.role_id, tgt.id, now() "
         "FROM user_role_permissions urp "
         "JOIN user_permissions src ON src.id = urp.permission_id "
         "CROSS JOIN user_permissions tgt "
         f"WHERE src.slug = '{src}' AND tgt.slug = '{tgt}' "
         "AND NOT EXISTS (SELECT 1 FROM user_role_permissions existing "
-        "WHERE existing.role_id = urp.role_id AND existing.permission_id = tgt.id)"
+        "WHERE existing.role_id = urp.role_id AND existing.permission_id = tgt.id) "
+        "ON CONFLICT DO NOTHING"
     )
 
 
 GRANTS = tuple(_grant(src, tgt) for src, tgt in _GRANT_FROM_SI)
+UNGRANT = f"DELETE FROM user_role_permissions WHERE id LIKE '{GRANT_ID_PREFIX}%'"
 
 
 def upgrade() -> None:
@@ -128,6 +136,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(text(UNGRANT))
     op.get_bind().execute(text(TEMPLATE_UPDATE), {"new": SEEDED_LAYOUT, "old": LABELLED_LAYOUT})
     # Only the rows this revision names; an admin's own NPA rows (other stage codes) stay.
     op.execute(
