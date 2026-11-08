@@ -1421,8 +1421,15 @@ def list_for(
     si = StockInquiryService(db)
     si._attach_sla_handlers(rows, source_entity_type=ENTITY)  # noqa: SLF001
     si._attach_print_counts(rows, actor.user_id, source_entity_type=ENTITY)  # noqa: SLF001
+    items = [serialize_summary(db, r, opened, created) for r in rows]
+    if actor.contact_id:
+        # A portal contact's own list names no staff (security S3), as its detail hides the
+        # purchasing person: the stage's assignee and lock holder stay on the staff side.
+        for item in items:
+            item.pop("assigned_to_name", None)
+            item.pop("handled_by_name", None)
     return {
-        "items": [serialize_summary(db, r, opened, created) for r in rows],
+        "items": items,
         "total": total,
         "page": page,
         "limit": limit,

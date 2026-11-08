@@ -262,9 +262,6 @@ function detail(over: Partial<Detail> = {}): Detail {
     customer_code: null,
     customer_name: 'EXAMPLE DEVELOPER SDN BHD',
     project_name: 'EXAMPLE RESIDENCE, TOWER B',
-    first_line: 'XY-1234-MB',
-    lines_total: 2,
-    lines_done: 0,
     opened_codes: [],
     needed_by: null,
     submitted_at: null,
@@ -368,7 +365,6 @@ describe('who sees which next action', () => {
     state.data = detail({
       status: 'approved',
       status_label: 'Approved',
-      lines_done: 1,
       lines: [
         line({
           opened_product_id: 'p-1',

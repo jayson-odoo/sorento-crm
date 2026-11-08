@@ -52,27 +52,6 @@ vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
     <button type="button" data-testid="downloads">{`${p.entityType}:${p.entityId}:${p.count}`}</button>
   ),
 }));
-vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
-  const React = await import('react');
-  type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
-  const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
-    const [loaded, setLoaded] = React.useState(options ?? []);
-    React.useEffect(() => {
-      if (fetchOptions) void fetchOptions('').then(setLoaded);
-    }, [fetchOptions]);
-    return (
-      <select multiple aria-label={placeholder ?? 'multi'} value={value}
-        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
-        {(fetchOptions ? loaded : (options ?? [])).map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-    );
-  };
-  return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
-});
-
 import NewProductApplicationsList from './NewProductApplicationsList';
 
 const ROW = {

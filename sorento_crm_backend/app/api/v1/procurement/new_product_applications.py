@@ -242,6 +242,18 @@ def export_application_xlsx(
     app = _load(db, application_id)
     svc.assert_can_view(app, _actor(db, user))
     downloads = DownloadService(db)
+    # One in flight per viewer per application (security review N3), as the order inquiry exports.
+    if downloads.has_in_flight(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+    ):
+        raise AppException(
+            status_code=409,
+            message="This workbook is already being prepared - check My Downloads.",
+            code="CONFLICT",
+        )
     download = downloads.create(
         user_id=str(user["id"]),
         kind="new_product_application_xlsx",

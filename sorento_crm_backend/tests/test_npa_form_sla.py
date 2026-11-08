@@ -974,12 +974,17 @@ def test_export_xlsx_queues_a_my_downloads_row_and_print_count_counts_it(world, 
 
     queued = []
     monkeypatch.setattr(queue_service, "enqueue_job", lambda fn, *a, **kw: queued.append((fn.__name__, a, kw)))
+    from app.models.download import UserDownload
+
     d = _submitted(world)
     for _ in range(2):
         res = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx")
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["kind"] == "new_product_application_xlsx" and body["status"] == "pending"
+        # The worker finished it: the next one may be queued (one in flight at a time, security N3).
+        world.db.get(UserDownload, body["id"]).status = "ready"
+        world.db.commit()
     assert [q[0] for q in queued] == ["generate_new_product_application_xlsx"] * 2
     assert queued[0][1][1] == d["id"]
     assert _row(world, d["id"], world.viewer)["print_count"] == 2
@@ -1039,3 +1044,15 @@ def test_the_worker_stores_the_workbook_and_marks_the_download_ready(world, monk
     world.db.refresh(row)
     assert row.status == "ready" and row.storage_key == stored["key"]
     assert stored["key"].startswith(f"exports/new-product-application-xlsx/{did}/") and stored["size"] > 0
+
+
+def test_a_second_export_while_one_is_in_flight_is_refused(world, monkeypatch):
+    """Security N3: one in-flight workbook per viewer per NPA, as the order inquiry exports."""
+    import app.services.queue_service as queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
+    d = _submitted(world)
+    assert world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx").status_code == 200
+    res = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx")
+    assert res.status_code == 409
+    assert "My Downloads" in res.text
