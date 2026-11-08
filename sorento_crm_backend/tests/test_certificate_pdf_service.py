@@ -349,3 +349,23 @@ def test_01_is_number_only():
     assert is_number_only("83-55") is True
     assert is_number_only("WC 8355") is False
     assert is_number_only("14A") is False
+
+
+def test_01_symbol_font_code_points_are_mapped_back_before_matching(monkeypatch):
+    """Real SPAN/WELPS PDFs report each character as U+F020..U+F0FF (symbol-font encoding)."""
+    from app.services.certificate_pdf_service import find_boxes
+
+    pdf = table_pdf([[("14A", ["STOP VALVE"], 30), ("4A", ["other"], 30)]])
+    original = pymupdf.Page.get_text
+
+    def shifted(self, option="text", *args, **kwargs):
+        result = original(self, option, *args, **kwargs)
+        if option != "words":
+            return result
+        return [(*w[:4], "".join(chr(ord(c) + 0xF000) if 0x20 <= ord(c) <= 0xFF else c for c in w[4]), *w[5:]) for w in result]
+
+    monkeypatch.setattr(pymupdf.Page, "get_text", shifted)
+    found = find_boxes(pdf, "14A")
+    assert found["has_text"] is True and len(found["boxes"]) == 1
+    assert found["boxes"][0]["y"] == pytest.approx((TOP + 30) / PAGE_H, abs=TOL)
+    assert len(find_boxes(pdf, "4A")["boxes"]) == 1

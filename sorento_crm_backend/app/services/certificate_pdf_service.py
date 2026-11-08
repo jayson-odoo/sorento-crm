@@ -22,7 +22,13 @@ _THIN = 1.5
 _EDGE_PUNCT = ".,;:()[]/-"
 
 
+def unshift(text: str) -> str:
+    """Symbol-font PDFs report each character as U+F020..U+F0FF; map back to the plain character."""
+    return "".join(chr(ord(ch) - 0xF000) if 0xF020 <= ord(ch) <= 0xF0FF else ch for ch in (text or ""))
+
+
 def normalise(text: str) -> str:
+    text = unshift(text)
     return "".join(ch for ch in (text or "").lower() if ch not in _DROP and not ch.isspace())
 
 
@@ -64,7 +70,7 @@ def _words(page) -> list[tuple[str, pymupdf.Rect, str]]:
         norm = normalise(w[4])
         if not norm:
             continue
-        out.append((norm, (pymupdf.Rect(w[:4]) * matrix).normalize(), w[4]))
+        out.append((norm, (pymupdf.Rect(w[:4]) * matrix).normalize(), unshift(w[4])))
     return out
 
 
