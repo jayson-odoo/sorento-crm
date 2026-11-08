@@ -314,7 +314,6 @@ register(
     )
 )
 
-
 register(
     FormAction(
         key="product.delete",
