@@ -157,17 +157,35 @@ def test_rm_additional_per_account_and_for_the_tier_are_not_both(api):
     assert res.status_code == 422, res.text
 
 
-def test_one_rm_additional_for_all_pays_each_counted_account_even_without_sales(api):
+def test_a_tier_level_rm_additional_on_a_combined_target_is_refused(api):
+    """Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional is set per
+    account only; a tier-level amount is a 422 that says so (create, edit, and adding an account)."""
     client, db, company_id = api
     pid = _product_id(db, company_id)
     a1 = _customer(db, company_id, "ZZT ALL A/C I", level=1)
     a2 = _customer(db, company_id, "ZZT ALL A/C II", level=2)
     _sale(db, company_id, a1, 200000, date(2026, 3, 1), product_id=pid)
-    res = client.post(BASE, json=_yearly([a1, a2], [{"threshold": 100000, "rate": 1, "bonus_amount": 100}]))
-    assert res.status_code == 201, res.text
-    period = res.json()["periods"][0]
-    assert period["bonus_earned"] == 200
-    assert {a["customer_id"]: a["commission_earned"] for a in period["accounts"]} == {a1.id: 2100.0, a2.id: 100.0}
+    tiers = [{"threshold": 100000, "rate": 1, "bonus_amount": 100}]
+    res = client.post(BASE, json=_yearly([a1, a2], tiers))
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "INVALID_TIERS" and "per account" in res.json()["message"]
+    # One account: the tier-level RM Additional is kept, paid once.
+    single = client.post(BASE, json=_yearly([a1], tiers))
+    assert single.status_code == 201, single.text
+    period = single.json()["periods"][0]
+    assert period["bonus_earned"] == 100
+    assert [a["commission_earned"] for a in period["accounts"]] == [2100.0]
+    # Adding a second account to it while the tier-level amount stands: refused the same way.
+    res = client.patch(f"{BASE}/{single.json()['id']}", json={"customer_ids": [a1.id, a2.id]})
+    assert res.status_code == 422, res.text
+    assert "per account" in res.json()["message"]
+    # Moving it per account in the same edit is fine.
+    res = client.patch(f"{BASE}/{single.json()['id']}", json={"customer_ids": [a1.id, a2.id], "tiers": [
+        {"threshold": 100000, "rate": 0, "account_rates": [
+            {"customer_id": a1.id, "rate": 1, "bonus_amount": 100}, {"customer_id": a2.id, "rate": 1}]},
+    ]})
+    assert res.status_code == 200, res.text
+    assert res.json()["periods"][0]["bonus_earned"] == 100
 
 
 def test_marginal_takes_a_rate_per_account(api):

@@ -2098,6 +2098,30 @@ def run(
                 # silently overwrite the first (review nit).
                 problem = f"the same accounts and dates as row {written_by[match_key]}"
                 break
+            if len(set(ids)) > 1:
+                # Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional
+                # is set only per account; a bonus naming no single counted account is refused.
+                loose = next(
+                    (t for t in scheme.tiers if t.bonus is not None and t.bonus_account is None), None
+                )
+                if loose is not None:
+                    problem = (
+                        f"{scheme.name}: the RM bonus on the tier from {loose.threshold:,.0f} names no "
+                        "single account this target counts; on a target counting several accounts, "
+                        "write it against one account (set per account)"
+                    )
+                    break
+                legacy = existing.get(match_key)
+                if legacy is not None and any(
+                    t.bonus_amount is not None for t in target_service._tiers(db, legacy.id)
+                ):
+                    note = (
+                        f"{legacy.target_no} has an RM Additional set for the tier on several accounts: "
+                        "it is not paid; set it per account"
+                    )
+                    for r in all_rows:
+                        if note not in r.warnings:
+                            r.warnings.append(note)
             tiers = [_tier_payload(t, rates, scheme, ids, customer_of) for t, rates in zip(scheme.tiers, tier_rates)]
             fields = {
                 "commission_method": "retroactive",

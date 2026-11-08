@@ -25,8 +25,9 @@ Computed per period from the target's tiers, never stored:
   is the target's: sen (0.01, default) or ringgit (1). The marginal main line is the sum of its
   slices, rounded once, as before.
 - Bonus (the RM Additional): the reached main tier's, once per period, per account like the
-  rate (owner 8 Nov, Q3): each account's own `account_bonuses` figure, else `bonus_amount` to each
-  counted account (once on an agent or team target, which has one bucket).
+  rate (owner 8 Nov, Q3): each account's own `account_bonuses` figure. A tier-level `bonus_amount`
+  pays once on one bucket (agent, team, single-account dealer) and nothing on several accounts
+  (owner 8 Nov 23:59, a: set only per account there).
 - Each account's share (`Payout.by_account`, lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every
   account of a dealer target is its own payee and earns its own amounts on every line. Marginal:
   the tier boundaries are on the combined total; each slice is shared by the accounts in
@@ -56,8 +57,8 @@ class Tier(NamedTuple):
     account_rates: Optional[Dict[Hashable, Decimal]] = None
     #: The tier's % Additional, paid on top of `rate` when this is the reached tier.
     additional_rate: Optional[Decimal] = None
-    #: account -> its own fixed RM Additional (owner 8 Nov, Q3). None: `bonus_amount` to each
-    #: counted account (once on an agent or team target).
+    #: account -> its own fixed RM Additional (owner 8 Nov, Q3). None: `bonus_amount`, paid once
+    #: on one bucket only (agent, team, single-account dealer); never on several accounts.
     account_bonuses: Optional[Dict[Hashable, Decimal]] = None
 
 
@@ -210,8 +211,14 @@ def payout_for(
         top = main[hit[-1]]
         if top.account_bonuses is not None:
             bonuses = {key: Decimal(value or 0) for key, value in top.account_bonuses.items()}
-        else:
+        elif len(by_account) <= 1:
+            # One bucket (agent, team, a single-account dealer): the tier's amount, once.
             bonuses = {key: Decimal(top.bonus_amount or 0) for key in by_account}
+        else:
+            # Several accounts: the RM Additional is set only per account (owner 8 Nov 23:59, a).
+            # A legacy tier-level amount pays nothing here, never once per account; the API
+            # refuses it and the import lists it.
+            bonuses = {}
         for key, each in bonuses.items():
             each = _round(each, unit)
             shares[key] = shares.get(key, Decimal("0")) + each

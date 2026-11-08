@@ -498,6 +498,13 @@ def _tier_bonuses(db: Session, tier_ids: Iterable[str]) -> Dict[str, Dict[str, D
     return out
 
 
+#: Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional is set only per
+#: account, never for the tier (it would be paid once per account).
+COMBINED_RM_MESSAGE = (
+    "This target counts several accounts: set the RM Additional per account, not for the tier."
+)
+
+
 #: The commission fields a create or PATCH payload may carry.
 COMMISSION_FIELDS = ("commission_method", "threshold_unit", "rounding", "tiers_per_period", "tiers")
 
@@ -604,6 +611,8 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
             raise _unprocessable(
                 "Turn on own tiers per period to give a tier a period.", "INVALID_TIERS"
             )
+        if t["bonus"] is not None and len(counted) > 1:
+            raise _unprocessable(COMBINED_RM_MESSAGE, "INVALID_TIERS")
         own_bonus = any(b is not None for _c, _r, b in t["account_rates"] or [])
         if (t["additional_rate"] is not None or t["bonus"] is not None) and own_bonus:
             raise _unprocessable(
@@ -947,6 +956,10 @@ def update_target(
             user_id=user_id,
         )
     if accounts is not None:
+        if len(set(accounts)) > 1 and "tiers" not in commission and any(
+            t.bonus_amount is not None for t in _tiers(db, target.id)
+        ):
+            raise _unprocessable(COMBINED_RM_MESSAGE, "INVALID_TIERS")
         _write_accounts(db, target, accounts)
         # Rates naming an account no longer counted go with it.
         kept = set(accounts)

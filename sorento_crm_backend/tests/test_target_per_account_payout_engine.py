@@ -88,14 +88,20 @@ def test_rm_additional_set_per_account_pays_each_its_own():
     assert _total(out) == out.commission + out.bonus
 
 
-def test_one_rm_additional_for_all_pays_each_counted_account():
-    """As a one-for-all rate pays each account: every counted account gets the RM Additional,
-    an account with no sales in the period included."""
+def test_a_tier_level_rm_additional_on_several_accounts_is_never_multiplied():
+    """Owner 8 Nov 23:59 (a): on a combined target the RM Additional is set only per account. A
+    legacy tier-level amount there pays nothing (listed by the import, refused by the API), never
+    once per account."""
     sales = {**SALES, "acc-d": D("0")}
     out = payout_for("retroactive", [tier(1000000, 1, bonus=100)], D("0"), sales, threshold_unit="amount")
-    assert out.bonus == D("400.00")
-    assert out.by_account["acc-d"] == D("100.00")
+    assert out.bonus == D("0")
+    assert out.by_account["acc-d"] == D("0")
     assert _total(out) == out.commission + out.bonus
+
+
+def test_a_tier_level_rm_additional_on_one_account_pays_once():
+    out = payout_for("retroactive", [tier(1000, 1, bonus=100)], D("0"), {A: D("5000")}, threshold_unit="amount")
+    assert out.bonus == D("100.00") and out.by_account == {A: D("150.00")}
 
 
 def test_rm_additional_on_a_single_bucket_pays_once():
