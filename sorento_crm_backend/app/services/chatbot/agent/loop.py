@@ -611,10 +611,48 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return entry["status"] == "empty" and bool(term) and (
             term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
         )
+    if entry["name"] == "crm_query" and entry["status"] == "ok" and isinstance(entry.get("data"), dict):
+        # A crm_query that matched no row backs "none" for the very term it named (crew live x3, 8 Nov: "commission
+        # payout to fullshun" was prefixed with a not-confirmed line after an empty query for "fullshun").
+        data = entry["data"]
+        if data.get("rows") != [] or data.get("total"):
+            return False
+        terms = _searched_names(entry.get("args") or {})
+        return terms is not None and any(
+            isinstance(t, str) and (term := _fold_text(t)) and (
+                term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+            )
+            for t in terms
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
     return False
+
+
+def _searched_names(args: dict) -> list | None:
+    """The names an empty crm_query searched for: its `agent` and its text filters on the entity's name or agent
+    fields. None when anything else narrowed it (a status, a kind, an amount: empty then says nothing about the
+    name), a date window aside (review round 2 on d8a47c7b)."""
+    from app.services.assistant_registry import ENTITIES
+
+    entity = ENTITIES.get(str(args.get("entity")))
+    if entity is None:
+        return None
+    names = [args.get("agent")]
+    for f in args.get("filters") or []:
+        if not isinstance(f, dict):
+            return None
+        field = entity.fields.get(str(f.get("field")))
+        if field is not None and field.kind == "date" or f.get("field") == entity.window_field:
+            continue
+        if field is not None and (f.get("field") in entity.name_by or field.agent_id) and f.get("op") in (
+            "eq", "contains", "starts_with"
+        ):
+            names.append(f.get("value"))
+            continue
+        return None
+    return names
 
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
@@ -671,14 +709,15 @@ def open_parts(args: Any, plan: list[str], on_limit: bool) -> list[str]:
 
 def final_reply(
     args: Any, bad_numbers: list[str], bad_not_found: list[str], *, plan: list[str] | None = None,
-    on_limit: bool = False, ledger: dict[str, dict] | None = None,
+    on_limit: bool = False, ledger: dict[str, dict] | None = None, user_text: str | None = None,
 ) -> tuple[str, bool]:
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
         text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
-        text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
+        missing = "; ".join(bad_not_found)
+        text = f"I did not search for {missing}, so I cannot say it does not exist. {text}".strip()
     if not_checked:
         text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
     left = open_parts(args, plan or [], on_limit)
@@ -687,7 +726,7 @@ def final_reply(
     # Records by their label, the result's scope note, dates as dd/mm/yyyy: decided in code (`query_tools`).
     from app.services.chatbot.agent.query_tools import shape_reply
 
-    text = shape_reply(text, ledger)
+    text = shape_reply(text, ledger, user_text)
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
@@ -1498,7 +1537,7 @@ def _run(
             nonlocal forced_args
             args = forced_args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
-            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
+            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger, user_text=text)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
             if named:
@@ -1604,6 +1643,7 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
+                self_note = None
                 if ctx.principal == "contact" and not (
                     name in CONTACT_TOOLS or name == HANDOFF or name in dealer
                     or (name in (CONFIRM_ACTION, CANCEL_ACTION) and waiting is not None)
@@ -1630,11 +1670,19 @@ def _run(
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
+                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
+                        from app.models.user import User
+                        from app.services.chatbot.agent.query_tools import strip_self_agent
+
+                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                        args, self_note = strip_self_agent(args, asker, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
                         catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
                     )
+                if name == "crm_query" and self_note:
+                    out.message = f"{out.message} {self_note}".strip() if out.message else self_note
                 agents = found_agents(out.data) if name == "crm_resolve" and out.status == "ok" else []
                 if agents and any(sc.get("function", {}).get("name") == "crm_query" for sc in schemas):
                     out.message = (
@@ -1720,7 +1768,7 @@ def _run(
 
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
-            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger, user_text=text)
         gaps = no_tool_items(final_args if final_args is not None else forced_args)
         if gaps:
             # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
