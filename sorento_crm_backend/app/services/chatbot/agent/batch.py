@@ -39,6 +39,10 @@ def schema_for(db, ctx) -> dict | None:
     props: dict[str, Any] = {}
     for definition in defs:
         props.update(copy.deepcopy(definition.schema["function"]["parameters"].get("properties") or {}))
+    props["row"] = {
+        "type": "integer",
+        "description": "The row's number in the pasted table; keep it when you re-propose.",
+    }
     return {
         "type": "function",
         "function": {
@@ -49,8 +53,11 @@ def schema_for(db, ctx) -> dict | None:
                 f"table. Up to {MAX_ROWS} rows. Rows that cannot apply are listed as skipped with the reason; the "
                 "user sees one preview table and confirms once. A customer name that fits several accounts is not "
                 "linked: the row waits and `needs_choice` lists its accounts; ask the user which account(s) per "
-                "waiting row (codes, or all) and do not repeat the table, then call this again with the chosen "
-                "codes in customer_codes. Nothing changes until the user confirms. Call it again with corrected "
+                "waiting row (codes, or all) and do not repeat the table. When the user picks accounts for waiting "
+                "rows (codes; 'all' = every listed account of that row; 'skip' = leave the row out), call this again "
+                "with the WHOLE table, every row's `row` kept and the picked codes in customer_codes (no "
+                "customer_names for those rows). Nothing changes until the user confirms. Call it again with "
+                "corrected "
                 "rows to replace the proposal."
             ),
             "parameters": {
@@ -71,8 +78,25 @@ def _cells(definition: writes.WriteDef, args: Any, shown: dict | None, summary: 
     return {"Change": summary} if shown is not None else {}
 
 
+def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> str | None:
+    """The skip reason when a row picks a code that neither the last table turn listed for this phone nor the user
+    typed this turn; None when every code is allowed (or the row picks nothing)."""
+    codes = args.get("customer_codes")
+    mine = [p for p in previous if key is not None and p.get("key") == key]
+    if not mine or not isinstance(codes, list) or not codes:
+        return None
+    listed = {str(c).strip().lower() for p in mine for c in p.get("codes") or []}
+    typed = " ".join(str(user_text or "").split()).lower()
+    for code in codes:
+        said = " ".join(str(code).split())
+        if said.lower() not in listed and said.lower() not in typed:
+            return f'"{said}" was not in the list for "{mine[0].get("written")}" (row {mine[0].get("row")}); pick from the list.'
+    return None
+
+
 def propose_rows(
-    db, ctx, write: str, rows: list, *, seen_ids: set[str]
+    db, ctx, write: str, rows: list, *, seen_ids: set[str], user_text: str = "",
+    previous_waiting: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -82,16 +106,28 @@ def propose_rows(
     skipped: list[dict] = []
     waiting: list[dict] = []
     keys: dict[Any, int] = {}
-    for n, args in enumerate(rows, 1):
+    for position, args in enumerate(rows, 1):
+        n = position
+        if isinstance(args, dict):
+            # The pasted table's own row number; it never reaches the write's argument check.
+            args = dict(args)
+            given = args.pop("row", None)
+            if isinstance(given, int) and not isinstance(given, bool) and given > 0:
+                n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
         if key is not None and key in keys:
             skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
+        if isinstance(args, dict):
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text)
+            if unlisted:
+                skipped.append({"row": n, "reason": unlisted, "cells": _cells(definition, args, None)})
+                continue
         out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
         if step is None:
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
-                waiting += [{"row": n, "cells": _cells(definition, args, None), **c} for c in choices]
+                waiting += [{"row": n, "key": key, "cells": _cells(definition, args, None), **c} for c in choices]
                 if key is not None:
                     keys[key] = n
                 continue
@@ -108,6 +144,8 @@ def propose_rows(
 def propose(
     db, ctx, args: Any, steps: list[dict], *, seen_ids: set[str], skipped_out: list[dict] | None = None,
     waiting_out: list[dict] | None = None,
+    user_text: str = "",
+    previous_waiting: list[dict] | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -131,7 +169,9 @@ def propose(
         )
     if any(not s.get("batch") for s in steps):
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")
-    new_steps, skipped, waiting = propose_rows(db, ctx, write, rows, seen_ids=seen_ids)
+    new_steps, skipped, waiting = propose_rows(
+        db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting
+    )
     steps[:] = new_steps
     if skipped_out is not None:
         skipped_out[:] = skipped

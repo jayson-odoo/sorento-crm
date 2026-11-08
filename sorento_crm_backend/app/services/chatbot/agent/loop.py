@@ -1269,6 +1269,15 @@ def _channel(is_test: bool) -> str:
     return "console" if is_test else "whatsapp"
 
 
+def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
+    """The `batch_waiting` of the newest EARLIER turn of this conversation that kept one (a plain turn in between
+    does not hide it)."""
+    for earlier in reversed(memory.conversation_turns(db, conv)):
+        if str(earlier.id) != turn_id and isinstance(earlier.response, dict) and "batch_waiting" in earlier.response:
+            return earlier.response["batch_waiting"] or []
+    return []
+
+
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
     is_test=True, context_before="", context_after="",
@@ -1309,6 +1318,7 @@ def _run(
     # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
     batch_skipped: list[dict] = []
     batch_waiting: list[dict] = []
+    batch_called = False
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1623,7 +1633,11 @@ def _run(
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name == batch.BATCH:
-                    out = batch.propose(db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped, waiting_out=batch_waiting)
+                    batch_called = True
+                    out = batch.propose(
+                        db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
+                        waiting_out=batch_waiting, user_text=text, previous_waiting=_previous_waiting(db, conv, turn_id),
+                    )
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
@@ -1855,6 +1869,12 @@ def _run(
         "limit_hit": limit_hit,
         "rounds": run.rounds,
     }
+    if batch_called:
+        # The rows still waiting for a pick, read by the next table turn to check the codes it is given.
+        turn.response["batch_waiting"] = [
+            {"row": w["row"], "key": w.get("key"), "written": w["written"], "codes": [c["code"] for c in w["candidates"]]}
+            for w in batch_waiting
+        ]
     # Only a real final answer can ask back; a forced final at a limit never does.
     if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
         turn.response["asked_back"] = True
