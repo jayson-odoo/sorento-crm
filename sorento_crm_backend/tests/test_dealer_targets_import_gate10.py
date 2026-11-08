@@ -224,7 +224,8 @@ def test_an_account_and_an_amount_in_an_incentive_column_is_a_bonus_on_that_tier
         (Decimal("100000"), Decimal("2"), None),
         (Decimal("300000"), Decimal("0"), Decimal("15000")),
     ]
-    assert target.payout_customer_id == ledger.id
+    # The named account is the one counted account: the tier's RM Additional is its own.
+    assert _accounts == [ledger.id]
 
 
 def test_an_amount_past_the_rate_limit_skips_that_tier_and_loads_the_rest(api):
@@ -310,3 +311,38 @@ def test_the_masked_account_pick_shapes_words_that_could_name_a_dealer():
 
     row = {"suggestions": [], "account_pick": {"pick_key": "k", "label": "Acme 9", "choices": ["Deluxe", "A/C I"]}}
     assert _pick_detail(row) == 'account pick "xxxx 9": xxxxxx, A/C I or skip'
+
+
+def test_a_bonus_naming_one_of_two_counted_accounts_is_that_account_s_own(api):
+    """Owner 8 Nov (lane TARGET-PER-ACCOUNT-PAYOUT, Q3): the RM Additional is set per account,
+    like the rate. "A/C I- 15,000" over a target counting A/C I and A/C II is A/C I's own, never
+    15,000 to each account."""
+
+    def fill(ws):
+        ws["A1"], ws["B1"], ws["C1"] = "DEALER NAME", "ACCOUNT", "Q1"
+        ws.merge_cells("A1:A2")
+        ws.merge_cells("B1:B2")
+        ws.merge_cells("C1:F1")
+        ws["C2"], ws["D2"], ws["E2"], ws["F2"] = "Tier 1", "Tier 1 Incentive", "Tier 4", "Tier 4 Incentive"
+        ws["A3"], ws["B3"] = "GOLF HOME SDN BHD", "A/C I"
+        ws["A4"], ws["B4"] = "GOLF HOME SDN BHD", "A/C II"
+        ws["C3"], ws["E3"], ws["F3"] = 100000, 300000, "A/C I- 15,000"
+        ws.merge_cells("C3:C4")
+        ws.merge_cells("E3:E4")
+        ws.merge_cells("F3:F4")
+        ws["D3"] = 0.02
+        ws.merge_cells("D3:D4")
+
+    client, db, company_id = api
+    a1 = _customer(db, company_id, "GOLF HOME SDN BHD [A/C I]", 1)
+    a2 = _customer(db, company_id, "GOLF HOME SDN BHD [A/C II]", 2)
+    done = _post(client, db, _bytes(fill), dry_run=False)
+    assert all(r["status"] == "mapped" for r in done["rows"]), done["rows"]
+    _target, tiers, _rates, accounts = _tiers(db, done["rows"][0]["target_nos"][0])
+    assert sorted(accounts) == sorted([a1.id, a2.id])
+    top = tiers[-1]
+    assert top.bonus_amount is None
+    from app.models.sales import SalesTargetTierRate
+
+    own = {r.customer_id: r.bonus_amount for r in db.query(SalesTargetTierRate).filter(SalesTargetTierRate.tier_id == top.id)}
+    assert own == {a1.id: Decimal("15000"), a2.id: None}

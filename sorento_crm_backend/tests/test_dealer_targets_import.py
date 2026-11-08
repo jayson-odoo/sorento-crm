@@ -73,7 +73,7 @@ def test_parse_p1_p2_p3_merged_accounts_named_rate_and_stacking_additionals():
     parsed = _parse()
     q = _scheme(parsed, "C-A1", "quarterly")
     assert q.codes == ["C-A1", "C-A3"]                      # P1: one target over both accounts
-    assert q.payout_code == "C-A1"
+    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
     assert (q.start, q.end, q.split_every, q.split_unit) == (date(2026, 1, 1), date(2026, 12, 31), 3, "month")
     assert q.threshold_unit == "amount"
     assert _tiers(q, date(2026, 1, 1)) == [                 # P3
@@ -102,7 +102,7 @@ def test_parse_p4_rate_per_account_deluxe_mastile_wply():
     ]
     # "-" is no scheme for Q2 to Q4.
     assert _tiers(q, date(2026, 4, 1)) == []
-    assert q.payout_code == "C-B_DELUXE"
+    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
 
 
 def test_parse_p6_dec_to_nov_window():
@@ -394,8 +394,7 @@ def test_import_code_of_another_company_is_not_representable(api):
 
 def test_parse_rate_on_one_row_of_a_merged_target_is_that_accounts_rate():
     """Ruling 2: the threshold merged over A/C III and A/C I, the rate typed on A/C I's row
-    only, pays A/C I only; with A/C III listed first, the payout defaults to A/C I, the first
-    account given a rate (not the first code)."""
+    only, pays A/C I only (each account is its own payee, lane TARGET-PER-ACCOUNT-PAYOUT)."""
     from app.services.sales.dealer_target_import import parse_workbook
 
     def fill(ws):
@@ -413,7 +412,7 @@ def test_parse_rate_on_one_row_of_a_merged_target_is_that_accounts_rate():
     q = _scheme(parsed, "C-A3", "quarterly")
     assert q.codes == ["C-A3", "C-A1"]
     assert _tiers(q, date(2026, 1, 1)) == [(D("200000"), None, False, {"C-A1": D("3")})]
-    assert q.payout_code == "C-A1"
+    assert q.payout_code is None  # no payee: each account is paid its own share (TARGET-PER-ACCOUNT-PAYOUT)
 
 
 def test_parse_merge_in_one_scheme_kind_does_not_join_the_other_kinds():
@@ -457,8 +456,8 @@ def test_import_matches_codes_without_regard_to_case_or_spaces(api):
     assert body["rows"][0]["customer"] == "ZZT CASE"
 
 
-def test_import_pay_to_code_without_a_row_of_its_own_resolves(api):
-    """E6: a target counting A/C III pays to A/C I, and A/C I has no row in the file."""
+def test_import_pay_to_column_is_not_used_and_says_so(api):
+    """E6 retired (owner 8 Nov): a PAY TO naming another account no longer names a payee."""
     client, db, company_id = api
     from app.models.order import Customer
 
@@ -477,4 +476,9 @@ def test_import_pay_to_code_without_a_row_of_its_own_resolves(api):
     assert row["status"] == "mapped", row
     rows = client.get(BASE, params={"subject": "dealer", "all": "true"}).json()["rows"]
     mine = next(r for r in rows if r["target_no"] in row["target_nos"])
-    assert mine["payout_label"] and "ZZT A1" in mine["payout_label"]
+    # Owner 8 Nov: no single payee; the counted account is paid its own share and the row says
+    # the PAY TO cell was not used.
+    assert mine["account_codes"] == [counted.customer_code] and "payout_label" not in mine
+    from app.services.sales.dealer_target_import import PAY_TO_IGNORED
+
+    assert PAY_TO_IGNORED in row["warnings"]

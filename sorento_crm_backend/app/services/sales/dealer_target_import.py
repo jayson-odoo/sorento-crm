@@ -246,6 +246,9 @@ class SchemeTier:
     #: The tier's % Additional: a "+ Additional x%" cell on the tier's threshold, folded onto it
     #: (lane TARGET-TIER-ADDITIONAL, owner 5 Nov).
     additional_rate: Optional[Decimal] = None
+    #: The counted account (row key) the bonus cell names: that account's own RM Additional
+    #: (owner 8 Nov, Q3: set per account, like the rate). None: the tier's, for every account.
+    bonus_account: Optional[str] = None
 
 
 @dataclass
@@ -1259,6 +1262,33 @@ def _group_schemes(
     ]
 
 
+def _tier_payload(t: SchemeTier, rates: Optional[Dict[str, Decimal]], scheme: Scheme, ids: List[str], customer_of) -> dict:
+    """One tier as `SalesTargetTierIn` takes it. A bonus naming one counted account of a
+    multi-account target is that account's own RM Additional (owner 8 Nov, Q3), so the tier is
+    written per account: the named rates, else the tier's rate on every account."""
+    own_bonus = None
+    if t.bonus is not None and t.bonus_account is not None and len(set(ids)) > 1:
+        own_bonus = customer_of(t.bonus_account).id
+    if own_bonus is not None:
+        per_account = dict(rates) if rates else {cid: Decimal(t.rate or 0) for cid in dict.fromkeys(ids)}
+        per_account.setdefault(own_bonus, Decimal("0"))
+        account_rates = [
+            {"customer_id": cid, "rate": float(rate), **({"bonus_amount": float(t.bonus)} if cid == own_bonus else {})}
+            for cid, rate in per_account.items()
+        ]
+    else:
+        account_rates = [{"customer_id": cid, "rate": float(rate)} for cid, rate in rates.items()] if rates else None
+    return {
+        "period_start": t.period_start if scheme.split_every else None,
+        "threshold": float(t.threshold),
+        "rate": float(t.rate or 0),
+        "is_additional": t.is_additional,
+        "account_rates": account_rates,
+        "bonus_amount": float(t.bonus) if t.bonus is not None and own_bonus is None else None,
+        "additional_rate": float(t.additional_rate) if t.additional_rate is not None else None,
+    }
+
+
 def _period_start(kind: str, number: int, start: date) -> date:
     if kind == "Q":
         return add_months(start, 3 * (number - 1))
@@ -1452,12 +1482,18 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
         main_rate: Optional[Decimal] = None
         bonus: Optional[Decimal] = None
         extras: List[Tuple[Optional[Dict[str, Decimal]], Optional[Decimal]]] = []
+        bonus_account: Optional[str] = None
         for r, e in entries:
             if e.bonus is not None:
-                # Paid once the tier is reached, to the account the cell names.
+                # Paid once the tier is reached: to the counted account the cell names, as its own
+                # RM Additional (owner 8 Nov, Q3); an account not counted is no payee.
                 if bonus is not None:
                     raise CellError(f"{name}: two bonus amounts for the threshold {threshold:,.0f}")
-                payees.append(resolve(e.label)[0])
+                key, counted = resolve(e.label)
+                if counted:
+                    bonus_account = key
+                else:
+                    payees.append(key)
                 bonus = e.bonus
                 continue
             additional = e.is_additional
@@ -1485,7 +1521,9 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
         if main or main_rate is not None:
             if main and main_rate is not None:
                 raise CellError(f"{name}: one tier pays both every account and named accounts")
-            out.append(SchemeTier(period_start, threshold, main_rate, False, main or None, bonus))
+            out.append(
+                SchemeTier(period_start, threshold, main_rate, False, main or None, bonus, bonus_account=bonus_account)
+            )
         for rates, rate in extras:
             out.append(SchemeTier(period_start, threshold, rate, True, rates))
         previous_threshold = threshold
@@ -2074,7 +2112,7 @@ def run(
             match_key = (
                 frozenset(ids), scheme.start, scheme.end, scheme.split_every, scheme.split_unit, scheme.threshold_unit
             )
-            same_group = next((p[0].rows[0] for p in prepared if p[3] == match_key), None)
+            same_group = next((p[0].rows[0] for p in prepared if p[2] == match_key), None)
             if same_group is not None:
                 problem = f"the same accounts and dates as row {same_group}"
                 break
@@ -2083,22 +2121,7 @@ def run(
                 # silently overwrite the first (review nit).
                 problem = f"the same accounts and dates as row {written_by[match_key]}"
                 break
-            tiers = [
-                {
-                    "period_start": t.period_start if scheme.split_every else None,
-                    "threshold": float(t.threshold),
-                    "rate": float(t.rate or 0),
-                    "is_additional": t.is_additional,
-                    "account_rates": (
-                        [{"customer_id": cid, "rate": float(rate)} for cid, rate in rates.items()]
-                        if rates
-                        else None
-                    ),
-                    "bonus_amount": float(t.bonus) if t.bonus is not None else None,
-                    "additional_rate": float(t.additional_rate) if t.additional_rate is not None else None,
-                }
-                for t, rates in zip(scheme.tiers, tier_rates)
-            ]
+            tiers = [_tier_payload(t, rates, scheme, ids, customer_of) for t, rates in zip(scheme.tiers, tier_rates)]
             fields = {
                 "commission_method": "retroactive",
                 "threshold_unit": scheme.threshold_unit,
@@ -2151,7 +2174,6 @@ def run(
                         message = errors()[0].get("msg", "not valid") if callable(errors) and errors() else str(exc)
                         raise _Refused(scheme, message) from exc
                     done.append((scheme, match, match_key, target))
-                    written[scheme.key] = target.id
         except _Refused as exc:
             fail(f"{exc.scheme.kind}: {exc.message}")
             continue

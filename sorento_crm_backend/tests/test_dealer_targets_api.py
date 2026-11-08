@@ -114,7 +114,7 @@ def test_create_dealer_target(api):
     assert len(body["periods"]) == 4
     q2 = [t for t in body["tiers"] if t["period_start"] == "2026-04-01"]
     assert [t["threshold"] for t in q2] == [200000, 250000]
-    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3}]
+    assert q2[1]["account_rates"] == [{"customer_id": a1.id, "rate": 3, "bonus_amount": None}]
     # A period's figure, when no target figure is typed: its lowest main threshold.
     assert _period(body, "2026-04-01")["target_value"] == 200000
 
@@ -358,8 +358,10 @@ def test_tier_validation_refuses_in_plain_words(api):
     refused(tiers=[{"threshold": 1, "rate": 2}])  # per period without a period
     refused(threshold_unit="points", metric="quantity", tiers=[
         {"period_start": "2026-01-01", "threshold": 1, "rate": 2}])
-    refused(commission_method="marginal", tiers=[{"period_start": "2026-01-01", "threshold": 1,
-                                                  "account_rates": [{"customer_id": a1.id, "rate": 2}]}])
+    # Marginal takes a rate per account since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov, Q3).
+    res = client.post(BASE, json=_dealer_body([a1], commission_method="marginal", tiers=[
+        {"period_start": "2026-01-01", "threshold": 1, "account_rates": [{"customer_id": a1.id, "rate": 2}]}]))
+    assert res.status_code == 201, res.text
     refused(tiers=[{"period_start": "2026-01-01", "rate": 2}])  # no threshold
     res = client.post(BASE, json=_dealer_body([]))
     assert res.status_code == 422
@@ -509,7 +511,7 @@ def test_removing_an_account_drops_its_tier_rates(api):
     ])).json()
     res = client.patch(f"{BASE}/{created['id']}", json={"customer_ids": [a1.id]})
     assert res.status_code == 200, res.text
-    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2}]
+    assert res.json()["tiers"][0]["account_rates"] == [{"customer_id": a1.id, "rate": 2, "bonus_amount": None}]
     from app.models.sales import SalesTargetTierRate
 
     assert db.query(SalesTargetTierRate).filter(SalesTargetTierRate.customer_id == a3.id).count() == 0
