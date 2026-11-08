@@ -112,6 +112,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # SPEC-SHEET-V2 (#2124, migration ssv2_0001_spec_sheets): a quotation document's saved spec
     # sheets, born straight into `projects`.
     "quotation_spec_sheets",
+    # QUOTE-CERT-TAB (#2245, migration qcert_0001): a quotation document's certificate list
+    # changes, born straight into `projects`.
+    "quotation_document_certificates",
 })
 
 

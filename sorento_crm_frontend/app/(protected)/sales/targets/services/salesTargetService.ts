@@ -58,14 +58,18 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
-export async function getSalesTargets(params: SalesTargetListParams): Promise<SalesTargetList> {
+export async function getSalesTargets(
+  params: SalesTargetListParams,
+  signal?: AbortSignal,
+): Promise<SalesTargetList> {
   const search = new URLSearchParams();
   if (params.all) search.set('all', 'true');
   else if (params.on) search.set('on', params.on);
   search.set('subject', params.subject);
   if (params.salesTeamId) search.set('sales_team_id', params.salesTeamId);
   if (params.query?.trim()) search.set('query', params.query.trim());
-  return read(await apiFetch(`${BASE}?${search.toString()}`), 'Failed to load targets');
+  const url = `${BASE}?${search.toString()}`;
+  return read(await (signal ? apiFetch(url, { signal }) : apiFetch(url)), 'Failed to load targets');
 }
 
 export async function getSalesTarget(id: string, on?: string): Promise<SalesTargetDetail> {

@@ -120,9 +120,6 @@ def _broaden(**extra: Any) -> dict[str, Any]:
     )
 
 
-CHENG_HUAT = "CHENG HUAT HARDWARE (SENTUL) SDN BHD"
-
-
 class _OwnerChat(_Replay):
     """Real `engine.run_turn`, one contact scoped to Sorento AND Mocha, one session; the
     orders list answered by the REAL route over the seeded documents and rendered by the
@@ -210,12 +207,8 @@ class _OwnerChat(_Replay):
         db.flush()
         self.mocha_brand_id = mocha.id
         brand_of = {"sorento": self.brand_id, "mocha": mocha.id, None: None}
-        # CUSTOMER-GROUP-GATE (owner ruling 3 Nov 2026): ledgers are one customer only through a
-        # customer group (one company's) or, across the two company books, by the IDENTICAL full
-        # name (crew answer on #2144: never ask "Sorento or Mocha?" for the same account). The
-        # replay is about the brand, so the word names that one customer in both companies.
-        sorento_cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=CHENG_HUAT)
-        mocha_cust = customer(db, company_id=MOCHA_ID, name=CHENG_HUAT)
+        sorento_cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="CHENG HUAT HARDWARE (SENTUL) SDN BHD - [A/C I]")
+        mocha_cust = customer(db, company_id=MOCHA_ID, name="CHENG HUAT HARDWARE (SENTUL) SDN BHD - [IBORN]")
         self.sorento_ledger, self.mocha_ledger = sorento_cust.id, mocha_cust.id
         warehouses = {c: warehouse(db, company_id=c).id for c in (DEFAULT_COMPANY_ID, MOCHA_ID)}
         for number, (company_id, lines) in DOCUMENTS.items():
@@ -307,7 +300,7 @@ def test_owner_transcript_replayed_in_order(owner_chat) -> None:
             assert _header(reply, "Brand") == f"Brand: {brand}", where
         else:
             assert _header(reply, "Brand") is None, where
-        assert _header(reply, "Customer") == f"Customer: {CHENG_HUAT}", where
+        assert _header(reply, "Customer") == "Customer: CHENG HUAT HARDWARE (SENTUL) SDN BHD - [A/C I], CHENG HUAT HARDWARE (SENTUL) SDN BHD - [IBORN]", where
         assert _numbers(reply) == docs, where
         listed = _codes(reply)
         if brand == "Sorento":
@@ -405,7 +398,7 @@ def test_the_clear_words_clear_the_brand_and_rerun(owner_chat, message) -> None:
         assert not args.get("brand_ids"), calls
         assert args.get("customer_ids") == [chat.sorento_ledger, chat.mocha_ledger], calls
         assert _header(reply, "Brand") is None, reply
-        assert _header(reply, "Customer") == f"Customer: {CHENG_HUAT}", reply
+        assert _header(reply, "Customer") == "Customer: CHENG HUAT HARDWARE (SENTUL) SDN BHD - [A/C I], CHENG HUAT HARDWARE (SENTUL) SDN BHD - [IBORN]", reply
         assert _numbers(reply) == ALL_DOCS, reply
 
 

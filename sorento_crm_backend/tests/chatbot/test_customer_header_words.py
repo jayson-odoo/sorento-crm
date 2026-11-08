@@ -9,8 +9,10 @@ joined by the name rule), identical names once.
 `ledger_family.customer_header_words(entries)`: `entries` is a list of
 `(customer_name, group_name or None)`; returns the header string.
 
-An ungrouped ledger whose trading name equals a group's stays its own customer (the switch
-that could join it was removed when the owner ruled, CUSTOMER-GROUP-GATE 3 Nov 2026).
+`ledger_family.UNGROUPED_JOINS_NAME_MATCHED_GROUP` (owner ruling pending, default False): an
+ungrouped ledger whose name rule key equals a group's key either stays its own family (False)
+or joins that group (True). One switch drives the formatter, `ledger_family_key` and
+`gate._cust_base`.
 
 Written BEFORE any implementation; each test imports the seam inside its body.
 """
@@ -106,7 +108,11 @@ def test_homemart_ledgers_in_the_hardware_group_merge_into_its_entry():
     assert out == "CHIN CHUN HARDWARE SDN BHD"
 
 
-# ============================================================ a name-matched ungrouped ledger
+# ============================================================ the collision switch
+
+
+def test_the_collision_switch_is_off():
+    assert _lf().UNGROUPED_JOINS_NAME_MATCHED_GROUP is False
 
 
 def test_ungrouped_ledger_with_a_group_matching_name_stays_its_own_customer():

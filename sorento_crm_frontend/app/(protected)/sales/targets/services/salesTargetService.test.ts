@@ -58,6 +58,16 @@ describe('salesTargetService', () => {
     );
   });
 
+  it('passes the abort signal so a superseded search is cancelled', async () => {
+    apiFetch.mockResolvedValue(ok({ on: '2026-10-15', rows: [], unassigned_amount: 0, no_team_count: 0 }));
+    const controller = new AbortController();
+    await getSalesTargets({ all: true, subject: 'dealer', query: 'deluxe' }, controller.signal);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      '/api/v1/sales/targets?all=true&subject=dealer&query=deluxe',
+      { signal: controller.signal },
+    );
+  });
+
   it('reads one target, on a date when given', async () => {
     apiFetch.mockResolvedValue(ok({ id: 't1' }));
     await getSalesTarget('t1');
