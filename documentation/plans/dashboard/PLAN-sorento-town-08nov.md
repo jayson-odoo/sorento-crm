@@ -192,7 +192,8 @@ Always-on legend, a "Tap any building" hint on first open, and the 2D cards besi
 ### Phase 0 extension (snapshot schema 1 gains two keys)
 
 - `compare`: `{"label": "Tue 27 Oct", "last_week_amount": "...", "last_week_invoice_count": n}` for
-  `day - 7`, same `invoiced_sales` expressions as `today` (posted, signed amount, company). Amount
+  `day - 7` up to the same time of day (documents with `created_at <= as_of - 7 days`; the whole day once
+  the phase is night, from 22:00 MYT; owner answer (a), 8 Nov), same `invoiced_sales` expressions as `today` (posted, signed amount, company). Amount
   removed by `redact()` and kept by the wallboard only for a full viewer (as `today.amount`).
 - `today.dealer_customer_count`: distinct `customer_id` of today's Dealer-type documents (feeds the
   "+N more dealers" sign: N = dealer_customer_count minus lit shops).
