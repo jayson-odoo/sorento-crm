@@ -117,4 +117,15 @@ PDF, plus optionally appended to the quote PDF (card Q3).
 
 ## Proof
 
-(filled in from the sandbox run)
+Sandbox run, PyMuPDF 1.2x (the dependency already in `requirements.txt:52`), a generated
+certificate-style page with a ruled table, rows `12A, 13A, 14A (wrapped 2 lines), 114A, 14AB`:
+
+- Whole-word word match (`page.get_text("words")`, token == code) for `14A`: 1 hit, row band from
+  the ruled lines `(40, 154, 555, 190)`, covering both lines of the wrapped description.
+  A naive substring `page.search_for("14A")` returns 3 hits (`14A`, `114A`, `14AB`): this is why R3
+  is whole-word.
+- `14AB` -> its own row only; `99Z` -> no hit.
+- `page.draw_rect` on a copy + `insert_pdf` into one output: boxed copy written, original untouched.
+- Image-only page (scan): `get_text()` returns 0 characters -> manual box only.
+
+Screens 2 and 6 of the mock show the on-screen and burned-in result.
