@@ -153,6 +153,11 @@ _NESTED: Dict[str, frozenset] = {
             "page_key",
             # apply-all: the layer id is looked up on the sheet's own pages (404 otherwise).
             "layer_id",
+            # QUOTE-CERT-TAB: every certification route loads the document under this project
+            # (`qdocs.get_document_or_404(db, project_id, document_id)`) and then finds the
+            # certificate in that document's own list (`quotation_certificate_service._find_group`,
+            # 404 for a certificate the document does not carry).
+            "certificate_id",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),

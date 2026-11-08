@@ -95,6 +95,7 @@ register(
             "last_responded_at": FieldDef("Responded at"),
             "created_at": FieldDef("Created at"),
         },
+        hint="stock inquiries salespeople raise to purchasing",
         name_by=("inquiry_number",),
         screen_path="/procurement-management/stock-inquiries/{id}",
         pages=("/procurement-management/stock-inquiries",),
@@ -130,6 +131,7 @@ register(
         # No relation to stock_inquiry: the query engine joins a relation without the target's
         # view slug, and an inquiry's customer / salesperson need procurement.stock_inquiries.view.
         relations={"new_product": ("product", "new_product_id")},
+        hint="NPA; new code = new_product, or new_code_text when typed, not linked",
         name_by=("application_no",),
         screen_path="/procurement-management/new-product-applications/{id}",
         pages=("/procurement-management/new-product-applications",),
@@ -153,6 +155,7 @@ register(
             "expected_qty": FieldDef("Qty"),
         },
         relations={"application": ("new_product_application", "application_id")},
+        hint="one product asked for on an NPA",
         name_by=("line_no",),
         scope=_line_scope,
     ),
@@ -169,6 +172,7 @@ register(
             "application": ("new_product_application", "application_id"),
             "product": ("product", "product_id"),
         },
+        hint="one CURRENT code an NPA's new code is built from",
         name_by=("position",),
         scope=_source_scope,
     ),
