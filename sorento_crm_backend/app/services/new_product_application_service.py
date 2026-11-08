@@ -1736,8 +1736,6 @@ PURCHASING_RESPOND = "purchasing_respond"
 #: The moves the Form SLA config listens to. The NPA's own move names are its SLA events
 #: (documentation/plans/procurement/PLAN-npa-form-sla-08nov.md stage map).
 SLA_EVENTS = ("submitted", "resubmitted", "approved", "rejected", "completed", PURCHASING_RESPOND)
-#: The moves whose "who acts next" notice the started stage's assignment notice replaces.
-STAGE_STARTS = ("submitted", "resubmitted", "approved")
 
 
 def _void_sla(db: Session, app: NewProductApplication, reason: str) -> None:
@@ -1760,37 +1758,27 @@ def _void_sla(db: Session, app: NewProductApplication, reason: str) -> None:
                 app._sla_voided_to.add(str(user_id))  # noqa: SLF001
 
 
-def _emit_sla(db: Session, app: NewProductApplication, event: str, actor_id: Optional[str]) -> bool:
-    """Drive the Form SLA stages; True when a stage of this application is open afterwards
-    (its assignee was told by the engine). Errors never undo the committed move."""
+def _emit_sla(db: Session, app: NewProductApplication, event: str, actor_id: Optional[str]) -> None:
+    """Drive the Form SLA stages (the SI's engine). Errors never undo the committed move."""
     try:
-        from app.services.form_sla_service import FormSLAOrchestrator, emit_form_event
+        from app.services.form_sla_service import emit_form_event
 
         emit_form_event(
             db, ENTITY, str(app.id), event, contact_id=app.contact_id, actor_user_id=actor_id
         )
-        return bool(FormSLAOrchestrator(db).active_trackers_for_source(ENTITY, str(app.id)))
     except Exception as exc:  # noqa: BLE001
         logger.warning("new product application SLA event failed: %s %s (%s)", event, app.id, exc)
         if not db.is_active:
             db.rollback()
-        return False
 
 
 # ------------------------------------------------------------------ notifications
 
 
-def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = ()) -> List[str]:
-    from app.services.project_notify_service import approver_user_ids
-
-    return approver_user_ids(db, company_id=company_id, exclude=set(exclude), slug=slug)
-
-
+#: Who the NPA itself tells. Submit / resubmit / approve are told by the started Form SLA stage
+#: (its assignee), as on the SI; a withdrawal tells whoever held the voided stage.
 _EVENTS = {
-    "submitted": ("waits for your approval", "approvers"),
-    "resubmitted": ("was appealed and waits for your approval", "approvers"),
-    "withdrawn": ("was taken back for changes", "approvers"),
-    "approved": ("is approved: codes to open", "purchasing"),
+    "withdrawn": ("was taken back for changes", "voided"),
     "rejected": ("was rejected", "applicant"),
     "completed": ("is done: the codes are open", "applicant"),
 }
@@ -1802,25 +1790,19 @@ def notify(
     """Tell the people who now have to act (card rule 8). Call AFTER the move commits; a
     failure is logged and swallowed per recipient, so it never undoes the move.
 
-    NPA-FORM-SLA: the move first drives the Form SLA stages. When a stage started, its
-    assignee got the SI's assignment notice and the broadcast is skipped; a withdrawal tells
-    the voided stage's assignee. With no NPA stage configured, today's broadcast stands."""
-    stage_open = _emit_sla(db, app, event, actor_id) if event in SLA_EVENTS else False
+    NPA-FORM-SLA (owner 8 Nov 21:45, "like SI"): the move first drives the Form SLA stages, and
+    the stage that starts tells its assignee (the SI's assignment notice). No stage row active =
+    no stage notice, as on the SI: there is no permission-holder broadcast any more. A withdrawal
+    tells whoever held the stage it voided."""
+    if event in SLA_EVENTS:
+        _emit_sla(db, app, event, actor_id)
     if event not in _EVENTS:
         return 0
-    if event in STAGE_STARTS and stage_open:
-        return 0
     phrase, audience = _EVENTS[event]
-    voided_to = getattr(app, "_sla_voided_to", None)
     try:
-        if event == "withdrawn" and voided_to:
-            recipients = [u for u in voided_to if u not in {str(actor_id or ""), str(app.applicant_id or "")}]
-        elif audience == "approvers":
-            # Never the applicant, and never the person who just acted (an approver who
-            # revised does not need to hear the request was withdrawn).
-            recipients = _holders(db, APPROVE, app.company_id, exclude=[app.applicant_id, actor_id])
-        elif audience == "purchasing":
-            recipients = _holders(db, OPEN_CODE, app.company_id)
+        if audience == "voided":
+            held = getattr(app, "_sla_voided_to", None) or set()
+            recipients = [u for u in held if u not in {str(actor_id or ""), str(app.applicant_id or "")}]
         else:
             recipients = [app.applicant_id] if app.applicant_id else []
         from app.services.notification_service import NotificationService
@@ -1831,11 +1813,7 @@ def notify(
         return 0
 
     sent = 0
-    if event == "approved":
-        open_lines = sum(1 for line in app.lines if not _resolved(line))
-        title = f"{app.application_no}: {open_lines} new code{'s' if open_lines != 1 else ''} to open"
-    else:
-        title = f"{app.application_no} {phrase}"
+    title = f"{app.application_no} {phrase}"
     for user_id in {str(u) for u in recipients if u}:
         try:
             service.create_with_channel_preferences(

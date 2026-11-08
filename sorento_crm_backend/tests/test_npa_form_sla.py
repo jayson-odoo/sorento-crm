@@ -210,24 +210,36 @@ def test_cancel_voids_the_open_purchasing_stage(world, sla):
     assert purchasing[0].voided_at is not None and not purchasing[0].is_resolved
 
 
-# ------------------------------------------------------------------ no config: today's broadcast
+# ------------------------------------------------------------------ no stage row: nothing, as the SI
 
 
-def test_without_npa_stage_rows_the_broadcast_still_goes_out(world):
+_BROADCASTS = (
+    "new_product_application_submitted",
+    "new_product_application_resubmitted",
+    "new_product_application_approved",
+    "new_product_application_withdrawn",
+)
+
+
+def test_without_npa_stage_rows_no_permission_holder_hears_a_move(world):
+    """Owner 8 Nov 21:45 (Q2 b): like the SI, no active stage row starts no stage and sends no
+    stage notice; the old broadcast to every .approve / .open_code holder is gone."""
     d = _submitted(world)
     assert not trackers(world.db, KIND, d["id"])
-    assert world.manager in _to(world, d["id"], "new_product_application_submitted")
-    res = _act(world, d["id"], "approve", world.manager)
-    assert res.status_code == 200, res.text
-    assert world.buyer in _to(world, d["id"], "new_product_application_approved")
+    assert _act(world, d["id"], "revise", world.sales, reason="Wrong finish").status_code == 200
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    assert _act(world, d["id"], "approve", world.manager).status_code == 200
+    assert not [t for (_u, t, e) in world.sent if e == d["id"] and t in _BROADCASTS]
+    assert not [t for (_u, t, _e) in world.sent if t == "form_sla"]
 
 
-def test_an_inactive_stage_row_falls_back_to_the_broadcast(world, sla):
+def test_an_inactive_stage_row_starts_nothing_and_tells_nobody(world, sla):
     sla.approval.config.is_active = False
     world.db.commit()
     d = _submitted(world)
     assert not trackers(world.db, KIND, d["id"])
-    assert world.manager in _to(world, d["id"], "new_product_application_submitted")
+    assert not [t for (_u, t, _e) in world.sent if t == "form_sla"]
+    assert not _to(world, d["id"], "new_product_application_submitted")
 
 
 # ------------------------------------------------------------------ handling lock gate
