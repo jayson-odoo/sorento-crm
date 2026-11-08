@@ -2729,7 +2729,7 @@ function AccountsGrid({
             </span>
           );
         },
-        size: 240,
+        size: 210,
         meta: { headerTitle: 'Period' },
       },
       {
@@ -2749,7 +2749,7 @@ function AccountsGrid({
             {row.original.account?.name ?? ''}
           </span>
         ),
-        size: 240,
+        size: 180,
         meta: { headerTitle: 'Customer' },
       },
       {
@@ -2770,7 +2770,7 @@ function AccountsGrid({
           />
         ),
         cell: ({ row }) => formatMoney(sales(row.original)),
-        size: 190,
+        size: 170,
         meta: {
           headerTitle: target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`,
           cellClassName: 'text-end tabular-nums',
