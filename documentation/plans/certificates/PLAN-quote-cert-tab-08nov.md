@@ -1,6 +1,6 @@
 # PLAN: Quotation Certification tab (QUOTE-CERT-TAB)
 
-Status: Review (PR #2245). Built test-first; reviewer NOT READY on round 2, round 3 fixes pushed and awaiting its re-check; security findings (1 medium, 5 low) fixed; cloud browser pass done; owner hand test pending. Track: full (L: migration + new tab + PDF annotation). UAC: `quote-cert-tab-08nov-acceptance-criteria.md`.
+Status: Merge-ready pending owner hand test (PR #2245). Built test-first; reviewer READY after 3 fix rounds (kill tests all red); security findings (1 medium, 5 low) fixed; cloud browser pass done. Track: full (L: migration + new tab + PDF annotation). UAC: `quote-cert-tab-08nov-acceptance-criteria.md`.
 
 Lane: QUOTE-CERT-TAB. Owner request 8 Nov 2026 ~10:15 MYT. Mock: `mockups/quote-cert-tab-08nov.html`.
 Behaviour card: `CARD-quote-cert-tab-08nov.md`.
