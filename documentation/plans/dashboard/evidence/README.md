@@ -54,18 +54,24 @@ Defects:
    `aria-describedby={undefined}` for DialogContent.
 4. The Sheet close icon button is 16x16 px at 375.
 
-## Final pass (head 984cfe3009, same fictional snapshot: 8 lit shops, 60 stalls)
+## Final pass (head 0d86b6dcb1, same fictional snapshot: 8 lit shops, 60 stalls)
 
-The two screenshots above were replaced (same names, fictional data only).
+The two screenshots above were replaced (same names, fictional data only). Three name tags are drawn now
+(Alpha Tiles, Omicron Ceramics, Upsilon Home Centre).
 
-- Legend below the canvas, not on the island, at 1280 and 375: PASS (legend top is at or below the canvas bottom).
-- Panels: no console warnings or errors opening all five panels at 1280 and at 375: PASS.
-- Sheet close hit area on a coarse pointer (375, touch emulation): 44x44 px, PASS (the icon itself is 16 px;
-  at 1280 with a fine pointer the hit area is 16x16, as intended).
-- Draw calls 18 per frame (limit 100); 0 rendered frames and 0 draws in 4 s idle, at both sizes: PASS.
-- Island plus labels fill about 90 percent of the limiting dimension: FAIL. Measured on the canvas pixels
-  (non-background bounding box): 1280 canvas 582x505 css, 79 percent of the width and 79 percent of the height,
-  margins L 81 / R 43 / T 12 / B 94 css px (an empty band at the bottom, content a little left-heavy);
-  375 canvas 341x227, 79 percent of the width and 85 percent of the height, margins L 48 / R 25 / T 12 / B 22 css px.
-- No two of the five tags overlap: FAIL. "Iota Ceramics RM 1,000" is still hidden behind "Mu Flooring RM 1,333"
-  at 1280 and at 375 (only the tail "00" shows at the right).
+- Legend below the canvas at 1280 and 375: PASS.
+- Panels: no console warnings or errors opening all five panels at 1280 and 375: PASS.
+- Sheet close hit area on a coarse pointer (375 touch emulation): 44x44 px, PASS (16x16 with a fine pointer at 1280).
+- Draw calls 16 per frame (limit 100); 0 rendered frames and 0 draws in 4 s idle at both sizes: PASS.
+- Tags, checked on canvas screenshots of the default view and one drag each way at 1280 and 375:
+  - None is clipped at the top edge in any of the six frames: PASS.
+  - Alpha Tiles never overlaps another tag: PASS.
+  - FAIL: "Omicron Ceramics RM 1,667" and "Upsilon Home Centre RM 2,222" still overlap. In the default view and after
+    a drag to the right, the Upsilon tag covers the lower half of the Omicron tag (the Omicron text is cut in half);
+    after a drag to the left it covers the Omicron tag from its first letters on ("Omicro" shows).
+  - After the drag to the left, the "+64 more dealers bought today" tag sits 6 css px from the right edge of the
+    canvas at both sizes (tight, text complete).
+- Fill, measured on the canvas pixels (non-background bounding box, default view, 6 px css inset against the rounded
+  corners): 1280 canvas 582x505 css: 72 percent of the width, 54 percent of the height, margins L 81 / R 81 / T 139 /
+  B 94 css px; 375 canvas 341x228: 72 percent of the width, 70 percent of the height, margins L 47 / R 46 / T 46 /
+  B 21 css px. Smaller than the previous pass (79 percent), nothing clipped by it; the island is centred.
