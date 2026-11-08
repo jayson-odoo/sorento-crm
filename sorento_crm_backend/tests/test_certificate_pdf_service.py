@@ -4,6 +4,9 @@ Written BEFORE `app/services/certificate_pdf_service.py` exists. Every PDF is ge
 PyMuPDF, so no real certificate is committed. The service import is done INSIDE each test so each
 test fails on its own, at the first call into the not-yet-built module.
 
+UAC v2: the matcher is NORMALISED whole-token (lower-case, spaces/hyphens/.,;:()[]/ dropped, runs of
+1-4 consecutive words, may cross a line break); `suggest_code` and `is_number_only` are pure helpers.
+
 Contract (UAC "Matcher"): `find_boxes(pdf_bytes, code) -> {"has_text", "boxes"}` with Box fractions
 of the page AS DISPLAYED (rotation applied), origin top-left; `burn_boxes(pdf_bytes, boxes) -> bytes`.
 """
@@ -37,7 +40,8 @@ def table_pdf(pages, *, rotation: int = 0, ruled: bool = True) -> bytes:
         page.insert_text((210, TOP + 20), "Description", fontsize=11)
         for i, (code, lines, _height) in enumerate(rows):
             top = ys[i + 1]
-            page.insert_text((60, top + 18), code, fontsize=11)
+            for n, part in enumerate(code.split("\n")):
+                page.insert_text((60, top + 18 + 13 * n), part, fontsize=11)
             for n, line in enumerate(lines):
                 page.insert_text((210, top + 18 + 15 * n), line, fontsize=11)
         if rotation:
@@ -256,3 +260,92 @@ def test_02_burn_puts_each_box_on_its_own_page():
     base = pymupdf.open(stream=pdf, filetype="pdf")
     assert len(doc[0].get_drawings()) == len(base[0].get_drawings())
     assert len(doc[1].get_drawings()) == len(base[1].get_drawings()) + 1
+
+
+# ------------------------------------------------------------------ 1b normalised matcher (UAC v2)
+
+REAL_SHAPE_ROWS = [
+    ("WC 8355", ["close coupled"], 30),
+    ("WC8355,", ["variant glued"], 30),
+    ("WC-8355", ["variant hyphen"], 30),
+    ("WC\n8355", ["split over two lines"], 50),
+    ("WB 1515", ["basin"], 30),
+    ("misc", ["WB 241, GB 762, WB 1515, AB 7049, WB 1516"], 30),
+]
+
+
+def test_01_normalised_code_hits_spaced_glued_hyphenated_and_line_split_forms():
+    from app.services.certificate_pdf_service import find_boxes
+
+    pdf = table_pdf([REAL_SHAPE_ROWS])
+    boxes = find_boxes(pdf, "WC 8355")["boxes"]
+    assert len(boxes) == 4, boxes
+    ys = sorted(b["y"] for b in boxes)
+    assert ys == sorted(set(ys)), "four distinct rows"
+    # Same answer whatever way the searched code is written.
+    for variant in ("wc8355", "WC-8355", "wc 8355"):
+        assert len(find_boxes(pdf, variant)["boxes"]) == 4
+
+
+def test_01_the_line_split_hit_covers_both_lines_of_its_row():
+    from app.services.certificate_pdf_service import find_boxes
+
+    pdf = table_pdf([REAL_SHAPE_ROWS])
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    split = [w for w in doc[0].get_text("words") if w[4] == "8355" and w[1] > 190]
+    assert split
+    second_line = split[0]
+    boxes = find_boxes(pdf, "WC 8355")["boxes"]
+    rect_hit = [b for b in boxes if b["y"] * PAGE_H <= second_line[1] and (b["y"] + b["h"]) * PAGE_H >= second_line[3]]
+    assert len(rect_hit) == 1
+
+
+def test_01_a_shorter_number_never_hits_a_longer_one():
+    from app.services.certificate_pdf_service import find_boxes
+
+    pdf = table_pdf([REAL_SHAPE_ROWS])
+    assert find_boxes(pdf, "WB 151")["boxes"] == []
+    # WB 1515 prints in its own row and inside the comma separated list: two hits.
+    assert len(find_boxes(pdf, "WB 1515")["boxes"]) == 2
+    assert len(find_boxes(pdf, "WB 241")["boxes"]) == 1
+    assert len(find_boxes(pdf, "AB 7049")["boxes"]) == 1
+
+
+def _text_pdf(*lines: str) -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    for i, line in enumerate(lines):
+        page.insert_text((60, 100 + 20 * i), line, fontsize=11)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_01_suggest_code_returns_the_printed_form_of_a_substring_of_the_product_code():
+    from app.services.certificate_pdf_service import suggest_code
+
+    assert suggest_code(_text_pdf("Model", "WB 1515", "WB 241"), "SRTWB1515") == "WB 1515"
+    assert suggest_code(_text_pdf("Model", "WC 8355"), "SRTWC8355-RL") == "WC 8355"
+
+
+def test_01_suggest_code_prefers_the_longest_run_over_the_bare_number():
+    from app.services.certificate_pdf_service import suggest_code
+
+    assert suggest_code(_text_pdf("AB 7049", "7049"), "SRTAB7049") == "AB 7049"
+
+
+def test_01_suggest_code_is_none_without_a_candidate_or_without_text():
+    from app.services.certificate_pdf_service import suggest_code
+
+    assert suggest_code(_text_pdf("XYZ 12", "nothing here"), "SRTWB1515") is None
+    assert suggest_code(image_only_pdf(), "SRTWB1515") is None
+    assert suggest_code(b"not a pdf", "SRTWB1515") is None
+
+
+def test_01_is_number_only():
+    from app.services.certificate_pdf_service import is_number_only
+
+    assert is_number_only("8355") is True
+    assert is_number_only("83-55") is True
+    assert is_number_only("WC 8355") is False
+    assert is_number_only("14A") is False
