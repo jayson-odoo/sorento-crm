@@ -266,11 +266,9 @@ class Scheme:
     tiers: List[SchemeTier]
     #: "<dealer> <2026 | Dec 2025 to Nov 2026> <quarterly | monthly | yearly>", the kind last.
     name: str = ""
-    #: Paid to an account of the dealer with no row in the file, found by name + account.
+    #: Paid to an account of the dealer with no row in the file, found by name + account. Always
+    #: None since lane TARGET-PER-ACCOUNT-PAYOUT (each account is its own payee).
     payout_by_name: Optional["ByName"] = None
-    #: The key of the dealer scheme that replaces this per-account one once it reaches a tier
-    #: (crew ruling 16 Oct: Tier 1-3 per account, Tier 4-5 on the dealer, one scale).
-    replaced_by: Optional[str] = None
 
 
 @dataclass
@@ -322,6 +320,9 @@ class _Column:
 
 
 _KIND_NAME = {"Q": "quarterly", "M": "monthly", "Y": "yearly"}
+#: A PAY TO cell, or a rate naming an account the target does not count, no longer names a payee
+#: (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every counted account is paid its own share.
+PAY_TO_IGNORED = "PAY TO not used: each counted account is paid its own share"
 
 #: A header cell that names a row's own field, matched on the WHOLE cell so a title such as
 #: "SORENTO DEALER INCENTIVE 2026" is never read as the dealer column.
@@ -1057,7 +1058,7 @@ def _group_schemes(
 ) -> List[Scheme]:
     """The one target of `kind` and unit over `ctx.rows`, or none. A block with Tier 1-3
     per account and Tier 4-5 merged over the accounts is one dealer target plus one target per
-    account that the dealer target replaces once it reaches a tier (crew ruling 16 Oct)."""
+    account; they stack, each paying on its own (owner 8 Nov, lane TARGET-PER-ACCOUNT-PAYOUT)."""
     grid, results = ctx.grid, ctx.results
     if len(ctx.rows) > 1:
         split = _account_and_dealer_columns(ctx, list(kind_cols))
@@ -1080,13 +1081,7 @@ def _group_schemes(
                     inherit_window=(dealer[0].start, dealer[0].end),
                 )
                 for scheme in own_schemes:
-                    if (scheme.start, scheme.end) != (dealer[0].start, dealer[0].end):
-                        # The replacement needs the dealer's period to cover the account's.
-                        raise CellError(
-                            f"{_KIND_NAME[kind]}: an account's window ({scheme.start:%b %Y} to {scheme.end:%b %Y}) "  # date-format-ok: month-level target window, no day to show
-                            f"differs from its dealer's ({dealer[0].start:%b %Y} to {dealer[0].end:%b %Y})"  # date-format-ok: month-level target window, no day to show
-                        )
-                    scheme.replaced_by = dealer[0].key
+                    # Stacks with the dealer target (owner 8 Nov): both pay, neither replaces the other.
                     account = results[r].account_in_file
                     name = (results[r].name_in_file or "")[:80]
                     if account and name:
@@ -1230,17 +1225,12 @@ def _group_schemes(
                 f'(rates "{" | ".join(rate_text(x) for x in twins)}")'
             )
         seen.add(key)
-    if len(set(pay_to)) > 1:
-        raise CellError(f"{_KIND_NAME[kind]}: the rates name two different accounts to pay")
-    if payto_text:
-        payout = ctx.dealer_labels.get(_label_key(payto_text), payto_text)
-    elif pay_to:
-        payout = pay_to[0]
-    else:
-        payout = next((next(iter(t.account_rates)) for t in tiers if t.account_rates), None) or codes[0]
-    by_name = payout if isinstance(payout, ByName) else None
-    if by_name is not None:
-        payout = None
+    if payto_text or pay_to:
+        # Each counted account is paid its own share (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov):
+        # a PAY TO cell, or a rate naming an account the target does not count, names no payee.
+        for r in ctx.rows:
+            if PAY_TO_IGNORED not in results[r].warnings:
+                results[r].warnings.append(PAY_TO_IGNORED)
     span = (
         str(start.year)
         if (start.month, start.day, end.month, end.day) == (1, 1, 12, 31) and start.year == end.year
@@ -1256,8 +1246,7 @@ def _group_schemes(
             rows=list(ctx.rows),
             codes=list(codes),
             names=[results[r].name_in_file or "" for r in ctx.rows],
-            payout_code=payout,
-            payout_by_name=by_name,
+            payout_code=None,
             start=start,
             end=end,
             split_every=split[0],
@@ -2082,19 +2071,6 @@ def run(
                     if r.row in numbers and note not in r.warnings:
                         r.warnings.append(note)
                 ids = list(dict.fromkeys(ids))
-            if scheme.payout_by_name is not None:
-                payout = by_name_customer.get(scheme.payout_by_name)
-                if payout is None:
-                    problem = (
-                        f"pays to {scheme.payout_by_name.label}, which has no row in the file and no "
-                        "single CRM customer of this dealer with that account"
-                    )
-                    break
-            else:
-                payout = customer_of(scheme.payout_code)
-            if payout is None:
-                problem = f"PAY TO: no customer with code {scheme.payout_code}"
-                break
             match_key = (
                 frozenset(ids), scheme.start, scheme.end, scheme.split_every, scheme.split_unit, scheme.threshold_unit
             )
@@ -2132,26 +2108,21 @@ def run(
                 "tiers_per_period": bool(scheme.split_every) and any(t.period_start for t in scheme.tiers),
                 "tiers": tiers,
             }
-            prepared.append((scheme, ids, payout, match_key, fields))
+            prepared.append((scheme, ids, match_key, fields))
         if problem:
             fail(problem)
             continue
         done = []
         try:
             with db.begin_nested():
-                # A dealer target first, so the account targets it replaces can name it.
-                written: Dict[str, str] = {}
-                for scheme, ids, payout, match_key, fields in sorted(prepared, key=lambda p: p[0].replaced_by is not None):
+                for scheme, ids, match_key, fields in prepared:
                     match = existing.get(match_key)
-                    if scheme.replaced_by and scheme.replaced_by not in written:
-                        raise _Refused(scheme, "its dealer target was not written")
-                    fields = {**fields, "replaced_by_target_id": written.get(scheme.replaced_by)}
                     try:
                         if match is not None:
                             target_service.update_target(
                                 db,
                                 match,
-                                SalesTargetUpdate(customer_ids=ids, payout_customer_id=payout.id, **fields),
+                                SalesTargetUpdate(customer_ids=ids, **fields),
                                 user_id=user_id,
                             )
                             target = match
@@ -2161,7 +2132,6 @@ def run(
                                 SalesTargetCreate(
                                     subject_kind="dealer",
                                     customer_ids=ids,
-                                    payout_customer_id=payout.id,
                                     name=scheme.name[:120],
                                     metric="amount",
                                     basis="ordered",
