@@ -84,12 +84,9 @@ def _check_write(db: Session, token: PortalToken, data: dict, *, current_custome
         space_id=token.space_id,
         stock_inquiry_id=data.get("stock_inquiry_id"),
     )
-    # Only a CHANGED debtor is re-checked (the Sample Request rule): a draft whose debtor later
-    # left the agent's book stays saveable with the customer it already has.
-    if data.get("customer_id") != current_customer:
-        sample_request_service.assert_portal_customer_allowed(
-            db, contact_id=token.contact_id, customer_id=data.get("customer_id")
-        )
+    # Owner 8 Nov 09:30: the customer is the stock inquiry's customer dropdown, which lists every
+    # customer of the company (`debtor_type.lookup_customers`), not only the agent's own. The
+    # service's company-filtered existence check (`_check_refs`) refuses another company's.
 
 
 def _move(db: Session, token: PortalToken, application_id: str, fn, **kw):

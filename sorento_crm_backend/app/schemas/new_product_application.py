@@ -66,7 +66,7 @@ class PurchasingResponseIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    outcome: Optional[Literal["link", "new", "not_opening"]] = None
+    outcome: Optional[Literal["link", "new"]] = None
     product_id: Optional[str] = None
     new_code: Optional[str] = Field(None, max_length=100)
     reason: Optional[str] = Field(None, max_length=2000)

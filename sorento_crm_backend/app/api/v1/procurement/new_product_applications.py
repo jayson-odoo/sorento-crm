@@ -346,6 +346,17 @@ def undo_new_code(application_id: str, user: dict = Depends(get_current_user), d
     return _move(db, user, application_id, svc.undo_new_code)
 
 
+@router.post("/{application_id}/purchasing-reject")
+def purchasing_reject(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 09:30: purchasing's Reject, as on the stock inquiry page."""
+    return _move(db, user, application_id, svc.purchasing_reject, reason=payload.reason)
+
+
 @router.put("/{application_id}/purchasing-response")
 def save_purchasing_response(
     application_id: str,

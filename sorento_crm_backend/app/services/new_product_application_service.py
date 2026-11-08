@@ -479,6 +479,24 @@ def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     return "rejected"
 
 
+def purchasing_reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> str:
+    """Owner 8 Nov 09:30: "not opening should be considered Reject like stock inquiry has a reject
+    button". Purchasing ends an Approved application with a reason; it goes to Rejected, the
+    applicant hears it (the "rejected" notice) and can fix and submit it again, as on an SI."""
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can reject this application.")
+    _require(app, APPROVED, "rejected by purchasing")
+    reason = _clean(reason)
+    if not reason:
+        raise _invalid("reason", "Enter the reason for rejecting.")
+    app.status = REJECTED
+    app.decided_at = datetime.utcnow()
+    app.decided_by = actor.user_id
+    app.reject_reason = reason
+    db.flush()
+    return "rejected"
+
+
 def _new_code_resolved(app: NewProductApplication) -> bool:
     return (
         app.new_product_id is not None
@@ -685,7 +703,8 @@ def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> N
     db.flush()
 
 
-OUTCOMES = ("link", "new", "not_opening")
+#: "Not opening" left the dialog for the Reject button (owner 8 Nov 09:30).
+OUTCOMES = ("link", "new")
 
 
 def _product_by_code(db: Session, code: Optional[str], company_id: Optional[str] = None) -> Optional[Product]:
@@ -723,7 +742,7 @@ def save_purchasing_response(
     if "outcome" in data:
         outcome = data["outcome"]
         if outcome is not None and outcome not in OUTCOMES:
-            raise _invalid("outcome", "Choose link, new or not opening.")
+            raise _invalid("outcome", "Choose link or new. To end the application, use Reject.")
         product_id, text, reason = None, None, None
         if outcome == "link":
             product = (
@@ -1152,6 +1171,14 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     return {"created_from": [row(*r) for r in created], "made_from_this": [row(*r) for r in made]}
 
 
+def status_label(app: NewProductApplication) -> str:
+    """An application purchasing closed as Not opening (before the Reject button, owner 8 Nov)
+    reads as Rejected; every other one shows its status."""
+    if app.status == COMPLETED and app.new_code_closed_reason and not (app.new_product_id or app.new_code_text):
+        return STATUS_LABELS[REJECTED]
+    return STATUS_LABELS.get(app.status, app.status)
+
+
 #: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
 NPA_NEXT_STEP = "Next step: please create a New Product Application for this inquiry."
 #: An application that still answers the inquiry's ask (a rejected or cancelled one does not).
@@ -1201,7 +1228,7 @@ def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict
                 "id": a.id,
                 "application_no": a.application_no,
                 "status": a.status,
-                "status_label": STATUS_LABELS.get(a.status, a.status),
+                "status_label": status_label(a),
                 "created_at": _iso(a.created_at),
                 "created_codes": created.get(str(a.id), []),
             }
@@ -1380,7 +1407,7 @@ def serialize_summary(
         "id": app.id,
         "application_no": app.application_no,
         "status": app.status,
-        "status_label": STATUS_LABELS.get(app.status, app.status),
+        "status_label": status_label(app),
         "source": app.source,
         "applicant_id": app.applicant_id,
         "applicant_name": applicant,
