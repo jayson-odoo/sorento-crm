@@ -129,3 +129,20 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
   the SI's own guard (`response_gate.assert_response_write_allowed("stock_inquiry", ...)`, same sentence), before the
   save, so nothing is saved or queued; `can_reply` follows the SI page's rule (inbox AND response stage), so the
   button is not drawn on a closed SI. Save only stays allowed, as on the SI.
+
+## Owner rulings 8 Nov 17:25 / 17:35 / 17:50: the NPA's own WhatsApp use case
+
+- Update & Reply sends its own use case `new_product_application_update` ("New Product Application"), not the
+  SI's `stock_inquiry` (its template says "Stock Inquiry"). Same dialog, same path: `enqueue_application_update_reply`
+  beside the SI's `enqueue_update_reply` (respond_io queue, the same composer with the NPA preamble "There is a
+  response to your new product application"), worker `send_new_product_application_respond_message` over the
+  shared `_send_and_log`, logged on `new_product_applications`.
+- No hard-coded body: the admin maps any approved template on WhatsApp Templates, like the SI's. Variables:
+  `entity_number` (NPA no), `inquiry_number`, `customer`, `project`, `product_code` (current codes),
+  `new_product_code`, `lead_time`, `update` (purchasing's text), `portal_url`, `status`, `reason`
+  (`new_product_application_service.template_vars`, read in the worker inside the row's own company). Blank -> "-".
+- View opens the NPA's portal page for the contact who raised it (`portal_url`, `PortalService.submission_link`
+  with the row's contact and space). NPAs are raised by the salesperson in the portal; a staff-raised row has no
+  contact and gets no link (no contact copy, no SI fallback, no backfill).
+- Unmapped: as the SI use case (in-window text, out-of-window skipped and logged failed). No new refusal.
+- The owner creates and submits the template in Respond.io himself.

@@ -398,6 +398,34 @@ def send_stock_inquiry_respond_message(
     )
 
 
+def send_new_product_application_respond_message(
+    application_id: str,
+    identifier: str,
+    message_text: str,
+    respond_user_id: str,
+    crm_sender_user_id: Optional[str],
+    space_id: Optional[str],
+    extra_context_vars: Optional[dict] = None,
+) -> dict:
+    """Worker-side: purchasing's Update & Reply on a New Product Application, sent through the
+    linked stock inquiry's conversation with the NPA's own template use case (owner 8 Nov).
+
+    The same window-aware send as the SI's reply; logged against the application.
+    """
+    return _send_and_log(
+        use_case="new_product_application_update",
+        business_table="new_product_applications",
+        business_id=application_id,
+        identifier=identifier,
+        message_text=message_text,
+        respond_user_id=respond_user_id,
+        crm_sender_user_id=crm_sender_user_id,
+        space_id=space_id,
+        sla_entity_type="",
+        extra_context_vars=extra_context_vars,
+    )
+
+
 _FORM_COMMENT_TABLES = {
     "complaint": "complaints",
     "stock_inquiry": "stock_inquiries",

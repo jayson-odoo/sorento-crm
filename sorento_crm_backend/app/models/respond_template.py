@@ -156,6 +156,14 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # A Utility template carrying the static Share Contact Info button; no params. Unmapped
     # -> no ask is sent and the chat is handed to staff once per 24h.
     "wa_phone_share",
+    # New Product Application update (PLAN-npa-from-si-07nov, owner 8 Nov). Purchasing's
+    # "Update & Reply" on an NPA raised from a stock inquiry, sent to the salesperson through
+    # the SI's conversation. Like ``stock_inquiry``: the admin maps whatever approved template
+    # to ``entity_number`` (NPA no) / ``inquiry_number`` / ``customer`` / ``project`` /
+    # ``product_code`` (current codes) / ``new_product_code`` / ``lead_time`` / ``update``
+    # (purchasing's text) / ``portal_url`` (the NPA's portal page). Unmapped: in-window text,
+    # out-of-window skipped and logged failed, exactly as an unmapped SI.
+    "new_product_application_update",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

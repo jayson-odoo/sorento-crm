@@ -6843,8 +6843,13 @@ class StockInquiryService:
 
     STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
 
+    #: The NPA's own preamble (owner 8 Nov 17:25: the NPA reply must not read "Stock Inquiry").
+    NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE = "There is a response to your new product application"
+
     @classmethod
-    def compose_stock_inquiry_reply_message(cls, bare_body: str, portal_url: str) -> str:
+    def compose_stock_inquiry_reply_message(
+        cls, bare_body: str, portal_url: str, preamble: Optional[str] = None
+    ) -> str:
         """The contact-facing WhatsApp text for a purchasing reply.
 
         Composed HERE, not in the frontend. The FE used to build
@@ -6863,7 +6868,7 @@ class StockInquiryService:
         """
         body = (bare_body or "").strip()
         url = (portal_url or "").strip()
-        text = f"{cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
+        text = f"{preamble or cls.STOCK_INQUIRY_REPLY_PREAMBLE}:"
         if body:
             text = f"{text}\n{body}"
         return f"{text}\n\n{url}" if url else text
@@ -6906,9 +6911,9 @@ class StockInquiryService:
     ) -> None:
         """Queue purchasing's "Update & Reply" message on the inquiry's conversation.
 
-        The one composer for the SI's own reply and the New Product Application's (crew pass
-        8 Nov: the NPA sends the SAME reply, template stock_inquiry_update_with_button), so the
-        two cannot drift. Call AFTER the business write commits.
+        The SI's own reply; the New Product Application's sibling is
+        ``enqueue_application_update_reply`` (same queue, composer and worker send, its own
+        template use case). Call AFTER the business write commits.
 
         Structured-template vars: the bare ``update`` text + links (mirrors complaint's bare
         ``stored_body``). One portal URL resolution, shared by the in-window text and the
@@ -6931,6 +6936,48 @@ class StockInquiryService:
             verify_delivery=True,
             extra_context_vars=reply_extra_vars,
         )
+
+    def enqueue_application_update_reply(
+        self,
+        inquiry: StockInquiry,
+        application,
+        *,
+        identifier: str,
+        update_text: str,
+        message_body: str,
+        portal_url: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" on a New Product Application, through the stock
+        inquiry's conversation, with the NPA's own template use case (owner 8 Nov 17:35).
+
+        The same path as the SI's reply (``enqueue_update_reply``): the respond_io queue, the
+        same composer, and the same worker send (``_send_and_log``). The template maps
+        ``update`` (purchasing's text) and ``portal_url`` (the NPA's portal page, built by
+        ``new_product_application_service.portal_url``); the rest comes from the application
+        row in the worker. ``message_body`` is the in-window text when no template is mapped.
+        """
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_new_product_application_respond_message
+
+        application_id = str(application.id)
+        portal_url = (portal_url or "").strip()
+        job = enqueue_job(
+            send_new_product_application_respond_message,
+            application_id,
+            identifier,
+            self.compose_stock_inquiry_reply_message(
+                message_body, portal_url, preamble=self.NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE
+            ),
+            respond_user_id,
+            crm_sender_user_id,
+            getattr(inquiry, "space_id", None),
+            {"update": update_text, "portal_url": portal_url},
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+        logger.info("Enqueued respond.io send job %s for new_product_application %s", job.id, application_id)
 
     def update_inquiry_and_reply(
         self,

@@ -365,8 +365,8 @@ def save_purchasing_response_and_reply(
     db: Session = Depends(get_db),
 ):
     """Owner 8 Nov 15:10: the stock inquiry's "Update & Reply" on the NPA. Saves like Save only,
-    then sends the SAME reply the stock inquiry's Update & Reply sends (crew pass 8 Nov: template
-    stock_inquiry_update_with_button, use case stock_inquiry), with the NPA facts as its update text."""
+    then replies through the linked stock inquiry's conversation on the SI's send path, with the
+    NPA's OWN template use case (owner 8 Nov 17:35: new_product_application_update)."""
     from app.api.v1.procurement.stock_inquiries import _respond_user_id_from_current_user
     from app.models.procurement import StockInquiry
     from app.services.error_handler import AppException
@@ -395,15 +395,20 @@ def save_purchasing_response_and_reply(
         if not identifier:
             raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
         respond_user_id = _respond_user_id_from_current_user(user)
-        update_text = svc.reply_message(db, app)
+        message_body = svc.reply_message(db, app)
+        update_text = app.purchasing_response or ""
+        link = svc.portal_url(db, app)
         detail = _done(db, app, event, actor.user_id)
     except Exception:
         db.rollback()
         raise
-    si_service.enqueue_update_reply(
+    si_service.enqueue_application_update_reply(
         inquiry,
+        app,
         identifier=identifier,
         update_text=update_text,
+        message_body=message_body,
+        portal_url=link,
         respond_user_id=respond_user_id,
         crm_sender_user_id=user.get("id"),
     )

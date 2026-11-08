@@ -809,6 +809,23 @@ def build_context_vars(
                 vars_out["customer"] = row.project_customer
                 vars_out["project"] = row.project_name
                 vars_out["product_code"] = row.product_code
+        elif entity_use_case == "new_product_application_update":
+            from app.models.base import company_scope
+            from app.models.new_product_application import NewProductApplication
+            from app.services.new_product_application_service import template_vars
+
+            # The worker session has no company scope (unset reads nothing). The id is the
+            # one the reply route enqueued, so load it unscoped, then read its variables
+            # inside its own company only.
+            with company_scope(db, None):
+                row = (
+                    db.query(NewProductApplication)
+                    .filter(NewProductApplication.id == str(business_id))
+                    .first()
+                )
+            if row:
+                with company_scope(db, frozenset({row.company_id})):
+                    vars_out.update(template_vars(db, row))
         elif entity_use_case in ("purchase_request", "sponsorship_form"):
             from app.models.procurement import PurchaseRequestHeader
 

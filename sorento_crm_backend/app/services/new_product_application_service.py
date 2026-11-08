@@ -1187,14 +1187,63 @@ def status_label(app: NewProductApplication) -> str:
     return STATUS_LABELS.get(display_status(app), app.status)
 
 
+def _new_code(db: Session, app: NewProductApplication) -> Optional[str]:
+    """The ONE new product code: the linked product's, else the code purchasing typed."""
+    code = None
+    if app.new_product_id:
+        code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
+    return code or app.new_code_text
+
+
+def template_vars(db: Session, app: NewProductApplication) -> Dict[str, Any]:
+    """The variables a ``new_product_application_update`` template can map (owner 8 Nov 17:35:
+    "depends on the template, just like SI"). A blank value goes as "-" (``sanitize_param``)."""
+    from app.services.document_number import display_document_number
+
+    inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+    customer = (
+        db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
+        if app.customer_id
+        else None
+    )
+    codes = (
+        db.query(Product.product_code)
+        .join(NewProductApplicationSource, NewProductApplicationSource.product_id == Product.id)
+        .filter(NewProductApplicationSource.application_id == app.id)
+        .order_by(NewProductApplicationSource.position)
+        .all()
+    )
+    return {
+        "entity_number": app.application_no,
+        "inquiry_number": (display_document_number(inquiry) or inquiry.inquiry_number) if inquiry else None,
+        "status": status_label(app),
+        "reason": app.reject_reason,
+        "customer": " - ".join(p for p in customer if p) if customer else app.customer_name,
+        "project": app.project_name,
+        "product_code": ", ".join(c for (c,) in codes if c),
+        "new_product_code": _new_code(db, app),
+        "lead_time": app.lead_time,
+    }
+
+
+def portal_url(db: Session, app: NewProductApplication) -> str:
+    """The NPA's portal page for the contact who raised it, by the SI's portal link mechanism
+    (``PortalService.submission_link``, with the row's own space). Owner 8 Nov 17:50: the
+    salesperson raises NPAs in the portal, so the row carries their contact; a staff-raised
+    row has none and gets no link (no contact copy, no fallback to the SI page)."""
+    from app.services.portal_service import PortalService
+
+    link = PortalService(db).submission_link(
+        app.contact_id, "new_product_application", str(app.id), space_id=app.space_id
+    )
+    return (link or "").strip()
+
+
 def reply_message(db: Session, app: NewProductApplication) -> str:
     """The text "Update & Reply" sends to the salesperson through the stock inquiry's
     conversation: the application, the new code (when there is one) and purchasing's response."""
     parts = [f"{app.application_no}: {app.purchasing_response or ''}".strip()]
-    code = None
-    if app.new_product_id:
-        code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
-    code = code or app.new_code_text
+    code = _new_code(db, app)
     if code:
         parts.append(f"New product code: {code}")
     if app.lead_time:
