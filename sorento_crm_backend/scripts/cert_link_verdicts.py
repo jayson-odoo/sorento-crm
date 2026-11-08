@@ -65,9 +65,13 @@ def _file_for(certificate, folder_index: dict[str, str]):
                 return folder_index[variant]
     number = _key(certificate.certificate_number)
     if len(number) >= 4:
-        for name, path in folder_index.items():
-            if number in name:
-                return path
+        paths = {path for name, path in folder_index.items() if number in name}
+        if len(paths) == 1:
+            return paths.pop()
+        if paths:
+            # Ambiguous (`qc12` also names `qc123.pdf`): never guess, say which.
+            names = ", ".join(sorted(os.path.basename(p) for p in paths))
+            print(f"skipped {certificate.scheme} {certificate.certificate_number}: several files match ({names})")
     return None
 
 
@@ -97,13 +101,17 @@ def _verdicts(db, certificate, data):
             set_codes=sets_of.get(str(cp.product_id), ()),
             source=cp.source,
         )
-        rows.append((value, code, cp.model_code or "", used or "", cp.source, (name or "")[:40]))
+        rows.append(
+            (value, code, cp.model_code or "", used or "", cp.source, (name or "")[:40], sets_of.get(str(cp.product_id), set()))
+        )
     return rows
 
 
-def _digit_led(used: str) -> bool:
+def _digit_led(used: str, product_code: str, set_codes) -> bool:
+    """A Found through a digit-led code that the rule does not explain: not the full product code and
+    not one of the product's set codes (those are Found by design)."""
     norm = _key(used)
-    return bool(norm) and norm[0].isdigit()
+    return bool(norm) and norm[0].isdigit() and norm != _key(product_code) and norm not in set_codes
 
 
 def main() -> int:
@@ -158,23 +166,23 @@ def main() -> int:
             with open(path, "rb") as handle:
                 data = handle.read()
             rows = _verdicts(db, certificate, data)
-            counts = Counter(value for value, *_rest in rows)
+            counts = Counter(row[0] for row in rows)
             totals.update(counts)
             label = f"{certificate.scheme} {certificate.certificate_number}"
-            digit_found = [r for r in rows if r[0] == link_check.VERDICT_FOUND and _digit_led(r[3])]
+            digit_found = [r for r in rows if r[0] == link_check.VERDICT_FOUND and _digit_led(r[3], r[1], r[6])]
             hits = [r for r in digit_found if r[4] != "manual"]
             manual_digit_led += len(digit_found) - len(hits)
-            digit_led_found += [(label, *r) for r in hits]
+            digit_led_found += [(label, *r[:6]) for r in hits]
             if args.digit_led_found:
                 if hits:
                     print(f"\n{label} ({os.path.basename(path)}): {len(hits)} digit-led Found")
-                    for value, code, model_code, used, source, name in hits:
+                    for value, code, model_code, used, source, name, _sets in hits:
                         print(f"  {code:<20} {model_code:<14} {used:<12} {source:<7} {name}")
                 continue
             print(f"\n{label} ({os.path.basename(path)}): {len(rows)} links")
             print("  " + ", ".join(f"{v} {counts.get(v, 0)}" for v in link_check.VERDICTS))
             print(f"  {'verdict':<10} {'product':<20} {'code on cert':<14} {'matched':<12} {'source':<7} name")
-            for value, code, model_code, used, source, name in rows:
+            for value, code, model_code, used, source, name, _sets in rows:
                 if only and value not in only:
                     continue
                 print(f"  {value:<10} {code:<20} {model_code:<14} {used:<12} {source:<7} {name}")

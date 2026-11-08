@@ -190,7 +190,9 @@ def verdict(
         if typed:
             return VERDICT_FOUND, model_code
         solid = text.get("solid") or ()
-        if all(_ambiguous(p, product_norm, solid, sets) for p in backing):
+        # Crew rule: "Check unless the FULL product code is printed", wherever it is on the PDF.
+        full_printed = product_norm in runs and product_norm in solid
+        if not full_printed and all(_ambiguous(p, product_norm, solid, sets) for p in backing):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 

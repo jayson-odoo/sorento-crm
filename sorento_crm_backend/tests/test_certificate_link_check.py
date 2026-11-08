@@ -484,3 +484,12 @@ def test_a_confirmed_link_with_no_code_reads_found(family_text):
     assert verdict(family_text, model_code=None, model_code_source=None, product_code="M459A-75-RG", source="manual")[0] == "found"
     # Still needs something of the product code printed.
     assert verdict(family_text, model_code=None, model_code_source=None, product_code="BRD7711CP", source="manual")[0] == "not_found"
+
+
+def test_a_digit_led_code_is_found_when_the_full_product_code_is_printed_elsewhere():
+    """Reviewer round 4: the crew rule is "unless the full product code is printed", wherever it is."""
+    from app.services.certificate_pdf_service import printed_runs
+
+    text = printed_runs(text_pdf(["Model 75-RG", "Item M459A-75-RG towel bar"]))
+    assert _verdict(text, "75-RG", "M459A-75-RG")[0] == "found"
+    assert _verdict(text, "75-RG", "M460A-75-RG")[0] == "check"
