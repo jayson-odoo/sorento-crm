@@ -31,6 +31,10 @@ import { NewProductApplicationProductCodes } from '@/components/common/NewProduc
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { useUrlTab } from '@/hooks/useUrlTab';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import NewProductApplicationPurchasingDialog from './NewProductApplicationPurchasingDialog';
@@ -61,7 +65,7 @@ import { downloadNewProductApplicationExcel } from '../services/newProductApplic
 // The sheet is read-only here, so no brand or product is ever searched.
 const NO_PRODUCTS = async () => [];
 
-const DETAIL_TABS = ['details', 'stock_inquiry'] as const;
+const DETAIL_TABS = ['details', 'stock_inquiry', 'sla'] as const;
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -233,6 +237,15 @@ function StaffNewProductApplicationDetail({
   const canViewRecord = useHasPermission(
     'procurement.new_product_applications.view',
   );
+  // NPA-FORM-SLA: the SLA tab and the handling lock read the form SLA trackers, which the NPA's
+  // view-all slugs admit (api/v1/sla/sla_tracking.py SOURCE_TYPE_READERS), as on the SI.
+  const canSeeSla = canViewRecord || canApprove || canOpen;
+  const handlingLock = useHandlingLock({
+    sourceEntityType: 'new_product_application',
+    sourceEntityId: canSeeSla ? applicationId : null,
+    entityKey: application?.updated_at,
+    enabled: canSeeSla,
+  });
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
   const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
@@ -264,6 +277,12 @@ function StaffNewProductApplicationDetail({
     cancel.isPending ||
     undo.isPending ||
     purchasingReject.isPending;
+  // The approver's and purchasing's buttons, gated by the handling lock like the SI's.
+  const stageLocked = !handlingLock.businessCtasEnabled;
+  const workBusy = busy || stageLocked;
+  const lockedTitle = stageLocked
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
+    : undefined;
 
   if (isLoading) {
     return (
@@ -448,6 +467,10 @@ function StaffNewProductApplicationDetail({
                   Delete draft
                 </DropdownMenuItem>
               )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
             </DetailActionsMenu>
           }
           primary={
@@ -459,13 +482,18 @@ function StaffNewProductApplicationDetail({
               )}
               {isAwaitingReview(r.status) && canApprove && (
                 <>
-                  <Button disabled={busy} onClick={() => approve.mutate(r.id)}>
+                  <Button
+                    disabled={workBusy}
+                    title={lockedTitle}
+                    onClick={() => approve.mutate(r.id)}
+                  >
                     Approve
                   </Button>
                   <Button
                     variant="outline"
                     className="border-destructive text-destructive hover:bg-destructive/10"
-                    disabled={busy}
+                    disabled={workBusy}
+                    title={lockedTitle}
                     onClick={() => setAsking({ kind: 'reject' })}
                   >
                     Reject
@@ -487,13 +515,17 @@ function StaffNewProductApplicationDetail({
                 </Button>
               )}
               {canAnswer && (
-                <Button disabled={busy} onClick={() => setPurchasingOpen(true)}>
+                <Button
+                  disabled={workBusy}
+                  title={lockedTitle}
+                  onClick={() => setPurchasingOpen(true)}
+                >
                   Edit purchasing response
                 </Button>
               )}
               {canAnswer && r.status === 'approved' && (
                 <RejectOutlineButton
-                  disabled={busy}
+                  disabled={workBusy}
                   onClick={() => setAsking({ kind: 'purchasingReject' })}
                 />
               )}
@@ -515,14 +547,27 @@ function StaffNewProductApplicationDetail({
         />
       )}
 
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
+
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+          {canSeeSla && <TabsTrigger value="sla">SLA Tracking</TabsTrigger>}
         </TabsList>
       </Tabs>
 
-      {tab === 'stock_inquiry' ? (
+      {tab === 'sla' && canSeeSla ? (
+        <FormSLATrackingTab
+          sourceEntityType="new_product_application"
+          sourceEntityId={r.id}
+        />
+      ) : tab === 'stock_inquiry' ? (
         <NewProductApplicationStockInquiry
           inquiry={r.stock_inquiry}
           href={(id) => `/procurement-management/stock-inquiries/${id}`}
@@ -659,7 +704,7 @@ function StaffNewProductApplicationDetail({
                                       <button
                                         type="button"
                                         className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                                        disabled={busy}
+                                        disabled={workBusy}
                                         onClick={() =>
                                           undo.mutate({
                                             id: r.id,
