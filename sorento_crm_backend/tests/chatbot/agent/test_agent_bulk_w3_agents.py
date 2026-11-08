@@ -144,11 +144,11 @@ def test_01_the_batch_tool_offers_the_write_only_with_the_slug(db):
     from app.services.chatbot.agent import batch
 
     w = world(db, superadmin=False)
-    enum = batch.schema_for(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
+    enum = batch.batch_tool_schema(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
     assert WRITE in enum
 
     without = world(db, slugs=(EDIT,), superadmin=False)
-    enum = batch.schema_for(db, ctx_of(db, without))["function"]["parameters"]["properties"]["write"]["enum"]
+    enum = batch.batch_tool_schema(db, ctx_of(db, without))["function"]["parameters"]["properties"]["write"]["enum"]
     assert WRITE not in enum
     steps = []
     out = batch.propose(db, ctx_of(db, without), {"write": WRITE, "rows": [row_(customer="X", agent="Y")]}, steps,
