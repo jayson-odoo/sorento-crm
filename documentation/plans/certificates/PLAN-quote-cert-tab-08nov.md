@@ -1,6 +1,6 @@
 # PLAN: Quotation Certification tab (QUOTE-CERT-TAB)
 
-Status: Step 2 (mock + behaviour card) posted as crew-ask on PR #2245, waiting on owner answers + mock approval. No code yet. Track: full (L: migration + new tab + PDF annotation).
+Status: Build (Phase 2, test-first). Owner answered Q1-Q5 = (a), 8 Nov ~10:40 MYT; mock approved pending crew real-PDF matcher run. Track: full (L: migration + new tab + PDF annotation). UAC: `quote-cert-tab-08nov-acceptance-criteria.md`.
 
 Lane: QUOTE-CERT-TAB. Owner request 8 Nov 2026 ~10:15 MYT. Mock: `mockups/quote-cert-tab-08nov.html`.
 Behaviour card: `CARD-quote-cert-tab-08nov.md`.
