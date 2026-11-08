@@ -276,11 +276,8 @@ describe('who sees which next action', () => {
     expect(button(/^approve$/i)).toBeInTheDocument();
     expect(button(/^reject$/i)).toBeInTheDocument();
     expect(button(/^submit$/i)).not.toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
   });
 
   it('treats a resubmitted application like a submitted one (RESUBMITTED-STATUS)', () => {
@@ -290,11 +287,8 @@ describe('who sees which next action', () => {
     render(<Page />);
     expect(button(/^approve$/i)).toBeInTheDocument();
     expect(button(/^reject$/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
   });
 
   it('labels the applicant\'s send button Appeal on a rejected application', () => {

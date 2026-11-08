@@ -4,9 +4,9 @@
  * stubbed, so the assertions are on the HTTP calls: `PUT .../{id}/purchasing-response`.
  *
  * Assumed controls inside the dialog (the coder matches them):
- *   radios "Link an existing product code" / "New product code" / "Not opening";
+ *   radios "Link an existing product code" / "New product code" / "No answer yet" (answered records only);
  *   Link: a combobox named /product code/i (product search); New: a textbox named /new product code/i;
- *   Not opening: a textbox named /reason/i; a textbox "Lead time"; "Cost (MYR)" (no lines) or
+ *   a textbox "Lead time"; "Cost (MYR)" (no lines) or
  *   "Cost for product N" (lines); a "Save" button.
  */
 import React from 'react';
@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   perms: new Set<string>(),
   data: undefined as unknown,
   calls: [] as { url: string; method: string; body: unknown }[],
+  onReject: null as null | ((reason: string) => unknown),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -72,6 +73,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
       state.calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
       if (/\/products\?q=/.test(url)) {
         return json([{ id: 'p-69', product_code: 'XY-1234-MB-69', product_name: 'Example sink 69', brand_name: null }]);
+      }
+      if (/\/purchasing-reject$/.test(url) && method === 'POST') {
+        if (state.onReject) state.data = state.onReject((init?.body ? JSON.parse(init.body) : {}).reason);
+        return json(state.data);
       }
       if (/\/purchasing-response$/.test(url)) return json(state.data);
       if (/\/new-product-applications\/a-1(\?.*)?$/.test(url) && method === 'GET') return json(state.data);
@@ -173,6 +178,7 @@ beforeEach(() => {
   state.calls = [];
   state.perms = new Set([VIEW, OPEN]);
   state.data = app();
+  state.onReject = null;
 });
 
 describe('inline purchasing controls are gone', () => {
@@ -235,7 +241,8 @@ describe('the dialog', () => {
     expect(within(dialog).getByText('Edit purchasing response')).toBeInTheDocument();
     expect(within(dialog).getByRole('radio', { name: /link an existing product code/i })).toBeInTheDocument();
     expect(within(dialog).getByRole('radio', { name: /^new product code$/i })).toBeInTheDocument();
-    expect(within(dialog).getByRole('radio', { name: /^not opening$/i })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('radio', { name: /not opening/i })).toBeNull();
+    expect(within(dialog).queryByRole('textbox', { name: /reason/i })).toBeNull();
     expect(within(dialog).getByRole('textbox', { name: /lead ?time/i })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Cost (MYR)')).toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/^Cost for product/)).toBeNull();
@@ -291,16 +298,22 @@ describe('Save calls PUT purchasing-response once', () => {
     expect(puts()[0].body).toMatchObject({ outcome: 'new', new_code: 'XY-NEW-1' });
   });
 
-  it('Not opening: outcome not_opening with the reason', async () => {
+  it('has no Not opening choice and no reason box, even on an answered record (Reject replaced it)', async () => {
+    state.data = app({
+      status: 'completed',
+      status_label: 'Completed',
+      new_product_id: 'p-1',
+      new_product_code: 'XY-1234-MB-1',
+    });
     render(<Page />);
     const dialog = await openDialog();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /^not opening$/i }));
-    fireEvent.change(await within(dialog).findByRole('textbox', { name: /reason/i }), {
-      target: { value: 'Customer walked away' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(puts()[0].body).toMatchObject({ outcome: 'not_opening', reason: 'Customer walked away' });
+    expect(within(dialog).queryByText(/not opening/i)).toBeNull();
+    expect(within(dialog).queryByLabelText(/reason/i)).toBeNull();
+    expect(within(dialog).getByRole('radio', { name: /link an existing product code/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: /^new product code$/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: /no answer yet/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('textbox', { name: /lead ?time/i })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Cost (MYR)')).toBeInTheDocument();
   });
 
   it('sends no outcome key when only the lead time changed on an answered record', async () => {
@@ -376,14 +389,16 @@ describe('the result, read-only on the detail', () => {
     expect(screen.queryByLabelText(/^lead ?time/i)).toBeNull();
   });
 
-  it('shows Not opening with the reason', async () => {
+  it('an older application closed as not opening reads Rejected: x, with a Rejected pill, never Not opening', async () => {
     state.data = app({
       status: 'completed',
-      status_label: 'Completed',
-      new_code_closed_reason: 'Customer walked away',
+      status_label: 'Rejected',
+      new_code_closed_reason: 'x',
     });
     render(<Page />);
-    expect(await screen.findByText('Not opening: Customer walked away')).toBeInTheDocument();
+    expect(await screen.findByText('Rejected: x')).toBeInTheDocument();
+    expect(screen.getAllByText('Rejected').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/not opening/i)).toBeNull();
   });
 
   it('shows the waiting text while unanswered', async () => {
@@ -463,5 +478,90 @@ describe('reviewer round 4: typed earlier code, No answer yet, no prose', () => 
     render(<Page />);
     const dialog = await openDialog();
     expect(within(dialog).queryByText(/Save records the new product code/i)).toBeNull();
+  });
+});
+
+describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
+  const rejects = () => state.calls.filter((c) => c.method === 'POST' && /purchasing-reject$/.test(c.url));
+  const headerReject = () => screen.queryByRole('button', { name: /^reject$/i });
+
+  it('an open_code holder on Approved sees a secondary Reject next to Edit purchasing response, styled like the stock inquiry one', async () => {
+    render(<Page />);
+    await screen.findByRole('button', { name: /^edit purchasing response$/i });
+    const btn = headerReject();
+    expect(btn).not.toBeNull();
+    expect(btn!.className).toMatch(/text-destructive/);
+    expect(btn!.className).toMatch(/border-destructive/);
+    expect(btn!.querySelector('svg.lucide-circle-x, svg.lucide-x-circle')).not.toBeNull();
+    expect(btn!.parentElement).toBe(
+      screen.getByRole('button', { name: /^edit purchasing response$/i }).parentElement,
+    );
+  });
+
+  it.each([['submitted'], ['resubmitted'], ['completed'], ['draft']])('has no purchasing Reject on %s', async (status) => {
+    state.data = app({ status, status_label: status });
+    state.perms = new Set([VIEW, OPEN]);
+    render(<Page />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(headerReject()).toBeNull();
+  });
+
+  it('has none for a user without open_code', async () => {
+    state.perms = new Set([VIEW]);
+    render(<Page />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(headerReject()).toBeNull();
+  });
+
+  it('opens the reject dialog with a required reason; Confirm stays disabled while blank', async () => {
+    render(<Page />);
+    await screen.findByRole('button', { name: /^edit purchasing response$/i });
+    fireEvent.click(headerReject()!);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Reject new product application')).toBeInTheDocument();
+    const box = within(dialog).getByRole('textbox', { name: /rejection reason/i });
+    const confirm = within(dialog).getByRole('button', { name: /^(confirm|reject)$/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(box, { target: { value: '   ' } });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(box, { target: { value: 'Supplier cannot make it' } });
+    expect(confirm).toBeEnabled();
+  });
+
+  it('Confirm POSTs purchasing-reject with the reason, and the page then shows Rejected with it', async () => {
+    state.onReject = (reason) =>
+      app({ status: 'rejected', status_label: 'Rejected', reject_reason: reason, decided_by_name: 'Buyer' });
+    render(<Page />);
+    await screen.findByRole('button', { name: /^edit purchasing response$/i });
+    fireEvent.click(headerReject()!);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /rejection reason/i }), {
+      target: { value: 'Supplier cannot make it' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^(confirm|reject)$/i }));
+    await waitFor(() => expect(rejects()).toHaveLength(1));
+    expect(rejects()[0].url).toContain('/api/v1/procurement/new-product-applications/a-1/purchasing-reject');
+    expect(rejects()[0].body).toEqual({ reason: 'Supplier cannot make it' });
+    expect(await screen.findByText('Supplier cannot make it')).toBeInTheDocument();
+    expect(screen.getAllByText('Rejected').length).toBeGreaterThan(0);
+  });
+});
+
+describe('no lock banner while Submitted or Resubmitted (owner 8 Nov 09:30)', () => {
+  it.each([
+    ['submitted', 'Submitted'],
+    ['resubmitted', 'Resubmitted'],
+  ])('shows neither "Waiting for approval." nor the Locked sentence on %s', async (status, label) => {
+    state.data = app({ status, status_label: label });
+    render(<Page />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+  });
+
+  it('Approved keeps "Approved by X on D."', async () => {
+    state.data = app({ decided_by_name: 'Approver One', decided_at: '2026-11-02T01:00:00' });
+    render(<Page />);
+    expect(await screen.findByText(/Approved by Approver One on /)).toBeInTheDocument();
   });
 });

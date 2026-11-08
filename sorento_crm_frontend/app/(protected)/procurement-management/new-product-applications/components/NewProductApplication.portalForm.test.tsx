@@ -260,7 +260,12 @@ describe('limited user, New Product Application edit loads from my-requests', ()
 describe('limited user, New Product Application view renders the portal form read-only', () => {
   it('a submitted application is read from my-requests, shows the portal lock sentence, never the staff API', async () => {
     mountDetail(LIMITED, { status: 'submitted', status_label: 'Submitted' });
-    expect(await screen.findByText(/Locked: Revise to change it/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0),
+    );
+    await screen.findByText(/ZZT Typed Co/);
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
     expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0);
     expect(staffApi()).toHaveLength(0);
@@ -330,7 +335,11 @@ describe('limited user, New Product Application shows exactly one Back (the CRM 
   });
   it('read-only view: no Back of its own', async () => {
     mountDetail(LIMITED, { status: 'submitted', status_label: 'Submitted' });
-    await screen.findByText(/Locked: Revise to change it/);
+    await waitFor(() =>
+      expect(where((c) => c.method === 'GET' && c.url === `${MINE}/npa-5`).length).toBeGreaterThan(0),
+    );
+    await screen.findByText(/ZZT Typed Co/);
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
     expectNoOwnBack();
   });
 });

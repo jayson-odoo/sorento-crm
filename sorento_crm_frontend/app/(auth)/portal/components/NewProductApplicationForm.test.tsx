@@ -282,11 +282,8 @@ describe('an existing application', () => {
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /save as draft/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
-    expect(
-      screen.getByText(
-        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
+    expect(screen.queryByText(/Waiting for approval/)).toBeNull();
     expect(
       screen.getByRole('button', { name: /^revise$/i }),
     ).toBeInTheDocument();
