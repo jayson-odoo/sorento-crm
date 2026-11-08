@@ -577,3 +577,12 @@ def test_b_cat_never_overrides_the_short_rule(cat_text):
     from app.services.certificate_pdf_service import printed_runs
 
     assert _cat(printed_runs(text_pdf(["Model 14A"])), "14A", "SV-14A-CP", one_family) == "check"
+
+
+def test_b_cat_needs_the_one_family_to_be_the_linked_products_own(cat_text, families):
+    """Reviewer round 5: an inactive product is not in the catalogue, so `162-QT` sits in one OTHER
+    family (srtwt). A link to `XYZ162-QT` must not read Found through srtwt."""
+    from app.services.certificate_link_check import verdict
+
+    assert _cat(cat_text, "162-QT", "XYZ162-QT", families) == "check"
+    assert verdict(cat_text, model_code=None, model_code_source=None, product_code="XYZ162-QT", families=families)[0] == "check"

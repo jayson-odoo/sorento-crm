@@ -56,6 +56,8 @@ MGB5011C and GB3011C read Found.
   start of the run (M459A-75-RG -> m459a, SRTKT32SS -> srtkt, M32SS-DIY -> m, CB61SS-BL -> cb,
   ORIWT906SS -> oriwt). So `75-RG`, `32SS`, `61SS` and `906SS` read Check, while `162-QT` and `165-QT`
   (srtwt only) read Found. `CatalogueFamilies` is built once per check job and memoised per run.
+- The one family must be the LINKED product's own family (reviewer round 5): the catalogue holds active
+  products only, so a link to an inactive product could otherwise read Found through another family.
 - The sweep script also matches files named by certificate, revision or attachment id.
 - A confirmed link (`source` manual) counts like a typed code; its code must still be printed. `source`
   is part of the check key, so a Confirm reads the link again (reviewer round 3).

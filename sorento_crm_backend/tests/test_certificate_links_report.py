@@ -412,3 +412,19 @@ def test_the_check_job_applies_rule_b_cat_over_the_catalogue(env, files):
     assert rows["SRTWT162-QT"]["verdict"] == "found"
     assert rows["M459A-75-RG"]["verdict"] == "check"
     assert rows["M460A-75-RG"]["verdict"] == "check"
+
+
+def test_b_cat_reads_only_active_products_and_the_linked_products_own_family(env, files):
+    """Reviewer round 5: an inactive product in a second family does not make `162-QT` ambiguous, and a
+    link to an inactive product never reads Found through another family."""
+    inactive_other = env.product("C", code="ORI162-QT")
+    inactive_other.is_active = False
+    env.db.flush()
+    cert = _certificate(env, files, "RPT-25", ["Model 162-QT"], ["162-QT"], ["SRTWT162-QT", "XYZ162-QT"])
+    xyz = env.db.query(Product).filter(Product.product_code == "XYZ162-QT").one()
+    xyz.is_active = False
+    env.db.commit()
+    _run_check(env)
+    rows = _by_code(_rows(env, certificate_ids=str(cert.id), verdict="found,check,not_found"))
+    assert rows["SRTWT162-QT"]["verdict"] == "found"
+    assert rows["XYZ162-QT"]["verdict"] == "check"

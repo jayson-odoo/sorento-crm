@@ -134,11 +134,18 @@ class CatalogueFamilies:
             self._memo[norm] = frozenset(found)
         return self._memo[norm]
 
-    def unique(self, norm: str) -> bool:
-        return len(self.families(norm)) == 1
+    def only_family_of(self, norm: str, product_code: Optional[str]) -> bool:
+        """True when the run sits in exactly ONE catalogue family and it is this product's own family
+        (reviewer round 5: an inactive product is not in the catalogue, so "one family" alone could be
+        somebody else's)."""
+        starts = boundary_starts(norm, product_code)
+        if not starts:
+            return False
+        own = normalise(product_code or "")[: starts[0]]
+        return self.families(norm) == frozenset({own})
 
 
-def _ambiguous(norm: str, product_norm: str, solid, sets, families=None) -> bool:
+def _ambiguous(norm: str, product_norm: str, solid, sets, families=None, product_code=None) -> bool:
     """A backed code that a person must decide (Check, never auto-Found): short, digits only, printed
     only as short tokens, or (crew re-check 8 Nov) digit-led and not the full product code: `75-RG`
     backs `M459A-75-RG` and `M460A-75-RG` alike because the family prefix is not printed. A printed
@@ -152,7 +159,7 @@ def _ambiguous(norm: str, product_norm: str, solid, sets, families=None) -> bool
             and norm != product_norm
             and norm not in sets
             # Rule B-cat: a digit-led run that only one catalogue family contains is not ambiguous.
-            and not (families is not None and families.unique(norm))
+            and not (families is not None and families.only_family_of(norm, product_code))
         )
     )
 
@@ -234,7 +241,9 @@ def verdict(
         solid = text.get("solid") or ()
         # Crew rule: "Check unless the FULL product code is printed", wherever it is on the PDF.
         full_printed = product_norm in runs and product_norm in solid
-        if not full_printed and all(_ambiguous(p, product_norm, solid, sets, families) for p in backing):
+        if not full_printed and all(
+            _ambiguous(p, product_norm, solid, sets, families, product_code) for p in backing
+        ):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 
@@ -261,7 +270,7 @@ def verdict(
             piece = product_norm[start:end]
             if piece not in runs or not _containable(piece) or not on_boundary(piece, product_code):
                 continue
-            if _ambiguous(piece, product_norm, solid, (), families):
+            if _ambiguous(piece, product_norm, solid, (), families, product_code):
                 if checked is None or len(piece) > len(checked):
                     checked = piece
             elif found is None or len(piece) > len(found):
