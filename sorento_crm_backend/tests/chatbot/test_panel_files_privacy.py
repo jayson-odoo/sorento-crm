@@ -498,3 +498,51 @@ def test_r1b_an_external_route_answers_a_panel_file_id_like_an_unknown_id_and_li
     if expected:
         assert expected in resp.text.lower(), f"{route} refused for another reason: {resp.text[:300]}"
     assert _links_to(external, external.panel_id) == before, f"{route} linked another user's panel file"
+
+
+# --------------------------------------------------------------------------- #
+# R1c: linking an existing file by id (link-packing-list, complaint, stock inquiry,
+# purchase request and NPA links all go through link_existing_attachment)
+# --------------------------------------------------------------------------- #
+
+
+def _links_of(session_factory, attachment_id):
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    db = session_factory()
+    try:
+        return db.query(EntityAttachmentLink).filter(EntityAttachmentLink.attachment_id == attachment_id).count()
+    finally:
+        db.close()
+
+
+def test_r1c_a_stranger_cannot_link_another_users_panel_file_to_a_record(world, session_factory):
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    before = _links_of(session_factory, world.panel_id)
+    db = session_factory()
+    try:
+        with pytest.raises(Exception) as caught:
+            EntityAttachmentService(db).link_existing_attachment(
+                "complaint", str(uuid.uuid4()), world.panel_id, created_by=world.other.user_id
+            )
+        db.rollback()
+    finally:
+        db.close()
+
+    assert getattr(caught.value, "status_code", None) == 404, repr(caught.value)
+    assert _links_of(session_factory, world.panel_id) == before
+
+
+def test_r1c_an_ordinary_file_still_links_for_anyone(world, session_factory):
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    db = session_factory()
+    try:
+        link = EntityAttachmentService(db).link_existing_attachment(
+            "complaint", str(uuid.uuid4()), world.control_id, created_by=world.other.user_id
+        )
+        assert str(link.attachment_id) == world.control_id
+        db.rollback()
+    finally:
+        db.close()

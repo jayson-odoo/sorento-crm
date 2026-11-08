@@ -207,7 +207,8 @@ class EntityAttachmentService:
             raise handle_validation_error("attachment_id is required")
 
         attachment = self.db.query(Attachment).filter(Attachment.id == att_id).first()
-        if not attachment:
+        # A private file (the assistant panel's) links only for its uploader: the same 404 as an unknown id.
+        if not attachment or is_private_to_others(attachment, created_by):
             raise handle_not_found("Attachment", att_id)
 
         existing = (

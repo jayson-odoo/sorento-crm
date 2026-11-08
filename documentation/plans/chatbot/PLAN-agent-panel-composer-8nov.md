@@ -122,3 +122,15 @@ Not changed, with the reason:
 - Files go to whichever agent model an admin configures (Gemini by default). The owner's "no OpenAI" ruling was on the
   voice engine (Q4); refusing files on another provider is a new policy for the owner to ask for, not this lane.
 - No per-user stored-bytes cap and a deleted thumbnail may live up to a day in the CDN edge cache (signed URLs only).
+
+Round 2 and 3 (8 Nov): security re-check READY at a82780a859 after R2b (rows read at most 100 columns, 10k rows per
+sheet, 20k per workbook), R1b (private-file rule on every bulk route and the external link routes), R3b (the server
+refuses confirm_action on a file turn). Round 3 should-fix closed: `link_existing_attachment` refuses another user's
+panel file (covers link-packing-list, complaint, stock inquiry, purchase request and NPA links).
+
+Not changed, with the reason: a few staff routes that take an `attachment_id` in a request body (certificates, product,
+marketing, price tag, dealer kit, accessory, procurement, complaints) look it up without the private-type rule. Using
+them needs the file's random id, which only admins can see (audit log); the turn envelope that holds it is not returned
+by any API. The reviewer's suggested global SQLAlchemy loader rule on `Attachment` is a new app-wide layer for that
+case; per "Simplest thing that works" it is deferred until an id is shown to a non-admin (trigger: any API or screen
+that returns `envelope.files` or a panel file id to a user other than the uploader).
