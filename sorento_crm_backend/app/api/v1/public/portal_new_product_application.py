@@ -77,7 +77,7 @@ def _done(db: Session, app, event: Optional[str] = None):
     return svc.serialize_detail(db, app, portal=True)
 
 
-def _check_write(db: Session, token: PortalToken, data: dict, *, current_customer=None) -> None:
+def _check_write(db: Session, token: PortalToken, data: dict) -> None:
     svc.assert_portal_inquiry_allowed(
         db,
         contact_id=str(token.contact_id),
@@ -280,7 +280,7 @@ def register_new_product_application_routes(
                 app = _own(db, token, application_id, for_update=True)
                 data = payload.model_dump(exclude_unset=True)
                 svc.assert_unlocked(app)
-                _check_write(db, token, data, current_customer=app.customer_id)
+                _check_write(db, token, data)
                 svc.update(db, app, actor=_actor(token), data=data)
                 return _done(db, app)
         except Exception:

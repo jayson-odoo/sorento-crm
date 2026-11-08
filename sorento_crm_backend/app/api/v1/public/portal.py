@@ -610,6 +610,14 @@ def register_profile_routes(router: APIRouter, token_dependency: Callable[..., A
             return project_registration_service.portal_debtors(db, token, q, limit)
         from app.services.debtor_type import lookup_customers
 
+        if kind == "new_product_application":
+            # Every customer, as the stock inquiry lists them (owner 8 Nov), but in the ONE
+            # company the application's save resolves, so a listed customer is never refused.
+            from app.api.v1.public.portal_price_tag import _resolve_company
+            from app.models.base import company_scope
+
+            with company_scope(db, frozenset({_resolve_company(db, token)})):
+                return lookup_customers(db, q, limit)
         return lookup_customers(db, q, limit)
 
     @router.get("/lookups/projects", response_model=list[ProjectLookupItem])

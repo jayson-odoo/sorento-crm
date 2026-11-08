@@ -293,8 +293,8 @@ function StaffNewProductApplicationDetail({
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
-  // An older application closed as not opening reads Rejected, pill included.
-  const pillStatus = r.status_label === 'Rejected' ? 'rejected' : r.status;
+  // An older application closed as Not opening reads Rejected, pill included (backend flag).
+  const pillStatus = r.display_status ?? r.status;
   const stamp = r.submitted_at ?? r.created_at;
   const canAnswer =
     canOpen && (r.status === 'approved' || r.status === 'completed');

@@ -10,18 +10,22 @@ export interface InquiryApplicationRow {
   application_no: string;
   status: string;
   status_label: string;
+  /** "rejected" for an older Not opening result (owner 8 Nov); otherwise the status. */
+  display_status?: string;
   created_at: string | null;
   created_codes?: NewProductApplicationCreatedCode[];
 }
 
-/** Live = still in play: not cancelled and not rejected. */
-export const isLiveApplication = (a: Pick<InquiryApplicationRow, 'status'>) =>
-  a.status !== 'cancelled' && a.status !== 'rejected';
+/** Live = still in play: not cancelled and not rejected (an older Not opening result counts as rejected). */
+export const isLiveApplication = (a: Pick<InquiryApplicationRow, 'status' | 'display_status'>) => {
+  const s = a.display_status ?? a.status;
+  return s !== 'cancelled' && s !== 'rejected';
+};
 
 /** Purchasing asked for an application and nobody has a live one yet. */
 export const npaStillToCreate = (
   requested: boolean | null | undefined,
-  applications: Pick<InquiryApplicationRow, 'status'>[],
+  applications: Pick<InquiryApplicationRow, 'status' | 'display_status'>[],
 ) => Boolean(requested) && !applications.some(isLiveApplication);
 
 /**
@@ -99,7 +103,7 @@ export function InquiryApplicationsList({
           {applications.map((a) => (
             <tr key={a.id} className="border-t">
               <td className="px-3 py-2 align-top font-medium">{renderNumber(a)}</td>
-              <td className="px-3 py-2 align-top"><Badge status={a.status}>{a.status_label}</Badge></td>
+              <td className="px-3 py-2 align-top"><Badge status={a.display_status ?? a.status}>{a.status_label}</Badge></td>
               <td className="break-words px-3 py-2 align-top">
                 {(a.created_codes ?? []).length > 0
                   ? (a.created_codes ?? [])

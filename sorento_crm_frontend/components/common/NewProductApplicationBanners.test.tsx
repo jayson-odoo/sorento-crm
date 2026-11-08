@@ -51,3 +51,13 @@ describe('InquiryApplicationsList', () => {
     expect(screen.getByText('-')).toBeInTheDocument();
   });
 });
+
+describe('an older Not opening result reads and counts as rejected (review round 5)', () => {
+  it('is not live, so the ask comes back', async () => {
+    const { isLiveApplication, npaStillToCreate } = await import('./NewProductApplicationBanners');
+    const old = { status: 'completed', display_status: 'rejected' };
+    expect(isLiveApplication(old)).toBe(false);
+    expect(npaStillToCreate(true, [old])).toBe(true);
+    expect(isLiveApplication({ status: 'completed', display_status: 'completed' })).toBe(true);
+  });
+});

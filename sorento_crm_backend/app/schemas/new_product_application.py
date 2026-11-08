@@ -62,7 +62,7 @@ class FeedbackIn(BaseModel):
 
 class PurchasingResponseIn(BaseModel):
     """Owner 8 Nov: purchasing's ONE dialog, like the stock inquiry's "Edit purchasing response".
-    ``outcome`` link | new | not_opening; sent as null clears it. A key left out is not changed."""
+    ``outcome`` link | new (ending it is the Reject button); sent as null clears it. A key left out is not changed."""
 
     model_config = ConfigDict(extra="forbid")
 

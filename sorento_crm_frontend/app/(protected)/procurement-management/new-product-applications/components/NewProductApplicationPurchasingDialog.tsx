@@ -2,9 +2,9 @@
 
 /**
  * Purchasing's one dialog on an Approved / Completed application, like the stock inquiry's "Edit
- * purchasing response": the answer on the new product code (link an existing one, type a new one,
- * or not opening), the lead time and the cost, saved in one PUT. A key that did not change is not
- * sent, so saving the lead time alone never touches the answer.
+ * purchasing response": the answer on the new product code (link an existing one or type a new
+ * one; ending the application is the Reject button), the lead time and the cost, saved in one PUT.
+ * A key that did not change is not sent, so saving the lead time alone never touches the answer.
  */
 
 import { useState } from 'react';

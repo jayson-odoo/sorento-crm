@@ -511,7 +511,7 @@ export default function NewProductApplicationForm({
             <Badge variant="secondary">New Product Application</Badge>
             <Badge
               status={
-                application?.status_label === 'Rejected' ? 'rejected' : status
+                application?.display_status ?? status
               }
             >
               {application?.status_label ?? 'Draft'}
@@ -593,7 +593,7 @@ export default function NewProductApplicationForm({
                         customer_name: v,
                       }))
                     }
-                    lookup={(q) => client.lookupDebtors(q, 20, undefined)}
+                    lookup={(q) => client.lookupDebtors(q, 20, 'new_product_application')}
                     placeholder="Customer name"
                   />
                 )}

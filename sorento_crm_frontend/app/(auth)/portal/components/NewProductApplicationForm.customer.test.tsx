@@ -85,7 +85,8 @@ describe('portal NPA customer = the stock inquiry customer dropdown', () => {
     await waitFor(() => expect(lookupDebtors.mock.calls.some((c) => c[0] === 'ZZ')).toBe(true));
     const typed = lookupDebtors.mock.calls.find((c) => c[0] === 'ZZ')!;
     expect(typed[1]).toBe(20);
-    expect(typed[2]).toBeUndefined();
+    // Review round 5: scoped to the one company the application's save resolves.
+    expect(typed[2]).toBe('new_product_application');
     expect(lookupNewProductApplicationCustomers).not.toHaveBeenCalled();
   });
 

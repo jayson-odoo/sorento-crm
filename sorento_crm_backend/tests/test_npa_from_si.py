@@ -677,5 +677,19 @@ def test_an_older_not_opening_result_reads_as_rejected(world):
     body = _get(world, d["id"])
     assert body["status"] == "completed"
     assert body["status_label"] == "Rejected"
+    assert body["display_status"] == "rejected"  # the pill colour and the filters follow it
     listed = world.api.as_(world.admin).get(NPA, params={"stock_inquiry_id": world.inquiry.id}).json()["items"]
-    assert next(r for r in listed if r["id"] == d["id"])["status_label"] == "Rejected"
+    row = next(r for r in listed if r["id"] == d["id"])
+    assert (row["status_label"], row["display_status"]) == ("Rejected", "rejected")
+
+
+def test_an_older_not_opening_result_no_longer_answers_the_inquirys_ask(world):
+    from app.services import new_product_application_service as svc
+
+    si = _inquiry(world.db)
+    si.npa_requested = True
+    world.db.flush()
+    d = _si_approved(world, stock_inquiry_id=si.id)
+    assert svc.npa_next_step_sentence(world.db, si) is None  # a live application answers it
+    assert _new_code(world, d["id"], "close", reason="supplier dropped it").status_code == 200
+    assert svc.npa_next_step_sentence(world.db, si) == svc.NPA_NEXT_STEP

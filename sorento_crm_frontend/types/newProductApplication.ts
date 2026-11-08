@@ -86,6 +86,8 @@ export interface NewProductApplicationSummary {
   application_no: string;
   status: NewProductApplicationStatus;
   status_label: string;
+  /** "rejected" for an older Not opening result (owner 8 Nov); otherwise the status. */
+  display_status?: string;
   source: string;
   applicant_id: string | null;
   applicant_name: string | null;
@@ -172,7 +174,7 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   stock_inquiry?: NewProductApplicationStockInquiry | null;
   current_products?: NewProductApplicationCurrentProduct[];
   suggestions?: NewProductApplicationSuggestion[];
-  /** The ONE new product code purchasing links (or the reason it is not opening). */
+  /** The ONE new product code purchasing links (an older Not opening reason reads Rejected). */
   new_product_id?: string | null;
   /** The code purchasing typed when it is not in the catalogue yet. */
   new_code_text?: string | null;
@@ -202,7 +204,7 @@ export interface NewProductApplicationPage {
 
 /** PUT /purchasing-response: purchasing's one save. A key left out is unchanged; outcome null clears. */
 export interface NewProductApplicationPurchasingResponseWrite {
-  outcome?: 'link' | 'new' | 'not_opening' | null;
+  outcome?: 'link' | 'new' | null;
   product_id?: string;
   new_code?: string;
   reason?: string;

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 
 /**
  * The read-only NEW PRODUCT CODE value for the applicant and the portal: the code once purchasing
- * linked it, the reason when it is not opening, otherwise the waiting line. `link` draws the code
+ * linked it, "Rejected: <reason>" for an older Not opening result, otherwise the waiting line. `link` draws the code
  * as a link on the staff side.
  */
 export function NewProductApplicationNewCodeValue({

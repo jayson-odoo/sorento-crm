@@ -225,3 +225,31 @@ def test_portal_customer_is_any_customer_of_the_company_like_the_stock_inquiry(p
         p.db.flush()
     res = _as(p, p.granted).post(BASE, json={"stock_inquiry_id": p.mine.id, "customer_id": foreign.id, "lines": []})
     assert res.status_code == 422
+
+
+def test_a_two_company_contact_lists_and_saves_only_the_npa_company_customers(portal):
+    """Review round 5 blocker: the NPA customer search (the SI's /lookups/debtors, kind
+    new_product_application) lists the ONE company the NPA save resolves, so a listed customer
+    is never refused on save; the other company's customers never show."""
+    from app.models.order import Customer
+    from tests._portal_grant import link_contact_company
+
+    p = portal
+    link_contact_company(p.db, p.granted, p.other_company)
+    tag = uid()[:6]
+    with company_scope(p.db, frozenset({p.company_id})):
+        here = Customer(id=uid(), customer_code=f"ZZT-H{tag}", customer_name=f"{MARKER} twoco {tag} here")
+        p.db.add(here)
+        p.db.flush()  # the company stamp reads the scope at flush time
+    with company_scope(p.db, frozenset({p.other_company})):
+        there = Customer(id=uid(), customer_code=f"ZZT-T{tag}", customer_name=f"{MARKER} twoco {tag} there")
+        p.db.add(there)
+        p.db.flush()
+    res = _as(p, p.granted).get(
+        f"{PORTAL}/lookups/debtors", params={"q": f"twoco {tag}", "kind": "new_product_application"}
+    )
+    assert res.status_code == 200, res.text
+    names = [r["debtor_name"] for r in res.json()]
+    assert names == [here.customer_name]
+    d = _create(p, customer_id=here.id, customer_name=here.customer_name)
+    assert d["customer_id"] == here.id

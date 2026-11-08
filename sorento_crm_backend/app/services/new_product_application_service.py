@@ -760,10 +760,6 @@ def save_purchasing_response(
             existing = _product_by_code(db, text, app.company_id)
             product_id = existing.id if existing is not None else None
             text = None if existing is not None else text
-        elif outcome == "not_opening":
-            reason = _clean(data.get("reason"))
-            if not reason:
-                raise _invalid("reason", "Enter why this code is not being opened.")
         app.new_product_id, app.new_code_text, app.new_code_closed_reason = product_id, text, reason
         if outcome is None:
             app.new_code_by = None
@@ -1171,12 +1167,20 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     return {"created_from": [row(*r) for r in created], "made_from_this": [row(*r) for r in made]}
 
 
-def status_label(app: NewProductApplication) -> str:
+def _closed_not_opening(app: NewProductApplication) -> bool:
+    return bool(
+        app.status == COMPLETED and app.new_code_closed_reason and not (app.new_product_id or app.new_code_text)
+    )
+
+
+def display_status(app: NewProductApplication) -> str:
     """An application purchasing closed as Not opening (before the Reject button, owner 8 Nov)
-    reads as Rejected; every other one shows its status."""
-    if app.status == COMPLETED and app.new_code_closed_reason and not (app.new_product_id or app.new_code_text):
-        return STATUS_LABELS[REJECTED]
-    return STATUS_LABELS.get(app.status, app.status)
+    is shown, coloured and counted as rejected; every other one as its status."""
+    return REJECTED if _closed_not_opening(app) else app.status
+
+
+def status_label(app: NewProductApplication) -> str:
+    return STATUS_LABELS.get(display_status(app), app.status)
 
 
 #: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
@@ -1186,15 +1190,16 @@ _LIVE = (DRAFT, *AWAITING_REVIEW, APPROVED, COMPLETED)
 
 
 def has_live_application(db: Session, stock_inquiry_id: Any) -> bool:
-    return (
-        db.query(NewProductApplication.id)
+    rows = (
+        db.query(NewProductApplication)
         .filter(
             NewProductApplication.stock_inquiry_id == str(stock_inquiry_id),
             NewProductApplication.status.in_(_LIVE),
         )
-        .first()
-        is not None
+        .all()
     )
+    # An older Not opening result reads Rejected (owner 8 Nov), so it no longer answers the ask.
+    return any(not _closed_not_opening(a) for a in rows)
 
 
 def npa_next_step_sentence(db: Session, inquiry: StockInquiry) -> Optional[str]:
@@ -1229,6 +1234,7 @@ def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict
                 "application_no": a.application_no,
                 "status": a.status,
                 "status_label": status_label(a),
+                "display_status": display_status(a),
                 "created_at": _iso(a.created_at),
                 "created_codes": created.get(str(a.id), []),
             }
@@ -1408,6 +1414,7 @@ def serialize_summary(
         "application_no": app.application_no,
         "status": app.status,
         "status_label": status_label(app),
+        "display_status": display_status(app),
         "source": app.source,
         "applicant_id": app.applicant_id,
         "applicant_name": applicant,
