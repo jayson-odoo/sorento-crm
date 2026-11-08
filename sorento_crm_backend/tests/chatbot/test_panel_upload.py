@@ -375,6 +375,7 @@ def test_c10_an_already_sent_file_is_404_and_untouched(panel):
     assert panel.store.deleted == []
 
 
-@pytest.mark.parametrize("bad_id", [str(uuid.uuid4()), "not-a-uuid"])
+# Fixed ids: every xdist worker must collect the same test ids.
+@pytest.mark.parametrize("bad_id", ["0b5d0c9e-3f43-4a3e-9c1e-6d2a7f0e8b11", "not-a-uuid"])
 def test_c10_an_unknown_or_malformed_id_is_the_same_404(panel, bad_id):
     assert panel.client.delete(f"{UPLOAD_URL}/{bad_id}").status_code == 404
