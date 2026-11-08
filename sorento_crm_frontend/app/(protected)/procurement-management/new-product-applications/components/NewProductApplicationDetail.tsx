@@ -7,6 +7,7 @@ import { Download, Link2, Trash2, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RejectOutlineButton } from '@/components/common/RejectOutlineButton';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
@@ -491,16 +492,10 @@ function StaffNewProductApplicationDetail({
                 </Button>
               )}
               {canAnswer && r.status === 'approved' && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-destructive text-destructive hover:bg-destructive/10"
+                <RejectOutlineButton
                   disabled={busy}
                   onClick={() => setAsking({ kind: 'purchasingReject' })}
-                >
-                  <XCircle className="size-4" />
-                  Reject
-                </Button>
+                />
               )}
             </div>
           }

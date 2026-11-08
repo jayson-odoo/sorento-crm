@@ -491,7 +491,9 @@ describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
     const btn = headerReject();
     expect(btn).not.toBeNull();
     expect(btn!.className).toMatch(/text-destructive/);
-    expect(btn!.className).toMatch(/border-destructive/);
+    // The SAME button as the stock inquiry's (crew pass 3): the lighter red border.
+    expect(btn!.className).toMatch(/border-destructive\/40/);
+    expect(btn!.className).toMatch(/hover:bg-destructive\/10/);
     expect(btn!.querySelector('svg.lucide-circle-x, svg.lucide-x-circle')).not.toBeNull();
     expect(btn!.parentElement).toBe(
       screen.getByRole('button', { name: /^edit purchasing response$/i }).parentElement,

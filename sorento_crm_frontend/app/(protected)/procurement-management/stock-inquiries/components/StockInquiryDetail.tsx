@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { NewProductApplicationBanners } from '@/components/common/NewProductApplicationBanners';
+import { RejectOutlineButton } from '@/components/common/RejectOutlineButton';
 import {
   exportStockInquiryToExcel,
   exportStockInquiryWithRevisionsToExcel,
@@ -709,9 +710,7 @@ function StaffStockInquiryDetail({
               (inquiry.status === 'pending_purchasing' ||
                 inquiry.status === 'responded') &&
               canPurchasingReject && (
-              <Button
-                variant="outline"
-                size="sm"
+              <RejectOutlineButton
                 disabled={purchasingRejectMutation.isPending}
                 onClick={() => {
                   setRejectAction('purchasing');
@@ -719,11 +718,7 @@ function StaffStockInquiryDetail({
                   setRejectDialogOpen(true);
                 }}
                 data-guide-target="procurement.stock-inquiries.reject-button"
-                className="text-destructive border-destructive/40 hover:bg-destructive/10"
-              >
-                <XCircle className="size-4 mr-1" />
-                Reject
-              </Button>
+              />
             )}
             {businessCtasEnabled && inquiry.status === 'rejected' && canReopen && (
               <Button
