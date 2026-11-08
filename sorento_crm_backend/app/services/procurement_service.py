@@ -5461,14 +5461,22 @@ class StockInquiryService:
         event_type: str,
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
+        source_entity_type: str = "stock_inquiry",
+        company_id: Optional[str] = None,
+        view_url: Optional[str] = None,
+        button_label: str = "Open stock inquiry",
     ) -> None:
-        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue."""
+        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue.
+
+        The New Product Application sends the SAME team notice (NPA-FORM-SLA, owner 8 Nov "like
+        SI"): it names its own ``source_entity_type``, ``company_id``, ``view_url`` and button,
+        and ``inquiry_id`` is then that record's id. A stock inquiry passes none of them."""
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        company_id = self._company_for_stock_inquiry(inquiry_id)
+        company_id = company_id or self._company_for_stock_inquiry(inquiry_id)
 
         if team_assignment_code:
             if team_assignment_code == "project_sales":
@@ -5497,13 +5505,15 @@ class StockInquiryService:
 
         # Staff team notification → in-system detail link (login-required), not the
         # public /view token page. Recipients are internal team members.
-        view_url = self._build_stock_inquiry_internal_url(inquiry_id, base_url_override=base_url_override)
+        view_url = view_url or self._build_stock_inquiry_internal_url(
+            inquiry_id, base_url_override=base_url_override
+        )
 
         from app.services.email_template_service import EmailTemplateService
 
         rendered = EmailTemplateService(self.db).render_code(
             "stock_inquiry_created",
-            {"heading": title, "intro": intro_plain, "view_url": view_url},
+            {"heading": title, "intro": intro_plain, "view_url": view_url, "button_label": button_label},
         )
         title = rendered["subject"]
         body_plain = rendered["body_text"]
@@ -5537,7 +5547,7 @@ class StockInquiryService:
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == first_uid,
-                    Notification.source_entity_type == "stock_inquiry",
+                    Notification.source_entity_type == source_entity_type,
                     Notification.source_entity_id == inquiry_id,
                     Notification.event_type == event_type,
                 )
@@ -5567,7 +5577,7 @@ class StockInquiryService:
                     title=title,
                     body=body_plain,
                     data=email_data,
-                    source_entity_type="stock_inquiry",
+                    source_entity_type=source_entity_type,
                     source_entity_id=inquiry_id,
                     event_type=event_type,
                 )
@@ -5594,7 +5604,7 @@ class StockInquiryService:
                     self.db.query(Notification)
                     .filter(
                         Notification.user_id == uid,
-                        Notification.source_entity_type == "stock_inquiry",
+                        Notification.source_entity_type == source_entity_type,
                         Notification.source_entity_id == inquiry_id,
                         Notification.event_type == event_type,
                     )
@@ -5611,7 +5621,7 @@ class StockInquiryService:
                         type="stock_inquiry_notification",
                         title=title,
                         body=body_plain,
-                        source_entity_type="stock_inquiry",
+                        source_entity_type=source_entity_type,
                         source_entity_id=inquiry_id,
                         event_type=event_type,
                     )

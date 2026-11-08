@@ -500,7 +500,7 @@ def test_the_team_notice_links_the_npa_not_a_stock_inquiry(world, monkeypatch):
     assert kw["inquiry_id"] == d["id"]
     assert kw["agent_code"] == "lead_time_enquiries" and kw["team_assignment_code"] == "project_sales"
     assert kw["view_url"].endswith(f"/procurement-management/new-product-applications/{d['id']}")
-    assert kw["company_id"] == world.company_id
+    assert kw["company_id"] == str(world.company_id)
     assert kw["button_label"] == "Open new product application"
     assert d["application_no"] in kw["title"]
 

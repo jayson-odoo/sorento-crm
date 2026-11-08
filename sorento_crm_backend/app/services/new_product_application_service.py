@@ -1784,18 +1784,77 @@ _EVENTS = {
 }
 
 
+#: The SI's team notice for an NPA move (owner 8 Nov, "like SI"): the same agent and team sets
+#: the SI's notice uses (`api/v1/procurement/stock_inquiries.py`, `procurement_service.py`), which
+#: are the team sets the NPA stage rows are seeded on. (team set, heading, intro).
+_TEAM_NOTICES = {
+    "submitted": (
+        "project_sales",
+        "New product application submitted",
+        "Dear Project Sales Team,\n\nA new product application has been submitted and requires your review.",
+    ),
+    "resubmitted": (
+        "project_sales",
+        "New product application appealed",
+        "Dear Project Sales Team,\n\nA previously rejected new product application has been edited and "
+        "appealed, and requires your review.",
+    ),
+    "approved": (
+        "purchasing",
+        "New product application pending purchasing",
+        "Dear Purchasing Team,\n\nA new product application has been approved and is now pending purchasing review.",
+    ),
+}
+TEAM_AGENT = "lead_time_enquiries"
+
+
+def _staff_url(app: NewProductApplication) -> str:
+    from app.config import settings
+
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    return f"{base}/procurement-management/new-product-applications/{app.id}"
+
+
+def _team_notice(db: Session, app: NewProductApplication, event: str) -> None:
+    """The SI's own team notice (`StockInquiryService._notify_team_stock_inquiry`), for the NPA.
+    Best effort: a failure is logged and never undoes the committed move."""
+    team_set, heading, intro = _TEAM_NOTICES[event]
+    try:
+        from app.services.procurement_service import StockInquiryService
+
+        StockInquiryService(db)._notify_team_stock_inquiry(  # noqa: SLF001
+            inquiry_id=str(app.id),
+            agent_code=TEAM_AGENT,
+            team_assignment_code=team_set,
+            title=f"{heading}: {app.application_no}",
+            intro_plain=intro,
+            intro_html=intro.replace("\n", "<br />"),
+            event_type=f"new_product_application_{event}",
+            source_entity_type=ENTITY,
+            company_id=str(app.company_id),
+            view_url=_staff_url(app),
+            button_label="Open new product application",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application team notice not sent: %s %s (%s)", event, app.id, exc)
+        if not db.is_active:
+            db.rollback()
+
+
 def notify(
     db: Session, app: NewProductApplication, event: Optional[str], actor_id: Optional[str] = None
 ) -> int:
     """Tell the people who now have to act (card rule 8). Call AFTER the move commits; a
     failure is logged and swallowed per recipient, so it never undoes the move.
 
-    NPA-FORM-SLA (owner 8 Nov 21:45, "like SI"): the move first drives the Form SLA stages, and
-    the stage that starts tells its assignee (the SI's assignment notice). No stage row active =
-    no stage notice, as on the SI: there is no permission-holder broadcast any more. A withdrawal
-    tells whoever held the stage it voided."""
+    NPA-FORM-SLA (owner 8 Nov, "like SI"): the move first drives the Form SLA stages, and the
+    stage that starts tells its assignee (the SI's assignment notice); then the SI's team notice
+    goes to the stage's team set, with or without a stage row, as on the SI. There is no
+    permission-holder broadcast any more. A withdrawal tells whoever held the stage it voided."""
     if event in SLA_EVENTS:
         _emit_sla(db, app, event, actor_id)
+    if event in _TEAM_NOTICES:
+        _team_notice(db, app, event)
     if event not in _EVENTS:
         return 0
     phrase, audience = _EVENTS[event]
