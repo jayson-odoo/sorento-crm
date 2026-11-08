@@ -66,6 +66,11 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     # An agent's team is the one it is in today, as the Agents tab shows it.
     team_of_agent = {m.sales_agent_id: t for m, t in ts._covering_on(db, today)}
     dealer_accounts = ts._accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
+    # The paid account as the Dealers tab prints it ("A/C I"): tells same-name dealer rows apart (owner 8 Nov).
+    from app.models.order import Customer
+
+    payee_ids = {t.payout_customer_id for t in targets if t.payout_customer_id}
+    payees = {c.id: ts.account_label(c) for c in db.query(Customer).filter(Customer.id.in_(payee_ids))} if payee_ids else {}
     # The dealer target that replaces one in a period it reaches a tier (Q5: the answer names it).
     replacing_ids = {t.replaced_by_target_id for t in targets if t.replaced_by_target_id}
     replacing = (
@@ -112,6 +117,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "_agent_id": agent.id if agent else None,
                 # The Dealers tab's own label (`list_all_targets`), ledger marker kept (crew live round 2).
                 "_tab_label": tab_label,
+                "_payout_account": payees.get(target.payout_customer_id),
                 "team": team.name if team else None,
                 "period": period.period_start,
                 "period_start": period.period_start,
@@ -199,7 +205,8 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         key = (kind, row["target_id"] if kind == "dealer" else name)
         out = per.setdefault(key, {
             "id": f"{kind}:{key[1]}", "owner": name, "owner_kind": kind, "period": row["period_start"],
-            "agent": extra["agent"], "team": extra["team"], "periods": 0, "targets": set(), "target_value": 0.0,
+            "agent": extra["agent"], "team": extra["team"], "payout_account": row.get("_payout_account"),
+            "periods": 0, "targets": set(), "target_value": 0.0,
             "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None, "replaced_by": None,
             "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
             "_zero": set(), "_replaced": set(), "_has_commission": False,
@@ -244,6 +251,7 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
             empty.update(dict.fromkeys(("target_value", "achieved_value", "achieved_pct"), ZERO_TARGET))
         out["_empty"] = empty
         out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
+        out["target_no"] = ", ".join(sorted(out["targets"]))
         out["targets"] = len(out["targets"])
         goal, achieved = round(out["target_value"], 2), round(out["achieved_value"], 2)
         out["target_value"] = goal if complete else None
@@ -451,6 +459,13 @@ register(
                 "Period", kind="date",
                 note="The window: between [from, to] (last month, this quarter); without it, the current periods.",
             ),
+            "target_no": FieldDef(
+                "Target", kind="text", note="The TGT number(s); a dealer row is one target, as on the Dealers tab.",
+            ),
+            "payout_account": FieldDef(
+                "Payout account", kind="text",
+                note="Dealer rows: the paid account as the Dealers tab shows it (A/C I), so same-name dealers differ.",
+            ),
             "kinds": FieldDef("Target kinds", kind="text"),
             "periods": FieldDef("Periods", kind="number"),
             "targets": FieldDef("Targets", kind="number"),
@@ -475,7 +490,8 @@ register(
         hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
              "one row per agent, team and dealer, highest payout first, totals row; no period = this year. One of them: agent=<code or name as said> "
              "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
-        list_fields=("owner_kind", "targets", "target_value", "achieved_value", "achieved_pct", "payout"),
+        list_fields=("owner_kind", "target_no", "payout_account", "target_value", "achieved_value", "achieved_pct",
+                     "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
         window_field="period",

@@ -340,6 +340,22 @@ def _dmy(found: "re.Match") -> str:
     return f"{day}/{month}/{year}"
 
 
+def _names_a_subject(entity_key: str, args: dict) -> bool:
+    """Does a crm_query name a record: `agent`, or a filter on the entity's name or agent field."""
+    if args.get("agent"):
+        return True
+    entity = ENTITIES.get(entity_key)
+    if entity is None:
+        return False
+    for f in args.get("filters") or []:
+        if not isinstance(f, dict):
+            continue
+        field = entity.fields.get(str(f.get("field")))
+        if field is not None and (f.get("field") in entity.name_by or field.agent_id):
+            return True
+    return False
+
+
 def shape_reply(text: str, ledger: dict | None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
@@ -350,9 +366,18 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     # its own, which never replaces the first (crew live x3 on 3c6924bf: "who is below
     # target" lost its target table and its "Not reached = ..." note to a later payout query).
     per_entity: dict[str, str] = {}
+    missed: set[str] = set()
     for e in (ledger or {}).values():
-        if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display"):
-            entity = str((e.get("data") or {}).get("entity") or (e.get("args") or {}).get("entity") or "")
+        if e.get("name") != QUERY or e.get("status") != "ok":
+            continue
+        args = e.get("args") or {}
+        entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
+        named = _names_a_subject(entity, args)
+        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total"):
+            missed.add(entity)
+        # A whole table nobody asked for, after the named record was not found, is not shown (owner 8 Nov: "payout
+        # to fullshun" appended every payout): the answer is that nothing matched.
+        if e.get("display") and not (entity in missed and not named):
             per_entity[entity] = e["display"]
     if per_entity:
         cards = list(per_entity.values())
