@@ -478,3 +478,39 @@ def test_u13_stock_tag_needs_stock_edit(client, db, perms, monkeypatch):
     assert _put(client, c, [a]).status_code == 403
     perms["granted"] = {VIEW, EDIT, STOCK_EDIT}
     assert _put(client, c, [a]).status_code == 200
+
+
+# ---------------------------------------------------------------- the owner's hand test, end to end
+
+
+def test_handtest_sequence(client, db, su):
+    """The steps of `tag-union-08nov-handtest.md`, so the values it promises are the values the code gives."""
+    s, m = _company(db, "sorento"), _company(db, "mocha")
+    ts = _stag(client, db, {"companies": [s.id], "chatbot": {"chatbot_allowed": False}}, "ZZT TU Sorento")
+    tm = _stag(client, db, {"companies": [m.id], "chatbot": {"chatbot_allowed": True}}, "ZZT TU Mocha")
+    c = _contact(db)
+    _tags(client, c, [ts])
+    assert _companies(db, c) == {s.id}
+    _tags(client, c, [ts, tm])
+    assert _companies(db, c) == {s.id, m.id} and _fresh(db, c).chatbot_allowed is True
+    _tags(client, c, [ts])
+    assert _companies(db, c) == {s.id} and _fresh(db, c).chatbot_allowed is False
+    db.add(RespondContactCompany(respond_contact_id=str(c.id), company_id=m.id))
+    db.flush()
+    _tags(client, c, [])
+    assert _companies(db, c) == {m.id}
+    _tags(client, c, [ts])
+    assert client.patch(f"{TAGS}/{ts['id']}", json={"is_active": False}).status_code == 200
+    assert _companies(db, c) == {m.id}
+    assert client.patch(f"{TAGS}/{ts['id']}", json={"is_active": True}).status_code == 200
+    assert _companies(db, c) == {s.id, m.id}
+    db.query(RespondContactCompany).filter(
+        RespondContactCompany.respond_contact_id == str(c.id), RespondContactCompany.company_id == s.id
+    ).delete()
+    db.flush()
+    body = client.get(f"{CONTACTS}/{c.id}/tag-settings").json()
+    assert [i["section"] for i in body["items"] if i["differs"]] == ["companies"]
+    resp = client.post(f"{CONTACTS}/bulk-apply-tag-settings", json={"contact_ids": [str(c.id)], "dry_run": False})
+    assert resp.status_code == 200, resp.text
+    assert _companies(db, c) == {s.id, m.id}
+    assert client.get(f"{CONTACTS}/{c.id}/tag-settings").json()["status"] == "matches"
