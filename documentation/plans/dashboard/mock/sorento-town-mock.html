@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sorento Town mock v2</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>Sorento Town mock v3</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* Tokens mirror sorento_crm_frontend/css/config.reui.css (light + dark). */
@@ -14,16 +13,16 @@
   --muted: #f4f4f5; --muted-foreground: #71717a;
   --border: oklch(94% 0.004 286.32); --destructive: #dc2626;
   --success: #15803d; --warning: #a16207;
-  --radius: 0.5rem; --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --duration-base: 200ms;
-  --material-regular: color-mix(in oklab, var(--background) 72%, transparent);
+  --radius: 0.5rem; --ease-standard: cubic-bezier(0.2, 0, 0, 1); --duration-base: 200ms;
+  --material-regular: color-mix(in oklab, var(--background) 80%, transparent);
   --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
   --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --lit: #f59e0b; --low: #dc2626; --deliver: #2563eb; --approve: #7c3aed;
 }
 :root.dark {
   --background: #09090b; --foreground: #fafafa; --card: #18181b;
-  --primary: #2563eb; --muted: #18181b; --muted-foreground: #a1a1aa;
-  --border: #27272a; --success: #4ade80; --warning: #facc15;
+  --primary: #2563eb; --muted: #18181b; --muted-foreground: #a1a1aa; --border: #27272a;
+  --success: #4ade80; --warning: #facc15;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 14px; }
@@ -31,55 +30,54 @@ html, body { margin: 0; background: var(--background); color: var(--foreground);
 .header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .header h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0; font-weight: 600; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 0.75rem; }
-.btn { font: inherit; border-radius: var(--radius); padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; transition: background var(--duration-base) var(--ease-standard); }
-.btn:hover { background: var(--muted); }
+.chip.sample { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.btn { font: inherit; border-radius: var(--radius); padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
 .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
-.stage { position: relative; height: min(68vh, 680px); min-height: 420px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(180deg, #fde7c8 0%, #fbcfe8 35%, #bfdbfe 75%, #e0f2fe 100%); }
-:root.night .stage { background: radial-gradient(ellipse at 70% 10%, #312e81 0%, #1e1b4b 40%, #0b1026 100%); }
-#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.float { position: absolute; background: var(--material-regular); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--material-edge); border-radius: var(--radius); box-shadow: 0 4px 16px rgb(0 0 0 / 0.08); }
-.banner { top: 12px; left: 50%; transform: translateX(-50%); padding: 10px 16px; display: flex; gap: 18px; align-items: baseline; white-space: nowrap; max-width: calc(100% - 24px); overflow-x: auto; }
-.banner .big { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.02em; }
-.banner .stat { color: var(--muted-foreground); font-size: 0.8125rem; }
-.banner .stat b { color: var(--foreground); font-weight: 600; }
-.closed { top: 72px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-weight: 600; display: none; }
+.split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); gap: 14px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.colhead { font-size: 0.75rem; font-weight: 600; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; }
+.stage { position: relative; height: min(70vh, 660px); min-height: 440px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%); }
+:root.night .stage { background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%); }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.float { position: absolute; background: var(--material-regular); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--material-edge); border-radius: var(--radius); box-shadow: 0 4px 16px rgb(0 0 0 / 0.08); }
+.hud { left: 10px; bottom: 10px; padding: 8px 10px; font-size: 0.75rem; display: grid; gap: 4px; }
+.hud div { display: flex; align-items: center; gap: 7px; }
+.hud i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.hint { left: 50%; top: 12px; transform: translateX(-50%); padding: 8px 14px; font-weight: 600; pointer-events: none; transition: opacity 400ms var(--ease-standard); }
+.hint.gone { opacity: 0; }
+.closed { top: 10px; left: 50%; transform: translateX(-50%); padding: 6px 14px; font-weight: 600; display: none; }
 :root.night .closed { display: block; }
-.panel { top: 12px; right: 12px; width: 320px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow: auto; padding: 14px; display: none; }
+.panel { top: 10px; right: 10px; width: 300px; max-width: calc(100% - 20px); max-height: calc(100% - 20px); overflow: auto; padding: 14px; display: none; }
 .panel.open { display: block; }
-.panel h2 { margin: 0 0 2px; font-size: 1rem; font-weight: 600; }
+.panel h2 { margin: 0 0 2px; font-size: 1rem; font-weight: 600; padding-right: 20px; }
 .panel .meta { color: var(--muted-foreground); font-size: 0.75rem; margin-bottom: 10px; }
 .panel table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 .panel td { padding: 5px 0; border-bottom: 1px solid var(--border); }
 .panel td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .panel .close { position: absolute; top: 8px; right: 8px; border: 0; background: transparent; font-size: 18px; cursor: pointer; color: var(--muted-foreground); }
 .bar { height: 6px; border-radius: 3px; background: var(--muted); overflow: hidden; margin-top: 3px; }
-.bar > i { display: block; height: 100%; background: var(--primary); }
-.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.6875rem; font-weight: 600; }
-.badge.warn { background: color-mix(in oklab, var(--warning) 16%, transparent); color: var(--warning); }
-.badge.ok { background: color-mix(in oklab, var(--success) 16%, transparent); color: var(--success); }
-.legend { left: 12px; bottom: 12px; padding: 8px 12px; font-size: 0.75rem; color: var(--muted-foreground); display: flex; gap: 12px; flex-wrap: wrap; max-width: calc(100% - 24px); }
-.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
-.cards { display: none; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-.cards.on { display: grid; }
-.card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--card); }
-.card h3 { margin: 0 0 4px; font-size: 0.875rem; font-weight: 600; }
-.card .v { font-size: 1.25rem; font-weight: 700; }
-.card .s { color: var(--muted-foreground); font-size: 0.75rem; }
-.mockbar { margin-top: 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
+.bar > i { display: block; height: 100%; }
+.cards { display: grid; gap: 10px; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card); display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; align-items: start; cursor: pointer; }
+.card .ic { grid-row: span 3; width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 700; }
+.card .q { font-size: 0.75rem; color: var(--muted-foreground); }
+.card .v { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
+.card .s { font-size: 0.8125rem; color: var(--muted-foreground); }
+.card ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: 0.8125rem; display: grid; gap: 3px; }
+.card li { display: flex; justify-content: space-between; gap: 8px; }
+.card li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up { color: var(--success); font-weight: 600; } .down { color: var(--destructive); font-weight: 600; }
+.mockbar { margin-top: 14px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 0.8125rem; color: var(--muted-foreground); }
 .mockbar label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.notice { margin: 10px 0 0; font-size: 0.75rem; color: var(--muted-foreground); }
 section.map { margin-top: 22px; }
-section.map h2 { font-size: 1.125rem; letter-spacing: -0.01em; margin: 0 0 8px; }
+section.map h2 { font-size: 1.125rem; margin: 0 0 8px; }
 .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
 .map table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 0.8125rem; }
 .map th, .map td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .map th { background: var(--muted); font-weight: 600; }
 .map code { font-size: 0.75rem; background: var(--muted); padding: 1px 5px; border-radius: 4px; }
-.notice { margin: 10px 0 0; font-size: 0.75rem; color: var(--muted-foreground); }
-@media (max-width: 640px) {
-  .banner { gap: 4px 10px; padding: 8px 10px; flex-wrap: wrap; white-space: normal; justify-content: center; width: calc(100% - 24px); } .banner .big { font-size: 1.125rem; }
-  .panel { top: auto; bottom: 12px; right: 12px; left: 12px; width: auto; max-height: 55%; }
-  .stage { height: 72vh; }
-}
+@media (max-width: 640px) { .panel { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 55%; } .stage { height: 64vh; } }
 </style>
 <script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js"}}</script>
 </head>
@@ -94,1231 +92,285 @@ section.map h2 { font-size: 1.125rem; letter-spacing: -0.01em; margin: 0 0 8px; 
     <button class="btn primary" id="wallboardBtn">Wallboard</button>
   </div>
 
-  <div class="stage" id="stage">
-    <canvas id="scene"></canvas>
-    <div class="float banner" id="banner"></div>
-    <div class="float closed">Closed for the day</div>
-    <div class="float panel" id="panel"><button class="close" aria-label="Close panel" id="panelClose">&times;</button><div id="panelBody"></div></div>
-    <div class="float legend">
-      <span style="--c:#f97316">Dealer shop (top 30, 90 days)</span>
-      <span style="--c:#facc15">Coin: invoiced today</span>
-      <span style="--c:#fb7185">Market stall</span>
-      <span style="--c:#64748b">Warehouse pool</span>
-      <span style="--c:#7c3aed">Town hall</span>
+  <div class="split">
+    <div>
+      <p class="colhead">3D town</p>
+      <div class="stage" id="stage">
+        <canvas id="scene"></canvas>
+        <div class="float closed">Closed for the day</div>
+        <div class="float hint" id="hint">Tap any building</div>
+        <div class="float panel" id="panel"><button class="close" aria-label="Close panel" id="panelClose">&times;</button><div id="panelBody"></div></div>
+        <div class="float hud" aria-label="Legend">
+          <div><i style="background:var(--lit)"></i>Lit shop = bought today</div>
+          <div><i style="background:var(--low)"></i>Red ! = low stock</div>
+          <div><i style="background:var(--deliver)"></i>Lorries = to deliver</div>
+          <div><i style="background:var(--approve)"></i>Badge = waiting approval</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="colhead">2D view (same snapshot; the fallback when 3D is off)</p>
+      <div class="cards" id="cards"></div>
     </div>
   </div>
-  <div class="cards" id="cards"></div>
 
   <div class="mockbar">
-    <b>Mock controls (not in the product):</b> <span>Drag the town to turn it.</span>
+    <b>Mock controls (not in the product):</b>
     <label><input type="checkbox" id="tNight"> Night (after 22:00)</label>
     <label><input type="checkbox" id="tRedact"> Viewer without sales report permission</label>
-    <label><input type="checkbox" id="tCards"> Fallback card view (no WebGL / reduced motion)</label>
     <label><input type="checkbox" id="tDark"> Dark theme</label>
-    <button class="btn" id="replayBtn">Replay the day</button>
     <span id="calls"></span>
   </div>
   <p class="notice" id="dataNotice"></p>
 
   <section class="map">
-    <h2>Element to component map</h2>
+    <h2>The five questions, element to component map</h2>
     <div class="scroll"><table>
-      <thead><tr><th>Element</th><th>Snapshot field (GET /api/v1/town/snapshot)</th><th>Source (one query per build, never per viewer)</th><th>Component (phase 1)</th><th>Click goes to</th></tr></thead>
+      <thead><tr><th>Question</th><th>3D visual</th><th>Snapshot field</th><th>Source</th><th>Tap goes to</th></tr></thead>
       <tbody>
-        <tr><td>Top banner: today RM, invoices, credit notes, customers</td><td><code>today.*</code> (amount hidden without <code>sales.reports.view</code>)</td><td><code>invoiced_sales.signed_amount()</code> over <code>posted()</code>, doc_date = today; equals the sales report</td><td><code>TownBanner</code></td><td>Sales report, today</td></tr>
-        <tr><td>Dealer shops (height = 90-day rank)</td><td><code>shops[kind=shop]</code></td><td>Top 30 Dealer sales type by 90-day invoiced sales, one per AutoCount account</td><td><code>TownScene</code> InstancedMesh (bodies, roofs, awnings)</td><td><code>ShopPanel</code>, then the customer's invoices (billing documents list filtered)</td></tr>
-        <tr><td>Glowing roof / walker arriving</td><td><code>shops[].today_amount</code>, <code>today_docs</code></td><td>Same calc, per account, today</td><td><code>TownWalkers</code> (phase 2 replays <code>town_days.events</code>)</td><td>Same as shop</td></tr>
-        <tr><td>Stalls</td><td><code>shops[kind=stall]</code></td><td>Dealer-type customers invoiced today outside the top 30</td><td>InstancedMesh</td><td><code>ShopPanel</code></td></tr>
-        <tr><td>Warehouse pools (height = stock on hand)</td><td><code>warehouses[]</code></td><td>Active warehouses folded on <code>pool_warehouse_id</code></td><td>InstancedMesh + <code>WarehousePanel</code></td><td>Stock balances, filtered to the pool</td></tr>
-        <tr><td>"!" over the warehouse district</td><td><code>reorder.below_count</code></td><td><code>scm.reorder_level.level</code> (product-wide) vs available stock</td><td><code>ReorderMarker</code> sprite</td><td>Existing SCM reorder list</td></tr>
-        <tr><td>Approvals sign</td><td><code>approvals.*</code></td><td>Pending purchase requests + quotation documents awaiting approval</td><td><code>ApprovalsSign</code></td><td>Purchase requests / quotation approvals</td></tr>
-        <tr><td>Supplier factories (smoking chimneys), port with container stacks and ship</td><td>phase 2: <code>suppliers[]</code>, <code>inbound[]</code></td><td>Supplier / PurchaseOrder / InboundShipment (procurement.py); decorative in this mock, no figures shown</td><td>InstancedMesh</td><td>Purchase orders / inbound containers</td></tr>
-        <tr><td>Lorries on the roads, people on the plaza, gold coins</td><td><code>shops[].today_docs</code>; phase 2 <code>town_days.events</code></td><td>-</td><td><code>TownWalkers</code> (one InstancedMesh each)</td><td>-</td></tr>
-        <tr><td>Night, "Closed for the day", Replay</td><td><code>phase</code>; <code>town_days</code> row</td><td>22:00 MYT freeze</td><td><code>TownScene</code> lighting + <code>ReplayButton</code></td><td>-</td></tr>
-        <tr><td>Card view</td><td>same snapshot</td><td>-</td><td><code>TownCards</code> (no WebGL, reduced motion)</td><td>Same targets</td></tr>
+        <tr><td>1 How much did we sell today?</td><td>Scoreboard over the plaza: RM, invoices, vs same weekday last week</td><td><code>today.*</code>, <code>compare.last_week_*</code> (new)</td><td><code>invoiced_sales</code> one calc, day and day-7</td><td>Sales report, today</td></tr>
+        <tr><td>2 Who bought today?</td><td>Only today's dealer shops lit, with a floating tag; the rest grey; "+N more" sign</td><td><code>shops[]</code> with <code>today_docs</code></td><td>Top 30 Dealer accounts + today's other dealers</td><td>Shop panel, then that customer's invoices</td></tr>
+        <tr><td>3 What stock is low?</td><td>Warehouse district, one red ! bubble with the count</td><td><code>reorder.below_count</code></td><td><code>scm.reorder_level.level</code></td><td>SCM reorder list</td></tr>
+        <tr><td>4 What must go out?</td><td>Depot with lorries lined up, number on the sign</td><td><code>deliveries.to_deliver</code> (new)</td><td>Definition pending with the owner</td><td>Deliveries list</td></tr>
+        <tr><td>5 What needs a decision?</td><td>Approvals office with a number badge</td><td><code>approvals.*</code></td><td>Pending PRs + quotation documents</td><td>Approvals list</td></tr>
       </tbody>
     </table></div>
   </section>
 </div>
 
-<script id="town-data" type="application/json">{
- "schema": 1,
- "company": "Demo Company",
- "day": "2026-11-03",
- "as_of": "2026-11-03T22:00:00+08:00",
- "data_as_of": "2026-11-04T10:24:00+08:00",
- "phase": "day",
- "today": {
-  "amount": "513912.31",
-  "invoice_count": 227,
-  "credit_note_count": 1,
-  "customer_count": 114,
-  "dealer_customer_count": 96,
-  "dealer_amount": "322758.80"
- },
- "shops": [
-  {
-   "key": "300-X001",
-   "code": "300-X001",
-   "name": "Dealer A01 Sdn Bhd",
-   "account_label": null,
-   "kind": "shop",
-   "rank": 1,
-   "ninety_day_amount": "1056208.79",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X002",
-   "code": "300-X002",
-   "name": "Dealer B02 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 2,
-   "ninety_day_amount": "628494.41",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X003",
-   "code": "300-X003",
-   "name": "Dealer C03 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 3,
-   "ninety_day_amount": "724495.55",
-   "today_amount": "9589.40",
-   "today_docs": 10
-  },
-  {
-   "key": "300-X004",
-   "code": "300-X004",
-   "name": "Dealer D04 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 4,
-   "ninety_day_amount": "566084.18",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X005",
-   "code": "300-X005",
-   "name": "Dealer E05 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 5,
-   "ninety_day_amount": "392515.11",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X006",
-   "code": "300-X006",
-   "name": "Dealer F06 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 6,
-   "ninety_day_amount": "210309.31",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X007",
-   "code": "300-X007",
-   "name": "Dealer G07 Sdn Bhd",
-   "account_label": null,
-   "kind": "shop",
-   "rank": 7,
-   "ninety_day_amount": "297459.18",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X008",
-   "code": "300-X008",
-   "name": "Dealer H08 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 8,
-   "ninety_day_amount": "176557.28",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X009",
-   "code": "300-X009",
-   "name": "Dealer I09 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 9,
-   "ninety_day_amount": "238537.48",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X010",
-   "code": "300-X010",
-   "name": "Dealer J10 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 10,
-   "ninety_day_amount": "163384.00",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X011",
-   "code": "300-X011",
-   "name": "Dealer K11 Sdn Bhd [A/C IV]",
-   "account_label": "A/C IV",
-   "kind": "shop",
-   "rank": 11,
-   "ninety_day_amount": "156037.36",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X012",
-   "code": "300-X012",
-   "name": "Dealer L12 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 12,
-   "ninety_day_amount": "213681.09",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X013",
-   "code": "300-X013",
-   "name": "Dealer M13 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 13,
-   "ninety_day_amount": "275417.24",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X014",
-   "code": "300-X014",
-   "name": "Dealer N14 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 14,
-   "ninety_day_amount": "150860.98",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X015",
-   "code": "300-X015",
-   "name": "Dealer O15 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 15,
-   "ninety_day_amount": "165229.42",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X016",
-   "code": "300-X016",
-   "name": "Dealer P16 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 16,
-   "ninety_day_amount": "225315.89",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X017",
-   "code": "300-X017",
-   "name": "Dealer Q17 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 17,
-   "ninety_day_amount": "276325.34",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X018",
-   "code": "300-X018",
-   "name": "Dealer R18 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 18,
-   "ninety_day_amount": "214379.17",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X019",
-   "code": "300-X019",
-   "name": "Dealer S19 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 19,
-   "ninety_day_amount": "180577.99",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X020",
-   "code": "300-X020",
-   "name": "Dealer T20 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 20,
-   "ninety_day_amount": "246255.08",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X021",
-   "code": "300-X021",
-   "name": "Dealer U21 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 21,
-   "ninety_day_amount": "108533.31",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X022",
-   "code": "300-X022",
-   "name": "Dealer V22 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 22,
-   "ninety_day_amount": "216804.13",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X023",
-   "code": "300-X023",
-   "name": "Dealer W23 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 23,
-   "ninety_day_amount": "133100.64",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X024",
-   "code": "300-X024",
-   "name": "Dealer X24 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 24,
-   "ninety_day_amount": "114254.89",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X025",
-   "code": "300-X025",
-   "name": "Dealer Y25 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 25,
-   "ninety_day_amount": "109596.40",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X026",
-   "code": "300-X026",
-   "name": "Dealer Z26 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 26,
-   "ninety_day_amount": "132540.33",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X027",
-   "code": "300-X027",
-   "name": "Dealer A27 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 27,
-   "ninety_day_amount": "188015.12",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X028",
-   "code": "300-X028",
-   "name": "Dealer B28 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 28,
-   "ninety_day_amount": "111443.34",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X029",
-   "code": "300-X029",
-   "name": "Dealer C29 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "shop",
-   "rank": 29,
-   "ninety_day_amount": "158226.90",
-   "today_amount": null,
-   "today_docs": null
-  },
-  {
-   "key": "300-X030",
-   "code": "300-X030",
-   "name": "Dealer D30 Sdn Bhd [A/C III]",
-   "account_label": "A/C III",
-   "kind": "shop",
-   "rank": 30,
-   "ninety_day_amount": "164686.18",
-   "today_amount": "24269.29",
-   "today_docs": 3
-  },
-  {
-   "key": "300-X031",
-   "code": "300-X031",
-   "name": "Dealer E31 Sdn Bhd [A/C I]",
-   "account_label": "A/C I",
-   "kind": "stall",
-   "rank": null,
-   "ninety_day_amount": null,
-   "today_amount": "12822.63",
-   "today_docs": 2
-  },
-  {
-   "key": "300-X032",
-   "code": "300-X032",
-   "name": "Dealer F32 Sdn Bhd [A/C IV]",
-   "account_label": "A/C IV",
-   "kind": "stall",
-   "rank": null,
-   "ninety_day_amount": null,
-   "today_amount": "7867.97",
-   "today_docs": 2
-  },
-  {
-   "key": "300-X033",
-   "code": "300-X033",
-   "name": "Dealer G33 Sdn Bhd [A/C IV]",
-   "account_label": "A/C IV",
-   "kind": "stall",
-   "rank": null,
-   "ninety_day_amount": null,
-   "today_amount": "7398.45",
-   "today_docs": 4
-  }
- ],
- "warehouses": [
-  {
-   "pool": "WH01",
-   "on_hand": 971213,
-   "locations": [
-    {
-     "code": "WH01-01",
-     "on_hand": 963400
-    },
-    {
-     "code": "WH01-02",
-     "on_hand": 109727
-    },
-    {
-     "code": "WH01-03",
-     "on_hand": 47442
-    },
-    {
-     "code": "WH01-04",
-     "on_hand": 51047
-    },
-    {
-     "code": "WH01-05",
-     "on_hand": 13927
-    },
-    {
-     "code": "WH01-06",
-     "on_hand": 3404
-    },
-    {
-     "code": "WH01-07",
-     "on_hand": 3982
-    },
-    {
-     "code": "WH01-08",
-     "on_hand": 3200
-    },
-    {
-     "code": "WH01-09",
-     "on_hand": 2216
-    },
-    {
-     "code": "WH01-10",
-     "on_hand": 1207
-    },
-    {
-     "code": "WH01-11",
-     "on_hand": 571
-    },
-    {
-     "code": "WH01-12",
-     "on_hand": 945
-    },
-    {
-     "code": "WH01-13",
-     "on_hand": 41
-    },
-    {
-     "code": "WH01-14",
-     "on_hand": 0
-    },
-    {
-     "code": "WH01-15",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH02",
-   "on_hand": 114132,
-   "locations": [
-    {
-     "code": "WH02-01",
-     "on_hand": 125396
-    },
-    {
-     "code": "WH02-02",
-     "on_hand": 11627
-    },
-    {
-     "code": "WH02-03",
-     "on_hand": 6383
-    },
-    {
-     "code": "WH02-04",
-     "on_hand": 6162
-    },
-    {
-     "code": "WH02-05",
-     "on_hand": 1860
-    },
-    {
-     "code": "WH02-06",
-     "on_hand": 408
-    },
-    {
-     "code": "WH02-07",
-     "on_hand": 169
-    },
-    {
-     "code": "WH02-08",
-     "on_hand": 150
-    },
-    {
-     "code": "WH02-09",
-     "on_hand": 75
-    },
-    {
-     "code": "WH02-10",
-     "on_hand": 59
-    },
-    {
-     "code": "WH02-11",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH03",
-   "on_hand": 174002,
-   "locations": [
-    {
-     "code": "WH03-01",
-     "on_hand": 144462
-    },
-    {
-     "code": "WH03-02",
-     "on_hand": 14555
-    },
-    {
-     "code": "WH03-03",
-     "on_hand": 13166
-    },
-    {
-     "code": "WH03-04",
-     "on_hand": 1246
-    },
-    {
-     "code": "WH03-05",
-     "on_hand": 1327
-    },
-    {
-     "code": "WH03-06",
-     "on_hand": 300
-    },
-    {
-     "code": "WH03-07",
-     "on_hand": 163
-    },
-    {
-     "code": "WH03-08",
-     "on_hand": 120
-    },
-    {
-     "code": "WH03-09",
-     "on_hand": 70
-    },
-    {
-     "code": "WH03-10",
-     "on_hand": 73
-    },
-    {
-     "code": "WH03-11",
-     "on_hand": 29
-    },
-    {
-     "code": "WH03-12",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH04",
-   "on_hand": 70397,
-   "locations": [
-    {
-     "code": "WH04-01",
-     "on_hand": 41732
-    },
-    {
-     "code": "WH04-02",
-     "on_hand": 4556
-    },
-    {
-     "code": "WH04-03",
-     "on_hand": 4117
-    },
-    {
-     "code": "WH04-04",
-     "on_hand": 1235
-    },
-    {
-     "code": "WH04-05",
-     "on_hand": 432
-    },
-    {
-     "code": "WH04-06",
-     "on_hand": 360
-    },
-    {
-     "code": "WH04-07",
-     "on_hand": 400
-    },
-    {
-     "code": "WH04-08",
-     "on_hand": 252
-    },
-    {
-     "code": "WH04-09",
-     "on_hand": 79
-    },
-    {
-     "code": "WH04-10",
-     "on_hand": 23
-    },
-    {
-     "code": "WH04-11",
-     "on_hand": 7
-    },
-    {
-     "code": "WH04-12",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH05",
-   "on_hand": 2948,
-   "locations": [
-    {
-     "code": "WH05-01",
-     "on_hand": 3032
-    }
-   ]
-  },
-  {
-   "pool": "WH06",
-   "on_hand": 1452,
-   "locations": [
-    {
-     "code": "WH06-01",
-     "on_hand": 1645
-    }
-   ]
-  },
-  {
-   "pool": "WH07",
-   "on_hand": 551,
-   "locations": [
-    {
-     "code": "WH07-01",
-     "on_hand": 813
-    }
-   ]
-  },
-  {
-   "pool": "WH08",
-   "on_hand": 107,
-   "locations": [
-    {
-     "code": "WH08-01",
-     "on_hand": 56
-    },
-    {
-     "code": "WH08-02",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-03",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-04",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-05",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-06",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-07",
-     "on_hand": 0
-    },
-    {
-     "code": "WH08-08",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH09",
-   "on_hand": 5,
-   "locations": [
-    {
-     "code": "WH09-01",
-     "on_hand": 5
-    }
-   ]
-  },
-  {
-   "pool": "WH10",
-   "on_hand": 0,
-   "locations": [
-    {
-     "code": "WH10-01",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH11",
-   "on_hand": 0,
-   "locations": [
-    {
-     "code": "WH11-01",
-     "on_hand": 0
-    }
-   ]
-  },
-  {
-   "pool": "WH12",
-   "on_hand": 0,
-   "locations": [
-    {
-     "code": "WH12-01",
-     "on_hand": 0
-    }
-   ]
-  }
- ],
- "reorder": {
-  "below_count": 1527,
-  "set_count": 11467,
-  "examples": [
-   {
-    "code": "PRD-0001",
-    "level": 200,
-    "available": 40
-   },
-   {
-    "code": "PRD-0002",
-    "level": 600,
-    "available": 484
-   },
-   {
-    "code": "PRD-0003",
-    "level": 150,
-    "available": 38
-   }
-  ]
- },
- "approvals": {
-  "total": 1,
-  "purchase_requests": 1,
-  "quotation_documents": 0
- },
- "masked": true
-}</script>
+<script id="town-data" type="application/json">{"schema": 1, "company": "Demo Company", "day": "2026-11-03", "as_of": "2026-11-03T22:00:00+08:00", "data_as_of": "2026-11-04T10:24:00+08:00", "phase": "day", "today": {"amount": "513912.31", "invoice_count": 227, "credit_note_count": 1, "customer_count": 114, "dealer_customer_count": 96, "dealer_amount": "322758.80"}, "shops": [{"key": "300-X001", "code": "300-X001", "name": "Dealer A01 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 1, "ninety_day_amount": "1056208.79", "today_amount": null, "today_docs": null}, {"key": "300-X002", "code": "300-X002", "name": "Dealer B02 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 2, "ninety_day_amount": "628494.41", "today_amount": null, "today_docs": null}, {"key": "300-X003", "code": "300-X003", "name": "Dealer C03 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 3, "ninety_day_amount": "724495.55", "today_amount": "9589.40", "today_docs": 10}, {"key": "300-X004", "code": "300-X004", "name": "Dealer D04 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 4, "ninety_day_amount": "566084.18", "today_amount": null, "today_docs": null}, {"key": "300-X005", "code": "300-X005", "name": "Dealer E05 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 5, "ninety_day_amount": "392515.11", "today_amount": null, "today_docs": null}, {"key": "300-X006", "code": "300-X006", "name": "Dealer F06 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 6, "ninety_day_amount": "210309.31", "today_amount": null, "today_docs": null}, {"key": "300-X007", "code": "300-X007", "name": "Dealer G07 Sdn Bhd", "account_label": null, "kind": "shop", "rank": 7, "ninety_day_amount": "297459.18", "today_amount": null, "today_docs": null}, {"key": "300-X008", "code": "300-X008", "name": "Dealer H08 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 8, "ninety_day_amount": "176557.28", "today_amount": null, "today_docs": null}, {"key": "300-X009", "code": "300-X009", "name": "Dealer I09 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 9, "ninety_day_amount": "238537.48", "today_amount": null, "today_docs": null}, {"key": "300-X010", "code": "300-X010", "name": "Dealer J10 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 10, "ninety_day_amount": "163384.00", "today_amount": null, "today_docs": null}, {"key": "300-X011", "code": "300-X011", "name": "Dealer K11 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "shop", "rank": 11, "ninety_day_amount": "156037.36", "today_amount": null, "today_docs": null}, {"key": "300-X012", "code": "300-X012", "name": "Dealer L12 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 12, "ninety_day_amount": "213681.09", "today_amount": null, "today_docs": null}, {"key": "300-X013", "code": "300-X013", "name": "Dealer M13 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 13, "ninety_day_amount": "275417.24", "today_amount": null, "today_docs": null}, {"key": "300-X014", "code": "300-X014", "name": "Dealer N14 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 14, "ninety_day_amount": "150860.98", "today_amount": null, "today_docs": null}, {"key": "300-X015", "code": "300-X015", "name": "Dealer O15 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 15, "ninety_day_amount": "165229.42", "today_amount": null, "today_docs": null}, {"key": "300-X016", "code": "300-X016", "name": "Dealer P16 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 16, "ninety_day_amount": "225315.89", "today_amount": null, "today_docs": null}, {"key": "300-X017", "code": "300-X017", "name": "Dealer Q17 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 17, "ninety_day_amount": "276325.34", "today_amount": null, "today_docs": null}, {"key": "300-X018", "code": "300-X018", "name": "Dealer R18 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 18, "ninety_day_amount": "214379.17", "today_amount": null, "today_docs": null}, {"key": "300-X019", "code": "300-X019", "name": "Dealer S19 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 19, "ninety_day_amount": "180577.99", "today_amount": null, "today_docs": null}, {"key": "300-X020", "code": "300-X020", "name": "Dealer T20 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 20, "ninety_day_amount": "246255.08", "today_amount": null, "today_docs": null}, {"key": "300-X021", "code": "300-X021", "name": "Dealer U21 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 21, "ninety_day_amount": "108533.31", "today_amount": null, "today_docs": null}, {"key": "300-X022", "code": "300-X022", "name": "Dealer V22 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 22, "ninety_day_amount": "216804.13", "today_amount": null, "today_docs": null}, {"key": "300-X023", "code": "300-X023", "name": "Dealer W23 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 23, "ninety_day_amount": "133100.64", "today_amount": null, "today_docs": null}, {"key": "300-X024", "code": "300-X024", "name": "Dealer X24 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 24, "ninety_day_amount": "114254.89", "today_amount": null, "today_docs": null}, {"key": "300-X025", "code": "300-X025", "name": "Dealer Y25 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 25, "ninety_day_amount": "109596.40", "today_amount": null, "today_docs": null}, {"key": "300-X026", "code": "300-X026", "name": "Dealer Z26 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 26, "ninety_day_amount": "132540.33", "today_amount": null, "today_docs": null}, {"key": "300-X027", "code": "300-X027", "name": "Dealer A27 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 27, "ninety_day_amount": "188015.12", "today_amount": null, "today_docs": null}, {"key": "300-X028", "code": "300-X028", "name": "Dealer B28 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 28, "ninety_day_amount": "111443.34", "today_amount": null, "today_docs": null}, {"key": "300-X029", "code": "300-X029", "name": "Dealer C29 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "shop", "rank": 29, "ninety_day_amount": "158226.90", "today_amount": null, "today_docs": null}, {"key": "300-X030", "code": "300-X030", "name": "Dealer D30 Sdn Bhd [A/C III]", "account_label": "A/C III", "kind": "shop", "rank": 30, "ninety_day_amount": "164686.18", "today_amount": "24269.29", "today_docs": 3}, {"key": "300-X031", "code": "300-X031", "name": "Dealer E31 Sdn Bhd [A/C I]", "account_label": "A/C I", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "12822.63", "today_docs": 2}, {"key": "300-X032", "code": "300-X032", "name": "Dealer F32 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7867.97", "today_docs": 2}, {"key": "300-X033", "code": "300-X033", "name": "Dealer G33 Sdn Bhd [A/C IV]", "account_label": "A/C IV", "kind": "stall", "rank": null, "ninety_day_amount": null, "today_amount": "7398.45", "today_docs": 4}], "warehouses": [{"pool": "WH01", "on_hand": 971213, "locations": [{"code": "WH01-01", "on_hand": 963400}, {"code": "WH01-02", "on_hand": 109727}, {"code": "WH01-03", "on_hand": 47442}, {"code": "WH01-04", "on_hand": 51047}, {"code": "WH01-05", "on_hand": 13927}, {"code": "WH01-06", "on_hand": 3404}, {"code": "WH01-07", "on_hand": 3982}, {"code": "WH01-08", "on_hand": 3200}, {"code": "WH01-09", "on_hand": 2216}, {"code": "WH01-10", "on_hand": 1207}, {"code": "WH01-11", "on_hand": 571}, {"code": "WH01-12", "on_hand": 945}, {"code": "WH01-13", "on_hand": 41}, {"code": "WH01-14", "on_hand": 0}, {"code": "WH01-15", "on_hand": 0}]}, {"pool": "WH02", "on_hand": 114132, "locations": [{"code": "WH02-01", "on_hand": 125396}, {"code": "WH02-02", "on_hand": 11627}, {"code": "WH02-03", "on_hand": 6383}, {"code": "WH02-04", "on_hand": 6162}, {"code": "WH02-05", "on_hand": 1860}, {"code": "WH02-06", "on_hand": 408}, {"code": "WH02-07", "on_hand": 169}, {"code": "WH02-08", "on_hand": 150}, {"code": "WH02-09", "on_hand": 75}, {"code": "WH02-10", "on_hand": 59}, {"code": "WH02-11", "on_hand": 0}]}, {"pool": "WH03", "on_hand": 174002, "locations": [{"code": "WH03-01", "on_hand": 144462}, {"code": "WH03-02", "on_hand": 14555}, {"code": "WH03-03", "on_hand": 13166}, {"code": "WH03-04", "on_hand": 1246}, {"code": "WH03-05", "on_hand": 1327}, {"code": "WH03-06", "on_hand": 300}, {"code": "WH03-07", "on_hand": 163}, {"code": "WH03-08", "on_hand": 120}, {"code": "WH03-09", "on_hand": 70}, {"code": "WH03-10", "on_hand": 73}, {"code": "WH03-11", "on_hand": 29}, {"code": "WH03-12", "on_hand": 0}]}, {"pool": "WH04", "on_hand": 70397, "locations": [{"code": "WH04-01", "on_hand": 41732}, {"code": "WH04-02", "on_hand": 4556}, {"code": "WH04-03", "on_hand": 4117}, {"code": "WH04-04", "on_hand": 1235}, {"code": "WH04-05", "on_hand": 432}, {"code": "WH04-06", "on_hand": 360}, {"code": "WH04-07", "on_hand": 400}, {"code": "WH04-08", "on_hand": 252}, {"code": "WH04-09", "on_hand": 79}, {"code": "WH04-10", "on_hand": 23}, {"code": "WH04-11", "on_hand": 7}, {"code": "WH04-12", "on_hand": 0}]}, {"pool": "WH05", "on_hand": 2948, "locations": [{"code": "WH05-01", "on_hand": 3032}]}, {"pool": "WH06", "on_hand": 1452, "locations": [{"code": "WH06-01", "on_hand": 1645}]}, {"pool": "WH07", "on_hand": 551, "locations": [{"code": "WH07-01", "on_hand": 813}]}, {"pool": "WH08", "on_hand": 107, "locations": [{"code": "WH08-01", "on_hand": 56}, {"code": "WH08-02", "on_hand": 0}, {"code": "WH08-03", "on_hand": 0}, {"code": "WH08-04", "on_hand": 0}, {"code": "WH08-05", "on_hand": 0}, {"code": "WH08-06", "on_hand": 0}, {"code": "WH08-07", "on_hand": 0}, {"code": "WH08-08", "on_hand": 0}]}, {"pool": "WH09", "on_hand": 5, "locations": [{"code": "WH09-01", "on_hand": 5}]}, {"pool": "WH10", "on_hand": 0, "locations": [{"code": "WH10-01", "on_hand": 0}]}, {"pool": "WH11", "on_hand": 0, "locations": [{"code": "WH11-01", "on_hand": 0}]}, {"pool": "WH12", "on_hand": 0, "locations": [{"code": "WH12-01", "on_hand": 0}]}], "reorder": {"below_count": 1527, "set_count": 11467, "examples": [{"code": "PRD-0001", "level": 200, "available": 40}, {"code": "PRD-0002", "level": 600, "available": 484}, {"code": "PRD-0003", "level": 150, "available": 38}]}, "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}, "masked": true, "compare": {"label": "Tue 27 Oct", "last_week_amount": "468000.00"}, "deliveries": {"to_deliver": 14}, "samples": ["compare", "deliveries"]}</script>
 <script type="module">
 const DATA = JSON.parse(document.getElementById('town-data').textContent);
 const root = document.documentElement;
 const state = { redact: false, wallboard: false, night: false };
-const rm = (s) => s == null ? null : 'RM ' + Number(s).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rm = (s) => 'RM ' + Number(s).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rm0 = (s) => 'RM ' + Math.round(Number(s)).toLocaleString('en-MY');
 const n = (v) => Number(v).toLocaleString('en-MY');
-const shopName = (s) => state.wallboard ? (s.kind === 'shop' ? `Shop #${s.rank}` : 'Stall') + (s.account_label ? ` [${s.account_label}]` : '') : s.name;
+const short = (name) => name.replace(/\s*(SDN\.?\s*BHD\.?|ENTERPRISE|MARKETING|TRADING|\(M\))/gi, '').replace(/\s+/g, ' ').trim();
+const shopLabel = (s) => state.redact ? 'Dealer' : state.wallboard ? (s.rank ? `Shop #${s.rank}` : 'Dealer') : short(s.name);
+const T = DATA.today, C = DATA.compare, D = DATA.deliveries, A = DATA.approvals, R = DATA.reorder;
+const bought = DATA.shops.filter(s => s.today_docs);
+const othersToday = Math.max(0, (T.dealer_customer_count || 0) - bought.length);
+const pct = C ? (Number(T.amount) - Number(C.last_week_amount)) / Number(C.last_week_amount) * 100 : null;
+const sample = new Set(DATA.samples || []);
 
 document.getElementById('asof').textContent = 'Tue 3 Nov 2026 · data as of 4 Nov, 10:24';
 document.getElementById('company').textContent = DATA.company;
 document.getElementById('dataNotice').textContent = (DATA.masked
   ? 'Masked copy: names, codes and figures are scrambled. The real-data copy goes to the owner through crew, never to GitHub. '
   : 'Real dev data, Sorento (SRT), Tue 3 Nov 2026 (last full day in the dev copy). Do not share outside the owner. ')
-  + 'Today figures per shop exist in this extract only for the top dealers of the day; other shops show their 90-day rank only.';
+  + (sample.size ? 'Figures marked "sample" (last week, to deliver) are placeholders until their data and definition are confirmed. ' : '')
+  + 'Per-shop today figures exist in this extract only for the day\'s top dealers.';
 
-function renderBanner() {
-  const t = DATA.today;
-  const amount = state.redact ? '' : `<span class="big">${rm(t.amount)}</span>`;
-  document.getElementById('banner').innerHTML = `${amount}
-    <span class="stat"><b>${n(t.invoice_count)}</b> invoices</span>
-    <span class="stat"><b>${n(t.credit_note_count)}</b> credit note${t.credit_note_count === 1 ? '' : 's'}</span>
-    <span class="stat"><b>${n(t.customer_count)}</b> customers</span>
-    <span class="stat">Approvals ${DATA.approvals.total ? `<b>${DATA.approvals.total}</b>` : '<span class="badge ok">All clear</span>'}</span>`;
+/* ---------------- 2D cards ---------------- */
+function renderCards() {
+  const S = (k) => sample.has(k) ? ' <span class="chip sample">sample</span>' : '';
+  const vs = pct == null ? '' : `<span class="${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%</span> vs ${C.label}${S('compare')}`;
+  document.getElementById('cards').innerHTML = `
+    <div class="card" data-k="sales"><div class="ic" style="background:#0f766e">RM</div><div class="q">How much did we sell today?</div>
+      <div class="v">${state.redact ? n(T.invoice_count) + ' invoices' : rm(T.amount)}</div><div class="s">${state.redact ? '' : n(T.invoice_count) + ' invoices · '}${vs}</div></div>
+    <div class="card" data-k="bought"><div class="ic" style="background:var(--lit)">${bought.length + othersToday}</div><div class="q">Who bought today?</div>
+      <div class="v">${n(T.dealer_customer_count || bought.length)} dealers</div>
+      <ul>${bought.slice(0, 5).map(s => `<li><span>${shopLabel(s)}</span><span>${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm0(s.today_amount)}</span></li>`).join('')}</ul></div>
+    <div class="card" data-k="low"><div class="ic" style="background:var(--low)">!</div><div class="q">What stock is low?</div>
+      <div class="v">${n(R.below_count)} products</div><div class="s">below reorder level</div></div>
+    <div class="card" data-k="deliver"><div class="ic" style="background:var(--deliver)">${D ? D.to_deliver : '-'}</div><div class="q">What must go out?</div>
+      <div class="v">${D ? n(D.to_deliver) + ' to deliver' : '-'}${S('deliveries')}</div><div class="s">delivery orders waiting</div></div>
+    <div class="card" data-k="approve"><div class="ic" style="background:var(--approve)">${A.total}</div><div class="q">What needs a decision?</div>
+      <div class="v">${A.total ? A.total + ' waiting' : 'All clear'}</div><div class="s">${A.purchase_requests} purchase request${A.purchase_requests === 1 ? '' : 's'} · ${A.quotation_documents} quotations</div></div>`;
+  document.querySelectorAll('.card').forEach(c => c.onclick = () => open[c.dataset.k]());
 }
 
+/* ---------------- panels (shared by both views) ---------------- */
 const panel = document.getElementById('panel'), panelBody = document.getElementById('panelBody');
 document.getElementById('panelClose').onclick = () => panel.classList.remove('open');
-function openPanel(html) { panelBody.innerHTML = html; panel.classList.add('open'); }
-function shopPanel(s) {
-  const amt = (v) => state.redact ? '' : (v == null ? '<span style="color:var(--muted-foreground)">Not in extract</span>' : rm(v));
-  openPanel(`<h2>${shopName(s)}</h2>
-    <div class="meta">${state.wallboard ? '' : s.code + ' · '}${s.kind === 'shop' ? 'Rank ' + s.rank + ' of 30 by 90-day invoiced sales' : 'Invoiced today, outside the top 30'}</div>
-    <table>
-      <tr><td>Invoices today</td><td>${s.today_docs ?? '-'}</td></tr>
-      ${state.redact ? '' : `<tr><td>Invoiced today</td><td>${amt(s.today_amount)}</td></tr>`}
-      ${state.redact || s.kind !== 'shop' ? '' : `<tr><td>Last 90 days</td><td>${amt(s.ninety_day_amount)}</td></tr>`}
-    </table>
-    <p style="margin:12px 0 0"><button class="btn">Open invoices</button></p>`);
-}
-function warehousePanel(w) {
-  const max = Math.max(1, ...w.locations.map(l => l.on_hand));
-  openPanel(`<h2>${w.pool}</h2><div class="meta">${w.locations.length} location${w.locations.length === 1 ? '' : 's'} · ${n(w.on_hand)} on hand</div>
-    <table>${w.locations.slice(0, 14).map(l => `<tr><td>${l.code}<div class="bar"><i style="width:${(100 * l.on_hand / max).toFixed(1)}%"></i></div></td><td>${n(l.on_hand)}</td></tr>`).join('')}</table>
-    ${w.locations.length > 14 ? `<div class="meta" style="margin-top:6px">+${w.locations.length - 14} more</div>` : ''}
-    <p style="margin:12px 0 0"><button class="btn">Open stock balances</button></p>`);
-}
-function reorderPanel() {
-  const r = DATA.reorder;
-  openPanel(`<h2>${n(r.below_count)} products below reorder level</h2><div class="meta">of ${n(r.set_count)} with a level set</div>
-    <table>${r.examples.map(e => `<tr><td>${e.code}<div class="bar"><i style="width:${Math.min(100, 100 * e.available / e.level).toFixed(0)}%;background:var(--warning)"></i></div></td><td>${n(e.available)} / ${n(e.level)}</td></tr>`).join('')}</table>
-    <p style="margin:12px 0 0"><button class="btn">Open reorder list</button></p>`);
-}
-function approvalsPanel() {
-  const a = DATA.approvals;
-  openPanel(`<h2>Approvals</h2><div class="meta">${a.total ? a.total + ' waiting' : 'All clear'}</div>
-    <table><tr><td>Purchase requests</td><td>${a.purchase_requests}</td></tr><tr><td>Quotation documents</td><td>${a.quotation_documents}</td></tr></table>`);
-}
+const show = (html) => { panelBody.innerHTML = html; panel.classList.add('open'); hideHint(); };
+const open = {
+  sales: () => show(`<h2>Today's sales</h2><div class="meta">Same figure as the sales report</div><table>
+      ${state.redact ? '' : `<tr><td>Invoiced today</td><td>${rm(T.amount)}</td></tr>`}
+      <tr><td>Invoices</td><td>${n(T.invoice_count)}</td></tr><tr><td>Credit notes</td><td>${n(T.credit_note_count)}</td></tr>
+      <tr><td>Customers</td><td>${n(T.customer_count)}</td></tr>
+      ${C && !state.redact ? `<tr><td>${C.label}${sample.has('compare') ? ' (sample)' : ''}</td><td>${rm(C.last_week_amount)}</td></tr>` : ''}</table>
+      <p style="margin:12px 0 0"><button class="btn">Open sales report</button></p>`),
+  bought: () => show(`<h2>Bought today</h2><div class="meta">${n(T.dealer_customer_count || bought.length)} dealers invoiced today</div><table>
+      ${bought.map(s => `<tr><td>${shopLabel(s)}</td><td>${state.redact || state.wallboard || !s.today_amount ? s.today_docs + ' inv' : rm(s.today_amount)}</td></tr>`).join('')}
+      ${othersToday ? `<tr><td>+ ${othersToday} more dealers</td><td></td></tr>` : ''}</table>`),
+  shop: (s) => show(`<h2>${shopLabel(s)}</h2><div class="meta">${s.today_docs ? 'Bought today' : 'No invoice today'}${s.rank && !state.redact ? ' · rank ' + s.rank + ' of 30 (90 days)' : ''}</div><table>
+      <tr><td>Invoices today</td><td>${s.today_docs || 0}</td></tr>
+      ${state.redact || state.wallboard || !s.today_amount ? '' : `<tr><td>Invoiced today</td><td>${rm(s.today_amount)}</td></tr>`}
+      ${state.redact || state.wallboard || !s.ninety_day_amount ? '' : `<tr><td>Last 90 days</td><td>${rm(s.ninety_day_amount)}</td></tr>`}</table>
+      ${state.redact ? '' : '<p style="margin:12px 0 0"><button class="btn">Open invoices</button></p>'}`),
+  low: () => show(`<h2>${n(R.below_count)} products low</h2><div class="meta">below their reorder level, of ${n(R.set_count)} with a level</div><table>
+      ${R.examples.map(e => `<tr><td>${e.code}<div class="bar"><i style="width:${Math.min(100, 100 * e.available / e.level).toFixed(0)}%;background:var(--low)"></i></div></td><td>${n(e.available)} / ${n(e.level)}</td></tr>`).join('')}</table>
+      <p style="margin:12px 0 0"><button class="btn">Open reorder list</button></p>`),
+  deliver: () => show(`<h2>${D ? n(D.to_deliver) : '-'} to deliver</h2><div class="meta">${sample.has('deliveries') ? 'Sample figure: definition pending' : 'Delivery orders waiting'}</div><p style="margin:12px 0 0"><button class="btn">Open deliveries</button></p>`),
+  approve: () => show(`<h2>Approvals</h2><div class="meta">${A.total ? A.total + ' waiting for a decision' : 'All clear'}</div><table>
+      <tr><td>Purchase requests</td><td>${A.purchase_requests}</td></tr><tr><td>Quotation documents</td><td>${A.quotation_documents}</td></tr></table>
+      <p style="margin:12px 0 0"><button class="btn">Open approvals</button></p>`),
+};
+let hintTimer = setTimeout(hideHint, 6000);
+function hideHint() { clearTimeout(hintTimer); document.getElementById('hint').classList.add('gone'); try { localStorage.setItem('town_hint_seen', '1'); } catch {} }
+try { if (localStorage.getItem('town_hint_seen')) hideHint(); } catch {}
 
-function renderCards() {
-  const el = document.getElementById('cards'); const t = DATA.today;
-  const shops = DATA.shops.filter(s => s.kind === 'shop');
-  el.innerHTML = `
-    <div class="card"><h3>Today</h3><div class="v">${state.redact ? n(t.invoice_count) + ' invoices' : rm(t.amount)}</div><div class="s">${n(t.invoice_count)} invoices · ${n(t.customer_count)} customers</div></div>
-    <div class="card"><h3>Below reorder level</h3><div class="v">${n(DATA.reorder.below_count)}</div><div class="s">products</div></div>
-    <div class="card"><h3>Approvals</h3><div class="v">${DATA.approvals.total || 'All clear'}</div><div class="s">${DATA.approvals.purchase_requests} purchase requests · ${DATA.approvals.quotation_documents} quotations</div></div>
-    ${shops.slice(0, 9).map(s => `<div class="card"><h3>#${s.rank} ${shopName(s)}</h3><div class="v">${s.today_docs ? s.today_docs + ' invoices today' : '-'}</div><div class="s">${state.redact || !s.today_amount ? '' : rm(s.today_amount)}</div></div>`).join('')}`;
-}
-
-renderBanner();
-
-/* ---------------------------------------------------------------- the scene */
-let THREE;
-try { THREE = await import('three'); } catch (e) { THREE = null; }
+/* ---------------- the scene ---------------- */
+let THREE; try { THREE = await import('three'); } catch { THREE = null; }
 const canvas = document.getElementById('scene');
 const webgl = THREE && (() => { try { return !!canvas.getContext('webgl2'); } catch { return false; } })();
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-if (!webgl || reducedMotion) { document.getElementById('tCards').checked = true; }
-
-let api = null;
-if (webgl) api = buildScene();
+let api = webgl ? buildScene() : null;
+if (!api) document.getElementById('stage').innerHTML = '<div style="padding:24px;color:var(--muted-foreground)">3D is not available on this device; the 2D view beside shows the same answers.</div>';
 
 function buildScene() {
-  /* v2: a crafted low-poly island town. Every repeated thing is ONE InstancedMesh of a merged,
-     vertex-coloured prototype (Kenney-style: flat shading, chunky shapes, warm palette), so the
-     whole town stays around 40 draw calls. Phase 1 swaps the procedural prototypes for one Kenney
-     CC0 kit family loaded as GLB, keeping the same instancing layout. */
+  /* Clarity first: five things on screen, each answering one question, each with a label.
+     Calm palette; nothing is lit or coloured unless it carries meaning. Rendered on demand only. */
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-  const scene = new THREE.Scene();
-  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
+  const scene = new THREE.Scene(); const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
   let yaw = Math.PI / 4, dirty = true;
-  const placeCam = () => { cam.position.set(Math.cos(yaw) * 90, 78, Math.sin(yaw) * 90); cam.lookAt(0, 3.5, 0); dirty = true; };
+  const placeCam = () => { cam.position.set(Math.cos(yaw) * 80, 70, Math.sin(yaw) * 80); cam.lookAt(0, 2, 0); dirty = true; };
   placeCam();
-  const ZOOM = 28;
-  function resize() {
-    const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false);
-    const a = w / h; const z = a < 1 ? ZOOM * 0.92 / a : ZOOM;
-    cam.left = -z * a; cam.right = z * a; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix(); dirty = true;
-  }
-  const hemi = new THREE.HemisphereLight(0xfff4e0, 0x7c8b6a, 1.9); scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffe2b8, 1.7); sun.position.set(-30, 60, 25); scene.add(sun);
+  function resize() { const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false); const a = w / h; const z = a < 1 ? 26 / a : 25; cam.left = -z * a; cam.right = z * a; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix(); dirty = true; }
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xb6c2b0, 2.0); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(-25, 50, 30); scene.add(sun);
 
-  /* ---------- tiny toolkit: seeded RNG, vertex-coloured parts, merge ---------- */
-  let seed = 20261103; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  const C = (hex) => new THREE.Color(hex);
+  const col = (h) => new THREE.Color(h);
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), E = new THREE.Euler();
-  function part(geo, color, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) {
+  function part(geo, color, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0) {
     const g = geo.index ? geo.toNonIndexed() : geo.clone();
-    g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz)));
-    const c = C(color), n = g.attributes.position.count, arr = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+    g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0)), new THREE.Vector3(sx, sy, sz)));
+    const c = col(color), k = g.attributes.position.count, arr = new Float32Array(k * 3);
+    for (let i = 0; i < k; i++) arr.set([c.r, c.g, c.b], i * 3);
     g.setAttribute('color', new THREE.BufferAttribute(arr, 3)); g.deleteAttribute('uv'); return g;
   }
-  function merge(parts) {
-    const out = new THREE.BufferGeometry(); const keys = ['position', 'normal', 'color'];
-    keys.forEach(k => {
-      const total = parts.reduce((s, p) => s + p.attributes[k].array.length, 0); const arr = new Float32Array(total);
-      let o = 0; parts.forEach(p => { arr.set(p.attributes[k].array, o); o += p.attributes[k].array.length; });
-      out.setAttribute(k, new THREE.BufferAttribute(arr, 3));
-    });
-    return out;
-  }
+  function merge(parts) { const out = new THREE.BufferGeometry(); ['position', 'normal', 'color'].forEach(key => { const arr = new Float32Array(parts.reduce((s, p) => s + p.attributes[key].array.length, 0)); let o = 0; parts.forEach(p => { arr.set(p.attributes[key].array, o); o += p.attributes[key].array.length; }); out.setAttribute(key, new THREE.BufferAttribute(arr, 3)); }); return out; }
   const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-  const CYL = (r1, r2, h, s = 8) => new THREE.CylinderGeometry(r1, r2, h, s).translate(0, h / 2, 0);
-  const PRISM = (() => { const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateZ(Math.PI / 2); g.rotateX(Math.PI / 2); g.rotateY(Math.PI / 2); g.translate(0, 0.25, 0); g.scale(1, 1, 1); return g; })();
-  const mat = (opts = {}) => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...opts });
-  const pickables = [];
-  function instanced(geo, material, list, place, onPick) {
-    const mesh = new THREE.InstancedMesh(geo, material, Math.max(1, list.length));
-    list.forEach((item, i) => { place(item, i, M); mesh.setMatrixAt(i, M); });
-    mesh.count = list.length; scene.add(mesh); if (onPick) pickables.push([mesh, (i) => onPick(list[i], i)]); return mesh;
+  const CYL = (r1, r2, h, s = 16) => new THREE.CylinderGeometry(r1, r2, h, s).translate(0, h / 2, 0);
+  const PRISM = (() => { const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateZ(Math.PI / 2); g.rotateX(Math.PI / 2); g.rotateY(Math.PI / 2); g.translate(0, 0.25, 0); return g; })();
+  const mat = () => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const pickables = []; const polar = (r, d) => [Math.cos(d * Math.PI / 180) * r, Math.sin(d * Math.PI / 180) * r];
+  const face = (x, z) => Math.atan2(x, z) + Math.PI;
+
+  // ground: one calm disc, a ring road, four short spokes
+  const ground = merge([
+    part(CYL(27, 28, 1.2, 48), 0xe7e2d6, 0, -1.2), part(CYL(26.6, 26.6, 0.1, 48), 0xd9e8cf, 0, -0.1),
+    part(CYL(9.5, 9.5, 0.06, 48), 0xc4c9cf, 0, 0), part(CYL(7.3, 7.3, 0.08, 48), 0xf3efe6, 0, 0),
+    ...[0, 90, 180, 270].map(a => { const [x, z] = polar(14, a); return part(BOX, 0xc4c9cf, x, 0, z, 9, 0.06, 2.2, -a * Math.PI / 180); }),
+  ]);
+  scene.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ vertexColors: true })));
+
+  // labels: one style, always readable
+  function label(text, x, y, z, bg = 'rgba(255,255,255,0.95)', fg = '#111827', w = 360, scale = 1) {
+    const c = document.createElement('canvas'); c.width = w * 2; c.height = 112; const g = c.getContext('2d');
+    g.fillStyle = bg; g.beginPath(); g.roundRect(4, 4, c.width - 8, 104, 40); g.fill();
+    g.fillStyle = fg; g.font = '600 52px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, c.width / 2, 58);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false })); sp.renderOrder = 10;
+    const k = (canvas.clientWidth < 640 ? 2.0 : 1.4) * scale; sp.scale.set(c.width / 70 * k, c.height / 70 * k, 1); sp.position.set(x, y, z); scene.add(sp); return sp;
   }
-  const at = (x, z, ry = 0, s = 1, sy = s, y = 0) => M.compose(V.set(x, y, z), Q.setFromEuler(E.set(0, ry, 0)), S.set(s, sy, s));
-  const polar = (r, deg) => [Math.cos(deg * Math.PI / 180) * r, Math.sin(deg * Math.PI / 180) * r];
-  const faceCentre = (x, z) => Math.atan2(x, z) + Math.PI; // local +z towards the island centre
 
-  /* ---------- island, water, plaza ---------- */
-  const water = new THREE.Mesh(new THREE.CircleGeometry(50, 48).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x7dd3fc }));
-  water.position.y = -0.9; scene.add(water);
-  const island = merge([
-    part(CYL(34, 35.5, 1.6, 40), 0xd9b98a, 0, -1.75),            // sandy rim
-    part(CYL(33, 33.6, 0.4, 40), 0x8fd17b, 0, -0.4),            // grass
-    part(CYL(6, 6, 0.08, 24), 0xf1e5cf, 0, 0),                  // plaza paving
-    part(CYL(1.6, 1.8, 0.6, 12), 0xcbd5e1, 0, 0),               // fountain basin
-    part(CYL(1.3, 1.3, 0.05, 12), 0x60a5fa, 0, 0.58),           // fountain water
-    part(CYL(0.25, 0.35, 1.6, 8), 0xe2e8f0, 0, 0.6),            // fountain column
-    part(new THREE.SphereGeometry(0.45, 8, 6).translate(0, 2.35, 0), 0x93c5fd),
-  ]);
-  scene.add(new THREE.Mesh(island, mat()));
-
-  /* ---------- roads: one merged ribbon mesh (curves, roundabout, spokes) ---------- */
-  function ribbon(points, width, color, y) {
-    const curve = new THREE.CatmullRomCurve3(points.map(([x, z]) => new THREE.Vector3(x, y, z)));
-    const n = Math.max(24, Math.round(curve.getLength() * 1.2)); const pos = [];
-    const pt = (t) => curve.getPointAt(t), tan = (t) => curve.getTangentAt(t);
-    for (let i = 0; i < n; i++) {
-      const a = pt(i / n), b = pt((i + 1) / n), ta = tan(i / n), tb = tan((i + 1) / n);
-      const na = new THREE.Vector3(-ta.z, 0, ta.x).multiplyScalar(width / 2), nb = new THREE.Vector3(-tb.z, 0, tb.x).multiplyScalar(width / 2);
-      const p1 = a.clone().add(na), p2 = a.clone().sub(na), p3 = b.clone().add(nb), p4 = b.clone().sub(nb);
-      pos.push(...p1.toArray(), ...p3.toArray(), ...p2.toArray(), ...p2.toArray(), ...p3.toArray(), ...p4.toArray());
-    }
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
-    return part(g, color);
+  // (1) scoreboard over the plaza
+  const board = document.createElement('canvas'); board.width = 1024; board.height = 400;
+  const boardTex = new THREE.CanvasTexture(board); boardTex.anisotropy = 4;
+  function drawBoard() {
+    const g = board.getContext('2d'); g.clearRect(0, 0, 1024, 400);
+    g.fillStyle = state.night ? '#0b1220' : '#0f172a'; g.beginPath(); g.roundRect(0, 0, 1024, 400, 36); g.fill();
+    g.fillStyle = '#94a3b8'; g.font = '600 46px Inter, sans-serif'; g.textAlign = 'center'; g.fillText(state.night ? 'CLOSED FOR THE DAY' : 'SOLD TODAY', 512, 74);
+    g.fillStyle = '#ffffff'; g.font = '700 112px Inter, sans-serif'; g.fillText(state.redact ? n(T.invoice_count) + ' invoices' : rm0(T.amount), 512, 200);
+    g.font = '600 48px Inter, sans-serif'; g.fillStyle = '#cbd5e1';
+    const line = (state.redact ? '' : n(T.invoice_count) + ' invoices   ') + (pct == null ? '' : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs ${C.label}`);
+    g.fillText(line, 512, 300); if (sample.has('compare')) { g.fillStyle = '#fbbf24'; g.font = '600 32px Inter, sans-serif'; g.fillText('comparison is a sample', 512, 356); }
+    boardTex.needsUpdate = true; dirty = true;
   }
-  const arc = (r, a0, a1, step = 6) => { const out = []; for (let a = a0; a <= a1 + 0.01; a += step) out.push(polar(r, a)); return out; };
-  const ROAD = 0x6b7280, WALK = 0xe7dcc8;
-  const roadParts = [];
-  const addRoad = (pts, w = 2.4) => { roadParts.push(ribbon(pts, w + 1.2, WALK, 0.02), ribbon(pts, w, ROAD, 0.05)); };
-  addRoad(arc(8.2, 0, 360, 10), 2.2);                       // roundabout
-  addRoad(arc(18, -75, 55));                                 // dealer high street (curved)
-  addRoad(arc(20, 140, 235));                                // warehouse ring
-  addRoad([polar(9.3, -12), polar(13, -14), polar(18, -12)]);   // east spoke
-  addRoad([polar(9.3, 188), polar(14, 186), polar(20, 188)]);  // west spoke
-  addRoad([polar(9.3, 95), polar(16, 98), polar(23, 100)]);    // north spoke to suppliers
-  addRoad([polar(9.3, 278), polar(18, 276), polar(27, 272)]);  // south spoke to the port
-  scene.add(new THREE.Mesh(merge(roadParts), mat()));
+  drawBoard();
+  const boardGroup = new THREE.Group();
+  boardGroup.add(new THREE.Mesh(merge([part(CYL(0.3, 0.35, 6.2, 8), 0x475569, -6.2, 0, 0), part(CYL(0.3, 0.35, 6.2, 8), 0x475569, 6.2, 0, 0), part(CYL(1.1, 1.3, 0.4, 16), 0x94a3b8, -6.2, 0, 0), part(CYL(1.1, 1.3, 0.4, 16), 0x94a3b8, 6.2, 0, 0)]), mat()));
+  const face1 = new THREE.Mesh(new THREE.PlaneGeometry(16.4, 6.4), new THREE.MeshBasicMaterial({ map: boardTex, transparent: true }));
+  face1.position.y = 9.2; boardGroup.add(face1);
+  scene.add(boardGroup); pickables.push([face1, () => open.sales()]);
+  const keepBoardFacing = () => boardGroup.rotation.set(0, yaw > -10 ? Math.atan2(cam.position.x, cam.position.z) : 0, 0);
+  keepBoardFacing();
 
-  /* ---------- dealer shops: varied silhouettes, awning + signboard in the shop's colour ---------- */
-  const shopColours = [0xef4444, 0xf97316, 0xf59e0b, 0x10b981, 0x06b6d4, 0x3b82f6, 0x8b5cf6, 0xec4899];
-  const shops = DATA.shops.filter(s => s.kind === 'shop');
-  const stalls = DATA.shops.filter(s => s.kind === 'stall');
-  const slots = [];
-  for (let i = 0; i < 12; i++) slots.push(polar(14.2, -68 + i * (118 / 11)));
-  for (let i = 0; i < 18; i++) slots.push(polar(21.8, -72 + i * (124 / 17)));
-  const shopSlot = shops.map((s, i) => ({ s, i, x: slots[i][0], z: slots[i][1], ry: faceCentre(slots[i][0], slots[i][1]) + (i >= 12 ? Math.PI : 0),
-    h: 1.6 + (30 - s.rank) / 30 * 2.6, w: 2.1 + rnd() * 0.3, style: Math.floor(rnd() * 3) }));
-  const wall = [0xfff7ed, 0xfef3c7, 0xf5f5f4, 0xfde68a, 0xe0f2fe];
-  // body: walls + door + shop window, vertex coloured; one prototype, scaled per shop
-  const shopBodyGeo = merge([
-    part(BOX, 0xffffff, 0, 0, 0, 1, 1, 1),
-    part(BOX, 0x7c4a1e, 0.25, 0, 0.505, 0.22, 0.42, 0.02),       // door
-    part(BOX, 0x93c5fd, -0.18, 0.18, 0.505, 0.38, 0.32, 0.02),   // shop window
-  ]);
-  const bodyMesh = instanced(shopBodyGeo, mat(), shopSlot, (o) => M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w, o.h, o.w * 0.9)), (o) => shopPanel(o.s));
-  shopSlot.forEach((o, i) => bodyMesh.setColorAt(i, C(wall[i % wall.length])));
-  // three roof families
-  const gable = merge([part(PRISM, 0xffffff, 0, 0, 0, 1.12, 1.4, 1.05)]);
-  const hip = merge([part(new THREE.ConeGeometry(0.78, 0.7, 4).rotateY(Math.PI / 4).translate(0, 0.35, 0), 0xffffff)]);
-  const flat = merge([part(BOX, 0xffffff, 0, 0, 0, 1.06, 0.18, 1.0), part(BOX, 0x9ca3af, 0.25, 0.18, -0.1, 0.25, 0.25, 0.25)]);
-  const roofTone = [0xb45309, 0x9a3412, 0x475569, 0x166534, 0x7f1d1d];
-  [gable, hip, flat].forEach((geo, style) => {
-    const list = shopSlot.filter(o => o.style === style);
-    const m = instanced(geo, mat(), list, (o) => M.compose(V.set(o.x, o.h, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w, style === 2 ? 1 : o.w * 0.75, o.w * 0.9)), (o) => shopPanel(o.s));
-    list.forEach((o, k) => m.setColorAt(k, C(roofTone[(o.i * 7) % roofTone.length])));
-  });
-  // awning (slanted) + signboard, tinted with the shop's colour
-  const awningGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 1, 0.08, 0.45, 0, -0.45), part(BOX, 0xffffff, 0, 0.62, -0.18, 0.7, 0.32, 0.06)]);
-  const awn = instanced(awningGeo, mat(), shopSlot, (o) => {
-    const fwd = new THREE.Vector3(Math.sin(o.ry), 0, Math.cos(o.ry)).multiplyScalar(o.w * 0.45 + 0.2);
-    M.compose(V.set(o.x + fwd.x, Math.min(o.h * 0.55, 1.5), o.z + fwd.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w * 0.95, 1, 1));
-  }, (o) => shopPanel(o.s));
-  shopSlot.forEach((o, i) => awn.setColorAt(i, C(shopColours[i % shopColours.length])));
-  // windows (upper floors): emissive at night
-  const winMat = new THREE.MeshLambertMaterial({ color: 0xfef3c7, emissive: 0xfbbf24, emissiveIntensity: 0, flatShading: true });
-  const winRows = []; shopSlot.forEach(o => { for (let f = 1; f * 1.05 + 0.9 < o.h; f++) winRows.push({ o, y: 0.55 + f * 1.05 }); });
-  instanced(merge([part(BOX, 0xffffff, -0.25, 0, 0.505, 0.22, 0.3, 0.03), part(BOX, 0xffffff, 0.25, 0, 0.505, 0.22, 0.3, 0.03)]), winMat, winRows,
-    (w) => M.compose(V.set(w.o.x, w.y, w.o.z), Q.setFromEuler(E.set(0, w.o.ry, 0)), S.set(w.o.w, 1, w.o.w * 0.9)));
-  // today's sales: a gold coin spinning above shops invoiced today
-  const coinShops = shopSlot.filter(o => o.s.today_amount != null || o.s.today_docs);
-  const coins = instanced(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 14).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xfacc15, emissive: 0x854d0e, emissiveIntensity: 0.4 }), coinShops, () => {});
-
-  /* ---------- market stalls on the plaza (invoiced today, outside the top 30) ---------- */
-  const stallGeo = merge([
-    part(BOX, 0xa16207, 0, 0, 0, 1.4, 0.7, 0.8),
-    part(CYL(0.05, 0.05, 1.4, 5), 0x78350f, -0.62, 0.7, -0.32), part(CYL(0.05, 0.05, 1.4, 5), 0x78350f, 0.62, 0.7, -0.32),
-    part(PRISM, 0xffffff, 0, 1.95, 0, 1.7, 0.9, 1.2),
-  ]);
-  const stallSlot = stalls.map((s, i) => { const [x, z] = polar(4.4, 200 + i * 40); return { s, x, z, ry: faceCentre(x, z) }; });
-  const stallMesh = instanced(stallGeo, mat(), stallSlot, (o) => at(o.x, o.z, o.ry), (o) => shopPanel(o.s));
-  stallSlot.forEach((o, i) => stallMesh.setColorAt(i, C([0xfb7185, 0x38bdf8, 0xa3e635, 0xfbbf24][i % 4])));
-
-  /* ---------- town hall with the approvals sign ---------- */
-  const hallGeo = merge([
-    part(BOX, 0xf5f5f4, 0, 0, 0, 5, 2.6, 3.2), part(PRISM, 0x7c3aed, 0, 2.6, 0, 5.4, 2.4, 3.6),
-    part(BOX, 0xe7e5e4, 0, 0, 1.75, 5.4, 0.3, 0.6),
-    ...[-1.8, -0.6, 0.6, 1.8].map(x => part(CYL(0.18, 0.18, 2.3, 8), 0xffffff, x, 0.3, 1.8)),
-    part(CYL(0.6, 0.6, 1.2, 10), 0xe9d5ff, 0, 3.5, 0), part(new THREE.ConeGeometry(0.75, 1, 10).translate(0, 5.2, 0), 0x6d28d9),
-    part(BOX, 0x4c1d95, 0, 0, 1.62, 0.9, 1.5, 0.05),
-  ]);
-  const hallPos = polar(10.8, 130);
-  const hall = new THREE.Mesh(hallGeo, mat()); hall.position.set(hallPos[0], 0, hallPos[1]); hall.rotation.y = faceCentre(...hallPos); scene.add(hall);
-  pickables.push([hall, () => approvalsPanel()]);
-
-  /* ---------- warehouse pools: curved roofs, roller doors, loading bay; pallets show stock ---------- */
-  const wh = DATA.warehouses;
-  const whSlot = wh.map((w, i) => {
-    const inner = i < 5; const k = inner ? i : i - 5; const n = inner ? 5 : 7;
-    const [x, z] = polar(inner ? 15.2 : 25.4, 146 + k * (84 / (n - 1)));
-    const big = i < 4; return { w, i, x, z, ry: faceCentre(x, z) + (inner ? 0 : Math.PI), s: big ? 1.25 : 0.95 };
-  });
-  const barrel = new THREE.CylinderGeometry(1, 1, 1, 12, 1, false, 0, Math.PI); barrel.rotateZ(Math.PI / 2); barrel.rotateY(Math.PI / 2);
-  const whGeo = merge([
-    part(BOX, 0xcbd5e1, 0, 0, 0, 4, 1.8, 3.2),
-    part(barrel, 0x64748b, 0, 1.8, 0, 2, 0.9, 1.0, Math.PI / 2),
-    ...[-1.1, 0, 1.1].map(x => part(BOX, 0x94a3b8, x, 0.02, 1.61, 0.8, 1.2, 0.04)),           // roller doors
-    ...[-1.1, 0, 1.1].flatMap(x => [0.3, 0.6, 0.9].map(y => part(BOX, 0x64748b, x, y, 1.64, 0.8, 0.04, 0.02))),
-    part(BOX, 0x9ca3af, 0, 0, 2.05, 4, 0.45, 0.9),                                              // loading bay
-    part(BOX, 0xfacc15, 1.75, 0.45, 2.45, 0.15, 0.06, 0.06),
-  ]);
-  instanced(whGeo, mat(), whSlot, (o) => at(o.x, o.z, o.ry, o.s), (o) => warehousePanel(o.w));
-  // pallet stacks next to each building: number of crates from log(on hand)
-  const maxOh = Math.max(...wh.map(w => w.on_hand), 1); const crates = [];
-  whSlot.forEach(o => {
-    const n = Math.round(1 + 8 * Math.log10(1 + o.w.on_hand) / Math.log10(1 + maxOh)) * (o.w.on_hand > 0 ? 1 : 0);
-    const side = new THREE.Vector3(Math.cos(o.ry), 0, -Math.sin(o.ry)).multiplyScalar(2.9 * o.s);
-    for (let c = 0; c < n; c++) crates.push({ o, x: o.x + side.x + ((c % 2) - 0.5) * 0.7, z: o.z + side.z + ((Math.floor(c / 2) % 2) - 0.5) * 0.7, y: Math.floor(c / 4) * 0.62 });
-  });
-  instanced(merge([part(BOX, 0xd97706, 0, 0.08, 0, 0.62, 0.5, 0.62), part(BOX, 0x92400e, 0, 0, 0, 0.66, 0.08, 0.66)]), mat(), crates,
-    (c) => at(c.x, c.z, c.o.ry, 1, 1, c.y), (c) => warehousePanel(c.o.w));
-
-  /* ---------- suppliers (factories with smoking chimneys) and the port ---------- */
-  const factoryGeo = merge([
-    part(BOX, 0xe5e7eb, 0, 0, 0, 5, 2.2, 3.4),
-    ...[-1.7, -0.55, 0.6, 1.75].map(x => part(PRISM, 0x0f766e, x, 2.2, 0, 1.15, 1.6, 3.4)),
-    part(CYL(0.35, 0.45, 4.8, 8), 0xb91c1c, 1.9, 0, -1.1), part(CYL(0.47, 0.47, 0.35, 8), 0xf5f5f4, 1.9, 4.0, -1.1),
-    part(BOX, 0x334155, -1.2, 0, 1.71, 1.2, 1.4, 0.04),
-  ]);
-  const factories = [0, 1, 2].map(k => { const [x, z] = polar(26, 82 + k * 17); return { x, z, ry: faceCentre(x, z) }; });
-  instanced(factoryGeo, mat(), factories, (o) => at(o.x, o.z, o.ry));
-  const puffs = []; factories.forEach(o => { for (let p = 0; p < 4; p++) puffs.push({ o, p }); });
-  const smoke = instanced(new THREE.IcosahedronGeometry(0.45, 0), new THREE.MeshLambertMaterial({ color: 0xf1f5f9, flatShading: true, transparent: true, opacity: 0.85 }), puffs, () => {});
-  const chimneyTop = (o) => { const c = new THREE.Vector3(1.9, 4.4, -1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), o.ry); return c.add(new THREE.Vector3(o.x, 0, o.z)); };
-
-  const portBase = polar(31, 272);
-  const dockGeo = merge([
-    part(BOX, 0x92400e, 0, -0.6, 0, 12, 0.7, 6),                                   // timber quay
-    ...[-5, -2.5, 0, 2.5, 5].map(x => part(CYL(0.2, 0.2, 1.6, 6), 0x78350f, x, -1.6, 3)),
-    part(BOX, 0xf59e0b, 4, 0.1, -1.6, 0.4, 6.5, 0.4), part(BOX, 0xf59e0b, 4, 0.1, 1.2, 0.4, 6.5, 0.4),   // crane legs
-    part(BOX, 0xf59e0b, 4, 6.4, 1.5, 0.5, 0.5, 9), part(BOX, 0x1f2937, 4, 5.6, 4.6, 0.8, 0.8, 0.8),
-  ]);
-  const dock = new THREE.Mesh(dockGeo, mat()); dock.position.set(portBase[0], 0.1, portBase[1] + 1); dock.rotation.y = faceCentre(...portBase) + Math.PI; scene.add(dock);
-  const boxes = []; const boxCols = [0xdc2626, 0x2563eb, 0x16a34a, 0xf59e0b, 0x0891b2, 0x7c3aed];
-  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) for (let l = 0; l < 1 + ((r * 4 + c) % 3); l++) boxes.push({ r, c, l });
-  const boxDir = faceCentre(...portBase) + Math.PI;
-  const cont = instanced(merge([part(BOX, 0xffffff, 0, 0, 0, 2.2, 0.9, 0.95), ...[-0.7, -0.35, 0, 0.35, 0.7].map(x => part(BOX, 0xe5e7eb, x, 0.05, 0.48, 0.05, 0.8, 0.02))]), mat(), boxes, (b) => {
-    const local = new THREE.Vector3(-4 + b.c * 2.4, 0, -1.6 + b.r * 1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), boxDir);
-    M.compose(V.set(portBase[0] + local.x, b.l * 0.92, portBase[1] + 1 + local.z), Q.setFromEuler(E.set(0, boxDir, 0)), S.set(1, 1, 1));
-  });
-  boxes.forEach((b, i) => cont.setColorAt(i, C(boxCols[(b.r * 5 + b.c * 3 + b.l) % boxCols.length])));
-  const shipGeo = merge([
-    part(BOX, 0x1e3a8a, 0, -0.9, 0, 11, 1.6, 3.4), part(BOX, 0xdc2626, 0, -1.05, 0, 11.1, 0.35, 3.45),
-    part(BOX, 0xf8fafc, -3.6, 0.7, 0, 2.4, 1.8, 2.8), part(CYL(0.3, 0.3, 1.2, 8), 0xf59e0b, -3.6, 2.5, 0),
-    ...[0, 1, 2, 3].map(k => part(BOX, boxCols[k], -1 + k * 1.7, 0.7, 0, 1.5, 0.85, 2.6)),
-  ]);
-  const ship = new THREE.Mesh(shipGeo, mat()); const shipPos = polar(43, 274); ship.position.set(shipPos[0], 0, shipPos[1]); ship.rotation.y = boxDir + Math.PI / 2; scene.add(ship);
-
-  /* ---------- street furniture, trees: seeded scatter, avoiding roads and lots ---------- */
-  const busy = (x, z) => {
-    const r = Math.hypot(x, z), a = (Math.atan2(z, x) * 180 / Math.PI + 360) % 360;
-    if (r < 12.5 || r > 32.5) return true;
-    if ((a > 285 || a < 60) && r > 12 && r < 24.5) return true;          // high street + shops
-    if (a > 138 && a < 240 && r > 12.5 && r < 28.5) return true;         // warehouses
-    if (a > 75 && a < 126 && r > 21 && r < 30) return true;              // factories
-    if (a > 255 && a < 290 && r > 24) return true;                       // port
-    if (a > 120 && a < 140 && r < 15) return true;                       // hall
-    return [-12, 188, 98, 276].some(sp => Math.abs(((a - sp + 540) % 360) - 180) < 5);
-  };
-  const trees = [];
-  for (let k = 0; trees.length < 70 && k < 3000; k++) { const r = 12 + rnd() * 21, a = rnd() * 360; const [x, z] = polar(r, a); if (!busy(x, z)) trees.push({ x, z, s: 0.75 + rnd() * 0.7, kind: rnd() < 0.55 ? 0 : 1, ry: rnd() * 6 }); }
-  const roundTree = merge([part(CYL(0.15, 0.2, 0.9, 6), 0x854d0e), part(new THREE.IcosahedronGeometry(0.85, 0).translate(0, 1.5, 0), 0x22c55e)]);
-  const pine = merge([part(CYL(0.12, 0.16, 0.6, 6), 0x78350f), part(new THREE.ConeGeometry(0.75, 1.3, 7).translate(0, 1.15, 0), 0x15803d), part(new THREE.ConeGeometry(0.55, 1.0, 7).translate(0, 1.9, 0), 0x16a34a)]);
-  [roundTree, pine].forEach((geo, kind) => {
-    const list = trees.filter(t => t.kind === kind);
-    const m = instanced(geo, mat(), list, (t) => at(t.x, t.z, t.ry, t.s));
-    list.forEach((t, i) => m.setColorAt(i, C([0xffffff, 0xd9f99d, 0xbbf7d0, 0xfef9c3][i % 4])));
-  });
-  const lampsAt = [...arc(16.6, -70, 50, 15), ...arc(19.4, -62, 50, 15), ...arc(21.6, 145, 230, 14), ...arc(6.6, 0, 360, 45)];
-  instanced(merge([part(CYL(0.07, 0.09, 2.2, 6), 0x334155), part(BOX, 0x334155, 0.18, 2.15, 0, 0.45, 0.06, 0.08)]), mat(), lampsAt, ([x, z]) => at(x, z, faceCentre(x, z)));
-  const bulbMat = new THREE.MeshLambertMaterial({ color: 0xfef9c3, emissive: 0xfde047, emissiveIntensity: 0.1 });
-  instanced(new THREE.SphereGeometry(0.16, 6, 4), bulbMat, lampsAt, ([x, z]) => { const r = faceCentre(x, z); M.compose(V.set(x + Math.sin(r) * 0.36 * 0 + Math.cos(r) * 0.36, 2.08, z - Math.sin(r) * 0.36), Q.identity(), S.set(1, 1, 1)); });
-  const benches = arc(5.3, 20, 340, 40).filter((_, i) => i % 2 === 0);
-  instanced(merge([part(BOX, 0x92400e, 0, 0.35, 0, 1.2, 0.1, 0.4), part(BOX, 0x92400e, 0, 0.55, -0.18, 1.2, 0.35, 0.08), part(BOX, 0x374151, -0.5, 0, 0, 0.08, 0.35, 0.36), part(BOX, 0x374151, 0.5, 0, 0, 0.08, 0.35, 0.36)]), mat(), benches,
-    ([x, z]) => at(x, z, faceCentre(x, z) + Math.PI));
-  const flowers = []; for (let k = 0; k < 40; k++) { const [x, z] = polar(6.4 + rnd() * 0.7, rnd() * 360); flowers.push({ x, z }); }
-  const fl = instanced(new THREE.IcosahedronGeometry(0.22, 0), mat(), flowers, (f) => at(f.x, f.z, 0, 1, 1, 0.15));
-  fl.material = new THREE.MeshLambertMaterial({ flatShading: true }); flowers.forEach((f, i) => fl.setColorAt(i, C([0xf472b6, 0xfacc15, 0xf87171, 0xc084fc][i % 4])));
-
-  /* ---------- labels: "!" on the warehouse district, approvals, district names ---------- */
-  function labelSprite(text, bg, fg, w = 256, font = 44) {
-    const c = document.createElement('canvas'); c.width = w; c.height = 96; const g = c.getContext('2d');
-    g.fillStyle = bg; g.beginPath(); g.roundRect(4, 4, w - 8, 88, 30); g.fill();
-    g.fillStyle = fg; g.font = `600 ${font}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, 50);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
-    sp.scale.set(w / 44, 96 / 44, 1); scene.add(sp); return sp;
+  // (2) dealer shops in one calm crescent: grey unless bought today; lit ones get a tag
+  const shops = DATA.shops.filter(s => s.kind === 'shop'), extra = DATA.shops.filter(s => s.kind !== 'shop');
+  const list = [...shops]; extra.forEach((s, k) => list.splice(Math.min(list.length, 4 + k * 9), 0, s));
+  const slot = list.map((s, i) => { const a = -78 + i * (156 / Math.max(1, list.length - 1)); const r = i % 2 ? 22 : 18.5; const [x, z] = polar(r, a); return { s, x, z, ry: face(x, z), lit: !!s.today_docs, h: 1.8 + (s.rank ? (30 - s.rank) / 30 * 1.6 : 0.6) }; });
+  const shopGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 2, 1, 1.8), part(PRISM, 0xffffff, 0, 1, 0, 2.3, 1.1, 2.0), part(BOX, 0xffffff, 0, 0.55, 1.05, 1.9, 0.08, 0.5, 0, -0.4)]);
+  const shopMesh = new THREE.InstancedMesh(shopGeo, new THREE.MeshLambertMaterial({ flatShading: true }), slot.length);
+  slot.forEach((o, i) => { M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(1, o.h / 1.8, 1)); shopMesh.setMatrixAt(i, M); shopMesh.setColorAt(i, col(o.lit ? 0xfbbf24 : 0xd6d3d1)); });
+  scene.add(shopMesh); pickables.push([shopMesh, (i) => open.shop(slot[i].s)]);
+  const tags = [];
+  function drawTags() {
+    tags.forEach(t => scene.remove(t)); tags.length = 0;
+    slot.filter(o => o.lit).forEach((o, k) => tags.push(label(`${shopLabel(o.s)}${state.redact || state.wallboard || !o.s.today_amount ? '' : '  ' + rm0(o.s.today_amount)}`, o.x, o.h + 2.6 + (k % 3) * 1.9, o.z, 'rgba(255,251,235,0.97)', '#92400e', 420, 0.95)));
+    if (othersToday) { const [x, z] = polar(24, 30); tags.push(label(`+${othersToday} more dealers bought today`, x, 2.5, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95)); }
+    dirty = true;
   }
-  const whCentre = polar(20.5, 188);
-  const bang = labelSprite('! ' + n(DATA.reorder.below_count) + ' low', '#facc15', '#422006', 360); bang.position.set(whCentre[0], 8.5, whCentre[1]);
-  pickables.push([bang, () => reorderPanel()]);
-  const sign = labelSprite(DATA.approvals.total ? 'Approvals ' + DATA.approvals.total : 'Approvals: all clear', DATA.approvals.total ? '#ffffff' : '#dcfce7', '#14532d', 440);
-  sign.position.set(hallPos[0], 8.2, hallPos[1]); pickables.push([sign, () => approvalsPanel()]);
-  const district = (t, r, a, y = 3.2) => { const s = labelSprite(t, 'rgba(255,255,255,0.9)', '#1f2937', 360, 40); const [x, z] = polar(r, a); s.position.set(x, y, z); return s; };
-  district('Dealer high street', 25, 20, 6.5); district('Warehouses', 31, 200, 4); district('Suppliers', 31, 112, 8); district('Port', 37, 256, 5);
+  drawTags();
 
-  /* ---------- life: lorries on the roads, people on the plaza ---------- */
-  const lorryGeo = merge([part(BOX, 0xffffff, 0.45, 0.25, 0, 1.3, 0.85, 0.75), part(BOX, 0x1d4ed8, -0.55, 0.25, 0, 0.6, 0.7, 0.72), part(BOX, 0xbfdbfe, -0.86, 0.6, 0, 0.02, 0.28, 0.6),
-    ...[-0.55, 0.65].flatMap(x => [-0.36, 0.36].map(z => part(CYL(0.18, 0.18, 0.12, 8), 0x111827, x, 0.18, z, 1, 1, 1, 0, Math.PI / 2)))]);
-  const targets = coinShops.length ? coinShops : shopSlot.slice(0, 3);
-  const paths = targets.map((o, k) => {
-    const start = whSlot[k % whSlot.length], aS = Math.atan2(start.z, start.x) * 180 / Math.PI, aT = Math.atan2(o.z, o.x) * 180 / Math.PI;
-    const pts = [polar(20, aS), polar(20, 188), polar(14, 186), polar(8.2, 180), polar(8.2, 120), polar(8.2, 60), polar(8.2, 0), polar(13, -14), polar(18, -12), polar(18, (aT - 12) / 2), polar(18, aT)];
-    const v3 = pts.map(([x, z]) => new THREE.Vector3(x, 0.08, z)).filter((v, i, a) => i === 0 || v.distanceTo(a[i - 1]) > 0.5);
-    return new THREE.CatmullRomCurve3(v3);
-  });
-  const lorries = instanced(lorryGeo, mat(), targets, () => {});
-  const people = []; for (let k = 0; k < 36; k++) people.push({ r: 2.6 + rnd() * 3, a: rnd() * 6.28, sp: (0.1 + rnd() * 0.25) * (rnd() < 0.5 ? -1 : 1) });
-  const folk = instanced(merge([part(CYL(0.16, 0.2, 0.55, 6), 0xffffff), part(new THREE.SphereGeometry(0.14, 6, 4).translate(0, 0.7, 0), 0xfcd34d)]), mat(), people, () => {});
-  people.forEach((p, i) => folk.setColorAt(i, C([0x60a5fa, 0xf87171, 0x34d399, 0xfbbf24, 0xa78bfa, 0xf472b6][i % 6])));
+  // (3) warehouse district: a few calm buildings, one red "!" bubble
+  const wh = DATA.warehouses.slice(0, 6);
+  const whSlot = wh.map((w, i) => { const [x, z] = polar(i < 3 ? 15 : 21, 160 + (i % 3) * 22); return { w, x, z, ry: face(x, z) }; });
+  const barrel = new THREE.CylinderGeometry(1, 1, 1, 14, 1, false, 0, Math.PI); barrel.rotateZ(Math.PI / 2); barrel.rotateY(Math.PI / 2);
+  const whMesh = new THREE.InstancedMesh(merge([part(BOX, 0xe2e8f0, 0, 0, 0, 4, 1.6, 3), part(barrel, 0x94a3b8, 0, 1.6, 0, 2, 0.8, 1.5, Math.PI / 2), part(BOX, 0xcbd5e1, 0, 0.02, 1.52, 2.2, 1.1, 0.04)]), mat(), whSlot.length);
+  whSlot.forEach((o, i) => { M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(1, 1, 1)); whMesh.setMatrixAt(i, M); });
+  scene.add(whMesh); pickables.push([whMesh, () => open.low()]);
+  const [bx, bz] = polar(18, 182);
+  const bang = label(`!  ${n(R.below_count)} low`, bx, 7, bz, '#dc2626', '#ffffff', 300, 1.05); pickables.push([bang, () => open.low()]);
+  
 
-  /* ---------- loop: render on demand, 30 fps cap, pause on hidden tab ---------- */
-  let last = 0, t0 = performance.now(), replayUntil = 0, night = false;
-  const UP = new THREE.Vector3(0, 1, 0);
-  function animate(now) {
-    const tt = (now - t0) / 1000 * (replayUntil > now ? 4 : 1);
-    paths.forEach((p, i) => {
-      const k = ((tt * 0.035 + i * 0.29) % 2); const u = Math.min(0.999, Math.max(0.001, k < 1 ? k : 2 - k));
-      const pos = p.getPointAt(u), tan = p.getTangentAt(u).multiplyScalar(k < 1 ? 1 : -1);
-      M.compose(pos, Q.setFromAxisAngle(UP, Math.atan2(-tan.z, tan.x) + Math.PI), S.set(1, 1, 1)); lorries.setMatrixAt(i, M);
-    });
-    lorries.instanceMatrix.needsUpdate = true;
-    people.forEach((p, i) => { const a = p.a + tt * p.sp * 0.6; M.compose(V.set(Math.cos(a) * p.r, 0.05 + Math.abs(Math.sin(tt * 6 + i)) * 0.05, Math.sin(a) * p.r), Q.setFromAxisAngle(UP, -a), S.set(1, 1, 1)); folk.setMatrixAt(i, M); });
-    folk.instanceMatrix.needsUpdate = true;
-    puffs.forEach((pf, i) => { const top = chimneyTop(pf.o); const ph = (tt * 0.25 + pf.p / 4) % 1; M.compose(V.set(top.x + ph * 1.2, top.y + ph * 3, top.z), Q.identity(), S.setScalar(0.5 + ph * 1.3)); smoke.setMatrixAt(i, M); });
-    smoke.instanceMatrix.needsUpdate = true;
-    coinShops.forEach((o, i) => { M.compose(V.set(o.x, o.h + 2.2 + Math.sin(tt * 2 + i) * 0.15, o.z), Q.setFromAxisAngle(UP, tt * 1.6 + i), S.set(1, 1, 1)); coins.setMatrixAt(i, M); });
-    coins.instanceMatrix.needsUpdate = true;
-  }
-  function frame(now) {
-    requestAnimationFrame(frame);
-    if (document.hidden) return;
-    const moving = !state.night || replayUntil > now;
-    if (!dirty && !moving) return;
-    if (now - last < 1000 / 30) return; last = now;
-    animate(now); renderer.render(scene, cam); dirty = false;
-    document.getElementById('calls').textContent = `draw calls: ${renderer.info.render.calls} · pixel ratio ${renderer.getPixelRatio()}`;
-  }
+  // (4) depot with lorries lined up
+  const [dx, dz] = polar(18, 248); const dry = face(dx, dz);
+  const depot = new THREE.Mesh(merge([part(BOX, 0xe0e7ff, 0, 0, 0, 6, 2.2, 3.4), part(BOX, 0x93c5fd, 0, 2.2, 0, 6.3, 0.25, 3.7), part(BOX, 0xbfdbfe, -1.5, 0.02, 1.71, 1.8, 1.6, 0.04), part(BOX, 0xbfdbfe, 1.5, 0.02, 1.71, 1.8, 1.6, 0.04)]), mat());
+  depot.position.set(dx, 0, dz); depot.rotation.y = dry; scene.add(depot); pickables.push([depot, () => open.deliver()]);
+  const lorryN = Math.min(10, D ? D.to_deliver : 0);
+  const lorryGeo = merge([part(BOX, 0xffffff, 0.35, 0.22, 0, 1.4, 0.95, 0.85), part(BOX, 0x2563eb, -0.7, 0.22, 0, 0.6, 0.75, 0.82), ...[-0.65, 0.6].flatMap(x => [-0.42, 0.42].map(z => part(CYL(0.2, 0.2, 0.12, 10), 0x1f2937, x, 0.2, z, 1, 1, 1, 0, Math.PI / 2)))]);
+  const lorries = new THREE.InstancedMesh(lorryGeo, mat(), Math.max(1, lorryN));
+  const fwd = new THREE.Vector3(Math.sin(dry), 0, Math.cos(dry)), side = new THREE.Vector3(Math.cos(dry), 0, -Math.sin(dry));
+  for (let i = 0; i < lorryN; i++) { const p = new THREE.Vector3(dx, 0, dz).addScaledVector(fwd, 3.2 + Math.floor(i / 5) * 1.3).addScaledVector(side, -2.4 + (i % 5) * 1.2); M.compose(p, Q.setFromEuler(E.set(0, dry + Math.PI / 2, 0)), S.set(0.8, 0.8, 0.8)); lorries.setMatrixAt(i, M); }
+  lorries.count = lorryN; scene.add(lorries); pickables.push([lorries, () => open.deliver()]);
+  const dsign = label(`To deliver: ${D ? n(D.to_deliver) : '-'}${sample.has('deliveries') ? ' (sample)' : ''}`, dx, 5.4, dz, '#1d4ed8', '#ffffff', 380, 0.9); pickables.push([dsign, () => open.deliver()]);
+
+  // (5) approvals office with a badge
+  const [ox, oz] = polar(16, 112);
+  const office = new THREE.Mesh(merge([part(BOX, 0xf5f3ff, 0, 0, 0, 3.6, 3.2, 3), part(BOX, 0xddd6fe, 0, 3.2, 0, 3.9, 0.3, 3.3), part(BOX, 0xc4b5fd, 0, 0.02, 1.52, 1, 1.6, 0.04)]), mat());
+  office.position.set(ox, 0, oz); office.rotation.y = face(ox, oz); scene.add(office); pickables.push([office, () => open.approve()]);
+  const badge = label(A.total ? `Approvals  ${A.total}` : 'Approvals: all clear', ox, 6, oz, A.total ? '#7c3aed' : '#dcfce7', A.total ? '#ffffff' : '#166534', 380, 0.9); pickables.push([badge, () => open.approve()]);
+
+  // a handful of trees only, for softness
+  const treeGeo = merge([part(CYL(0.14, 0.18, 0.8, 6), 0xa16207), part(new THREE.IcosahedronGeometry(0.8, 1).translate(0, 1.4, 0), 0x86c17a)]);
+  const treeAt = [[-6, 6], [6, -6], [-6, -6], [6.2, 6.2], ...[0, 72, 144, 216, 288].map(a => polar(25, a + 30))];
+  const trees = new THREE.InstancedMesh(treeGeo, mat(), treeAt.length);
+  treeAt.forEach(([x, z], i) => { M.compose(V.set(x, 0, z), Q.identity(), S.setScalar(0.9)); trees.setMatrixAt(i, M); }); scene.add(trees);
+
+  // render on demand (nothing moves), 30 fps cap while dragging, pause when hidden
+  let last = 0;
+  function frame(now) { requestAnimationFrame(frame); if (document.hidden || !dirty || now - last < 33) return; last = now; renderer.render(scene, cam); dirty = false; document.getElementById('calls').textContent = `draw calls: ${renderer.info.render.calls} · pixel ratio ${renderer.getPixelRatio()}`; }
   new ResizeObserver(resize).observe(canvas); resize(); requestAnimationFrame(frame);
 
-  /* ---------- picking + drag to turn the island ---------- */
   const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let drag = null;
   canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, yaw, moved: false }; });
-  window.addEventListener('pointermove', (e) => { if (!drag) return; const dx = e.clientX - drag.x; if (Math.abs(dx) > 4) drag.moved = true; yaw = drag.yaw - dx * 0.006; placeCam(); });
+  window.addEventListener('pointermove', (e) => { if (!drag) return; const dx = e.clientX - drag.x; if (Math.abs(dx) > 4) drag.moved = true; if (drag.moved) { yaw = drag.yaw - dx * 0.006; placeCam(); keepBoardFacing(); } });
   window.addEventListener('pointerup', (e) => {
-    const wasDrag = drag && drag.moved; drag = null; if (wasDrag || e.target !== canvas) return;
+    const moved = drag && drag.moved; drag = null; if (moved || e.target !== canvas) return;
     const r = canvas.getBoundingClientRect(); ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ptr, cam); const hits = ray.intersectObjects(pickables.map(p => p[0]), false); if (!hits.length) return;
-    const entry = pickables.find(p => p[0] === hits[0].object); entry[1](hits[0].instanceId ?? 0);
+    pickables.find(p => p[0] === hits[0].object)[1](hits[0].instanceId ?? 0);
   });
-
   return {
-    setNight(on) {
-      night = on; hemi.intensity = on ? 0.45 : 1.9; hemi.color.set(on ? 0x93a5ff : 0xfff4e0); sun.intensity = on ? 0.12 : 1.7;
-      winMat.emissiveIntensity = on ? 1.8 : 0; bulbMat.emissiveIntensity = on ? 1.4 : 0.1;
-      water.material.color.set(on ? 0x1e3a8a : 0x7dd3fc); dirty = true;
-    },
-    replay() { replayUntil = performance.now() + 9000; t0 = performance.now(); dirty = true; },
+    refresh() { drawBoard(); drawTags(); },
+    setNight(on) { hemi.intensity = on ? 0.55 : 2.0; sun.intensity = on ? 0.2 : 1.3; slot.forEach((o, i) => shopMesh.setColorAt(i, col(o.lit ? (on ? 0xfde68a : 0xfbbf24) : (on ? 0x57534e : 0xd6d3d1)))); shopMesh.instanceColor.needsUpdate = true; dirty = true; },
   };
 }
 
-
-/* ---------------------------------------------------------------- controls */
-const tNight = document.getElementById('tNight'), tRedact = document.getElementById('tRedact');
-const tCards = document.getElementById('tCards'), tDark = document.getElementById('tDark');
+/* ---------------- controls ---------------- */
+const tNight = document.getElementById('tNight'), tRedact = document.getElementById('tRedact'), tDark = document.getElementById('tDark');
 function sync() {
   state.night = tNight.checked; state.redact = tRedact.checked;
   root.classList.toggle('night', state.night); root.classList.toggle('dark', tDark.checked);
-  const cards = tCards.checked || !api;
-  document.getElementById('stage').style.display = cards ? 'none' : '';
-  document.getElementById('cards').classList.toggle('on', cards);
-  api && api.setNight(state.night);
-  renderBanner(); renderCards(); panel.classList.remove('open');
+  renderCards(); panel.classList.remove('open'); if (api) { api.setNight(state.night); api.refresh(); }
 }
-[tNight, tRedact, tCards, tDark].forEach(el => el.addEventListener('change', sync));
+[tNight, tRedact, tDark].forEach(el => el.addEventListener('change', sync));
 document.getElementById('wallboardBtn').onclick = (e) => { state.wallboard = !state.wallboard; e.target.textContent = state.wallboard ? 'Exit wallboard' : 'Wallboard'; sync(); };
-document.getElementById('replayBtn').onclick = () => { if (api) { tNight.checked = true; sync(); api.replay(); } };
 sync();
-window.__mock = { shopPanel, warehousePanel, reorderPanel, approvalsPanel, DATA };
+window.__mock = { open, DATA };
 </script>
 </body>
 </html>
