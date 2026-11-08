@@ -117,4 +117,30 @@ describe('ContactEditDialog companies vs live tag recompute', () => {
     const order = calls.filter((c) => c.method === 'PUT').map((c) => (c.url === 'tags' ? 'tags' : c.url.endsWith('/companies') ? 'companies' : 'contact'));
     expect(order.indexOf('companies')).toBeLessThan(order.indexOf('tags'));
   });
+
+  it('a company picked before the loaded companies arrive is not sent (it would replace them)', async () => {
+    apiFetch.mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+      calls.push({ url, method: init?.method ?? 'GET', body: init?.body });
+      if (url.endsWith('/companies') && (init?.method ?? 'GET') === 'GET') return new Promise(() => {});
+      return { ok: true, json: async () => ({ id: 'c1' }) };
+    });
+    open();
+    fireEvent.click(await screen.findByRole('button', { name: 'Select companies: add Mocha' }));
+    fireEvent.click(screen.getByRole('button', { name: /update contact/i }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.endsWith('/contacts/c1'))).toBe(true));
+    await waitFor(() => expect(client.isMutating()).toBe(0));
+    expect(companyPuts()).toEqual([]);
+  });
+
+  it('access types and requires-registered-project are only sent when changed (a tag change alone sends neither)', async () => {
+    open();
+    await screen.findByRole('button', { name: 'Select companies: remove Sorento' });
+    fireEvent.click(screen.getByRole('button', { name: 'Select tags: add TU Mocha' }));
+    fireEvent.click(screen.getByRole('button', { name: /update contact/i }));
+    await waitFor(() => expect(setTags).toHaveBeenCalled());
+    const put = calls.find((c) => c.method === 'PUT' && c.url.endsWith('/contacts/c1'));
+    const body = JSON.parse(put?.body ?? '{}');
+    expect(body).not.toHaveProperty('access_type_codes');
+    expect(body).not.toHaveProperty('requires_registered_project');
+  });
 });

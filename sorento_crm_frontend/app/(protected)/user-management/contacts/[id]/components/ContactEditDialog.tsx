@@ -161,6 +161,12 @@ export default function ContactEditDialog({
 
   const mutation = useMutation({
     mutationFn: async (values: ContactEditSchemaType) => {
+      const pickedCodes = values.access_type_codes ?? [];
+      const heldCodes = contact.access_type_codes ?? [];
+      const accessTypesChanged =
+        pickedCodes.length !== heldCodes.length || pickedCodes.some((c) => !heldCodes.includes(c));
+      const pickedProject = values.requires_registered_project ?? false;
+      const projectChanged = pickedProject !== (contact.requires_registered_project ?? false);
       const response = await apiFetch(`/api/user-management/contacts/${contact.id}`, {
         method: 'PUT',
         headers: {
@@ -170,8 +176,10 @@ export default function ContactEditDialog({
           phone_number: values.phone_number,
           name: values.name || null,
           workspace_id: values.workspace_id ? values.workspace_id : null,
-          access_type_codes: values.access_type_codes ?? [],
-          requires_registered_project: values.requires_registered_project ?? false,
+          // Access fields only when changed here (an omitted field is left as is): a tag can set them,
+          // and re-sending a stale copy would record a fake own change (TAG-UNION).
+          ...(accessTypesChanged ? { access_type_codes: pickedCodes } : {}),
+          ...(projectChanged ? { requires_registered_project: pickedProject } : {}),
         }),
       });
 
@@ -233,6 +241,10 @@ export default function ContactEditDialog({
       closeDialog();
     },
     onError: (error: Error) => {
+      // Saves run one after another: refresh what may already have been written.
+      queryClient.invalidateQueries({ queryKey: ['respond-contact', contact.id] });
+      queryClient.invalidateQueries({ queryKey: ['contact-companies', contact.id] });
+      invalidateContactTagSettings(queryClient, contact.id);
       const message = error.message || 'Failed to update contact. Please try again.';
       toast.custom(
         () => (
@@ -391,6 +403,7 @@ export default function ContactEditDialog({
                         placeholder="Select companies"
                         emptyMessage="No company found."
                         triggerClassName="w-full"
+                        disabled={!companiesFetched || mutation.isPending}
                       />
                     </FormControl>
                     <FormDescription>
