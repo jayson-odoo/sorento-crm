@@ -1,6 +1,6 @@
 # CARD - TAG-UNION: contact tags add up (union merge, live recompute, inactive tags ignored)
 
-Status: Plan, step 1 (no code). Card posted for the owner with `crew-ask`; answers pending. Lane TAG-UNION.
+Status: Answered 8 Nov ~16:00 (1a, 2 everything adds up, 3a, 4a, 5 keep "Apply settings"); build in `PLAN-tag-union-08nov.md`. Lane TAG-UNION.
 Track: full (new column + migration, access rules for every tagged contact, one-off recompute of prod data).
 
 ## Owner ask (8 Nov ~15:55)
@@ -62,9 +62,9 @@ Grants (visibility, permission): UNION, "any tag allows". Restrictions (hide lis
 | 24 | Messaging (outbound) | AND | OR |
 | 25 | Memory level | min | max |
 | 26 | Requires registered project (a restriction) | OR | AND |
-| 27 | **AI replies (`chatbot_allowed`)** | AND | **stays AND (strictest)**: an "AI off" tag is a safety stop (dispute, VIP handled by people). One tag saying off keeps the bot quiet (Q2) |
+| 27 | AI replies (`chatbot_allowed`) | AND | OR (owner Q2: everything adds up, no strict exceptions) |
 | 28 | ETA buffer days | OR | unchanged (OR) |
-| 29 | Skip date-range questions, files as links | must agree, else conflict | unchanged: preferences, not permissions |
+| 29 | Skip date-range questions, files as links | must agree, else conflict | OR (owner Q2: every switch, any tag on = on) |
 | 30 | Tier | dealer wins, dealer + end user = conflict | unchanged: an identity, not a permission |
 | 31 | AI model | read live, all must agree | unchanged rule, but inactive tags no longer count |
 
@@ -114,8 +114,8 @@ Model: like roles plus direct grants. One new column `respond_contacts.tag_setti
 
 Visible: the contact's Tag settings section keeps its per-setting rows (expected from tags vs
 current), and each setting that differs now reads "Own change: +Sorento, -Mocha" (or "Own value:
-Off") instead of "Differs". "Apply settings" becomes **"Reset to tags"**: it drops the contact's own
-changes for the chosen settings (same preview first, same per-section rights). The tag list's
+Off") instead of "Differs". "Apply settings" keeps its name (owner Q5); its action is "reset this contact to its tags": it drops
+the contact's own changes for the chosen settings (same preview first, same per-section rights). The tag list's
 "Differs" count becomes "Own changes".
 
 Why not "the contact's own values are just one more tag in the union": then a person could never
