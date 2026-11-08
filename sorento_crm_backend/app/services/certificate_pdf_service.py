@@ -206,6 +206,40 @@ def find_boxes(pdf_bytes: bytes, code: str) -> dict[str, Any]:
         doc.close()
 
 
+#: A printed run longer than any code a certificate prints is never looked up, so it is not kept.
+_MAX_RUN_CHARS = 60
+
+
+def printed_runs(pdf_bytes: bytes | None) -> dict[str, Any]:
+    """CERT-LINK-CLEANUP: every whole-token run printed on the PDF, read once.
+
+    `{"has_text", "runs": {normalised run: printed text}}`, runs of 1-4 consecutive words exactly as
+    `find_boxes` matches them (so `14A` is a run, `4A` inside `14A` is not). First printed form wins.
+    """
+    doc = _open(pdf_bytes) if pdf_bytes else None
+    if doc is None:
+        return {"has_text": False, "runs": {}}
+    try:
+        runs: dict[str, str] = {}
+        has_text = False
+        for index in range(min(len(doc), MAX_PAGES)):
+            words = _words(doc[index])
+            if not words:
+                continue
+            has_text = True
+            for i, n, acc in _runs(words, _MAX_RUN):
+                if len(acc) > _MAX_RUN_CHARS:
+                    continue
+                if acc not in runs:
+                    runs[acc] = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")
+        return {"has_text": has_text, "runs": runs}
+    except Exception:  # noqa: BLE001
+        logger.warning("certificate pdf text read failed", exc_info=True)
+        return {"has_text": False, "runs": {}}
+    finally:
+        doc.close()
+
+
 def _qualifies(norm: str) -> bool:
     """A suggestion candidate: 4+ characters with a digit, or exactly 3 with a letter AND a digit
     ("14A" yes, "120" no: a bare three digit number is usually a quantity in prose)."""
