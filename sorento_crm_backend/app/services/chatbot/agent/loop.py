@@ -1730,6 +1730,17 @@ def _run(
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
+                elif name == "crm_query" and isinstance(args, dict) and ctx.user_id:
+                    # The asker's own name as the agent: dropped only when the call finds nothing with it and the
+                    # model did not say the question is about them (`query_tools.query_as_asker`; data decides, the
+                    # message is never read). crm_query is a user read, so it is run here, not in the branch below.
+                    from app.models.user import User
+                    from app.services.chatbot.agent.query_tools import query_as_asker
+
+                    asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                    args, out, self_note = query_as_asker(
+                        args, asker, lambda a: writes.run_user_read(db, ctx, name, a, seen_ids)
+                    )
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and run.rounds > 1:
@@ -1741,12 +1752,6 @@ def _run(
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
-                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
-                        from app.models.user import User
-                        from app.services.chatbot.agent.query_tools import strip_self_agent
-
-                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
-                        args, self_note = strip_self_agent(args, asker)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),

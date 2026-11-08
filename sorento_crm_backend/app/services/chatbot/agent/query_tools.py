@@ -423,7 +423,27 @@ def strip_self_agent(args: dict, user_name: str | None) -> tuple[dict, str | Non
         out["filters"] = keep
     if not dropped:
         return args, None
-    return out, f"Left out {', '.join(dropped)}: that is your own name and the question was not about you."
+    return out, f"Left out {', '.join(dropped)}: that is your own name, nothing matched it and the question was not about you."
+
+
+def _found_something(out: Any) -> bool:
+    data = getattr(out, "data", None)
+    return getattr(out, "status", None) == "ok" and isinstance(data, dict) and bool(
+        data.get("rows") or data.get("groups") or data.get("total")
+    )
+
+
+def query_as_asker(args: dict, user_name: str | None, run) -> tuple[dict, Any, str | None]:
+    """Run a crm_query for the asking user: (the args that ran, the result, a note or None). A call that names the
+    asker's own name (`strip_self_agent`) runs as it is first; only when it finds nothing is the name dropped and the
+    call run again (crew live round 4: "payout per dealer" was filtered by the asker's own name). So a colleague who
+    shares a word of the asker's name ("payout for Tan" asked by Tan Wei Ming) is answered, the data decides, and
+    the message is never read (review on 8202e048)."""
+    stripped, note = strip_self_agent(args, user_name)
+    first = run(args)
+    if note is None or _found_something(first):
+        return args, first, None
+    return stripped, run(stripped), note
 
 
 def _names_a_subject(entity_key: str, args: dict) -> bool:

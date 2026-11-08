@@ -27,7 +27,7 @@ def test_S1_neither_function_reads_the_message():
 
 
 @pytest.mark.parametrize("value", ["Jayson", "teh jayson", "Jayson Teh", "JAYSON", "Teh"])
-def test_S2_the_askers_own_name_is_dropped_unless_the_model_says_the_question_is_about_them(value):
+def test_S2_strip_self_agent_proposes_dropping_the_askers_own_name_unless_about_self(value):
     from app.services.chatbot.agent.query_tools import strip_self_agent
 
     kept, note = strip_self_agent({"entity": ENTITY, "agent": value, "period": "2026"}, "Jayson Teh")
@@ -95,3 +95,94 @@ def test_S7_the_askers_own_name_stripped_before_the_call_never_hides_the_next_ta
     for said in ("commission payout per dealer this year", "komisen setiap dealer", ""):
         text = shape_reply("Total dealer payout this year is RM 478,755.53.", ledger, user_text=said)
         assert "DEALER TABLE" in text and text.startswith("Total dealer payout")
+
+
+# ------------------------------------------------------------------ review on 8202e048: data decides, not the name
+
+
+def _found(rows):
+    from app.services.chatbot.agent.tools import ToolResult
+
+    return ToolResult("ok", data={"entity": ENTITY, "rows": rows, "total": len(rows)})
+
+
+def test_S8_a_colleague_who_shares_a_word_of_the_askers_name_is_kept_when_the_call_finds_them():
+    """B1: asker "Tan Wei Ming", "payout for Tan" about agent Tan Ah Kow: the filter matched, so it stays."""
+    from app.services.chatbot.agent.query_tools import query_as_asker
+
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return _found([{"id": "1", "label": "TAK - Tan Ah Kow"}] if args.get("agent") == "Tan" else [])
+
+    args, out, note = query_as_asker({"entity": ENTITY, "agent": "Tan"}, "Tan Wei Ming", run)
+    assert args["agent"] == "Tan" and out.data["rows"] and note is None and calls == [{"entity": ENTITY, "agent": "Tan"}]
+
+
+def test_S9_the_askers_own_name_that_finds_nothing_is_dropped_and_the_call_runs_again():
+    """Crew live round 4: "payout per dealer" filtered by the asker's own name found nothing."""
+    from app.services.chatbot.agent.query_tools import query_as_asker
+
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return _found([] if args.get("agent") else [{"id": "1", "label": "D1"}])
+
+    args, out, note = query_as_asker({"entity": ENTITY, "agent": "Jayson", "period": "2026"}, "Jayson Teh", run)
+    assert "agent" not in args and out.data["rows"] and "your own name" in note
+    assert calls == [{"entity": ENTITY, "agent": "Jayson", "period": "2026"}, {"entity": ENTITY, "period": "2026"}]
+    # about_self: the user's own figures, even when there are none.
+    calls.clear()
+    args, out, note = query_as_asker({"entity": ENTITY, "agent": "Jayson", "about_self": True}, "Jayson Teh", run)
+    assert args["agent"] == "Jayson" and note is None and len(calls) == 1
+
+
+@pytest.fixture
+def loop_db():
+    from app.services.company_scope import register_company_scope_listeners
+    from tests._pg_fixture import blank_session
+
+    register_company_scope_listeners()
+    with blank_session() as session:
+        yield session
+
+
+@pytest.mark.parametrize("colleague", [True, False])
+def test_S10_the_loop_runs_every_crm_query_through_query_as_asker(loop_db, monkeypatch, colleague):
+    """M5: the loop's own crm_query branch, with a scripted model: what reaches the tool is decided by the data."""
+    import app.main  # noqa: F401
+    from app.models.company import UserCompany
+    from app.models.user import User
+    from app.services.chatbot.agent import loop
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests.chatbot.agent.test_ai_query_reply import Scripted, answer, asks
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    db = loop_db
+    contact = seed_agent_contact(db, slugs=("sales.targets.view",))
+    db.add(UserCompany(user_id=contact["user_id"], company_id=DEFAULT_COMPANY_ID))
+    db.get(User, contact["user_id"]).name = "Tan Wei Ming"
+    db.flush()
+    sent = []
+
+    def fake_read(db_, ctx, name, args, seen_ids):
+        if name != "crm_query":
+            return real(db_, ctx, name, args, seen_ids)
+        sent.append(dict(args))
+        rows = [{"id": "1", "label": "TAK - Tan Ah Kow"}] if (colleague or not args.get("agent")) else []
+        return _found(rows)
+
+    real = loop.writes.run_user_read
+    monkeypatch.setattr(loop.writes, "run_user_read", fake_read)
+    script = [asks("crm_query", {"entity": ENTITY, "agent": "Tan"}), answer("Here it is.")]
+    from tests.chatbot.agent._ported_reads_support import panel_turn
+
+    with panel_turn(contact["user_id"]):
+        loop.run_agent_turn(db, contact_respond_id=contact["respond_id"], text="payout for Tan",
+                            provider=Scripted(script), mcp_call=lambda n, a: {}, catalog={})
+    if colleague:
+        assert sent == [{"entity": ENTITY, "agent": "Tan"}]
+    else:
+        assert sent == [{"entity": ENTITY, "agent": "Tan"}, {"entity": ENTITY}]
