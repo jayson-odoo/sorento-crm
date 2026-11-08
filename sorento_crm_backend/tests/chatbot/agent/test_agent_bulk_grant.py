@@ -10,7 +10,7 @@ Assumed shapes (the plan pins the names, these pin the rest):
 - `crm_contact_grant` args: `phone`, `name`, `role` (owner | employee), `companies` (SRT | MCH),
   `customer_codes`, `customer_names`. A row that cannot apply is refused in `read_before` with a 4xx whose
   message is the reason the preview shows.
-- `batch.propose_rows(db, ctx, write, rows, seen_ids)` -> (steps, skipped); skipped = [{"row", "reason", ...}].
+- `batch.propose_rows(db, ctx, write, rows, seen_ids)` -> (steps, skipped, waiting); skipped = [{"row", "reason", ...}].
 - A batch action's steps carry `batch: True`; confirm runs every row, each its own transaction.
 """
 from __future__ import annotations
@@ -252,7 +252,7 @@ def store(db, w: W, steps):
 def propose_and_confirm(db, w: W, rows):
     from app.services.chatbot.agent import actions
 
-    steps, skipped = propose_rows(db, w, rows)
+    steps, skipped, _ = propose_rows(db, w, rows)
     assert steps, f"nothing proposed: {skipped}"
     action = store(db, w, steps)
     return actions.confirm(db, w.respond_id, str(action.id), via="console"), skipped
@@ -328,7 +328,7 @@ def test_02_an_existing_contact_by_local_phone_and_customer_code_previews_then_c
     person = dealer(db, w)
     before = state(db, person.phone_number)
 
-    steps, skipped = propose_rows(db, w, [row_(local(person.phone_number), codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(local(person.phone_number), codes=[w.cust_a.customer_code])])
 
     assert skipped == []
     assert len(steps) == 1 and steps[0]["batch"] is True
@@ -354,7 +354,7 @@ def test_02_a_phone_not_in_the_crm_creates_the_contact_with_the_tables_name(db):
     w = make_world(db)
     phone = fake_phone()
 
-    steps, skipped = propose_rows(db, w, [row_(local(phone), name="ZZT New Person", role="employee", codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(local(phone), name="ZZT New Person", role="employee", codes=[w.cust_a.customer_code])])
 
     assert skipped == []
     assert "new" in json.dumps(steps[0]["cells"]).lower()
@@ -387,19 +387,21 @@ def test_03_a_customer_by_exact_name_with_one_match_is_linked(db):
     assert state(db, person.phone_number)["links"] == [str(w.cust_a.id)]
 
 
-def test_03_a_name_held_by_two_customers_a_near_name_and_an_unknown_code_are_skipped_never_guessed(db):
+def test_03_a_name_held_by_two_customers_and_a_near_name_wait_for_a_choice_and_an_unknown_code_is_skipped(db):
     w = make_world(db)
     a, b, c = dealer(db, w), dealer(db, w), dealer(db, w)
 
-    steps, skipped = propose_rows(db, w, [
+    steps, skipped, waiting = propose_rows(db, w, [
         row_(a.phone_number, names=[w.twin1.customer_name]),
-        row_(b.phone_number, names=[w.cust_a.customer_name[:-1]]),  # one letter short: no fuzzy link
+        row_(b.phone_number, names=[w.cust_a.customer_name[:-1]]),  # one letter short: a pick, never a link
         row_(c.phone_number, codes=["ZZT-NO-SUCH-CODE"]),
     ])
 
     assert steps == []
-    assert "more than one" in reason_of(skipped, 1)
-    assert "no customer" in reason_of(skipped, 2)
+    assert [x["row"] for x in waiting] == [1, 2]
+    assert {cand["code"] for cand in waiting[0]["candidates"]} == {w.twin1.customer_code, w.twin2.customer_code}
+    assert w.cust_a.customer_code in {cand["code"] for cand in waiting[1]["candidates"]}
+    assert [x["row"] for x in skipped] == [3]
     assert "no customer" in reason_of(skipped, 3)
     for person in (a, b, c):
         assert state(db, person.phone_number)["links"] == []
@@ -409,7 +411,7 @@ def test_03_a_customer_of_a_company_the_row_does_not_name_is_skipped(db):
     w = make_world(db)
     person = dealer(db, w)
 
-    steps, skipped = propose_rows(db, w, [row_(person.phone_number, companies=["SRT"], codes=[w.cust_b.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, companies=["SRT"], codes=[w.cust_b.customer_code])])
 
     assert steps == []
     assert "mocha" in reason_of(skipped, 1) or "mch" in reason_of(skipped, 1)
@@ -422,7 +424,7 @@ def test_03_a_customer_outside_the_users_companies_is_not_found(db):
         hidden = seed_customer(db, unique_code("ZZT Hidden"), None, company_id=w.hidden)
     db.commit()
 
-    steps, skipped = propose_rows(db, w, [row_(person.phone_number, codes=[hidden.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, codes=[hidden.customer_code])])
 
     assert steps == []
     assert "no customer" in reason_of(skipped, 1)
@@ -435,7 +437,7 @@ def test_03_an_ambiguous_phone_an_invalid_phone_and_a_repeated_phone_are_skipped
     dealer(db, w, phone=local(shared))  # same digits after normalising, a second contact
     once = dealer(db, w)
 
-    steps, skipped = propose_rows(db, w, [
+    steps, skipped, _ = propose_rows(db, w, [
         row_(shared),
         row_("12345"),
         row_(once.phone_number, codes=[w.cust_a.customer_code]),
@@ -454,7 +456,7 @@ def test_03_a_row_with_nothing_to_change_is_skipped_as_already_set(db):
     outcome, _ = propose_and_confirm(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
     assert outcome.status == "executed"
 
-    steps, skipped = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
 
     assert steps == []
     assert "already" in reason_of(skipped, 1)
@@ -462,7 +464,7 @@ def test_03_a_row_with_nothing_to_change_is_skipped_as_already_set(db):
 
 def test_03_an_unknown_role_or_company_is_refused_by_the_schema(db):
     w = make_world(db)
-    steps, skipped = propose_rows(db, w, [
+    steps, skipped, _ = propose_rows(db, w, [
         {**row_(fake_phone()), "role": "boss"},
         {**row_(fake_phone()), "companies": ["ZZX"]},
     ])
@@ -527,7 +529,7 @@ def test_04_a_row_changed_on_screen_since_the_preview_fails_alone(db):
 
     w = make_world(db)
     moved, steady = dealer(db, w), dealer(db, w)
-    steps, _ = propose_rows(db, w, [
+    steps, _, _ = propose_rows(db, w, [
         row_(moved.phone_number, codes=[w.cust_a.customer_code]),
         row_(steady.phone_number, codes=[w.cust_a.customer_code]),
     ])
@@ -554,7 +556,7 @@ def test_04_the_slug_removed_before_confirm_fails_every_row_and_writes_nothing(d
 
     w = make_world(db, superadmin=False)
     person = dealer(db, w)
-    steps, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
     action = store(db, w, steps)
     db.execute(text(
         "DELETE FROM user_role_permissions WHERE role_id IN "
@@ -588,7 +590,7 @@ def test_05_a_user_who_cannot_set_companies_on_screen_gets_the_row_without_the_c
     w = make_world(db, slugs=(EDIT,), superadmin=False)
     person = dealer(db, w, companies=())
 
-    steps, skipped = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
 
     assert skipped == []
     assert "not applied" in steps[0]["summary"].lower()
@@ -663,7 +665,7 @@ def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
     person = dealer(db, w, companies=())
     ctx = dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
 
-    steps, skipped = batch.propose_rows(db, ctx, GRANT, [row_(person.phone_number, codes=[w.cust_a.customer_code])], seen_ids=set())
+    steps, skipped, _ = batch.propose_rows(db, ctx, GRANT, [row_(person.phone_number, codes=[w.cust_a.customer_code])], seen_ids=set())
     assert skipped == [] and "not applied" in steps[0]["summary"].lower()
     action = store(db, w, steps)
     outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
@@ -679,7 +681,7 @@ def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
 
 def test_07_more_than_ten_customers_on_a_row_is_refused(db):
     w = make_world(db)
-    steps, skipped = propose_rows(db, w, [row_(fake_phone(), codes=[f"ZZT-{i}" for i in range(11)])])
+    steps, skipped, _ = propose_rows(db, w, [row_(fake_phone(), codes=[f"ZZT-{i}" for i in range(11)])])
     assert steps == []
     assert "more than 10" in reason_of(skipped, 1)
 
@@ -688,7 +690,7 @@ def test_07_a_cell_cannot_carry_a_markdown_link_or_a_pipe(db):
     from app.services.chatbot.agent import batch
 
     w = make_world(db)
-    steps, skipped = propose_rows(db, w, [row_("[click](http://evil.example) | x", name="A|B")])
+    steps, skipped, _ = propose_rows(db, w, [row_("[click](http://evil.example) | x", name="A|B")])
     block = batch.preview_block(steps, skipped)
     assert "](" not in block and "A/B" in block
 
@@ -702,7 +704,7 @@ def test_08_a_company_the_user_is_not_granted_is_refused(db):
     db.commit()
     person = dealer(db, w)
 
-    steps, skipped = propose_rows(db, w, [row_(person.phone_number, companies=["MCH"])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, companies=["MCH"])])
 
     assert steps == []
     assert "not one of your companies" in reason_of(skipped, 1)
@@ -714,7 +716,7 @@ def test_08_a_customer_renamed_between_preview_and_confirm_fails_the_row(db):
     w = make_world(db)
     person = dealer(db, w)
     said = w.cust_a.customer_name
-    steps, _ = propose_rows(db, w, [row_(person.phone_number, names=[said])])
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, names=[said])])
     action = store(db, w, steps)
     with company_scope(db, None):
         db.execute(text("UPDATE customers SET customer_name = customer_name || ' OLD' WHERE id = :i"), {"i": w.cust_a.id})
@@ -767,7 +769,7 @@ def test_09_an_access_word_outside_owner_and_employee_skips_the_row_with_the_wor
     w = make_world(db)
     person = dealer(db, w)
 
-    steps, skipped = propose_rows(db, w, [
+    steps, skipped, _ = propose_rows(db, w, [
         {**row_(person.phone_number, codes=[w.cust_a.customer_code]), "role": "unknown", "access_as_written": "Manager"},
     ])
 
@@ -805,4 +807,4 @@ def test_09_row_numbers_and_counts_the_batch_produced_are_not_flagged_as_unverif
     result, _ = run_turn(db, w, script, text_="grant access to these people")
 
     assert "not verified" not in result.reply_text
-    assert "rows 1 and 2" in result.reply_text
+    assert result.reply_text.startswith("Rows from your table: 2 ready to confirm, 1 not changed.")

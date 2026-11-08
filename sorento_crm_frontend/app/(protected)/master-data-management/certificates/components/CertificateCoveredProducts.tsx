@@ -32,6 +32,7 @@ import { SOURCE_LABELS } from '../lib/certificateDisplay';
 import { useAddCertificateProduct, useRemoveCertificateProduct } from '../hooks/useCertificates';
 import type { CertificateProduct } from '../types/certificate.types';
 import { distinctName } from '@/lib/product-display';
+import { CoverageCodeEditor } from './CoverageCodeEditor';
 
 /**
  * Coverage as a standard DataGrid, not bespoke chips: fixed layout, resizable
@@ -42,9 +43,12 @@ import { distinctName } from '@/lib/product-display';
 export default function CertificateCoveredProducts({
   certificateId,
   products,
+  canEditCodes = false,
 }: {
   certificateId: string;
   products: CertificateProduct[];
+  /** `master_data.certificates.edit`: the Code on certificate cell becomes editable. */
+  canEditCodes?: boolean;
 }) {
   const [productToAdd, setProductToAdd] = useState('');
   const [pendingUnlink, setPendingUnlink] = useState<CertificateProduct | null>(null);
@@ -113,6 +117,23 @@ export default function CertificateCoveredProducts({
         meta: { headerTitle: 'Product Name' },
       },
       {
+        id: 'model_code',
+        header: ({ column }) => <DataGridColumnHeader title="Code on certificate" column={column} />,
+        cell: ({ row }) => (
+          <CoverageCodeEditor
+            certificateId={certificateId}
+            coverageId={row.original.id}
+            code={row.original.model_code}
+            source={row.original.model_code_source}
+            canEdit={canEditCodes}
+          />
+        ),
+        size: 180,
+        minSize: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Code on certificate' },
+      },
+      {
         accessorKey: 'company_name',
         header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
         cell: ({ row }) => (
@@ -160,7 +181,7 @@ export default function CertificateCoveredProducts({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [],
+    [certificateId, canEditCodes],
   );
 
   const table = useReactTable({

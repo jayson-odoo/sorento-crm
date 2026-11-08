@@ -55,7 +55,7 @@ def _refused(exc: QueryRefused) -> ToolResult:
     return ToolResult(_REFUSAL_STATUS.get(exc.code, "invalid"), message=exc.message)
 
 
-def _as_user(db, ctx, name: str, fn) -> ToolResult:
+def _as_user(db, ctx, name: str, fn, *, cap: bool = True) -> ToolResult:
     if getattr(ctx, "principal", "user") == "contact" or not ctx.user_id:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
     try:
@@ -64,14 +64,27 @@ def _as_user(db, ctx, name: str, fn) -> ToolResult:
         return _refused(exc)
     except Exception as exc:  # noqa: BLE001
         return writes._route_failure(exc)
+    if not cap:
+        return ToolResult("ok", data=data)
+    shaped, more = cap_result(data)
+    return ToolResult("ok", data=shaped, more=more)
+
+
+def query_result(data: Any, *, panel: bool) -> ToolResult:
+    """A crm_query result: the code-rendered table from EVERY row the query returned (crew live round 6: the size
+    cap for the model cut 50 rows to 49 before the table was drawn, "Top 49 of 88"), else the result capped."""
+    if isinstance(data, dict):
+        card = as_card(data, panel=panel)
+        if card is not None:
+            return card
     shaped, more = cap_result(data)
     return ToolResult("ok", data=shaped, more=more)
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
-    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args))
-    if out.status == "ok" and isinstance(out.data, dict):
-        return as_card(out.data, panel=staff_principal.current() is not None) or out
+    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args), cap=False)
+    if out.status == "ok":
+        return query_result(out.data, panel=staff_principal.current() is not None)
     return out
 
 
@@ -134,7 +147,10 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             lines.append("Total: " + ", ".join(f"{c['label']} {_cell(totals[c['key']])}" for c in columns if c["key"] in totals))
     shown, whole = len(items), data.get("total_groups", data.get("total"))
     if data.get("truncated") and whole:
-        lines.append(f"Showing {shown:,} of {int(whole):,}.")
+        if data.get("ranked_by"):
+            lines.append(f"Top {shown:,} of {int(whole):,} by {str(data['ranked_by']).lower()}.")
+        else:
+            lines.append(f"Showing {shown:,} of {int(whole):,}.")
     if data.get("scope_note"):
         lines.append(data["scope_note"])
     return "\n".join(lines)
@@ -144,9 +160,10 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
     """A result over CARD_MIN_ROWS as a code-rendered block for the user plus a summary for the model; None
     for a short result, which the model reads whole."""
     items = data.get("groups") if "groups" in data else data.get("rows")
-    if not isinstance(items, list) or len(items) <= CARD_MIN_ROWS:
-        return None
     entity = ENTITIES.get(str(data.get("entity")))
+    least = entity.card_min_rows if entity is not None and entity.card_min_rows else CARD_MIN_ROWS + 1
+    if not isinstance(items, list) or len(items) < least:
+        return None
     title = entity.label if entity is not None else "Results"
     if "groups" in data:
         keys = [c["label"] for c in data.get("columns") or [] if c.get("group")]
@@ -160,7 +177,7 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
         "truncated": data.get("truncated"),
         "sample": items[:SAMPLE_ROWS],
     }
-    for key in ("total", "total_groups", "totals", "restricted"):
+    for key in ("total", "total_groups", "totals", "restricted", "ranked_by"):
         if key in data:
             summary[key] = data[key]
     return ToolResult("ok", data=summary, display=render_card(data, title=title, panel=panel))
@@ -337,7 +354,79 @@ def _dmy(found: "re.Match") -> str:
     return f"{day}/{month}/{year}"
 
 
-def shape_reply(text: str, ledger: dict | None) -> str:
+def _sentences(note: str) -> list[str]:
+    return [part.strip() for part in re.split(r"(?<=\.)\s+(?=[A-Z])", note) if part.strip()]
+
+
+def _year_as_range(text: str, entries: list[dict]) -> str:
+    """"for 2026" as the window the result covered ("from 01/01/2026 to 31/12/2026"), when a whole calendar year
+    was read (crew live round 4: the first line said "for 2026" where the owner wants the date range)."""
+    for e in entries:
+        found = re.fullmatch(r"Period 01/01/(\d{4}) to 31/12/\1", str((e.get("data") or {}).get("period_display") or ""))
+        if found:
+            year = found.group(1)
+            text = re.sub(rf"\b(?:for|in|during) (?:the year )?{year}\b", f"from 01/01/{year} to 31/12/{year}", text)
+    return text
+
+
+def _user_named(args: dict, user_text: str | None) -> bool:
+    said = " ".join(str(user_text or "").split()).lower()
+    if not said:
+        return False
+    values = [args.get("agent")] + [f.get("value") for f in args.get("filters") or [] if isinstance(f, dict)]
+    return any(isinstance(v, str) and v.strip() and " ".join(v.split()).lower() in said for v in values)
+
+
+def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple[dict, str | None]:
+    """The asking user's own name is not an agent filter unless they said "my" (or named themselves): crew live
+    round 4, "payout per dealer" was first filtered by the asker's own name and found nothing."""
+    own = " ".join(str(user_name or "").split()).lower()
+    said = " ".join(str(user_text or "").split()).lower()
+    if not own or re.search(r"\b(my|me|mine|myself|saya)\b", said):
+        return args, None
+
+    words = set(own.split())
+
+    def is_self(value: Any) -> bool:
+        # The asker's name, or part of it, in any order ("Teh", "teh jayson"); never one naming someone else too.
+        v = " ".join(str(value or "").split()).lower()
+        return bool(v) and set(v.split()) <= words and v not in said
+
+    out, dropped = dict(args), []
+    if is_self(out.get("agent")):
+        dropped.append(str(out.pop("agent")))
+    entity = ENTITIES.get(str(out.get("entity")))
+    if entity is not None and isinstance(out.get("filters"), list):
+        keep = []
+        for f in out["filters"]:
+            field = entity.fields.get(str(f.get("field"))) if isinstance(f, dict) else None
+            if field is not None and (f.get("field") in entity.name_by or field.agent_id) and is_self(f.get("value")):
+                dropped.append(str(f.get("value")))
+                continue
+            keep.append(f)
+        out["filters"] = keep
+    if not dropped:
+        return args, None
+    return out, f"Left out {', '.join(dropped)}: that is your own name and the question did not name it or say 'my'."
+
+
+def _names_a_subject(entity_key: str, args: dict) -> bool:
+    """Does a crm_query name a record: `agent`, or a filter on the entity's name or agent field."""
+    if args.get("agent"):
+        return True
+    entity = ENTITIES.get(entity_key)
+    if entity is None:
+        return False
+    for f in args.get("filters") or []:
+        if not isinstance(f, dict):
+            continue
+        field = entity.fields.get(str(f.get("field")))
+        if field is not None and (f.get("field") in entity.name_by or field.agent_id):
+            return True
+    return False
+
+
+def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
@@ -347,10 +436,28 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     # its own, which never replaces the first (crew live x3 on 3c6924bf: "who is below
     # target" lost its target table and its "Not reached = ..." note to a later payout query).
     per_entity: dict[str, str] = {}
+    missed: set[str] = set()
+    kept: list[dict] = []
     for e in (ledger or {}).values():
-        if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display"):
-            entity = str((e.get("data") or {}).get("entity") or (e.get("args") or {}).get("entity") or "")
+        if e.get("name") != QUERY or e.get("status") != "ok":
+            continue
+        args = e.get("args") or {}
+        entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
+        named = _names_a_subject(entity, args)
+        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total") and (
+            _user_named(args, user_text)
+        ):
+            # Only a name the USER asked about: an empty call on a name the model made up (the asker's own, crew
+            # live round 6) never hides the table a later call returned.
+            missed.add(entity)
+        if entity in missed and not named:
+            # A whole table nobody asked for, after the named record was not found, is not shown, nor its notes
+            # (owner 8 Nov: "payout to fullshun" appended every payout and notes on other agents).
+            continue
+        kept.append(e)
+        if e.get("display"):
             per_entity[entity] = e["display"]
+    text = _year_as_range(text, kept)
     if per_entity:
         cards = list(per_entity.values())
         card = "\n\n".join(cards)
@@ -360,13 +467,14 @@ def shape_reply(text: str, ledger: dict | None) -> str:
         return _ISO_DATE.sub(_dmy, text)
     lowered = text.lower()
     notes: list[str] = []
-    for entry in (ledger or {}).values():
-        if entry.get("name") != QUERY or entry.get("status") != "ok" or not isinstance(entry.get("data"), dict):
+    for entry in kept:
+        if not isinstance(entry.get("data"), dict):
             continue
         data = entry["data"]
-        note = data.get("scope_note")
-        if note and note not in notes:
-            notes.append(note)
+        # Sentence by sentence, each once (crew live round 4: "No period named" twice from two queries).
+        for note in _sentences(data.get("scope_note") or ""):
+            if note not in notes:
+                notes.append(note)
         for row in data.get("rows") or []:
             label = str(row.get("label") or "")
             if ": " not in label or label.lower() in lowered:
