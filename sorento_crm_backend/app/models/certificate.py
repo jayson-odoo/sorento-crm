@@ -301,6 +301,10 @@ class CertificateProduct(Base):
     source = Column(String(10), nullable=False, server_default="ai", default=CERTIFICATE_SOURCE_AI)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
+    # QUOTE-CERT-TAB: the text as printed on the certificate, who set it, and the default box cache.
+    model_code = Column(String(60), nullable=True)
+    model_code_source = Column(String(10), nullable=True)
+    boxes = Column(JSONB, nullable=True)
 
     certificate = relationship("Certificate", back_populates="covered_products")
     product = relationship("Product")
@@ -309,6 +313,10 @@ class CertificateProduct(Base):
         CheckConstraint(
             "source IN ('ai', 'manual')",
             name="ck_certificate_products_source",
+        ),
+        CheckConstraint(
+            "model_code_source IS NULL OR model_code_source IN ('ai', 'manual')",
+            name="ck_certificate_products_code_source",
         ),
         Index(
             "uq_certificate_products_unique",

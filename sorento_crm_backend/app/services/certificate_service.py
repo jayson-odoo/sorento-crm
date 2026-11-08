@@ -1349,6 +1349,8 @@ class CertificateService:
                     else (company.name if company is not None else "Shared")
                 ),
                 source=coverage.source,
+                model_code=coverage.model_code,
+                model_code_source=coverage.model_code_source,
                 created_at=coverage.created_at,
                 created_by=str(coverage.created_by) if coverage.created_by else None,
             )

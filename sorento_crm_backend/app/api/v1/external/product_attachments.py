@@ -204,6 +204,32 @@ def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[st
     matched = [(m.requested_code, m.product, m.via) for m in resolved.matches]
     return matched, list(resolved.unmatched)
 
+def _store_printed_codes(db: Session, certificate_id: str, matched) -> None:
+    """CERT-14: the requested text of a matched product is the code printed on the certificate,
+    stored as a Suggested (`ai`) model code. A prefix match names a family, not a printed code,
+    and a `manual` code is never overwritten."""
+    from app.models.certificate import CertificateProduct
+
+    for code, product, via in matched:
+        text_code = (code or "").strip()[:60]
+        if via == "prefix" or not text_code:
+            continue
+        row = (
+            db.query(CertificateProduct)
+            .filter(
+                CertificateProduct.certificate_id == certificate_id,
+                CertificateProduct.product_id == str(getattr(product, "id")),
+            )
+            .first()
+        )
+        if row is None or row.model_code_source == "manual":
+            continue
+        if row.model_code != text_code and not (isinstance(row.boxes, dict) and row.boxes.get("source") == "manual"):
+            row.boxes = None  # a person's drawn default boxes outlive a changed suggestion
+        row.model_code = text_code
+        row.model_code_source = "ai"
+
+
 def _link_via_certificate(
     db: Session,
     attachment,
@@ -275,6 +301,7 @@ def _link_via_certificate(
         commit=False,
     )
     certificate_id = str(certificate.id)
+    _store_printed_codes(db, certificate_id, matched)
     db.commit()
 
     linked: list[ProductAttachmentBulkLinkItem] = []

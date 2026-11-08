@@ -481,6 +481,87 @@ def generate_quotation_issue_pdf(
         db.close()
 
 
+def generate_quotation_certificates_pdf(
+    download_id: str,
+    document_id: str,
+    issue_id: Optional[str],
+    user_id: str,
+    company_id: Optional[str] = None,
+) -> dict:
+    """Merge a quotation's certificates into one PDF with the boxes burned in (CERT-12).
+
+    With an issue it reads that issue's frozen list, else the live list. A certificate whose file
+    cannot be read is skipped and named in the result. Stored files are never modified.
+    """
+    db = SessionLocal()
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        import pymupdf
+
+        from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
+        from app.models.resources import Attachment
+        from app.services import certificate_pdf_service as pdfs
+        from app.services import quotation_certificate_service as certs
+        from app.services.resources_service import AttachmentService
+
+        document = db.get(ProjectQuotationDocument, str(document_id))
+        if document is None:
+            raise ValueError("This quotation no longer exists, so its certificates cannot be exported.")
+        issue = db.get(ProjectQuotationIssue, str(issue_id)) if issue_id else None
+        entries = certs.export_entries(db, document, issue)
+
+        merged = pymupdf.open()
+        skipped = []
+        try:
+            for entry in entries:
+                label = f"{entry.get('scheme') or ''} {entry.get('certificate_number') or ''}".strip()
+                try:
+                    attachment = db.get(Attachment, entry["attachment_id"]) if entry.get("attachment_id") else None
+                    if attachment is None:
+                        raise ValueError("no file")
+                    data = AttachmentService(db).get_file_content_for(attachment)
+                    burned = pdfs.burn_boxes(data, entry.get("boxes") or [])
+                    part = pymupdf.open(stream=burned, filetype="pdf")
+                    try:
+                        merged.insert_pdf(part)
+                    finally:
+                        part.close()
+                except Exception:  # noqa: BLE001 - one bad file must not sink the rest
+                    logger.warning("certificate %s skipped in export", label, exc_info=True)
+                    skipped.append(entry.get("certificate_number") or label)
+            if len(merged) == 0:
+                raise ValueError("None of the certificate files could be read.")
+            pdf_bytes = merged.tobytes()
+        finally:
+            merged.close()
+
+        filename = certs.export_filename(document, issue)
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/quotation-certificates/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes), "skipped": skipped}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_certificates_pdf failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_quotation_certificates_pdf")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
 def generate_quotation_issue_xlsx(
     download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
 ) -> dict:
