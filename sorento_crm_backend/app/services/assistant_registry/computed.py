@@ -309,7 +309,8 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         # No period named: the entity's own default window, said (crew live x3: a payout answered for today only).
         default = {"field": entity.window_field, "op": "eq", "value": entity.default_window}
         date_from, date_to, rest, period = _window(entity, [*asked, default])
-        notes.append(f"No period named: {entity.default_window.replace('_', ' ')}.")
+        shown = _display_date(date_from.isoformat(), "date"), _display_date(date_to.isoformat(), "date")
+        notes.append(f"No period named: {entity.default_window.replace('_', ' ')}, {shown[0]} to {shown[1]}.")
     named = {f.get("field") for f in rest}
     for field, op, value, note in entity.default_filters:
         if field not in named:

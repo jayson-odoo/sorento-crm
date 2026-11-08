@@ -35,7 +35,7 @@ def test_S1_payout_per_agent_and_dealer_this_year_ranked_with_totals(targets):
     assert out["totals"] == {"targets": 3, "payout": 3500.0 + 540.0 + 180.0}
     assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
     # The dealer target has no figure (0): its sales stay out of target and achieved, its payout counts.
-    assert out["scope_note"] == f"No period named: this year. Left out of target and achieved (a target of 0): {t['dealer']['target_no']}."
+    assert out["scope_note"] == f"No period named: this year, 01/01/2026 to 31/12/2026. No target set on {t['dealer']['target_no']}: left out of target and achieved."
 
 
 def test_S1b_a_wider_window_is_still_one_row_per_agent(targets):

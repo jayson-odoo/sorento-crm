@@ -76,6 +76,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     rows = []
     for target, period, fig in ts.period_figures(db, targets, date_from=date_from, date_to=date_to):
         agent = agents.get(target.sales_agent_id) if target.sales_agent_id else None
+        tab_label = None
         if target.subject_kind == "agent":
             subject = agent_label(agent) if agent else ""
             team = team_of_agent.get(target.sales_agent_id)
@@ -87,7 +88,8 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
             # As the chat target lines (`period_progress`): no ledger marker on a single account's name.
             from app.services.ledger_family import ledger_family_label
 
-            subject = ledger_family_label(ts.dealer_label(db, dealer_accounts.get(target.id, [])))
+            tab_label = ts.dealer_label(db, dealer_accounts.get(target.id, []))
+            subject = ledger_family_label(tab_label)
         # A points target with no ratio on file has no RM figure (the page flags it, `period_progress` blanks it).
         missing = fig["ratio_missing"]
         goal = None if missing else fig["target_value"]
@@ -108,6 +110,8 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "agent": agent_label(agent) if agent else None,
                 "agent_code": agent.sales_agent if agent else None,
                 "_agent_id": agent.id if agent else None,
+                # The Dealers tab's own label (`list_all_targets`), ledger marker kept (crew live round 2).
+                "_tab_label": tab_label,
                 "team": team.name if team else None,
                 "period": period.period_start,
                 "period_start": period.period_start,
@@ -148,8 +152,8 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
     Owner answers on the behaviour card: an agent's row is its own agent targets only (Q1 a: a dealer target is paid
     to the dealer's account, so it is the dealer's row, never folded into the agent who owns its accounts); a team's
     row is its team target's own payout, named "Team X" and no person (Q2 a, Q3 a), and its members are the agent rows
-    whose `team` is X (Q2 b); a dealer is named as the Dealers tab names it, `agent` being the agent who owns every
-    counted account. Dealer targets with the same name are one dealer (a target and the one that replaces it, Q5).
+    whose `team` is X (Q2 b); a dealer is one row per dealer target named as the Dealers tab names it, `agent` being the agent who owns every
+    counted account.
 
     Matching (`computed.names_exact`): an agent by code, name, "CODE - Name" or the person behind several codes
     (`SalesAgent.person_label`); a team with or without "Team"; a dealer by its name or any counted account's code or
@@ -182,15 +186,19 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
             if len(owners) == 1 and None not in owners and next(iter(owners)) in agents else None
         )
         names = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
-        return row["subject"], "dealer", {
+        names.append(_norm(row["subject"]))  # the family name without its ledger marker
+        return row["_tab_label"] or row["subject"], "dealer", {
             "agent": owner, "team": None, "_names": {"owner": names, "agent": [person[owner]] if owner in person else []},
         }
 
     per: dict[tuple, dict] = {}
     for row in periods:
         name, kind, extra = subject(row)
-        out = per.setdefault((kind, name), {
-            "id": f"{kind}:{name}", "owner": name, "owner_kind": kind, "period": row["period_start"],
+        # One row per dealer TARGET, as the Dealers tab lists them (crew live round 2: two ledgers of one customer
+        # were one row); agents and teams by name.
+        key = (kind, row["target_id"] if kind == "dealer" else name)
+        out = per.setdefault(key, {
+            "id": f"{kind}:{key[1]}", "owner": name, "owner_kind": kind, "period": row["period_start"],
             "agent": extra["agent"], "team": extra["team"], "periods": 0, "targets": set(), "target_value": 0.0,
             "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None, "replaced_by": None,
             "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
@@ -255,8 +263,8 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
 
 #: What an empty payout reads as: no commission tiers on any of the row's targets.
 NO_COMMISSION = "no commission set"
-#: What target, achieved and % read as on a row of only targets of 0.
-ZERO_TARGET = "left out (target of 0)"
+#: What target, achieved and % read as on a row of only targets of 0 (never "RM 0", crew live round 2).
+ZERO_TARGET = "no target set"
 
 
 def _norm(value) -> str:
@@ -274,7 +282,7 @@ def _summary_note(rows: list[dict]) -> str | None:
     parts = []
     zero = [no for r in rows for no in r["_zero"]]
     if zero:
-        parts.append(f"Left out of target and achieved (a target of 0): {_some(zero)}.")
+        parts.append(f"No target set on {_some(zero)}: left out of target and achieved.")
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
         parts.append(f"No commission is set on the targets of {_some(unset)}.")
