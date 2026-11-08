@@ -79,7 +79,16 @@ Ingest after R8, same SPAN PDF read again: `14A` links `SV-14A-CP` (whole part) 
 - A renewal does not re-derive coverage (REV-2), so its links get a fresh verdict against the new PDF.
 - 10k links x ~1 PDF read per certificate: the backfill reads each PDF once (not once per link).
 
-## Questions (3, each with a recommendation)
+## Owner answers (crew, 8 Nov) - these override the rules above where they differ
+
+- **Q1: not (a) as written.** A link is FOUND when the printed code (whole token on the PDF) is
+  CONTAINED in the product code as a contiguous run of 3+ characters with a digit (`14A` inside
+  `CSK14A-BL`, `WB 1515` inside `SRTWB1515`); digits-only = Check; a code a person typed always counts.
+  E3 therefore reads Found. The exact tiers count too (own code, printed set code, `A + B` parts).
+- **Q2 (a)** certificates only. **Q3 (a)** Confirm flips source to manual, audit "was AI".
+- Recorded deviations (R3 lazy check instead of a deploy job, R6 one audit row per link): see the plan.
+
+## Questions as asked (3, each with a recommendation)
 
 Q1. **What "Found" means when the Code on certificate is a whole token on the PDF but only a fragment
     of the product code** (E3: `14A` printed, product `CSK14A-BL`). (a) Not found: the printed code must

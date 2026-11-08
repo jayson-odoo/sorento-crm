@@ -194,11 +194,22 @@ def list_links(
     limit = max(1, int(limit or 50))
     rows = q.offset((page - 1) * limit).limit(limit).all()
     data = [_serialize(cp, cert, product, type_name, verdict_value) for cp, cert, product, type_name, verdict_value in rows]
+    # The certificate types that have links in scope: the type filter's options, so a viewer
+    # needs no attachment-types permission to filter by type.
+    types = (
+        db.query(AttachmentType.id, AttachmentType.type_name)
+        .join(Certificate, Certificate.attachment_type_id == AttachmentType.id)
+        .join(CertificateProduct, CertificateProduct.certificate_id == Certificate.id)
+        .distinct()
+        .order_by(AttachmentType.type_name)
+        .all()
+    )
     return {
         "data": data,
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
         "summary": summary,
+        "types": [{"id": str(type_id), "name": name} for type_id, name in types],
     }
 
 

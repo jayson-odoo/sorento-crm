@@ -22,6 +22,8 @@ export function useCertificateLinks(params: CertificateLinksParams, options?: { 
       params.certificateId,
       params.verdicts,
       params.source,
+      params.typeIds,
+      params.statuses,
     ],
     queryFn: () => getCertificateLinks(params),
     ...LIST_QUERY_OPTIONS,

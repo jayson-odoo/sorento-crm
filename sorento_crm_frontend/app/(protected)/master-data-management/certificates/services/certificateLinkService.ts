@@ -4,8 +4,9 @@
  * Layering: components -> hooks/useCertificateLinks -> THIS service -> lib/api-client -> backend.
  *
  *   GET  /api/v1/master-data/certificate-links/   (master_data.certificates.view)
- *        Query: page, limit, sort, dir, query, certificate_ids, verdict (repeated), source, status.
- *        200: { data: CertificateLink[], pagination, empty, summary: { <verdict>: count } }
+ *        Query: page, limit, sort, dir, query, certificate_ids, attachment_type_ids, verdict (repeated),
+ *        source, status (certificate status).
+ *        200: { data: CertificateLink[], pagination, empty, summary: { <verdict>: count }, types }
  *        `summary` counts every verdict under every filter except the verdict one.
  *   POST /api/v1/master-data/certificate-links/check     200: { queued }  (worker reads each PDF once)
  *   POST /api/v1/master-data/certificate-links/confirm   body { ids }  200: { confirmed }
@@ -23,6 +24,8 @@ export type CertificateLinksParams = DataGridApiFetchParams & {
   certificateId?: string;
   verdicts?: string[];
   source?: string;
+  typeIds?: string[];
+  statuses?: string[];
 };
 
 export async function getCertificateLinks(params: CertificateLinksParams): Promise<CertificateLinksResponse> {
@@ -30,6 +33,8 @@ export async function getCertificateLinks(params: CertificateLinksParams): Promi
     certificate_ids: params.certificateId,
     verdict: params.verdicts && params.verdicts.length ? params.verdicts : undefined,
     source: params.source,
+    attachment_type_ids: params.typeIds && params.typeIds.length ? params.typeIds : undefined,
+    status: params.statuses && params.statuses.length ? params.statuses : undefined,
   });
   const response = await apiFetch(`${BASE}/?${qs.toString()}`);
   if (!response.ok) {

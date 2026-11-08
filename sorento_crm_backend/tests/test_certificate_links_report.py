@@ -320,3 +320,16 @@ def test_set_members_linked_through_a_printed_set_code_are_found(env, files):
     _run_check(env)
     rows = _by_code(_rows(env, certificate_ids=str(cert.id)))
     assert {code: row["verdict"] for code, row in rows.items()} == {"WB-8800": "found", "WB-8801": "found"}
+
+
+def test_filters_by_certificate_type_and_status_and_lists_the_types(env, files):
+    a = _certificate(env, files, "RPT-18", ["Model 14A"], ["14A"], ["SV-14A-CP"])
+    b = _certificate(env, files, "RPT-19", ["Model 77B"], ["77B"], ["SV-77B-CP"])
+    b.status = "archived"
+    env.db.commit()
+    body = _rows(env)
+    assert {t["id"] for t in body["types"]} == {str(a.attachment_type_id), str(b.attachment_type_id)}
+    only_a = _rows(env, attachment_type_ids=str(a.attachment_type_id))
+    assert {r["certificate_number"] for r in only_a["data"]} == {"RPT-18"}
+    archived = _rows(env, status="archived")
+    assert {r["certificate_number"] for r in archived["data"]} == {"RPT-19"}

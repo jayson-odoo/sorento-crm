@@ -4,7 +4,7 @@
  * row-selection driven, which the shared DataGrid cannot do under jsdom; the browser pass covers them.
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -165,6 +165,7 @@ function response(rows: CertificateLink[], summary: Partial<CertificateLinksResp
     pagination: { total: rows.length, page: 1, limit: 50 },
     empty: rows.length === 0,
     summary: { found: 2, check: 0, not_found: rows.length, scanned: 0, no_file: 0, pending: 0, ...summary },
+    types: [{ id: 'type-1', name: 'Certification' }],
   };
 }
 
@@ -178,6 +179,10 @@ function renderList() {
 }
 
 describe('CertificateLinksList', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
@@ -229,5 +234,19 @@ describe('CertificateLinksList', () => {
     await waitFor(() =>
       expect(svc.getCertificateLinks.mock.calls.at(-1)?.[0].verdicts).toEqual(['scanned']),
     );
+  });
+
+  it('filters by certificate type and status, with the types the list returned', async () => {
+    svc.getCertificateLinks.mockResolvedValue(response([link()]));
+    renderList();
+    await screen.findByRole('option', { name: 'Certification' });
+    const types = screen.getByLabelText('Every type') as HTMLSelectElement;
+    for (const option of Array.from(types.options)) option.selected = option.value === 'type-1';
+    fireEvent.change(types);
+    await waitFor(() => expect(svc.getCertificateLinks.mock.calls.at(-1)?.[0].typeIds).toEqual(['type-1']));
+    const status = screen.getByLabelText('Active and archived') as HTMLSelectElement;
+    for (const option of Array.from(status.options)) option.selected = option.value === 'archived';
+    fireEvent.change(status);
+    await waitFor(() => expect(svc.getCertificateLinks.mock.calls.at(-1)?.[0].statuses).toEqual(['archived']));
   });
 });

@@ -32,6 +32,7 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 
 import { useCertificates } from '../hooks/useCertificates';
+import { STATUS_FILTER_OPTIONS } from '../lib/certificateDisplay';
 import {
   CERTIFICATE_LINKS_KEY,
   useCertificateLinks,
@@ -72,6 +73,8 @@ const SOURCE_OPTIONS = [
 ];
 
 const POLL_MS = 5000;
+/** Stop polling after this long: a certificate whose check keeps failing must not poll forever. */
+const POLL_LIMIT_MS = 10 * 60 * 1000;
 
 function TextCell({ value, className }: { value: string | null | undefined; className?: string }) {
   if (!value) return <span className="text-muted-foreground">-</span>;
@@ -90,6 +93,8 @@ export default function CertificateLinksList() {
   const [source, setSource] = useState<string>(DEFAULT_SOURCE);
   const [certificateId, setCertificateId] = useState<string>('');
   const [certificateLabel, setCertificateLabel] = useState<string>('');
+  const [typeIds, setTypeIds] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
   const {
     value: searchInputValue,
     setValue: setSearchInputValue,
@@ -98,9 +103,10 @@ export default function CertificateLinksList() {
   } = useDebouncedSearch();
   const certificateSearch = useDebouncedSearch();
 
-  useResetPageOnFilterChange(setPagination, [verdicts, source, certificateId, searchQuery]);
+  useResetPageOnFilterChange(setPagination, [verdicts, source, certificateId, typeIds, statuses, searchQuery]);
 
   const [polling, setPolling] = useState(false);
+  const pollStarted = useRef(0);
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useCertificateLinks(
     {
       pageIndex: pagination.pageIndex,
@@ -110,6 +116,8 @@ export default function CertificateLinksList() {
       certificateId: certificateId || undefined,
       verdicts,
       source: source || undefined,
+      typeIds,
+      statuses,
     },
     { refetchInterval: polling ? POLL_MS : false },
   );
@@ -123,9 +131,22 @@ export default function CertificateLinksList() {
     if (pending > 0 && !asked.current) {
       asked.current = true;
       check.mutate();
+      pollStarted.current = Date.now();
       setPolling(true);
+      return;
     }
-    if (pending === 0 && polling) setPolling(false);
+    if (!polling) return;
+    if (pending === 0) {
+      setPolling(false);
+      return;
+    }
+    const left = POLL_LIMIT_MS - (Date.now() - pollStarted.current);
+    if (left <= 0) {
+      setPolling(false);
+      return;
+    }
+    const timer = setTimeout(() => setPolling(false), left);
+    return () => clearTimeout(timer);
   }, [pending, polling, check]);
 
   const register = useCertificates({
@@ -147,6 +168,8 @@ export default function CertificateLinksList() {
   }, [register.data, certificateId, certificateLabel]);
 
   const summary = data?.summary;
+  const typeOptions = (data?.types ?? []).map((t) => ({ value: t.id, label: t.name }));
+  const statusOptions = STATUS_FILTER_OPTIONS.filter((o) => o.value !== 'all');
   const verdictOptions = VERDICT_ORDER.map((v) => ({
     value: v,
     label: summary ? `${VERDICT_LABELS[v]} (${summary[v] ?? 0})` : VERDICT_LABELS[v],
@@ -263,14 +286,23 @@ export default function CertificateLinksList() {
   const isDefault =
     source === DEFAULT_SOURCE &&
     !certificateId &&
+    typeIds.length === 0 &&
+    statuses.length === 0 &&
     verdicts.length === DEFAULT_VERDICTS.length &&
     DEFAULT_VERDICTS.every((v) => verdicts.includes(v));
-  const activeFilterCount = (verdicts.length ? 1 : 0) + (source ? 1 : 0) + (certificateId ? 1 : 0);
+  const activeFilterCount =
+    (verdicts.length ? 1 : 0) +
+    (source ? 1 : 0) +
+    (certificateId ? 1 : 0) +
+    (typeIds.length ? 1 : 0) +
+    (statuses.length ? 1 : 0);
   const resetFilters = () => {
     setVerdicts(DEFAULT_VERDICTS);
     setSource(DEFAULT_SOURCE);
     setCertificateId('');
     setCertificateLabel('');
+    setTypeIds([]);
+    setStatuses([]);
   };
 
   return (
@@ -288,10 +320,8 @@ export default function CertificateLinksList() {
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
       emptyMessage={
         <div className="flex flex-col items-center gap-1 py-6">
-          <span className="font-medium">No links to check</span>
-          <span className="text-sm text-muted-foreground">
-            Every link in this view is backed by its certificate&apos;s text.
-          </span>
+          <span className="font-medium">No links match</span>
+          <span className="text-sm text-muted-foreground">Try other filters.</span>
         </div>
       }
     >
@@ -336,6 +366,28 @@ export default function CertificateLinksList() {
                       options={certificateOptions}
                       onSearchChange={certificateSearch.setValue}
                       placeholder="Every certificate"
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                  <div>
+                    <Label>Certificate type</Label>
+                    <SearchableMultiSelect
+                      value={typeIds}
+                      onChange={setTypeIds}
+                      options={typeOptions}
+                      placeholder="Every type"
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                  <div>
+                    <Label>Certificate status</Label>
+                    <SearchableMultiSelect
+                      value={statuses}
+                      onChange={setStatuses}
+                      options={statusOptions}
+                      placeholder="Active and archived"
                       triggerClassName="mt-1"
                       clearable
                     />

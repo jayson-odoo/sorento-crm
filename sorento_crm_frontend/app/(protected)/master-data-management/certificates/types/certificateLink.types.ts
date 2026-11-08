@@ -26,4 +26,6 @@ export interface CertificateLinksResponse {
   pagination: { total: number; page: number; limit: number };
   empty: boolean;
   summary: CertificateLinkSummary;
+  /** Certificate types that have links in scope: the type filter's options. */
+  types: { id: string; name: string }[];
 }
