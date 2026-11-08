@@ -8,6 +8,8 @@ matcher run). Plan: `PLAN-quote-cert-tab-08nov.md`. Card: `CARD-quote-cert-tab-0
 ### Data (one additive migration `qcert_0001_quote_certificates`, chained on main's head)
 
 - `certificate_products.model_code` VARCHAR(60) NULL. Text exactly as printed on the certificate.
+- `certificate_products.model_code_source` VARCHAR(10) NULL, CHECK `ai|manual`: `ai` = Suggested
+  (from the ingest or the PDF suggestion, CERT-14), `manual` = typed or confirmed by a person.
 - `certificate_products.boxes` JSONB NULL. The product-certificate DEFAULT box cache:
   `{"revision_id": str, "code": str, "source": "auto"|"manual", "has_text": bool, "boxes": [Box]}`.
 - `projects.quotation_document_certificates` (company-scoped like its document):
@@ -27,13 +29,22 @@ within [0, 1], w > 0, h > 0, x + w <= 1, y + h <= 1 (422 `certificate_box_invali
 ### Matcher (`app/services/certificate_pdf_service.py`, pure functions over PDF bytes)
 
 - `find_boxes(pdf_bytes, code) -> {"has_text": bool, "boxes": [Box without product_id]}`.
-  Whole-word exact: a word token (from `page.get_text("words")`, punctuation `.,;:()[]` stripped
-  from both ends) equal to `code`, case-insensitive. Multi-word codes (`WCM PC 1`) match consecutive
-  tokens on one line. Row band = nearest horizontal ruled line at/above the hit and at/below it
+  Whole-token, NORMALISED (real-PDF finding, crew 8 Nov): normalise = lower-case, drop spaces,
+  hyphens and the punctuation `.,;:()[]/`. A hit is a run of 1 to 4 CONSECUTIVE words in reading
+  order (`page.get_text("words")` sorted by block, line, word; a run may cross a line break, e.g.
+  `WC` / `8355`) whose joined normalised text EQUALS the normalised code, starting and ending on word
+  boundaries. So `WC 8355` hits `WC 8355`, `WC8355,` and `WC-8355`; `WB 151` never hits `WB 1515`;
+  `14A` never hits `114A` or `14AB`. The box is the union of the run's row bands. Row band = nearest horizontal ruled line at/above the hit and at/below it
   (from `page.get_drawings()`, thin lines or rect edges), x span = outermost vertical rules of the
   table; no rules = the hit line widened by 2 pt. Every hit on every page is returned.
 - `has_text` false when the whole document yields no text characters (scan); then `boxes` is [].
 - Unreadable / encrypted PDF: `has_text` false, no exception.
+- `suggest_code(pdf_bytes, product_code) -> str|None`: the printed code for a product (CERT-14):
+  among word runs of 1 to 3 consecutive words whose normalised text has length >= 4, contains a
+  digit, and is a substring of the normalised product code, the LONGEST normalised run wins (ties:
+  first in reading order); returned as printed (words joined by one space, edge punctuation
+  stripped). None when nothing qualifies or there is no text.
+- `is_number_only(code) -> bool`: normalised code is all digits.
 - `burn_boxes(pdf_bytes, boxes) -> bytes`: a COPY with each box drawn as a red (0.88, 0.11, 0.28)
   1.5 pt rectangle; input bytes unchanged.
 
@@ -64,14 +75,15 @@ Coverage code (master data, `app/api/v1/master_data/certificates.py`):
 `{"model_code": str|null}` (trimmed, max 60, "" = null), permission `master_data.certificates.edit`;
 coverage rows in the certificate detail payload gain `model_code`.
 
-`Row` = `{certificate_id, scheme, certificate_number, title, certifying_body, valid_until,
+`Row` = `{certificate_id (the row's representative, CERT-15), also_filed_as: [{certificate_id, scheme, certificate_number}], scheme, certificate_number, title, certifying_body, valid_until,
 validity_state ("valid"|"expiring"|"expired"|"unknown"), source ("auto"|"manual"),
 products: [{product_id, product_code}], marked: {count: int, state: "found"|"edited"|"none"|
-"no_text"|"not_found"|"no_file"}, send_to_customer: bool (effective), has_file: bool}`.
+"no_text"|"not_found"|"no_file"|"suggested"|"code_needed"}, send_to_customer: bool (effective), has_file: bool}`.
 
 `Detail` = `Row` + `{revision_id, page_count|null, has_text, can_edit, can_edit_defaults,
 box_source ("quote"|"default"), boxes: [Box], products: [{product_id, product_code,
-coverage_id, model_code, code_used, state ("found"|"edited"|"not_found"|"no_text")}]}`.
+coverage_id, model_code, model_code_source ("ai"|"manual"|null), code_used, number_only: bool,
+state ("found"|"suggested"|"edited"|"not_found"|"no_text"|"code_needed")}]}`.
 
 ### Rules
 
@@ -81,15 +93,18 @@ coverage_id, model_code, code_used, state ("found"|"edited"|"not_found"|"no_text
   `quotation_document_certificates` rows with `included` and `source=manual`; minus rows with
   `included=false`. Ordered by scheme, then number. Company scope of the document applies.
 - CERT-2 One Row per certificate; `products` lists every quoted product it covers (code order).
-- CERT-3 Code used per product = `model_code` when set, else `products.product_code`. Exact
-  whole-word, case-insensitive; `14A` never hits `114A` or `14AB`.
+- CERT-3 Code used per product = `model_code` when set; else (text PDF) the CERT-14 suggestion,
+  persisted; else none (state `code_needed`, no box). The product code itself is NOT searched (real
+  certificates never print it). Matching per the matcher rule above. A code with `number_only` true
+  is flagged, never blocked.
 - CERT-4 Boxes resolution for (quote, certificate): quote override when its `revision_id` equals
   the current revision; else per covered quoted product: `certificate_products.boxes` when its
   `revision_id` is current (and, for `source=auto`, its `code` equals the code used); else
   `find_boxes` on the current file, written back to `certificate_products.boxes` as `source=auto`.
   A manual-added certificate covering no quoted product has no boxes.
-- CERT-5 `marked.state`: `no_file` (current revision has no attachment), `no_text` (scan),
-  `edited` (quote override or any manual default in use), `found` (count > 0), `not_found`
+- CERT-5 `marked.state` (first that applies): `no_file` (current revision has no attachment), `no_text` (scan),
+  `edited` (quote override or any manual default in use), `suggested` (count > 0 and any box from an
+  `ai` code), `found` (count > 0), `code_needed` (a covered product has no code), `not_found`
   (text PDF, products present, zero hits), `none` (no quoted product covered).
 - CERT-6 PUT boxes `scope=quote` writes the override for the current revision (any quote editor).
   `scope=default` needs `master_data.certificates.edit` (403 otherwise), requires every box to carry
@@ -112,6 +127,19 @@ coverage_id, model_code, code_used, state ("found"|"edited"|"not_found"|"no_text
   certificate in list order with boxes burned in (`burn_boxes`), stored files untouched, into My
   Downloads like the quote PDF. A certificate whose file cannot be read is skipped and named in the
   job result. Zero certificates = 422 `quotation_certificates_empty`.
+- CERT-14 Suggested code: when a coverage row has no `model_code` and the current file has text,
+  the first read stores `model_code = suggest_code(...)`, `model_code_source = 'ai'`. The ingest
+  (`_link_via_certificate`, `app/api/v1/external/product_attachments.py:217`) stores the printed
+  `requested_code` of each matched product the same way unless `via == prefix` or the row already
+  has a `manual` code (never overwritten). A product whose code is `ai` shows `state = suggested`
+  when its boxes are found. PATCH coverage `{model_code}` (typed) and `{"confirm": true}` (keep the
+  suggested text) both set `model_code_source = 'manual'`; both need `master_data.certificates.edit`.
+  Suggested boxes ARE sent to the customer (pending owner sub-question; default (i)).
+- CERT-15 Dedupe by file: certificates on the list whose current revision's file is the same
+  (`attachments.file_hash` equal, else same `attachment_id`) form ONE Row. Representative = valid
+  before expired, then latest `valid_until`, then scheme, number; the others go in `also_filed_as`.
+  Boxes, override and `send_to_customer` are keyed by the representative; Remove writes
+  `included=false` for every member; the export carries the file once; `products` is the union.
 - CERT-13 Removing a quoted product drops its auto certificate from the list on next read; manual
   and removed markers persist.
 
@@ -140,7 +168,9 @@ coverage_id, model_code, code_used, state ("found"|"edited"|"not_found"|"no_text
 
 Backend (Postgres, seed own chain, `ZZT` prefixes):
 1. Matcher on a generated ruled table: `14A` -> exactly one box covering the wrapped row; `114A`,
-   `14AB` rows not hit; code absent -> []; image-only PDF -> has_text false; multi-word code;
+   `14AB` rows not hit; `WC 8355` hits `WC 8355`, `WC8355,`, `WC-8355` and `WC` / `8355` across a
+   line break; `WB 151` hits nothing next to `WB 1515`; `suggest_code` (WB 1515 for SRTWB1515, WC 8355
+   for SRTWC8355-RL, AB 7049 over 7049 for SRTAB7049, None for no candidate); `is_number_only`; code absent -> []; image-only PDF -> has_text false; multi-word code;
    case-insensitive; code on 2 pages -> 2 boxes; rotated page (90) box fractions still cover the
    row as displayed; garbage bytes -> has_text false, no raise.
 2. `burn_boxes` returns different bytes with one more drawing per box; input unchanged.
@@ -148,7 +178,10 @@ Backend (Postgres, seed own chain, `ZZT` prefixes):
    archived certificate excluded, other company's coverage excluded, removed excluded,
    manual included, order.
 4. POST add (201, idempotent, 404 inactive/foreign), pending remove commits included=false / deletes manual.
-5. Boxes resolution order CERT-4 incl. revision change invalidating override and cache; model_code
+5. Dedupe CERT-15 (two certificates, same file_hash -> one Row, representative rule, remove hides both,
+   export once); suggested code persisted on first read and never overwriting manual; ingest stores
+   requested_code (not for prefix); PATCH confirm/typed -> manual, 403 without certificates.edit.
+   Boxes resolution order CERT-4 incl. revision change invalidating override and cache; model_code
    change resets cache; `marked.state` each value.
 6. PUT boxes: quote scope by quote editor; default scope 403 without certificates.edit; 422 bad box /
    foreign product; default write drops quote override.
