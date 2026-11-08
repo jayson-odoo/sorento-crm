@@ -1709,6 +1709,21 @@ def list_all_targets(
         } if targets else {}
         labels = {team_id: team.name for team_id, team in teams.items()}
 
+    # Search before periods and achievement (TARGET-SEARCH-FAST): achievement is the slow part,
+    # so a search hitting 3 targets computes it for those 3 only. Same fields the row shows.
+    if query and query.strip():
+        needle = query.strip().lower()
+        label_key = {"dealer": "id", "agent": "sales_agent_id"}.get(subject, "sales_team_id")
+        targets = [
+            t
+            for t in targets
+            if any(
+                needle in (v or "").lower()
+                for v in (labels.get(getattr(t, label_key), ""), t.name, t.target_no)
+            )
+            or any(needle in (c.customer_code or "").lower() for c in accounts.get(t.id, []))
+        ]
+
     periods_by_target: Dict[str, List[SalesTargetPeriod]] = {}
     if targets:
         for period in db.query(SalesTargetPeriod).filter(
@@ -1803,14 +1818,6 @@ def list_all_targets(
             }
         )
 
-    if query and query.strip():
-        needle = query.strip().lower()
-        rows = [
-            r
-            for r in rows
-            if any(needle in (r.get(key) or "").lower() for key in ("subject_label", "name", "target_no"))
-            or any(needle in code.lower() for code in r.get("account_codes") or [])
-        ]
     # Newest range first, then by who and the number, so the current targets lead.
     rows.sort(key=lambda r: (r["subject_label"].lower(), r["target_no"]))
     rows.sort(key=lambda r: r["start_date"], reverse=True)
