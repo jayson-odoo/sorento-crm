@@ -1,6 +1,6 @@
 # PLAN: Point ratio rows, edit and delete (lane POINT-RATIO-EDIT)
 
-Status: in progress, small fix track (no migration, no new permission, no external ingest).
+Status: in review, small fix track (no migration, no new permission, no external ingest). Browser pass: `evidence/point-ratio-edit/README.md`.
 
 ## Journey
 Owner, 8 Nov: on Sales > Targets (Dealers tab) > Point ratio, a ratio added by mistake cannot be
