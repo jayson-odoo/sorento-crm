@@ -2,7 +2,9 @@
 
 Status: final (plan accepted). Owner, 7 Nov ~16:15, on PR #2229: "2229 ok", which accepts all 5 recommendations
 (section 4). Delivery is the lanes in section 3 (REPORT-SPEC-W1 to W7). #2209 merged 7 Nov 10:26 UTC (3200ee1a,
-head f3d4789f): W1 is unblocked once crew re-records the 26 steps, and the keep/clear rule freeze (3.0) is in force
+head f3d4789f): the re-record is a read-only trace extraction on the owner's
+machine (runbook 3.2.1). The 78 rows of 4c1b310a already ran the merged head's app code, so only step 18 (v74)
+needs a live re-run. W1 starts from the extracted file, and the keep/clear rule freeze (3.0) is in force
 from that merge. No lane has started. Re-checked on main 56b5458b: no app file differs between the measured #2209 head
 89f14f49 and the merged head f3d4789f, so section 1's #2209 numbers are now main's numbers. Each lane writes its own PLAN + UAC under `documentation/plans/chatbot/` before code.
 
@@ -297,8 +299,10 @@ No feature touches `merge.py` or `validate.py`'s order. Today the same "new axis
 ### 3.2 The lanes
 
 **REPORT-SPEC-W1: golden corpus + harness**
-- Depends on: #2209 merged. Crew re-records the 26 steps on #2209's final head and published-candidate prompt, with
-  the `Held report:` line per turn (ruling 4). The 156 existing rows go in as seed rows marked `recorded_without_held`.
+- Depends on: #2209 merged (done, 7 Nov 10:26 UTC). The 26 steps with the `Held report:` line per turn (ruling 4)
+  come from the runbook in 3.2.1. It is a read-only extraction on the owner's machine, not a new live run. The 156
+  existing rows get their `held` line backfilled the same way. A row whose trace no longer exists stays a seed row
+  marked `recorded_without_held`.
 - Scope:
   - `tests/chatbot/golden/report_turns.jsonl` (new);
   - `tests/chatbot/test_report_golden.py` (new);
@@ -312,6 +316,57 @@ No feature touches `merge.py` or `validate.py`'s order. Today the same "new axis
   - known failures are `xfail` with a reason;
   - the corpus row count is posted.
 - Deletes: nothing.
+
+#### 3.2.1 Re-record runbook: the `Held report:` line per turn
+
+Finding (8 Nov): the line is already on record for every live turn, so the re-record needs no new LLM run.
+- `engine.py:6114` builds the line from the held focus (`_held_report_line`, `engine.py:3631`). It goes into the
+  parser's user block (`turn/context.py:599`, `context.assemble`).
+- `engine.py:6281` writes the whole user block into the turn trace on every parsed turn:
+  `turn_trace.add("prompt_text", {"text": user_block})`. It lands in `chatbot.turns.trace` as a flat event
+  `{"kind": "prompt_text", "at": ..., "text": ...}` (`trace.py:186-213`).
+- A failed parse carries the same block under its `understood` record's `raw.user_block` (`engine.py:6184`).
+- The trace caps an entry at 32 KB (`trace.py` `_cap`). A capped entry carries a note in place of `text`, and the
+  extraction reports it instead of guessing.
+
+The extraction needs the owner's prod copy, which this cloud sandbox may not reach, so crew runs it on the Mac.
+`sorento_prod_1104` is the copy crew already read for step 10. Every statement below is a SELECT:
+
+```sql
+-- one row per parsed turn of the #2209 live runs; narrow the window to each run (crew's run log has the times)
+SELECT t.id, t.created_at, t.contact_respond_id,
+       e->>'text' AS user_block,
+       u->'raw'->'parser_raw' AS parser_raw
+FROM chatbot.turns t
+CROSS JOIN LATERAL jsonb_array_elements(t.trace) e
+LEFT JOIN LATERAL (SELECT x FROM jsonb_array_elements(t.trace) x
+                   WHERE x->>'stage' = 'understood' AND x->'raw' ? 'parser_raw' LIMIT 1) AS uu(u) ON true
+WHERE t.is_test
+  AND e->>'kind' = 'prompt_text'
+  AND t.created_at BETWEEN :run_start AND :run_end
+ORDER BY t.contact_respond_id, t.created_at;
+```
+
+For each row:
+- the message is the `Current user message: ` line of `user_block` (`turn/context.py:566` and `:578`);
+- `held` is the line that starts `Held report` (`HELD_REPORT_PREFIX`, `turn/context.py:220`): `Held report: {json}`,
+  or `Held report (open question: <q>): {json}`. No such line means nothing was held, so write `held: null`;
+- the object is `parser_raw.report_ask`, and `open_question` comes from the same object.
+
+Join each row to its corpus step by (head, run, step) through the message text and the order within one test
+contact. The output is one jsonl row per turn: the existing keys plus `held` and `turn_id`. Crew pastes the file
+as a `crew-note` on the W1 PR, or commits it there as `tests/chatbot/golden/report_turns.recorded.jsonl`.
+
+What can still require a real re-run:
+- Steps whose turns were never traced, or whose rows were pruned. These are listed by step.
+- Ruling 4 asks for the 26 steps on the merged head (f3d4789f) and the candidate prompt 289da7e5. The 156 rows
+  are on 2a8e6f7c and 4c1b310a with prompt v79 289da7e5. Step 18 used v74.
+- The app code of 4c1b310a is the merged head's: `git diff 4c1b310a f3d4789f -- sorento_crm_backend/app` is empty,
+  and so is the diff from b986bbd5. So the 78 rows of 4c1b310a (3 runs x 26 steps) are already "on the final head",
+  and their extracted `held` lines are the ruling-4 recording. The exception is step 18, which ran on v74, not
+  289da7e5. Its 3 turns get re-run through crew's existing live harness on the Mac.
+- The 78 rows of 2a8e6f7c differ in app code (+45/-15 in 2 files), so they stay seed rows with their `held`
+  backfilled and are not expectations.
 
 **REPORT-SPEC-W2: ReportSpec, merge table, validator, to_params + production shadow**
 - Depends on: W1.
