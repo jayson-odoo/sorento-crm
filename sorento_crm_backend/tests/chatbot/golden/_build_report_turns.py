@@ -1,6 +1,6 @@
 """Build `report_turns.jsonl`, the L1 report corpus (REPORT-SPEC-W1, `ARCH-report-engine-7nov.md` 3.0 / 3.2).
 
-usage (cwd = sorento_crm_backend): venv/bin/python -m tests.chatbot.golden._build_report_turns
+usage (cwd = sorento_crm_backend): SORENTO_ENV_FILE=.env.ci-tests venv/bin/python -m tests.chatbot.golden._build_report_turns
 
 Inputs, nothing else:
 * the recorded turns: `report_turns.recorded.jsonl` (crew's plan 3.2.1 extraction: the 156 #2209 live turns plus the
@@ -43,6 +43,13 @@ BRANDS = {"8": ["SORENTO", "CABANA"]}
 REPEATS = {"18.1": "1", "18.2": "2", "18.4": "4"}
 
 XFAIL_W3 = "REPORT-SPEC-W3"
+# Step 18 on the v72 text (crew Q1 (a), 8 Nov): steps 1 / 2 / 4's expectation, xfail where today's engine misses.
+V72_MISS = {
+    s: f"{XFAIL_W3}: the v72 text has no ALL, so the clear leaves `brands` out and the held brand stays "
+       "(owner Expected 18: the fix needs the new prompt)"
+    for s in ("18.2", "18.4")
+}
+STEP19_PENDING = "the flat parse (the supplier entity) is not on record for this turn, so it cannot be replayed"
 
 
 def md5(name: str) -> str:
@@ -86,20 +93,27 @@ def _expect(step: str) -> tuple[dict[str, Any] | None, dict[str, Any], str | Non
         return {"route_params": {**SEP, "company": None, "brand_ids": ["SORENTO"], "group_by": "channel"}}, {}, None
     if step == "20":  # owner 7 Nov ~14:00: the object writes no basis, so the basis is asked
         return {"ask_field": "basis"}, {}, None
-    if step == "19":
-        return None, {}, (
-            "supplier outstanding is its own lane (owner, 7 Nov ~16:00); the object is null and the flat parse "
-            "(the supplier entity) is not on record, so the turn cannot be replayed"
-        )
+    if step == "19":  # crew 8 Nov: run 3's parse is the expectation (supplier outstanding POs); see STEP19
+        return None, {}, STEP19_PENDING
     raise KeyError(step)
+
+
+# Owner Expected 19: that supplier's open purchase orders (crew 8 Nov: run 3's parse, supplier 400-L005, is the
+# expectation; runs 1 and 2 read it as an incoming / brand ask).
+PO_TOOL = "crm_procurement_po_placed_list"
+STEP19_EXPECT: dict[str, Any] = {"route_params": {"supplier_ids": ["400-L005"]}}
 
 
 def _live_rows() -> tuple[list[dict[str, Any]], bool]:
     from tests.chatbot.test_report_filter_all_live import PARSER_MISS
 
-    recorded = RECORDED.exists()
-    src = RECORDED if recorded else FIXTURE
-    rows = [json.loads(ln) for ln in src.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    def _load(path: pathlib.Path) -> list[dict[str, Any]]:
+        return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()] if path.exists() else []
+
+    # Crew's extraction rows replace the fixture's turn of the same (head, run, step); the rest keep the fixture's
+    # (no `held` / `turn_id` yet: `held_recorded` false). Extraction rows of a new head (the step-18 re-run) append.
+    recorded = {(r["head"], str(r["run"]), str(r["step"])): r for r in _load(RECORDED)}
+    rows = [recorded.pop((r["head"], str(r["run"]), str(r["step"])), r) for r in _load(FIXTURE)] + list(recorded.values())
     out = []
     for r in rows:
         head, run, step = r["head"], str(r["run"]), str(r["step"])
@@ -120,8 +134,17 @@ def _live_rows() -> tuple[list[dict[str, Any]], bool]:
             row["parse"] = parse
         if skip:
             row["skip"] = skip
+        if step in V72_MISS and head == EXPECTATION_HEAD and prompt == md5(V72):
+            row["xfail"] = V72_MISS[step]
         if (head, run, step) in PARSER_MISS:
             row["xfail"] = f"{XFAIL_W3}: the parser kept company Sorento beside ALL in every list (PARSER_MISS)"
+        if r.get("parser_raw"):  # the whole recorded parse: replayed as it is (replay.py's recorded-parse mode)
+            row["parser_raw"] = r["parser_raw"]
+            if step == "19" and head != SEED_HEAD:
+                row.pop("skip", None)
+                row["expect"], row["tool"] = STEP19_EXPECT, PO_TOOL
+                if run != "3":
+                    row["xfail"] = f"{XFAIL_W3}: the parse read LASHIQI as {r['parser_raw']['entities'][0]['hint']} / {r['parser_raw']['domain_hint']}, not the supplier's outstanding POs (crew 8 Nov)"
         if r.get("note"):
             row["note"] = r["note"]
         out.append(row)

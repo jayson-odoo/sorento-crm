@@ -14,7 +14,7 @@ Each conversation replays once per session: its outcomes are kept, and every row
 The prompt a row ran on is pinned by md5 (`prompt_md5`, the `test_report_filter_all.py:382-390` pattern): the
 replay reads the report flags (`report_ask`, the defined keys, `said_as`) from that exact text.
 
-Rebuild the corpus: `venv/bin/python -m tests.chatbot.golden._build_report_turns` (backend dir).
+Rebuild the corpus: `SORENTO_ENV_FILE=.env.ci-tests venv/bin/python -m tests.chatbot.golden._build_report_turns` (backend dir).
 """
 from __future__ import annotations
 
@@ -78,9 +78,9 @@ def test_corpus_file_has_every_expectation_turn() -> None:
     live = [r for r in ROWS if r["head"] == EXPECTATION_HEAD]
     assert len(live) == STEPS_PER_RUN * RUNS_PER_HEAD and all(r["role"] == "expectation" for r in live), len(live)
     assert {r["run"] for r in live} == {"1", "2", "3"}
-    if not RECORDED.exists():
+    rerun = [r for r in ROWS if r["role"] == "expectation" and r["step"].startswith("18.") and r["head"] not in (EXPECTATION_HEAD, SEED_HEAD, "gold")]
+    if not rerun:
         pytest.skip("the step-18 re-run on 289da7e5 arrives with crew's extraction (report_turns.recorded.jsonl)")
-    rerun = [r for r in ROWS if r["role"] == "expectation" and r["step"].startswith("18.") and r["head"] not in (EXPECTATION_HEAD, SEED_HEAD)]
     assert len(rerun) == STEP18_RERUN and {r["prompt_md5"] for r in rerun} == {"289da7e56130a489ecb624031996acc2"}, rerun
 
 
@@ -139,20 +139,65 @@ def _pin_prompt(monkeypatch, md5: str) -> None:
     monkeypatch.setattr(parser_mod, "resolve_config", _cfg)
 
 
+REPORT_TOOL = "crm_report_ask"
+SUPPLIER = ("400-L005", "LASHIQI")  # step 19's supplier as crew recorded it (code, name)
+PO_GRANTS = ("purchase_orders.supplier", "purchase_orders.placed")
+
+
+def _owner_world(rbot, monkeypatch) -> None:
+    """The owner's hand-test user also holds the PO view and the supplier reveal (crew-handtest Setup 2), and the
+    book holds step 19's supplier with one open purchase order."""
+    import uuid
+    from datetime import date
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+    from app.services.chatbot import engine as engine_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import product
+
+    current = engine_mod.check_access
+
+    def _access(db, **kw):
+        out = current(db, **kw)
+        return {**out, "attributes": [*(out.get("attributes") or []), *PO_GRANTS]}
+
+    monkeypatch.setattr(engine_mod, "check_access", _access)
+    db = rbot.console.session_factory()
+    try:
+        sup = Supplier(id=str(uuid.uuid4()), supplier_code=SUPPLIER[0], supplier_name=SUPPLIER[1], company_id=DEFAULT_COMPANY_ID)
+        db.add(sup)
+        db.flush()
+        po = PurchaseOrder(id=str(uuid.uuid4()), po_number="PO-ZZT-L005", supplier_id=sup.id,
+                           company_id=DEFAULT_COMPANY_ID, expected_date=date(2026, 12, 1))
+        db.add(po)
+        db.flush()
+        db.add(PurchaseOrderLine(id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=product(db, company_id=DEFAULT_COMPANY_ID).id,
+                                 qty_ordered=10, qty_received=2, line_status="open", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _names(rbot, args: dict[str, Any]) -> dict[str, Any]:
-    """Route args with ids turned back into the names a row states (company name, brand code, agent name)."""
+    """Route args in the names a row states: company name, agent name, supplier code, and brands by NAME (the route
+    sends brand codes, and the test world holds two brands named Sorento, ZZTSOR and SORENTO, where the owner's book
+    holds one: a brand is the name the report shows), upper-cased and de-duplicated."""
     from app.models.company import Company
+    from app.models.procurement import Supplier
     from app.models.product import Brand
     from app.models.sales_agent import SalesAgent
 
     db = rbot.console.session_factory()
+    db.info["company_scope"] = None  # read every company's rows (the harness session is otherwise left scoped)
     try:
         out = dict(args)
         if args.get("company"):
             out["company"] = db.get(Company, args["company"]).name
-        for key, model, col in (("brand_ids", Brand, "brand_code"), ("sales_agent_ids", SalesAgent, "sales_agent")):
-            if args.get(key):
-                out[key] = sorted(getattr(db.get(model, i), col) for i in args[key])
+        for key, model, col in (("brand_ids", Brand, "brand_name"), ("sales_agent_ids", SalesAgent, "sales_agent"),
+                                ("supplier_ids", Supplier, "supplier_code")):
+            if args.get(key):  # ids reach the route upper-cased: match them case-blind
+                found = {str(i).lower(): n for i, n in db.query(model.id, getattr(model, col)).all()}
+                out[key] = sorted({str(found.get(str(i).lower(), i)).upper() for i in args[key]})
         return out
     finally:
         db.close()
@@ -184,15 +229,17 @@ def _say(rbot, row: dict[str, Any]) -> dict[str, Any]:
         text, calls = rbot.say(_verdict(setup), "setup: the held report of the gold row")
         assert _ran(calls), f"{_id(row)} setup did not run: {text!r}"
     before = len(rbot.blocks)
-    text, calls = rbot.say(_verdict(row["report_ask"] or {}, *_entities(row), **flat), row["text"])
+    verdict = row["parser_raw"] if row.get("parser_raw") else _verdict(row["report_ask"] or {}, *_entities(row), **flat)
+    text, calls = rbot.say(verdict, row["text"])
     block = rbot.blocks[before] if len(rbot.blocks) > before else ""
     held = [ln for ln in block.splitlines() if ln.startswith(HELD_PREFIX)]
-    ran = _ran(calls)
+    ran = [a for n, a in calls if n == row.get("tool", REPORT_TOOL)]
     return {
         "text": text,
         "held": held,
         "route_params": _names(rbot, ran[-1]) if ran else None,
         "ask_field": None if ran else _kind_slot(rbot).get("asking"),
+        "tools": [n for n, _a in calls],
     }
 
 
@@ -205,6 +252,7 @@ def _outcome(request, row: dict[str, Any]) -> dict[str, Any]:
         md5s = {r["prompt_md5"] for r in CONVERSATIONS[conv]}
         assert len(md5s) == 1, f"{conv}: one conversation, one prompt: {md5s}"
         _pin_prompt(monkeypatch, md5s.pop())
+        _owner_world(rbot, monkeypatch)
         _OUTCOMES[conv] = {_key(r): _say(rbot, r) for r in CONVERSATIONS[conv]}
     return _OUTCOMES[conv][_key(row)]
 
@@ -227,7 +275,31 @@ def test_engine_prints_the_recorded_held_line(request, row) -> None:
         pytest.skip("held line pending crew's extraction (report_turns.recorded.jsonl)")
     got = _outcome(request, row)["held"]
     want = [row["held"]] if row["held"] is not None else []
+    if row["head"] == "gold" and want:
+        # A gold row's line is the parser input it was graded on, in gold's masked names (zqa / zqc / zqd) and codes;
+        # the setup holds it in the world's names, so the line is compared in those names, case-blind.
+        assert len(got) == 1 and got[0].split(": ", 1)[0] == want[0].split(": ", 1)[0], (got, want)
+        assert _fold(json.loads(got[0].split(": ", 1)[1])) == _fold(_gold_world(row["held_spec"])), (got, want)
+        return
     assert got == want, f"{_id(row)}: engine printed {got}, recorded {want}"
+
+
+def _fold(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _fold(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return sorted(_fold(v) for v in value)
+    return value.casefold() if isinstance(value, str) else value
+
+
+def _gold_world(spec: dict[str, Any]) -> dict[str, Any]:
+    from tests.chatbot.golden._build_report_turns import WORLD
+
+    return {k: _world(_world_names(v, WORLD)) for k, v in spec.items()}
+
+
+def _world_names(value: Any, world: dict[str, str]) -> Any:
+    return [world.get(v, v) for v in value] if isinstance(value, list) else world.get(value, value)
 
 
 def _same(want: Any, got: Any) -> bool:
@@ -248,7 +320,7 @@ def test_report_golden(request, row) -> None:
     expect = row["expect"]
     if "route_params" in expect:
         got = out["route_params"]
-        assert got is not None, f"{where}: no report ran: {out['text']!r}"
+        assert got is not None, f"{where}: no {row.get('tool', REPORT_TOOL)} call (tools {out['tools']}): {out['text']!r}"
         bad = {k: (v, got.get(k)) for k, v in expect["route_params"].items() if not _same(v, got.get(k))}
         assert not bad, f"{where}: (want, got) {bad}; args {got}"
     elif "ask_field" in expect:
