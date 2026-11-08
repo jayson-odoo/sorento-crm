@@ -134,9 +134,6 @@ const app = (over: Record<string, unknown> = {}) => ({
   customer_code: null,
   customer_name: 'EXAMPLE DEVELOPER SDN BHD',
   project_name: 'EXAMPLE RESIDENCE, TOWER B',
-  first_line: null,
-  lines_total: 0,
-  lines_done: 0,
   opened_codes: [],
   needed_by: null,
   submitted_at: null,
@@ -305,7 +302,6 @@ describe('the dialog', () => {
   it('with lines, asks one cost per line and no single cost', async () => {
     state.data = app({
       lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
-      lines_total: 2,
     });
     render(<Page />);
     const dialog = await openDialog();
@@ -392,7 +388,6 @@ describe('Save calls PUT purchasing-response once', () => {
   it('with lines, sends one cost per line id', async () => {
     state.data = app({
       lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
-      lines_total: 2,
     });
     render(<Page />);
     const dialog = await openDialog();
@@ -478,7 +473,6 @@ describe('product table on the staff detail', () => {
       stock_inquiry_id: null,
       stock_inquiry_number: null,
       lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
-      lines_total: 2,
     });
     render(<Page />);
     await screen.findByText('NEW PRODUCT APPLICATION');
@@ -584,7 +578,7 @@ describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
   });
 
   it('an application with no product rows does not say "0 of 0 lines done"', async () => {
-    state.data = app({ lines: [], lines_total: 0, lines_done: 0 });
+    state.data = app({ lines: [] });
     render(<Page />);
     await screen.findByText('NEW PRODUCT APPLICATION');
     expect(screen.queryByText(/0 of 0/)).toBeNull();

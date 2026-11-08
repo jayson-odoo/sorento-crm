@@ -59,7 +59,7 @@ beforeEach(() => {
         {
           id: 'npa-1', application_no: 'NPA-000001', status: 'submitted', status_label: 'Submitted', source: 'portal',
           applicant_id: 'u-1', applicant_name: 'Owner', stock_inquiry_id: null, stock_inquiry_number: 'SI26-0412',
-          customer_name: 'Acme', project_name: null, first_line: 'Sink', lines_total: 2, lines_done: 0, opened_codes: [],
+          customer_name: 'Acme', project_name: null, opened_codes: [],
           needed_by: null, submitted_at: null, created_at: '2026-10-10T01:00:00',
         },
       ],

@@ -1,6 +1,6 @@
 # Plan: NPA approval and purchasing through Form SLA config (NPA-FORM-SLA)
 
-Status: Review (owner hand test 9 Nov round built: no product rows, SI list columns; reviewer pending), 9 Nov 2026. Size M, full track (data migration + one additive column, RBAC gate
+Status: Merge-ready pending crew pass + owner re-test (hand-test round built; reviewer READY after fixes, security CLEAN after fixes), 9 Nov 2026. Size M, full track (data migration + one additive column, RBAC gate
 change on approve / reject / purchasing moves). Owner ask 8 Nov ("2233 sla a + same teams"): the
 New Product Application's approver / processor flow works like the Stock Inquiry's, through Form SLA
 config, same component and same engine.
@@ -92,6 +92,10 @@ that starts a stage (a resubmit, an approve of an already-submitted one) starts 
   of an undone NPA left without a task.
 - Revise / Cancel void the open stage but do not void a pending take-over request on it (the SI's
   revision does, after its commit; the price tag re-escalation has the same gap).
+- An older NPA with a product row already linked or closed, but not Completed, can no longer be
+  revised or cancelled (`_assert_nothing_resolved`), and the row's Undo has no screen since the
+  hand-test round removed the product table. Purchasing still finishes it through the NEW PRODUCT
+  CODE. Trigger for a follow-up: such an NPA on dev or prod that someone needs to revise.
 - The shared SLA Tracking tab shows a voided stage as Pending with time remaining: the tracker
   response carries no `voided_at`. Same on the SI today (shared component). The backend is right
   (voided, not resolved, out of the KPIs); the tab needs `voided_at` in the response and a Voided

@@ -83,8 +83,7 @@ const detail = (over: Record<string, unknown> = {}) => ({
   id: 'npa-5', application_no: 'NPA-000005', status: 'draft', status_label: 'Draft', source: 'portal',
   applicant_id: 'u-owner', applicant_name: 'Ann Sales', stock_inquiry_id: null, stock_inquiry_number: null,
   customer_id: null, customer_code: null, customer_name: 'ZZT Typed Co', project_name: 'ZZT project', needed_by: null,
-  remark: null, lead_time: null, attachments: [], created_at: '2026-10-10T01:00:00', submitted_at: null,
-  first_line: 'ZZT-1', lines_total: 1, lines_done: 0, opened_codes: [], decided_at: null, reject_reason: null,
+  remark: null, lead_time: null, attachments: [], created_at: '2026-10-10T01:00:00', submitted_at: null, opened_codes: [], decided_at: null, reject_reason: null,
   revise_reason: null, cancel_reason: null, lines: [line()], ...over,
 });
 const PREFILL = {

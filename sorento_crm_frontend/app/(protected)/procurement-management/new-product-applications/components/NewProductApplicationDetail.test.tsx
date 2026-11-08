@@ -564,8 +564,6 @@ describe('owner hand test 9 Nov: no product rows, no repeated status', () => {
       status: 'submitted',
       status_label: 'Submitted',
       submitted_at: '2026-11-08T01:00:00',
-      lines_total: 1,
-      lines_done: 0,
     } as Partial<Detail>);
     render(<Page />);
     expect(screen.queryByText(/line done|lines done/)).toBeNull();

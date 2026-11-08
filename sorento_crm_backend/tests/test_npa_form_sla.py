@@ -940,13 +940,23 @@ def test_the_list_carries_the_si_columns_salesperson_assigned_to_handled_by(worl
         assert gone not in row
 
 
-@pytest.mark.parametrize("sort", ["assigned_to_name", "handled_by_name", "salesperson"])
-def test_the_new_list_columns_sort(world, sla, sort):
-    _submitted(world)
-    _draft(world)
-    for direction in ("asc", "desc"):
-        res = world.api.as_(world.admin).get(NPA, params={"sort": sort, "dir": direction})
+@pytest.mark.parametrize("sort,column", [("assigned_to_name", "assigned_to_id"), ("handled_by_name", "handled_by_id")])
+def test_the_new_list_columns_sort_by_the_name_shown(world, sla, sort, column):
+    """The OLDER application gets the name that sorts first ("ZZT manager" < "ZZT purchasing"), so
+    ascending order differs from the newest-first default (review: a 200 alone proves nothing)."""
+    older, newer = _submitted(world), _submitted(world)
+    for aid, user in ((older["id"], world.manager), (newer["id"], world.buyer)):
+        # One commit per row: `open_tracker` expires the session, dropping an unsaved change.
+        setattr(open_tracker(world.db, KIND, aid), column, user)
+        world.db.commit()
+
+    def order(direction):
+        res = world.api.as_(world.admin).get(NPA, params={"sort": sort, "dir": direction, "limit": 100})
         assert res.status_code == 200, res.text
+        return [r["id"] for r in res.json()["items"] if r["id"] in (older["id"], newer["id"])]
+
+    assert order("asc") == [older["id"], newer["id"]]
+    assert order("desc") == [newer["id"], older["id"]]
 
 
 # ------------------------------------------------------------------ owner hand test 9 Nov: Rev and Print Count, the SI way
@@ -987,6 +997,7 @@ def test_export_xlsx_queues_a_my_downloads_row_and_print_count_counts_it(world, 
         world.db.commit()
     assert [q[0] for q in queued] == ["generate_new_product_application_xlsx"] * 2
     assert queued[0][1][1] == d["id"]
+    assert queued[0][2]["queue_name"] == "imports"  # a queue the worker drains, as the SI PDF
     assert _row(world, d["id"], world.viewer)["print_count"] == 2
     assert _row(world, d["id"], world.admin)["print_count"] == 0  # the viewer's own, as the SI
 
@@ -1003,11 +1014,12 @@ def test_the_print_count_column_sorts(world, monkeypatch):
     import app.services.queue_service as queue_service
 
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
-    first, second = _submitted(world), _submitted(world)
-    world.api.as_(world.admin).post(f"{NPA}/{second['id']}/export/xlsx")
+    # The OLDER one has the download, so "most printed first" differs from newest-first.
+    older, newer = _submitted(world), _submitted(world)
+    world.api.as_(world.admin).post(f"{NPA}/{older['id']}/export/xlsx")
     res = world.api.as_(world.admin).get(NPA, params={"sort": "print_count", "dir": "desc", "limit": 100})
     ids = [r["id"] for r in res.json()["items"]]
-    assert ids.index(second["id"]) < ids.index(first["id"])
+    assert ids.index(older["id"]) < ids.index(newer["id"])
 
 
 def test_the_worker_stores_the_workbook_and_marks_the_download_ready(world, monkeypatch):
@@ -1056,3 +1068,54 @@ def test_a_second_export_while_one_is_in_flight_is_refused(world, monkeypatch):
     res = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx")
     assert res.status_code == 409
     assert "My Downloads" in res.text
+
+
+def test_a_queue_failure_marks_the_download_failed_and_answers_500(world, monkeypatch):
+    import app.services.queue_service as queue_service
+    from app.models.download import UserDownload
+
+    def down(*a, **kw):
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(queue_service, "enqueue_job", down)
+    d = _submitted(world)
+    res = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx")
+    assert res.status_code == 500
+    world.db.expire_all()
+    (row,) = (
+        world.db.query(UserDownload)
+        .filter(UserDownload.source_entity_id == d["id"], UserDownload.user_id == world.viewer)
+        .all()
+    )
+    assert row.status == "failed"
+
+
+def test_a_worker_failure_marks_the_download_failed_with_the_fixed_sentence(world, monkeypatch):
+    import app.services.queue_service as queue_service
+    import app.tasks.export_tasks as export_tasks
+    from app.models.download import UserDownload
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
+    d = _submitted(world)
+    did = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx").json()["id"]
+
+    class _Backend:
+        def upload_file(self, **kw):
+            raise RuntimeError("storage unreachable")
+
+    class _Session:
+        def __getattr__(self, name):
+            return getattr(world.db, name)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _Session())
+    monkeypatch.setattr(export_tasks, "set_company_scope", lambda db, scope: None)
+    monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _Backend())
+    out = export_tasks.generate_new_product_application_xlsx(did, d["id"], world.viewer)
+    assert out["status"] == "failed"
+    row = world.db.get(UserDownload, did)
+    world.db.refresh(row)
+    assert row.status == "failed"
+    assert row.error == export_tasks.EXPORT_FAILURE_MESSAGE  # never the raw exception text
