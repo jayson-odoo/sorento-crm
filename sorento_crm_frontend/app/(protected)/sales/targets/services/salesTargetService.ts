@@ -17,6 +17,8 @@
  *   DELETE /sales/targets/{id}                                                      sales.targets.delete
  *   GET    /sales/targets/point-ratios                   -> {rows: PointRatio[]}    sales.targets.view
  *   POST   /sales/targets/point-ratios   body {effective_from, rm_per_point}        sales.targets.edit
+ *   PATCH  /sales/targets/point-ratios/{id}  body {effective_from, rm_per_point}     sales.targets.edit
+ *          (delete is the deferred `point_ratio.delete` pending action, also .edit)
  *   POST   /sales/targets/import?dry_run&year  multipart file (+ picks JSON) -> DealerImportResult sales.targets.edit
  *   GET    /sales/targets/import/template?year  -> .xlsx                           sales.targets.edit
  *   POST   /sales/targets/commission-statement  body {ids} -> MyDownload (max 50)  sales.targets.view
@@ -152,6 +154,16 @@ export async function getPointRatios(): Promise<{ rows: PointRatio[] }> {
 
 export async function savePointRatio(payload: { effective_from: string; rm_per_point: number }): Promise<PointRatio> {
   return read(await apiFetch(`${BASE}/point-ratios`, jsonInit('POST', payload)), 'Failed to save the ratio');
+}
+
+export async function updatePointRatio(
+  id: string,
+  payload: { effective_from: string; rm_per_point: number },
+): Promise<PointRatio> {
+  return read(
+    await apiFetch(`${BASE}/point-ratios/${encodeURIComponent(id)}`, jsonInit('PATCH', payload)),
+    'Failed to save the ratio',
+  );
 }
 
 export async function importDealerTargets(

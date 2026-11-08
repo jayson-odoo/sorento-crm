@@ -66,7 +66,7 @@ from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
 from app.models.projects import ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
-from app.models.sales import SalesOpportunity, SalesTarget, SalesTeam, SetApartCustomer
+from app.models.sales import SalesOpportunity, SalesPointRatio, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
 from app.models.scm import (
     LoadingPlan,
@@ -378,6 +378,7 @@ _PARK_SCOPED_MODELS: dict = {
     "order.set_status": Order,
     "order_inquiry_reserve_request.cancel": OrderInquiryReserveRequest,
     "order_inquiry_row.unlink": OrderInquiryRow,
+    "point_ratio.delete": SalesPointRatio,
     "price_tag_request.void": PriceTagRequest,
     "product.delete": Product,
     "product_category.delete": ProductCategory,
