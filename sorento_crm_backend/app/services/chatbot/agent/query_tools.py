@@ -487,9 +487,11 @@ def _distance_reply(text: str, kept: list[dict], admitted: list[str]) -> str | N
     # every row shown. A ranking of one kind, or a top N, says nothing about the missed name (review on 376cdda8).
     def covers_everyone(e: dict) -> bool:
         args, data = e.get("args") or {}, e.get("data") or {}
-        kinds = [f for f in args.get("filters") or [] if isinstance(f, dict) and f.get("field") == "owner_kind"]
+        window = ENTITIES[NEXT_TIER_ENTITY].window_field
+        # Any filter but the window narrows "everyone" (a kind, a team, a %).
+        narrowed = [f for f in args.get("filters") or [] if not (isinstance(f, dict) and f.get("field") == window)]
         return (
-            not _names_a_subject(NEXT_TIER_ENTITY, args) and args.get("subjects") in (None, "all") and not kinds
+            not _names_a_subject(NEXT_TIER_ENTITY, args) and args.get("subjects") in (None, "all") and not narrowed
             and not data.get("truncated") and args.get("limit") is None
         )
 

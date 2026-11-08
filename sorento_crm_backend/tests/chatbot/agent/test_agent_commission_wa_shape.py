@@ -343,6 +343,7 @@ def test_R9_a_not_found_next_tier_call_alone_never_becomes_a_code_reply(targets)
     {"next_tier": "closest", "subjects": "dealer"},
     {"next_tier": "closest", "subjects": "all", "limit": 1},
     {"next_tier": "closest", "subjects": "all", "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]},
+    {"next_tier": "closest", "subjects": "all", "filters": [{"field": "payout", "op": "gt", "value": 0}]},
 ])
 def test_R10_a_ranking_that_cannot_include_a_missed_name_keeps_the_not_found(targets, ranking):
     db, _c, _t = targets
@@ -387,3 +388,19 @@ def test_R14_what_was_not_done_is_said_once_when_the_models_text_is_kept(targets
                        {"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}],
                   "Agent Zed was not found. Not checked: team North.", admitted=["Not checked: team North."])
     assert reply.count("Not checked: team North.") == 1 and "Agent Zed was not found." in reply
+
+
+def test_R15_a_ranking_cut_by_the_row_cap_never_hides_a_missed_name(targets):
+    """KR15: truncated means not every row was shown."""
+    from app.services.chatbot.agent.query_tools import query_result, shape_reply
+
+    db, _c, _t = targets
+    out = query_result(run(db, {"entity": ENTITY, "next_tier": "closest", "subjects": "all"}), panel=True)
+    data = {**out.data, "truncated": True}
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"},
+               "data": {"entity": ENTITY, "rows": [], "total": 0}, "display": None},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "next_tier": "closest", "subjects": "all"},
+               "data": data, "display": out.display},
+    }
+    assert "Agent Zed was not found." in shape_reply("Agent Zed was not found.", ledger, "")

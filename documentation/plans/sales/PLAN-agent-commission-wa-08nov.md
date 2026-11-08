@@ -1,6 +1,6 @@
 # PLAN: distance to the next tier and what it would pay (AGENT-COMMISSION-WA)
 
-Status: Merge-ready (reviewer READY after round 1; crew-done). Track: small fix (registry + one helper, no migration, no new
+Status: Merge-ready after the shape rounds (reviewer READY on 35e99316; crew live x3 to re-run). Track: small fix (registry + one helper, no migration, no new
 permission). Size S.
 
 Wave W-A of `PLAN-agent-commission-all-08nov.md` "Next waves". Stacks on #2242
@@ -56,3 +56,17 @@ Keep #2242's set as it is, plus:
 W2), top tier (W3, W7, W8), kill test the would-pay equals the page after the sale lands (W4), two targets (W5),
 dealer (W6), per-account mix and even split with rates (W9, W10), view_own (W11), index hint (W12), per-period rows
 (W13: none on the hidden per-period entity), lines only when asked (W14, W21); review round 1: live period (W15, W22), three-way split (W16), negative account (W17), no ratio / no tiers (W18), replaced (W19), quantity units (W20).
+
+## Shape rounds (crew live x3 on 0c5c7b78 and bb85f8b5)
+
+Figures were right every run; the shape was not stable. Owner rule (4 Oct, 28 Oct): understanding is semantic only,
+never a regex or word list on the message. So `crm_query` takes `next_tier` (distance | closest | furthest) and
+`subjects` (agent | dealer | team | all), set by the model; `agent_target_summary`'s `spec_hook` (`sales._next_tier_spec`)
+forces the next-tier columns, the distance ranking and the kind filter, refuses closest / furthest without `subjects`
+(the model asks the user), and a next-tier call is about the periods containing today (one period basis).
+`query_tools.shape_reply` builds the reply from the calls' arguments and data: the next-tier tables alone (no payout
+lead line, no targets table), the one "No agent target has a commission ladder this period." line, a same-turn
+payout or other answer kept, a named subject not found kept unless a full ranking covers it, and `final_reply`'s
+not-done lines. Tests: `test_agent_commission_wa_shape.py` N1-N14, R1-R15.
+
+Open, out of this lane: #2242's `strip_self_agent` and `_user_named` still read the message text.
