@@ -10,6 +10,7 @@ one failed row never stops or half-writes another. Nothing is written here.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from app.services.chatbot.agent import writes
@@ -89,7 +90,7 @@ def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> s
     typed = " ".join(str(user_text or "").split()).lower()
     for code in codes:
         said = " ".join(str(code).split())
-        if said.lower() not in listed and said.lower() not in typed:
+        if said.lower() not in listed and not re.search(rf"(?<![0-9a-z]){re.escape(said.lower())}(?![0-9a-z])", typed):
             return f'"{said}" was not in the list for "{mine[0].get("written")}" (row {mine[0].get("row")}); pick from the list.'
     return None
 
@@ -106,13 +107,18 @@ def propose_rows(
     skipped: list[dict] = []
     waiting: list[dict] = []
     keys: dict[Any, int] = {}
+    def valid(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+    numbers = [r["row"] for r in rows if isinstance(r, dict) and valid(r.get("row"))]
+    use_given = len(numbers) == len(set(numbers))  # a repeated number makes every given number untrustworthy
     for position, args in enumerate(rows, 1):
         n = position
         if isinstance(args, dict):
             # The pasted table's own row number; it never reaches the write's argument check.
             args = dict(args)
             given = args.pop("row", None)
-            if isinstance(given, int) and not isinstance(given, bool) and given > 0:
+            if use_given and valid(given):
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
         if key is not None and key in keys:

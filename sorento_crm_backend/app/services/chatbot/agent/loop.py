@@ -1272,10 +1272,19 @@ def _channel(is_test: bool) -> str:
 def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
     """The `batch_waiting` of the newest EARLIER turn of this conversation that kept one (a plain turn in between
     does not hide it)."""
-    for earlier in reversed(memory.conversation_turns(db, conv)):
-        if str(earlier.id) != turn_id and isinstance(earlier.response, dict) and "batch_waiting" in earlier.response:
-            return earlier.response["batch_waiting"] or []
-    return []
+    earlier = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == conv.contact_respond_id,
+            ChatbotTurn.ingress == "agent",
+            ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
+            ChatbotTurn.response.has_key("batch_waiting"),
+            ChatbotTurn.id != turn_id,
+        )
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc())
+        .first()
+    )
+    return (earlier.response.get("batch_waiting") or []) if earlier is not None else []
 
 
 def _run(
@@ -1319,6 +1328,7 @@ def _run(
     batch_skipped: list[dict] = []
     batch_waiting: list[dict] = []
     batch_called = False
+    previous_waiting: list[dict] | None = None
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1634,9 +1644,11 @@ def _run(
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name == batch.BATCH:
                     batch_called = True
+                    if previous_waiting is None:
+                        previous_waiting = _previous_waiting(db, conv, turn_id)
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
-                        waiting_out=batch_waiting, user_text=text, previous_waiting=_previous_waiting(db, conv, turn_id),
+                        waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,
                     )
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}
