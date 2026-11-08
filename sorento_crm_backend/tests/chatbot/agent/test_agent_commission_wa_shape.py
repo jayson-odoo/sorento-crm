@@ -137,8 +137,8 @@ def no_agent_ladder(api, grant):
       "aggregates": [{"fn": "sum", "field": "payout"}]}],
     [{"entity": ENTITY, "next_tier": "closest", "subjects": "agent",
       "filters": [{"field": "owner_kind", "op": "eq", "value": "agent"}]}],
-    # An empty first call on a made-up name, then the real one.
-    [{"entity": ENTITY, "agent": "Jayson", "next_tier": "distance"},
+    # An empty first call (a window with no period running), then the real one.
+    [{"entity": ENTITY, "next_tier": "closest", "subjects": "agent", "period": ["01/01/2025", "31/01/2025"]},
      {"entity": ENTITY, "next_tier": "closest", "subjects": "agent"}],
 ])
 def test_N5_no_agent_commission_ladder_is_one_code_line(no_agent_ladder, calls):
@@ -334,3 +334,56 @@ def test_R9_a_not_found_next_tier_call_alone_never_becomes_a_code_reply(targets)
     reply = _turn(db, [{"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}],
                   "Agent Zed was not found.\n\nNot checked: team North.", admitted=["Not checked: team North."])
     assert reply.startswith("Agent Zed was not found.") and "Not checked: team North." in reply
+
+
+# ------------------------------------------------------------------ review on 376cdda8
+
+
+@pytest.mark.parametrize("ranking", [
+    {"next_tier": "closest", "subjects": "dealer"},
+    {"next_tier": "closest", "subjects": "all", "limit": 1},
+    {"next_tier": "closest", "subjects": "all", "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]},
+])
+def test_R10_a_ranking_that_cannot_include_a_missed_name_keeps_the_not_found(targets, ranking):
+    db, _c, _t = targets
+    reply = _turn(db, [{"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}, {"entity": ENTITY, **ranking}],
+                  "Agent Zed was not found. The dealers are ranked below.")
+    assert "Agent Zed was not found." in reply and "To the next tier" in reply
+
+
+def test_R11_a_full_ranking_over_everyone_answers_for_a_missed_name(targets):
+    db, _c, t = targets
+    reply = _turn(db, [{"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"},
+                       {"entity": ENTITY, "next_tier": "closest", "subjects": "all"}], "Total payout RM 9.")
+    assert "Total payout" not in reply and _a(t) in reply
+
+
+def test_R12_subjects_with_distance_is_refused(targets):
+    db, _c, _t = targets
+    err = refused(db, {"entity": ENTITY, "agent": "ZZT DEALER W2", "next_tier": "distance", "subjects": "agent"})
+    assert "subjects" in err.message and "closest or furthest" in err.message
+
+
+def test_R13_a_targets_table_shown_by_code_is_dropped_from_a_next_tier_answer(targets):
+    """S1 / K11: a real card (over 10 rows) of target_list, not only a short result."""
+    from app.services.chatbot.agent.query_tools import query_result, shape_reply
+
+    db, _c, _t = targets
+    out = query_result(run(db, {"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"}), panel=True)
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": "target_list"},
+               "data": {"entity": "target_list", "shown_to_user": True, "total": 40}, "display": "SALES TARGETS TABLE"},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"},
+               "data": out.data, "display": out.display},
+    }
+    reply = shape_reply("x", ledger, "")
+    assert "SALES TARGETS TABLE" not in reply and "To the next tier" in reply
+
+
+def test_R14_what_was_not_done_is_said_once_when_the_models_text_is_kept(targets):
+    """K14: the admitted line is taken out of the kept text, so it is never said twice."""
+    db, _c, _t = targets
+    reply = _turn(db, [{"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"},
+                       {"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}],
+                  "Agent Zed was not found. Not checked: team North.", admitted=["Not checked: team North."])
+    assert reply.count("Not checked: team North.") == 1 and "Agent Zed was not found." in reply

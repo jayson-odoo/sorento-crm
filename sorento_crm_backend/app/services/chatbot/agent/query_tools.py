@@ -483,9 +483,17 @@ def _distance_reply(text: str, kept: list[dict], admitted: list[str]) -> str | N
         # Rows, none with a ladder: the line alone, never a ranking of them (crew live x3 W6).
         parts.append(line or e.get("display") or "")
     keep_text = False
-    # A ranking over everyone (no subject named) answers for any name an earlier call missed (an empty first call
-    # on a name the model made up never brings its text back, crew live round 6).
-    ranked = any(not _names_a_subject(NEXT_TIER_ENTITY, e.get("args") or {}) for e in calls)
+    # A full ranking over everyone answers for any name an earlier call missed: no subject named, no kind filter,
+    # every row shown. A ranking of one kind, or a top N, says nothing about the missed name (review on 376cdda8).
+    def covers_everyone(e: dict) -> bool:
+        args, data = e.get("args") or {}, e.get("data") or {}
+        kinds = [f for f in args.get("filters") or [] if isinstance(f, dict) and f.get("field") == "owner_kind"]
+        return (
+            not _names_a_subject(NEXT_TIER_ENTITY, args) and args.get("subjects") in (None, "all") and not kinds
+            and not data.get("truncated") and args.get("limit") is None
+        )
+
+    ranked = any(covers_everyone(e) for e in calls)
     for e in kept:
         data = e.get("data") or {}
         entity = str(data.get("entity") or (e.get("args") or {}).get("entity") or "")

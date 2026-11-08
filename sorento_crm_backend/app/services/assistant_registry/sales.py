@@ -72,6 +72,9 @@ def _next_tier_spec(spec: dict) -> dict:
         raise QueryRefused("invalid", "`next_tier` is one of distance, closest, furthest.")
     if subjects is not None and subjects not in NEXT_TIER_SUBJECTS:
         raise QueryRefused("invalid", "`subjects` is one of agent, dealer, team, all.")
+    if kind == "distance" and subjects is not None:
+        # A distance question names its subject (agent=...); a kind beside it could only contradict it.
+        raise QueryRefused("invalid", "`subjects` goes with next_tier closest or furthest, not distance.")
     if kind != "distance" and subjects is None:
         raise QueryRefused(
             "invalid",
