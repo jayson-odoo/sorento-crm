@@ -12,6 +12,12 @@ export interface AccessoryPicture extends AccessoryImage {
   colour_hex: string | null;
 }
 
+/** One entry of an accessory's colours list (independent of its pictures; one dot each on a card). */
+export interface AccessoryColour {
+  name: string | null;
+  hex: string;
+}
+
 /** The overrides stored on one list row (nulls = the accessory's own). */
 export interface AccessoryEntryOverrides {
   image_id: string | null;
@@ -29,6 +35,8 @@ export interface Accessory {
   /** The first picture (old callers); `images` is the whole ordered set. */
   image: AccessoryImage | null;
   images?: AccessoryPicture[];
+  /** The accessory's colours, in order; each may carry the id the server gave it. */
+  colours?: (AccessoryColour & { id?: string })[];
   product_count: number;
   combo_count: number;
 }

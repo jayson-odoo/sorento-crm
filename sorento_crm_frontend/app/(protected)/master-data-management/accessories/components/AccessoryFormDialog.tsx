@@ -13,9 +13,14 @@ import { Input } from '@/components/ui/input';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import { Label } from '@/components/ui/label';
-import { useCreateAccessory, useUpdateAccessory } from '../hooks/useAccessories';
+import {
+  useCreateAccessory,
+  useReplaceAccessoryColours,
+  useUpdateAccessory,
+} from '../hooks/useAccessories';
+import { AccessoryColoursField } from './AccessoryColoursField';
 import { AccessoryPicturesField } from './AccessoryPicturesField';
-import type { Accessory, AccessoryPicture } from '../types/accessory.types';
+import type { Accessory, AccessoryColour, AccessoryPicture } from '../types/accessory.types';
 
 /** A rich value with no visible text is no value. */
 const orNull = (html: string): string | null => (richPlainText(html).trim() === '' ? null : html);
@@ -36,6 +41,8 @@ export default function AccessoryFormDialog({
   const [spec, setSpec] = useState('');
   const [remark, setRemark] = useState('');
   const [pictures, setPictures] = useState<AccessoryPicture[]>([]);
+  const [colours, setColours] = useState<AccessoryColour[]>([]);
+  const replaceColours = useReplaceAccessoryColours();
   const create = useCreateAccessory();
   const update = useUpdateAccessory();
 
@@ -45,18 +52,22 @@ export default function AccessoryFormDialog({
     setSpec(accessory?.spec ?? '');
     setRemark(accessory?.remark ?? '');
     setPictures(accessory?.images ?? []);
+    setColours((accessory?.colours ?? []).map(({ name, hex }) => ({ name: name ?? null, hex })));
   }, [open, accessory]);
 
   const trimmed = name.trim();
-  const pending = create.isPending || update.isPending;
+  const pending = create.isPending || update.isPending || replaceColours.isPending;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!trimmed) return;
     const write = { name: trimmed, spec: orNull(spec), remark: orNull(remark) };
     try {
+      // The colours are their own list: saved right after the record they belong to.
+      let id = accessory?.id;
       if (accessory) await update.mutateAsync({ id: accessory.id, write });
-      else await create.mutateAsync(write);
+      else id = (await create.mutateAsync(write))?.id;
+      if (id && (accessory || colours.length > 0)) await replaceColours.mutateAsync({ id, colours });
       onOpenChange(false);
     } catch {
       // Toasted by the hook (a duplicate name says so); the modal stays open.
@@ -110,6 +121,7 @@ export default function AccessoryFormDialog({
               onChanged={setPictures}
             />
           ) : null}
+          <AccessoryColoursField colours={colours} canEdit={canEdit} onChange={setColours} />
           {canEdit ? (
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

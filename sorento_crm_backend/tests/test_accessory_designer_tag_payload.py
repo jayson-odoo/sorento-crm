@@ -65,9 +65,15 @@ def _list(client, product, *entries):
 
 
 def _colander(db, client):
+    """Two pictures and, independently, the colours list Black + Grey (S7: they are not coupled)."""
     item = _accessory(db, _name("COLANDER"))
-    black = _picture(client, item.id, 1, colour_name="Black", colour_hex="#1f2937")
-    grey = _picture(client, item.id, 2, colour_name="Grey", colour_hex="#9ca3af")
+    black = _picture(client, item.id, 1)
+    grey = _picture(client, item.id, 2)
+    response = client.put(
+        f"/api/v1/master-data/accessories/{item.id}/colours",
+        json={"colours": [{"name": "Black", "hex": "#1f2937"}, {"name": "Grey", "hex": "#9ca3af"}]},
+    )
+    assert response.status_code == 200, response.text
     return item, black, grey
 
 
@@ -92,8 +98,8 @@ def test_images_colours_and_the_default_first_picture(db, monkeypatch, storage, 
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     host = seed.product(db, "ZZPAY")
     item, black, grey = _colander(db, client)
-    _picture(client, item.id, 3, colour_name="Black again", colour_hex="#1f2937")
-    _picture(client, item.id, 4)  # no colour
+    _picture(client, item.id, 3)
+    _picture(client, item.id, 4)
     _list(client, host, {"accessory_id": item.id})
     (entry,) = _payload(db, host)
 
@@ -108,7 +114,8 @@ def test_images_colours_and_the_default_first_picture(db, monkeypatch, storage, 
     assert entry["colours"] == [
         {"name": "Black", "hex": "#1f2937"},
         {"name": "Grey", "hex": "#9ca3af"},
-    ], "distinct by hex, in picture order, only pictures with a hex"
+    ], "the colours list, whatever the pictures"
+    assert all(image["colour_hex"] is None and image["colour_name"] is None for image in entry["images"])
 
 
 def test_the_entrys_chosen_picture_is_the_image(db, monkeypatch, storage, signed):

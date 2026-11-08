@@ -25,9 +25,23 @@ class AccessoryImageOut(BaseModel):
 
 
 class AccessoryImagePatch(BaseModel):
-    #: Omitted = left alone; null clears.
-    colour_name: Optional[str] = Field(default=None, max_length=40)
-    colour_hex: Optional[str] = Field(default=None, pattern=HEX_PATTERN)
+    """A picture carries no colour any more (S7): colour fields in the body are ignored."""
+
+
+class AccessoryColourIn(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=40)
+    hex: str = Field(pattern=HEX_PATTERN)
+
+
+class AccessoryColoursIn(BaseModel):
+    #: The whole ordered list; replaces what was there. At most 12, no duplicate hex (checked in the service).
+    colours: List[AccessoryColourIn] = Field(default_factory=list, max_length=12)
+
+
+class AccessoryColourOut(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    hex: str
 
 
 class AccessoryImageOrderIn(BaseModel):
@@ -58,6 +72,8 @@ class AccessoryOut(BaseModel):
     #: The first picture (kept for old callers); `images` is the whole ordered set.
     image: Optional[AccessoryPictureOut] = None
     images: List[AccessoryImageOut] = []
+    #: The accessory's colours (one dot each), independent of its pictures.
+    colours: List[AccessoryColourOut] = []
     #: Only in a product / combo list: the overrides stored on that row.
     entry: Optional[AccessoryEntryOut] = None
     code: Optional[str] = None

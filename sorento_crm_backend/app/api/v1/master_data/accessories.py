@@ -18,6 +18,8 @@ from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.accessory import (
     AccessoryCreate,
     AccessoryItemsIn,
+    AccessoryColourOut,
+    AccessoryColoursIn,
     AccessoryImageOrderIn,
     AccessoryImageOut,
     AccessoryImagePatch,
@@ -117,8 +119,6 @@ def delete_accessory(
 def add_accessory_image(
     accessory_id: str,
     file: UploadFile = File(...),
-    colour_name: Optional[str] = Form(None),
-    colour_hex: Optional[str] = Form(None),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -129,9 +129,18 @@ def add_accessory_image(
         content=content,
         filename=file.filename or "accessory",
         user_id=current_user.get("id"),
-        colour_name=colour_name,
-        colour_hex=colour_hex,
     )
+
+
+@router.put("/accessories/{accessory_id}/colours", response_model=List[AccessoryColourOut])
+def set_accessory_colours(
+    accessory_id: str,
+    payload: AccessoryColoursIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(accessory_id, resource="Accessory")
+    return AccessoryService(db).set_colours(accessory_id, [c.model_dump() for c in payload.colours])
 
 
 @router.put("/accessories/{accessory_id}/images/order", response_model=List[AccessoryImageOut])

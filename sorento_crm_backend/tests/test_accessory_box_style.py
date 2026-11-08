@@ -314,7 +314,10 @@ def test_revision_0018_is_additive_and_chains_onto_one_head():
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
-    assert script.get_heads() == ["ptag_0018_acc_box_style"]
+    heads = script.get_heads()
+    assert len(heads) == 1, f"expected one alembic head, found {heads}"
+    ancestry = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
+    assert "ptag_0018_acc_box_style" in ancestry
 
 
 @pytest.mark.parametrize("kind", ["product", "combo"])

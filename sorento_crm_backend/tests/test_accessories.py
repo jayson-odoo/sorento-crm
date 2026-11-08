@@ -724,7 +724,7 @@ def test_sec_write_routes_take_a_signed_in_user_not_an_api_key():
 
     source = Path(accessories.__file__).read_text()
     assert "require_permission_with_api_key(EDIT)" not in source
-    assert source.count("require_permission(EDIT)") == 11  # + 4 picture routes (POST, PATCH, DELETE, PUT order)
+    assert source.count("require_permission(EDIT)") == 12  # + 4 picture routes (POST, PATCH, DELETE, PUT order) + PUT colours
 
 
 def test_crew_an_ala_carte_line_with_no_list_carries_none(db, signed):

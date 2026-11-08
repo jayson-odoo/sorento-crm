@@ -13,14 +13,14 @@ import {
   getAccessories,
   listOwnerAccessories,
   orderAccessoryPictures,
-  patchAccessoryPicture,
+  replaceAccessoryColours,
   replaceOwnerAccessories,
   updateAccessory,
   uploadAccessoryImage,
-  type PictureColour,
 } from '../services/accessoryService';
 import { entryRef, withBoxStyle } from '../types/accessory.types';
 import type {
+  AccessoryColour,
   AccessoryEntry,
   OwnerAccessories,
   AccessoryOwnerKind,
@@ -92,7 +92,7 @@ export function useAccessoryImage() {
   };
 }
 
-/** Several coloured pictures per accessory: add, recolour, remove, reorder. */
+/** An accessory's pictures: add and reorder (a picture carries no colour; removal is deferred). */
 export function useAccessoryPictures() {
   const queryClient = useQueryClient();
   const refresh = () => {
@@ -101,16 +101,9 @@ export function useAccessoryPictures() {
   };
   const fail = (fallback: string) => (error: Error) => toast.error(error.message || fallback);
   const add = useMutation({
-    mutationFn: ({ id, file, colour }: { id: string; file: File; colour?: Partial<PictureColour> }) =>
-      addAccessoryPicture(id, file, colour),
+    mutationFn: ({ id, file }: { id: string; file: File }) => addAccessoryPicture(id, file),
     onSuccess: refresh,
     onError: fail('Failed to upload the picture'),
-  });
-  const patch = useMutation({
-    mutationFn: ({ id, imageId, colour }: { id: string; imageId: string; colour: Partial<PictureColour> }) =>
-      patchAccessoryPicture(id, imageId, colour),
-    onSuccess: refresh,
-    onError: fail('Failed to save the colour'),
   });
   const order = useMutation({
     mutationFn: ({ id, ids }: { id: string; ids: string[] }) => orderAccessoryPictures(id, ids),
@@ -119,9 +112,8 @@ export function useAccessoryPictures() {
   });
   return {
     addMutateAsync: add.mutateAsync,
-    patchMutateAsync: patch.mutateAsync,
     orderMutateAsync: order.mutateAsync,
-    busy: add.isPending || patch.isPending || order.isPending,
+    busy: add.isPending || order.isPending,
   };
 }
 
@@ -216,4 +208,18 @@ export function useFreshAccessoryPictures() {
       ).images ?? [],
     [queryClient],
   );
+}
+
+/** Replace an accessory's ordered colours list (saved with the dialog's Save). */
+export function useReplaceAccessoryColours() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, colours }: { id: string; colours: AccessoryColour[] }) =>
+      replaceAccessoryColours(id, colours),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
+      queryClient.invalidateQueries({ queryKey: ['owner-accessories'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the colours'),
+  });
 }

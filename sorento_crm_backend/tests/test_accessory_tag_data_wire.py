@@ -16,7 +16,7 @@ from tests.test_dealer_kit_tag_data_routes import SORENTO, _product, _signing_wo
 from tests._pg_fixture import unique_code
 
 
-def _picture(db, accessory, order, name, hex_):
+def _picture(db, accessory, order):
     from app.models.accessory import AccessoryImage
     from app.models.resources import Attachment
 
@@ -36,7 +36,6 @@ def _picture(db, accessory, order, name, hex_):
     db.add(
         AccessoryImage(
             accessory_id=accessory.id, attachment_id=attachment.id, sort_order=order,
-            colour_name=name, colour_hex=hex_,
         )
     )
     db.flush()
@@ -52,8 +51,12 @@ def test_product_tag_data_carries_accessory_remark_images_and_colours(api):  # n
     )
     db.add(item)
     db.flush()
-    _picture(db, item, 0, "Black", "#1f2937")
-    _picture(db, item, 1, "Grey", "#9ca3af")
+    _picture(db, item, 0)
+    _picture(db, item, 1)
+    from app.models.accessory import AccessoryColour
+
+    db.add(AccessoryColour(accessory_id=item.id, name="Black", hex="#1f2937", sort_order=0))
+    db.add(AccessoryColour(accessory_id=item.id, name="Grey", hex="#9ca3af", sort_order=1))
     db.add(ProductAccessory(id=str(uuid.uuid4()), product_id=product.id, accessory_id=item.id, sort_order=0))
     db.flush()
 
@@ -63,7 +66,7 @@ def test_product_tag_data_carries_accessory_remark_images_and_colours(api):  # n
     assert res.status_code == 200, res.text
     (entry,) = res.json()["accessories"]
     assert entry["remark"] == "Follows sink"
-    assert [i["colour_hex"] for i in entry["images"]] == ["#1f2937", "#9ca3af"]
-    assert [i["colour_name"] for i in entry["images"]] == ["Black", "Grey"]
+    assert len(entry["images"]) == 2
+    assert [i["colour_hex"] for i in entry["images"]] == [None, None]
     assert all(i["url"] for i in entry["images"])
     assert entry["colours"] == [{"name": "Black", "hex": "#1f2937"}, {"name": "Grey", "hex": "#9ca3af"}]

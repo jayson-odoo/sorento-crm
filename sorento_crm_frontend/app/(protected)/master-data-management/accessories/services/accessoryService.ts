@@ -9,8 +9,9 @@
  *  DELETE /accessories/{id} -> 204 (409 while listed on products or combos)
  *  POST   /accessories/{id}/image (multipart `file`) -> {attachment_id, url}
  *  DELETE /accessories/{id}/image -> 204
- *  POST   /accessories/{id}/images (multipart `file`, `colour_name?`, `colour_hex?`) -> picture, 201
- *  PATCH  /accessories/{id}/images/{image_id} {colour_name?, colour_hex?}; removal is the deferred
+ *  POST   /accessories/{id}/images (multipart `file`) -> picture, 201 (a picture carries no colour)
+ *  PUT    /accessories/{id}/colours {colours: [{name?, hex}]} -> the ordered colours list
+ *  removal of a picture is the deferred
  *         action `accessory_image.delete` (the DELETE route is the same service call)
  *  PUT    /accessories/{id}/images/order {ids} -> pictures
  *  GET|PUT /products/{id}/accessories and /product-combos/{id}/accessories
@@ -25,6 +26,7 @@ import type {
   Accessory,
   AccessoryEntry,
   AccessoryImage,
+  AccessoryColour,
   AccessoryItemRef,
   AccessoryOwnerKind,
   AccessoryPicture,
@@ -101,38 +103,23 @@ export async function deleteAccessoryImage(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove the picture'));
 }
 
-/** A colour is `{ colour_name, colour_hex }`; null clears. */
-export interface PictureColour {
-  colour_name: string | null;
-  colour_hex: string | null;
-}
-
-export async function addAccessoryPicture(
-  id: string,
-  file: File,
-  colour?: Partial<PictureColour>,
-): Promise<AccessoryPicture> {
+export async function addAccessoryPicture(id: string, file: File): Promise<AccessoryPicture> {
   const form = new FormData();
   form.append('file', file);
-  if (colour?.colour_name) form.append('colour_name', colour.colour_name);
-  if (colour?.colour_hex) form.append('colour_hex', colour.colour_hex);
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/images`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to upload the picture'));
   return (await res.json()) as AccessoryPicture;
 }
 
-export async function patchAccessoryPicture(
-  id: string,
-  imageId: string,
-  colour: Partial<PictureColour>,
-): Promise<AccessoryPicture> {
-  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`, {
-    method: 'PATCH',
+/** Replace the accessory's ordered colours list (max 12, no duplicate hex). */
+export async function replaceAccessoryColours(id: string, colours: AccessoryColour[]): Promise<AccessoryColour[]> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/colours`, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(colour),
+    body: JSON.stringify({ colours }),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the colour'));
-  return (await res.json()) as AccessoryPicture;
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the colours'));
+  return (await res.json()) as AccessoryColour[];
 }
 
 export async function orderAccessoryPictures(id: string, ids: string[]): Promise<AccessoryPicture[]> {

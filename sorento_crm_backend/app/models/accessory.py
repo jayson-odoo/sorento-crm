@@ -92,6 +92,27 @@ class AccessoryImage(Base):
     )
 
 
+class AccessoryColour(Base):
+    """One entry of an accessory's ordered colours list (PRICETAG-ACCESSORY-DESIGNER S7): independent of its
+    pictures. The card's colour dots are this list, one dot per colour. Reached through the accessory."""
+
+    __tablename__ = "accessory_colours"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(40), nullable=True)
+    hex = Column(String(7), nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("hex ~ '^#[0-9a-fA-F]{6}$'", name="ck_accessory_colours_hex"),
+        Index("uq_accessory_colours_accessory_hex", "accessory_id", text("lower(hex)"), unique=True),
+    )
+
+
 class ProductAccessory(Base):
     """One entry on a product's own list (an accessory or a product). Reached through the product, which carries the
     company partition (like `product_combos`)."""

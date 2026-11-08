@@ -71,13 +71,13 @@ function mount(accessory: unknown = ACCESSORY, canEdit = true) {
 }
 
 describe('AccessoryFormDialog pictures', () => {
-  it('shows both pictures of an accessory with their colour labels', () => {
+  it('shows both pictures of an accessory (a picture carries no colour label any more, S7)', () => {
     mount();
     const dialog = screen.getByRole('dialog');
     const sources = Array.from(dialog.querySelectorAll('img')).map((i) => i.getAttribute('src'));
     expect(sources).toEqual(expect.arrayContaining([IMAGES[0].url, IMAGES[1].url]));
-    expect(within(dialog).getByText('Black')).toBeInTheDocument();
-    expect(within(dialog).getByText('Grey')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Black')).toBeNull();
+    expect(within(dialog).queryByText('Grey')).toBeNull();
   });
 
   it('offers Add picture', () => {

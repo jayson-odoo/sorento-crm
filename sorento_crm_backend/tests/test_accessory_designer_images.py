@@ -69,21 +69,22 @@ def _get(client, accessory_id):
     return response.json()
 
 
-def test_post_appends_an_image_with_its_colour(db, monkeypatch, storage):
+def test_post_appends_an_image_and_a_colour_form_field_is_ignored(db, monkeypatch, storage):
+    """S7: a picture carries no colour; the colours are their own list."""
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     row = _accessory(db, _name("COLANDER"))
     first = _add(client, row.id, 1, **BLACK)
     assert first.status_code == 201, first.text
     body = first.json()
-    assert body["colour_name"] == "Black" and body["colour_hex"] == "#1f2937"
+    assert body["colour_name"] is None and body["colour_hex"] is None
     assert body["id"] and body["attachment_id"] and body["url"]
     second = _add(client, row.id, 2, **GREY)
     assert second.status_code == 201, second.text
 
     out = _get(client, row.id)
     assert [image["id"] for image in out["images"]] == [body["id"], second.json()["id"]]
-    assert [image["colour_hex"] for image in out["images"]] == ["#1f2937", "#9ca3af"]
-    assert [image["colour_name"] for image in out["images"]] == ["Black", "Grey"]
+    assert [image["colour_hex"] for image in out["images"]] == [None, None]
+    assert out["colours"] == [], "no colours came from the pictures"
     assert out["image"]["attachment_id"] == body["attachment_id"], "image = the first picture"
 
 
@@ -95,11 +96,9 @@ def test_post_without_a_colour_is_allowed(db, monkeypatch, storage):
     assert response.json()["colour_hex"] is None and response.json()["colour_name"] is None
 
 
-def test_post_refuses_a_bad_hex_and_a_non_image(db, monkeypatch, storage):
+def test_post_refuses_a_non_image(db, monkeypatch, storage):
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     row = _accessory(db, _name("BADHEX"))
-    assert _add(client, row.id, 1, colour_hex="red").status_code == 422
-    assert _add(client, row.id, 2, colour_hex="#12345").status_code == 422
     svg = client.post(
         IMAGES.format(accessory_id=row.id), files={"file": ("x.svg", b"<svg/>", "image/svg+xml")}
     )
@@ -129,29 +128,16 @@ def test_the_13th_image_is_422(db, monkeypatch, storage):
     assert len(_get(client, row.id)["images"]) == 12
 
 
-def test_patch_sets_and_clears_the_colour(db, monkeypatch, storage):
+def test_patch_ignores_colour_fields_whatever_they_hold(db, monkeypatch, storage):
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     row = _accessory(db, _name("PATCHED"))
-    image = _add(client, row.id, 1, **BLACK).json()
+    image = _add(client, row.id, 1).json()
     url = IMAGE.format(accessory_id=row.id, image_id=image["id"])
-
-    changed = client.patch(url, json={"colour_name": "Gold", "colour_hex": "#D4AF37"})
-    assert changed.status_code == 200, changed.text
-    assert changed.json()["colour_name"] == "Gold" and changed.json()["colour_hex"].lower() == "#d4af37"
-
-    cleared = client.patch(url, json={"colour_name": None, "colour_hex": None})
-    assert cleared.status_code == 200, cleared.text
-    assert cleared.json()["colour_name"] is None and cleared.json()["colour_hex"] is None
-
-
-def test_patch_with_a_bad_hex_is_422(db, monkeypatch, storage):
-    client = _caller(db, {VIEW, EDIT}, monkeypatch)
-    row = _accessory(db, _name("PATCHBAD"))
-    image = _add(client, row.id, 1, **BLACK).json()
-    url = IMAGE.format(accessory_id=row.id, image_id=image["id"])
-    for bad in ("#fff", "1f2937", "#gggggg", "#1f29371"):
-        assert client.patch(url, json={"colour_hex": bad}).status_code == 422, bad
-    assert _get(client, row.id)["images"][0]["colour_hex"] == "#1f2937"
+    for body in ({"colour_name": "Gold", "colour_hex": "#D4AF37"}, {"colour_hex": "#fff"}, {}):
+        response = client.patch(url, json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["colour_hex"] is None and response.json()["colour_name"] is None
+    assert _get(client, row.id)["images"][0]["colour_hex"] is None
 
 
 def test_an_image_of_another_accessory_is_404_on_patch_and_delete(db, monkeypatch, storage):

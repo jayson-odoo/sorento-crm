@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.models.accessory import (
     Accessory,
+    AccessoryColour,
     AccessoryImage,
     ProductAccessory,
     ProductComboAccessory,
@@ -45,6 +46,7 @@ UNSET = _UNSET = object()
 IMAGE_TYPE_CODE = "accessory_image"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 12
+MAX_COLOURS = 12
 MAX_SPEC_CHARS = 4000
 MAX_REMARK_CHARS = 1000
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -147,24 +149,23 @@ def _picture_rows(db: Session, accessory_id: str) -> List[Dict[str, Any]]:
             {
                 "id": row.id,
                 **picture,
-                "colour_name": row.colour_name,
-                "colour_hex": row.colour_hex,
+                # A picture carries no colour any more (S7); the keys stay, null, for older readers.
+                "colour_name": None,
+                "colour_hex": None,
             }
         )
     return out
 
 
-def _colours_of(pictures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Distinct `{name, hex}` of the pictures that carry a colour, in picture order."""
-    seen: set = set()
-    out: List[Dict[str, Any]] = []
-    for picture in pictures:
-        hex_value = picture.get("colour_hex")
-        if not hex_value or hex_value.lower() in seen:
-            continue
-        seen.add(hex_value.lower())
-        out.append({"name": picture.get("colour_name"), "hex": hex_value})
-    return out
+def _colour_rows(db: Session, accessory_id: str) -> List[Dict[str, Any]]:
+    """The accessory's own ordered colours list: `{id, name, hex}` (one dot each on a card)."""
+    rows = (
+        db.query(AccessoryColour)
+        .filter(AccessoryColour.accessory_id == accessory_id)
+        .order_by(AccessoryColour.sort_order, AccessoryColour.created_at, AccessoryColour.id)
+        .all()
+    )
+    return [{"id": row.id, "name": row.name, "hex": row.hex} for row in rows]
 
 
 def _tag_images(pictures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -224,7 +225,7 @@ def tag_accessory(
         "remark": _first_non_blank(getattr(link, "remark_override", None), accessory.remark),
         "image": {"attachment_id": lead["attachment_id"], "url": lead["url"]} if lead else None,
         "images": _tag_images(pictures),
-        "colours": _colours_of(pictures),
+        "colours": [{"name": c["name"], "hex": c["hex"]} for c in _colour_rows(db, accessory.id)],
         "code": None,
         "list_price": None,
     }
@@ -327,6 +328,7 @@ class AccessoryService:
         out = {
             **tag_accessory(self.db, accessory, None, pictures),
             "images": pictures,
+            "colours": _colour_rows(self.db, accessory.id),
             "product_count": product_count,
             "combo_count": combo_count,
         }
@@ -481,7 +483,7 @@ class AccessoryService:
             raise AppException(
                 status_code=502, message="The image was stored but a preview URL could not be produced."
             )
-        return {"id": image.id, **picture, "colour_name": image.colour_name, "colour_hex": image.colour_hex}
+        return {"id": image.id, **picture, "colour_name": None, "colour_hex": None}
 
     def _image_or_404(self, accessory_id: str, image_id: str) -> AccessoryImage:
         image = (
@@ -500,12 +502,9 @@ class AccessoryService:
         content: bytes,
         filename: str,
         user_id: Optional[str],
-        colour_name: Optional[str] = None,
-        colour_hex: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Append a picture (last in order), with an optional colour."""
+        """Append a picture (last in order). A picture carries no colour (S7)."""
         row = self._or_404(accessory_id)
-        name, hex_value = _clean_colour(colour_name, colour_hex)
         # Serialise concurrent adds so the cap below cannot be passed by two requests at once.
         self.db.query(Accessory.id).filter(Accessory.id == row.id).with_for_update().first()
         existing = self._images(row.id)
@@ -520,8 +519,6 @@ class AccessoryService:
             image = AccessoryImage(
                 accessory_id=row.id,
                 attachment_id=attachment_id,
-                colour_name=name,
-                colour_hex=hex_value,
                 sort_order=(max(item.sort_order for item in existing) + 1) if existing else 0,
             )
             self.db.add(image)
@@ -533,17 +530,34 @@ class AccessoryService:
         return self._image_out(image)
 
     def patch_image(self, accessory_id: str, image_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+        """Nothing about a picture is editable here any more (colours are their own list); kept so an old
+        tab's PATCH answers instead of 404."""
         self._or_404(accessory_id)
-        image = self._image_or_404(accessory_id, image_id)
-        name, hex_value = _clean_colour(
-            changes.get("colour_name", image.colour_name), changes.get("colour_hex", image.colour_hex)
+        return self._image_out(self._image_or_404(accessory_id, image_id))
+
+    def set_colours(self, accessory_id: str, colours: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Replace the accessory's ordered colours list (max 12, no duplicate hex ignoring case)."""
+        row = self._or_404(accessory_id)
+        if len(colours) > MAX_COLOURS:
+            raise AppException(status_code=422, message=f"An accessory holds at most {MAX_COLOURS} colours.")
+        cleaned: List[tuple] = []
+        seen: set = set()
+        for colour in colours:
+            name, hex_value = _clean_colour(colour.get("name"), colour.get("hex"))
+            if not hex_value:
+                raise AppException(status_code=422, message="A colour needs a hex like #1f2937")
+            if hex_value in seen:
+                raise AppException(status_code=422, message=f"{hex_value} is listed twice")
+            seen.add(hex_value)
+            cleaned.append((name, hex_value))
+        self.db.query(AccessoryColour).filter(AccessoryColour.accessory_id == row.id).delete(
+            synchronize_session=False
         )
-        if "colour_name" in changes:
-            image.colour_name = name
-        if "colour_hex" in changes:
-            image.colour_hex = hex_value
+        self.db.flush()
+        for index, (name, hex_value) in enumerate(cleaned):
+            self.db.add(AccessoryColour(accessory_id=row.id, name=name, hex=hex_value, sort_order=index))
         self.db.commit()
-        return self._image_out(image)
+        return _colour_rows(self.db, row.id)
 
     def delete_picture(self, accessory_id: str, image_id: str) -> None:
         """Remove one picture; list rows that chose it fall back to the first (FK SET NULL)."""

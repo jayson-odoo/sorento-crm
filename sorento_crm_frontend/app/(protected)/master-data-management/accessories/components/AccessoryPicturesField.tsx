@@ -21,9 +21,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
 import {
   useAccessoryPictures,
@@ -32,31 +30,11 @@ import {
 } from '../hooks/useAccessories';
 import type { AccessoryPicture } from '../types/accessory.types';
 
-/** The short palette; anything else is a custom hex. */
-export const PICTURE_COLOURS = [
-  { value: '#1f2937', label: 'Black' },
-  { value: '#9ca3af', label: 'Grey' },
-  { value: '#c0c0c0', label: 'Silver' },
-  { value: '#ffffff', label: 'White' },
-  { value: '#d4af37', label: 'Gold' },
-  { value: '#2c3539', label: 'Gunmetal' },
-];
-const CUSTOM = 'custom';
-const COLOUR_OPTIONS = [...PICTURE_COLOURS, { value: CUSTOM, label: 'Custom' }];
-const HEX = /^#[0-9a-fA-F]{6}$/;
-
-function colourChoice(hex: string | null): string {
-  if (!hex) return '';
-  const match = PICTURE_COLOURS.find((colour) => colour.value === hex.toLowerCase());
-  return match ? match.value : CUSTOM;
-}
-
 function PictureRow({
   picture,
   index,
   canEdit,
   pending,
-  onColour,
   onRemove,
 }: {
   picture: AccessoryPicture;
@@ -64,16 +42,11 @@ function PictureRow({
   canEdit: boolean;
   /** Its removal is counting down. */
   pending: boolean;
-  onColour: (colour: { colour_name: string | null; colour_hex: string | null }) => void;
   onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: picture.id,
   });
-  const [custom, setCustom] = useState(colourChoice(picture.colour_hex) === CUSTOM);
-  const [hex, setHex] = useState(colourChoice(picture.colour_hex) === CUSTOM ? (picture.colour_hex ?? '') : '');
-  const choice = custom ? CUSTOM : colourChoice(picture.colour_hex);
-
   return (
     <li
       ref={setNodeRef}
@@ -92,48 +65,7 @@ function PictureRow({
         </button>
       ) : null}
       <img src={picture.url} alt="" className="size-14 shrink-0 rounded-md border object-cover" />
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        {canEdit ? (
-          <>
-            <SearchableSelect
-              aria-label={`Colour of picture ${index + 1}`}
-              value={choice}
-              options={COLOUR_OPTIONS}
-              clearable
-              placeholder="No colour"
-              onChange={(value: string) => {
-                if (!value) {
-                  setCustom(false);
-                  onColour({ colour_name: null, colour_hex: null });
-                } else if (value === CUSTOM) {
-                  setCustom(true);
-                } else {
-                  setCustom(false);
-                  const picked = PICTURE_COLOURS.find((colour) => colour.value === value);
-                  onColour({ colour_name: picked?.label ?? null, colour_hex: value });
-                }
-              }}
-            />
-            {custom ? (
-              <Input
-                aria-label={`Custom colour of picture ${index + 1}`}
-                className="h-8"
-                placeholder="#d4af37"
-                maxLength={7}
-                value={hex}
-                onChange={(e) => {
-                  setHex(e.target.value);
-                  if (HEX.test(e.target.value)) {
-                    onColour({ colour_name: null, colour_hex: e.target.value.toLowerCase() });
-                  }
-                }}
-              />
-            ) : null}
-          </>
-        ) : (
-          <span className="text-sm">{picture.colour_name ?? picture.colour_hex ?? ''}</span>
-        )}
-      </div>
+      <span className="min-w-0 flex-1" />
       {canEdit ? (
         <Button
           type="button"
@@ -167,7 +99,7 @@ export function AccessoryPicturesField({
   canEdit: boolean;
   onChanged: (pictures: AccessoryPicture[]) => void;
 }) {
-  const { addMutateAsync, patchMutateAsync, orderMutateAsync, busy } = useAccessoryPictures();
+  const { addMutateAsync, orderMutateAsync, busy } = useAccessoryPictures();
   const freshPictures = useFreshAccessoryPictures();
   const latest = useRef({ onChanged });
   latest.current = { onChanged };
@@ -234,12 +166,6 @@ export function AccessoryPicturesField({
                   picture={picture}
                   index={index}
                   canEdit={canEdit}
-                  onColour={(colour) =>
-                    void run(async () => {
-                      const saved = await patchMutateAsync({ id: accessoryId, imageId: picture.id, colour });
-                      onChanged(pictures.map((p) => (p.id === saved.id ? saved : p)));
-                    })
-                  }
                   pending={isPending(picture)}
                   onRemove={() => {
                     removal.run({ id: picture.id, subject: picture.colour_name ?? `Picture ${index + 1}` });
