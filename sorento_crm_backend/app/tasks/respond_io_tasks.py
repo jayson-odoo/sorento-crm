@@ -870,27 +870,34 @@ def set_respond_conversation_assignee(tracking_id: str, respond_user_id: str) ->
 
 
 def ensure_respond_contact(contact_id: str) -> dict:
-    """Worker-side (DEALER-ACCESS-PORTAL B2, V8): make a CRM contact the agent just granted access known to
+    """Worker-side (DEALER-ACCESS-PORTAL B2, B3, V8): make a CRM contact the agent just granted access known to
     Respond.io at once, so the bot answers their first message instead of waiting for the 15 minute sync.
 
-    Looks the phone up; a 404 creates the contact there (phone and first name, no message is ever sent). Stores the
-    Respond.io id (and the name parts the CRM row lacks), then writes the `backend_id` custom field the sync writes.
-    No resolvable API key (dev, CI): returns without any HTTP call. Any other HTTP error raises so RQ retries."""
+    Looks the phone up (normalised, URL-quoted in the path); a 404 creates the contact there (phone and first name, no
+    message is ever sent). Stores the Respond.io id (and the name parts the CRM row lacks), then writes the
+    `backend_id` custom field the sync writes. A contact that already has its id (a retry) only gets `backend_id`. No
+    usable phone or no resolvable API key (dev, CI): returns without any HTTP call. Any other HTTP error raises so RQ
+    retries."""
+    from urllib.parse import quote
+
     import httpx
 
     from app.database import SessionLocal
     from app.models.access import RespondContact
     from app.services.contact_service import parse_respond_contact_payload
+    from app.services.contact_setup_engine import normalise_phone
     from app.services.integration_service import RespondClient
     from app.services.respond_sync_handler import _internal_contact_url
 
     db = SessionLocal()
     try:
         contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
-        if contact is None or not contact.phone_number:
+        if contact is None:
             return {"contact_id": contact_id, "status": "skipped_no_contact"}
-        if contact.respond_io_id:
-            return {"contact_id": contact_id, "status": "skipped_has_respond_id"}
+        phone = normalise_phone(contact.phone_number)
+        if phone is None:
+            logger.warning("ensure_respond_contact: contact %s has no Malaysian mobile number; left as is", contact_id)
+            return {"contact_id": contact_id, "status": "skipped_no_phone"}
         try:
             client = RespondClient.for_contact_id(db, str(contact.id))
         except ValueError:
@@ -898,33 +905,36 @@ def ensure_respond_contact(contact_id: str) -> dict:
         if client is None or not client.api_key:
             logger.info("ensure_respond_contact: no Respond.io API key; contact %s left to the sync", contact_id)
             return {"contact_id": contact_id, "status": "skipped_no_key"}
-        try:
-            payload = client.get_contact_by_phone(contact.phone_number)
-            status = "found"
-        except httpx.HTTPStatusError as exc:
-            if exc.response is None or exc.response.status_code != 404:
-                raise
-            payload = client.create_contact(contact.phone_number, contact.first_name or contact.name or None)
-            status = "created"
-        parsed = parse_respond_contact_payload(payload or {})
-        respond_id = parsed.get("respond_io_id")
+        respond_id = contact.respond_io_id
+        status = "backend_id"
         if not respond_id:
-            raise RuntimeError(f"Respond.io returned no contact id for contact {contact_id}")
-        holder = db.query(RespondContact.id).filter(
-            RespondContact.respond_io_id == respond_id, RespondContact.id != contact.id
-        ).first()
-        if holder is not None:
-            # Another CRM row already is this Respond.io contact: a duplicate for the office, never overwritten.
-            logger.warning(
-                "ensure_respond_contact: Respond.io id %s already belongs to contact %s; %s left as is",
-                respond_id, holder[0], contact_id,
-            )
-            return {"contact_id": contact_id, "status": "skipped_duplicate"}
-        contact.respond_io_id = respond_id
-        for key in ("first_name", "last_name"):
-            if not getattr(contact, key) and parsed.get(key):
-                setattr(contact, key, parsed[key])
-        db.commit()
+            try:
+                payload = client.get_contact_by_phone(quote(phone, safe=""))
+                status = "found"
+            except httpx.HTTPStatusError as exc:
+                if exc.response is None or exc.response.status_code != 404:
+                    raise
+                payload = client.create_contact(phone, contact.first_name or contact.name or None)
+                status = "created"
+            parsed = parse_respond_contact_payload(payload or {})
+            respond_id = parsed.get("respond_io_id")
+            if not respond_id:
+                raise RuntimeError(f"Respond.io returned no contact id for contact {contact_id}")
+            holder = db.query(RespondContact.id).filter(
+                RespondContact.respond_io_id == respond_id, RespondContact.id != contact.id
+            ).first()
+            if holder is not None:
+                # Another CRM row already is this Respond.io contact: a duplicate for the office, never overwritten.
+                logger.warning(
+                    "ensure_respond_contact: Respond.io id %s already belongs to contact %s; %s left as is",
+                    respond_id, holder[0], contact_id,
+                )
+                return {"contact_id": contact_id, "status": "skipped_duplicate"}
+            contact.respond_io_id = respond_id
+            for key in ("first_name", "last_name"):
+                if not getattr(contact, key) and parsed.get(key):
+                    setattr(contact, key, parsed[key])
+            db.commit()
         client.update_contact(
             f"id:{respond_id}",
             {"custom_fields": [{"name": "backend_id", "value": _internal_contact_url(str(contact.id))}]},

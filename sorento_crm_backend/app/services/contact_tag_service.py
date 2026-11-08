@@ -37,18 +37,24 @@ def tags_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[d
 
 def owner_tag(db: Session, company_code: str) -> Optional[ContactTag]:
     """The active Business owner tag of the company (`TEMPLATE["owner_tags"]`, name matched case-insensitively);
-    None when it is missing or switched off."""
+    None when it is missing, switched off, or sets anything but exactly the company's template owner types (UAC A15:
+    an edited tag never grants more than the template)."""
     from app.services.contact_access_sheet_service import TEMPLATE
 
     name = TEMPLATE["owner_tags"].get(company_code)
     if not name:
         return None
-    return (
+    tag = (
         db.query(ContactTag)
         .filter(func.lower(ContactTag.name) == name.lower(), ContactTag.is_active.is_(True))
         .order_by(ContactTag.id)
         .first()
     )
+    settings = (tag.settings or {}) if tag is not None else {}
+    types = settings.get("access_types")
+    if set(settings) != {"access_types"} or not isinstance(types, list):
+        return None
+    return tag if set(types) == set(TEMPLATE["owner_types"][company_code]) else None
 
 
 def change_tags(

@@ -803,11 +803,15 @@ class RespondClient:
             return response.json() if response.content else {}
 
     def create_contact(self, phone: str, first_name: Optional[str] = None) -> dict:
-        """Create a contact via POST /v2/contact/phone:{phone}. Sends no message (DEALER-ACCESS-PORTAL B2)."""
+        """Create a contact via POST /v2/contact/phone:{phone}, the phone URL-quoted in the path. Sends no message
+        (DEALER-ACCESS-PORTAL B2, B3)."""
+        from urllib.parse import quote
+
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
         clean_phone = phone.replace("phone:", "")
-        url = f"{self.base_url}/v2/contact/{self._contact_api_identifier(f'phone:{clean_phone}')}"
+        identifier = "phone:" + quote(clean_phone, safe="")
+        url = f"{self.base_url}/v2/contact/{self._contact_api_identifier(identifier)}"
         payload = {"firstName": first_name or clean_phone, "phone": clean_phone}
         with self._http(timeout=15) as client:
             response = client.post(url, headers=self._headers(), json=payload)

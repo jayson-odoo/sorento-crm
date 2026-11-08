@@ -1190,7 +1190,13 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 )
             from app.services.contact_tag_service import owner_tag, tags_by_contact
 
-            # Business owner is the company's owner tag (DEALER-ACCESS-PORTAL C1, C2).
+            # Business owner is the company's owner tag (DEALER-ACCESS-PORTAL C1, C2). Own scope: neither a promotion
+            # nor a demotion while another account also reaches the person (C3, A14).
+            if own_scope and _not_own_links(db, uid, contact.id):
+                raise AppException(
+                    status_code=422, code="VALIDATION_ERROR",
+                    message="This person also has access through another account; ask the office to change their level.",
+                )
             if role == "owner":
                 for code in lacking:
                     tag = owner_tag(db, code)
@@ -1203,14 +1209,6 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 add = {TEMPLATE["base_type"]}
                 new_label = _role_label("owner", template_codes)
             else:
-                if own_scope and _not_own_links(db, uid, contact.id):
-                    raise AppException(
-                        status_code=422, code="VALIDATION_ERROR",
-                        message=(
-                            "This person also has access through another account; ask the office to change their "
-                            "level."
-                        ),
-                    )
                 from app.models.access import ContactTag
 
                 names = {TEMPLATE["owner_tags"][c].lower() for c in template_codes if c in TEMPLATE["owner_tags"]}

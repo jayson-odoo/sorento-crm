@@ -87,13 +87,29 @@ def db():
 
 
 @pytest.fixture(autouse=True)
-def jobs(monkeypatch):
+def jobs(monkeypatch, db):
     """Every `enqueue_job` call, recorded instead of reaching Redis. Patched on the queue module and on the grant
-    module (in case it imports the name), so the recorder sees the call whichever way it is made."""
+    module (in case it imports the name), so the recorder sees the call whichever way it is made.
+
+    `committed` (B1, review round 1 M6): no write was flushed since the session's last commit when the job was
+    enqueued. The blank schema's outer transaction hides even committed rows from a fresh connection, so the
+    session's own flush and commit events stand in for "the grant is committed"."""
+    from sqlalchemy import event
+
     calls: list[SimpleNamespace] = []
+    pending = {"flushed": False}
+
+    def flushed(*_a):
+        pending["flushed"] = True
+
+    def committed(*_a):
+        pending["flushed"] = False
+
+    event.listen(db, "after_flush", flushed)
+    event.listen(db, "after_commit", committed)
 
     def record(func, *args, **kwargs):
-        calls.append(SimpleNamespace(func=func, args=args, kwargs=kwargs))
+        calls.append(SimpleNamespace(func=func, args=args, kwargs=kwargs, committed=not pending["flushed"]))
         return SimpleNamespace(id=f"zzt-job-{len(calls)}")
 
     import app.services.queue_service as queue_service
@@ -646,6 +662,7 @@ def test_B1_a_grant_of_a_new_phone_enqueues_ensure_respond_contact_on_the_respon
     assert len(calls) == 1, [getattr(c.func, "__name__", c.func) for c in jobs]
     assert [str(a) for a in calls[0].args] == [state(db, phone)["id"]]
     assert calls[0].kwargs.get("queue_name") == "respond_io"
+    assert calls[0].committed, "the job was enqueued before the grant committed"
 
 
 def test_B1_a_grant_of_an_existing_contact_without_a_respond_id_enqueues_the_job(db, jobs):
@@ -657,6 +674,7 @@ def test_B1_a_grant_of_an_existing_contact_without_a_respond_id_enqueues_the_job
     assert outcome.status == "executed", outcome.steps
     calls = respond_jobs(jobs)
     assert len(calls) == 1 and [str(a) for a in calls[0].args] == [str(person.id)]
+    assert calls[0].committed, "the job was enqueued before the grant committed"
 
 
 def test_B1_a_grant_of_a_contact_that_has_a_respond_id_enqueues_nothing(db, jobs):
@@ -1000,3 +1018,259 @@ def test_C5_own_scope_update_never_names_another_salespersons_account(db, change
             .filter(RespondContactCustomer.contact_id == person.id)
         }
     assert str(o.theirs.id) in left
+
+
+# ------------------------------------------------------------------ review round 1 (UAC A12-A16, B3)
+
+NO_OWN_ACCOUNT = "Name one of your accounts for this person (code or name)."
+
+
+def test_A12_an_own_scope_row_naming_no_account_is_refused_for_new_and_existing_contacts_and_both_roles(db):
+    o = own_world(db)
+    existing = dealer(db, o.w, customers=(o.theirs,))
+    rows = [
+        row_(fake_phone(), role="employee"),
+        row_(fake_phone(), role="owner"),
+        row_(existing.phone_number, role="employee"),
+        row_(existing.phone_number.replace("+6019", "+6018"), role="owner"),
+    ]
+
+    steps, skipped, waiting = propose(db, o.w, rows)
+
+    assert steps == [] and waiting == []
+    for n in (1, 2, 3, 4):
+        assert reason(skipped, n) == NO_OWN_ACCOUNT
+
+
+def _settings_of(db, contact_id: str) -> dict:
+    from app.models.access import StockVisibilityPolicy
+    from app.models.media import ContactMediaLimit
+
+    db.expire_all()
+    with company_scope(db, None):
+        row = db.get(RespondContact, contact_id)
+        policy = db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == contact_id).one_or_none()
+        media = db.query(ContactMediaLimit).filter(ContactMediaLimit.contact_id == contact_id).all()
+        return {
+            "switches": {
+                k: getattr(row, k) for k in (
+                    "chatbot_allowed", "chatbot_stock_allowed", "chatbot_eta_offset_applied", "escalation_allowed",
+                    "packing_list_allowed",
+                )
+            },
+            "brands": sorted(map(str, row.brand_ids or [])),
+            "stock": None if policy is None else (
+                policy.mode, sorted(map(str, policy.warehouse_ids or [])),
+                sorted(map(str, policy.excluded_warehouse_ids or [])), policy.hide_zero_locations,
+            ),
+            "media": sorted((m.modality, m.is_allowed) for m in media),
+        }
+
+
+def test_A13_an_own_scope_grant_on_a_contact_of_another_account_adds_only_the_additive_facets(db):
+    from app.models.access import AccessAgent, ContactAgentAccess, StockVisibilityPolicy, respond_contact_market_segments
+    from app.models.inventory import Warehouse
+
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, types=(), companies=(), customers=(o.theirs,))
+    with company_scope(db, None):
+        brw = db.query(Warehouse.id).filter(Warehouse.company_id == w.srt, Warehouse.warehouse_code == "BRW").scalar()
+        db.query(RespondContact).filter(RespondContact.id == person.id).update({
+            "chatbot_allowed": False, "chatbot_stock_allowed": False, "chatbot_eta_offset_applied": False,
+            "escalation_allowed": True, "packing_list_allowed": True, "brand_ids": [str(uuid.uuid4())],
+        })
+        db.add(StockVisibilityPolicy(contact_id=person.id, mode="detailed", excluded_warehouse_ids=[str(brw)]))
+    db.commit()
+    kept = _settings_of(db, person.id)
+
+    outcome, steps, skipped, _ = grant(db, w, [row_(person.phone_number, role="employee", codes=[w.cust_a.customer_code])])
+
+    assert skipped == [] and outcome.status == "executed", outcome.steps
+    summary = steps[0]["summary"]
+    for word in ("AI replies", "stock replies", "ETA offset", "hand-over", "packing list", "stock check",
+                 "stock locations", "brands", "image replies"):
+        assert word not in summary, f"{word!r} is planned on another account's contact: {summary}"
+    after = state(db, person.phone_number)
+    assert after["links"] == sorted([str(o.theirs.id), str(w.cust_a.id)])
+    assert w.srt in after["companies"] and "end_user" in after["types"]
+    with company_scope(db, None):
+        agents = {
+            code for (code,) in db.query(AccessAgent.code)
+            .join(ContactAgentAccess, ContactAgentAccess.agent_id == AccessAgent.id)
+            .filter(ContactAgentAccess.respond_contact_id == person.id)
+        }
+        segments = {
+            c for (c,) in db.execute(
+                select(respond_contact_market_segments.c.segment_code)
+                .where(respond_contact_market_segments.c.contact_id == person.id)
+            )
+        }
+    assert {"general_enquiries", "order_enquiries", "incoming_stock_enquiries"} <= agents
+    assert "retail" in segments
+    assert _settings_of(db, person.id) == kept
+
+
+def test_A14_an_own_scope_owner_grant_for_a_contact_of_another_account_is_refused(db):
+    o = own_world(db)
+    person = dealer(db, o.w, customers=(o.theirs,))
+
+    steps, skipped, _ = propose(db, o.w, [row_(person.phone_number, role="owner", codes=[o.w.cust_a.customer_code])])
+
+    assert steps == []
+    assert reason(skipped) == DEMOTE_REFUSED
+    assert tags_of(db, person.id) == []
+
+
+def test_A14_an_own_scope_promote_through_the_update_tool_for_a_contact_of_another_account_is_refused(db):
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, customers=(w.cust_a, o.theirs))
+
+    res, step = update_step(db, w, {"contact_id": person.id, "role": "owner"}, seen={person.id})
+
+    assert step is None and res.status in ("invalid", "denied")
+    assert DEMOTE_REFUSED in (res.message or "")
+    assert tags_of(db, person.id) == [] and state(db, person.phone_number)["types"] == ["end_user"]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"access_types": ["dealer", "cabana_dealer"], "chatbot": {"stock_allowed": True}},
+        {},
+        {"access_types": ["dealer", "cabana_dealer", "mocha_dealer"]},
+    ],
+    ids=["extra section", "no access types", "more types"],
+)
+def test_A15_an_owner_tag_whose_settings_are_not_exactly_the_template_counts_as_missing(db, settings):
+    w = make_world(db)
+    with company_scope(db, None):
+        db.query(ContactTag).filter(ContactTag.name == SRT_TAG).update({"settings": settings})
+    db.commit()
+    phone = fake_phone()
+
+    steps, skipped, _ = propose(db, w, [row_(phone, role="owner", codes=[w.cust_a.customer_code])])
+
+    assert steps == []
+    assert reason(skipped) == missing_tag_text(SRT_TAG)
+
+
+def test_A15_the_template_owner_types_in_another_order_still_count(db):
+    w = make_world(db)
+    owner_tag(db, SRT_TAG, types=["cabana_dealer", "dealer"])
+    phone = fake_phone()
+
+    outcome, _, _, _ = grant(db, w, [row_(phone, role="owner", codes=[w.cust_a.customer_code])])
+
+    assert outcome.status == "executed", outcome.steps
+    assert tags_of(db, state(db, phone)["id"]) == [SRT_TAG]
+
+
+@pytest.mark.parametrize("form", ["international", "local"])
+def test_A16_a_new_phone_equal_to_a_users_contact_number_is_refused_as_staff(db, form):
+    from app.models.user import User
+
+    w = make_world(db)
+    phone = fake_phone()
+    digits = phone.lstrip("+")
+    staff = seed_user(db, contact_pk=None, slugs=())
+    db.query(User).filter(User.id == staff).update(
+        {"contact_number": f"+{digits}" if form == "international" else f"0{digits[2:5]}-{digits[5:]}"}
+    )
+    db.commit()
+
+    steps, skipped, _ = propose(db, w, [row_(phone, role="employee", codes=[w.cust_a.customer_code])])
+
+    assert steps == []
+    assert reason(skipped) == STAFF
+    assert state(db, phone) is None
+
+
+def test_B3_the_job_normalises_the_phone_and_url_quotes_it_for_the_lookup(db, respond):
+    from urllib.parse import quote
+
+    phone = fake_phone()
+    digits = phone.lstrip("+")
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"0{digits[2:5]}-{digits[5:]}", name="ZZT Quoted")
+    db.add(contact)
+    db.commit()
+
+    respond.job(str(contact.id))
+
+    looked = [c for c in respond.calls if c[0] == "get_contact_by_phone"]
+    assert looked == [("get_contact_by_phone", quote(phone, safe=""))]
+
+
+def test_B3_create_contact_url_quotes_the_phone_in_the_path(monkeypatch):
+    from urllib.parse import quote
+
+    from app.services.integration_service import RespondClient
+
+    sent = {}
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            sent.update(url=url, json=json)
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"id": 900000124})
+
+    monkeypatch.setattr(RespondClient, "_http", staticmethod(lambda *a, **k: _Client()))
+    phone = fake_phone()
+
+    out = RespondClient(api_key="zzt-key", base_url="https://respond.invalid").create_contact(phone, "ZZT Made")
+
+    assert out == {"id": 900000124}
+    assert sent["url"] == f"https://respond.invalid/v2/contact/phone:{quote(phone, safe='')}"
+    assert sent["json"]["phone"] == phone and sent["json"]["firstName"] == "ZZT Made"
+
+
+def test_B3_a_phone_that_does_not_normalise_skips_the_job_without_any_http_call(db, respond):
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number="12345", name="ZZT Not A Mobile")
+    db.add(contact)
+    db.commit()
+
+    out = respond.job(str(contact.id))
+
+    assert respond.calls == [] and respond.forbidden == []
+    assert str(out.get("status", "")).startswith("skipped")
+    assert _respond_id(db, contact.id) is None
+
+
+def test_B3_a_retry_for_a_contact_that_has_its_respond_id_still_writes_backend_id(db, respond):
+    contact = _job_contact(db)
+    with company_scope(db, None):
+        db.query(RespondContact).filter(RespondContact.id == contact.id).update({"respond_io_id": "900000333"})
+    db.commit()
+
+    respond.job(str(contact.id))
+
+    assert not any(c[0] in ("get_contact_by_phone", "create_contact") for c in respond.calls)
+    assert _backend_id_written(respond, "900000333")
+    assert respond.forbidden == []
+
+
+def test_B3_an_own_scope_stored_action_carries_own_link_ids_and_a_count_of_the_others(db):
+    from app.models.chatbot_agent import AgentAction
+
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, customers=(w.cust_a, o.theirs))
+
+    steps, skipped, _ = propose(db, w, [row_(person.phone_number, role="employee", codes=[w.twin1.customer_code])])
+    assert steps, skipped
+    assert steps[0]["before"]["links"] == [str(w.cust_a.id)]
+    assert steps[0]["before"]["other_links"] == 1
+    action = store(db, w, steps)
+    outcome = confirm(db, w, action)
+
+    assert outcome.status == "executed", outcome.steps
+    db.expire_all()
+    stored = json.dumps(db.get(AgentAction, action.id).steps, default=str)
+    assert str(o.theirs.id) not in stored
+    assert state(db, person.phone_number)["links"] == sorted([str(w.cust_a.id), str(o.theirs.id), str(w.twin1.id)])

@@ -14,6 +14,7 @@ row's skip reason.
 from __future__ import annotations
 
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,6 +27,14 @@ GRANT = "crm_contact_grant"
 EDIT = writes.CONTACT_EDIT
 EVENT = writes.CONTACT_EVENT
 LINK_SOURCE = "agent"
+NO_OWN_ACCOUNT = "Name one of your accounts for this person (code or name)."
+OTHER_ACCOUNT = "This person also has access through another account; ask the office to change their level."
+#: Own scope, a contact another account also reaches (UAC A13): the settings someone else chose stay as they are;
+#: only the additive facets (link, company, end_user, missing enquiry agents, retail segment) apply.
+NON_ADDITIVE = frozenset({
+    "chatbot_allowed", "chatbot_stock_allowed", "chatbot_eta_offset_applied", "escalation_allowed",
+    "packing_list_allowed", "stock_check_mode", "stock_locations", "brands", "media",
+})
 COMPANY_WORDS = {"SRT": "Sorento", "MCH": "Mocha"}
 #: The template facets the preview names in words, in this order (the role and the links have their own words).
 _FACET_WORDS = (
@@ -76,8 +85,6 @@ MAX_CHOICES = 10
 
 def _significant_words(text: str) -> list[str]:
     """The words of a business name that can identify it: 3+ characters, company suffix words left out."""
-    import re
-
     from app.services.contact_setup_engine import _NAME_SUFFIXES
 
     return list(dict.fromkeys(
@@ -218,14 +225,21 @@ def _find_contact(db, phone: str):
     return rows[0] if rows else None
 
 
-def _is_staff(db, contact_id: str) -> bool:
-    """Is this contact a CRM user's own contact or a sales agent's (UAC A9)? Never granted dealer access."""
+def _is_staff(db, phone: str, contact_id: str | None) -> bool:
+    """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
+    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access."""
+    from sqlalchemy import func
+
     from app.models.base import company_scope
     from app.models.sales_agent import SalesAgent
     from app.models.user import User
 
+    full = phone.lstrip("+")
+    digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
     with company_scope(db, None):
-        return (
+        if db.query(User.id).filter(digits.in_({full, full[1:]})).first() is not None:
+            return True
+        return contact_id is not None and (
             db.query(User.id).filter(User.respond_contact_id == contact_id).first() is not None
             or db.query(SalesAgent.id).filter(SalesAgent.contact_id == contact_id).first() is not None
         )
@@ -278,6 +292,8 @@ def plan(db, user: dict, args: dict) -> dict:
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     if choices:
         raise NeedsChoice(choices)
+    if own_agents is not None and not customers:
+        raise _refuse(NO_OWN_ACCOUNT)  # UAC A12: no grant without one of the user's own accounts
     # Business owner is the company's owner tag (UAC A6); a missing or switched-off tag refuses the row (A7). Checked
     # once the row is otherwise ready: the row's own problems and its account pick come first.
     tags: list = []
@@ -292,10 +308,15 @@ def plan(db, user: dict, args: dict) -> dict:
         if missing:
             raise _refuse("; ".join(missing) + ".")
     contact = _find_contact(db, phone)
-    if contact is not None and _is_staff(db, str(contact.id)):
+    if _is_staff(db, phone, str(contact.id) if contact is not None else None):
         raise _refuse("This number belongs to a staff member.")
-    # The whole template is written whatever the confirming user could set by hand (UAC A5, owner Q2 a).
-    skip = frozenset()
+    # Own scope: links to accounts that are not the user's own, counted, never named (A10, A13, A14, B3).
+    others = writes._not_own_links(db, uid, str(contact.id)) if own_agents is not None and contact is not None else set()
+    if others and role == "owner":
+        raise _refuse(OTHER_ACCOUNT)  # UAC A14: promotion is as restricted as demotion
+    # The whole template is written whatever the confirming user could set by hand (UAC A5, owner Q2 a), except on a
+    # contact another account reaches too (A13).
+    skip = NON_ADDITIVE if others else frozenset()
     world = sheet._world(db, set(companies))
     if contact is not None:
         cid = str(contact.id)
@@ -314,7 +335,6 @@ def plan(db, user: dict, args: dict) -> dict:
     changes, todo = engine._plan_contact(db, subject, snap, desired, names, world, sheet.TEMPLATE, media, skip)
     changed = [c for c in changes if c["changed"]]
     add_links = [c for c in customers if str(c.id) not in held]
-    not_applied = sorted({c["facet"] for c in changes if c["status"] == "not_applied"})
     held_tags = tags_by_contact(db, [cid]).get(cid, []) if cid else []
     add_tags = [t for t in tags if str(t.id) not in {h["id"] for h in held_tags}]
     if contact is not None and not changed and not add_links and not add_tags:
@@ -328,24 +348,25 @@ def plan(db, user: dict, args: dict) -> dict:
         added = [code for code, i in company_ids.items() if i in set(todo["companies"])]
         lines.append(f"add company {_company_words(added)}")
     lines += [f"link {c.customer_code} {_clean(c.customer_name)}".strip() for c in add_links]
-    if own_agents is not None and contact is not None and writes._not_own_links(db, uid, cid):
+    if others:
         # Add-only beside it; the other account is never named (UAC A10, owner Q5 a).
         lines.append("also has access through another account")
     extra = [word for facet, word in _FACET_WORDS if facet in facets]
     if extra:
         lines.append("template: " + ", ".join(extra))
-    if not_applied:
-        words = dict(_FACET_WORDS) | {"companies": "companies"}
-        lines.append("not applied (needs more access): " + ", ".join(dict.fromkeys(words.get(f, f) for f in not_applied)))
+    # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row. Own scope:
+    # another account's link is only counted (B3).
+    before = {
+        "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies),
+        "links": [h for h in held if h not in others], "targets": sorted(str(c.id) for c in customers),
+    }
+    if own_agents is not None:
+        before["other_links"] = len(others)
     return {
         "phone": phone, "name": name or (contact.name if contact is not None else "") or "", "contact": contact,
         "contact_id": cid, "desired": desired, "todo": todo, "changed": changed, "add_links": add_links,
         "lines": lines, "snap": snap, "held": held, "add_tags": add_tags, "held_tags": [h["name"] for h in held_tags],
-        # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row.
-        "before": {
-            "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies), "links": held,
-            "targets": sorted(str(c.id) for c in customers),
-        },
+        "before": before,
     }
 
 

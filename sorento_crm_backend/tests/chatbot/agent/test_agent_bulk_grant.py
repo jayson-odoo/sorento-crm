@@ -604,7 +604,7 @@ def test_04_more_than_fifty_rows_is_invalid_and_proposes_nothing(db):
 # ------------------------------------------------------------------ 5. permissions beyond the slug
 
 
-def test_05_a_user_who_cannot_set_companies_on_screen_gets_the_row_without_the_company(db):
+def test_05_a_user_who_cannot_set_companies_on_screen_still_gets_the_whole_template_company_included(db):
     # UAC A5 / Q2 a (DEALER-ACCESS-PORTAL): no facet is skipped any more; the whole template is written, company
     # included. Employee row: the owner tag is A6's subject, not this test's.
     w = make_world(db, slugs=(EDIT,), superadmin=False)
