@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 import re
 import uuid
@@ -88,15 +89,23 @@ def expire_proposed(db, contact_respond_id: str, *, test: bool | None = None) ->
     query.update({AgentAction.status: "expired"}, synchronize_session=False)
 
 
+def expire_previous(db, ctx, steps: list[dict], *, test: bool = False) -> None:
+    """A new proposal (or a table turn with no ready row) replaces the contact's older `proposed` actions. A contact
+    turn expires only its own kind (test or live); `test` is used when there are no steps to read it from."""
+    if str(ctx.user_id or "") == "":
+        expire_proposed(
+            db, ctx.contact_respond_id, test=any(bool((s.get("args") or {}).get("_is_test")) for s in steps) if steps else test
+        )
+    else:
+        expire_proposed(db, ctx.contact_respond_id)
+
+
 def store_proposal(
     db, ctx, *, conversation_id: str, turn_id: str, steps: list[dict], action_id: str | None = None
 ) -> AgentAction:
     """The turn's steps as a `proposed` action. Older `proposed` actions of the contact expire."""
     now = _now()
-    if str(ctx.user_id or "") == "":
-        expire_proposed(db, ctx.contact_respond_id, test=any(bool((s.get("args") or {}).get("_is_test")) for s in steps))
-    else:
-        expire_proposed(db, ctx.contact_respond_id)
+    expire_previous(db, ctx, steps)
     row = AgentAction(
         id=action_id or str(uuid.uuid4()),
         conversation_id=conversation_id,
@@ -202,7 +211,7 @@ def _recheck(db, ctx, step: dict) -> str | None:
     except Exception as exc:  # noqa: BLE001
         text = writes.error_text(exc)
         # A rule that now refuses (nothing left to change, a field no longer valid) means it moved on.
-        return f"This changed since it was proposed: {text}" if getattr(exc, "status_code", 0) == 422 else text
+        return f"This changed since it was proposed: {text}" if getattr(exc, "status_code", 0) in (409, 422) else text
     before = step.get("before") or {}
     for field in before:
         if now.get(field) != before[field]:
@@ -527,3 +536,96 @@ def actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[dic
             }
         )
     return out
+
+
+# ------------------------------------------------------------------ decided cards (AGENT-DECIDED-CARDS)
+
+#: An action the user decided: a cancel, or a confirm that ran (whatever each step's outcome).
+DECIDED = ("cancelled", "executed", "partial", "rejected")
+_STEP_MARKS = {"done": "done", "failed": "failed", "skipped": "not run", "withdrawn": "withdrawn"}
+
+
+#: Argument keys that never change what a row asks for: the access cell's echo, the person's label, and the phone
+#: (compared, normalised, as the `batch_key`), so a row re-sent with the phone or name written differently still
+#: matches.
+_ECHO_KEYS = frozenset({"access_as_written", "name", "phone"})
+
+
+def _canonical(value):
+    """A value compared across cards: text trimmed, whitespace collapsed and lowercased; a list order-free."""
+    if isinstance(value, str):
+        return " ".join(value.split()).lower()
+    if isinstance(value, (list, tuple, set)):
+        return sorted((_canonical(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True, default=str))
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    return value
+
+
+def row_identity(step: dict) -> tuple | None:
+    """Which table row a step is, across cards: the write, its `batch_key` (a grant's phone) and what it asks for
+    (every argument, compared without case, spacing or list order), so the same person asked for something else
+    is a different row. None for a write that never batches."""
+    definition = writes.write_def(step.get("tool"))
+    args = step.get("args") if isinstance(step.get("args"), dict) else {}
+    if definition is None or not definition.batchable:
+        return None
+    key = definition.batch_key(args) if definition.batch_key is not None else None
+    plain = {k: v for k, v in args.items() if not str(k).startswith("_") and k not in _ECHO_KEYS and k != "row"}
+    return (definition.name, key, json.dumps(_canonical(plain), sort_keys=True, ensure_ascii=False, default=str))
+
+
+def closed_rows(db, contact_respond_id: str, conversation_id: str) -> dict[tuple, dict]:
+    """The table rows of this conversation the user already decided, by `row_identity`: {"status": "cancelled" |
+    "done", "args"}. The newest card holding a row speaks for it, so a row the user asked for again (a newer card
+    proposed it) is open again; a step that failed or did not run stays open."""
+    out: dict[tuple, dict] = {}
+    rows = (
+        db.query(AgentAction)
+        .filter(
+            AgentAction.contact_respond_id == str(contact_respond_id),  # the indexed column; same rows
+            AgentAction.conversation_id == str(conversation_id),
+        )
+        .order_by(AgentAction.created_at, AgentAction.id)
+        .all()
+    )
+    for action in rows:
+        for step in action.steps or []:
+            ident = row_identity(step)
+            if ident is None:
+                continue
+            closed = None
+            if action.status == "cancelled" or step.get("status") == "withdrawn":
+                closed = "cancelled"
+            elif action.status in DECIDED and step.get("status") == "done":
+                closed = "done"
+            if closed is None:
+                out.pop(ident, None)
+            else:
+                out[ident] = {"status": closed, "args": dict(step.get("args") or {})}
+    return out
+
+
+def decision_note(action: AgentAction) -> str | None:
+    """The fact the model reads after the turn that proposed `action`, once the user decided it (a panel Cancel or
+    Confirm is not a chat turn, so the history would not say it otherwise). None while undecided."""
+    steps = action.steps or []
+    if action.status not in DECIDED or not steps:
+        return None
+    if action.status == "cancelled":
+        rows = "; ".join(f"{n}. {writes._line(s.get('summary'))}" for n, s in enumerate(steps, 1))
+        return (
+            f"[Card cancelled by the user: nothing was changed. Its rows were: {rows}. These rows are closed: never "
+            "propose them again unless the user's latest message asks for them again.]"
+        )
+    rows = "; ".join(
+        f"{n}. {writes._line(s.get('summary'))} ({_STEP_MARKS.get(s.get('status'), s.get('status'))})"
+        for n, s in enumerate(steps, 1)
+    )
+    head = (
+        "Card confirmed by the user, but nothing ran" if action.status == "rejected" else "Card confirmed by the user"
+    )
+    return (
+        f"[{head}. Rows: {rows}. Done rows are finished: never propose them again; a row marked failed or not run "
+        "may be proposed again only if the user asks.]"
+    )

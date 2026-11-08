@@ -9,6 +9,7 @@ import {
   mergeCertificateInto,
   removeCertificateProduct,
   updateCertificate,
+  updateCertificateProductCode,
 } from '../services/certificateService';
 import type { CertificatesListParams } from '../services/certificateService';
 import type { CertificateFormData } from '../types/certificate.types';
@@ -201,5 +202,25 @@ export function useRemoveCertificateProduct() {
       toast.success('Product removed from coverage');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to remove covered product'),
+  });
+}
+
+export function useUpdateCertificateProductCode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      coverageId,
+      body,
+    }: {
+      id: string;
+      coverageId: string;
+      body: { model_code?: string | null; confirm?: boolean };
+    }) => updateCertificateProductCode(id, coverageId, body),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['certificate', variables.id] });
+      toast.success('Code saved');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the code'),
   });
 }

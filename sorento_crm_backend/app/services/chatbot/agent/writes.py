@@ -246,7 +246,9 @@ def _route_failure(exc: Exception) -> ToolResult:
         if exc.status_code in (403, 404):
             return ToolResult("denied", message=error_text(exc))
         if 400 <= exc.status_code < 500:
-            return ToolResult("invalid", message=error_text(exc))
+            # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
+            choices = getattr(exc, "choices", None)
+            return ToolResult("invalid", data={"choices": choices} if choices else None, message=error_text(exc))
     logger.warning("agent: in-process route call failed", exc_info=True)
     return ToolResult("error", message="The tool failed.")
 
@@ -2687,4 +2689,4 @@ WRITES[CREATE_TICKET] = WriteDef(
 from app.services.chatbot.agent import query_tools  # noqa: E402,F401
 
 # AGENT-BULK-ACTIONS: the contact grant row write and the generic batch tool; imported last for the same reason.
-from app.services.chatbot.agent import batch, contact_grant  # noqa: E402,F401
+from app.services.chatbot.agent import batch, contact_grant, contact_tags  # noqa: E402,F401

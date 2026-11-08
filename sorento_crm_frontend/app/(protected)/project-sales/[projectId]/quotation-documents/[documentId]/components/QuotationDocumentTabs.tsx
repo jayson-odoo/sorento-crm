@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BookImage, FileText, Mail, MessageSquareText, PenLine, ScrollText } from 'lucide-react';
+import { BadgeCheck, BookImage, FileText, Mail, MessageSquareText, PenLine, ScrollText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
@@ -40,6 +40,8 @@ export function quotationDocumentTabs(projectId: string, documentId: string): Ta
     { key: 'feedback', title: 'Customer feedback', icon: MessageSquareText, path: `${base}/feedback` },
     // PS-SPEC-SHEET: the project catalogue printed from an issued revision.
     { key: 'spec-sheet', title: 'Spec sheet', icon: BookImage, path: `${base}/spec-sheet` },
+    // QUOTE-CERT-TAB: the certificates of the quoted products, rows boxed for the customer.
+    { key: 'certification', title: 'Certification', icon: BadgeCheck, path: `${base}/certification` },
   ];
 }
 
