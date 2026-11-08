@@ -2113,6 +2113,7 @@ class ProjectQuotationIssueResponse(BaseModel):
     issued_by_name: Optional[str] = None
     grand_total: Decimal = Decimal("0.00")
     scope_count: int = 0
+    certificates_count: int = 0
 
     # The customer's acceptance lives on the issue, but the screen watching for it is the
     # document, so it has to travel with the issue history the document reads.
