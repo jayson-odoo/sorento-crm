@@ -1,6 +1,6 @@
 # PLAN - Products list: list price changed-between filter, changed-at column, change-history lightbox
 
-Status: Build done, in review on PR #2260 (Track: full - carries a data migration). Plan created 2026-11-08.
+Status: merge-ready on PR #2260, awaiting owner hand test (Track: full - carries a data migration). Plan created 2026-11-08.
 
 crew-lane: LIST-PRICE-CHANGE-UI. Base: main cffaece6 (#2228 list-price change notifications).
 
