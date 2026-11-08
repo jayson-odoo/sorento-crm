@@ -123,3 +123,66 @@ def test_duplicate_keeps_accounts_and_needs_no_payee(api):
     res = client.post(f"{BASE}/{combined['id']}/duplicate")
     assert res.status_code in (200, 201), res.text
     assert len(res.json()["accounts"]) == 3
+
+
+def test_rm_additional_set_per_account_is_stored_and_paid_per_account(api):
+    """Owner 8 Nov (Q3): a fixed RM Additional per account, beside its rate."""
+    client, db, company_id = api
+    (a1, a2, a3), combined = _deluxe(client, db, company_id)
+    res = client.patch(f"{BASE}/{combined['id']}", json={"tiers": [
+        {"threshold": 1000000, "rate": 0, "account_rates": [
+            {"customer_id": a1.id, "rate": 1.5, "bonus_amount": 500}, {"customer_id": a2.id, "rate": 1},
+            {"customer_id": a3.id, "rate": 1.5, "bonus_amount": 100},
+        ]},
+    ]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert [r.get("bonus_amount") for r in body["tiers"][0]["account_rates"]] == [500, None, 100]
+    period = body["periods"][0]
+    assert period["bonus_earned"] == 600
+    shares = {a["customer_id"]: a["commission_earned"] for a in period["accounts"]}
+    assert shares == {a1.id: 10446.07, a2.id: 5839.84, a3.id: 655.20}
+    # Duplicate keeps each account's own Additional.
+    copy = client.post(f"{BASE}/{combined['id']}/duplicate").json()
+    assert [r.get("bonus_amount") for r in copy["tiers"][0]["account_rates"]] == [500, None, 100]
+
+
+def test_rm_additional_per_account_and_for_the_tier_are_not_both(api):
+    client, db, company_id = api
+    (a1, _a2, _a3), combined = _deluxe(client, db, company_id)
+    res = client.patch(f"{BASE}/{combined['id']}", json={"tiers": [
+        {"threshold": 1000000, "rate": 0, "bonus_amount": 50,
+         "account_rates": [{"customer_id": a1.id, "rate": 1.5, "bonus_amount": 500}]},
+    ]})
+    assert res.status_code == 422, res.text
+
+
+def test_one_rm_additional_for_all_pays_each_counted_account_even_without_sales(api):
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a1 = _customer(db, company_id, "ZZT ALL A/C I", level=1)
+    a2 = _customer(db, company_id, "ZZT ALL A/C II", level=2)
+    _sale(db, company_id, a1, 200000, date(2026, 3, 1), product_id=pid)
+    res = client.post(BASE, json=_yearly([a1, a2], [{"threshold": 100000, "rate": 1, "bonus_amount": 100}]))
+    assert res.status_code == 201, res.text
+    period = res.json()["periods"][0]
+    assert period["bonus_earned"] == 200
+    assert {a["customer_id"]: a["commission_earned"] for a in period["accounts"]} == {a1.id: 2100.0, a2.id: 100.0}
+
+
+def test_marginal_takes_a_rate_per_account(api):
+    """Owner 8 Nov (Q3): marginal pays each account its own rate on its part of each slice."""
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a = _customer(db, company_id, "ZZT MRG A", level=1)
+    b = _customer(db, company_id, "ZZT MRG B", level=2)
+    _sale(db, company_id, a, 1500000, date(2026, 3, 1), product_id=pid)
+    _sale(db, company_id, b, 1000000, date(2026, 3, 1), product_id=pid)
+    res = client.post(BASE, json=_yearly([a, b], [
+        {"threshold": 1000000, "rate": 0, "account_rates": [{"customer_id": a.id, "rate": 1}, {"customer_id": b.id, "rate": 2}]},
+        {"threshold": 2000000, "rate": 0, "account_rates": [{"customer_id": a.id, "rate": 2}, {"customer_id": b.id, "rate": 3}]},
+    ], commission_method="marginal"))
+    assert res.status_code == 201, res.text
+    period = res.json()["periods"][0]
+    assert {x["customer_id"]: x["commission_earned"] for x in period["accounts"]} == {a.id: 12000.0, b.id: 14000.0}
+    assert period["commission_earned"] == 26000

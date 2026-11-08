@@ -576,10 +576,16 @@ class SalesTargetTierRate(CompanyScopedMixin, Base):
         UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False
     )
     rate = Column(Numeric(9, 4), nullable=False)
+    #: This account's own fixed RM Additional when its tier is the one reached (owner 8 Nov,
+    #: lane TARGET-PER-ACCOUNT-PAYOUT Q3: set per account, like the rate).
+    bonus_amount = Column(Numeric(15, 2), nullable=True)
 
     __table_args__ = (
         Index("uq_sales_target_tier_rates_tier_customer", "tier_id", "customer_id", unique=True),
         CheckConstraint("rate >= 0", name="ck_sales_target_tier_rates_rate"),
+        CheckConstraint(
+            "bonus_amount IS NULL OR bonus_amount >= 0", name="ck_sales_target_tier_rates_bonus_amount"
+        ),
         {"schema": SCHEMA},
     )
 

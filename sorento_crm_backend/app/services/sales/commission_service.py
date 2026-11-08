@@ -24,12 +24,14 @@ Computed per period from the target's tiers, never stored:
   line is rounded half up on its own, then added, never one combined rate (ruling 3). The unit
   is the target's: sen (0.01, default) or ringgit (1). The marginal main line is the sum of its
   slices, rounded once, as before.
-- Bonus (the RM Additional): the reached main tier's `bonus_amount`, once per period.
+- Bonus (the RM Additional): the reached main tier's, once per period, per account like the
+  rate (owner 8 Nov, Q3): each account's own `account_bonuses` figure, else `bonus_amount` to each
+  counted account (once on an agent or team target, which has one bucket).
 - Each account's share (`Payout.by_account`, lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every
-  account of a dealer target is its own payee. A line paid per account gives each account its own
-  rounded amount; the marginal main line and the bonus, which have no per-account figure, split
-  pro rata to each account's sales (rounding remainder on the largest). Shares add up to
-  commission + bonus.
+  account of a dealer target is its own payee and earns its own amounts on every line. Marginal:
+  the tier boundaries are on the combined total; each slice is shared by the accounts in
+  proportion to their sales, each paying its own rate on its part. Shares add up to commission
+  + bonus.
 - `rate` is a % of the achieved amount on an amount target, RM per unit on a quantity target.
 - `none` returns null commission and bonus.
 """
@@ -54,6 +56,9 @@ class Tier(NamedTuple):
     account_rates: Optional[Dict[Hashable, Decimal]] = None
     #: The tier's % Additional, paid on top of `rate` when this is the reached tier.
     additional_rate: Optional[Decimal] = None
+    #: account -> its own fixed RM Additional (owner 8 Nov, Q3). None: `bonus_amount` to each
+    #: counted account (once on an agent or team target).
+    account_bonuses: Optional[Dict[Hashable, Decimal]] = None
 
 
 class PayLine(NamedTuple):
@@ -77,24 +82,6 @@ class Payout(NamedTuple):
 
 def _round(value: Decimal, unit: Decimal = CENT) -> Decimal:
     return value.quantize(unit, rounding=ROUND_HALF_UP)
-
-
-def _pro_rata(amount: Decimal, weights: Dict[Hashable, Decimal], unit: Decimal) -> Dict[Hashable, Decimal]:
-    """`amount` split by `weights` (each account's sales), each share rounded, the rounding
-    remainder on the largest weight so the shares add up to `amount` exactly. Owner 8 Nov (card
-    Q3): the marginal method and the RM Additional have no per-account figure of their own."""
-    keys = list(weights)
-    if not keys:
-        return {}
-    total = sum(weights.values(), Decimal("0"))
-    if total <= 0:
-        shares = {key: Decimal("0") for key in keys}
-        shares[keys[0]] = amount
-        return shares
-    shares = {key: _round(amount * weights[key] / total, unit) for key in keys}
-    largest = max(keys, key=lambda key: weights[key])
-    shares[largest] += amount - sum(shares.values(), Decimal("0"))
-    return shares
 
 
 def threshold_in_rm(
@@ -182,20 +169,30 @@ def payout_for(
             top = main[hit[-1]]
             lines.append(PayLine("main", _rm(at(top)), line_amount(top)))
     else:
-        # Marginal: one line, the sum of each tier's slice, rounded once (unchanged).
-        slices = Decimal("0")
+        # Marginal: one line. The boundaries are on the combined total; each slice of it is
+        # shared by the accounts in proportion to their sales, each account paying its own rate
+        # for the tier on its part, its slices added then rounded once (owner 8 Nov, Q3). One
+        # bucket (agent, team): the slices themselves, rounded once, as before.
+        own: Dict[Hashable, Decimal] = {}
         for index, tier in enumerate(main):
             low = at(tier)
             if low is None:
                 continue
             high = at(main[index + 1]) if index + 1 < len(main) else None
             top = total if high is None else min(total, high)
-            if top > low:
-                slices += pay(Decimal(tier.rate or 0), top - low)
-        if hit or slices:
-            amount = _round(slices, unit)
+            if top <= low:
+                continue
+            for key, sales in by_account.items():
+                if tier.account_rates is None:
+                    rate = Decimal(tier.rate or 0)
+                else:
+                    rate = Decimal(tier.account_rates.get(key, 0))
+                own[key] = own.get(key, Decimal("0")) + pay(rate, sales * (top - low) / total)
+        rounded = {key: _round(value, unit) for key, value in own.items()}
+        amount = sum(rounded.values(), Decimal("0"))
+        if hit or amount:
             lines.append(PayLine("main", _rm(at(main[hit[-1]])) if hit else None, amount))
-            for key, each in _pro_rata(amount, by_account, unit).items():
+            for key, each in rounded.items():
                 shares[key] = shares.get(key, Decimal("0")) + each
     if hit and main[hit[-1]].additional_rate:
         top = main[hit[-1]]
@@ -207,9 +204,18 @@ def payout_for(
         lines.append(PayLine("additional", _rm(at(tier)), line_amount(tier)))
 
     commission = sum((line.amount for line in lines), Decimal("0"))
-    bonus = _round(Decimal(main[hit[-1]].bonus_amount or 0) if hit else Decimal("0"), unit)
-    for key, each in _pro_rata(bonus, by_account, unit).items():
-        shares[key] = shares.get(key, Decimal("0")) + each
+    # The RM Additional of the reached tier, per account like the rate (owner 8 Nov, Q3).
+    bonus = Decimal("0")
+    if hit:
+        top = main[hit[-1]]
+        if top.account_bonuses is not None:
+            bonuses = {key: Decimal(value or 0) for key, value in top.account_bonuses.items()}
+        else:
+            bonuses = {key: Decimal(top.bonus_amount or 0) for key in by_account}
+        for key, each in bonuses.items():
+            each = _round(each, unit)
+            shares[key] = shares.get(key, Decimal("0")) + each
+            bonus += each
     return Payout(_round(commission, unit), bonus, lines, tier_reached, ratio_missing, shares)
 
 

@@ -3,8 +3,10 @@ owner rulings 8 Nov, card Q1 (a) and Q2 (a)).
 
 Separate targets stack, so no target zeroes another: `sales.targets.replaced_by_target_id` and
 its check go (every link is cleared with the column). Each counted account of a dealer target
-is its own payee, so `sales.targets.payout_customer_id` and its check go too. Downgrade adds both
-columns back empty (the links and payees are not restored).
+is its own payee, so `sales.targets.payout_customer_id` and its check go too. The RM Additional
+is set per account like the rate (owner card Q3): `sales.target_tier_rates.bonus_amount`
+numeric(15,2) NULL, >= 0. Downgrade drops it and adds the two target columns back empty (the
+links and payees are not restored).
 
 Revision ID: sales_0008_no_replace_payee
 Revises: panel_att_0001_ai_asst_type
@@ -28,10 +30,23 @@ def upgrade() -> None:
     op.execute(f'ALTER TABLE "{schema}".targets DROP COLUMN IF EXISTS replaced_by_target_id')
     op.execute(f'ALTER TABLE "{schema}".targets DROP CONSTRAINT IF EXISTS ck_sales_targets_payout_dealer')
     op.execute(f'ALTER TABLE "{schema}".targets DROP COLUMN IF EXISTS payout_customer_id')
+    op.add_column(
+        "target_tier_rates", sa.Column("bonus_amount", sa.Numeric(15, 2), nullable=True), schema=schema
+    )
+    op.create_check_constraint(
+        "ck_sales_target_tier_rates_bonus_amount",
+        "target_tier_rates",
+        "bonus_amount IS NULL OR bonus_amount >= 0",
+        schema=schema,
+    )
 
 
 def downgrade() -> None:
     schema = translated_schema(op.get_bind())
+    op.drop_constraint(
+        "ck_sales_target_tier_rates_bonus_amount", "target_tier_rates", schema=schema, type_="check"
+    )
+    op.drop_column("target_tier_rates", "bonus_amount", schema=schema)
     op.add_column(
         "targets",
         sa.Column(

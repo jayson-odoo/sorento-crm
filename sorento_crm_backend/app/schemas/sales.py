@@ -410,6 +410,8 @@ class SalesTargetTierRateIn(BaseModel):
 
     customer_id: UuidStr
     rate: float = Field(..., ge=0, le=99999)
+    #: This account's own fixed RM Additional (owner 8 Nov, Q3); null: none.
+    bonus_amount: Optional[float] = Field(None, ge=0, le=99999999)
 
 
 class SalesTargetTierIn(BaseModel):
@@ -680,6 +682,8 @@ class SalesTargetTierAdditional(BaseModel):
     #: `pct` (on top of the rate) or `amount` (fixed RM, the tier's Bonus).
     kind: str
     value: float
+    #: An RM Additional set per account (owner 8 Nov, Q3): each account's own amount.
+    accounts: Optional[List["SalesTargetRateEntry"]] = None
 
 
 class SalesTargetPeriodOut(BaseModel):
@@ -715,6 +719,7 @@ class SalesTargetPeriodOut(BaseModel):
 class SalesTargetTierRateOut(BaseModel):
     customer_id: str
     rate: float
+    bonus_amount: Optional[float] = None
 
 
 class SalesTargetTierOut(BaseModel):
