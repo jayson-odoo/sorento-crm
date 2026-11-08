@@ -323,18 +323,24 @@ def get_product_purchase_history(
 @router.get("/{product_id}/list-price-history")
 def get_product_list_price_history(
     product_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    sort: Optional[str] = Query("changed_at"),
+    dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """This product's list-price changes, newest first, from the audit trail (the List Price
-    cell's history lightbox, LIST-PRICE-CHANGE-UI).
+    """This product's list-price history from the audit trail, paged and sorted on the server
+    (the List Price cell's history lightbox, LIST-PRICE-CHANGE-UI).
 
     The product is fetched first, through the service, so a product this company cannot see
     returns 404 here too, exactly like ``/purchase-history``.
     """
     try:
         ProductService(db).get_product(product_id)   # visibility gate (404s on miss)
-        return product_list_price_history_service.list_price_history(db, product_id)
+        return product_list_price_history_service.list_price_history(
+            db, product_id, page=page, limit=limit, sort=sort or "changed_at", direction=dir or "desc"
+        )
     except HTTPException:
         raise
     except Exception as e:

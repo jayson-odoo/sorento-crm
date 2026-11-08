@@ -8,7 +8,10 @@ The column mirrors "Discontinued at" (`tests/test_product_discontinued_at_list.p
 NULLS LAST, filtered by an inclusive Malaysia-day range (`list_price_changed_from` / `_to`).
 
 The history is the product's audit trail: every `product` UPDATE row whose `new_values` carries
-`list_price`, newest first, credited by the same rule as the #2228 digest's "by <source>".
+`list_price`, plus (owner, Q5) the price the product was created with as an "Initial price" row,
+credited by the #2228 digest's "by <source>" rule, paged and sorted on the server (owner, Q3: the
+lightbox is the standard DataGrid with pagination). Owner Q1: a one-time backfill stamps
+`list_price_notified_at` from the latest audited change. Owner Q4: an export column.
 
 Postgres only; every row is seeded fresh with fake values.
 """
@@ -57,10 +60,17 @@ def _refs(db):
     return db._zzt_lpc_refs
 
 
-def _mk_product(db, code: str, *, changed_at: datetime | None = None, price="10.00", company_id=None) -> str:
+def _mk_product(
+    db, code: str, *, changed_at: datetime | None = None, price="10.00", company_id=None, keep_trail=False
+) -> str:
+    """A product with NO audit trail unless ``keep_trail``: once the app has started, the real
+    audit listener writes a CREATE row for every insert, and the history tests seed their own."""
     cat_id, uom_id = _refs(db)
     pid = str(uuid.uuid4())
     kwargs = {"company_id": company_id} if company_id else {}
+    if not keep_trail:
+        # The audit service's own per-session switch (audit_service._session_before_flush).
+        db.info["skip_audit_entity_types"] = ["product"]
     db.add(
         Product(
             id=pid,
@@ -76,6 +86,7 @@ def _mk_product(db, code: str, *, changed_at: datetime | None = None, price="10.
         )
     )
     db.flush()
+    db.info.pop("skip_audit_entity_types", None)
     return pid
 
 
@@ -313,35 +324,120 @@ def _staff(db, name="Fake Pricer", email=None):
     return u
 
 
+def _create_row(db, pid, *, price, actor_type="user", user_id=None, changed_at=None):
+    row = AuditLog(
+        id=str(uuid.uuid4()), entity_type="product", entity_id=pid, action="CREATE",
+        new_values={"list_price": price, "product_code": "x"}, actor_type=actor_type, user_id=user_id,
+    )
+    if changed_at is not None:
+        row.changed_at = changed_at
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _history(api, pid, **params):
     return api.get(f"/api/v1/master-data/products/{pid}/list-price-history", params=params)
 
 
-def test_history_newest_first_with_old_new_pct_and_source(api, db):
+def _seed_three(db):
     staff = _staff(db, name="Fake Pricer")
-    pid = _mk_product(db, f"{STEM}-HIST", price="121.00", changed_at=datetime(2026, 11, 8, 2, 0))
+    pid = _mk_product(db, f"{STEM}-HIST-{uuid.uuid4().hex[:6]}", price="121.00")
     t0 = datetime(2026, 10, 1, 4, 0)
+    _create_row(db, pid, price="100.00", actor_type="user", user_id=staff.id, changed_at=t0 - timedelta(days=60))
     _audit(db, pid, old="100.00", new="110.00", actor_type="integration", changed_at=t0)
     _audit(db, pid, old="110.00", new="121.00", actor_type="user", user_id=staff.id,
            changed_at=t0 + timedelta(days=30))
-    _audit(db, pid, old="0.00", new="100.00", actor_type="scheduler", changed_at=t0 - timedelta(days=30))
+    _audit(db, pid, old="121.00", new="0.00", actor_type="scheduler", changed_at=t0 + timedelta(days=31))
+    _audit(db, pid, old="0.00", new="121.00", actor_type="legacy", changed_at=t0 + timedelta(days=32))
     db.commit()
+    return pid
 
+
+def test_history_default_newest_first_with_initial_price_row(api, db):
+    pid = _seed_three(db)
     resp = _history(api, pid)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     rows = body["data"]
-    assert [r["new_price"] for r in rows] == [121.0, 110.0, 100.0], "newest first"
-    assert rows[0]["old_price"] == 110.0
-    assert rows[0]["change_pct"] == 10.0
-    assert rows[0]["changed_by"] == "Fake Pricer"
-    assert rows[0]["changed_at"].startswith("2026-10-31T04:00:00")
-    assert rows[1]["changed_by"] == "AutoCount sync"
-    assert rows[1]["change_pct"] == 10.0
-    assert rows[2]["change_pct"] is None, "from 0 there is no percentage"
-    assert rows[2]["changed_by"] is None, "a non-user, non-integration actor is not named"
-    assert body["total"] == 3
-    assert body["truncated"] is False
+    assert body["pagination"] == {"total": 5, "page": 1, "limit": 10}
+    assert [r["kind"] for r in rows] == ["change", "change", "change", "change", "initial"]
+    assert [(r["old_price"], r["new_price"]) for r in rows] == [
+        (0.0, 121.0), (121.0, 0.0), (110.0, 121.0), (100.0, 110.0), (None, 100.0),
+    ]
+    assert rows[2]["change_pct"] == 10.0
+    assert rows[2]["changed_by"] == "Fake Pricer"
+    assert rows[2]["changed_at"].startswith("2026-10-31T04:00:00")
+    assert rows[3]["changed_by"] == "AutoCount sync"
+    assert rows[1]["change_pct"] == -100.0
+    assert rows[0]["change_pct"] is None, "from 0 there is no percentage"
+    assert rows[0]["changed_by"] is None and rows[1]["changed_by"] is None, (
+        "a non-user, non-integration actor is not named"
+    )
+    assert rows[4]["change_pct"] is None
+    assert rows[4]["changed_by"] == "Fake Pricer"
+    assert all(r["id"] for r in rows)
+
+
+def test_history_initial_price_row_is_a_switch(api, db, monkeypatch):
+    from app.services import product_list_price_history_service as svc
+
+    pid = _seed_three(db)
+    monkeypatch.setattr(svc, "INCLUDE_INITIAL_PRICE", False)
+    body = _history(api, pid).json()
+    assert body["pagination"]["total"] == 4
+    assert all(r["kind"] == "change" for r in body["data"])
+
+
+def test_history_pages_on_the_server(api, db):
+    pid = _mk_product(db, f"{STEM}-PAGE")
+    t0 = datetime(2026, 1, 1)
+    for i in range(12):
+        _audit(db, pid, old=f"{100 + i}.00", new=f"{101 + i}.00", changed_at=t0 + timedelta(hours=i))
+    db.commit()
+    page1 = _history(api, pid, page=1, limit=5).json()
+    page3 = _history(api, pid, page=3, limit=5).json()
+    assert page1["pagination"] == {"total": 12, "page": 1, "limit": 5}
+    assert [r["new_price"] for r in page1["data"]] == [112.0, 111.0, 110.0, 109.0, 108.0]
+    assert [r["new_price"] for r in page3["data"]] == [102.0, 101.0]
+
+
+@pytest.mark.parametrize(
+    "sort,direction,expected_new",
+    [
+        ("changed_at", "asc", [100.0, 110.0, 121.0, 0.0, 121.0]),
+        ("new_price", "desc", [121.0, 121.0, 110.0, 100.0, 0.0]),
+        ("old_price", "asc", [None, 110.0, 121.0, 0.0, 121.0]),
+        ("change_pct", "desc", [121.0, 110.0, 0.0, 121.0, 100.0]),
+        ("changed_by", "asc", [110.0, 121.0, 100.0, 121.0, 0.0]),
+    ],
+)
+def test_history_sorts_every_column_on_the_server(api, db, sort, direction, expected_new):
+    """Nulls last in both directions; ties fall back to newest first."""
+    pid = _seed_three(db)
+    rows = _history(api, pid, sort=sort, dir=direction).json()["data"]
+    got = [r["new_price"] for r in rows]
+    if sort == "old_price":
+        # old_price asc: 0.00, 100, 110, 121, then the initial row's null last.
+        assert [r["old_price"] for r in rows] == [0.0, 100.0, 110.0, 121.0, None]
+    elif sort == "change_pct":
+        # +10.0 (110 -> 121), +10.0 (100 -> 110), -100.0, then the two nulls (newest first).
+        assert [r["change_pct"] for r in rows] == [10.0, 10.0, -100.0, None, None]
+        assert got == [121.0, 110.0, 0.0, 121.0, 100.0]
+    elif sort == "changed_by":
+        # "AutoCount sync" < "Fake Pricer" (x2, newest first), then the unnamed (newest first).
+        assert [r["changed_by"] for r in rows] == [
+            "AutoCount sync", "Fake Pricer", "Fake Pricer", None, None,
+        ]
+        assert got == [110.0, 121.0, 100.0, 121.0, 0.0]
+    else:
+        assert got == expected_new
+
+
+def test_history_unknown_sort_falls_back_to_newest_first(api, db):
+    pid = _seed_three(db)
+    rows = _history(api, pid, sort="id; DROP TABLE x", dir="sideways").json()["data"]
+    assert [r["new_price"] for r in rows][:2] == [121.0, 0.0]
 
 
 def test_history_negative_change_pct_rounds_to_one_decimal(api, db):
@@ -358,9 +454,8 @@ def test_history_skips_rows_without_a_list_price_change(api, db):
     other = _mk_product(db, f"{STEM}-OTHER")
     _audit(db, pid, old=None, new=None, extra_new={"product_name": "renamed"})  # not a price change
     _audit(db, pid, old="10.00", new="10.00")  # no-op restatement
+    _audit(db, pid, old="10.0", new="10.00")  # same number, different text
     _audit(db, other, old="10.00", new="12.00")  # another product
-    db.add(AuditLog(id=str(uuid.uuid4()), entity_type="product", entity_id=pid, action="CREATE",
-                    new_values={"list_price": "10.00"}, actor_type="user"))
     _audit(db, pid, old="9.00", new="10.00")
     db.commit()
 
@@ -368,25 +463,19 @@ def test_history_skips_rows_without_a_list_price_change(api, db):
     assert [(r["old_price"], r["new_price"]) for r in rows] == [(9.0, 10.0)]
 
 
-def test_history_empty_for_a_product_with_no_changes(api, db):
+def test_history_empty_for_a_product_with_no_history(api, db):
     pid = _mk_product(db, f"{STEM}-EMPTY")
     db.commit()
     resp = _history(api, pid)
     assert resp.status_code == 200
-    assert resp.json() == {"data": [], "total": 0, "truncated": False}
+    assert resp.json() == {"data": [], "pagination": {"total": 0, "page": 1, "limit": 10}}
 
 
-def test_history_caps_at_limit_and_says_so(api, db):
-    pid = _mk_product(db, f"{STEM}-CAP")
-    t0 = datetime(2026, 1, 1)
-    for i in range(55):
-        _audit(db, pid, old=f"{100 + i}.00", new=f"{101 + i}.00", changed_at=t0 + timedelta(hours=i))
+def test_history_limit_is_bounded(api, db):
+    pid = _mk_product(db, f"{STEM}-LIM")
     db.commit()
-    body = _history(api, pid).json()
-    assert len(body["data"]) == 50
-    assert body["total"] == 55
-    assert body["truncated"] is True
-    assert body["data"][0]["new_price"] == 155.0, "the cap keeps the NEWEST rows"
+    assert _history(api, pid, limit=101).status_code == 422
+    assert _history(api, pid, page=0).status_code == 422
 
 
 def test_history_unknown_product_is_404(api, db):
@@ -406,22 +495,115 @@ def test_history_of_another_companys_product_is_404(api, db):
 
 
 def test_history_through_the_real_audit_listener(api, db):
-    """End to end: a real ORM price edit lands in the history, so a rename of the audit entity
-    type or of the column key cannot silently empty the lightbox."""
+    """End to end: a real ORM create and price edit land in the history, so a rename of the
+    audit entity type, action or column key cannot silently empty the lightbox."""
     from app.audit_context import AuditActor, actor_scope
     from app.services.audit_service import register_audit_listeners
 
     register_audit_listeners()
     staff = _staff(db, name="Fake Real Staff")
-    pid = _mk_product(db, f"{STEM}-REAL", price="100.00")
     db.commit()
-
     with actor_scope(AuditActor(actor_type="user", user_id=staff.id, real_user_id=staff.id), db=db):
+        pid = _mk_product(db, f"{STEM}-REAL", price="100.00", keep_trail=True)
+        db.commit()
         p = db.get(Product, pid)
         p.list_price = Decimal("125.00")
         db.commit()
 
     rows = _history(api, pid).json()["data"]
-    assert len(rows) == 1
-    assert (rows[0]["old_price"], rows[0]["new_price"], rows[0]["change_pct"]) == (100.0, 125.0, 25.0)
+    assert [(r["kind"], r["old_price"], r["new_price"]) for r in rows] == [
+        ("change", 100.0, 125.0), ("initial", None, 100.0),
+    ]
+    assert rows[0]["change_pct"] == 25.0
     assert rows[0]["changed_by"] == "Fake Real Staff"
+
+
+# --------------------------------------------------------------------------- migration (Q1 + Q4)
+
+
+def _migration():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "alembic" / "versions" / "lpcui_0001_list_price_changed.py"
+    spec = importlib.util.spec_from_file_location("_lpcui_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_backfill_stamps_latest_audited_change_only_where_unset_and_not_pending(db):
+    t0 = datetime(2026, 6, 1, 3, 0)
+    changed = _mk_product(db, f"{STEM}-BF-CHANGED", price="12.00")
+    _audit(db, changed, old="10.00", new="11.00", changed_at=t0)
+    _audit(db, changed, old="11.00", new="12.00", changed_at=t0 + timedelta(days=5))
+    _audit(db, changed, old=None, new=None, extra_new={"product_name": "later rename"},
+           changed_at=t0 + timedelta(days=9))
+
+    already = _mk_product(db, f"{STEM}-BF-ALREADY", price="12.00", changed_at=datetime(2026, 11, 8, 1, 0))
+    _audit(db, already, old="10.00", new="12.00", changed_at=t0)
+
+    pending = _mk_product(db, f"{STEM}-BF-PENDING", price="15.00")
+    db.get(Product, pending).list_price_notified = Decimal("12.00")  # changed, not yet reported
+    _audit(db, pending, old="12.00", new="15.00", changed_at=t0)
+
+    noop = _mk_product(db, f"{STEM}-BF-NOOP", price="10.00")
+    _audit(db, noop, old="10.00", new="10.00", changed_at=t0)
+
+    created_only = _mk_product(db, f"{STEM}-BF-CREATED")
+    _create_row(db, created_only, price="10.00", changed_at=t0)
+    db.commit()
+
+    _migration().backfill_changed_at(db.connection())
+    db.expire_all()
+
+    assert db.get(Product, changed).list_price_notified_at == t0 + timedelta(days=5)
+    assert db.get(Product, already).list_price_notified_at == datetime(2026, 11, 8, 1, 0)
+    assert db.get(Product, pending).list_price_notified_at is None
+    assert db.get(Product, noop).list_price_notified_at is None
+    assert db.get(Product, created_only).list_price_notified_at is None
+
+
+def test_export_catalog_row_seeds_once_and_exports_the_malaysia_date(db):
+    from tests.test_product_discontinued_at_list import _ensure_products_discontinued_at_field
+
+    _ensure_products_discontinued_at_field(db)  # the products resource row
+    m = _migration()
+    assert m.seed(db.connection()) is True
+    assert m.seed(db.connection()) is False, "idempotent"
+
+    from app.models.list_query_metadata import ListQueryField
+
+    field = (
+        db.query(ListQueryField)
+        .join(ListQueryField.resource)
+        .filter_by(resource_key="products")
+        .filter(ListQueryField.field_key == "list_price_changed_at")
+        .one()
+    )
+    assert field.label == "List price changed at"
+    assert field.export_column_name == "List price changed at"
+    assert field.data_type == "date"
+    assert field.compile_key == "product.list_price_notified_at"
+    assert field.filterable is False and field.exportable is True
+
+    p_in = _mk_product(db, f"{STEM}-EXPV-IN", changed_at=datetime(2026, 11, 7, 16, 30))  # 8 Nov MYT
+    p_null = _mk_product(db, f"{STEM}-EXPV-NULL")
+    db.commit()
+    rows = ListQueryExportService(db).export_rows(
+        ListExportRequest(
+            resource="products",
+            fields=[{"field_key": "list_price_changed_at"}],
+            record_ids=[p_in, p_null],
+        )
+    )
+    assert sorted(r["List price changed at"] or "" for r in rows) == ["", "2026-11-08"]
+
+
+def test_bootstrap_replays_the_catalog_seed():
+    import inspect
+
+    import scripts.bootstrap_env as boot
+
+    src = inspect.getsource(boot.seed_products_list_query_fields)
+    assert "lpcui_0001_list_price_changed.py" in src

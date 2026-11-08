@@ -1,86 +1,124 @@
-"""A product's list-price change history, for the products list's List Price lightbox
+"""A product's list-price history, for the products list's List Price lightbox
 (LIST-PRICE-CHANGE-UI, plan documentation/plans/products/PLAN-list-price-change-ui-08nov.md).
 
-Read from the audit trail, the only place a product's earlier prices live: every ``product``
-UPDATE row whose ``new_values`` carries ``list_price`` (the flush listener writes only the
-changed keys, so the key's presence means the price was written). A row that restates the
-same price is skipped. A product's first price (its CREATE row) is not a change. Credited by
-the #2228 digest's own rule, ``audit_source_labels``.
+Read from the audit trail, the only place a product's earlier prices live:
 
-The caller gates visibility by loading the product through the company-scoped ORM first;
-this module reads ``audit_logs`` by that product's id only.
+* every ``product`` UPDATE row whose ``new_values`` carries ``list_price`` (the flush listener
+  writes only the changed keys, so the key's presence means the price was written), skipping
+  a row that restates the same number;
+* the product's CREATE row as one "Initial price" row (owner, 8 Nov, Q5), behind
+  ``INCLUDE_INITIAL_PRICE`` so it can be switched off in one line.
+
+Credited by the #2228 digest's rule (``_list_price_sources`` in
+``product_watched_field_notify_service``): an integration is ``SYNC_SOURCE_LABEL``, a staff
+user is their name (else email), any other actor is unnamed. The rule is restated in SQL here
+because the owner's lightbox is a server-paged, server-sorted DataGrid (Q3), and "by" is one of
+its sortable columns.
+
+The caller gates visibility by loading the product through the company-scoped ORM first; this
+module reads ``audit_logs`` by that one product id only (raw SQL: ``audit_logs`` is not
+company-scoped, see ``AuditLog.company_id``).
 """
 from __future__ import annotations
-
-from decimal import Decimal, InvalidOperation
-from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.product_watched_field_notify_service import audit_source_labels
+from app.services.product_watched_field_notify_service import SYNC_SOURCE_LABEL
 
-#: Rows returned; the rest are counted in ``total`` and flagged ``truncated``.
-HISTORY_LIMIT = 50
+#: Owner Q5 ("include the price set at create time"): crew is confirming the reading; flip to
+#: False to show changes only.
+INCLUDE_INITIAL_PRICE = True
+
+# A JSON price as numeric, or NULL when the stored text is not a plain decimal (never a cast
+# error that would fail the whole read).
+_NUM = (
+    "CASE WHEN ({x}) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN ({x})::numeric END"
+)
+
+#: Sort key -> SQL expression over the ``h`` rows below. Anything else sorts by date.
+_SORTS = {
+    "changed_at": "changed_at",
+    "old_price": "old_price",
+    "new_price": "new_price",
+    "change_pct": "change_pct",
+    "changed_by": "changed_by",
+}
 
 
-def _price(raw) -> Optional[Decimal]:
-    if raw is None:
-        return None
-    try:
-        return Decimal(str(raw))
-    except (InvalidOperation, ValueError):
-        return None
+def list_price_history(
+    db: Session,
+    product_id: str,
+    *,
+    page: int = 1,
+    limit: int = 10,
+    sort: str = "changed_at",
+    direction: str = "desc",
+) -> dict:
+    """``{"data": [...], "pagination": {"total", "page", "limit"}}``, the DataGrid shape.
 
-
-def _pct(old: Optional[Decimal], new: Optional[Decimal]) -> Optional[float]:
-    if old is None or new is None or old == 0:
-        return None
-    return float(round((new - old) / old * 100, 1))
-
-
-def list_price_history(db: Session, product_id: str, limit: int = HISTORY_LIMIT) -> dict:
-    """``{"data": [...newest first...], "total": n, "truncated": bool}``.
-
-    Each row: ``changed_at`` (naive UTC), ``old_price``, ``new_price`` (floats, or null when
-    the audit value is unreadable), ``change_pct`` (one decimal; null from 0), ``changed_by``.
+    Each row: ``id`` (the audit row's), ``kind`` (``change`` | ``initial``), ``changed_at``
+    (naive UTC ISO), ``old_price`` / ``new_price`` (floats, null when absent or unreadable),
+    ``change_pct`` (one decimal, null from 0 and on the initial row), ``changed_by``.
+    Nulls sort last in both directions; ties fall back to newest first.
     """
-    # Raw SQL: audit_logs is not company-scoped (see AuditLog.company_id) and the filter
-    # is the one product id the caller already proved visible. The no-op guard compares
-    # the JSON text, so "10.00" vs "10.0" would still count; the Decimal check below
-    # drops those too.
-    where = (
-        "entity_type = 'product' AND action = 'UPDATE' AND entity_id = :pid "
-        "AND new_values ? 'list_price' "
-        "AND (old_values ->> 'list_price') IS DISTINCT FROM (new_values ->> 'list_price')"
-    )
-    rows = db.execute(
-        text(
-            "SELECT id, changed_at, actor_type, user_id, "
-            "old_values ->> 'list_price' AS old_price, new_values ->> 'list_price' AS new_price "
-            f"FROM audit_logs WHERE {where} ORDER BY changed_at DESC, id DESC"
-        ),
-        {"pid": str(product_id)},
-    ).all()
+    sort_sql = _SORTS.get(sort, "changed_at")
+    dir_sql = "ASC" if direction == "asc" else "DESC"
+    actions = "('UPDATE', 'CREATE')" if INCLUDE_INITIAL_PRICE else "('UPDATE')"
+    old_num = _NUM.format(x="a.old_values ->> 'list_price'")
+    new_num = _NUM.format(x="a.new_values ->> 'list_price'")
 
-    changes = []
-    for row in rows:
-        old, new = _price(row.old_price), _price(row.new_price)
-        if old is not None and new is not None and old == new:
-            continue
-        changes.append((row, old, new))
+    cte = f"""
+        WITH raw AS (
+            SELECT a.id, a.action, a.changed_at, a.actor_type, a.user_id,
+                   CASE WHEN a.action = 'CREATE' THEN NULL ELSE {old_num} END AS old_price,
+                   {new_num} AS new_price
+            FROM audit_logs a
+            WHERE a.entity_type = 'product' AND a.entity_id = :pid
+              AND a.action IN {actions}
+              AND a.new_values ? 'list_price'
+        ), h AS (
+            SELECT r.id, r.changed_at, r.old_price, r.new_price,
+                   CASE WHEN r.action = 'CREATE' THEN 'initial' ELSE 'change' END AS kind,
+                   CASE WHEN r.action = 'CREATE' THEN NULL
+                        ELSE round((r.new_price - r.old_price) / NULLIF(r.old_price, 0) * 100, 1)
+                   END AS change_pct,
+                   CASE r.actor_type
+                        WHEN 'integration' THEN :sync_label
+                        WHEN 'user' THEN COALESCE(NULLIF(u.name, ''), u.email)
+                   END AS changed_by
+            FROM raw r
+            LEFT JOIN users u ON r.actor_type = 'user' AND u.id::text = r.user_id::text
+            WHERE r.action = 'CREATE' OR r.old_price IS DISTINCT FROM r.new_price
+        )
+    """
+    params = {"pid": str(product_id), "sync_label": SYNC_SOURCE_LABEL}
+    sql = cte + f"""
+        SELECT h.*, count(*) OVER () AS total
+        FROM h
+        ORDER BY {sort_sql} {dir_sql} NULLS LAST, changed_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+    """
+    rows = db.execute(text(sql), {**params, "limit": limit, "offset": (page - 1) * limit}).all()
+    if rows:
+        total = int(rows[0].total)
+    else:
+        # No history, or a page past the last one: no row carries the window count.
+        total = int(db.execute(text(cte + " SELECT count(*) FROM h"), params).scalar() or 0)
 
-    total = len(changes)
-    kept = changes[:limit]
-    labels = audit_source_labels(db, {str(r.id): (r.actor_type, r.user_id) for r, _, _ in kept})
+    def _f(value):
+        return float(value) if value is not None else None
+
     data = [
         {
+            "id": str(r.id),
+            "kind": r.kind,
             "changed_at": r.changed_at.isoformat() if r.changed_at else None,
-            "old_price": float(old) if old is not None else None,
-            "new_price": float(new) if new is not None else None,
-            "change_pct": _pct(old, new),
-            "changed_by": labels.get(str(r.id)),
+            "old_price": _f(r.old_price),
+            "new_price": _f(r.new_price),
+            "change_pct": _f(r.change_pct),
+            "changed_by": r.changed_by,
         }
-        for r, old, new in kept
+        for r in rows
     ]
-    return {"data": data, "total": total, "truncated": total > limit}
+    return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}}
