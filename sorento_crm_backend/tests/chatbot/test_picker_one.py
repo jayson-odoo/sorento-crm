@@ -289,17 +289,8 @@ class TestNotMeasuredMeansNoStamp:
 
 class TestOneStampHelper:
     def test_customer_stamp_reads_the_family_base(self) -> None:
-        """CUSTOMER-GROUP-GATE: a ledger line matches the DO rows of its own ledger or its customer group;
-        a typed word matches by trading name, as search does."""
-        from app.services.ledger_family import customer_groups
-
         bases = _bases()
-        assert pickers.customer_stamp("HANLIM TRADING SDN BHD", bases) == "has DO"
-        assert pickers.customer_stamp("HANLIM TRADING SDN BHD [A/C II]", bases) == "no DO"
-        assert pickers.customer_stamp("hanlim trading", bases, typed=True) == "has DO"
-        group = {"HANLIM TRADING SDN BHD": "HANLIM TRADING SDN BHD", "HANLIM TRADING SDN BHD [A/C II]": "HANLIM TRADING SDN BHD"}
-        with customer_groups(group):
-            assert pickers.customer_stamp("HANLIM TRADING SDN BHD [A/C II]", _bases()) == "has DO"
+        assert pickers.customer_stamp("HANLIM TRADING SDN BHD [A/C II]", bases) == "has DO"
         assert pickers.customer_stamp("HANLIM SDN BHD", bases) == "no DO"
         assert pickers.customer_stamp("HANLIM SDN BHD", None) is None
 

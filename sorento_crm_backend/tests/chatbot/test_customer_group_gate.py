@@ -1,20 +1,22 @@
-"""CUSTOMER-GROUP-GATE: the chatbot's which-one lists apply the office's explicit customer groups,
-and nothing else joins ledgers.
+"""CUSTOMER-GROUP-GATE (re-landed with the owner's 9 Nov 2026 ruling): the chatbot's lists apply the
+office's explicit customer groups, and same-name ledgers are one customer.
 
 Bug (found by SALES-ACCOUNT-TYPE, #2105): `gate._cust_base` stripped the `[A/C ..]` account
 suffix BEFORE asking `customer_group_of`, which answers only by the exact FULL ledger name. So no
 suffixed ledger ever reached its group and every ledger fell to the name rule: on the dev copy
 all 8 FULLSHUN ledgers, grouped or not, became one name-rule family.
 
-Owner ruling (CUSTOMER-GROUP, 2 Oct 2026, restated by crew 3 Nov 2026 for this lane): explicit,
-staff-set groups only. So, for every which-one list:
+Owner ruling, 9 Nov 2026 (replacing the 3 Nov "explicit links only" reading for answers): "it should
+just answer by the group, the user doesn't care about which account la, we should just return all
+accounts"; Q1: "we should treat it as part of group also ... we should be more lenient"; crew Q2 (a).
+So, for every list:
 - the ledgers the office put in ONE group are one entry (looked up by the customer's id, or its
-  exact full name when no id is at hand);
-- a group is per company: a group name that exists in two companies is two entries, never one;
-- an ungrouped ledger is its OWN entry, never bundled with others by trading name;
-- two rows with the same full name, one grouped and one not, are two entries.
-
-Name matching stays for SEARCH only (what a typed word matches), never for joining ledgers.
+  exact full name when no id is at hand: #2144's fix);
+- ledgers of one trading name are one entry, grouped or not, and an ungrouped ledger of a group's
+  trading name is that group's entry (answer-time only: no data link is written);
+- a group name in both companies is one entry (the bot never asks "Sorento or Mocha?");
+- different trading names stay different entries, so the bot still asks between two shops;
+- scope is the asker's: an entry covers only the rows the resolver returned for this asker.
 
 The gate decides the customer picker for the domains whose matrix allows a customer (`order`:
 DO and outstanding asks, `sales`); the stock list's roster is the narrower's
@@ -83,7 +85,7 @@ def world():
     return {"names": names, "ids": ids, "rows": rows, "srt": srt_code, "mch": mch_code}
 
 
-EXPECTED = [{"G1", "G2", "DUP_G"}, {"M1"}, {"U1"}, {"U2"}, {"DUP_U"}, {"OTHER"}]
+EXPECTED = [{"G1", "G2", "DUP_G", "M1", "U1", "U2", "DUP_U"}, {"OTHER"}]
 
 
 def _norm(families: list[set[str]]) -> list[frozenset[str]]:
@@ -101,11 +103,10 @@ def test_the_id_map_holds_every_grouped_ledger_and_no_ungrouped_one(world):
         assert rows[k]["uuid"] not in ids, k
 
 
-def test_a_group_name_in_two_companies_is_two_groups(world):
+def test_a_group_name_in_two_companies_is_one_group_name(world):
+    """Crew Q2 (a), 9 Nov 2026: no company tag on the group's name, so the two groups are one customer."""
     ids, rows = world["ids"], world["rows"]
-    assert ids[rows["G1"]["uuid"]] != ids[rows["M1"]["uuid"]]
-    assert world["srt"] in ids[rows["G1"]["uuid"]]
-    assert world["mch"] in ids[rows["M1"]["uuid"]]
+    assert ids[rows["G1"]["uuid"]] == ids[rows["M1"]["uuid"]] == NAME
 
 
 def test_a_full_name_in_two_groups_or_in_a_group_and_none_is_left_out_of_the_name_map(world):
@@ -123,9 +124,10 @@ def test_cust_base_finds_the_group_of_a_suffixed_ledger_by_its_full_name():
         assert gate._cust_base({"display": {"customer_name": G2}}) == lf.group_key(NAME)
 
 
-def test_ungrouped_ledgers_of_one_trading_name_are_not_joined_without_any_groups():
+def test_ungrouped_ledgers_of_one_trading_name_are_one_entry_without_any_groups():
     keys = {gate._cust_base({"display": {"customer_name": n}}) for n in (G1, G2, U1, U2)}
-    assert len(keys) == 4
+    assert len(keys) == 1
+    assert gate._cust_base({"display": {"customer_name": OTHER}}) not in keys
 
 
 def test_cust_base_and_ledger_family_key_agree_on_every_row(world):
@@ -163,7 +165,7 @@ def _gate(world, domain: str, intent: str, **parser_extra: Any) -> dict[str, Any
         pytest.param("sales", "sales_report", {}, id="sales"),
     ],
 )
-def test_gate_which_one_list_has_one_entry_per_group_and_per_ungrouped_ledger(world, domain, intent, extra):
+def test_gate_which_one_list_has_one_entry_per_trading_name_or_group(world, domain, intent, extra):
     out = _gate(world, domain, intent, **extra)
     key_of = {m["uuid"]: k for k, m in world["rows"].items()}
     families = [{key_of[u] for u in uuids} for uuids in (out.get("picker_families") or {}).values()]
@@ -188,20 +190,20 @@ def _roster(world) -> list[dict[str, Any]]:
         return customer_options(cands, cap=50)
 
 
-def test_stock_which_one_list_has_one_entry_per_group_and_per_ungrouped_ledger(world):
+def test_stock_which_one_list_has_one_entry_per_trading_name_or_group(world):
     options = _roster(world)
     key_of = {m["uuid"]: k for k, m in world["rows"].items()}
     families = [{key_of[u] for u in o["uuids"]} for o in options]
     assert _norm(families) == _norm(EXPECTED), [o["label"] for o in options]
 
 
-def test_the_list_names_each_group_once_per_company_and_each_ungrouped_ledger_in_full(world):
+def test_the_list_names_the_group_once_with_both_company_codes_and_the_other_shop(world):
     labels = [o["label"] for o in _roster(world)]
     srt, mch = world["srt"], world["mch"]
-    assert f"{NAME} ({srt})" in labels, labels
-    assert f"{NAME} ({mch})" in labels, labels
-    for name in (U1, U2, OTHER):
-        assert f"{name} ({srt})" in labels, labels
+    assert len(labels) == 2, labels
+    (group_line,) = [label for label in labels if label.startswith(NAME)]
+    assert srt in group_line and mch in group_line, labels
+    assert any(label.startswith(OTHER) for label in labels), labels
     # a company tag is printed once, never twice
     assert not any(label.endswith(f"({srt}) ({srt})") or label.endswith(f"({mch}) ({mch})") for label in labels)
 
@@ -209,10 +211,10 @@ def test_the_list_names_each_group_once_per_company_and_each_ungrouped_ledger_in
 # ============================================================ identical vs near-identical names across companies
 
 
-def test_an_identical_full_name_in_two_companies_is_one_entry_a_near_identical_one_is_not():
-    """Crew answer on #2144 (owner ruling 3 Nov 2026, R2 on #2105: never ask "Sorento or Mocha?"): the SAME ungrouped
-    ledger name in both company books is one entry whose pick covers both; a near-identical name (another marker,
-    punctuation) is another customer, never joined by a trading-name match."""
+def test_identical_and_near_identical_names_across_companies_are_one_customer_never_asked():
+    """Owner 3 Nov R2 on #2105 (never ask "Sorento or Mocha?") and the 9 Nov ruling ("return all accounts", "be more
+    lenient"): the same name in both books, another marker or other punctuation are ONE customer. No question; the
+    answer covers all four ledgers."""
     srt, mch, near_a, near_b = (str(uuid.uuid4()) for _ in range(4))
     rows = [
         {"entity_type": "customer", "uuid": srt, "company_code": "SRT", "display": {"customer_name": "ZZT CRAFT SDN BHD"}},
@@ -227,17 +229,19 @@ def test_an_identical_full_name_in_two_companies_is_one_entry_a_near_identical_o
         "entities": [{"raw": "zzt craft", "hint": "customer", "current_message": True, "confident": True}],
     }
     out = run_gate(dict(resolver), parser=parser, resolver=resolver)
-    families = sorted(sorted(f) for f in (out.get("picker_families") or {}).values())
-    assert families == sorted([sorted([srt, mch]), [near_a], [near_b]]), families
+    assert out.get("require_specific") is not True, out.get("gate_reason")
+    assert not out.get("picker_families"), out.get("picker_families")
+    customers = {c["uuid"] for c in out["compatible_entities"] if c["entity_type"] == "customer"}
+    assert customers == {srt, mch, near_a, near_b}, out["compatible_entities"]
 
 
 # ============================================================ review B1: near-identical GROUP names
 
 
-def test_groups_whose_names_differ_only_by_punctuation_or_legal_form_are_separate_entries():
-    """Review B1: a group is keyed by its exact name, never by the trading-name rule. "ZZT CRAFT SDN BHD" (SRT),
-    "ZZT CRAFT SDN. BHD." (MCH) and "ZZT CRAFT" (MCH, a second group of that company) are three groups: three
-    entries, each pick carrying only its own group's ledger."""
+def test_groups_whose_names_differ_only_by_punctuation_or_legal_form_are_one_customer():
+    """Review B1 of #2144, reversed by the 9 Nov ruling ("be more lenient"): "ZZT CRAFT SDN BHD" (SRT),
+    "ZZT CRAFT SDN. BHD." (MCH) and "ZZT CRAFT" (MCH) share one trading name, so they are one customer: no question,
+    the answer covers all three groups' ledgers."""
     from app.services.chatbot.turn.narrow import customer_options
 
     a, b, c = (str(uuid.uuid4()) for _ in range(3))
@@ -260,8 +264,9 @@ def test_groups_whose_names_differ_only_by_punctuation_or_legal_form_are_separat
               "canonical_code": r["uuid"][:6], "company_codes": [r["company_code"]]} for r in rows],
             cap=50,
         )
-    assert sorted(sorted(f) for f in out["picker_families"].values()) == sorted([[a], [b], [c]]), out["picker_families"]
-    assert sorted(o["uuids"] for o in options) == sorted([[a], [b], [c]]), options
+    assert out.get("require_specific") is not True and not out.get("picker_families"), out.get("picker_families")
+    assert {c["uuid"] for c in out["compatible_entities"] if c["entity_type"] == "customer"} == {a, b, c}
+    assert len(options) == 1 and sorted(options[0]["uuids"]) == sorted([a, b, c]), options
 
 
 # ============================================================ review 2: the "has DO" stamp follows the list rule
@@ -271,19 +276,40 @@ def _do_row(customer: str, delivered: bool) -> dict[str, Any]:
     return {"customer_name": customer, "actual_delivery_date": "2026-10-01" if delivered else None}
 
 
-def test_an_ungrouped_ledger_with_no_do_never_reads_has_do_because_a_sibling_has_one():
-    """Reviewer round 2: the picker's DO stamp keyed rows by the trading-name rule, so with ungrouped ledgers now
-    separate lines, "- [A/C III]" (no DO) read "has DO" because "- [A/C I]" had one. Grouped, the group's line
-    reads "has DO" when any of its ledgers has one."""
+def test_the_has_do_stamp_follows_the_customer_entry_not_the_ledger():
+    """9 Nov ruling: one customer entry is every ledger of one trading name (or one group), so the entry reads
+    "has DO" when any of its ledgers has one; another shop never borrows it."""
     from app.services.chatbot.lanes.business import pickers
 
-    rows = [_do_row(G1, True), _do_row(U1, False)]
+    rows = [_do_row(G1, True), _do_row(U1, False), _do_row(OTHER, False)]
     bases = pickers._bases_with_do(rows)
     assert pickers.customer_stamp(G1, bases) == "has DO"
-    assert pickers.customer_stamp(U1, bases) == "no DO"
-    assert pickers.customer_stamp(U2, bases) == "no DO"
+    assert pickers.customer_stamp(U1, bases) == "has DO"
+    assert pickers.customer_stamp(OTHER, bases) == "no DO"
 
     with lf.customer_groups({G1: NAME, G2: NAME}):
-        bases = pickers._bases_with_do([_do_row(G2, True), _do_row(U1, False)])
+        bases = pickers._bases_with_do([_do_row(G2, True), _do_row(OTHER, False)])
         assert pickers.customer_stamp(G1, bases) == "has DO"  # its group's other ledger has one
-        assert pickers.customer_stamp(U1, bases) == "no DO"
+        assert pickers.customer_stamp(U1, bases) == "has DO"  # ungrouped, the group's name (Q1)
+        assert pickers.customer_stamp(OTHER, bases) == "no DO"
+
+
+# ============================================================ access scope: "all accounts" = all the asker may see
+
+
+def test_an_entry_covers_only_the_ledgers_the_resolver_returned_for_this_asker(world):
+    """Owner 9 Nov: "all accounts" means all the accounts this asker may see. The resolver returns only the asker's
+    rows (company scope, a dealer's own links); the group maps hold every grouped ledger, and must never add one the
+    resolver left out. Here the asker sees two of the group's seven ledgers: the answer covers those two only."""
+    seen = [world["rows"]["G1"], world["rows"]["U1"]]
+    resolver = {"resolutions": [{"token": "zztfull", "matches": seen}], "unresolved_tokens": []}
+    parser = {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "entities": [{"raw": "zztfull", "hint": "customer", "current_message": True, "confident": True}],
+    }
+    with lf.customer_groups(world["names"], ids=world["ids"]):
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+    assert out.get("require_specific") is not True, out.get("gate_reason")
+    customers = {c["uuid"] for c in out["compatible_entities"] if c["entity_type"] == "customer"}
+    assert customers == {world["rows"]["G1"]["uuid"], world["rows"]["U1"]["uuid"]}, out["compatible_entities"]

@@ -353,98 +353,78 @@ def _only_the_group(services: ResolveGateServices, ids: dict[str, str]) -> Resol
     return replace(services, resolve_entity=without_other)
 
 
-def test_o3_each_company_s_group_and_another_customer_print_one_line_each(chat, session_factory):
-    """Crew live check @1ae7b94d (a) with all four ledgers grouped, re-pinned to CUSTOMER-GROUP-GATE (owner ruling
-    3 Nov 2026: a group is one company's, never merged across companies): the SRT group is one line carrying its three
-    ledgers, the MCH group of the same name its own line, the other customer the third; picking 1 reports the SRT
-    group."""
+def test_o3_the_group_and_another_customer_print_two_lines_option_1_carries_the_whole_group(chat, session_factory):
+    """Crew live check @1ae7b94d (a) with all four ledgers grouped: the group (across SRT and MCH) is one line carrying
+    all four, the other customer the second; the pick reports the whole group. (Red against c05682bf only on the
+    ungrouped data of 4d6c73ae.)"""
     ids = _seed_group_with_strays(session_factory)
     result, captured = chat(_t1(), "Dealer zz demo oct total sales", "ZZT-cpr-o3-1",
                             resolve_services=_group_with_strays(ids))
     question = chat.session().get("open_question") or {}
     options = question.get("options") or []
-    assert question.get("kind") == "customer_pick" and len(options) == 3, (_reply(result), options)
-    group_ids = {ids[k] for k in GROUP_KEYS if k not in MCH_KEYS}
-    assert [set(o["uuids"]) for o in options] == [group_ids, {ids["iborn"]}, {ids["other"]}], options
+    assert question.get("kind") == "customer_pick" and len(options) == 2, (_reply(result), options)
+    group_ids = {ids[k] for k in GROUP_KEYS}
+    assert set(options[0]["uuids"]) == group_ids, options[0]
+    assert options[1]["uuids"] == [ids["other"]], options[1]
     result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o3-2")
     calls = _report_calls(captured)
     assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == group_ids, captured
 
 
-def test_o4_one_company_s_group_alone_is_one_customer_no_question(chat, session_factory):
-    """Crew live check @1ae7b94d (b), "Dealer <customer> sanitary oct total sales": only ONE company's group's ledgers
-    match (the MCH ledger is in no group here, and is not matched), so there is one customer: no question, one report
-    over the group's ledgers."""
-    ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project", "showcase"))
-    services = _only_the_group(_group_with_strays(ids), ids)
-    inner = services.resolve_entity
-
-    def without_mch(body: dict[str, Any]) -> dict[str, Any]:
-        out = inner(body)
-        for resolution in out["resolutions"]:
-            resolution["matches"] = [m for m in resolution["matches"] if m["uuid"] != ids["iborn"]]
-        return out
-
-    from dataclasses import replace
-
+def test_o4_only_the_group_s_ledgers_match_one_customer_no_question(chat, session_factory):
+    """Crew live check @1ae7b94d (b), "Dealer <customer> sanitary oct total sales", with all four ledgers grouped: only
+    the group's ledgers match, so there is one customer: no question, one report over all four ledgers."""
+    ids = _seed_group_with_strays(session_factory)
     result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o4-1",
-                            resolve_services=replace(services, resolve_entity=without_mch))
+                            resolve_services=_only_the_group(_group_with_strays(ids), ids))
     assert "Which one do you mean" not in _reply(result), _reply(result)
     calls = _report_calls(captured)
-    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {
-        ids[k] for k in ("ac1", "project", "showcase")
-    }, captured
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in GROUP_KEYS}, captured
 
 
-def test_o5_guard_ungrouped_ledgers_stay_their_own_customer(chat, session_factory):
-    """Owner ruling (b), 2 Oct, kept (25 Oct 18:4x) and widened (CUSTOMER-GROUP-GATE, 3 Nov): a ledger with no customer
-    group is never joined to a group, nor to another ledger, by the name rule. Before the data fix the "- [IBORN]" and
-    "(SHOWCASE)" ledgers are each a customer of their own: three lines."""
+def test_o5_an_ungrouped_ledger_of_the_group_s_name_is_answered_with_the_group(chat, session_factory):
+    """Owner Q1, 9 Nov 2026 ("we should treat it as part of group also ... we should be more lenient"), replacing the
+    2 Oct ruling (b): the "- [IBORN]" and "(SHOWCASE)" ledgers carry the group's name but no group. They are answered
+    WITH the group, at answer time only (no data link): no question, one report over all four ledgers, across SRT and
+    MCH (crew Q2 (a): a group name in both books is one customer)."""
     ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
     result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o5-1",
                             resolve_services=_only_the_group(_group_with_strays(ids), ids))
-    question = chat.session().get("open_question") or {}
-    options = question.get("options") or []
-    assert question.get("kind") == "customer_pick" and len(options) == 3, (_reply(result), options)
-    assert [set(o["uuids"]) for o in options] == [{ids["ac1"], ids["project"]}, {ids["iborn"]}, {ids["showcase"]}], options
-    assert _report_calls(captured) == [], captured
-
-
-def test_o6_the_narrower_s_roster_pick_resumes_the_held_report(chat, session_factory):
-    """Crew chat pass, 25 Oct: a roster the NARROWER raises (no other customer, the group's ungrouped ledgers apart:
-    O5's shape) is answered with the prod pick parse (`order_status` sales_analysis, `group_by` customer). The pick
-    resumes the held sales report for the picked line; it never runs the company analysis ("Sorento or Mocha?")."""
-    ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
-    chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o6-1",
-         resolve_services=_only_the_group(_group_with_strays(ids), ids))
-    assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", chat.session().get("open_question")
-    result, captured = chat(_t2(), "1", "ZZT-cpr-o6-2")
-    assert _calls(captured, ANALYSIS) == [], f"the pick never runs the company analysis: {captured}"
+    assert "Which one do you mean" not in _reply(result), _reply(result)
+    assert (chat.session().get("open_question") or {}).get("kind") != "customer_pick", chat.session().get("open_question")
     calls = _report_calls(captured)
-    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, captured
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in GROUP_KEYS}, captured
+
+
+def test_o6_the_lenient_answer_keeps_the_held_report_s_own_filters(chat, session_factory):
+    """Crew chat pass, 25 Oct, re-pinned for Q1 (9 Nov): with the group's ungrouped ledgers joined, the sales report
+    runs straight away for every ledger, with the turn's own filters (dealer channel, October), and never runs the
+    company analysis ("Sorento or Mocha?")."""
+    ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
+    result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o6-1",
+                            resolve_services=_only_the_group(_group_with_strays(ids), ids))
+    assert _calls(captured, ANALYSIS) == [], f"never the company analysis: {captured}"
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in GROUP_KEYS}, captured
     assert calls[0].get("channel") == "dealer", calls[0]
     assert calls[0].get("date_from") == "2026-10-01" and calls[0].get("date_to") == "2026-10-31", calls[0]
 
 
-def test_o7_the_owner_s_edit_leaves_the_ungrouped_showcase_ledger_its_own_customer(chat, session_factory):
+def test_o7_the_owner_s_edit_answers_the_ungrouped_showcase_ledger_with_the_group(chat, session_factory):
     """The owner's actual prod edit (25 Oct): "- [IBORN]" in the MCH group, the inactive "(SHOWCASE)" left ungrouped.
-    "Dealer <customer> sanitary ..." asks between the SRT group (two ledgers), the MCH group of the same name (one) and
-    "(SHOWCASE)" (CUSTOMER-GROUP-GATE, 3 Nov: a group is one company's); picking 1 reports the SRT group's two."""
+    Under Q1 (9 Nov) "(SHOWCASE)" carries the group's name, so it is answered with the group: no question, one report
+    over the group's three ledgers and "(SHOWCASE)"."""
     ids = _seed_group_with_strays(session_factory, grouped=OWNER_EDIT)
     result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o7-1",
                             resolve_services=_only_the_group(_group_with_strays(ids), ids))
-    options = (chat.session().get("open_question") or {}).get("options") or []
-    srt_group = {ids["ac1"], ids["project"]}
-    assert [set(o["uuids"]) for o in options] == [srt_group, {ids["iborn"]}, {ids["showcase"]}], (_reply(result), options)
-    result, captured = chat(_t2(), "1", "ZZT-cpr-o7-2")
+    assert "Which one do you mean" not in _reply(result), _reply(result)
     calls = _report_calls(captured)
-    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == srt_group, captured
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == {ids[k] for k in GROUP_KEYS}, captured
 
 
-def test_o8_a_ranking_pick_on_the_narrower_s_roster_resumes_the_ranking(chat, session_factory):
-    """Reviewer, 25 Oct: O5's shape (the gate does not ask, the narrower raises the roster) under a SALES RANKING. The
-    pick resumes the ranking for the picked line (axis, count, measure, period), as a pick on the gate's own roster
-    does (`answer_bridge._offer_ask_payload`'s `ranking_ask`), never a plain sales report."""
+def test_o8_a_ranking_over_the_group_and_its_name_matched_ledgers_runs_unasked(chat, session_factory):
+    """Reviewer, 25 Oct, re-pinned for Q1 (9 Nov): O5's shape under a SALES RANKING. No roster: the ranking runs at
+    once over the group and its name-matched ledgers (axis, count, measure as asked), never a plain sales report."""
     ids = _seed_group_with_strays(session_factory, grouped=("ac1", "project"))
     t1 = _parser_output(
         message_type="business_query", domain_hint="sales", intent_hint="check_order", order_status="sales_ranking",
@@ -454,13 +434,12 @@ def test_o8_a_ranking_pick_on_the_narrower_s_roster_resumes_the_ranking(chat, se
                    "confident": True}],
         **OCT_2026,
     )
-    chat(t1, "top 5 products for zz demo sanitary oct by amount", "ZZT-cpr-o8-1",
-         resolve_services=_only_the_group(_group_with_strays(ids), ids))
-    assert (chat.session().get("open_question") or {}).get("kind") == "customer_pick", chat.session().get("open_question")
-    result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o8-2")
+    result, captured = chat(t1, "top 5 products for zz demo sanitary oct by amount", "ZZT-cpr-o8-1",
+                            resolve_services=_only_the_group(_group_with_strays(ids), ids))
+    assert (chat.session().get("open_question") or {}).get("kind") != "customer_pick", chat.session().get("open_question")
     assert not _calls(captured, "crm_sales_report"), f"a ranking pick never becomes a plain sales report: {captured}"
     ran = [args for name, args in captured if name == "crm_report_ask"]
     assert len(ran) == 1, (_reply(result), captured)
-    assert set(ran[0].get("customer_ids") or []) == {ids["ac1"], ids["project"]}, ran
+    assert set(ran[0].get("customer_ids") or []) == {ids[k] for k in GROUP_KEYS}, ran
     assert ran[0]["group_by"] == "product" and ran[0]["top_n"] == 5 and ran[0]["measure"] == "amount", ran
     assert ran[0]["date_from"] == "2026-10-01" and ran[0]["date_to"] == "2026-10-31", ran

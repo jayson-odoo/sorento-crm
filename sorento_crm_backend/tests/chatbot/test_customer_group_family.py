@@ -4,8 +4,8 @@ PLAN ``documentation/plans/master-data/PLAN-customer-group-2oct.md`` "Chatbot: o
 
 Contract under test: ``app.services.ledger_family.customer_groups(mapping)`` is a context
 manager holding ``{normalised customer_name: group name}`` (upper-cased, whitespace collapsed)
-for the turn; ``ledger_family_key`` / ``ledger_family_label`` consult it first; a row it leaves
-out is its own entry (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026: no name-rule family). ``app.services.customer_group_service.family_overrides(db)`` builds the mapping.
+for the turn; ``ledger_family_key`` / ``ledger_family_label`` consult it first and fall back to
+the name rule. ``app.services.customer_group_service.family_overrides(db)`` builds the mapping.
 
 Written BEFORE any implementation. The seam is imported inside each test so every test fails on
 its own assertion or on the missing function, never at collection.
@@ -49,9 +49,10 @@ def _cand(name: str, uid: str | None = None) -> dict:
 # ============================================================ AC-10 the seam
 
 
-def test_ac10_mapped_name_follows_the_group_and_everything_else_is_its_own_entry():
+def test_ac10_mapped_name_follows_the_group_and_everything_else_follows_the_rule():
     lf = _seam()
-    own_key = lf.ledger_family_key(f"{HOMEMART} [A/C I]")
+    rule_key = lf.ledger_family_key(f"{HOMEMART} [A/C I]")
+    rule_label = lf.ledger_family_label(f"{HOMEMART} [A/C I]")
 
     # Exact full names only (ruling (b)): the marker-stripped probe is gone, so the mapping
     # names the bare row AND the `[A/C I]` row.
@@ -59,13 +60,13 @@ def test_ac10_mapped_name_follows_the_group_and_everything_else_is_its_own_entry
         assert lf.ledger_family_key(f"{HOMEMART} [A/C I]") == lf.ledger_family_key(HARDWARE)
         assert lf.ledger_family_key(HOMEMART) == lf.ledger_family_key(HARDWARE)
         assert lf.ledger_family_label(HOMEMART) == HARDWARE
-        # A name that is not in the map is its own entry, by its full name.
-        assert lf.ledger_family_key("OTHER SHOP SDN BHD [A/C I]") != lf.ledger_family_key("OTHER SHOP SDN BHD [A/C II]")
-        assert lf.ledger_family_label("OTHER SHOP SDN BHD [A/C I]") == "OTHER SHOP SDN BHD [A/C I]"
+        # A name that is not in the map gives exactly the rule's output.
+        assert lf.ledger_family_key("OTHER SHOP SDN BHD [A/C I]") == "OTHER SHOP"
+        assert lf.ledger_family_label("OTHER SHOP SDN BHD [A/C I]") == "OTHER SHOP SDN BHD"
 
-    # Outside the context every ledger is its own entry.
-    assert lf.ledger_family_key(f"{HOMEMART} [A/C I]") == own_key != lf.ledger_family_key(HOMEMART)
-    assert lf.ledger_family_label(f"{HOMEMART} [A/C I]") == f"{HOMEMART} [A/C I]"
+    # Outside the context the rule only.
+    assert lf.ledger_family_key(f"{HOMEMART} [A/C I]") == rule_key == "CHIN CHUN HOMEMART"
+    assert lf.ledger_family_label(f"{HOMEMART} [A/C I]") == rule_label
 
 
 def test_ac10_the_map_is_keyed_on_the_normalised_name_so_case_and_spacing_do_not_matter():
@@ -114,18 +115,19 @@ def _roster(candidates):
     return _options(candidates, "customer", "ledger_family")
 
 
-def test_ac11_hanlim_roster_is_one_line_only_once_grouped():
+def test_ac11_hanlim_roster_is_one_line_with_or_without_the_seeded_group():
     lf = _seam()
     ids = [_u(), _u(), _u()]
     names = [f"{HANLIM} [A/C I]", f"{HANLIM} [A/C II]", HANLIM]
     cands = [_cand(n, i) for n, i in zip(names, ids)]
 
-    # No group: each ledger is its own line (no joining by trading name).
-    assert [o["label"] for o in _roster(cands)] == names
+    def check(options):
+        assert [o["label"] for o in options] == [HANLIM]
+        assert sorted(options[0]["uuids"]) == sorted(ids)
+
+    check(_roster(cands))
     with lf.customer_groups({n.upper(): HANLIM for n in names}):
-        options = _roster(cands)
-    assert [o["label"] for o in options] == [HANLIM]
-    assert sorted(options[0]["uuids"]) == sorted(ids)
+        check(_roster(cands))
 
 
 def test_ac12_two_families_merge_into_one_line_once_grouped():
@@ -141,17 +143,20 @@ def test_ac12_two_families_merge_into_one_line_once_grouped():
     assert sorted(options[0]["uuids"]) == sorted([a, b])
 
 
-def test_ac13_two_ledgers_of_one_trading_name_stay_apart_grouped_or_not():
+def test_ac13_a_name_the_rule_merges_stays_one_when_only_one_is_grouped():
+    """Owner Q1, 9 Nov 2026: grouping one of two same-trading-name ledgers never splits them apart (the ungrouped one
+    is answered with the group, "we should be more lenient")."""
     lf = _seam()
     ns, y1990 = _u(), _u()
     cands = [_cand(f"{JUBIN_NS} [A/C I]", ns), _cand(f"{JUBIN_1990} [A/C I]", y1990)]
 
-    assert len(_roster(cands)) == 2
+    assert len(_roster(cands)) == 1
 
     with lf.customer_groups({f"{JUBIN_1990} [A/C I]": JUBIN_1990}):
         options = _roster(cands)
-    assert len(options) == 2
-    assert {o["uuids"][0] for o in options} == {ns, y1990}
+    assert len(options) == 1
+    assert sorted(options[0]["uuids"]) == sorted([ns, y1990])
+    assert options[0]["label"] == JUBIN_1990
 
 
 def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
@@ -170,11 +175,9 @@ def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
 
     with lf.customer_groups(mapping):
         options = _roster([_cand(names[u], u) for u in (plain, a1, a3, ns)])
-        assert len(options) == 2
-        by_label = {o["label"]: o for o in options}
-        assert sorted(by_label[group]["uuids"]) == sorted([plain, a1, a3])
-        (ns_line,) = [o for o in options if o["label"] != group]
-        assert ns_line["uuids"] == [ns]
+        # Owner Q1 (9 Nov 2026): the ungrouped NS ledger carries the group's trading name, so it is the group's line.
+        assert [o["label"] for o in options] == [group]
+        assert sorted(options[0]["uuids"]) == sorted([plain, a1, a3, ns])
 
         matches = [
             {"uuid": u, "entity_type": "customer", "display": {"customer_name": names[u]}}
@@ -190,7 +193,7 @@ def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
 
     assert refusal is None
     kept = {m["uuid"] for m in resolved["resolutions"][0]["matches"]}
-    assert kept == {a1}, f"the NS ledger must not answer for the group's name: {kept}"
+    assert kept == {a1, ns}, f"Q1: the NS ledger answers with the group's Account 1: {kept}"
 
 
 # ============================================================ AC-14 one test per call site
@@ -214,7 +217,7 @@ def test_ac14_session_state_picker_family_uuids_follow_the_group():
     first, second = _u(), _u()
     row = {"idx": 1, "label": f"{HOMEMART} [A/C I]", "uuid": second, "entity_type": "customer"}
     # `picker_families` keyed by the key of the line the gate wrote: the group's.
-    families = {lf.group_key(HARDWARE): [first, second]}
+    families = {lf.ledger_family_key(HARDWARE): [first, second]}
 
     assert "uuids" not in _legacy_option(row, "customer", 1, families)
 
@@ -247,12 +250,11 @@ def test_ac14_gate_cust_base_returns_the_group_key_for_a_mapped_match():
 
     lf = _seam()
     match = {"canonical_code": "ZZT-1", "display": {"customer_name": HOMEMART}}
-    own = gate._cust_base(match)
-    assert own == lf.ledger_family_key(HOMEMART) != lf.group_key(HARDWARE)
+    assert gate._cust_base(match) == "CHIN CHUN HOMEMART"
 
     with lf.customer_groups({HOMEMART: HARDWARE}):
-        assert gate._cust_base(match) == lf.group_key(HARDWARE)
-    assert gate._cust_base(match) == own
+        assert gate._cust_base(match) == "CHIN CHUN HARDWARE"
+    assert gate._cust_base(match) == "CHIN CHUN HOMEMART"
 
 
 def test_ac14_stock_ask_contact_label_follows_the_group():
@@ -295,4 +297,4 @@ def test_ac15_the_next_entry_follows_the_new_mapping():
         assert lf.ledger_family_label(HOMEMART) == "SOMEWHERE ELSE SDN BHD"
     with lf.customer_groups({}):
         assert lf.ledger_family_label(HOMEMART) == HOMEMART
-        assert lf.ledger_family_key(HOMEMART) != lf.group_key(HOMEMART)
+        assert lf.ledger_family_key(HOMEMART) == "CHIN CHUN HOMEMART"

@@ -56,10 +56,10 @@ def normalise_customer_name(text: str) -> str:
 
 
 class _TurnGroups:
-    """The turn's customer groups (owner ruling 2 Oct 2026, restated 3 Nov 2026 for
-    CUSTOMER-GROUP-GATE: a group is the office's own say-so and NOTHING else joins ledgers),
-    indexed once so a roster of hundreds of names does no scan per name. Pure strings, no DB,
-    no `re`."""
+    """The turn's customer groups (the office's explicit links, CUSTOMER-GROUP-GATE), indexed
+    once so a roster of hundreds of names does no scan per name. Pure strings, no DB, no `re`.
+    They decide what an answer is CALLED and join ledgers of different names; same-name ledgers
+    are one entry with or without them (owner ruling 9 Nov 2026, see `ledger_family_key`)."""
 
     def __init__(self, mapping: Mapping[str, str], ids: Mapping[str, str] | None) -> None:
         #: normalised customer name -> group name
@@ -70,21 +70,18 @@ class _TurnGroups:
         #: normalised group names, so a picked line's label (the group's name) keys as the group
         #: (a KEY only; it never makes a ledger a member)
         self.own = {normalise_customer_name(v) for v in labels}
+        #: a group's comparison key -> its name, so an ungrouped ledger of the group's trading name
+        #: is answered with the group (owner Q1, 9 Nov 2026). Answer-time only: no data link.
+        self.keys = {group_key(v): v for v in labels if group_key(v)}
 
 
 _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", default=None)
-
-#: Appended to an UNGROUPED ledger's key: the ledger is its own entry, and the parenthesis
-#: keeps its key apart from every group's key (`group_key` ends " (GROUP)").
-_UNGROUPED = " (NO GROUP)"
-UNGROUPED_SUFFIX = _UNGROUPED
-
 
 @contextmanager
 def customer_groups(mapping: Mapping[str, str], ids: Mapping[str, str] | None = None) -> Iterator[None]:
     """Hold the turn's groups for the block: `mapping` (customer name -> group name, for a caller
     holding only a name) and `ids` (customer id -> group name, authoritative for a caller holding
-    the row's id). Both empty = no groups: every ledger is its own entry.
+    the row's id). Both empty = no groups: ledgers join by trading name alone.
 
     Set once per turn by the engine and by `stock_ask_service`."""
     token = _GROUPS.set(_TurnGroups(mapping, ids) if (mapping or ids) else None)
@@ -120,23 +117,17 @@ def _words(text: str) -> str:
     return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
 
 
-#: Appended to a GROUP's key: a group is keyed by its exact (normalised) name, never by the
-#: trading-name rule, so two groups whose names differ only by punctuation or "SDN BHD" stay
-#: two entries (CUSTOMER-GROUP-GATE review B1), and no ledger key can equal it.
-_GROUP = " (GROUP)"
-
-
 def group_key(group_name: str) -> str:
-    """The comparison key of a customer GROUP, by its own exact name."""
-    name = normalise_customer_name(group_name)
-    return name + _GROUP if name else ""
+    """The comparison key of a customer GROUP: the trading name of its own name, so a ledger of
+    that trading name, grouped or not, is the same entry (owner Q1, 9 Nov 2026: "we should treat it
+    as part of group also ... we should be more lenient")."""
+    return trading_name_key(group_name)
 
 
 def trading_name_key(text: str) -> str:
-    """The TRADING NAME a word or a ledger name speaks for, for SEARCH only: upper-cased,
-    bracketed parts dropped, the legal-form words dropped, everything non-alphanumeric
-    collapsed to one space. It matches what a person typed against ledger names; it never
-    decides which ledgers are one customer (owner ruling: explicit links only)."""
+    """The TRADING NAME a word or a ledger name speaks for: upper-cased, bracketed parts dropped,
+    the legal-form words dropped, everything non-alphanumeric collapsed to one space. Search
+    matches a typed word with it, and `ledger_family_key` joins same-name ledgers with it."""
     return _words(_without_brackets(text.upper()))
 
 
@@ -165,46 +156,50 @@ def group_named(text: str) -> str | None:
 
 
 def ledger_family_key(text: str, uuid: str | None = None) -> str:
-    """The key the rows of ONE which-one-list entry share.
+    """The key the rows of ONE customer entry share: one answer covers them all, never a
+    "which account?" between them.
 
-    A row in a customer group the turn holds answers with its GROUP's key; every other row is
-    its own entry, keyed by its own full name (owner ruling, CUSTOMER-GROUP-GATE 3 Nov 2026: no
-    joining by trading name). A label equal to a group's own name (a picked line typed back)
-    keys as that group, unless the caller's id says the row is ungrouped.
+    Owner ruling, 9 Nov 2026 (re-land of CUSTOMER-GROUP-GATE): "it should just answer by the
+    group, the user doesn't care about which account la, we should just return all accounts".
+    A row in a customer group the turn holds (by id, else by exact full name: #2144's lookup)
+    answers with its GROUP's key; every other row with its trading name, so the ledgers of one
+    name are one entry. An ungrouped ledger of a group's trading name is that group's entry
+    (`group_key`). Access scope is the caller's: only rows the asker may see ever reach here.
     """
     group = customer_group_of(text, uuid)
     if group is not None:
         return group_key(group)
-    groups = _GROUPS.get()
-    by_id_known = bool(uuid) and groups is not None and groups.by_id is not None
-    if groups is not None and not by_id_known and normalise_customer_name(text) in groups.own:
-        return group_key(text)
-    name = normalise_customer_name(text)
-    return name + _UNGROUPED if name else ""
+    return trading_name_key(text)
 
 
 def ledger_family_label(text: str, uuid: str | None = None) -> str:
-    """What the entry is CALLED: the group's name when the turn has one for the row, else the
-    row's own full name."""
+    """What the entry is CALLED: its group's name (the row's own group, or the group of its
+    trading name), else the row's own name without its ledger marker."""
     group = customer_group_of(text, uuid)
     if group is not None:
         return group
-    return text.strip()
+    groups = _GROUPS.get()
+    if groups is not None:
+        joined = groups.keys.get(trading_name_key(text))
+        if joined is not None:
+            return joined
+    return without_ledger_marker(text)
 
 
 def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:
     """The words a `Customer:` line prints for `entries` = `(customer name, group name or None)`.
 
-    A ledger joins a company line ONLY through its explicit customer group (owner ruling (b),
-    2 Oct 2026: no automatic name-rule joining). One word per group (its name), one per
-    ungrouped ledger (its own full name); first-seen order, identical words once, no count,
-    none dropped."""
+    One word per customer entry (`ledger_family_key`): a group by its name, an ungrouped ledger by
+    its own full name, except that an ungrouped ledger of a group's trading name (in these
+    entries) prints as that group (owner Q1, 9 Nov 2026). First-seen order, identical words once,
+    no count, none dropped."""
+    pairs = [(str(n or "").strip(), g) for n, g in entries]
+    groups = {group_key(g): g for n, g in pairs if n and g}
     words: list[str] = []
-    for name, group in entries:
-        name = str(name or "").strip()
+    for name, group in pairs:
         if not name:
             continue
-        word = group or name
+        word = group or groups.get(trading_name_key(name)) or name
         if word not in words:
             words.append(word)
     return ", ".join(words)

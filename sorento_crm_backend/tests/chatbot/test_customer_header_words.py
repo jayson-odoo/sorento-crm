@@ -9,8 +9,10 @@ joined by the name rule), identical names once.
 `ledger_family.customer_header_words(entries)`: `entries` is a list of
 `(customer_name, group_name or None)`; returns the header string.
 
-An ungrouped ledger whose trading name equals a group's stays its own customer (the switch
-that could join it was removed when the owner ruled, CUSTOMER-GROUP-GATE 3 Nov 2026).
+`ledger_family.UNGROUPED_JOINS_NAME_MATCHED_GROUP` (owner ruling pending, default False): an
+ungrouped ledger whose name rule key equals a group's key either stays its own family (False)
+or joins that group (True). One switch drives the formatter, `ledger_family_key` and
+`gate._cust_base`.
 
 Written BEFORE any implementation; each test imports the seam inside its body.
 """
@@ -106,16 +108,17 @@ def test_homemart_ledgers_in_the_hardware_group_merge_into_its_entry():
     assert out == "CHIN CHUN HARDWARE SDN BHD"
 
 
-# ============================================================ a name-matched ungrouped ledger
+# ============================================================ an ungrouped ledger of a group's name (owner Q1)
 
 
-def test_ungrouped_ledger_with_a_group_matching_name_stays_its_own_customer():
+def test_ungrouped_ledger_with_a_group_matching_name_prints_as_the_group():
+    """Owner Q1, 9 Nov 2026 ("we should treat it as part of group also"): answer-time only, no data link."""
     lf = _lf()
     entries = [(n, JUBIN_G) for n in JUBIN_GROUPED] + [(JUBIN_NS, None)]
-    assert lf.customer_header_words(entries) == f"{JUBIN_G}, {JUBIN_NS}"
+    assert lf.customer_header_words(entries) == JUBIN_G
 
 
-def test_ledger_family_key_and_gate_cust_base_keep_the_ungrouped_ledger_apart():
+def test_ledger_family_key_and_gate_cust_base_join_the_ungrouped_ledger_to_the_group():
     from app.services.chatbot.lanes.business import gate
 
     lf = _lf()
@@ -124,8 +127,8 @@ def test_ledger_family_key_and_gate_cust_base_keep_the_ungrouped_ledger_apart():
         return {"canonical_code": "ZZT-1", "display": {"customer_name": name}}
 
     with lf.customer_groups(_mapping(JUBIN_GROUPED, JUBIN_G)):
-        assert lf.ledger_family_key(JUBIN_NS) != lf.ledger_family_key(JUBIN_GROUPED[1])
-        assert gate._cust_base(match(JUBIN_NS)) != gate._cust_base(match(JUBIN_GROUPED[1]))
+        assert lf.ledger_family_key(JUBIN_NS) == lf.ledger_family_key(JUBIN_GROUPED[1])
+        assert gate._cust_base(match(JUBIN_NS)) == gate._cust_base(match(JUBIN_GROUPED[1]))
 
 
 # ============================================================ name-only headers, turn groups

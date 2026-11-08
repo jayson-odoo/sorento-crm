@@ -47,7 +47,6 @@ from app.services.chatbot.lanes.business.predicate import derive_predicate_words
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
 from app.services.ledger_family import (
-    UNGROUPED_SUFFIX,
     group_named,
     ledger_family_key,
     ledger_family_label,
@@ -1465,12 +1464,10 @@ def _no_such_account(
 ) -> str:
     """Q4: one trading name says which levels it has; several names say the word has none."""
     names = [_match_name(m) for m in customers]
-    # One customer group, or else one trading name (the typed word's own: search, not joining).
+    # One customer entry (a group, or one trading name: `ledger_family_key`).
     groups = {ledger_family_key(_match_name(m), m.get("uuid")) for m in customers}
-    if len(groups) == 1 and not next(iter(groups)).endswith(UNGROUPED_SUFFIX):
+    if len(groups) == 1:
         subject = ledger_family_label(names[0], customers[0].get("uuid"))
-    elif len({trading_name_key(n) for n in names}) == 1:
-        subject = without_ledger_marker(names[0])
     else:
         return f'None of the customers matching "{typed}" has Account {account}.'
     have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})

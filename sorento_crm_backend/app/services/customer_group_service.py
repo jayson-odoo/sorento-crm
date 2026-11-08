@@ -268,27 +268,12 @@ class CustomerGroupService:
 def _group_labels(db: Session) -> dict[str, str]:
     """`{group id: the name the chatbot calls it}`, for the groups in the caller's scope.
 
-    A group belongs to ONE company. A group name that exists in more than one company in scope
-    (190 names sit in both MCH and SRT on the 20 Oct prod copy) carries that company's code,
-    "FULLSHUN SANITARYWARE SDN BHD (SRT)", so the two groups are two customers to the chatbot,
-    never one (owner ruling, CUSTOMER-GROUP-GATE: explicit links only, never across companies).
+    The group's own name. A group name that exists in both Sorento and Mocha (190 names on the
+    20 Oct prod copy) is ONE customer to the chatbot: the bot never asks "Sorento or Mocha?" for
+    it (owner 3 Nov R2 on #2105; crew Q2 (a), 9 Nov 2026). The company codes still print on the
+    line (`gate._company_suffix`, `narrow._options`).
     """
-    from app.models.company import Company
-
-    rows = (
-        db.query(CustomerGroup.id, CustomerGroup.name, CustomerGroup.company_id, Company.code, Company.name)
-        .outerjoin(Company, Company.id == CustomerGroup.company_id)
-        .all()
-    )
-    companies: dict[str, set[str]] = {}
-    for _gid, name, company_id, _code, _cname in rows:
-        companies.setdefault(normalise_customer_name(name), set()).add(str(company_id))
-    labels: dict[str, str] = {}
-    for gid, name, _company_id, code, company_name in rows:
-        shared = len(companies[normalise_customer_name(name)]) > 1
-        tag = code or company_name
-        labels[str(gid)] = f"{name} ({tag})" if shared and tag else name
-    return labels
+    return {str(gid): name for gid, name in db.query(CustomerGroup.id, CustomerGroup.name).all()}
 
 
 def family_maps(db: Session) -> tuple[dict[str, str], dict[str, str]]:
