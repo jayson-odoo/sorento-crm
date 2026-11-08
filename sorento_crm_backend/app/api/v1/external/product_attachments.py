@@ -203,20 +203,27 @@ def _resolve_product_codes(
     """
     from app.services import certificate_link_check as link_check
 
+    resolved = _resolve_codes(db, codes, allow_prefix=False)
     text = (
-        _certificate_text(db, attachment, link_check.wanted_for_codes(codes))
+        _certificate_text(
+            db,
+            attachment,
+            link_check.wanted_for_codes(
+                codes,
+                [m.product.product_code for m in resolved.matches if m.via == "plus_split"],
+            ),
+        )
         if attachment is not None
         else None
     )
-    resolved = _resolve_codes(db, codes, allow_prefix=False)
     unmatched = list(resolved.unmatched)
     matched: list[tuple[str, object, str]] = []
     kept: set[str] = set()
     rejected: list[str] = []
     for m in resolved.matches:
-        if link_check.printed_on(text, m.requested_code) and link_check.ingest_match_allowed(
-            m.requested_code, m.via
-        ):
+        if link_check.ingest_printed(
+            text, m.requested_code, m.via, getattr(m.product, "product_code", None)
+        ) and link_check.ingest_match_allowed(m.requested_code, m.via):
             matched.append((m.requested_code, m.product, m.via))
             kept.add(m.requested_code)
         elif m.requested_code not in rejected:

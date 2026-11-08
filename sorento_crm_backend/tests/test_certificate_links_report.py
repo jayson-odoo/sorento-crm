@@ -10,6 +10,7 @@ import pytest
 
 from app.models.audit import AuditLog
 from app.models.certificate import Certificate, CertificateProduct
+from app.models.product import Product
 
 from .test_certificate_api import EXTERNAL, _cert_payload, env  # noqa: F401  (fixture + helper)
 
@@ -300,3 +301,22 @@ def test_a_visible_link_parks_its_remove(env, files):
         json={"action_key": "certificate_link.remove", "entity_type": "certificate_link", "entity_id": str(link.id)},
     )
     assert parked.status_code == 202, parked.text
+
+
+def test_set_members_linked_through_a_printed_set_code_are_found(env, files):
+    """Reviewer round 1 blocker: correct set coverage must never sit in the Not found view."""
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    for code in ("WB-8800", "WB-8801"):
+        env.product("S", code=code)
+    members = env.db.query(Product).filter(Product.product_code.in_(["WB-8800", "WB-8801"])).all()
+    product_set = ProductSet(set_code="SRTSET-100", name="Basin pack")
+    env.db.add(product_set)
+    env.db.flush()
+    for order, member in enumerate(members):
+        env.db.add(ProductSetMember(product_set_id=product_set.id, product_id=member.id, sort_order=order))
+    env.db.flush()
+    cert = _certificate(env, files, "RPT-17", ["Set SRTSET-100 basin pack"], ["SRTSET-100"], [])
+    _run_check(env)
+    rows = _by_code(_rows(env, certificate_ids=str(cert.id)))
+    assert {code: row["verdict"] for code, row in rows.items()} == {"WB-8800": "found", "WB-8801": "found"}

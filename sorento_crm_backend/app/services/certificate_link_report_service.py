@@ -284,6 +284,26 @@ def _read_current_text(db: Session, certificate, wanted: set[str]) -> Optional[d
     return link_check.read_text(data, wanted)
 
 
+def _set_codes_by_product(db: Session, product_ids) -> dict[str, set[str]]:
+    """`{product_id: {normalised set code}}` for the product sets each product is a member of."""
+    from app.models.product_set import ProductSet, ProductSetMember
+    from app.services.certificate_pdf_service import normalise
+
+    ids = [str(x) for x in product_ids]
+    out: dict[str, set[str]] = {}
+    if not ids:
+        return out
+    rows = (
+        db.query(ProductSetMember.product_id, ProductSet.set_code)
+        .join(ProductSet, ProductSet.id == ProductSetMember.product_set_id)
+        .filter(ProductSetMember.product_id.in_(ids))
+        .all()
+    )
+    for product_id, set_code in rows:
+        out.setdefault(str(product_id), set()).add(normalise(set_code or ""))
+    return out
+
+
 def check_certificate(db: Session, certificate) -> int:
     """Read the certificate's current PDF once and stamp every link. Returns links stamped."""
     rev_id = certificate.current_revision_id
@@ -296,9 +316,14 @@ def check_certificate(db: Session, certificate) -> int:
     )
     wanted = link_check.wanted_for_links((cp.model_code, product_code) for cp, product_code in links)
     text = _read_current_text(db, certificate, wanted)
+    sets_of = _set_codes_by_product(db, [cp.product_id for cp, _code in links])
     for cp, product_code in links:
         value, code = link_check.verdict(
-            text, model_code=cp.model_code, model_code_source=cp.model_code_source, product_code=product_code
+            text,
+            model_code=cp.model_code,
+            model_code_source=cp.model_code_source,
+            product_code=product_code,
+            set_codes=sets_of.get(str(cp.product_id), ()),
         )
         cp.check_verdict = value
         cp.check_code = (code or None) and str(code)[:60]

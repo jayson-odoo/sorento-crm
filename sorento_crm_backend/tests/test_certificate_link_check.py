@@ -187,3 +187,48 @@ def test_wanted_for_links_covers_every_lookup_verdict_makes(span_text):
         assert verdict(narrow, model_code=code, model_code_source="ai", product_code=product) == verdict(
             span_text, model_code=code, model_code_source="ai", product_code=product
         )
+
+
+# ------------------------------------------------------------- reviewer round 1, blocker 1
+SETS = ["Set SRTSET-100 basin pack", "SRT100 + SRT200 pair", "Model ABCD"]
+
+
+@pytest.fixture(scope="module")
+def sets_text():
+    from app.services.certificate_pdf_service import printed_runs
+
+    return printed_runs(text_pdf(SETS))
+
+
+def test_a_printed_set_code_counts_for_its_members(sets_text):
+    from app.services.certificate_link_check import verdict
+
+    found = verdict(sets_text, model_code="SRTSET-100", model_code_source="ai", product_code="WB-8800", set_codes={"srtset100"})
+    assert found[0] == "found"
+    other = verdict(sets_text, model_code="SRTSET-100", model_code_source="ai", product_code="WB-8800", set_codes=set())
+    assert other[0] == "not_found"
+
+
+def test_a_plus_code_counts_per_part(sets_text):
+    from app.services.certificate_link_check import verdict
+
+    for product in ("SRT100", "SRT200"):
+        assert verdict(sets_text, model_code="SRT100 + SRT200", model_code_source="ai", product_code=product)[0] == "found"
+    assert verdict(sets_text, model_code="SRT100 + SRT200", model_code_source="ai", product_code="SRT300")[0] == "not_found"
+
+
+def test_an_exact_product_code_without_a_digit_counts(sets_text):
+    from app.services.certificate_link_check import verdict
+
+    assert verdict(sets_text, model_code="ABCD", model_code_source="ai", product_code="ABCD")[0] == "found"
+
+
+def test_wanted_sets_cover_set_and_plus_lookups(sets_text):
+    from app.services.certificate_link_check import verdict, wanted_for_codes, wanted_for_links
+    from app.services.certificate_pdf_service import printed_runs
+
+    pairs = [("SRTSET-100", "WB-8800"), ("SRT100 + SRT200", "SRT200")]
+    narrow = printed_runs(text_pdf(SETS), wanted_for_links(pairs))
+    assert verdict(narrow, model_code="SRTSET-100", model_code_source="ai", product_code="WB-8800", set_codes={"srtset100"})[0] == "found"
+    assert verdict(narrow, model_code="SRT100 + SRT200", model_code_source="ai", product_code="SRT200")[0] == "found"
+    assert {"srt100", "srt200"} <= wanted_for_codes(["SRT100 + SRT200"])

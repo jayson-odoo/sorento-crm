@@ -131,3 +131,13 @@ def test_a_renewal_adds_only_printed_links(env, pdf_bytes):
     _post(env, "TIGHT-8", ["14A"])
     _post(env, "TIGHT-8", ["14A", "BRD7711CP"])
     assert _covered_codes(env, "TIGHT-8") == {"SV-14A-CP"}
+
+
+def test_a_plus_code_links_each_printed_part_even_in_separate_cells(env, pdf_bytes):
+    """Reviewer round 1: parts printed apart (table cells) still link; an unprinted part does not."""
+    pdf_bytes["data"] = _pdf(["Model SRTP100", "Model SRTP200"])
+    env.product("T", code="SRTP100")
+    env.product("T", code="SRTP200")
+    env.product("T", code="SRTP300")
+    _post(env, "TIGHT-9", ["SRTP100 + SRTP200 + SRTP300"])
+    assert _covered_codes(env, "TIGHT-9") == {"SRTP100", "SRTP200"}

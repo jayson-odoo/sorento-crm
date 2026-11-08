@@ -5,7 +5,9 @@ Pure rules over `certificate_pdf_service.printed_runs` output (card
 
 - **found**: the printed code is a whole token on the PDF AND is contained in the product code as a
   contiguous run of 3+ characters with a digit (`14A` inside `CSK14A-BL`, `WB 1515` inside `SRTWB1515`).
-  A code a person typed (`model_code_source = manual`) skips the containment rule.
+  A code a person typed (`model_code_source = manual`) skips the containment rule. The exact tiers
+  the ingest keeps count too: the product's own code, a printed product-set code the product is a
+  member of, and each part of an `A + B` code (reviewer round 1).
 - **check**: as found, but the code is digits only (`120` is usually a quantity or a size).
 - **not_found**: the PDF has text and the rule above fails.
 - **scanned**: the PDF has no text layer, cannot be checked. **no_file**: no readable current PDF.
@@ -36,12 +38,38 @@ def _containable(norm: str) -> bool:
     return len(norm) >= MIN_CODE_LEN and any(ch.isdigit() for ch in norm)
 
 
+def plus_parts(code: Optional[str]) -> list[str]:
+    """`A + B` names two products: the normalised parts, or [] for a single code."""
+    parts = [normalise(p) for p in (code or "").split("+")]
+    parts = [p for p in parts if p]
+    return parts if len(parts) > 1 else []
+
+
+def _backs(norm: str, product_norm: str, *, typed: bool, set_codes) -> bool:
+    """Does a printed `norm` back a link to this product? Exact code, a set it belongs to, a code a
+    person typed, or (Q1) a contained run of 3+ characters with a digit."""
+    return (
+        typed
+        or norm == product_norm
+        or norm in set_codes
+        or (_containable(norm) and norm in product_norm)
+    )
+
+
 def printed_on(text: Optional[dict], code: Optional[str]) -> bool:
     """The string is printed as a whole token. A scan or a missing file cannot say no."""
     if not text or not text.get("has_text"):
         return True
     norm = normalise(code or "")
     return bool(norm) and norm in (text.get("runs") or {})
+
+
+def ingest_printed(text: Optional[dict], code: Optional[str], via: str, product_code: Optional[str]) -> bool:
+    """R8 printed check for one resolver match. A `+` code is checked per part (parts may sit in
+    separate table cells): the part that names this product must be printed."""
+    if via == "plus_split":
+        return printed_on(text, code) or printed_on(text, product_code)
+    return printed_on(text, code)
 
 
 def ingest_match_allowed(code: Optional[str], via: str) -> bool:
@@ -60,8 +88,11 @@ def verdict(
     model_code: Optional[str],
     model_code_source: Optional[str],
     product_code: Optional[str],
+    set_codes=(),
 ) -> tuple[str, Optional[str]]:
-    """`(verdict, code used)` of one link. `text` is `printed_runs(...)`, or None when no file."""
+    """`(verdict, code used)` of one link. `text` is `printed_runs(...)`, or None when no file.
+    `set_codes`: normalised codes of the product sets this product belongs to (a printed set code
+    names its members; reviewer round 1)."""
     if text is None:
         return VERDICT_NO_FILE, model_code
     if not text.get("has_text"):
@@ -70,12 +101,16 @@ def verdict(
     product_norm = normalise(product_code or "")
 
     if model_code and model_code.strip():
-        norm = normalise(model_code)
-        if not norm or norm not in runs:
+        typed = model_code_source == "manual"
+        sets = set(set_codes or ())
+        parts = plus_parts(model_code) or [normalise(model_code)]
+        backing = [p for p in parts if p and p in runs and _backs(p, product_norm, typed=typed, set_codes=sets)]
+        if not backing:
             return VERDICT_NOT_FOUND, model_code
-        if model_code_source != "manual" and not (_containable(norm) and norm in product_norm):
-            return VERDICT_NOT_FOUND, model_code
-        return (VERDICT_CHECK if norm.isdigit() else VERDICT_FOUND), model_code
+        exact = any(p == product_norm or p in sets for p in backing)
+        if all(p.isdigit() for p in backing) and not exact:
+            return VERDICT_CHECK, model_code
+        return VERDICT_FOUND, model_code
 
     # No code on the link: the longest printed run that sits inside the product code. A lettered
     # run beats a digits-only one of any length, so `check` is only the answer when nothing else is.
@@ -98,9 +133,15 @@ def verdict(
     return VERDICT_NOT_FOUND, None
 
 
-def wanted_for_codes(codes) -> set[str]:
-    """The normalised strings an ingest looks up: the requested codes themselves."""
-    return {n for n in (normalise(c or "") for c in codes) if n}
+def wanted_for_codes(codes, product_codes=()) -> set[str]:
+    """The normalised strings an ingest looks up: the requested codes, their `+` parts, and the
+    product codes a `+` split matched."""
+    out: set[str] = set()
+    for code in list(codes) + list(product_codes):
+        out.add(normalise(code or ""))
+        out.update(plus_parts(code))
+    out.discard("")
+    return out
 
 
 def wanted_for_links(links) -> set[str]:
@@ -110,6 +151,7 @@ def wanted_for_links(links) -> set[str]:
     for model_code, product_code in links:
         if model_code:
             out.add(normalise(model_code))
+            out.update(plus_parts(model_code))
         product_norm = normalise(product_code or "")
         for start in range(len(product_norm)):
             for end in range(start + MIN_CODE_LEN, len(product_norm) + 1):
