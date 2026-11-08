@@ -668,3 +668,23 @@ def test_r2_the_row_number_fallback_is_only_for_this_write_and_never_for_a_phone
 
     other_phone = {"phone": "+60190000002", "customer_codes": ["B9"]}
     assert batch._not_listed(other_phone, "+60190000002", grant_wait, "x", 1, None) is None
+
+
+def test_r2_a_written_customer_name_re_sent_as_a_code_is_still_refused(db):
+    """Review 8 Nov: the text a CUSTOMER row waits on is a name; sent back as customer_code it must not pass the pick
+    check, even when some account's code equals that text."""
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = f"ZZT Fox {uuid.uuid4().hex[:4]}"
+    customer_(db, w.srt, f"{stem} One")
+    customer_(db, w.srt, f"{stem} Two")
+    other = customer_(db, w.srt, "ZZT Totally Other")
+    with company_scope(db, None):
+        db.get(Customer, str(other.id)).customer_code = stem.upper()
+    db.commit()
+    first = {**row_(name=stem, agent=new.sales_agent), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    assert waiting
+    sneaky = {**first, "customer_code": stem}
+    steps, skipped, _ = propose_rows(db, w, [sneaky], previous_waiting=waiting, user_text="row 2: X")
+    assert steps == [] and "pick from the list" in reason_of(skipped, 1)

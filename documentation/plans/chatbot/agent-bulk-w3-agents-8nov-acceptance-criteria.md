@@ -46,4 +46,5 @@ Plan: `PLAN-agent-bulk-w3-agents-8nov.md`. Test numbers in brackets are the pyte
 
 - R5 A follow-up that answers only some waiting rows keeps the other rows waiting (on an agent or on a customer):
   the text a row is waiting on, re-sent unchanged, is not a pick. A not-changed row re-sent keeps its reason.
-  Changing that text to an unlisted, untyped value is still Not changed "pick from the list".
+  Changing that text to an unlisted, untyped value is still Not changed "pick from the list". Only an agent or
+  tag row's written text counts (it sits in the pick argument); a customer row's written NAME never passes as a code.

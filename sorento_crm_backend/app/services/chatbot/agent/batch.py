@@ -122,12 +122,16 @@ def _not_listed(
         mine = [p for p in previous if p.get("row") == row and p.get("write") == write]
     if not mine or not codes:
         return None
-    # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick; so is the text the
-    # row is still waiting on (`written`), re-sent unchanged when the user answers only other rows (crew live 8 Nov):
-    # that row waits again rather than dropping to Not changed.
+    # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick; so is the text an
+    # agent or tag row is still waiting on (`written`), re-sent unchanged in that same pick argument when the user
+    # answers only other rows (crew live 8 Nov): that row waits again rather than dropping to Not changed. Not for a
+    # customer row: its written text is a NAME, which must never pass as a code (review 8 Nov).
     listed = {
         " ".join(str(c).split()).lower()
-        for p in mine for c in [*(p.get("codes") or []), *(p.get("kept") or []), p.get("written") or ""]
+        for p in mine for c in [
+            *(p.get("codes") or []), *(p.get("kept") or []),
+            (p.get("written") or "") if p.get("noun") in ("agent", "tag") else "",
+        ]
     }
     typed = " ".join(str(user_text or "").split()).lower()
     for code in codes:
