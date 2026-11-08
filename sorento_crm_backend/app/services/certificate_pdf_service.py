@@ -212,39 +212,88 @@ _MAX_RUN_CHARS = 60
 _MAX_PRINTED_CHARS = 120
 
 
+#: A token longer than this makes a run "solid": a run of short tokens only (`AB 12C`, `3 13A`) is short
+#: however long it reads, so the verdict never auto-Finds it (crew offline check, 8 Nov).
+SHORT_TOKEN_LEN = 3
+#: A gap wider than this many word heights between a row number and the next word is a column gap.
+_INDEX_GAP_HEIGHTS = 1.5
+
+
+def _lined_words(page) -> list[tuple[str, pymupdf.Rect, str, tuple[int, int]]]:
+    """`_words`, plus each word's (block, line), to tell where a printed line starts."""
+    matrix = page.rotation_matrix
+    raw = sorted(page.get_text("words")[:MAX_WORDS_PER_PAGE], key=lambda w: (w[5], w[6], w[7]))
+    out = []
+    for w in raw:
+        norm = normalise(w[4])
+        if not norm:
+            continue
+        out.append((norm, (pymupdf.Rect(w[:4]) * matrix).normalize(), unshift(w[4]), (w[5], w[6])))
+    return out
+
+
+def _index_cells(words) -> set[int]:
+    """Positions of row-number cells: a digits-only word of up to 3 characters that starts its line
+    and is followed, on the same visual line, by a word a column gap away (`3 | 13A`). Such a word
+    is never joined into a multi-word run (crew offline check, 8 Nov: `3 13A` read as `313A`)."""
+    out: set[int] = set()
+    for i, (norm, rect, _printed, line) in enumerate(words):
+        if not (norm.isdigit() and len(norm) <= SHORT_TOKEN_LEN):
+            continue
+        if i > 0 and words[i - 1][3] == line:
+            continue  # not the first word of its line
+        if i + 1 >= len(words):
+            continue
+        nxt = words[i + 1][1]
+        same_row = nxt.y0 < rect.y1 and nxt.y1 > rect.y0
+        if same_row and nxt.x0 - rect.x1 > _INDEX_GAP_HEIGHTS * max(rect.height, 1.0):
+            out.add(i)
+    return out
+
+
 def printed_runs(pdf_bytes: bytes | None, wanted: set[str] | frozenset[str] | None = None) -> dict[str, Any]:
     """CERT-LINK-CLEANUP: the whole-token runs printed on the PDF that the caller asks about, read once.
 
-    `{"has_text", "runs": {normalised run: printed text}}`, runs of 1-4 consecutive words exactly as
-    `find_boxes` matches them (so `14A` is a run, `4A` inside `14A` is not). First printed form wins.
+    `{"has_text", "runs": {normalised run: printed text}, "solid": {normalised run}}`. Runs are 1-4
+    consecutive words exactly as `find_boxes` matches them (so `14A` is a run, `4A` inside `14A` is
+    not), except that a row-number cell is never joined to its neighbours. First printed form wins.
+    `solid` holds the runs printed at least once with a token longer than `SHORT_TOKEN_LEN`
+    characters: a run of short tokens only is short (Check, never auto-Found).
     `wanted` is the set of NORMALISED strings the caller will look up; only those are kept, so a
     hostile file with 60 pages of unique words cannot grow the dict (security review S2). `None`
     keeps every run, for tests and small files only.
     """
     doc = _open(pdf_bytes) if pdf_bytes else None
     if doc is None:
-        return {"has_text": False, "runs": {}}
+        return {"has_text": False, "runs": {}, "solid": set()}
     try:
         runs: dict[str, str] = {}
+        solid: set[str] = set()
         has_text = False
         for index in range(min(len(doc), MAX_PAGES)):
-            words = _words(doc[index])
+            words = _lined_words(doc[index])
             if not words:
                 continue
             has_text = True
             if wanted is not None and not wanted:
                 break  # a text check only: the first page with text answers it
+            index_cells = _index_cells(words)
             for i, n, acc in _runs(words, _MAX_RUN):
-                if len(acc) > _MAX_RUN_CHARS or acc in runs:
+                if len(acc) > _MAX_RUN_CHARS:
                     continue
                 if wanted is not None and acc not in wanted:
                     continue
-                printed = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")
-                runs[acc] = printed[:_MAX_PRINTED_CHARS]
-        return {"has_text": has_text, "runs": runs}
+                if n > 1 and any(j in index_cells for j in range(i, i + n)):
+                    continue
+                if acc not in runs:
+                    printed = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")
+                    runs[acc] = printed[:_MAX_PRINTED_CHARS]
+                if any(len(w[0]) > SHORT_TOKEN_LEN for w in words[i : i + n]):
+                    solid.add(acc)
+        return {"has_text": has_text, "runs": runs, "solid": solid}
     except Exception:  # noqa: BLE001
         logger.warning("certificate pdf text read failed", exc_info=True)
-        return {"has_text": False, "runs": {}}
+        return {"has_text": False, "runs": {}, "solid": set()}
     finally:
         doc.close()
 

@@ -12,8 +12,9 @@ Pure rules over `certificate_pdf_service.printed_runs` output (card
   digit (`CSK14` is not in `CSK140-BL`). A code a person typed (`model_code_source = manual`) or a link a
   person confirmed (`source = manual`) skips every product-side rule; the code must still be printed. The exact tiers the ingest keeps count too: the product's own code, a printed
   product-set code the product is a member of, and each part of an `A + B` code (reviewer round 1).
-- **check**: as found, but the code is SHORT (3 or fewer letters and digits: `14A`, `11C`) or digits only
-  (`120`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
+- **check**: as found, but the code is SHORT (3 or fewer letters and digits: `14A`, `11C`; or printed only
+  as a run of such short tokens: `AB 12C`, crew offline check 8 Nov) or digits only (`120`). A row number
+  printed next to a model (`3 | 13A`) is never joined into it (`certificate_pdf_service._index_cells`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
 - **not_found**: the PDF has text and the rule above fails.
 - **scanned**: the PDF has no text layer, cannot be checked. **no_file**: no readable current PDF.
 
@@ -172,7 +173,8 @@ def verdict(
             return VERDICT_NOT_FOUND, model_code
         if typed:
             return VERDICT_FOUND, model_code
-        if all(is_short(p) or p.isdigit() for p in backing):
+        solid = text.get("solid") or ()
+        if all(is_short(p) or p.isdigit() or p not in solid for p in backing):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 
@@ -185,7 +187,7 @@ def verdict(
             piece = product_norm[start:end]
             if piece not in runs or not _containable(piece) or not on_boundary(piece, product_code):
                 continue
-            if is_short(piece) or piece.isdigit():
+            if is_short(piece) or piece.isdigit() or piece not in (text.get("solid") or ()):
                 if checked is None or len(piece) > len(checked):
                     checked = piece
             elif found is None or len(piece) > len(found):

@@ -7,6 +7,7 @@ Plan: `PLAN-cert-link-cleanup-08nov.md`. Card: `CARD-cert-link-cleanup-08nov.md`
 - V1 Printed `14A` on the PDF: `SV-14A-CP` and `CSK14A-BL` are Check (short code); `BRD7711CP`, `BRHSD213C`, `FUR-A11C` are Not found.
 - V1b Real SPAN shape (prints `11C`, `13C`, `14A`): `BRD7711CP`, `BRHSD213C`, `MGB5011C`, `GB3011C` are Not found through `11C`/`13C` (preceded by a digit);
   `FUR-A11C` is Check; `SV-14AB` is Not found through `14A` (followed inside its segment); `CSK14A-BL` is Found through a printed `CSK14A`; none of the over-linked products is Found.
+- V1c Numbered table (`3 | 13A`): the row number is never joined into the code (`313A` is not a run), so `CB313A-NL` is not Found; a run of short tokens only (`AB 12C`) is Check.
 - V2 `4A` inside the printed word `14A` is never a hit (whole token only); spaces, hyphens and case are ignored.
 - V3 A code under 3 characters or without a digit does not count as contained; a digits-only code, or any code of 3 or fewer characters, is Check, never Found.
 - V4 A code a person typed skips the containment rule.

@@ -176,7 +176,7 @@ def test_printed_runs_keeps_only_what_the_caller_asks_about():
     text = printed_runs(text_pdf(SPAN), {"14a", "zz99"})
     assert text["has_text"] is True
     assert set(text["runs"]) == {"14a"}
-    assert printed_runs(text_pdf(SPAN), set()) == {"has_text": True, "runs": {}}
+    assert printed_runs(text_pdf(SPAN), set()) == {"has_text": True, "runs": {}, "solid": set()}
 
 
 def test_wanted_for_links_covers_every_lookup_verdict_makes(span_text):
@@ -339,3 +339,69 @@ def test_a_code_ending_in_a_digit_is_not_followed_by_a_digit(code, product_code,
     from app.services.certificate_pdf_service import normalise
 
     assert on_boundary(normalise(code), product_code) is expect
+
+
+# ----------------------------------------- crew offline check 8 Nov: numbered table, `3 13A` -> `313A`
+# The real SPAN file prints the ROW NUMBER in its own column next to the model: row 3 reads `3 | 13A`.
+# Joined, `313A` sat inside `CB313A-NL` and read Found.
+NUMBERED_ROWS = [("1", "11C"), ("2", "12C"), ("3", "13A"), ("4", "14A"), ("12", "WB 1515"), ("13", "AB 12C")]
+
+
+def numbered_table_pdf() -> bytes:
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    top = 100
+    page.insert_text((60, top - 10), "No.", fontsize=10)
+    page.insert_text((110, top - 10), "Model", fontsize=10)
+    page.insert_text((250, top - 10), "Description", fontsize=10)
+    for i, (number, code) in enumerate(NUMBERED_ROWS):
+        y = top + 24 * i
+        page.draw_line((50, y), (545, y))
+        for x in (50, 100, 240, 545):
+            page.draw_line((x, y), (x, y + 24))
+        page.insert_text((60, y + 16), number, fontsize=10)
+        page.insert_text((110, y + 16), code, fontsize=10)
+        page.insert_text((250, y + 16), "STOP VALVE DN15 CHROME", fontsize=10)
+    page.draw_line((50, top + 24 * len(NUMBERED_ROWS)), (545, top + 24 * len(NUMBERED_ROWS)))
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.fixture(scope="module")
+def numbered_text():
+    from app.services.certificate_pdf_service import printed_runs
+
+    return printed_runs(numbered_table_pdf())
+
+
+def test_a_row_number_is_never_joined_into_a_code(numbered_text):
+    runs = numbered_text["runs"]
+    assert "13a" in runs and "3" in runs
+    assert "313a" not in runs
+    assert "1213a" not in runs and "1214a" not in runs
+
+
+def test_the_row_number_does_not_make_cb313a_nl_found(numbered_text):
+    assert _verdict(numbered_text, None, "CB313A-NL")[0] != "found"
+    assert _verdict(numbered_text, "3 13A", "CB313A-NL")[0] == "not_found"
+    assert _verdict(numbered_text, "13A", "CB313A-NL")[0] == "not_found"  # preceded by a digit
+
+
+def test_a_run_of_short_tokens_is_check_not_found(numbered_text):
+    """`AB 12C`: every token is 3 or fewer characters, so the run is short however long it reads."""
+    assert _verdict(numbered_text, "AB 12C", "XAB12C-1")[0] == "check"
+    assert _verdict(numbered_text, None, "XAB12C-1")[0] == "check"
+
+
+def test_a_run_with_a_long_token_keeps_the_found_rule(numbered_text):
+    assert _verdict(numbered_text, "WB 1515", "SRTWB1515")[0] == "found"
+    assert _verdict(numbered_text, None, "SRTWB1515-W")[0] == "found"
+
+
+def test_a_number_inside_a_sentence_still_joins(numbered_text):
+    """Only an index cell is kept apart: a digit with ordinary spacing on its line still joins."""
+    from app.services.certificate_pdf_service import printed_runs
+
+    text = printed_runs(text_pdf(["Model 3 13A wide"]))
+    assert "313a" in text["runs"]

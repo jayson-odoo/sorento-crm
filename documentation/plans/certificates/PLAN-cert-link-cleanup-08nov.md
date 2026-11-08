@@ -32,6 +32,11 @@ MGB5011C and GB3011C read Found.
   segment. (Kills BRD7711CP, BRHSD213C, MGB5011C, GB3011C.) Crew answer (a), same day: a code that
   ENDS with a digit may not be followed by a digit either (`CSK14` does not back `CSK140-BL`; `WB 1515`
   still backs `SRTWB1515`, `WC 8355` still backs `SRTWC8355-RL`).
+- Crew offline check on the real file (head 9c1208df, 158 links: 14 Found / 78 Check / 66 Not found)
+  found one false Found: `CB313A-NL` through `3 13A`, where the row number printed beside model `13A` was
+  joined into `313A`. Now a row-number cell (a digits-only word of up to 3 characters that starts its line,
+  followed by a word a column gap away) is never joined into a run, and a run printed only as tokens of 3
+  or fewer characters (`AB 12C`, `3 13A`) is short: Check, never Found.
 - A confirmed link (`source` manual) counts like a typed code; its code must still be printed. `source`
   is part of the check key, so a Confirm reads the link again (reviewer round 3).
 - Short codes (3 or fewer letters and digits after normalising: `14A`, `11C`, `13C`) are never
