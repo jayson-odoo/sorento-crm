@@ -1612,9 +1612,11 @@ jobs:
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one
       # reverting it leave a tree that already passed; a merge commit lands
       # both).
-      # CI-GITLEAKS-RETRY: most runs skip the download (github.com release
-      # URLs 504'd every PR gate on 8 Nov 2026). The key's version must match
-      # GITLEAKS_VERSION in scripts/ci_gitleaks.sh, which re-checks the sha256.
+      # CI-GITLEAKS-RETRY (github.com release URLs 504'd every PR gate on
+      # 8 Nov 2026): a re-run of the same PR skips the download. Saved from the
+      # PR's own ref, so a new PR still downloads (retries + API fallback in the
+      # script). The key's version must match GITLEAKS_VERSION in
+      # scripts/ci_gitleaks.sh, which re-checks the sha256 of a cached tarball.
       - name: Cache the gitleaks CLI
         if: github.event_name == 'pull_request'
         uses: actions/cache@v4

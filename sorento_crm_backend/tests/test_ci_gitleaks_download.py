@@ -79,13 +79,14 @@ def _serve(where: Path, tarball: bytes = GOOD) -> None:
 
 
 def _run(tmp_path: Path, *, curl_fail: str = "", gh_fail: bool = False, api_tarball: bytes = GOOD,
+         direct_tarball: bytes = GOOD,
          cache: bytes | None = None, cache_env: str = ""):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("curl", CURL_STUB), ("gh", GH_STUB), ("uname", "#!/bin/sh\necho x86_64\n")):
         (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
-    _serve(tmp_path / "direct")
+    _serve(tmp_path / "direct", direct_tarball)
     _serve(tmp_path / "api", api_tarball)
     cache_dir = tmp_path / "cache"
     if cache is not None:
@@ -142,6 +143,13 @@ def test_a_failing_direct_url_falls_back_to_the_api(tmp_path, failing):
 
 def test_the_fallback_tarball_is_checksum_verified(tmp_path):
     rc, out, calls, cache_dir = _run(tmp_path, curl_fail="releases/download", api_tarball=EVIL)
+    assert rc != 0, out
+    assert "TAMPERED-BINARY-RAN" not in out and RAN not in out
+    assert not (cache_dir / TARBALL).exists(), "an unverified tarball must not reach the cache"
+
+
+def test_the_direct_tarball_is_checksum_verified(tmp_path):
+    rc, out, calls, cache_dir = _run(tmp_path, direct_tarball=EVIL)
     assert rc != 0, out
     assert "TAMPERED-BINARY-RAN" not in out and RAN not in out
     assert not (cache_dir / TARBALL).exists(), "an unverified tarball must not reach the cache"
