@@ -85,6 +85,9 @@ Ingest after R8, same SPAN PDF read again: `14A` links `SV-14A-CP` (whole part) 
   CONTAINED in the product code as a contiguous run of 3+ characters with a digit (`14A` inside
   `CSK14A-BL`, `WB 1515` inside `SRTWB1515`); digits-only = Check; a code a person typed always counts.
   E3 therefore reads Found. The exact tiers count too (own code, printed set code, `A + B` parts).
+- **Superseded after the crew pass (8 Nov):** on the real SPAN file `11C` and `13C` are printed too, so
+  the contained-run rule passed the towel rail, the hand shower and others. The rule is now a boundary
+  rule plus "short codes (3 or fewer characters) are Check, never auto-Found". See the plan.
 - **Q2 (a)** certificates only. **Q3 (a)** Confirm flips source to manual, audit "was AI".
 - Recorded deviations (R3 lazy check instead of a deploy job, R6 one audit row per link): see the plan.
 
