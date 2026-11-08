@@ -323,6 +323,12 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    if entity.row_identity and (group_by or aggregates) and (
+        not group_by or any((g.get("field") if isinstance(g, dict) else g) in entity.row_identity for g in group_by)
+    ):
+        # Already one row per subject: the rows, ranked, with their totals row, never a regroup (crew live round 4).
+        group_by, aggregates = [], []
+        spec = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
     from app.services.assistant_registry.query import require_aggregate
 
     require_aggregate(entity, slugs, bool(group_by or aggregates))

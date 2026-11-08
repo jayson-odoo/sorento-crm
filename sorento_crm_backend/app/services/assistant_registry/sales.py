@@ -502,6 +502,8 @@ register(
         default_window="this_year",
         # Every agent, team and dealer of a normal window in one result (the table is rendered by code).
         default_limit=50,
+        row_identity=("owner", "target_no", "payout_account"),
+        card_min_rows=2,
     ),
     EntityDef(
         key="target_list",

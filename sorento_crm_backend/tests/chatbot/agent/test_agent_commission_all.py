@@ -347,8 +347,9 @@ def test_L1b_grouped_per_dealer_ranks_by_the_sum_and_totals_every_group(dealers)
     db, _c, _t = dealers
     out = run(db, {"entity": ENTITY, **DEALERS_YEAR, "group_by": ["owner"],
                    "aggregates": [{"fn": "sum", "field": "payout"}], "limit": 2})
-    assert [g["sum_payout"] for g in out["groups"]] == [5000.0, 4000.0]
-    assert out["totals"]["sum_payout"] == 15550.0 and out["truncated"] is True
+    # Crew live round 4: a regroup by dealer is answered with the dealer rows themselves (see G1).
+    assert [r["payout"] for r in out["rows"]] == [5000.0, 4000.0]
+    assert out["totals"]["payout"] == 15550.0 and out["truncated"] is True
 
 
 def test_L1c_a_long_payout_list_is_not_cut_at_20_by_default(targets):
