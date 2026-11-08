@@ -34,3 +34,14 @@ Tests: `sorento_crm_backend/tests/chatbot/agent/test_agent_bulk_v2.py` (test num
 | V19 | A re-proposed row picks a code that was neither listed for that row last turn nor typed in the owner's message this turn | the row is skipped: `"CODE" was not in the list for "X" (row N); pick from the list` (never linked) (11) |
 | V20 | A code the owner typed in this turn's message, listed or not (e.g. a fresh table with the code in the Customer column) | accepted as an explicit link (11) |
 | V21 | A table turn that leaves rows waiting, with or without ready rows | the waiting rows (row, phone, written name, listed codes) are kept on the turn (`response.batch_waiting`) and read by the next batch call of the same conversation; only the immediately previous table turn counts (12) |
+
+Crew live x3 on 722d5e86 (8 Nov, gemini-3.6-flash, 18 turns): behaviour right 18/18; reply shape and cost fix round
+(V22-V26).
+
+| # | Given / When | Then |
+|---|---|---|
+| V22 | A table turn whose code-built block is shown (ready, waiting or skipped rows) | the reply is ONE code-built sentence of counts ("Rows from your table: N ready to confirm, N need your choice, N not changed.", zero parts left out) then the code-built tables; the model's own text is never shown, so no model copy of the tables and no candidate codes in prose (13) |
+| V23 | Same turn | the model's final answer is accepted without the answer check (its text is replaced), so no repair round is spent (13) |
+| V24 | A not-found claim after a batch call that quotes the term (`Customer named "X"`) or repeats the code's own reason (`No customer named "X" in your companies.`) | backed (no repair round) for a term the batch skipped as "No customer ..."; a term the batch never refused that way stays unbacked (14) |
+| V25 | The closing line | any row waits: "Reply with the account code(s) for each row under Needs your choice, all, or skip." (plus " Or reply yes to confirm the ready rows now." when rows are ready); no row waits and rows are ready: "Reply yes to go ahead, or tell me what to change."; nothing ready or waiting: "Nothing can change yet; fix the rows above and send the table again." (14) |
+| V26 | Every preview table | columns start "#", "Phone", "Name"; the ready table's "Will change" cell is never cut (all entries shown) (15) |
