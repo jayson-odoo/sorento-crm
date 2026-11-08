@@ -18,10 +18,12 @@ from app.services.chatbot.agent.contact_grant import NeedsChoice, _clean, _find_
 
 TAGS = "crm_contact_tags"
 EDIT = writes.CONTACT_EDIT
+VIEW = "user_management.contacts.view"
 EVENT = "contact.tags_agent"
 MAX_TAGS = 10
 MAX_CHOICES = 10
 NOT_APPLIED = "not applied (needs more access)"
+SETTINGS_FAILED = "settings not saved; apply them from the tag screen"
 
 
 def _fold(text: Any) -> str:
@@ -42,8 +44,16 @@ def _gates(db, user: dict) -> tuple[Callable[[str], bool], Callable[[], bool]]:
     )
 
 
-def _resolve(db, written: list[str], problems: list[str], choices: list[dict], kept: list[str]) -> dict[str, Any]:
-    """{tag id: tag} for the names written; a name that is not exact records a problem or a choice."""
+def _choice(name: str, names: list[str], more: bool = False) -> dict:
+    return {"written": name, "company": "", "noun": "tag", "candidates": [{"code": n, "name": ""} for n in names],
+            "more": more}
+
+
+def _resolve(
+    db, written: list[str], problems: list[str], choices: list[dict], kept: list[str], *, may_list: bool = True,
+) -> dict[str, Any]:
+    """{tag id: tag} for the names written; a name that is not exact records a problem or a choice. Tags are listed
+    as a pick only to a user who may list them on screen (`may_list`, contacts.view; security review 8 Nov)."""
     from sqlalchemy import func
 
     from app.models.access import ContactTag
@@ -53,7 +63,18 @@ def _resolve(db, written: list[str], problems: list[str], choices: list[dict], k
     for name in dict.fromkeys(_clean(n) for n in written):
         if not name:
             continue
-        exact = db.query(ContactTag).filter(norm == name.lower()).first()
+        same = db.query(ContactTag).filter(norm == name.lower()).order_by(ContactTag.name).all()
+        if len(same) > 1:
+            # Names that differ only in inner spaces ("Office Staff" / "Office  Staff"): the one written as is, else
+            # a pick, never an arbitrary one.
+            same = [t for t in same if t.name.lower() == name.lower()] or same
+        if len(same) > 1:
+            if may_list:
+                choices.append(_choice(name, [t.name for t in same]))
+            else:
+                problems.append(f'No tag named "{name}".')
+            continue
+        exact = same[0] if same else None
         if exact is not None:
             if not exact.is_active:
                 problems.append(f'Tag "{exact.name}" is inactive.')
@@ -61,7 +82,7 @@ def _resolve(db, written: list[str], problems: list[str], choices: list[dict], k
                 out[str(exact.id)] = exact
                 kept.append(_fold(exact.name))
             continue
-        found = (
+        found = [] if not may_list else (
             db.query(ContactTag.name)
             .filter(ContactTag.is_active.is_(True), func.strpos(norm, name.lower()) > 0)
             .order_by(func.lower(ContactTag.name))
@@ -69,11 +90,7 @@ def _resolve(db, written: list[str], problems: list[str], choices: list[dict], k
             .all()
         )
         if found:
-            choices.append({
-                "written": name, "company": "", "noun": "tag",
-                "candidates": [{"code": n, "name": ""} for (n,) in found[:MAX_CHOICES]],
-                "more": len(found) > MAX_CHOICES,
-            })
+            choices.append(_choice(name, [n for (n,) in found[:MAX_CHOICES]], len(found) > MAX_CHOICES))
         else:
             problems.append(f'No tag named "{name}".')
     return out
@@ -101,8 +118,10 @@ def plan(db, user: dict, args: dict) -> dict:
     add_written, remove_written = _texts(args.get("tags_add")), _texts(args.get("tags_remove"))
     if not any(_clean(n) for n in add_written + remove_written):
         problems.append("Name the tag(s) to add or remove.")
-    add = _resolve(db, add_written, problems, choices, kept)
-    remove = _resolve(db, remove_written, problems, choices, kept)
+    can, _ = _gates(db, user)
+    may_list = can(VIEW)
+    add = _resolve(db, add_written, problems, choices, kept, may_list=may_list)
+    remove = _resolve(db, remove_written, problems, choices, kept, may_list=may_list)
     for tag_id in add.keys() & remove.keys():
         problems.append(f'Tag "{add[tag_id].name}" is both added and removed.')
     contact = None
@@ -123,7 +142,8 @@ def plan(db, user: dict, args: dict) -> dict:
         [cid], list(add), list(remove), True, str(user["id"]), apply_settings=bool(add), gates=_gates(db, user),
     )["results"][0]
     settings = result.get("settings") or {}
-    current = {t["id"] for t in tags_by_contact(db, [cid]).get(cid, [])}
+    holding = {t["id"]: t["name"] for t in tags_by_contact(db, [cid]).get(cid, [])}
+    current = set(holding)
     lines = [f"add tag {t.name}" for i, t in add.items() if i not in current]
     lines += [f"remove tag {t.name}" for i, t in remove.items() if i in current]
     changed = list(dict.fromkeys(c["label"] for c in settings.get("changes") or []))
@@ -133,20 +153,37 @@ def plan(db, user: dict, args: dict) -> dict:
     conflicts = list(dict.fromkeys(c["label"] for c in settings.get("conflicts") or []))
     if not lines:
         extra = f"; {NOT_APPLIED}: {', '.join(blocked)}" if blocked else ""
-        raise _refuse(f"Already tagged; nothing to change{extra}.")
+        if add and remove:
+            head = "Already tagged and not tagged; nothing to change"
+        elif add:
+            head = "Already tagged; nothing to change"
+        else:
+            head = "Not tagged; nothing to remove"
+        raise _refuse(f"{head}{extra}.")
     if blocked:
         lines.append(f"{NOT_APPLIED}: " + ", ".join(blocked))
     if conflicts:
         lines.append("tags disagree, not changed: " + ", ".join(conflicts))
+    after = {**{i: n for i, n in holding.items() if i not in remove}, **{i: t.name for i, t in add.items()}}
     return {
-        "phone": phone, "name": _clean(args.get("name"))[:255] or contact.name or "", "contact_id": cid,
+        "phone": phone, "name": _name(contact, args), "contact_id": cid,
         "add": add, "remove": remove, "lines": lines,
+        "names_before": sorted(holding.values(), key=str.lower), "names_after": sorted(after.values(), key=str.lower),
         "before": {
             "contact_id": cid, "tags": sorted(current), "targets": sorted(add) + sorted(remove),
             # The setting changes the user saw: a tag edited between preview and confirm fails the row.
             "settings": [[c["label"], str(c["before"]), str(c["after"])] for c in settings.get("changes") or []],
         },
     }
+
+
+def _name(contact, args: dict) -> str:
+    """The contact's name in the CRM (the row found by phone), with the table's name when it differs: a phone typo
+    that hits another contact shows (security review 8 Nov)."""
+    crm, said = _clean(contact.name)[:255], _clean(args.get("name"))[:255]
+    if not crm:
+        return said
+    return crm if not said or said.casefold() == crm.casefold() else f"{crm} (table says {said})"
 
 
 def _read_before(db, user: dict, args: dict) -> dict:
@@ -178,22 +215,28 @@ def _execute(db, user: dict, args: dict) -> dict:
 
     p = plan(db, user, args)
     cid = p["contact_id"]
-    # Recorded first: the screen's service commits the membership, its own audit rows and this row together.
+    result = ContactTagService(db).bulk_tag(
+        [cid], list(p["add"]), list(p["remove"]), False, str(user["id"]),
+        apply_settings=bool(p["add"]), gates=_gates(db, user),
+    )["results"][0]
+    lines = p["lines"]
+    if (result.get("settings") or {}).get("status") == "failed":
+        # The screen's service keeps the membership when a settings write fails (that contact's savepoint only):
+        # say so rather than report settings that were not saved.
+        lines = [line for line in lines if not line.startswith("settings: ")] + [SETTINGS_FAILED]
+    # After the write (the screen's service commits the membership with its own "Tag added / removed" rows, and
+    # audit rows are append-only), so this row says what really happened.
     audit_service.record(
         db,
         event=EVENT,
         entity_type="respond_contacts",
         entity_id=cid,
-        old_values={"Tags": p["before"]["tags"]},
-        new_values={"Changes": p["lines"]},
+        old_values={"Tags": p["names_before"]},
+        new_values={"Tags": p["names_after"], "Changes": lines},
         description=f"Agent tag change for {p['phone']} from a pasted table",
     )
-    ContactTagService(db).bulk_tag(
-        [cid], list(p["add"]), list(p["remove"]), False, str(user["id"]),
-        apply_settings=bool(p["add"]), gates=_gates(db, user),
-    )
     db.commit()
-    return {"id": cid, "after": {"changes": p["lines"]}}
+    return {"id": cid, "after": {"changes": lines}}
 
 
 def _changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:

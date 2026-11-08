@@ -26,3 +26,20 @@ Plan: `PLAN-agent-bulk-w2-tags-8nov.md`. Test numbers in brackets are the pytest
 - T8 (08) The reply carries the code-built tables (Ready / Needs your choice / Not changed); the waiting table's
   pick column says "Tag" and the closing line asks for the tag name(s); the grant wording stays unchanged.
 - T9 (09) A Not changed "No tag named X" backs the reply's "no tag named X" wording (no repair round).
+
+## Fix round 1 (crew live x3 on 0aea0605, reviewer, security-reviewer; 8 Nov)
+
+- R1 A remove row whose tag the contact does not hold: Not changed "Not tagged; nothing to remove."
+- R2 The `contact.tags_agent` audit row names the tags before / after (no ids), written after the change so it says
+  what happened (audit rows are append-only).
+- R3 Every table (Ready / Needs your choice / Not changed) starts `# | Phone | Name`, whatever order a stored step's
+  cells come back in (`batch.LEAD_CELLS`).
+- R4 A tag's settings edited between preview and confirm fail that row; the others apply.
+- R5 A console operator without a section's gate leaves that section "not applied" even when the linked user has it.
+- R6 A settings write that fails is reported as "settings not saved; apply them from the tag screen", not as done
+  (the screen's service keeps the membership).
+- R7 Two tags differing only in inner spaces: the one written as is, else a pick; never an arbitrary one.
+- R8 The Name cell is the CRM contact's name; when the table's differs: "<CRM name> (table says <name>)".
+- R9 Tag candidates are listed only when both acting people hold `user_management.contacts.view` (the tag list's
+  slug); otherwise "No tag named X".
+- Left to lane AGENT-DECIDED-CARDS (crew, on main): follow-up turns re-including cancelled / decided rows.

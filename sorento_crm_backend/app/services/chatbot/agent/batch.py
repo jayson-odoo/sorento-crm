@@ -252,18 +252,27 @@ def summary_line(steps: list[dict], skipped: list[dict], waiting: list[dict] | t
     return "Rows from your table: " + ", ".join(f"{n} {word}" for n, word in counts if n) + "."
 
 
+#: The cells every table starts with, whatever order a stored step's cells come back in (JSONB keeps no key order).
+LEAD_CELLS = ("Phone", "Name")
+
+
+def _heads(cells: list[dict]) -> list[str]:
+    keys = list(dict.fromkeys(k for c in cells for k in c))
+    return [k for k in LEAD_CELLS if k in keys] + [k for k in keys if k not in LEAD_CELLS]
+
+
 def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | tuple = ()) -> str:
     """The turn as tables built by code: the ready rows (row number from the pasted table), the rows that need a
     choice, then the skipped rows and why."""
     parts: list[str] = []
     if steps:
-        headers = list(dict.fromkeys(k for s in steps for k in (s.get("cells") or {"Change": s.get("summary")})))
+        headers = _heads([s.get("cells") or {"Change": s.get("summary")} for s in steps])
         body = [[s.get("row", n)] + [(s.get("cells") or {"Change": s.get("summary")}).get(h, "") for h in headers]
                 for n, s in enumerate(steps, 1)]
         parts += [PREVIEW_HEAD, _table(["#", *headers], body, uncapped=("Will change",))]
     tags = bool(waiting) and all(w.get("noun") == "tag" for w in waiting)
     if waiting:
-        heads = list(dict.fromkeys(k for w in waiting for k in w.get("cells") or {}))
+        heads = _heads([w.get("cells") or {} for w in waiting])
         rows: list[list[Any]] = []
         for w in waiting:
             cells = [(w.get("cells") or {}).get(h, "") for h in heads]
@@ -275,7 +284,7 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
                 rows.append([w["row"], *[""] * len(heads), "", MORE_NOTE if not tags else TAG_MORE_NOTE])
         parts += [NEEDS_HEAD, _table(["#", *heads, "You wrote", "Tag" if tags else "Account"], rows)]
     if skipped:
-        heads = list(dict.fromkeys(k for s in skipped for k in s.get("cells") or {}))
+        heads = _heads([s.get("cells") or {} for s in skipped])
         rows = [[s["row"]] + [(s.get("cells") or {}).get(h, "") for h in heads] + [s["reason"]] for s in skipped]
         parts += [SKIPPED_HEAD, _table(["#", *heads, "Why"], rows)]
     if waiting:

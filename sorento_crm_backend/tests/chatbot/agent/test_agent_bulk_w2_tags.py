@@ -475,3 +475,177 @@ def test_09_a_no_tag_named_skip_backs_the_claim_for_that_term_only():
     assert backed("ZZT Gold") is True
     assert backed('No tag named "ZZT Gold"') is True
     assert backed("ZZT Silver") is False
+
+
+# ------------------------------------------------------------------ fix round 1 (crew live x3 + reviewer + security)
+
+
+def _operator(db, w, slugs=(EDIT,)):
+    import dataclasses
+
+    from app.models.company import UserCompany
+    from tests.chatbot.agent._seed import seed_user
+
+    operator = seed_user(db, contact_pk=None, slugs=slugs)
+    for company_id in (w.srt, w.mch):
+        db.add(UserCompany(user_id=operator, company_id=company_id))
+    db.commit()
+    return operator, dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
+
+
+def test_r1_a_remove_row_whose_tag_is_already_gone_says_not_tagged(db):
+    w = make_world(db)
+    t = tag_(db, f"{stem()} Project Salesperson")
+    person = dealer(db, w)
+
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, remove=[t.name])])
+
+    assert steps == [] and reason_of(skipped, 1) == "Not tagged; nothing to remove."
+
+
+def test_r1_the_agent_audit_row_names_the_tags_before_and_after(db):
+    w = make_world(db)
+    keep = tag_(db, f"{stem()} Office Staff")
+    new = tag_(db, f"{stem()} Retail Salesperson")
+    person = dealer(db, w)
+    hold(db, person, keep)
+
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, add=[new.name])])
+    assert confirm(db, w, steps).status == "executed"
+
+    row = db.query(AuditLog).filter(AuditLog.entity_id == str(person.id), AuditLog.event == EVENT).one()
+    assert row.old_values["Tags"] == [keep.name]
+    assert sorted(row.new_values["Tags"]) == sorted([keep.name, new.name])
+    assert str(keep.id) not in str(row.old_values) and str(new.id) not in str(row.new_values)
+
+
+def test_r1_every_table_starts_with_number_phone_name_whatever_the_stored_key_order():
+    from app.services.chatbot.agent import batch
+
+    step = {"row": 1, "summary": "s", "cells": {"Will change": "add tag X", "Name": "N", "Phone": "+60190000001"}}
+    wait = {"row": 2, "cells": {"Name": "N", "Phone": "+60190000002"}, "written": "x", "company": "", "noun": "tag",
+            "more": False, "candidates": [{"code": "X", "name": ""}]}
+    skip = {"row": 3, "reason": "r", "cells": {"Name": "N", "Phone": "+60190000003"}}
+
+    block = batch.preview_block([step], [skip], [wait])
+
+    heads = [line for line in block.splitlines() if line.startswith("| #")]
+    assert len(heads) == 3
+    for head in heads:
+        assert head.startswith("| # | Phone | Name |"), head
+
+
+def test_r1_settings_edited_after_the_preview_fail_that_row_and_the_other_applies(db):
+    w = make_world(db)
+    t = tag_(db, f"{stem()} Office Staff", {"chatbot": {"chatbot_stock_allowed": False}})
+    a, b = dealer(db, w), dealer(db, w)
+    for c in (a, b):
+        fresh(db, c).chatbot_stock_allowed = True
+    db.commit()
+    other = tag_(db, f"{stem()} Plain")
+
+    steps, skipped, _ = propose_rows(db, w, [row_(a.phone_number, add=[t.name]), row_(b.phone_number, add=[other.name])])
+    assert skipped == [] and len(steps) == 2
+    row = db.get(ContactTag, str(t.id))
+    row.settings = {"chatbot": {"chatbot_stock_allowed": True}}  # an admin edits the tag after the preview
+    db.commit()
+
+    outcome = confirm(db, w, steps)
+    assert outcome.status == "partial", outcome.steps
+    assert held(db, a) == [] and fresh(db, a).chatbot_stock_allowed is True
+    assert held(db, b) == [other.name]
+
+
+def test_r1_a_console_operator_without_the_agents_gate_leaves_agents_not_applied(db):
+    from app.services.chatbot.agent import actions, batch
+    from app.services.contact_tag_settings import SECTION_TITLES
+
+    w = make_world(db)  # the linked user: superadmin with the agents slug
+    operator, ctx = _operator(db, w)
+    agent = AccessAgent(code=f"zzt_{uuid.uuid4().hex[:8]}", name="ZZT agent")
+    db.add(agent)
+    db.flush()
+    t = tag_(db, f"{stem()} Dealer", {"chatbot": {"chatbot_stock_allowed": False}, "agents": {str(agent.id): True}})
+    person = dealer(db, w)
+    fresh(db, person).chatbot_stock_allowed = True
+    db.commit()
+
+    steps, skipped, _ = batch.propose_rows(db, ctx, TAGS, [row_(person.phone_number, add=[t.name])], seen_ids=set())
+    assert skipped == []
+    assert f"not applied (needs more access): {SECTION_TITLES['agents']}" in steps[0]["summary"]
+    action = store(db, w, steps)
+    outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
+
+    assert outcome.status == "executed", outcome.steps
+    assert fresh(db, person).chatbot_stock_allowed is False
+    assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == str(person.id)).count() == 0
+
+
+def test_r1_a_failed_settings_write_is_reported_as_not_saved_not_as_done(db):
+    from sqlalchemy import text
+
+    w = make_world(db)
+    t = tag_(db, f"{stem()} Office Staff", {"chatbot": {"chatbot_stock_allowed": False}})
+    person = dealer(db, w)
+    fresh(db, person).chatbot_stock_allowed = True
+    db.commit()
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, add=[t.name])])
+    db.execute(text("CREATE FUNCTION zzt_boom_tags() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'zzt boom'; END $$"))
+    db.execute(text(
+        f"CREATE TRIGGER zzt_boom_tags BEFORE UPDATE ON respond_contacts FOR EACH ROW "
+        f"WHEN (OLD.id = '{person.id}') EXECUTE FUNCTION zzt_boom_tags()"
+    ))
+    db.commit()
+
+    outcome = confirm(db, w, steps)
+
+    db.execute(text("DROP TRIGGER zzt_boom_tags ON respond_contacts"))
+    db.commit()
+    afters = [c["after"] for c in outcome.steps[0]["changes"]]
+    assert any("settings not saved" in a for a in afters)
+    assert not any(a.startswith("settings: ") for a in afters)
+    assert held(db, person) == [t.name]  # the screen's service keeps the membership
+    assert fresh(db, person).chatbot_stock_allowed is True
+
+
+def test_r1_two_tags_that_differ_only_in_inner_spaces_are_never_picked_at_random(db):
+    w = make_world(db)
+    s = stem()
+    one = tag_(db, f"{s} Office Staff")
+    tag_(db, f"{s} Office  Staff")
+    person = dealer(db, w)
+
+    steps, _, _ = propose_rows(db, w, [row_(person.phone_number, add=[one.name])])
+    assert f"add tag {one.name}" in steps[0]["summary"]
+
+    steps, _, waiting = propose_rows(db, w, [row_(person.phone_number, add=[f"{s} OFFICE   staff ".lower()])])
+    if steps:  # written with collapsed spaces = the single-spaced tag's own name
+        assert f"add tag {one.name}" in steps[0]["summary"]
+    else:
+        assert len(waiting[0]["candidates"]) == 2
+
+
+def test_r1_the_name_is_the_crm_contacts_with_the_tables_when_they_differ(db):
+    w = make_world(db)
+    t = tag_(db, f"{stem()} Office Staff")
+    person = dealer(db, w, name="ZZT Siti")
+
+    same, _, _ = propose_rows(db, w, [row_(person.phone_number, name="zzt siti", add=[t.name])])
+    other, _, _ = propose_rows(db, w, [row_(person.phone_number, name="ZZT Ahmad", add=[t.name])])
+
+    assert same[0]["cells"]["Name"] == "ZZT Siti"
+    assert other[0]["cells"]["Name"] == "ZZT Siti (table says ZZT Ahmad)"
+
+
+def test_r1_a_user_who_may_not_list_contacts_gets_no_tag_candidates(db):
+    w = make_world(db, slugs=(EDIT,), superadmin=False)  # contacts.edit without contacts.view
+    s = stem()
+    tag_(db, f"{s} Retail Salesperson")
+    tag_(db, f"{s} Project Salesperson")
+    person = dealer(db, w)
+
+    steps, skipped, waiting = propose_rows(db, w, [row_(person.phone_number, add=["salesperson"])])
+
+    assert steps == [] and waiting == []
+    reason = reason_of(skipped, 1)
+    assert reason == 'No tag named "salesperson".' and "Retail" not in reason
