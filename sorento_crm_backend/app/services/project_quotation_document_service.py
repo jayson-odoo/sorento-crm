@@ -740,6 +740,11 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
+    # QUOTE-CERT-TAB (CERT-11): the certificates that go out with this revision, frozen.
+    from app.services import quotation_certificate_service
+
+    record.certificates = quotation_certificate_service.snapshot(db, document)
+    db.flush()
     # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.

@@ -2886,6 +2886,47 @@ register(
 )
 
 
+def assert_quotation_certificate_removable(db: Session, document_id: str, certificate_id, user_id) -> None:
+    """Park-time and commit-time check of `quotation_certificate.remove`: the edit right, write
+    access to the project, and the certificate currently on the document's list. 404 otherwise."""
+    from app.models.projects import Project, ProjectQuotationDocument
+    from app.services import project_service
+    from app.services import quotation_certificate_service as certs
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    document = db.get(ProjectQuotationDocument, document_id)
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if document is None or project is None:
+        raise handle_not_found("Quotation", document_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    certs.assert_removable(db, document, str(certificate_id or ""))
+    return document
+
+
+def _remove_quotation_certificate(db: Session, payload: dict):
+    from app.services import quotation_certificate_service as certs
+
+    document = assert_quotation_certificate_removable(
+        db, _entity_id(payload), payload.get("certificate_id"), payload.get("requested_by_id")
+    )
+    certs.remove(db, document, str(payload.get("certificate_id")), payload.get("requested_by_id"))
+    return {"removed": True}
+
+
+register(
+    FormAction(
+        key="quotation_certificate.remove",
+        entity_types=("quotation_certificate",),
+        execute=_remove_quotation_certificate,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Remove certificate",
+    )
+)
+
+
 def _delete_project_party_contact(db: Session, payload: dict):
     """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
     (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""
