@@ -27,7 +27,7 @@ from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.finance import CREDIT_NOTE, BillingDocument
 from app.models.inventory import Stock, Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseRequestHeader
 from app.models.product import Product
 from app.models.projects import ProjectQuotationDocument
@@ -71,21 +71,64 @@ def _account_label(name: Optional[str]) -> Optional[str]:
     return match.group(1).strip() if match else None
 
 
-def _today_figures(db: Session, company_id: str, day: date) -> dict:
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
+    """Today's figures and the same weekday last week, from one query over the two days."""
+    week_ago = day - timedelta(days=7)
+    sales_type = inv.document_sales_type()
+    today = BillingDocument.doc_date == day
+    last = BillingDocument.doc_date == week_ago
+    not_credit = BillingDocument.document_type != CREDIT_NOTE
     row = db.execute(
         sa.select(
-            sa.func.coalesce(sa.func.sum(inv.signed_amount()), 0),
-            sa.func.count().filter(BillingDocument.document_type != CREDIT_NOTE),
-            sa.func.count().filter(BillingDocument.document_type == CREDIT_NOTE),
-            sa.func.count(sa.distinct(BillingDocument.customer_id)),
-        ).where(inv.posted(), BillingDocument.company_id == company_id, BillingDocument.doc_date == day)
+            sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(today), 0),
+            sa.func.count().filter(today, not_credit),
+            sa.func.count().filter(today, BillingDocument.document_type == CREDIT_NOTE),
+            sa.func.count(sa.distinct(BillingDocument.customer_id)).filter(today),
+            sa.func.count(sa.distinct(BillingDocument.customer_id)).filter(today, sales_type.c.value == inv.DEALER),
+            sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(last), 0),
+            sa.func.count().filter(last, not_credit),
+        )
+        .select_from(BillingDocument)
+        .join(sales_type, sa.true(), isouter=True)
+        .where(
+            inv.posted(), BillingDocument.company_id == company_id,
+            BillingDocument.doc_date.in_([day, week_ago]),
+        )
     ).one()
-    return {
+    figures = {
         "amount": _money(row[0]),
         "invoice_count": int(row[1]),
         "credit_note_count": int(row[2]),
         "customer_count": int(row[3]),
+        "dealer_customer_count": int(row[4]),
     }
+    compare = {
+        "label": f"{_WEEKDAYS[week_ago.weekday()]} {week_ago.day} {_MONTHS[week_ago.month - 1]}",
+        "last_week_amount": _money(row[5]),
+        "last_week_invoice_count": int(row[6]),
+    }
+    return figures, compare
+
+
+def _deliveries(db: Session, company_id: str, day: date) -> dict:
+    """Sales orders still owing goods that are due today or overdue (a count only)."""
+    due = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.requested_delivery_date)
+    count = db.execute(
+        sa.select(sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)))
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .where(
+            SalesOrder.company_id == company_id,
+            SalesOrderLine.line_status == "open",
+            SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
+            due <= day,
+        )
+    ).scalar_one()
+    return {"to_deliver": int(count)}
 
 
 def _dealer_rows(db: Session, company_id: str, since: date, until: date, *, today: Optional[date]) -> list:
@@ -265,6 +308,7 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
             BillingDocument.company_id == company_id, BillingDocument.doc_date >= day - timedelta(days=7)
         )
     ).scalar_one()
+    today, compare = _today_and_compare(db, company_id, day)
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -272,11 +316,13 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         "as_of": now_myt.isoformat(timespec="seconds"),
         "data_as_of": data_as_of.replace(tzinfo=timezone.utc).isoformat() if data_as_of else None,
         "phase": "night" if now_myt.hour * 60 + now_myt.minute >= NIGHT_MINUTE else "day",
-        "today": _today_figures(db, company_id, day),
+        "today": today,
+        "compare": compare,
         "shops": _shops(db, company_id, day),
         "warehouses": _warehouses(db, company_id),
         "reorder": _reorder(db, company_id),
         "approvals": _approvals(db, company_id),
+        "deliveries": _deliveries(db, company_id, day),
     }
 
 
@@ -317,6 +363,7 @@ def redact(snapshot: dict) -> dict:
     identity or ranking either (name, code, rank, customer id). Counts and kinds stay."""
     out = copy.deepcopy(snapshot)
     out.get("today", {}).pop("amount", None)
+    out.get("compare", {}).pop("last_week_amount", None)
     for shop in out.get("shops", []):
         for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
