@@ -593,7 +593,7 @@ export default function NewProductApplicationForm({
                         customer_name: v,
                       }))
                     }
-                    lookup={(q) => client.lookupDebtors(q, 20, 'new_product_application')}
+                    lookup={(q) => client.lookupDebtors(q, 20, undefined)}
                     placeholder="Customer name"
                   />
                 )}

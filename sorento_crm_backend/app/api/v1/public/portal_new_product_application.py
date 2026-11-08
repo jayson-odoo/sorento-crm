@@ -84,9 +84,35 @@ def _check_write(db: Session, token: PortalToken, data: dict) -> None:
         space_id=token.space_id,
         stock_inquiry_id=data.get("stock_inquiry_id"),
     )
-    # Owner 8 Nov 09:30: the customer is the stock inquiry's customer dropdown, which lists every
-    # customer of the company (`debtor_type.lookup_customers`), not only the agent's own. The
-    # service's company-filtered existence check (`_check_refs`) refuses another company's.
+    # Owner 8 Nov: the customer is the stock inquiry's customer dropdown (every customer of every
+    # company of the contact). Another of the contact's companies is kept as text (below); an id
+    # outside them is refused by the service's company-filtered `_check_refs`.
+    _keep_other_company_customer_as_text(db, token, data)
+
+
+def _keep_other_company_customer_as_text(db: Session, token: PortalToken, data: dict) -> None:
+    """Owner 8 Nov 12:50, option (a): "just behave like how stock inquiry behaves now". The
+    customer list is the SI's (every company of the contact); the SI keeps any customer as text.
+    So a pick of the application's own company links by id, and a pick of the contact's OTHER
+    company is kept as text "<code> - <name>" with no id; the application stays in its company.
+    An id outside the contact's companies is left for `_check_refs` to refuse."""
+    from app.models.order import Customer
+    from app.services.company_scope_resolver import portal_contact_scope
+
+    customer_id = data.get("customer_id")
+    if not customer_id or svc._ref_exists(db, Customer, customer_id):
+        return
+    with company_scope(db, portal_contact_scope(db, str(token.contact_id))):
+        row = (
+            db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == customer_id).first()
+            if svc._is_uuid(customer_id)
+            else None
+        )
+    if row is None:
+        return
+    code, name = row
+    data["customer_id"] = None
+    data["customer_name"] = f"{code} - {name}" if code else name
 
 
 def _move(db: Session, token: PortalToken, application_id: str, fn, **kw):
