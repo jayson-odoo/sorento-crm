@@ -967,3 +967,48 @@ def test_15_every_table_starts_with_number_phone_name_and_the_will_change_cell_i
     for a in linked:
         assert a.customer_code in block
     assert "..." not in block
+
+
+# ------------------------------------------------------------------ reviewer round on the live-run fix
+
+
+SENTINEL = "SENTINEL MODEL SENTENCE"
+
+
+def test_13_guard_a_turn_with_no_ready_row_shows_only_the_code_built_tables(db):
+    w = make_world(db)
+    for code, i in (("300-ZZ1", 1), ("300-ZZ2", 2)):
+        account(db, f"ZZT DEALER H {SUFFIXES[i]} {i}", code, w.mch)
+    waits, bad = dealer(db, w, companies=(w.mch,)), dealer(db, w)
+    rows = [tag(waiting_row(w, waits), 1), tag(row_(bad.phone_number, names=["ZZT Nowhere Stores"]), 2)]
+    model_text = f"{SENTINEL}: | 1 | MODELCOPY | pick 300-ZZ1 please."
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
+
+    result, _ = run_turn(db, w, script, text_="grant access to these people")
+
+    reply = result.reply_text
+    assert result.pending_action is None
+    assert reply.startswith("Rows from your table: 1 need your choice, 1 not changed.")
+    assert SENTINEL not in reply and "MODELCOPY" not in reply
+    assert reply.count("300-ZZ1") == 1
+    assert reply.index("300-ZZ1") > reply.index(NEEDS)
+
+
+def test_13_when_the_proposal_cannot_be_stored_the_reply_is_the_summary_and_the_failure_line_only(db, monkeypatch):
+    from app.services.chatbot.agent import actions
+
+    def broken(*args, **kw):
+        raise RuntimeError("store failed")
+
+    monkeypatch.setattr(actions, "store_proposal", broken)
+    w, rows = mixed_world(db)
+    model_text = f"{SENTINEL}: | 1 | MODELCOPY | pick 300-ZZ1 please."
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
+
+    result, _ = run_turn(db, w, script, text_="grant access to these people")
+
+    assert result.reply_text == (
+        "Rows from your table: 1 ready to confirm, 1 need your choice, 1 not changed.\n\n"
+        "I could not store the proposed changes, so nothing will be changed."
+    )
+    assert action_rows(db, w.respond_id) == []
