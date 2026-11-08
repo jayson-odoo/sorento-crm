@@ -1,6 +1,6 @@
 # PLAN: Sorento Town (2.5D daily overview, cached snapshot)
 
-Status: Step 1 (behaviour card) posted to the owner, waiting on answers. Track: L (feature lane; new screen + new background job + new table). No code yet.
+Status: Step 1 (behaviour card) posted to the owner, revised with dev data 8 Nov, waiting on answers. Track: L (feature lane; new screen + new background job + new table). No code yet.
 
 Lane: SORENTO-TOWN. Owner go: 8 Nov 2026 ~13:35 MYT. Research: crew report of 8 Nov (embedded in the lane brief).
 
@@ -28,7 +28,33 @@ makes no DB call.
 | 4 | May an office wallboard show customer names | (a) no: wallboard mode shows shop rank numbers and the total only. (b) yes | (a): a wallboard is a public screen (visitors, dealers' staff in the showroom). Names stay on the signed-in personal view. |
 | 5 | Which reorder field drives the "!" | (a) `scm.ReorderLevel.level` (`models/scm.py:109`), buyer-owned, per product with optional per-location override; NULL = not set, no "!". (b) `Stock.reorder_point` (`models/inventory.py:134`). (c) `Product.reorder_level` (`models/product.py:346`) | (a): it is the field the SCM reorder engine plans against and only a person sets it, so a "!" means the same thing as a reorder suggestion. (b)/(c) are older mirrors; showing a "!" the buyer does not act on trains people to ignore it. |
 
-Real examples from dev data: requested from crew (crew-data-request on the PR); filled in here when they arrive.
+### What dev data changed (8 Nov, crew data request; structural facts only, no real names or amounts on GitHub)
+
+The real figures (one full day, top dealers, examples) live with the owner via crew, not in the repo.
+
+- **Decision 2:** the 90-day all-types top 30 is roughly half project accounts plus related-company
+  accounts; the Dealer sales type (`invoiced_sales.sales_type()`) excludes both. Sales are keyed per
+  AutoCount debtor account, and one dealer company can hold several accounts (`[A/C I]`, `[A/C III]`),
+  which reorders the top 30 when merged. Revised recommendation: **2a = top 30 Dealer-type customers by
+  90-day invoiced sales, one shop per AutoCount account** (labelled with its account suffix), because
+  that is exactly how the Invoiced report groups and the town total must match it; a project-sales
+  "site" district and per-company merging are phase 2 options, not phase 1. The day banner still shows
+  the all-types total (equals the sales report).
+- **Decision 3:** every approval queue is near empty on a normal day (PR pending: 1; project quotation
+  documents pending: 0; dealer-kit editions: 0). Recommendation unchanged ((a)+(b) one number), and the
+  sign shows "All clear" at zero rather than disappearing. Note: `purchase_requests` has no company
+  column, so the PR count is cross-company until that is fixed (snapshot shows it on every company's
+  town; flagged for the owner).
+- **Decision 5:** (b) `stock.reorder_point` is set on 0 of ~60k stock rows: drop it. (a) and (c) are set
+  on ~11.3k products and equal on every product that has both (sourced from AutoCount). (a) has no
+  per-location level rows, so a level is product-wide: "below" = product availability summed across
+  warehouses. ~1.75k products sit below level, far too many to mark one by one. Revised recommendation:
+  **5a, with the "!" on the warehouse district as a count ("1,7xx below reorder"), click -> the existing
+  SCM reorder list; per-warehouse stock bars show volume, not "!"**, because a product-wide level cannot
+  say which warehouse is short.
+- **Warehouses:** 67 active SRT warehouses, most are sub-locations of a few pools (BRW, MWH, DC1, WH3,
+  RSW, HQ ...). Recommendation: **one building per pool** (sub-locations folded in), so ~6-8 warehouse
+  buildings, not 67.
 
 ## Phase 0 sketch (to be confirmed after the card)
 
