@@ -693,3 +693,78 @@ def test_an_older_not_opening_result_no_longer_answers_the_inquirys_ask(world):
     assert svc.npa_next_step_sentence(world.db, si) is None  # a live application answers it
     assert _new_code(world, d["id"], "close", reason="supplier dropped it").status_code == 200
     assert svc.npa_next_step_sentence(world.db, si) == svc.NPA_NEXT_STEP
+
+
+# ------------------------------------------------------------------ owner 8 Nov 15:10: the SI's Edit purchasing response
+# (Save only / Update & Reply, the same dialog component; the reply goes through the SI's conversation)
+
+
+@pytest.fixture()
+def reply_spy(monkeypatch):
+    from app.api.v1.procurement import stock_inquiries as si_routes
+    from app.services import queue_service, respond_chat_template_service
+
+    sent = []
+    monkeypatch.setattr(si_routes, "_resolve_stock_inquiry_chat_contact", lambda db, sid: ("901234", "contact-1"))
+    monkeypatch.setattr(si_routes, "_build_stock_inquiry_chat_context", lambda db, sid: {"portal_url": "u"})
+    monkeypatch.setattr(
+        respond_chat_template_service, "precheck_chat_send", lambda db, **kw: {"sent_as": "text", "window_state": "open"}
+    )
+
+    class _Job:
+        id = "job-1"
+
+    def capture(fn, *args, **kwargs):
+        sent.append(args)
+        return _Job()
+
+    monkeypatch.setattr(queue_service, "enqueue_job", capture)
+    return sent
+
+
+def test_the_purchasing_response_text_is_saved_like_the_sis(world):
+    d = _si_approved(world)
+    res = _respond(world, d["id"], purchasing_response="Supplier can cut 600 x 900.", lead_time="8 weeks")
+    assert res.status_code == 200, res.text
+    assert res.json()["purchasing_response"] == "Supplier can cut 600 x 900."
+    assert res.json()["status"] == "approved"  # text alone answers nothing
+
+
+def test_update_and_reply_saves_and_sends_through_the_inquirys_conversation(world, reply_spy):
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    newp = make_product(world.db, code="ZZT-RPL-1")
+    d = _si_approved(world)
+    assert _get(world, d["id"])["can_reply"] is True
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply",
+        json={"purchasing_response": "Code opened.", "outcome": "link", "product_id": newp.id, "lead_time": "8 weeks"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "completed"
+    assert body["purchasing_response"] == "Code opened."
+    [args] = reply_spy
+    identifier, contact, text, use_case, table, entity_id = args[:6]
+    assert (identifier, use_case, table, entity_id) == ("901234", "stock_inquiry_chat", "stock_inquiries", world.inquiry.id)
+    assert d["application_no"] in text and "Code opened." in text and "ZZT-RPL-1" in text
+
+
+def test_reply_needs_the_response_text_and_an_inquiry_conversation(world, reply_spy):
+    d = _si_approved(world)
+    url = f"{NPA}/{d['id']}/purchasing-response/reply"
+    assert world.api.as_(world.buyer).post(url, json={"purchasing_response": "  "}).status_code == 422
+    standalone = world.api.as_(world.sales).post(NPA, json={"lines": [_line(world)]}).json()
+    assert _act(world, standalone["id"], "submit", world.sales).status_code == 200
+    assert _act(world, standalone["id"], "approve", world.manager).status_code == 200
+    assert _get(world, standalone["id"])["can_reply"] is False
+    res = world.api.as_(world.buyer).post(f"{NPA}/{standalone['id']}/purchasing-response/reply", json={"purchasing_response": "x"})
+    assert res.status_code == 422
+    assert reply_spy == []
+
+
+def test_reply_is_purchasing_only(world, reply_spy):
+    d = _si_approved(world)
+    res = world.api.as_(world.sales).post(f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "x"})
+    assert res.status_code == 403
+    assert reply_spy == []
