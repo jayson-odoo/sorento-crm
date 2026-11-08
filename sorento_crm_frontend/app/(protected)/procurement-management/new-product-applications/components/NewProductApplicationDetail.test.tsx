@@ -409,7 +409,8 @@ describe('Edit purchasing response: Link an existing product code', () => {
     expect(state.purchasing).not.toHaveBeenCalled();
     fireEvent.click(hit);
     expect(state.purchasing).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
     expect(state.purchasing.mock.calls[0][0].data).toMatchObject({
       outcome: 'link',
@@ -474,7 +475,8 @@ describe('PURCHASING FEEDBACK (Edit purchasing response)', () => {
       fireEvent.change(within(dialog).getByLabelText('Cost for product 1'), {
         target: { value: '12.50' },
       });
-      fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+      fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
       await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
       const arg = state.purchasing.mock.calls[0][0];
       expect(arg.id).toBe('a-1');
@@ -701,7 +703,8 @@ describe('NEW PRODUCT CODE (header)', () => {
       within(dialog).getByRole('radio', { name: /link an existing product code/i }),
     ).toBeChecked();
     expect(state.purchasing).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(state.purchasing).toHaveBeenCalledTimes(1));
     expect(state.purchasing.mock.calls[0][0].data).toMatchObject({
       outcome: 'link',

@@ -4,8 +4,10 @@
  * stubbed, so the assertions are on the HTTP calls: `PUT .../{id}/purchasing-response`.
  *
  * Assumed controls inside the dialog (the coder matches them):
- *   radios "Link an existing product code" / "New product code" / "No answer yet" (answered records only);
+ *   radios "Link an existing product code" / "New product code";
  *   Link: a combobox named /product code/i (product search); New: a textbox named /new product code/i;
+ *   the shared PurchasingResponseDialog (data-testid purchasing-response-dialog) whose first field is the
+ *   "Purchasing response" textarea, buttons Cancel / "Save only" / "Update & Reply" (only when detail.can_reply);
  *   a textbox "Lead time"; "Cost (MYR)" (no lines) or
  *   "Cost for product N" (lines); a "Save" button.
  */
@@ -78,7 +80,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         if (state.onReject) state.data = state.onReject((init?.body ? JSON.parse(init.body) : {}).reason);
         return json(state.data);
       }
-      if (/\/purchasing-response$/.test(url)) return json(state.data);
+      if (/\/purchasing-response(\/reply)?$/.test(url)) return json(state.data);
       if (/\/new-product-applications\/a-1(\?.*)?$/.test(url) && method === 'GET') return json(state.data);
       return json({ items: [], data: [], pagination: { total: 0, page: 1, limit: 20 } });
     },
@@ -143,6 +145,8 @@ const app = (over: Record<string, unknown> = {}) => ({
   remark: null,
   lead_time: null,
   cost_price: null,
+  purchasing_response: null,
+  can_reply: false,
   new_code_text: null,
   new_product_id: null,
   new_product_code: null,
@@ -246,7 +250,7 @@ describe('the dialog', () => {
     expect(within(dialog).getByRole('textbox', { name: /lead ?time/i })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Cost (MYR)')).toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/^Cost for product/)).toBeNull();
-    expect(within(dialog).getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /^save only$/i })).toBeInTheDocument();
   });
 
   it('with lines, asks one cost per line and no single cost', async () => {
@@ -278,7 +282,8 @@ describe('Save calls PUT purchasing-response once', () => {
     fireEvent.click(await screen.findByText(/XY-1234-MB-69/));
     fireEvent.change(within(dialog).getByRole('textbox', { name: /lead ?time/i }), { target: { value: '3 weeks' } });
     fireEvent.change(within(dialog).getByLabelText('Cost (MYR)'), { target: { value: '12.50' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     const body = puts()[0].body as Record<string, unknown>;
     expect(body).toMatchObject({ outcome: 'link', product_id: 'p-69', lead_time: '3 weeks' });
@@ -293,7 +298,8 @@ describe('Save calls PUT purchasing-response once', () => {
     fireEvent.change(await within(dialog).findByRole('textbox', { name: /new product code/i }), {
       target: { value: 'XY-NEW-1' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0].body).toMatchObject({ outcome: 'new', new_code: 'XY-NEW-1' });
   });
@@ -311,7 +317,7 @@ describe('Save calls PUT purchasing-response once', () => {
     expect(within(dialog).queryByLabelText(/reason/i)).toBeNull();
     expect(within(dialog).getByRole('radio', { name: /link an existing product code/i })).toBeInTheDocument();
     expect(within(dialog).getByRole('radio', { name: /^new product code$/i })).toBeInTheDocument();
-    expect(within(dialog).getByRole('radio', { name: /no answer yet/i })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('radio', { name: /no answer yet/i })).toBeNull();
     expect(within(dialog).getByRole('textbox', { name: /lead ?time/i })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Cost (MYR)')).toBeInTheDocument();
   });
@@ -326,7 +332,8 @@ describe('Save calls PUT purchasing-response once', () => {
     render(<Page />);
     const dialog = await openDialog();
     fireEvent.change(within(dialog).getByRole('textbox', { name: /lead ?time/i }), { target: { value: '5 weeks' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     const body = puts()[0].body as Record<string, unknown>;
     expect(body.lead_time).toBe('5 weeks');
@@ -342,7 +349,8 @@ describe('Save calls PUT purchasing-response once', () => {
     const dialog = await openDialog();
     fireEvent.change(within(dialog).getByLabelText('Cost for product 1'), { target: { value: '10' } });
     fireEvent.change(within(dialog).getByLabelText('Cost for product 2'), { target: { value: '20.5' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     const body = puts()[0].body as { lines: { id: string; cost_price: unknown }[] };
     expect(body.lines.map((l) => [l.id, Number(l.cost_price)])).toEqual([
@@ -365,7 +373,8 @@ describe('"Created before" suggestion lives in the dialog', () => {
     expect(within(dialog).getByRole('radio', { name: /link an existing product code/i })).toBeChecked();
     expect(within(dialog).getAllByText(/XY-1234-MB-69/).length).toBeGreaterThan(1);
     expect(puts()).toHaveLength(0);
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0].body).toMatchObject({ outcome: 'link', product_id: 'p-69' });
   });
@@ -438,7 +447,7 @@ describe('product table on the staff detail', () => {
   });
 });
 
-describe('reviewer round 4: typed earlier code, No answer yet, no prose', () => {
+describe('reviewer round 4: typed earlier code, no prose', () => {
   const typedEarlier = { ...earlier, product_id: null, product_code: 'XY-TYPED-9' };
 
   it('Use on a typed earlier code (no product id) pre-selects New product code with the code filled, never Link', async () => {
@@ -450,29 +459,24 @@ describe('reviewer round 4: typed earlier code, No answer yet, no prose', () => 
     expect(
       (within(dialog).getByRole('textbox', { name: /new product code/i }) as HTMLInputElement).value,
     ).toBe('XY-TYPED-9');
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /purchasing response/i }), { target: { value: 'We can supply' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     const body = puts()[0].body as Record<string, unknown>;
     expect(body).toMatchObject({ outcome: 'new', new_code: 'XY-TYPED-9' });
     expect(body).not.toHaveProperty('product_id');
   });
 
-  it('offers No answer yet only when the application has an answer, and saving it sends outcome null', async () => {
-    state.data = app({ status: 'completed', status_label: 'Completed', new_code_text: 'XY-TYPED-7', new_product_code: 'XY-TYPED-7' });
-    render(<Page />);
-    const dialog = await openDialog();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /^no answer yet$/i }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    const body = puts()[0].body as Record<string, unknown>;
-    expect(body).toHaveProperty('outcome', null);
-  });
-
-  it('has no No answer yet radio while the application is unanswered', async () => {
-    render(<Page />);
-    const dialog = await openDialog();
-    expect(within(dialog).queryByRole('radio', { name: /no answer yet/i })).toBeNull();
-  });
+  it.each([['unanswered', {}], ['answered', { status: 'completed', status_label: 'Completed', new_code_text: 'XY-TYPED-7', new_product_code: 'XY-TYPED-7' }]])(
+    'has no No answer yet option while %s (the stock inquiry has no equivalent)',
+    async (_name, over) => {
+      state.data = app(over as Record<string, unknown>);
+      render(<Page />);
+      const dialog = await openDialog();
+      expect(within(dialog).queryByRole('radio', { name: /no answer yet/i })).toBeNull();
+      expect(within(dialog).queryByText(/no answer yet/i)).toBeNull();
+    },
+  );
 
   it('shows no explanation prose in the dialog', async () => {
     render(<Page />);
@@ -582,5 +586,102 @@ describe('no lock banner while Submitted or Resubmitted (owner 8 Nov 09:30)', ()
     state.data = app({ decided_by_name: 'Approver One', decided_at: '2026-11-02T01:00:00' });
     render(<Page />);
     expect(await screen.findByText(/Approved by Approver One on /)).toBeInTheDocument();
+  });
+});
+
+describe('the shared PurchasingResponseDialog on the NPA (owner 8 Nov 15:10)', () => {
+  const replies = () => state.calls.filter((c) => c.method === 'POST' && /purchasing-response\/reply$/.test(c.url));
+  const respBox = (d: HTMLElement) => within(d).getByRole('textbox', { name: /purchasing response/i });
+  const fill = (d: HTMLElement, v = 'We can supply it') => fireEvent.change(respBox(d), { target: { value: v } });
+
+  it('opens the same shared component, with the Purchasing response textarea before every NPA field', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(screen.getByTestId('purchasing-response-dialog')).toBe(dialog.closest('[data-testid="purchasing-response-dialog"]') ?? dialog);
+    expect(within(dialog).getByText('Edit purchasing response')).toBeInTheDocument();
+    const box = respBox(dialog);
+    const first = within(dialog).getAllByRole('textbox')[0];
+    expect(first).toBe(box);
+    const radio = within(dialog).getByRole('radio', { name: /link an existing product code/i });
+    expect(Boolean(box.compareDocumentPosition(radio) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    const lead = within(dialog).getByRole('textbox', { name: /lead ?time/i });
+    expect(Boolean(box.compareDocumentPosition(lead) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it('starts from the saved purchasing response', async () => {
+    state.data = app({ purchasing_response: 'Earlier answer' });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect((respBox(dialog) as HTMLTextAreaElement).value).toBe('Earlier answer');
+  });
+
+  it('Save only is disabled while the response is blank and enabled once there is text', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    const save = within(dialog).getByRole('button', { name: /^save only$/i });
+    expect(save).toBeDisabled();
+    fill(dialog, '   ');
+    expect(save).toBeDisabled();
+    fill(dialog);
+    expect(save).toBeEnabled();
+  });
+
+  it('Save only sends PUT purchasing-response with purchasing_response plus the other keys, and no reply', async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    fill(dialog, 'We can supply it');
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^new product code$/i }));
+    fireEvent.change(await within(dialog).findByRole('textbox', { name: /new product code/i }), { target: { value: 'XY-NEW-1' } });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /lead ?time/i }), { target: { value: '3 weeks' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^save only$/i }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].body).toMatchObject({
+      purchasing_response: 'We can supply it',
+      outcome: 'new',
+      new_code: 'XY-NEW-1',
+      lead_time: '3 weeks',
+    });
+    expect(replies()).toHaveLength(0);
+  });
+
+  it('Update & Reply is absent while detail.can_reply is false', async () => {
+    state.data = app({ can_reply: false });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(within(dialog).queryByRole('button', { name: /update & reply/i })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: /^save only$/i })).toBeInTheDocument();
+  });
+
+  it('Update & Reply is shown when detail.can_reply is true, disabled while the response is blank', async () => {
+    state.data = app({ can_reply: true });
+    render(<Page />);
+    const dialog = await openDialog();
+    const reply = within(dialog).getByRole('button', { name: /^update & reply$/i });
+    expect(reply).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /^save only$/i })).toBeDisabled();
+    fill(dialog);
+    expect(reply).toBeEnabled();
+  });
+
+  it('Update & Reply POSTs purchasing-response/reply with the same body as Save only', async () => {
+    state.data = app({ can_reply: true });
+    render(<Page />);
+    const dialog = await openDialog();
+    fill(dialog, 'We can supply it');
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /lead ?time/i }), { target: { value: '3 weeks' } });
+    fireEvent.change(within(dialog).getByLabelText('Cost (MYR)'), { target: { value: '12.50' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^update & reply$/i }));
+    await waitFor(() => expect(replies()).toHaveLength(1));
+    expect(replies()[0].url).toContain('/api/v1/procurement/new-product-applications/a-1/purchasing-response/reply');
+    expect(replies()[0].body).toMatchObject({ purchasing_response: 'We can supply it', lead_time: '3 weeks' });
+    expect(Number((replies()[0].body as Record<string, unknown>).cost_price)).toBe(12.5);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it('the read-only detail shows the saved PURCHASING RESPONSE text', async () => {
+    state.data = app({ purchasing_response: 'We can supply it in 3 weeks' });
+    render(<Page />);
+    expect(await screen.findByText('We can supply it in 3 weeks')).toBeInTheDocument();
+    expect(document.body.textContent ?? '').toContain('PURCHASING RESPONSE');
   });
 });

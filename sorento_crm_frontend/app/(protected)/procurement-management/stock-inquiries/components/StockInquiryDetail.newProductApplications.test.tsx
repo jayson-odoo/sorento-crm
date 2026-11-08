@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const push = vi.hoisted(() => vi.fn());
@@ -424,5 +424,39 @@ describe('StockInquiryDetail - Salesperson must create a New Product Application
     const want = { purchasing_response: 'ok', npa_requested: true };
     expect(updateInquiryMutateAsync).toHaveBeenCalledWith({ id: 'si-1', data: want });
     expect(updateAndReplyMutateAsync).toHaveBeenCalledWith({ id: 'si-1', data: want });
+  });
+});
+
+describe('StockInquiryDetail - the dialog is the shared PurchasingResponseDialog', () => {
+  it('renders the shared dialog: textarea, then the NPA checkbox and Attachments, then Cancel, Save only, Update & Reply', async () => {
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({
+        npa_requested: false,
+        purchasing_response: 'ok',
+        respond_inbox_url: 'https://inbox.example/1',
+      }),
+      isLoading: false,
+    });
+    renderPage();
+    const edit = await waitFor(() => {
+      const el = document.querySelector(
+        '[data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"]',
+      );
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    fireEvent.click(edit);
+    const dialog = await screen.findByTestId('purchasing-response-dialog');
+    const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const box = within(dialog).getByRole('textbox', { name: /purchasing response/i });
+    const check = within(dialog).getByRole('checkbox', { name: 'Salesperson must create a New Product Application' });
+    const attachments = within(dialog).getByText('Attachments');
+    const saveOnly = within(dialog).getByRole('button', { name: 'Save only' });
+    const reply = within(dialog).getByRole('button', { name: /update & reply/i });
+    expect(follows(box, check)).toBe(true);
+    expect(follows(check, attachments)).toBe(true);
+    expect(follows(attachments, saveOnly)).toBe(true);
+    expect(follows(saveOnly, reply)).toBe(true);
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
   });
 });
