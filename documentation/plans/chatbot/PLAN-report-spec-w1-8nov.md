@@ -1,6 +1,6 @@
 # PLAN: REPORT-SPEC-W1, golden corpus + harness (8 Nov 2026)
 
-Status: in progress, the corpus is green on main with crew's held lines for the 156 turns. Pending crew: parser_raw (flat parse) for 18.2 / 14c (asked for all 156), and the step-18 re-run x3 after the dev agent cap. UAC:
+Status: in progress, the corpus is green on main on crew's full recorded parse (156 turns). Pending crew: the step-18 re-run x3 on 289da7e5 after the dev agent cap. UAC:
 `report-spec-w1-acceptance-criteria.md`. Track: small fix (tests + data only, no app change, no migration, no auth/RBAC, no screen).
 
 Source: `ARCH-report-engine-7nov.md` sections 3.0 and 3.2 (W1) and 3.2.1 (re-record runbook).
