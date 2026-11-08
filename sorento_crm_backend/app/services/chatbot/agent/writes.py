@@ -971,6 +971,36 @@ def contact_in_scope(db, user_id: str, contact_pk: str) -> bool:
         )
 
 
+def _all_links(db, contact_pk: str) -> set[str]:
+    """The customer ids linked to the contact in EVERY company, whatever the user may see."""
+    from app.models.access import RespondContactCustomer
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        return {
+            str(c) for (c,) in db.query(RespondContactCustomer.customer_id)
+            .filter(RespondContactCustomer.contact_id == str(contact_pk))
+        }
+
+
+def _not_own_links(db, user_id: str, contact_pk: str) -> set[str]:
+    """The contact's links (every company) that are not the user's own accounts: active customers of the user's own
+    sales agents in the user's companies. Only ever counted or worded "another account", never named."""
+    from app.models.order import Customer
+
+    links = _all_links(db, contact_pk)
+    agents = _own_agent_ids(db, user_id)
+    if not links or not agents:
+        return links
+    with _users_scope(db, user_id):
+        own = {
+            str(c) for (c,) in db.query(Customer.id).filter(
+                Customer.id.in_(links), Customer.is_active.is_(True), Customer.sales_agent_id.in_(agents)
+            )
+        }
+    return links - own
+
+
 def _owner_types(codes) -> set[str]:
     from app.services.contact_access_sheet_service import TEMPLATE
 
@@ -1130,8 +1160,11 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         if c not in facts["links"]:
             raise AppException(status_code=422, message=f"{codes[c]} was not linked.", code="VALIDATION_ERROR")
     phone = contact.phone_number
+    own_scope = not _permitted(db, uid, CONTACT_EDIT)
     add: set[str] = set()
     remove: set[str] = set()
+    add_tags: list = []
+    remove_tags: list = []
     lines: list[str] = []
     template_codes = facts["template_codes"]
     if role == "owner" and not template_codes:
@@ -1155,10 +1188,37 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 raise AppException(
                     status_code=422, message="This contact's companies have no owner role to set.", code="VALIDATION_ERROR"
                 )
+            from app.services.contact_tag_service import owner_tag, tags_by_contact
+
+            # Business owner is the company's owner tag (DEALER-ACCESS-PORTAL C1, C2).
             if role == "owner":
-                add = {TEMPLATE["base_type"]} | _owner_types(lacking)
+                for code in lacking:
+                    tag = owner_tag(db, code)
+                    if tag is None:
+                        raise AppException(
+                            status_code=422, code="VALIDATION_ERROR",
+                            message=f"The \"{TEMPLATE['owner_tags'][code]}\" tag is missing; ask the office.",
+                        )
+                    add_tags.append(tag)
+                add = {TEMPLATE["base_type"]}
                 new_label = _role_label("owner", template_codes)
             else:
+                if own_scope and _not_own_links(db, uid, contact.id):
+                    raise AppException(
+                        status_code=422, code="VALIDATION_ERROR",
+                        message=(
+                            "This person also has access through another account; ask the office to change their "
+                            "level."
+                        ),
+                    )
+                from app.models.access import ContactTag
+
+                names = {TEMPLATE["owner_tags"][c].lower() for c in template_codes if c in TEMPLATE["owner_tags"]}
+                held = [t["id"] for t in tags_by_contact(db, [str(contact.id)]).get(str(contact.id), [])]
+                remove_tags = [
+                    t for t in (db.query(ContactTag).filter(ContactTag.id.in_(held)).all() if held else [])
+                    if t.name.lower() in names
+                ]
                 add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
                 new_label = _role_label("employee", [])
             lines.append(f"{_role_label(facts['role'], facts['owner_codes'])} -> {new_label}")
@@ -1166,11 +1226,14 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
             raise AppException(
                 status_code=422, message="This contact has no company, so its role cannot be set.", code="VALIDATION_ERROR"
             )
+    link = [c for c in link_ids if c not in facts["links"]]
+    if ai is None and unlink_ids and not (_all_links(db, contact.id) - set(unlink_ids)) and not link:
+        # The person's last link anywhere goes: AI replies go off in the same change (C4).
+        ai = False
     if ai is not None and ai != bool(contact.chatbot_allowed):
         lines.append(f"AI replies {'on' if contact.chatbot_allowed else 'off'} -> {'on' if ai else 'off'}")
     else:
         ai = None
-    link = [c for c in link_ids if c not in facts["links"]]
     lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink_ids]
     if not lines:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
@@ -1180,8 +1243,13 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     if facts["links"]:
         with _users_scope(db, uid):
             known = dict(db.query(Customer.id, Customer.customer_code).filter(Customer.id.in_(facts["links"])).all())
+    if own_scope:
+        # Another salesperson's account is never named, not even in the stored step or the audit row (C5).
+        others = _not_own_links(db, uid, contact.id)
+        known = {k: ("another account" if str(k) in others else v) for k, v in known.items()}
     return {
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
+        "add_tags": add_tags, "remove_tags": remove_tags,
         "link": link, "unlink": list(unlink_ids), "codes": codes, "lines": lines, "phone": phone,
         "link_codes": {**{str(k): v for k, v in known.items()}, **codes},
     }
@@ -1252,6 +1320,11 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
         if any(r is None for r in rows):
             raise AppException(status_code=422, message="An access type this role needs is missing.", code="VALIDATION_ERROR")
         contact.access_types = rows
+    if plan["add_tags"] or plan["remove_tags"]:
+        from app.services.contact_tag_service import change_tags
+
+        db.flush()  # the types above first: the tag recompute writes the same rows by SQL
+        change_tags(db, contact, add=plan["add_tags"], remove=plan["remove_tags"], actor_id=uid)
     if plan["ai"] is not None:
         contact.chatbot_allowed = plan["ai"]
     for customer_id in plan["link"]:

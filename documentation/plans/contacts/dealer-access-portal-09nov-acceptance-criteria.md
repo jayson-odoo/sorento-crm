@@ -15,11 +15,12 @@ A2. Own scope, customer codes: a code of an own account resolves; a code of an a
 A3. Own scope, customer names: an exact name of exactly one own account resolves; a name fitting several own accounts
     (phrase match) waits for the pick, and the candidates are own accounts only, even when other salespeople's
     accounts carry the same name. Never linked on a name alone when more than one fits.
-A4. Word fallback (both scopes): a written name that no account contains as a phrase offers, as a pick, the active
-    accounts (own accounts in own scope) of the row's company whose name shares at least one significant word (3+
-    letters, company suffix words like sdn, bhd, berhad, enterprise, trading, co, company, plt ignored), ordered by
-    the number of shared words then code, at most 10 (+ "more"). With no such account: `No customer named "<name>"
-    in your accounts.` (own scope) / today's text (broad).
+A4. Word fallback (own scope only): a written name that none of the user's own accounts contains as a phrase offers,
+    as a pick, the user's own active accounts of the row's company whose name contains the FIRST significant word of
+    the written name (3+ letters; company suffix words like sdn, bhd, berhad, enterprise, trading, co, company, plt
+    ignored), ordered by the number of shared significant words then code, at most 10 (+ "more"). Never linked
+    without the pick. With no such account: `No customer named "<name>" in your accounts.` Broad scope (`.edit`)
+    keeps today's matching (a generic word such as "hardware" would otherwise offer hundreds of accounts).
 A5. The whole 26 Oct template is written on confirm (Q2 a) whatever the confirming user could set by hand: a user
     holding only edit_own (no superadmin, no `inventory.stock.edit`, no `user_management.access_agents.edit`) grants a
     new phone and the contact ends with the company, the stock policy (availability, the template locations), the
@@ -70,6 +71,6 @@ D1. Migration grants `user_management.contacts.edit_own` to role `salesperson` (
 
 ## E. Not changed
 
-E1. `.edit` holders: grant, find and update behave as before except A4 (word fallback, offered picks only) and A5
-    (no facet is skipped any more) and A9.
+E1. `.edit` holders: grant, find and update behave as before except A5 (no facet is skipped any more), A6/C1/C2 (the
+    owner level is the tag) and A9.
 E2. The admin access sheet upload (`contact_access_sheet_service`) is unchanged.

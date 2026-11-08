@@ -273,7 +273,7 @@ def test_01_the_row_write_is_registered_and_batchable_and_the_batch_tool_exists(
 
     grant = writes.WRITES[GRANT]
     assert grant.batchable is True
-    assert grant.user_permission == EDIT
+    assert grant.user_permission == writes.CONTACT_SLUGS  # UAC A1 (DEALER-ACCESS-PORTAL): edit_own may grant too
     props = grant.schema["function"]["parameters"]["properties"]
     assert {"phone", "name", "role", "companies", "customer_codes", "customer_names"} <= set(props)
     assert batch.BATCH == BATCH
@@ -297,14 +297,18 @@ def test_01_the_batch_tool_is_offered_only_with_the_contacts_edit_slug_and_its_a
         if spec.get("type") == "array":
             assert "items" in spec  # Gemini refuses an array without items
 
+    # UAC A1 (DEALER-ACCESS-PORTAL): an edit_own holder is offered the grant too; neither slug, no batch tool.
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
+    assert GRANT in batch.batch_tool_schema(db, ctx_of(db, own))["function"]["parameters"]["properties"]["write"]["enum"]
+    neither = make_world(db, slugs=("sales.customer_asks.view",), superadmin=False)
+    assert batch.batch_tool_schema(db, ctx_of(db, neither)) is None
 
 
 def test_01_a_batch_call_without_the_slug_is_denied_and_proposes_nothing(db):
     from app.services.chatbot.agent import batch
 
-    w = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
+    # UAC A1 (DEALER-ACCESS-PORTAL): edit_own is allowed now, so the denied user holds neither contacts slug.
+    w = make_world(db, slugs=("sales.customer_asks.view",), superadmin=False)
     steps, out = [], None
     out = batch.propose(db, ctx_of(db, w), {"write": GRANT, "rows": [row_(fake_phone())]}, steps, seen_ids=set())
     assert out.status == "denied"
@@ -588,19 +592,21 @@ def test_04_more_than_fifty_rows_is_invalid_and_proposes_nothing(db):
 
 
 def test_05_a_user_who_cannot_set_companies_on_screen_gets_the_row_without_the_company(db):
+    # UAC A5 / Q2 a (DEALER-ACCESS-PORTAL): no facet is skipped any more; the whole template is written, company
+    # included. Employee row: the owner tag is A6's subject, not this test's.
     w = make_world(db, slugs=(EDIT,), superadmin=False)
     person = dealer(db, w, companies=())
 
-    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, role="employee", codes=[w.cust_a.customer_code])])
 
     assert skipped == []
-    assert "not applied" in steps[0]["summary"].lower()
+    assert "not applied" not in steps[0]["summary"].lower()
     from app.services.chatbot.agent import actions
 
     outcome = actions.confirm(db, w.respond_id, str(store(db, w, steps).id), via="console")
     assert outcome.status == "executed", outcome.steps
     after = state(db, person.phone_number)
-    assert after["companies"] == []
+    assert after["companies"] == [w.srt]
     assert after["links"] == [str(w.cust_a.id)]
 
 
@@ -652,7 +658,8 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
 
 
 def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
-    """B1: a superadmin linked user, an operator holding only the contacts slug: no company, stock or agents."""
+    """B1: a superadmin linked user, an operator holding only the contacts slug. UAC A5 / Q2 a (DEALER-ACCESS-PORTAL):
+    the whole template is written now, company, stock and enquiry agents included."""
     import dataclasses
 
     from app.models.access import ContactAgentAccess, StockVisibilityPolicy
@@ -666,18 +673,19 @@ def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
     person = dealer(db, w, companies=())
     ctx = dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
 
-    steps, skipped, _ = batch.propose_rows(db, ctx, GRANT, [row_(person.phone_number, codes=[w.cust_a.customer_code])], seen_ids=set())
-    assert skipped == [] and "not applied" in steps[0]["summary"].lower()
+    row = row_(person.phone_number, role="employee", codes=[w.cust_a.customer_code])
+    steps, skipped, _ = batch.propose_rows(db, ctx, GRANT, [row], seen_ids=set())
+    assert skipped == [] and "not applied" not in steps[0]["summary"].lower()
     action = store(db, w, steps)
     outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
 
     assert outcome.status == "executed", outcome.steps
     after = state(db, person.phone_number)
-    assert after["companies"] == []
+    assert after["companies"] == [w.srt]
     assert after["links"] == [str(w.cust_a.id)]
     with company_scope(db, None):
-        assert db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == person.id).count() == 0
-        assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == person.id).count() == 0
+        assert db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == person.id).count() == 1
+        assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == person.id).count() == 3
 
 
 def test_07_more_than_ten_customers_on_a_row_is_refused(db):

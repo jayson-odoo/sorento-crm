@@ -1,7 +1,8 @@
 """Contact tag catalog and tagging (CONTACT-TAGS S1).
 
 Tags are labels staff put on contacts. No code path here (or in sync, the external upsert or
-create_contact) assigns a tag on its own. `settings` is stored for S2 and not interpreted.
+create_contact) assigns a tag on its own; the agent's dealer access tools add or remove the two
+Business owner tags (`owner_tag`, `change_tags`) when a user sets that level.
 """
 from __future__ import annotations
 
@@ -32,6 +33,59 @@ def tags_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[d
     for contact_id, tag_id, name in rows:
         out.setdefault(str(contact_id), []).append({"id": str(tag_id), "name": name})
     return out
+
+
+def owner_tag(db: Session, company_code: str) -> Optional[ContactTag]:
+    """The active Business owner tag of the company (`TEMPLATE["owner_tags"]`, name matched case-insensitively);
+    None when it is missing or switched off."""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    name = TEMPLATE["owner_tags"].get(company_code)
+    if not name:
+        return None
+    return (
+        db.query(ContactTag)
+        .filter(func.lower(ContactTag.name) == name.lower(), ContactTag.is_active.is_(True))
+        .order_by(ContactTag.id)
+        .first()
+    )
+
+
+def change_tags(
+    db: Session, contact: RespondContact, *, add=(), remove=(), actor_id: Optional[str] = None
+) -> None:
+    """Add and remove tags on ONE contact inside the caller's transaction (no commit, no gates: the caller decided),
+    then recompute what the changed tags set (TAG-UNION). A tag already held is not added again; one not held is
+    not removed."""
+    from app.services import contact_tag_union
+
+    cid = str(contact.id)
+    held = {t["id"] for t in tags_by_contact(db, [cid]).get(cid, [])}
+    to_add = [t for t in dict.fromkeys(add) if str(t.id) not in held]
+    to_remove = [t for t in dict.fromkeys(remove) if str(t.id) in held]
+    if not (to_add or to_remove):
+        return
+    contact_tag_union.ensure_seeded(db, [contact])
+    for tag in to_remove:
+        db.execute(delete(respond_contact_tags).where(
+            and_(respond_contact_tags.c.contact_id == cid, respond_contact_tags.c.tag_id == str(tag.id))
+        ))
+    if to_add:
+        db.execute(
+            insert(respond_contact_tags),
+            [{"contact_id": cid, "tag_id": str(t.id), "created_by": actor_id} for t in to_add],
+        )
+    service = ContactTagService(db)
+    for tag in to_remove:
+        service._audit_membership(cid, tag.name, False, actor_id)
+    for tag in to_add:
+        service._audit_membership(cid, tag.name, True, actor_id)
+    db.flush()
+    changed = [*to_add, *to_remove]
+    contact_tag_union.recompute(
+        db, [contact], keys=_keys(t for t in changed if t.is_active), actor_id=actor_id,
+        trigger="Tags changed: " + ", ".join(sorted(t.name for t in changed)),
+    )
 
 
 class ContactTagService:

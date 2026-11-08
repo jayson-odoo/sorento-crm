@@ -42,6 +42,8 @@ LINK_SOURCE = "access_sheet"
 TEMPLATE: dict[str, Any] = {
     "companies": {"Sorento Sdn Bhd": "SRT", "Mocha Sdn Bhd": "MCH"},
     "owner_types": {"SRT": ["dealer", "cabana_dealer"], "MCH": ["mocha_dealer"]},
+    # The agent grants Business owner through these tags (seeded by `dap_0001_dealer_access`); the sheet does not.
+    "owner_tags": {"SRT": "Sorento Business Owner", "MCH": "Mocha Business Owner"},
     "base_type": "end_user",
     "locations": {"SRT": ["BRW", "MWH"], "MCH": ["HQ", "MOCHA-WH"]},
     "stock_mode": "availability",
