@@ -20,7 +20,6 @@ from app.services.chatbot import console_service
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import turn_runtime
 from app.services.chatbot.head import parser as parser_mod
-from app.services.chatbot.lanes.business import services as business_services
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.integration_service import RespondClient
 
@@ -112,7 +111,7 @@ class TestContactWithNoRealTurnGetsAReply:
         assert row.is_test is True
         assert row.envelope["synthetic_envelope"] is True
         assert row.envelope["is_test"] is True and row.envelope["test_run_id"]
-        # No channel block: the WhatsApp phone gate (engine.py `normalise_channel(...)`) stays off.
+        # Shape check: the synthetic base claims no channel source.
         assert "channel" not in row.envelope["message"]
         assert row.envelope["contact"]["phone"] == "+60000000011"
         assert row.envelope["contact"]["firstName"] == "ZZTSynth"
@@ -189,7 +188,9 @@ class TestBorrowRule:
 
 class TestSyntheticAnswersMatchBorrowed:
     """The facts that decide an answer are read from the DB by contact id, not off the
-    envelope: stock allowed, the contact's customer links, and its companies (two here).
+    envelope: stock allowed (the profile read) and its companies (two here, the company
+    scope read), both spied on as the turn makes them. The customer links seeded here
+    resolve inside that same company scope.
     The same turn on the synthetic base and, once a real turn exists, on the borrowed one
     must read the same facts and give the same answer."""
 
@@ -215,9 +216,8 @@ class TestSyntheticAnswersMatchBorrowed:
         db.commit()
         monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: STOCK_ASK)
 
-        reads: dict[str, list[Any]] = {"scope": [], "profile": [], "customers": []}
+        reads: dict[str, list[Any]] = {"scope": [], "profile": []}
         real_scope, real_profile = engine_mod._contact_company_scope, turn_runtime.load_profile
-        real_customers = business_services.customer_scope
 
         def spy_scope(factory, cid):
             out = real_scope(factory, cid)
@@ -236,12 +236,7 @@ class TestSyntheticAnswersMatchBorrowed:
             for v in reads.values():
                 v.clear()
             body = _post(client, "check stock srtwc286")
-            seen = {k: list(v) for k, v in reads.items()}
-            # The customer links, read the way the turn reads them (by contact id).
-            seen["customers"] = [
-                real_customers(session_factory(), str(CONTACT_ID), business_services.fetch_space_id(session_factory()))
-            ]
-            return body, seen
+            return body, {k: list(v) for k, v in reads.items()}
 
         synthetic, synthetic_reads = run()
         _seed_webhook_turn(session_factory)

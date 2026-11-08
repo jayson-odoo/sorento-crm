@@ -173,9 +173,10 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
 def _contact_row(db: Session, contact_respond_id: str) -> Any:
     """`(phone_number, first_name)` of this respond id's `respond_contacts` row, or None.
 
-    One respond id can sit on several rows (one per workspace), so the row is picked the
-    way `turn_runtime._profile_rows` resolves the profile: the default workspace's row
-    first, then a NULL-workspace row, then any other, by id so the pick is stable.
+    One respond id can sit on several rows (one per workspace). The first two tiers are
+    `turn_runtime._profile_rows`'s (the default workspace's row, then a NULL-workspace
+    row); the third, any other workspace's row by id, is the console's own, so a contact
+    in another workspace can still be simulated (its profile then fails open there).
     """
     from app.services.chatbot.head.access import default_space_id
 
@@ -191,12 +192,15 @@ def _contact_row(db: Session, contact_respond_id: str) -> Any:
     ).first()
 
 
-def _synthetic_envelope(contact_respond_id: str, *, phone: str | None, first_name: str | None) -> dict[str, Any]:
+def _synthetic_envelope(
+    contact_respond_id: str, *, phone: str | None, first_name: str | None
+) -> dict[str, Any]:
     """A base envelope for a contact that never sent a real message (CONSOLE-SYNTH-ENVELOPE).
 
     The console media path's shape: contact id, phone, first name and
-    `is_human_intervened=false`. No `message.channel`, so the WhatsApp phone gate stays off.
-    Company, customer links and stock access come from the DB by contact id, not from the
+    `is_human_intervened=false`, and no `message.channel` (nothing claims a source). The
+    WhatsApp phone link gate cannot fire: it only acts on a contact with no
+    `respond_contacts` row, and a synthetic base exists only when there is one. Company, customer links and stock access come from the DB by contact id, not from the
     envelope, so the answer matches a borrowed envelope's. Built fresh for every turn and
     only ever passed through `_build_envelope`, which makes it a dry run.
     """

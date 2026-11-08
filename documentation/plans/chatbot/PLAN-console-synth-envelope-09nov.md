@@ -14,13 +14,15 @@ message and types a question. Today the console answers 404 `CHATBOT_CONSOLE_NO_
 - `console_service._borrow_envelope`: when no real (`ingress='webhook'`, `is_test=false`)
   row exists but a `respond_contacts` row does, return a fresh synthetic base envelope in the
   media-path shape (contact id, phone, firstName, `custom_fields` is_human_intervened=false),
-  with NO `message.channel` (the WhatsApp phone gate stays off) and `synthetic_envelope=true`.
+  with NO `message.channel` and `synthetic_envelope=true`. The WhatsApp phone link gate
+  cannot fire: it acts only on a contact with no `respond_contacts` row.
 - 404 stays only when there is no `respond_contacts` row at all.
 - Never borrow a console/test row (S6 rule); synthetic base is built fresh every turn.
 - The base still goes through `_build_envelope`, so `is_test` / `test_run_id` keep the
   turn a dry run. Nothing is sent.
-- Phone lookup filtered to the default workspace (duplicate `respond_io_id` rows across
-  workspaces made `.scalar()` pick an arbitrary one).
+- Phone lookup prefers the default workspace's row, then a NULL-workspace row, then any
+  other by id (duplicate `respond_io_id` rows across workspaces made `.scalar()` pick an
+  arbitrary one).
 - The marker surfaces in the trace summary and the console response
   (`synthetic_envelope`), and the console shows a small badge
   "simulated contact, no real WhatsApp history".
