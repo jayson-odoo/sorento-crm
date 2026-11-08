@@ -29,6 +29,7 @@ class CertificateLinkIds(BaseModel):
     ids: List[str] = Field(default_factory=list, max_length=1000)
 
 
+# ai: not-for-assistant an admin data-quality worklist of certificate-product link verdicts, worked through by a person with bulk Confirm and Remove; the assistant already reads which products a certificate covers through the certificates entity
 @router.get("/")
 def list_certificate_links(
     page: int = Query(1, ge=1),
