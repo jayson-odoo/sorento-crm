@@ -115,6 +115,11 @@ PO_TOOL = "crm_procurement_po_placed_list"
 STEP19_EXPECT: dict[str, Any] = {"route_params": {"supplier_ids": ["400-L005"]}}
 
 
+def _set(ask: Any) -> Any:
+    """A report_ask object with its empty slots (null, []) dropped: the recorded row keeps only the set ones."""
+    return {k: v for k, v in ask.items() if v not in (None, [])} if isinstance(ask, dict) else ask
+
+
 def _live_rows() -> tuple[list[dict[str, Any]], bool]:
     from tests.chatbot.test_report_filter_all_live import PARSER_MISS
 
@@ -147,6 +152,8 @@ def _live_rows() -> tuple[list[dict[str, Any]], bool]:
             row["skip"] = skip
         if (head, run, step) in PARSER_MISS:
             row["xfail"] = f"{XFAIL_W3}: the parser kept company Sorento beside ALL in every list (PARSER_MISS)"
+        if r.get("parser_raw") and _set(r["parser_raw"].get("report_ask")) != _set(r.get("report_ask")):
+            raise ValueError(f"{head} r{run} step {step}: parser_raw.report_ask differs from the row's report_ask")
         if r.get("parser_raw"):  # the whole recorded parse: replayed as it is (replay.py's recorded-parse mode)
             row["parser_raw"] = r["parser_raw"]
             if step == "19" and head != SEED_HEAD:

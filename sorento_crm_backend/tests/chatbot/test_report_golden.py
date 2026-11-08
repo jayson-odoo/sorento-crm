@@ -250,7 +250,15 @@ def _say(rbot, row: dict[str, Any]) -> dict[str, Any]:
         text, calls = rbot.say(_verdict(setup), "setup: the held report of the gold row")
         assert _ran(calls), f"{_id(row)} setup did not run: {text!r}"
     before = len(rbot.blocks)
-    verdict = row["parser_raw"] if row.get("parser_raw") else _verdict(row["report_ask"] or {}, *_entities(row), **flat)
+    if row.get("parser_raw"):  # the whole recorded parse, as it is (replay.py's recorded-parse mode)
+        verdict = row["parser_raw"]
+        if parse.get("pick_option"):  # a recorded pick is a position: it must name the same option in this world
+            picked = (verdict.get("open_question_answer") or {}).get("picked") or verdict.get("reference_positions")
+            assert picked and list(picked)[:1] == flat["reference_positions"], (
+                f"{_id(row)}: the recorded pick {picked} is not option {parse['pick_option']!r} "
+                f"(position {flat['reference_positions']}) in the harness world")
+    else:
+        verdict = _verdict(row["report_ask"] or {}, *_entities(row), **flat)
     text, calls = rbot.say(verdict, row["text"])
     block = rbot.blocks[before] if len(rbot.blocks) > before else ""
     held = [ln for ln in block.splitlines() if ln.startswith(HELD_PREFIX)]
