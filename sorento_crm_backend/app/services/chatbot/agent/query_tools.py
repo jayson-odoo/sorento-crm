@@ -162,9 +162,13 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
     items = data.get("groups") if "groups" in data else data.get("rows")
     entity = ENTITIES.get(str(data.get("entity")))
     least = entity.card_min_rows if entity is not None and entity.card_min_rows else CARD_MIN_ROWS + 1
+    distance = _is_distance(data)
+    if distance:
+        # One subject is a table too (crew live x3 W4: one row was left to the model, "were not retrieved").
+        least = 1
     if not isinstance(items, list) or len(items) < least:
         return None
-    title = entity.label if entity is not None else "Results"
+    title = DISTANCE_TITLE if distance else (entity.label if entity is not None else "Results")
     if "groups" in data:
         keys = [c["label"] for c in data.get("columns") or [] if c.get("group")]
         title = f"{title} by {', '.join(k.lower() for k in keys)}" if keys else title
@@ -426,6 +430,80 @@ def _names_a_subject(entity_key: str, args: dict) -> bool:
     return False
 
 
+# ------------------------------------------------------------------ distance to the next tier (AGENT-COMMISSION-WA)
+
+#: The entity that answers "how far from the next tier" (`assistant_registry.sales`, `NEXT_TIER_FIELDS`).
+NEXT_TIER_ENTITY = "agent_target_summary"
+#: The columns of every distance answer, whatever the model asked for (crew live x3 on 0c5c7b78: X2 run 3 and W4
+#: run 2 dropped them). The always-shown TGT and payout account come with them (`EntityDef.always_fields`).
+NEXT_TIER_COLUMNS = (
+    "owner_kind", "to_next_tier", "next_tier", "next_tier_at", "next_tier_payout", "next_tier_gain", "payout",
+)
+DISTANCE_TITLE = "Distance to the next tier"
+#: The one line of a distance question nothing in the window can answer (crew live x3, W6).
+NO_LADDER_SUFFIX = "has a commission ladder this period."
+_NEXT_TIER_SAID = re.compile(
+    r"\bnext\s+(?:commission\s+)?tier\b"
+    r"|\b(?:how\s+far|closest|nearest|to\s+go)\b.*\btier\b"
+    r"|\btier\b.*\b(?:to\s+go|away)\b"
+)
+_AGENTS_SAID = re.compile(r"\b(?:agents|salespeople|salesmen|salespersons)\b")
+_OTHER_KINDS_SAID = re.compile(r"\b(?:dealers?|teams?|customers?)\b")
+
+
+def next_tier_question(user_text: str | None) -> bool:
+    """Is the user asking how far someone is from the next tier, or what it would pay."""
+    return bool(_NEXT_TIER_SAID.search(" ".join(str(user_text or "").split()).lower()))
+
+
+def next_tier_args(args: Any, user_text: str | None) -> Any:
+    """A distance question's `agent_target_summary` call, shaped by code before it runs (crew live x3 on 0c5c7b78):
+    one row per subject (no regroup), the next-tier columns whatever the model listed, ranked by what is still to
+    sell, and only agents when the user asked about agents and named no one. Any other call is returned as it is."""
+    if not isinstance(args, dict) or args.get("entity") != NEXT_TIER_ENTITY or not next_tier_question(user_text):
+        return args
+    out = {k: v for k, v in args.items() if k not in ("group_by", "aggregates", "fields", "sort")}
+    out["fields"] = list(NEXT_TIER_COLUMNS)
+    out["sort"] = [{"field": "to_next_tier", "dir": "asc"}]
+    said = " ".join(str(user_text or "").split()).lower()
+    filters = [f for f in out.get("filters") or [] if isinstance(f, dict)]
+    if (
+        _AGENTS_SAID.search(said) and not _OTHER_KINDS_SAID.search(said) and not _names_a_subject(NEXT_TIER_ENTITY, out)
+        and not any(f.get("field") == "owner_kind" for f in filters)
+    ):
+        out["filters"] = [*filters, {"field": "owner_kind", "op": "eq", "value": "agent"}]
+    return out
+
+
+def _is_distance(data: dict) -> bool:
+    return data.get("entity") == NEXT_TIER_ENTITY and any(
+        c.get("key") == "to_next_tier" for c in data.get("columns") or []
+    )
+
+
+def _distance_reply(kept: list[dict]) -> str | None:
+    """A distance question's whole reply, by code: the last distance call's table, alone (no lead line about the
+    payout, no other entity's table), or its one "no commission ladder" line. None when there is no distance call
+    to answer from (the reply is then shaped as any other)."""
+    from app.services.assistant_registry.sales import NEXT_TIER_FIELDS
+
+    calls = [
+        e for e in kept
+        if (e.get("args") or {}).get("entity") == NEXT_TIER_ENTITY
+        and NEXT_TIER_FIELDS.keys() & set((e.get("args") or {}).get("fields") or [])
+    ]
+    if not calls:
+        return None
+    last = calls[-1]
+    data = last.get("data") or {}
+    named_none = data.get("rows") == [] and _names_a_subject(NEXT_TIER_ENTITY, last.get("args") or {})
+    for note in _sentences(data.get("scope_note") or ""):
+        # A name that matched nothing is answered as not found, not as "no ladder".
+        if note.endswith(NO_LADDER_SUFFIX) and not named_none:
+            return note
+    return last.get("display") or None
+
+
 def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
@@ -457,6 +535,10 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) ->
         kept.append(e)
         if e.get("display"):
             per_entity[entity] = e["display"]
+    if next_tier_question(user_text):
+        answer = _distance_reply(kept)
+        if answer:
+            return _ISO_DATE.sub(_dmy, answer)
     text = _year_as_range(text, kept)
     if per_entity:
         cards = list(per_entity.values())

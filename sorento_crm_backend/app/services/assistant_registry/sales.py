@@ -404,6 +404,11 @@ def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     # Only when the question is about the next tier (one of its fields asked, filtered or sorted on).
     asked = used & NEXT_TIER_FIELDS.keys()
     lines = [_next_line(r["owner"], live) for r in rows for live in r.get("_live", [])] if asked else []
+    if asked and not lines:
+        # Nothing shown has a commission target: one line says so (crew live x3 W6, `query_tools._distance_reply`
+        # answers with it alone), never a ranking of something else.
+        who = "agent target" if all(r["owner_kind"] == "agent" for r in rows) else "target"
+        parts.insert(0, f"No {who} has a commission ladder this period.")
     if lines:
         parts.append("Next tier: " + " ".join(lines[:NEXT_LINES]))
         if len(lines) > NEXT_LINES:
@@ -429,12 +434,18 @@ def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to
                 continue
             if r["start_date"] > date_to or r["end_date"] < date_from:
                 continue
+            # A target of 0 has no target, achieved or % to show, said in words as on the payout summary (crew
+            # live x3 on 0c5c7b78, X3: "achieved 9.92M" printed for a target of 0).
+            zero = r["target_value"] is not None and r["target_value"] <= 0
             rows.append({
                 "id": r["target_id"], "target_id": r["target_id"], "target_no": r["target_no"],
                 "subject": r["subject_label"], "subject_kind": subject, "period": r["start_date"],
-                "start_date": r["start_date"], "end_date": r["end_date"], "target_value": r["target_value"],
-                "achieved_value": r["achieved_value"], "achieved_pct": r["achieved_pct"],
+                "start_date": r["start_date"], "end_date": r["end_date"],
+                "target_value": None if zero else r["target_value"],
+                "achieved_value": None if zero else r["achieved_value"],
+                "achieved_pct": None if zero else r["achieved_pct"],
                 "reached": not _below(r["achieved_pct"]),
+                "_empty": dict.fromkeys(("target_value", "achieved_value", "achieved_pct"), ZERO_TARGET) if zero else {},
             })
             if len(rows) > limit:
                 from app.services.assistant_registry.query import QueryRefused

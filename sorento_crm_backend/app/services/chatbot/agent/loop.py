@@ -1676,6 +1676,11 @@ def _run(
 
                         asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
                         args, self_note = strip_self_agent(args, asker, text)
+                    if name == "crm_query":
+                        # A distance-to-the-next-tier question's columns and ranking, decided by code (W-A shape).
+                        from app.services.chatbot.agent.query_tools import next_tier_args
+
+                        args = next_tier_args(args, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
