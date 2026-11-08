@@ -53,6 +53,12 @@ _HEADER_SCAN_ROWS = 20
 _CELL_CHARS = 200
 #: Raw rows one sheet is scanned for, so a sheet of a million styled blanks cannot hold a request.
 _SCAN_ROWS = 100_000
+#: Columns and sheets read, whatever a workbook declares about itself (R2).
+_MAX_COLUMNS = 100
+_MAX_SHEETS = 20
+#: Ceilings in code that an edit of the type row cannot lift (R6).
+MAX_FILE_MB = 10
+MAX_DRAFTS = 5
 
 _MIME = {
     "png": "image/png",
@@ -102,6 +108,7 @@ def ensure_attachment_type(db: Session) -> AttachmentType:
             allowed_extensions=ATTACHMENT_EXTENSIONS,
             max_file_size_mb=10,
             max_count_per_entity=5,
+            triggers_n8n_webhook=False,
         )
         db.add(row)
         db.flush()
@@ -220,18 +227,24 @@ def _xls_rows(book, sheet) -> Iterable[list[Any]]:
         yield out
 
 
+def _narrow(rows: Iterable[Iterable[Any]]) -> Iterable[list[Any]]:
+    for row in rows:
+        yield list(row)[:_MAX_COLUMNS]
+
+
 def _sheets(data: bytes, ext: str):
-    """`(name, rows iterator)` per sheet in workbook order, opened lazily; a csv is one unnamed sheet."""
+    """`(name, rows iterator)` per sheet in workbook order (the first `_MAX_SHEETS`), opened lazily, each
+    row at most `_MAX_COLUMNS` wide; a csv is one unnamed sheet."""
     if ext == "csv":
-        yield None, _csv_rows(data)
+        yield None, _narrow(_csv_rows(data))
         return
     if ext == "xls":
         import xlrd
 
         book = xlrd.open_workbook(file_contents=data, on_demand=True)
         try:
-            for sheet in book.sheets():
-                yield sheet.name, _xls_rows(book, sheet)
+            for sheet in book.sheets()[:_MAX_SHEETS]:
+                yield sheet.name, _narrow(_xls_rows(book, sheet))
         finally:
             book.release_resources()
         return
@@ -239,8 +252,11 @@ def _sheets(data: bytes, ext: str):
 
     wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     try:
-        for ws in wb.worksheets:
-            yield ws.title, ws.iter_rows(values_only=True)
+        for ws in wb.worksheets[:_MAX_SHEETS]:
+            # A read-only sheet trusts its declared `<dimension>`; a forged A1:XFD1048576 would pad every row.
+            if hasattr(ws, "reset_dimensions"):
+                ws.reset_dimensions()
+            yield ws.title, _narrow(ws.iter_rows(values_only=True))
     finally:
         wb.close()
 
@@ -276,7 +292,7 @@ def list_sheets(data: bytes, ext: str) -> list[dict[str, Any]]:
 def render_sheet_block(filename: str, read: SheetRead, *, is_csv: bool) -> str:
     shown = len(read.rows)
     count = f"first {shown} of {read.total_rows} rows" if read.total_rows > shown else f"{read.total_rows} rows"
-    where = "" if is_csv else f', sheet "{read.name}"'
+    where = "" if is_csv else f', sheet "{_one_line(read.name or "")}"'
     first = f'Attached file "{_one_line(filename)}"{where}: {count}.'
     if not read.header_found and read.total_rows:
         first += " Note: no header row found, columns are numbered."
@@ -289,7 +305,8 @@ def render_sheet_block(filename: str, read: SheetRead, *, is_csv: bool) -> str:
 
 
 def _one_line(text: str) -> str:
-    return " ".join(str(text or "").split())
+    """A name flattened to one line with no double quote, so it cannot break out of a block header."""
+    return " ".join(str(text or "").split()).replace('"', "'")
 
 
 # --------------------------------------------------------------------------- #
@@ -417,20 +434,46 @@ def thumb_url_of(att: Attachment) -> str | None:
     return _signed(rendition_key(att.file_path, "thumb"), att.storage_provider)
 
 
-def create_draft(db: Session, *, user_id: str, filename: str, data: bytes) -> dict[str, Any]:
-    """C1 to C8 and the store. `data` is at most the type's limit + 1 bytes (the route bounds the read)."""
+def size_limit_bytes(atype: AttachmentType) -> int:
+    """The type row's size limit, never above the 10 MB ceiling and never off (R6)."""
+    mb = atype.max_file_size_mb
+    return (min(mb, MAX_FILE_MB) if mb and mb > 0 else MAX_FILE_MB) * 1024 * 1024
+
+
+def _check_limits(db: Session, atype: AttachmentType, user_id: str, size: int, ext: str) -> None:
+    """C1, C2, C8 against the type row and the ceilings in code, answering 422."""
+    allowed = {
+        e.strip().lower().lstrip(".") for e in (atype.allowed_extensions or ATTACHMENT_EXTENSIONS).split(",") if e.strip()
+    }
+    if ext not in allowed:
+        raise _refuse(f"Unsupported file type. Allowed: {', '.join(sorted(allowed))}.", "VALIDATION_ERROR")
+    limit = size_limit_bytes(atype)
+    if size > limit:
+        raise _refuse(f"File exceeds {limit // (1024 * 1024)} MB limit.", "VALIDATION_ERROR")
+    cap = min(atype.max_count_per_entity, MAX_DRAFTS) if atype.max_count_per_entity is not None else MAX_DRAFTS
+    held = (
+        db.query(EntityAttachmentLink)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(
+            EntityAttachmentLink.entity_type == DRAFT_ENTITY,
+            EntityAttachmentLink.entity_id == str(user_id),
+            Attachment.attachment_type_id == atype.id,
+        )
+        .count()
+    )
+    if held >= cap:
+        raise _refuse(f"Attachment limit reached ({cap}).", "VALIDATION_ERROR")
+
+
+def create_draft(
+    db: Session, *, user_id: str, filename: str, data: bytes, atype: AttachmentType | None = None
+) -> dict[str, Any]:
+    """C1 to C8 and the store. `data` is at most the size limit + 1 bytes (the route bounds the read)."""
     name = (filename or "").strip()
     ext = extension_of(name)
     if ext == "xlsm":
         raise _refuse(MACRO_MESSAGE, "macro_workbook")
-    atype = ensure_attachment_type(db)
-    service = EntityAttachmentService(db)
-    try:
-        service.check_quota(atype, DRAFT_ENTITY, str(user_id), len(data), ext)
-    except AppException as exc:
-        if exc.status_code == 400:  # the quota check's own status; this surface answers 422
-            raise _refuse(exc.message, exc.code or "attachment_refused") from exc
-        raise
+    _check_limits(db, atype or ensure_attachment_type(db), str(user_id), len(data), ext)
     facts = inspect_upload(ext, data)
     mime = _MIME[ext]
     created = create_response_attachment(
@@ -443,6 +486,7 @@ def create_draft(db: Session, *, user_id: str, filename: str, data: bytes) -> di
         uploaded_by=str(user_id),
         attachment_type_code=ATTACHMENT_TYPE_CODE,
         key_prefix=f"ai_assistant/{user_id}",
+        check_quota=False,
     )
     att = db.get(Attachment, created["attachment_id"])
     return {
@@ -570,6 +614,11 @@ class PreparedFiles:
         return bool(self.drafts)
 
     @property
+    def file_text(self) -> str:
+        """One block per file in order, a blank line between: quoted data for the model (R3)."""
+        return "\n\n".join(self.blocks)
+
+    @property
     def first_name(self) -> str:
         return self.drafts[0].attachment.original_filename if self.drafts else ""
 
@@ -650,11 +699,6 @@ def prepare(drafts: list[Draft], *, provider_name: str) -> PreparedFiles:
     return out
 
 
-def agent_text(typed: str, prepared: PreparedFiles) -> str:
-    """T6: the typed text, then one block per file, a blank line between."""
-    return "\n\n".join(part for part in [(typed or "").strip(), *prepared.blocks] if part)
-
-
 def move_to_conversation(db: Session, prepared: PreparedFiles, conversation_id: str) -> None:
     """T5: the files stop being drafts and belong to the thread."""
     for d in prepared.drafts:
@@ -667,6 +711,7 @@ def with_urls(db: Session, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """T11: each stored file field plus a fresh `url` (and `thumb_url` for an image). Never written back."""
     ids = [i for i in (_as_uuid(f.get("id")) for f in files if isinstance(f, dict)) if i]
     atts = {str(a.id): a for a in db.query(Attachment).filter(Attachment.id.in_(ids)).all()} if ids else {}
+    atts = {i: a for i, a in atts.items() if not a.is_deleted}
     out = []
     for f in files:
         item = dict(f) if isinstance(f, dict) else {}

@@ -26,12 +26,21 @@ def upgrade() -> None:
     ).first()
     if exists:
         return
+    # No n8n intake: a draft would otherwise show in the upload-activity list and sit on Processing.
+    has_webhook = bind.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'attachment_types' AND column_name = 'triggers_n8n_webhook'"
+        )
+    ).first()
+    webhook_col = ", triggers_n8n_webhook" if has_webhook else ""
+    webhook_val = ", false" if has_webhook else ""
     # `id` is explicit: a create_all-built schema has no server default for it.
     bind.execute(
         sa.text(
             "INSERT INTO attachment_types "
-            "(id, code, type_name, description, allowed_extensions, max_file_size_mb, max_count_per_entity) "
-            "VALUES (gen_random_uuid(), :code, :name, :description, :exts, 10, 5)"
+            f"(id, code, type_name, description, allowed_extensions, max_file_size_mb, max_count_per_entity{webhook_col}) "
+            f"VALUES (gen_random_uuid(), :code, :name, :description, :exts, 10, 5{webhook_val})"
         ),
         {
             "code": CODE,

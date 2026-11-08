@@ -43,7 +43,7 @@ from app.services.chatbot.console_service import (
 )
 from app.services.chatbot.contracts import PANEL_INGRESS, Envelope
 from app.services.chatbot.engine import run_turn, split_marked_message, split_send_actions
-from app.services.chatbot.router import RouteDecision, decide_route
+from app.services.chatbot.router import RouteDecision, daily_cap_reached, decide_route, eligible_contact
 from app.services.chatbot_reply_copy import CHATBOT_REPLY_AI_DID_NOT_ANSWER
 from app.services import rate_limit
 from app.services.company_scope_resolver import resolve_user_active_company
@@ -65,6 +65,7 @@ PAGE_SEARCH_CHARS = 500
 PANEL_MESSAGES_PER_MINUTE = 20
 TOO_MANY_REPLY = "Too many messages in a short time. Try again in a minute."
 NOT_READABLE_HERE = "I can't read files for you here."
+DAILY_CAP_REPLY = "You have used today's assistant turns. Try again tomorrow."
 BUSY_REPLY = "I am still working on your earlier message in this chat. Try again in a moment."
 
 
@@ -128,6 +129,16 @@ def run_panel_turn(
         real_user_id=real_user_id,
     )
     with staff_principal.acting_as(principal):
+        if files:
+            # A file turn skips the classifier: it only has to be allowed and under the day's cap (R4).
+            contact, _user, refusal = eligible_contact(db, principal.key)
+            if refusal is not None:
+                return PanelTurnResult(reply_text=NOT_READABLE_HERE, route="chat", status="refused")
+            if daily_cap_reached(db, principal.key, contact):
+                return PanelTurnResult(reply_text=DAILY_CAP_REPLY, route="chat", status="refused")
+            return _run_agent_side(
+                db, principal, text.strip(), RouteDecision("agent", "attachment"), page_note, files=files
+            )
         decision = decide_route(
             db,
             contact_respond_id=principal.key,
@@ -135,15 +146,6 @@ def run_panel_turn(
             session_vars=get_for_panel_thread(db, conversation_id=principal.conversation_id),
             has_media=False,
         )
-        if files:
-            if decision.reason.startswith("not_eligible"):
-                return PanelTurnResult(
-                    reply_text=NOT_READABLE_HERE, route="chat", status="refused", route_decision=decision.as_response()
-                )
-            return _run_agent_side(
-                db, principal, panel_files.agent_text(text, files), RouteDecision("agent", "attachment"), page_note,
-                files=files,
-            )
         if decision.side == "agent":
             return _run_agent_side(db, principal, text, decision, page_note)
     envelope = _envelope(principal, user, text, message_id or f"panel-{uuid.uuid4()}")
@@ -227,7 +229,7 @@ def _run_agent_side(
         after = "\n\n".join(part for part in (after, page_note) if part)
         extra: dict[str, Any] = {}
         if files:
-            extra = {"files": files.envelope_files}
+            extra = {"files": files.envelope_files, "file_text": files.file_text}
             if files.images:
                 extra["images"] = files.images
         result = agent_loop.run_agent_turn(

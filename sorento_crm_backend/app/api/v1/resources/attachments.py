@@ -762,7 +762,7 @@ def get_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
@@ -1574,7 +1574,7 @@ def update_attachment(
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         # Both ends of an edit: the entity the file is on now, and the one it is re-pointed to.
-        current = service.get_attachment(attachment_id)
+        current = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         assert_can_write_existing(db, current.entity_type, current.entity_id, current_user)
         requested = attachment_data.model_dump(exclude_unset=True)
         if "entity_type" in requested or "entity_id" in requested:
@@ -1625,10 +1625,10 @@ def download_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         
         # Get file content from S3
-        file_content = service.get_file_content(attachment_id)
+        file_content = service.get_file_content_for(attachment)
         
         # Return file as streaming response
         return Response(
@@ -1661,7 +1661,7 @@ def get_attachment_metadata(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
@@ -1683,7 +1683,7 @@ def get_attachment_preview_url(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         file_path = getattr(attachment, "file_path", None)
         if (variant or "").strip().lower() == "thumb":
             thumb_path = getattr(attachment, "thumbnail_path", None)
@@ -1927,7 +1927,7 @@ def read_attachment_again(
     from app.services import rate_limit
 
     validate_uuid_path(attachment_id, resource="Attachment")
-    attachment = AttachmentService(db).get_attachment(attachment_id)
+    attachment = AttachmentService(db).get_attachment(attachment_id, viewer_id=str(current_user["id"]))
     reason = knowledge_service.read_block_reason(db, attachment)
     if reason:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
@@ -1955,7 +1955,7 @@ def resubmit_attachment_webhook(
         validate_uuid_path(attachment_id, resource="Attachment")
         # Verify attachment exists (ORM row; file_path is stable base URL or S3 key from DB)
         attachment_service = AttachmentService(db)
-        attachment = attachment_service.get_attachment(attachment_id)
+        attachment = attachment_service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
 
         # An untyped attachment is never sent to n8n (owner rule, 2 Oct 2026), even
         # one with a log from before that rule; say so rather than send it.

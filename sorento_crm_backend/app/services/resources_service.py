@@ -20,6 +20,7 @@ from app.services.error_handler import (
 )
 from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
+from app.services.entity_attachment_service import exclude_private_types, is_private_to_others
 from app.utils.multi_value import multi_values
 
 
@@ -879,7 +880,7 @@ class AttachmentService:
         ):
             return None, entity_buckets
 
-        q = self.db.query(Attachment)
+        q = exclude_private_types(self.db.query(Attachment))
         if with_joinedload:
             q = q.options(joinedload(Attachment.attachment_type))
         if attachment_ids:
@@ -1459,19 +1460,20 @@ class AttachmentService:
             "recursive": recursive,
         }
 
-    def _get_attachment_any(self, attachment_id: str):
-        """Get attachment by ID (active or archived)."""
+    def _get_attachment_any(self, attachment_id: str, viewer_id: Optional[str] = None):
+        """Get attachment by ID (active or archived). A file of a private type (the AI panel's) is a 404 to
+        anyone but its uploader, and to a caller that names no viewer."""
         from sqlalchemy.orm import joinedload
         attachment = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         ).filter(Attachment.id == attachment_id).first()
-        if not attachment:
+        if not attachment or is_private_to_others(attachment, viewer_id):
             raise handle_not_found("Attachment", attachment_id)
         return attachment
 
-    def get_attachment(self, attachment_id: str):
+    def get_attachment(self, attachment_id: str, viewer_id: Optional[str] = None):
         """Get an attachment by ID (active or archived)."""
-        return self._get_attachment_any(attachment_id)
+        return self._get_attachment_any(attachment_id, viewer_id)
 
     def _active_scope_company_id(self) -> Optional[str]:
         """The caller's single active company, or None (multi/all-companies scope)."""

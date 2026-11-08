@@ -311,9 +311,10 @@ def upload_ai_assistant_attachment(
     uid = str(user["id"])
     if not rate_limit.hit("panel_upload", uid, limit=panel_files.UPLOADS_PER_MINUTE, window_seconds=60).allowed:
         raise AppException(429, "Too many uploads in a short time. Try again in a minute.", code="RATE_LIMITED")
-    limit = (panel_files.ensure_attachment_type(db).max_file_size_mb or 10) * 1024 * 1024
+    atype = panel_files.ensure_attachment_type(db)
+    limit = panel_files.size_limit_bytes(atype)
     data = file.file.read(limit + 1)  # never buffer more than the limit plus the byte that proves it
-    return panel_files.create_draft(db, user_id=uid, filename=file.filename or "", data=data)
+    return panel_files.create_draft(db, user_id=uid, filename=file.filename or "", data=data, atype=atype)
 
 
 @router.delete("/ai-assistant/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)

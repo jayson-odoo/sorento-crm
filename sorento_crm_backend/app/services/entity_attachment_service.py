@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 # documentation/plans/PLAN-response-attachments-and-portal-nav.md decision D9.
 RESPONSE_ATTACHMENT_TYPE_CODE = "response_attachment"
 
+#: Types whose files belong to one person (the AI panel's drafts and sent files). They are left out of the
+#: generic attachment lists and drive, and a single-file read answers 404 to anyone but the uploader.
+PRIVATE_ATTACHMENT_TYPE_CODE = "ai_assistant_attachment"
+
+
+def exclude_private_types(query):
+    """`query` (over ``Attachment``) without the files of a private type."""
+    return query.filter(~Attachment.attachment_type.has(AttachmentType.code == PRIVATE_ATTACHMENT_TYPE_CODE))
+
+
+def is_private_to_others(attachment: Attachment, viewer_id: Optional[str]) -> bool:
+    """True when ``attachment`` is of a private type and ``viewer_id`` is not its uploader (no viewer: closed)."""
+    kind = getattr(attachment, "attachment_type", None)
+    if kind is None or kind.code != PRIVATE_ATTACHMENT_TYPE_CODE:
+        return False
+    return not viewer_id or str(attachment.uploaded_by or "") != str(viewer_id)
+
+
 # Distinct from None, which is a legitimate cached result (type not seeded).
 _UNRESOLVED = object()
 
@@ -630,9 +648,11 @@ def create_response_attachment(
     commit: bool = True,
     attachment_type_code: str = RESPONSE_ATTACHMENT_TYPE_CODE,
     key_prefix: Optional[str] = None,
+    check_quota: bool = True,
 ) -> dict[str, Any]:
     """Upload + link a staff response attachment (``response_attachment`` type, D9).
 
+    ``check_quota=False`` is for a caller that has already checked its own limits.
     ``attachment_type_code`` and ``key_prefix`` let another staff upload surface (the AI panel's
     drafts) reuse these steps under its own type and storage folder.
 
@@ -658,7 +678,8 @@ def create_response_attachment(
 
     incoming_size = len(contents or b"")
     extension = _response_attachment_ext(filename, content_type)
-    service.check_quota(attachment_type, entity_type, entity_id, incoming_size, extension)
+    if check_quota:
+        service.check_quota(attachment_type, entity_type, entity_id, incoming_size, extension)
 
     safe_ext = f".{extension}" if extension else ""
     folder = key_prefix or f"response_attachments/{entity_type}/{entity_id}"

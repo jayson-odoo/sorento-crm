@@ -154,12 +154,18 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
         setChips((prev) => [...prev, ...added]);
         for (const { key, file } of toUpload) {
           uploadAssistantFile(file).then(
-            (uploaded) =>
+            (uploaded) => {
+              // The chip was removed while the upload was in flight: the file is already on the server.
+              if (!chipsRef.current.some((c) => c.key === key)) {
+                deleteAssistantFile(uploaded.id).catch(() => undefined);
+                return;
+              }
               patch(key, {
                 status: 'ready',
                 file: uploaded,
                 sheet: uploaded.sheets[0]?.name,
-              }),
+              });
+            },
             (err: unknown) =>
               patch(key, {
                 status: 'error',
@@ -343,14 +349,16 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
                 >
                   <Mic className="size-4" />
                 </Button>
-                <button
+                <Button
                   type="button"
-                  aria-label="Dictation language"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-1.5 text-2xs text-muted-foreground"
+                  aria-label={`Dictation language: ${lang === 'ms-MY' ? 'Malay' : 'English'}`}
                   onClick={toggleLang}
-                  className="rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-muted"
                 >
                   {lang === 'ms-MY' ? 'BM' : 'EN'}
-                </button>
+                </Button>
               </>
             ) : null}
             <span className="flex-1" />
