@@ -19,10 +19,14 @@ case "$(uname -m)" in
 esac
 tarball="gitleaks_${GITLEAKS_VERSION}_${arch}.tar.gz"
 base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+# The release download is retried: GitHub's release CDN answered 504 on three PR gates in a row on
+# 8 Nov 2026 (PR #2249), failing the gate before any scan ran. curl retries 5xx/408/429 itself;
+# the sha256 check below still guards whatever arrives.
+fetch() { curl -sSfL --retry 5 --retry-delay 5 --retry-connrefused -O "$1"; }
 (
   cd "$dir"
-  curl -sSfLO "$base/$tarball"
-  curl -sSfLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+  fetch "$base/$tarball"
+  fetch "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
   grep " ${tarball}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
   tar -xzf "$tarball" gitleaks
 )
