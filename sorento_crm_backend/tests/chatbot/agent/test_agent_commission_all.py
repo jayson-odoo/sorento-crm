@@ -551,11 +551,11 @@ def test_D2_an_unasked_whole_table_after_a_named_empty_query_is_not_shown():
         "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY},
                "data": {"entity": ENTITY, "shown_to_user": True, "total": 40}, "display": "WHOLE TABLE"},
     }
-    text = shape_reply("No commission payout for fullshun this year.", ledger)
+    text = shape_reply("No commission payout for fullshun this year.", ledger, user_text="payout to fullshun")
     assert "WHOLE TABLE" not in text and text.startswith("No commission payout for fullshun")
     # A table that was asked for (a named query that found rows) still shows.
     ledger["q1"]["data"] = {"entity": ENTITY, "rows": [{"id": "1"}], "total": 1}
-    assert "WHOLE TABLE" in shape_reply("Payout per dealer.", ledger)
+    assert "WHOLE TABLE" in shape_reply("Payout per dealer.", ledger, user_text="payout to fullshun")
 
 
 # ------------------------------------------------------------------ crew live round 4 on 73403177 (8 Nov)
@@ -628,7 +628,7 @@ def test_G3_q6_reply_tidy_range_not_year_one_period_note_no_unasked_notes():
                         "scope_note": "No period named: this year, 01/01/2026 to 31/12/2026. "
                                       "No commission is set on the targets of AA - Agent A."}, "display": None},
     }
-    text = shape_reply("No commission payout was found for fullshun for 2026.", ledger)
+    text = shape_reply("No commission payout was found for fullshun for 2026.", ledger, user_text="commission payout to fullshun")
     assert text.splitlines()[0] == "No commission payout was found for fullshun from 01/01/2026 to 31/12/2026."
     assert text.count("No period named") == 1
     assert "Agent A" not in text
@@ -657,3 +657,52 @@ def test_H1_tgt_and_payout_account_are_shown_whatever_columns_the_model_asks_for
         assert "payout" in keys and "columns_dropped" not in out
         twins = [(r["target_no"], r["payout_account"]) for r in out["rows"]]
         assert len(twins) == 2 and len(set(twins)) == 2 and {a for _n, a in twins} == {"A/C I"}
+
+
+# ------------------------------------------------------------------ crew live round 6 on 3f9edf78 (8 Nov)
+
+
+def test_K1_an_empty_first_call_on_the_askers_name_never_hides_the_second_calls_table():
+    """Q2 run 1 (turn f7be4cd6): call 1 filtered agent = the asker and found nothing, call 2 returned the per-dealer
+    table, the reply was the total only. The user never named the asker: the table must show."""
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "Jayson"},
+               "data": {"entity": ENTITY, "rows": [], "total": 0}, "display": None},
+        "q2": {"name": "crm_query", "status": "ok",
+               "args": {"entity": ENTITY, "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]},
+               "data": {"entity": ENTITY, "shown_to_user": True, "total": 88}, "display": "DEALER TABLE"},
+    }
+    text = shape_reply("Total dealer payout this year is RM 478,755.53.", ledger,
+                       user_text="commission payout per dealer this year")
+    assert "DEALER TABLE" in text and text.startswith("Total dealer payout")
+
+
+def test_K1b_the_askers_name_in_any_order_or_part_is_stripped_without_my():
+    from app.services.chatbot.agent.query_tools import strip_self_agent
+
+    for said_agent in ("Teh", "teh jayson", "Jayson Teh", "JAYSON"):
+        kept, note = strip_self_agent({"entity": ENTITY, "agent": said_agent}, "Jayson Teh", "payout per dealer this year")
+        assert "agent" not in kept and note, said_agent
+    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Teh"}, "Jayson Teh", "saya punya commission")
+    assert kept["agent"] == "Teh" and note is None
+    # Another person who only shares a word is not the asker.
+    kept, _ = strip_self_agent({"entity": ENTITY, "agent": "Jayson Lim"}, "Jayson Teh", "payout to jayson lim")
+    assert kept["agent"] == "Jayson Lim"
+
+
+def test_K2_fifty_long_rows_are_all_in_the_table_plus_totals_never_49():
+    """'Top 49 of 88': the result was cut to fit the model's size cap before the table was drawn."""
+    from app.services.chatbot.agent.query_tools import query_result
+
+    columns = [{"key": "label", "label": "Dealer"}, {"key": "target_no", "label": "Target"},
+               {"key": "payout_account", "label": "Payout account"}, {"key": "payout", "label": "Commission payout"}]
+    rows = [{"id": str(i), "label": f"ZZT A VERY LONG DEALER NAME SDN BHD NUMBER {i:03d} " + "X" * 120,
+             "target_no": f"TGT-{i:06d}", "payout_account": "A/C I", "payout": float(1000 - i)} for i in range(50)]
+    data = {"entity": ENTITY, "columns": columns, "rows": rows, "total": 88, "truncated": True,
+            "ranked_by": "Commission payout", "totals": {"payout": 99999.0}}
+    out = query_result(data, panel=True)
+    body = [line for line in out.display.splitlines() if line.startswith("| ZZT")]
+    assert len(body) == 50
+    assert "Top 50 of 88 by commission payout." in out.display and "| Total |" in out.display
