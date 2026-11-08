@@ -211,38 +211,75 @@ def test_03_a_customer_by_name_only_waits_with_the_rows_company_accounts_even_on
     assert steps == [] and skipped == []
     assert len(waiting) == 1 and waiting[0]["row"] == 1
     assert [c["code"] for c in waiting[0]["candidates"]] == [one.customer_code]
-    assert (waiting[0].get("noun") or "account") == "account"
+    assert waiting[0]["noun"] == "customer"
 
 
-def test_03_an_agent_not_written_exactly_waits_with_the_fitting_agents_and_is_never_auto_picked(db):
-    w = world(db)
-    stem = code("SE")
-    a1 = agent_(db, w.srt, "X")
-    a1.sales_agent = f"{stem}AN"
-    a2 = agent_(db, None, "Y")  # shared: fits every company
-    a2.sales_agent = f"{stem}BO"
-    other = agent_(db, w.mch, "Z")  # another company's: never offered for an SRT customer
-    other.sales_agent = f"{stem}CY"
+def tiers(db, company_id, person: str, suffixes=(" I", " III", " IV")) -> list[SalesAgent]:
+    """One person, one code per account tier (the dev shape: 'X I' sits inside 'X III'), all labelled the person."""
+    base = code("T")
+    rows = [agent_(db, company_id, "T", label=person) for _ in suffixes]
+    for row, suffix in zip(rows, suffixes):
+        row.sales_agent = f"{base}{suffix}"
     db.commit()
+    return rows
+
+
+def test_03_an_exact_code_wins_over_the_codes_that_contain_it(db):
+    w = world(db)
+    one, three, four = tiers(db, None, f"ZZT Person {uuid.uuid4().hex[:4]}")
+    cust = customer_(db, w.srt, "ZZT Delta Trading")
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=one.sales_agent)])
+    assert skipped == [] and waiting == [] and f"-> {one.sales_agent}" in steps[0]["summary"]
+
+
+def test_03_a_person_name_held_by_several_agents_waits_with_those_agents_and_is_never_auto_picked(db):
+    w = world(db)
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    agents = tiers(db, None, person)
+    other = agent_(db, w.mch, "Z", label=person)  # another company's: never offered for an SRT customer
     cust = customer_(db, w.srt, "ZZT Delta Trading")
 
-    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=stem)])
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=person.upper())])
     assert steps == [] and skipped == []
     assert waiting[0]["noun"] == "agent"
-    assert sorted(c["code"] for c in waiting[0]["candidates"]) == sorted([a1.sales_agent, a2.sales_agent])
+    got = sorted(c["code"] for c in waiting[0]["candidates"])
+    assert got == sorted(a.sales_agent for a in agents) and other.sales_agent not in got
+    assert all(c["name"] == person for c in waiting[0]["candidates"])
+
+
+def test_03_a_person_name_held_by_one_agent_is_that_agent(db):
+    w = world(db)
+    person = f"ZZT Solo {uuid.uuid4().hex[:4]}"
+    solo = agent_(db, w.srt, "S", label=person)
+    cust = customer_(db, w.srt, "ZZT Delta Trading")
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=person)])
+    assert skipped == [] and waiting == [] and f"-> {solo.sales_agent}" in steps[0]["summary"]
+
+
+def test_03_a_name_inside_longer_names_waits_and_a_code_is_never_matched_by_containment(db):
+    w = world(db)
+    stem = f"ZZT Ma {uuid.uuid4().hex[:4]}"
+    short = agent_(db, None, "M", label=f"{stem} Longer")
+    longer = agent_(db, None, "N", label=f"{stem} Longest")
+    cust = customer_(db, w.srt, "ZZT Delta Trading")
+    _, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=stem)])
+    assert skipped == [] and sorted(c["code"] for c in waiting[0]["candidates"]) == sorted(
+        [short.sales_agent, longer.sales_agent]
+    )
+
+    # a written code that is only PART of agent codes is not a pick list: it is not found
+    piece = short.sales_agent[:-2]
+    steps, skipped, waiting = propose_rows(db, w, [row_(customer=cust.customer_code, agent=piece)])
+    assert steps == [] and waiting == [] and f'No sales agent named "{piece}"' in reason_of(skipped, 1)
 
 
 def test_03_the_pick_by_reply_proposes_the_row_and_an_unlisted_pick_is_refused(db):
     w = world(db)
-    stem = code("SE")
-    a1 = agent_(db, w.srt, "X")
-    a1.sales_agent = f"{stem}AN"
-    a2 = agent_(db, w.srt, "Y")
-    a2.sales_agent = f"{stem}BO"
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    _, a2, _ = tiers(db, None, person)
     stranger = agent_(db, w.srt, "Q")
-    db.commit()
     cust = customer_(db, w.srt, "ZZT Echo Trading")
-    first = {**row_(customer=cust.customer_code, agent=stem), "row": 1}
+    first = {**row_(customer=cust.customer_code, agent=person), "row": 1}
     _, _, waiting = propose_rows(db, w, [first])
     assert waiting
 
@@ -298,7 +335,7 @@ def test_04_unknown_customer_unknown_agent_inactive_other_company_and_already_se
         elif n == 3:
             assert f'Sales agent "{sleepy.sales_agent}" is inactive' in reason
         elif n == 4:
-            assert f'"{mocha.sales_agent}" is a MCH agent' in reason
+            assert f'"{mocha.sales_agent}" is a Mocha agent' in reason
         else:
             assert reason == f"Already under {on.sales_agent}; nothing to change."
 
@@ -316,15 +353,49 @@ def test_04_a_customer_of_another_company_than_the_row_names_is_not_changed(db):
     new = agent_(db, None, "SH")
     cust = customer_(db, w.mch, "ZZT Hotel Mocha")
     steps, skipped, _ = propose_rows(db, w, [row_(company="SRT", customer=cust.customer_code, agent=new.sales_agent)])
-    assert steps == [] and "MCH customer" in reason_of(skipped, 1)
+    assert steps == [] and "is a Mocha customer" in reason_of(skipped, 1)
 
 
 def test_04_a_customer_outside_the_users_companies_is_not_found(db):
-    w = world(db)
+    w = world(db, superadmin=False)
     new = agent_(db, None, "SH")
     hidden = customer_(db, w.hidden, "ZZT India Hidden")
     steps, skipped, _ = propose_rows(db, w, [row_(company=None, customer=hidden.customer_code, agent=new.sales_agent)])
     assert steps == [] and reason_of(skipped, 1).startswith(f'No customer with the code "{hidden.customer_code}"')
+
+
+def test_04_the_same_code_in_two_companies_is_read_in_the_rows_company_and_needs_one_without(db):
+    w = world(db)
+    new = agent_(db, None, "SH")
+    srt_cust = customer_(db, w.srt, "ZZT Heng Srt")
+    mch_cust = customer_(db, w.mch, "ZZT Heng Mocha")
+    with company_scope(db, None):
+        db.get(Customer, str(mch_cust.id)).customer_code = srt_cust.customer_code
+    db.commit()
+
+    steps, skipped, _ = propose_rows(db, w, [row_(company="MCH", customer=srt_cust.customer_code, agent=new.sales_agent)])
+    assert skipped == [] and steps[0]["cells"]["Name"] == "ZZT Heng Mocha"
+    steps, skipped, _ = propose_rows(db, w, [row_(company=None, customer=srt_cust.customer_code, agent=new.sales_agent)])
+    assert steps == [] and "give the company" in reason_of(skipped, 1)
+
+
+def test_04_an_inactive_customer_is_not_changed(db):
+    w = world(db)
+    new = agent_(db, None, "SH")
+    cust = customer_(db, w.srt, "ZZT Hengsen Closed")
+    with company_scope(db, None):
+        db.get(Customer, str(cust.id)).is_active = False
+    db.commit()
+    steps, skipped, _ = propose_rows(db, w, [row_(customer=cust.customer_code, agent=new.sales_agent)])
+    assert steps == [] and f'Customer "{cust.customer_code}" is inactive' in reason_of(skipped, 1)
+
+
+def test_04_a_customer_name_without_a_company_asks_for_the_company(db):
+    w = world(db)
+    new = agent_(db, None, "SH")
+    customer_(db, w.srt, "ZZT Yee Tat One")
+    steps, skipped, waiting = propose_rows(db, w, [row_(company=None, name="ZZT Yee Tat", agent=new.sales_agent)])
+    assert steps == [] and waiting == [] and "Give the company" in reason_of(skipped, 1)
 
 
 def test_04_the_same_customer_twice_is_skipped_as_the_same_row(db):
@@ -407,11 +478,8 @@ def test_06_an_agent_retired_since_the_preview_fails_the_row(db):
 def test_07_a_turn_shows_ready_needs_choice_and_not_changed_tables_and_writes_nothing(db):
     w = world(db)
     new = agent_(db, w.srt, "SEAN")
-    stem = code("PK")
-    for suffix in ("A", "B"):
-        a = agent_(db, w.srt, "T")
-        a.sales_agent = f"{stem}{suffix}"
-    db.commit()
+    stem = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    tiers(db, None, stem)
     ready = customer_(db, w.srt, "ZZT Papa Trading")
     waits = customer_(db, w.srt, "ZZT Quebec Trading")
     rows = [
@@ -419,7 +487,7 @@ def test_07_a_turn_shows_ready_needs_choice_and_not_changed_tables_and_writes_no
         {**row_(customer=waits.customer_code, agent=stem), "row": 2},
         {**row_(customer="ZZTNOPE999", agent=new.sales_agent), "row": 3},
     ]
-    reply = say(db, w, rows, "assign these agents please")
+    reply = say(db, w, rows, "assign these agents please").reply_text
     assert READY in reply and NEEDS in reply and NOT_CHANGED in reply
     assert "| # | Customer | Name |" in reply
     assert "| Agent |" in reply or "| Agent" in reply
