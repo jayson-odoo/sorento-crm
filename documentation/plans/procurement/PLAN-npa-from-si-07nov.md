@@ -81,3 +81,17 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
 - A (Excel BRAND row): owner (a) "NPA can keep": the row stays, empty on new applications, filled on older ones.
 - Exemption: the two embedded read-only lists (SI "New product applications", product Lineage) are plain bordered
   tables like `SampleRequestLines`, not DataGrids (a few rows, no search / sort / pagination).
+
+## Owner hand-test round 3 (8 Nov 09:30 + 12:50)
+
+- Customer = the stock inquiry's customer dropdown: one shared `components/common/CustomerDebtorCombobox.tsx`, the
+  same `/public/portal/lookups/debtors` call (no kind: every company of the contact). Owner 12:50, option (a)
+  "just behave like how stock inquiry behaves now": a pick of the application's own company links by id; a pick of
+  the contact's other company is kept as text "<code> - <name>" with no id (the SI keeps every customer as text);
+  the application stays in its company; never a 422 for that (`portal_new_product_application._keep_other_company_customer_as_text`).
+- No "Waiting for approval / Locked" banner on Submitted / Resubmitted.
+- Not opening became Reject: `POST /{id}/purchasing-reject` (open_code, Approved, reason) -> Rejected, the applicant
+  resubmits; the shared `RejectOutlineButton` (the SI's style); older Not opening results read Rejected
+  (`display_status`), and no longer answer the SI's ask.
+- Crew took the recommendations: Excel BRAND row kept; SI attachments -> follow-up lane; old per-row routes kept until
+  production shows none.
