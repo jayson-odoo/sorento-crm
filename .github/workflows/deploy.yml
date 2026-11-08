@@ -1612,10 +1612,22 @@ jobs:
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one
       # reverting it leave a tree that already passed; a merge commit lands
       # both).
+      # CI-GITLEAKS-RETRY: most runs skip the download (github.com release
+      # URLs 504'd every PR gate on 8 Nov 2026). The key's version must match
+      # GITLEAKS_VERSION in scripts/ci_gitleaks.sh, which re-checks the sha256.
+      - name: Cache the gitleaks CLI
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gitleaks
+          key: gitleaks-8.30.1-${{ runner.arch }}
+
       - name: Secret scan (gitleaks)
         if: github.event_name == 'pull_request'
         env:
           RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          GITLEAKS_CACHE_DIR: ~/.cache/gitleaks
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci_gitleaks.sh
 
       - name: Select the changed test files to run

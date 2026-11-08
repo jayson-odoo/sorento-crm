@@ -79,7 +79,7 @@ def _serve(where: Path, tarball: bytes = GOOD) -> None:
 
 
 def _run(tmp_path: Path, *, curl_fail: str = "", gh_fail: bool = False, api_tarball: bytes = GOOD,
-         cache: bytes | None = None):
+         cache: bytes | None = None, cache_env: str = ""):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("curl", CURL_STUB), ("gh", GH_STUB), ("uname", "#!/bin/sh\necho x86_64\n")):
@@ -105,7 +105,7 @@ def _run(tmp_path: Path, *, curl_fail: str = "", gh_fail: bool = False, api_tarb
     env = {
         "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
         "HOME": str(tmp_path), "RANGE": "HEAD~1..HEAD", "RUNNER_TEMP": str(runner_temp),
-        "GITLEAKS_CACHE_DIR": str(cache_dir), "CALLS": str(calls),
+        "GITLEAKS_CACHE_DIR": cache_env or str(cache_dir), "CALLS": str(calls),
         "DIRECT": str(tmp_path / "direct"), "API": str(tmp_path / "api"),
         "CURL_FAIL": curl_fail, "GH_FAIL": "1" if gh_fail else "0", "GH_TOKEN": "ghs_dummy",
     }
@@ -127,7 +127,7 @@ def test_both_curls_retry_with_a_connect_timeout(tmp_path):
     curls = [c for c in calls if c.startswith("curl")]
     assert len(curls) == 2, curls
     for c in curls:
-        for flag in ("--retry 5", "--retry-all-errors", "--retry-delay 15", "--connect-timeout 20", "-f"):
+        for flag in ("--retry 5", "--retry-all-errors", "--retry-delay 15", "--connect-timeout 20", "-sSfL"):
             assert flag in c, (flag, c)
 
 
@@ -166,6 +166,14 @@ def test_a_tampered_cache_is_rejected_and_redownloaded(tmp_path):
     assert RAN in out and "TAMPERED-BINARY-RAN" not in out
     assert [c for c in calls if c.startswith("curl")], calls
     assert (cache_dir / TARBALL).read_bytes() == GOOD
+
+
+def test_the_workflow_tilde_cache_path_resolves_to_home(tmp_path):
+    # deploy.yml writes `~/.cache/gitleaks`; the shell never expands ~ inside an env value.
+    rc, out, calls, cache_dir = _run(tmp_path, cache=GOOD, cache_env="~/cache")
+    assert rc == 0, out
+    assert calls == [], calls
+    assert not (tmp_path / "repo" / "~").exists()
 
 
 def test_the_token_is_never_printed(tmp_path):
