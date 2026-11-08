@@ -128,8 +128,8 @@ export default function CertificateCoveredProducts({
             canEdit={canEditCodes}
           />
         ),
-        size: 220,
-        minSize: 150,
+        size: 180,
+        minSize: 160,
         enableSorting: false,
         meta: { headerTitle: 'Code on certificate' },
       },

@@ -404,3 +404,14 @@ def test_m3_vertical_rules_of_a_neighbouring_table_do_not_widen_the_row():
     (box,) = find_boxes(pdf, "AA 111")["boxes"]
     assert box["x"] == pytest.approx(40 / PAGE_W, abs=TOL)
     assert box["x"] + box["w"] == pytest.approx(250 / PAGE_W, abs=TOL)
+
+
+def test_suggest_code_accepts_a_bare_three_character_code_with_a_digit():
+    from app.services.certificate_pdf_service import suggest_code
+
+    # 114A is not a substring of zztsv14acp, so only 14A qualifies.
+    assert suggest_code(_text_pdf("Model", "14A", "114A"), "ZZT-SV14A-CP") == "14A"
+    # The longer run still beats the bare number.
+    assert suggest_code(_text_pdf("1515", "WB 1515"), "SRTWB1515") == "WB 1515"
+    # Under three characters never qualifies.
+    assert suggest_code(_text_pdf("A1"), "ZZTA1X") is None

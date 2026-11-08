@@ -43,7 +43,7 @@ within [0, 1], w > 0, h > 0, x + w <= 1, y + h <= 1 (422 `certificate_box_invali
   files store their text that way).
 - Unreadable / encrypted PDF: `has_text` false, no exception.
 - `suggest_code(pdf_bytes, product_code) -> str|None`: the printed code for a product (CERT-14):
-  among word runs of 1 to 3 consecutive words whose normalised text has length >= 4, contains a
+  among word runs of 1 to 3 consecutive words whose normalised text has length >= 3, contains a
   digit, and is a substring of the normalised product code, the LONGEST normalised run wins (ties:
   first in reading order); returned as printed (words joined by one space, edge punctuation
   stripped). None when nothing qualifies or there is no text.

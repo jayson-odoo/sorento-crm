@@ -238,20 +238,20 @@ export function QuotationCertificatesList({
           }
           const text = markedText(marked);
           return (
-            <span className="flex items-center gap-1.5">
+            <div className="min-w-0">
               <span className="block truncate" title={text}>
                 {text}
               </span>
               {marked.state === 'suggested' && (
-                <Badge variant="warning" appearance="light" size="sm" className="shrink-0">
+                <Badge variant="warning" appearance="light" size="sm" className="mt-0.5">
                   Suggested, check
                 </Badge>
               )}
-            </span>
+            </div>
           );
         },
-        size: 230,
-        minSize: 150,
+        size: 190,
+        minSize: 170,
         enableSorting: false,
         meta: { headerTitle: 'Rows marked' },
       },
