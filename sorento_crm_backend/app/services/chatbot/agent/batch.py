@@ -254,7 +254,7 @@ def _sent_keys(definition: writes.WriteDef, rows: list) -> set:
 
 def carried_skips(
     write: str, sent_keys: set, steps: list[dict], skipped: list[dict], waiting: list[dict],
-    previous: dict | None,
+    previous: dict | None, pick_changes_key: bool = False,
 ) -> list[dict]:
     """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on that
     table's pick follow-up: the same write, and at least one row of this call is a row that turn left waiting. The
@@ -271,6 +271,10 @@ def carried_skips(
             continue
         key = s.get("key")
         if (key in sent_keys) if key is not None else (s.get("row") in sent_rows):
+            continue
+        # A write whose key a pick or a corrected cell may change (customer agent): the same table row number sent
+        # again is that row, checked again, so the earlier copy is not carried next to it.
+        if pick_changes_key and s.get("row") in sent_rows:
             continue
         out.append({
             "row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {}),
@@ -325,7 +329,8 @@ def keep_earlier_reasons(write: str, sent_keys: set, skipped: list[dict], previo
             continue
         before = _filled(match[0]["args"])
         if len(now) < len(before) and all(before.get(k) == v for k, v in now.items()):
-            s["reason"] = match[0]["reason"]
+            # The earlier arguments go with the reason, so the next follow-up compares against the full row again.
+            s["reason"], s["args"] = match[0]["reason"], match[0]["args"]
 
 
 def propose(
@@ -365,7 +370,7 @@ def propose(
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting).
     sent = _sent_keys(definition, rows)
     keep_earlier_reasons(write, sent, skipped, previous)
-    carried = carried_skips(write, sent, new_steps, skipped, waiting, previous)
+    carried = carried_skips(write, sent, new_steps, skipped, waiting, previous, definition.pick_changes_key)
     skipped += carried
     steps[:] = new_steps
     if skipped_out is not None:
