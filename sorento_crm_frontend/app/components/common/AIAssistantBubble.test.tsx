@@ -31,6 +31,8 @@ vi.mock('@/lib/aiAssistantChatApi', () => ({
   listAIAssistantConversations: vi.fn(async () => []),
   loadConversation: vi.fn(async () => ({ messages: [] })),
   sendAIAssistantMessage: vi.fn(async () => ({ messages: [] })),
+  uploadAssistantFile: vi.fn(),
+  deleteAssistantFile: vi.fn(async () => undefined),
   confirmPanelAction: vi.fn(),
   cancelPanelAction: vi.fn(),
   withdrawPanelStep: vi.fn(),
@@ -1083,5 +1085,92 @@ describe('AIAssistantBubble: kill gaps on a failed send and on the draw counter 
     await act(async () => { await Promise.resolve(); });
 
     expect(screen.getByText('ZZT ANSWER TWO')).toBeDefined();
+  });
+});
+
+describe('AIAssistantBubble: a failed send (fix round 2, B-3)', () => {
+  it('keeps the typed words in the box so the user can retry', async () => {
+    grant();
+    await openThread(waitingThread(inAMinute()));
+    vi.mocked(chatApi.sendAIAssistantMessage).mockRejectedValueOnce(new Error('ZZT server down'));
+
+    typeAndSend('ZZT retry me');
+
+    await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
+    expect((screen.getByPlaceholderText('Ask the assistant...') as HTMLTextAreaElement).value).toBe('ZZT retry me');
+  });
+
+  it('a failed Confirm click does not put "Confirm" in the box', async () => {
+    grant();
+    await openThread([
+      user(),
+      {
+        id: 'm-old',
+        role: 'assistant',
+        content: 'ZZT change the phone number?',
+        created_at: '2026-10-30T09:00:05Z',
+        metadata_json: { pending_confirmation: { tool_name: 'zzt_tool', status: 'pending', summary: 'x' } },
+      },
+    ]);
+    vi.mocked(chatApi.sendAIAssistantMessage).mockRejectedValueOnce(new Error('ZZT server down'));
+
+    fireEvent.click(screen.getByTestId('write-confirm-btn'));
+
+    await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
+    expect((screen.getByPlaceholderText('Ask the assistant...') as HTMLTextAreaElement).value).toBe('');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Owner hand test (8 Nov ~20:30): the files are part of the sent message. On Send the chips move into the
+// user's bubble at once (before the reply) and the composer clears; a failed send puts them back.
+// ---------------------------------------------------------------------------
+
+describe('AIAssistantBubble: a send with a file shows it on the sent bubble at once', () => {
+  async function openFresh() {
+    grant();
+    window.localStorage.setItem(OPEN_STORAGE_KEY, '1');
+    vi.mocked(chatApi.fetchAIAssistantGreeting).mockResolvedValueOnce({
+      greeting: 'Hi', suggestions: [], can_attach: true,
+    } as never);
+    vi.mocked(chatApi.uploadAssistantFile).mockResolvedValueOnce({
+      id: 'f-1', filename: 'Pricetag Submission.pdf', size: 1_300_000, mime_type: 'application/pdf', kind: 'pdf',
+      thumb_url: null, sheets: [], pages: 8,
+    } as never);
+    render(<AIAssistantBubble />);
+    await waitFor(() => expect(screen.getByLabelText('Attach files')).toBeDefined());
+    const pdf = new File(['%PDF-1.4'], 'Pricetag Submission.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByTestId('assistant-file-input'), { target: { files: [pdf] } });
+    await waitFor(() => expect(screen.getByText(/8 pages/)).toBeDefined());
+  }
+
+  it('moves the chip into the user bubble before the reply and clears the composer', async () => {
+    await openFresh();
+    const sending = deferred<unknown>();
+    vi.mocked(chatApi.sendAIAssistantMessage).mockReturnValueOnce(sending.promise as never);
+
+    typeAndSend("what's this file talking about");
+
+    await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+    // The composer holds no chip any more (its Remove button is gone) ...
+    expect(screen.queryByLabelText('Remove Pricetag Submission.pdf')).toBeNull();
+    // ... and the sent bubble carries it, with its pages, while the reply is still pending.
+    expect(screen.getByText('Pricetag Submission.pdf')).toBeDefined();
+    expect(screen.getByText('8 pages')).toBeDefined();
+    expect(screen.getByText("what's this file talking about")).toBeDefined();
+    await act(async () => {
+      sending.resolve({ id: 'conv-1', messages: [] });
+    });
+  });
+
+  it('puts the chip back in the composer when the send fails', async () => {
+    await openFresh();
+    vi.mocked(chatApi.sendAIAssistantMessage).mockRejectedValueOnce(new Error('ZZT server down'));
+
+    typeAndSend("what's this file talking about");
+
+    await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
+    expect(screen.getByLabelText('Remove Pricetag Submission.pdf')).toBeDefined();
   });
 });
