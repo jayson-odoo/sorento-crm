@@ -981,7 +981,9 @@ class TestAPickerLineNamesEveryLedgerItsFamilySpans:
             f"a family spanning two ledgers must name both, in first-seen order: {titles!r}"
         )
         families = out["picker_families"]
-        assert set(families["A CRAFT IDEA"]) == {"u-srt-1", "u-mocha"}, families
+        from app.services.ledger_family import ledger_family_key
+
+        assert set(families[ledger_family_key("A CRAFT IDEA SDN BHD")]) == {"u-srt-1", "u-mocha"}, families
         # PICKER-ONE: the line the customer reads comes from the one builder, off these rows.
         assert "Which customer do you mean" not in out["gate_clarification"], out["gate_clarification"]
         resolver = {"resolutions": [{"token": "a craft idea", "matches": out_matches}]}
