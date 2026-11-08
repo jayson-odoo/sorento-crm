@@ -23,6 +23,7 @@ from app.services import respond_messaging_service
 from app.services.contact_service import parse_respond_contact_payload
 from app.services.phone_signin_service import mask
 from app.services.phone_utils import normalize_msisdn
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ def _outbox(
                 business_id=business_id,
                 external_reference=identifier,
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
                 http_method="POST",
                 status=status,
                 status_code=getattr(resp, "status_code", None),

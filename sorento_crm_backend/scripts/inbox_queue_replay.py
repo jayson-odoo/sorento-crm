@@ -39,7 +39,7 @@ env checks and its refusals are prefixed `worker env <file>`; its DATABASE_URL (
 assignment across case variants) must name the same host, port and database as `--env-file`
 (credentials never compared or printed). A checked value the
 env file leaves out, or sets empty, is judged by its Settings default (RESPOND_BASE_URL falls
-back to https://api.respond.io, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
+back to the real Respond.io host, `RESPOND_DEFAULT_BASE_URL`, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -265,6 +265,12 @@ def _settings_default(key: str) -> str:
     """The Settings default a key left out of the env file falls back to (empty if none)."""
     from app.config import settings
 
+    if key.lower() == "respond_base_url":
+        # Unset, it resolves to the workspace row's base_url (judged by the DB half), else the
+        # real host: `integration_service.resolve_respond_base_url`.
+        from app.services.integration_service import RESPOND_DEFAULT_BASE_URL
+
+        return RESPOND_DEFAULT_BASE_URL
     field = type(settings).model_fields.get(key.lower())
     default = getattr(field, "default", None) if field is not None else None
     return "" if default is None or not isinstance(default, str) else default
@@ -305,7 +311,7 @@ def check_env(env: Any) -> list[str]:
     for key in ("RESPOND_BASE_URL", "N8N_WEBHOOK_URL", "N8N_CLOSE_CONVO_WEBHOOK_URL", "SMTP_HOST"):
         # Judged as the app RESOLVES it: every case variant present is judged; absent, bare or
         # empty falls back to the Settings default (RESPOND_BASE_URL's is the real
-        # https://api.respond.io).
+        # Respond.io host, `integration_service.RESPOND_DEFAULT_BASE_URL`).
         present = [k for k in _settings_keys(env, key) if env.get(k)]
         for spelling in present:
             need(f"env {spelling}", env[spelling])

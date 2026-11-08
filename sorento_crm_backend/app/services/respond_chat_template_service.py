@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.services.error_handler import handle_not_found, handle_validation_error
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ def send_manual_template_for(
                     business_id=business_id,
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier or ''}/message"),
                     http_method="POST",
                     status="failed",
                     error_message=str(e),
@@ -207,7 +208,7 @@ def send_manual_template_for(
                 business_id=business_id,
                 external_reference=identifier,
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
                 http_method="POST",
                 status="success",
                 response_payload=str(response)[:50000] if response else None,
@@ -430,7 +431,7 @@ def send_chat_message_for(
     stripped = (text or "").strip()
     window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
     log_service = IntegrationLogService(db)
-    endpoint = f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+    endpoint = respond_endpoint(f"/v2/contact/id:{identifier or ''}/message")
 
     def _log(status: str, *, request_payload: Any, response: Any = None, error: str = None) -> None:
         # Best-effort outbox write - never mask a delivered send / never 500 a success.

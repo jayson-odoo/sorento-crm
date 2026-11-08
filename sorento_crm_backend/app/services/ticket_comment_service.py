@@ -33,6 +33,7 @@ from app.models.ticket_comment import (
 from app.models.user import User
 from app.schemas.ticket_comment import TicketCommentResponse
 from app.services.error_handler import handle_not_found, handle_validation_error
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ def mirror_comment_to_respond(
     ]
     if tags:
         text = " ".join(tags) + "\n" + text
-    endpoint = f"https://api.respond.io/v2/contact/id:{ident}/comment"
+    endpoint = respond_endpoint(f"/v2/contact/id:{ident}/comment")
     payload = {"text": text}
     api = client if client is not None else RespondClient.for_identifier(db, ident)
     try:

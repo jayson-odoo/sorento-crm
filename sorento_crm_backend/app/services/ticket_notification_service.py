@@ -26,6 +26,7 @@ from app.models.tickets import Ticket
 from app.schemas.integration import IntegrationLogCreate
 from app.services.integration_service import IntegrationLogService, RespondClient
 from app.services.notification_service import NotificationService
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ def notify_submitter_on_status_change(
                 business_id=str(ticket.id),
                 external_reference=contact.respond_io_id,
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{contact.respond_io_id}/message"),
                 http_method="POST",
                 status="success",
                 response_payload=str(response)[:50000] if response else None,
@@ -218,7 +219,7 @@ def notify_submitter_on_status_change(
                 business_id=str(ticket.id),
                 external_reference=contact.respond_io_id or "",
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id or ''}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{contact.respond_io_id or ''}/message"),
                 http_method="POST",
                 status="failed",
                 error_message=str(e),
@@ -284,7 +285,7 @@ def notify_submitter_text(db: Session, *, ticket: Ticket, title: str, text: str)
                 business_id=str(ticket.id),
                 external_reference=contact.respond_io_id,
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{contact.respond_io_id}/message"),
                 http_method="POST",
                 status="success",
                 response_payload=str(response)[:50000] if response else None,
@@ -300,7 +301,7 @@ def notify_submitter_text(db: Session, *, ticket: Ticket, title: str, text: str)
                 business_id=str(ticket.id),
                 external_reference=contact.respond_io_id or "",
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{contact.respond_io_id or ''}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{contact.respond_io_id or ''}/message"),
                 http_method="POST",
                 status="failed",
                 error_message=str(e),

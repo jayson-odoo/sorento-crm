@@ -83,6 +83,7 @@ from app.services.requestor_options_service import (
 # from an explicit None (which CLEARS the requestor + its label).
 _UNSET_REQUESTOR = object()
 from app.config import settings
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -7771,7 +7772,7 @@ class PurchaseRequestService:
                     business_id=str(header.id),
                     external_reference=identifier,
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
                     http_method="POST",
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
@@ -7807,7 +7808,7 @@ class PurchaseRequestService:
                     business_id=str(header.id),
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier or ''}/message"),
                     http_method="POST",
                     status="failed",
                     status_code=resp_code,
@@ -9986,7 +9987,7 @@ class PurchaseRequestService:
                     business_id=request_id,
                     external_reference=identifier,
                     direction="outbound",
-                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier),
+                    endpoint=respond_endpoint("/v2/contact/id:{}/message".format(identifier)),
                     http_method="POST",
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
@@ -10002,7 +10003,7 @@ class PurchaseRequestService:
                     business_id=request_id,
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier or ""),
+                    endpoint=respond_endpoint("/v2/contact/id:{}/message".format(identifier or "")),
                     http_method="POST",
                     status="failed",
                     error_message=str(e),

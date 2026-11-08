@@ -22,6 +22,7 @@ from app.services.activities_registry import (
     get_adapter,
     is_registered,
 )
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -639,7 +640,7 @@ def send_message(
                 business_id=entity_id,
                 external_reference=str(contact_id),
                 direction="outbound",
-                endpoint=f"https://api.respond.io/v2/contact/id:{contact_id}/message",
+                endpoint=respond_endpoint(f"/v2/contact/id:{contact_id}/message"),
                 http_method="POST",
                 status=log_status,
                 response_payload=str(response)[:50000] if response else None,

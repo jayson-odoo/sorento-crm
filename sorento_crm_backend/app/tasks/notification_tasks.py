@@ -7,6 +7,7 @@ from datetime import datetime
 
 from app.database import SessionLocal
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     # source_entity_id can be a composite string (e.g. the daily summary's
     # "<user_id>:<date>:<mode>:<ts>"), so always use the notification UUID here.
     business_id = str(getattr(notification, "id", ""))
-    endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/message"
+    endpoint = respond_endpoint(f"/v2/contact/id:{identifier}/message")
     request_payload: dict = {"message": {"type": "text", "text": text}}
     try:
         result = send_text_or_template(

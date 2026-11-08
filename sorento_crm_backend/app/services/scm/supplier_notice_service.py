@@ -909,7 +909,7 @@ def _chat_window_open(db: Session, identifier: str, respond_contact_id: str) -> 
     """Whether the contact wrote to us inside the 24h window (the composer's own answer).
 
     A seam, like `_chat_send`: the real one is a live Respond.io call, and a suite that had
-    to reach api.respond.io to test our own branch would be testing somebody else's uptime.
+    to reach Respond.io to test our own branch would be testing somebody else's uptime.
     """
     from app.services.respond_messaging_service import get_window_state
 

@@ -120,7 +120,10 @@ class Settings(BaseSettings):
 
     # Respond.io
     respond_api_key: str | None = None
-    respond_base_url: str = "https://api.respond.io"
+    # RESPOND_BASE_URL: when set, it overrides every workspace row's base_url for every
+    # Respond.io call (a test copy points it at a `.invalid` host). Unset = the workspace's
+    # base_url, else the default in `integration_service.RESPOND_DEFAULT_BASE_URL`.
+    respond_base_url: str | None = None
     respond_app_base_url: str = "https://app.respond.io"  # Base URL for inbox links (e.g. /space/{id}/inbox/{contact_id})
     respond_space_id: str | None = None
     
