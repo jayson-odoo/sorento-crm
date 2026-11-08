@@ -454,6 +454,16 @@ def _handler_product_discontinued_check(db, task):
     return run_product_discontinued_check(db, task)
 
 
+def _handler_product_list_price_check(db, task):
+    """Report products whose list price changed (batched) to subscribed staff."""
+    from app.services.product_watched_field_notify_service import (
+        LIST_PRICE,
+        run_watched_field_check,
+    )
+
+    return run_watched_field_check(db, LIST_PRICE, task)
+
+
 def _handler_project_staleness_sweep(db, task):
     """Move every live project up or off the staleness ladder (AC-H5, AC-H6).
 
@@ -839,6 +849,7 @@ def register_task_handlers():
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
     register_handler("attachment_storage_audit", run_attachment_storage_audit)
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
+    register_handler("product_list_price_check", _handler_product_list_price_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
     register_handler("form_action_commit", _handler_form_action_commit)

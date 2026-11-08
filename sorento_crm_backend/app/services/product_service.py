@@ -350,6 +350,7 @@ class ProductService:
         entity_buckets: Optional[Any] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        list_price_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
@@ -409,6 +410,9 @@ class ProductService:
         # products reported in that batch (see product_discontinued_notify_service).
         if discontinued_batch_id:
             filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+        # Same, for a "list price changed" notification (product_watched_field_notify_service).
+        if list_price_batch_id:
+            filters.append(Product.list_price_notify_batch_id == list_price_batch_id)
 
         # "Discontinued at" date-range filter (issue #1287): inclusive by Malaysia
         # calendar day, either bound set also excludes null (never-discontinued) rows.
@@ -553,6 +557,7 @@ class ProductService:
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        list_price_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
@@ -612,6 +617,7 @@ class ProductService:
             entity_buckets=entity_buckets,
             product_ids=product_ids,
             discontinued_batch_id=discontinued_batch_id,
+            list_price_batch_id=list_price_batch_id,
             variant_filter=variant_filter,
             discontinued_from=discontinued_from,
             discontinued_to=discontinued_to,

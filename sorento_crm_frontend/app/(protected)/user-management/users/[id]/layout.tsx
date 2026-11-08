@@ -121,6 +121,8 @@ export default function UserLayout({
         notifyEmailOnMention: data.notify_email_on_mention ?? data.notifyEmailOnMention ?? true,
         notifyEmailOnProductDiscontinued: data.notify_email_on_product_discontinued ?? data.notifyEmailOnProductDiscontinued ?? false,
         notifyWhatsappOnProductDiscontinued: data.notify_whatsapp_on_product_discontinued ?? data.notifyWhatsappOnProductDiscontinued ?? false,
+        notifyEmailOnProductListPrice: data.notify_email_on_product_list_price ?? data.notifyEmailOnProductListPrice ?? false,
+        notifyWhatsappOnProductListPrice: data.notify_whatsapp_on_product_list_price ?? data.notifyWhatsappOnProductListPrice ?? false,
         productDiscontinuedScopes: data.product_discontinued_scopes ?? data.productDiscontinuedScopes ?? [],
         superiorId: data.superior_id || data.superiorId,
         superiorName: data.superior_name || data.superiorName,

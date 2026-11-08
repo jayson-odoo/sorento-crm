@@ -137,6 +137,8 @@ const UserProfileEditDialog = ({
       notify_email_on_mention: user?.notifyEmailOnMention ?? true,
       notify_email_on_product_discontinued: Boolean(user?.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user?.notifyWhatsappOnProductDiscontinued),
+      notify_email_on_product_list_price: Boolean(user?.notifyEmailOnProductListPrice),
+      notify_whatsapp_on_product_list_price: Boolean(user?.notifyWhatsappOnProductListPrice),
     },
     mode: 'onTouched',
   });
@@ -177,6 +179,8 @@ const UserProfileEditDialog = ({
       notify_email_on_mention: user.notifyEmailOnMention ?? true,
       notify_email_on_product_discontinued: Boolean(user.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user.notifyWhatsappOnProductDiscontinued),
+      notify_email_on_product_list_price: Boolean(user.notifyEmailOnProductListPrice),
+      notify_whatsapp_on_product_list_price: Boolean(user.notifyWhatsappOnProductListPrice),
     });
     setScopeRows(scopesToRows(user.productDiscontinuedScopes));
     setScopesDirty(false);
@@ -185,7 +189,13 @@ const UserProfileEditDialog = ({
 
   const discontinuedEmailOn = form.watch('notify_email_on_product_discontinued');
   const discontinuedWhatsappOn = form.watch('notify_whatsapp_on_product_discontinued');
-  const discontinuedNotifyOn = Boolean(discontinuedEmailOn || discontinuedWhatsappOn);
+  const listPriceEmailOn = form.watch('notify_email_on_product_list_price');
+  const listPriceWhatsappOn = form.watch('notify_whatsapp_on_product_list_price');
+  // The scope rows are shared by both product notices (discontinued, list price), so
+  // either one switching on is what pre-populates them.
+  const discontinuedNotifyOn = Boolean(
+    discontinuedEmailOn || discontinuedWhatsappOn || listPriceEmailOn || listPriceWhatsappOn,
+  );
 
   // Switching a discontinued channel on with no scopes at all would mean opting in
   // to silence, so the first row defaults to everything. Removing every row after
@@ -336,6 +346,8 @@ const UserProfileEditDialog = ({
       profileData.notify_email_on_mention = Boolean(values.notify_email_on_mention);
       profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
       profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
+      profileData.notify_email_on_product_list_price = Boolean(values.notify_email_on_product_list_price);
+      profileData.notify_whatsapp_on_product_list_price = Boolean(values.notify_whatsapp_on_product_list_price);
       // Replace-all: whatever the editor shows is the user's full scope set. Sent
       // only when the editor was actually touched - omitted means "leave scopes
       // alone", so an unrelated profile save can never rewrite them.
@@ -795,6 +807,8 @@ const UserProfileEditDialog = ({
               { name: 'notify_email_on_mention', label: 'Email on mention in a note', hint: 'Emailed when a teammate mentions you in an internal note.' },
               { name: 'notify_email_on_product_discontinued', label: 'Email on products discontinued', hint: 'Emailed when products are newly discontinued (batched).' },
               { name: 'notify_whatsapp_on_product_discontinued', label: 'WhatsApp on products discontinued', hint: 'Needs a linked WhatsApp contact.' },
+              { name: 'notify_email_on_product_list_price', label: 'Email on list price changes', hint: 'Emailed when product list prices change (batched).' },
+              { name: 'notify_whatsapp_on_product_list_price', label: 'WhatsApp on list price changes', hint: 'Needs a linked WhatsApp contact.' },
             ] as const).map((t) => (
               <FormField
                 key={t.name}

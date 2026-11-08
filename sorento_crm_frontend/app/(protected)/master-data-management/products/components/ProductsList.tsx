@@ -164,9 +164,12 @@ const ProductsList = () => {
     isReloadRef.current = false;
     if (!searchParams.toString()) return;
     const batch = searchParams.get('discontinued_batch_id');
+    const priceBatch = searchParams.get('list_price_batch_id');
     const batchBrands = searchParams.get('brand_id');
-    if (batch) {
-      const kept = new URLSearchParams({ discontinued_batch_id: batch });
+    if (batch || priceBatch) {
+      const kept = new URLSearchParams(
+        batch ? { discontinued_batch_id: batch } : { list_price_batch_id: priceBatch as string },
+      );
       if (batchBrands) kept.set('brand_id', batchBrands);
       router.replace(`${pathname}?${kept.toString()}`);
     } else {
@@ -241,9 +244,11 @@ const ProductsList = () => {
   // Deep link from a "products discontinued" notification - restrict the list to
   // exactly the products reported in that batch.
   const discontinuedBatchId = searchParams.get('discontinued_batch_id') || undefined;
+  // Same, from a "list price changed" notification.
+  const listPriceBatchId = searchParams.get('list_price_batch_id') || undefined;
   // ...and, for a recipient scoped to specific brands, to their slice of it. The
   // param is passed through verbatim (comma-separated ids filter with IN).
-  const discontinuedBrandIds = discontinuedBatchId
+  const discontinuedBrandIds = discontinuedBatchId || listPriceBatchId
     ? searchParams.get('brand_id') || undefined
     : undefined;
   const effectiveBrandId =
@@ -263,6 +268,7 @@ const ProductsList = () => {
       status: selectedStatus ?? 'all',
       variant_filter: selectedVariantFilter,
       discontinued_batch_id: discontinuedBatchId,
+      list_price_batch_id: listPriceBatchId,
       discontinued_brand_ids: discontinuedBrandIds,
       discontinued_from: discontinuedFrom ?? undefined,
       discontinued_to: discontinuedTo ?? undefined,
@@ -278,6 +284,7 @@ const ProductsList = () => {
       selectedStatus,
       selectedVariantFilter,
       discontinuedBatchId,
+      listPriceBatchId,
       discontinuedBrandIds,
       discontinuedFrom,
       discontinuedTo,
@@ -376,6 +383,7 @@ const ProductsList = () => {
         variant_filter:
           selectedVariantFilter !== 'all' ? selectedVariantFilter : undefined,
         discontinued_batch_id: discontinuedBatchId,
+        list_price_batch_id: listPriceBatchId,
         discontinued_from: discontinuedFrom ?? undefined,
         discontinued_to: discontinuedTo ?? undefined,
         advFilter: encodeAdvancedFilter(advancedFilter),
@@ -934,9 +942,13 @@ const ProductsList = () => {
     >
       <Card>
         <CardHeader className="block">
-          {discontinuedBatchId && (
+          {(discontinuedBatchId || listPriceBatchId) && (
             <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-              <span>Showing only the products from a recent “products discontinued” notification.</span>
+              <span>
+                {discontinuedBatchId
+                  ? 'Showing only the products from a recent “products discontinued” notification.'
+                  : 'Showing only the products from a recent “list price changed” notification.'}
+              </span>
               <Button variant="ghost" size="sm" onClick={() => router.replace(pathname)}>
                 Clear filter
               </Button>
