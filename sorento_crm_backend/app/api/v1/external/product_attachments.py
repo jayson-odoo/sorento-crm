@@ -26,6 +26,7 @@ from app.services.attachment_field_link_service import AttachmentFieldLinkServic
 from app.models.certificate import CERTIFICATE_SOURCE_AI
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentType
+from app.services.entity_attachment_service import exclude_private_types
 from app.api.v1.external.utils import scope_to_attachment_company
 from app.services.attachment_notification_helper import (
     build_attachment_detail_url,
@@ -456,7 +457,7 @@ def create_product_attachment(
     the regression guard the 951 Technical Specifications and all Product Photos
     rows depend on (ING-4 / ING-5).
     """
-    attachment = db.query(Attachment).filter(Attachment.id == payload.attachment_id).first()
+    attachment = exclude_private_types(db.query(Attachment)).filter(Attachment.id == payload.attachment_id).first()
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -614,7 +615,7 @@ def _link_attachment_to_products_bulk(
     service = ProductAttachmentService(db)
     field_link_service = AttachmentFieldLinkService(db)
     attachment_row = (
-        db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        exclude_private_types(db.query(Attachment)).filter(Attachment.id == attachment_id).first()
     )
     # Multi-company isolation (Group G): restrict product matching to the
     # attachment's company. Covers the /link-products route that reaches this
@@ -740,7 +741,7 @@ def link_attachment_to_products(
     Link one attachment to many products by product code.
     Products are matched by product_code after removing spaces (e.g. "WC 8038" matches "WC8038").
     """
-    attachment = db.query(Attachment).filter(Attachment.id == payload.attachment_id).first()
+    attachment = exclude_private_types(db.query(Attachment)).filter(Attachment.id == payload.attachment_id).first()
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 # documentation/plans/PLAN-response-attachments-and-portal-nav.md decision D9.
 RESPONSE_ATTACHMENT_TYPE_CODE = "response_attachment"
 
+#: Types whose files belong to one person (the AI panel's drafts and sent files). They are left out of the
+#: generic attachment lists and drive, and a single-file read answers 404 to anyone but the uploader.
+PRIVATE_ATTACHMENT_TYPE_CODE = "ai_assistant_attachment"
+
+
+def exclude_private_types(query):
+    """`query` (over ``Attachment``) without the files of a private type."""
+    return query.filter(~Attachment.attachment_type.has(AttachmentType.code == PRIVATE_ATTACHMENT_TYPE_CODE))
+
+
+def is_private_to_others(attachment: Attachment, viewer_id: Optional[str]) -> bool:
+    """True when ``attachment`` is of a private type and ``viewer_id`` is not its uploader (no viewer: closed)."""
+    kind = getattr(attachment, "attachment_type", None)
+    if kind is None or kind.code != PRIVATE_ATTACHMENT_TYPE_CODE:
+        return False
+    return not viewer_id or str(attachment.uploaded_by or "") != str(viewer_id)
+
+
 # Distinct from None, which is a legitimate cached result (type not seeded).
 _UNRESOLVED = object()
 
@@ -189,7 +207,8 @@ class EntityAttachmentService:
             raise handle_validation_error("attachment_id is required")
 
         attachment = self.db.query(Attachment).filter(Attachment.id == att_id).first()
-        if not attachment:
+        # A private file (the assistant panel's) links only for its uploader: the same 404 as an unknown id.
+        if not attachment or is_private_to_others(attachment, created_by):
             raise handle_not_found("Attachment", att_id)
 
         existing = (
@@ -628,8 +647,15 @@ def create_response_attachment(
     content_type: Optional[str],
     uploaded_by: Optional[str],
     commit: bool = True,
+    attachment_type_code: str = RESPONSE_ATTACHMENT_TYPE_CODE,
+    key_prefix: Optional[str] = None,
+    check_quota: bool = True,
 ) -> dict[str, Any]:
     """Upload + link a staff response attachment (``response_attachment`` type, D9).
+
+    ``check_quota=False`` is for a caller that has already checked its own limits.
+    ``attachment_type_code`` and ``key_prefix`` let another staff upload surface (the AI panel's
+    drafts) reuse these steps under its own type and storage folder.
 
     Mirrors the portal upload path (app/api/v1/public/portal.py::portal_upload_attachment)
     but scoped to its own attachment type so staff and contact uploads never
@@ -638,7 +664,7 @@ def create_response_attachment(
     shape shared by the stock-inquiry and complaint response-attachment routes.
     """
     service = EntityAttachmentService(db)
-    attachment_type = service.get_attachment_type_by_code(RESPONSE_ATTACHMENT_TYPE_CODE)
+    attachment_type = service.get_attachment_type_by_code(attachment_type_code)
 
     # `attachments.uploaded_by` / `entity_attachment_links.created_by` are UUID
     # columns while `users.id` is a String, and this route also accepts an API-key
@@ -653,10 +679,12 @@ def create_response_attachment(
 
     incoming_size = len(contents or b"")
     extension = _response_attachment_ext(filename, content_type)
-    service.check_quota(attachment_type, entity_type, entity_id, incoming_size, extension)
+    if check_quota:
+        service.check_quota(attachment_type, entity_type, entity_id, incoming_size, extension)
 
     safe_ext = f".{extension}" if extension else ""
-    key = f"response_attachments/{entity_type}/{entity_id}/{uuid.uuid4()}{safe_ext}"
+    folder = key_prefix or f"response_attachments/{entity_type}/{entity_id}"
+    key = f"{folder}/{uuid.uuid4()}{safe_ext}"
 
     from app.services.storage_router import default_provider, get_backend
 
@@ -683,7 +711,7 @@ def create_response_attachment(
         file_url=key,
         file_name=filename or os.path.basename(key),
         file_size_bytes=incoming_size,
-        attachment_type_code=RESPONSE_ATTACHMENT_TYPE_CODE,
+        attachment_type_code=attachment_type_code,
         created_by=uploader_id,
         thumbnail_path=thumbnail_path,
         storage_provider=provider,

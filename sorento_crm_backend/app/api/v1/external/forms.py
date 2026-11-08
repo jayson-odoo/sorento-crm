@@ -9,6 +9,7 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.forms import Form
 from app.models.resources import Attachment
+from app.services.entity_attachment_service import exclude_private_types
 from app.api.v1.external.utils import scope_to_attachment_company
 from app.schemas.external.forms import FormCreateRequest, FormCreateResponse
 from app.schemas.forms import FormCreate, FormResponse
@@ -39,7 +40,7 @@ def create_form(
     f = payload.form
     attachment_id = payload.attachment_id if payload.attachment_id is not None else f.attachment_id
     if attachment_id:
-        att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        att = exclude_private_types(db.query(Attachment)).filter(Attachment.id == attachment_id).first()
         if not att:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
