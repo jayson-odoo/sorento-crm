@@ -233,3 +233,19 @@ def test_adding_and_removing_company_touches_only_those_rows(db, two_companies):
     db.refresh(c.user)
     # The active grant (MCH) was revoked: repoint to the first remaining id sent.
     assert str(c.user.last_active_company_id) == c.srt.id
+
+
+def test_company_ids_are_canonicalised_and_garbage_skipped(db, two_companies):
+    c = two_companies
+    before = _grants(db, c.user.id)
+    UserService(db).set_user_companies(c.user.id, [c.srt.id.upper(), c.mch.id, "not-a-uuid"])
+    assert _grants(db, c.user.id) == before
+
+
+def test_set_user_roles_drops_rbac_cache(db, sales_then_admin, monkeypatch):
+    from app.services import user_service
+
+    seen = []
+    monkeypatch.setattr(user_service, "invalidate_rbac_cache", lambda uid=None: seen.append(uid))
+    UserService(db).set_user_roles(sales_then_admin.user.id, [sales_then_admin.sales.id])
+    assert seen == [sales_then_admin.user.id]

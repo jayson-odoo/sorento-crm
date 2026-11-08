@@ -1162,6 +1162,8 @@ class UserService:
             if role_id not in existing:
                 self.db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
         self.db.commit()
+        # A removed role must stop granting at once, not after the cache TTL (this process).
+        invalidate_rbac_cache(user_id)
         return {"message": "User roles updated successfully"}
 
     def list_user_companies(self, user_id: str) -> list[dict]:
@@ -1185,7 +1187,17 @@ class UserService:
         """
         from app.models.company import Company, UserCompany
         user = self.get_user(user_id)
-        wanted = list(dict.fromkeys(str(c) for c in (company_ids or []) if c))
+        import uuid as _uuid
+
+        def _canonical(c) -> str | None:
+            # Postgres returns uuids lower-case; compare in that form or a valid
+            # upper-case id would be dropped (and an existing grant revoked).
+            try:
+                return str(_uuid.UUID(str(c)))
+            except ValueError:
+                return None
+
+        wanted = list(dict.fromkeys(c for c in (_canonical(c) for c in (company_ids or []) if c) if c))
         granted: list[str] = []
         if wanted:
             known = {

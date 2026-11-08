@@ -15,9 +15,17 @@ places, so Postgres may return any of the tied rows: the primary role can flip o
 
 1. `set_user_roles` / `set_user_companies` diff against the existing rows: keep rows whose
    role/company stays (same id and timestamp), insert only new ids, delete only removed ones.
-2. One helper, `primary_role_order()` in `app/services/user_service.py`, returns
+2. One helper, `UserRoleAssignment.primary_order()` in `app/models/user.py`, returns
    `(assigned_at ASC, id ASC)`; all five primary-role lookups use it
    (`dependencies.py`, `phone_signin_service.py`, `impersonation.py`, `dev_login.py`).
-3. No migration, no backfill. Rows already tied on prod resolve deterministically by `id` after
+3. `set_user_roles` also calls `invalidate_rbac_cache(user_id)` so a removed role stops
+   granting at once in this process. Company ids are canonicalised before matching.
+4. No migration, no backfill. Rows already tied on prod resolve deterministically by `id` after
    this ships (the id is a random uuid, so the pick is stable but arbitrary); a read-only query
    to find them is in the PR body for the owner.
+
+## Known gap (follow-up, not this lane)
+
+Roles added in one save (new user with two roles, or two roles added at once) still share
+`assigned_at`, so which of them is primary is the lower random id: stable, but not the admin's
+pick. Trigger to fix: the owner wants "primary" to mean "first role chosen".
