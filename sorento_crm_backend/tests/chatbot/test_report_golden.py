@@ -48,6 +48,11 @@ HELD_PREFIX = "Held report"  # turn/context.py HELD_REPORT_PREFIX
 EXPECTATION_HEAD, SEED_HEAD = "4c1b310a", "2a8e6f7c"
 STEPS_PER_RUN, RUNS_PER_HEAD = 26, 3
 STEP18_RERUN = 3  # the step-18 turns re-run on 289da7e5 (crew, plan 3.2.1)
+STEP18_PENDING = (
+    "pending: the step-18 re-run x3 on 289da7e5 (runs r1-r3, head = the main sha replayed) needs live agent turns on "
+    "a dev copy; crew schedules it after the dev agent daily cap resets (8 Nov) and commits it to "
+    "golden/report_turns.recorded.jsonl"
+)
 
 ROWS: list[dict[str, Any]] = [json.loads(ln) for ln in CORPUS.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
@@ -80,7 +85,7 @@ def test_corpus_file_has_every_expectation_turn() -> None:
     assert {r["run"] for r in live} == {"1", "2", "3"}
     rerun = [r for r in ROWS if r["role"] == "expectation" and r["step"].startswith("18.") and r["head"] not in (EXPECTATION_HEAD, SEED_HEAD, "gold")]
     if not rerun:
-        pytest.skip("the step-18 re-run on 289da7e5 arrives with crew's extraction (report_turns.recorded.jsonl)")
+        pytest.skip(STEP18_PENDING)
     assert len(rerun) == STEP18_RERUN and {r["prompt_md5"] for r in rerun} == {"289da7e56130a489ecb624031996acc2"}, rerun
 
 
