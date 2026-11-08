@@ -172,7 +172,7 @@ export function CertificateReader({
   const listHref = `/project-sales/${projectId}/quotation-documents/${documentId}/certification`;
 
   if (query.isLoading) {
-    return <Skeleton className="h-[60vh] w-full" role="status" aria-busy="true" aria-label="Loading" />;
+    return <Skeleton className="h-[60dvh] w-full" role="status" aria-busy="true" aria-label="Loading" />;
   }
   if (query.error || !detail) {
     return (
