@@ -110,6 +110,7 @@ def _cert(
     company_id=None,
     file_hash=None,
     attachment=None,
+    link_source="manual",
 ):
     """A certificate with a current revision. `covers` = [(product, model_code|None, source|None)]."""
     from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
@@ -149,7 +150,7 @@ def _cert(
             id=_uid(),
             certificate_id=cert.id,
             product_id=product.id,
-            source="manual",
+            source=link_source,
             model_code=code,
             model_code_source=source,
         )
@@ -957,3 +958,93 @@ def test_09_export_with_nothing_to_export_is_422(files, queued):
             assert r.status_code == 422, r.text
             assert _code_of(r) == "quotation_certificates_empty"
             assert queued == []
+
+
+# ------------------------------------------------------------------ 10 verified listing (CERT-16)
+
+
+def _unverified(db, c, files, **kw):
+    """A towel-rail style product linked by AI to a text certificate that never prints its code."""
+    kw.setdefault("covers", [(c["a"], None, None)])
+    kw.setdefault("pdf", _pdf("ZZ 9", "QQ 12"))
+    return _cert(db, c, files, link_source="ai", **kw)
+
+
+def test_16_an_ai_link_whose_code_is_not_on_the_certificate_is_listed_unverified_and_last(files):
+    with blank_session() as db:
+        c = _draft(db)
+        grey = _unverified(db, c, files, scheme="ZZT0")
+        ok = _cert(db, c, files, scheme="ZZT1", covers=[(c["b"], "WC 8355", "manual")], pdf=_pdf("WC 8355"), link_source="ai")
+        with _api(db, c) as client:
+            items = _items(client, c)
+            assert _ids(items) == [ok.id, grey.id]
+            assert items[0]["verified"] is True and items[0]["marked"]["state"] == "found"
+            assert items[1]["verified"] is False
+            assert items[1]["marked"] == {"count": 0, "state": "not_on_certificate"}
+            assert items[1]["send_to_customer"] is False
+            assert _detail(client, c, grey.id)["verified"] is False
+
+
+def test_16_unverified_rows_stay_out_of_the_snapshot_and_the_export(files, queued):
+    with blank_session() as db:
+        c = _draft(db)
+        _unverified(db, c, files, scheme="ZZT0")
+        _cert(db, c, files, scheme="ZZT1", covers=[(c["b"], "WC 8355", "manual")], pdf=_pdf("WC 8355"), link_source="ai")
+        with _api(db, c) as client:
+            assert client.post(_u(c, "/export"), json={"issue_id": None}).status_code == 202
+            result, backend = _run_task(db, queued[0])
+            assert _pages(backend.uploads[0][1]) == 1
+            db.commit()
+            issue = _issue(db, c["document"], c["owner"])
+            db.flush()
+            db.refresh(issue)
+            assert len(issue.certificates) == 1
+
+
+def test_16_only_unverified_rows_means_nothing_to_export(files, queued):
+    with blank_session() as db:
+        c = _draft(db)
+        _unverified(db, c, files)
+        with _api(db, c) as client:
+            r = client.post(_u(c, "/export"), json={"issue_id": None})
+            assert r.status_code == 422 and _code_of(r) == "quotation_certificates_empty"
+
+
+def test_16_ticking_include_sends_an_unverified_row(files):
+    with blank_session() as db:
+        c = _draft(db)
+        grey = _unverified(db, c, files)
+        with _api(db, c) as client:
+            r = client.patch(_u(c, f"/{grey.id}"), json={"send_to_customer": True})
+            assert r.status_code == 200 and r.json()["send_to_customer"] is True
+            assert r.json()["verified"] is False
+            db.commit()
+            issue = _issue(db, c["document"], c["owner"])
+            db.flush()
+            db.refresh(issue)
+            assert [f["certificate_id"] for f in issue.certificates] == [grey.id]
+
+
+def test_16_drawing_a_box_makes_the_row_verified(files):
+    with blank_session() as db:
+        c = _draft(db)
+        grey = _unverified(db, c, files)
+        with _api(db, c) as client:
+            assert client.put(_u(c, f"/{grey.id}/boxes"), json={"scope": "quote", "boxes": [_box()]}).status_code == 200
+            row = _items(client, c)[0]
+            assert row["verified"] is True and row["marked"] == {"count": 1, "state": "edited"}
+            assert row["send_to_customer"] is True
+
+
+def test_16_scans_manual_links_and_hand_added_rows_are_always_verified(files):
+    with blank_session() as db:
+        c = _draft(db)
+        scan = _unverified(db, c, files, scheme="ZZT1", pdf=image_only_pdf())
+        manual_link = _cert(db, c, files, scheme="ZZT2", covers=[(c["b"], "NOPE 1", "manual")], pdf=_pdf("OTHER 1"))
+        added = _cert(db, c, files, scheme="ZZT3", pdf=_pdf("OTHER 2"))
+        with _api(db, c) as client:
+            assert client.post(_u(c), json={"certificate_id": added.id}).status_code == 201
+            by = {i["certificate_id"]: i for i in _items(client, c)}
+            assert by[scan.id]["verified"] is True and by[scan.id]["marked"]["state"] == "no_text"
+            assert by[manual_link.id]["verified"] is True and by[manual_link.id]["marked"]["state"] == "not_found"
+            assert by[added.id]["verified"] is True

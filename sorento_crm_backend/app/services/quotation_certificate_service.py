@@ -209,7 +209,7 @@ def _tag(boxes: List[dict], product_id: Optional[str]) -> List[dict]:
     return [{**b, "product_id": product_id} for b in boxes]
 
 
-def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker) -> Dict[str, Any]:
+def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_added: bool = False) -> Dict[str, Any]:
     """CERT-3/4/5/14: the products' codes and states, the boxes in force and the marked state."""
     rev = group.rev
     rev_id = str(rev.id) if rev is not None else None
@@ -297,7 +297,10 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker) -> Dict
         state = "edited"
     elif not products:
         state = "none"
-    elif all(p["state"] == "no_text" for p in products if p["code_used"]) and any(p["code_used"] for p in products) and count == 0:
+    elif count == 0 and (
+        group._has_text is False
+        or (any(p["code_used"] for p in products) and all(p["state"] == "no_text" for p in products if p["code_used"]))
+    ):
         state = "no_text"
     elif count > 0 and any_ai_box:
         state = "suggested"
@@ -307,13 +310,33 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker) -> Dict
         state = "code_needed"
     else:
         state = "not_found"
-    return {"products": products, "boxes": boxes, "box_source": source, "marked": {"count": count, "state": state}}
+    # CERT-16: an AI-linked certificate of a text file that prints none of the quoted codes is
+    # listed but not verified. Hand-added rows, manual links, scans and missing files always are.
+    verified = True
+    if (
+        state in ("not_found", "code_needed")
+        and not hand_added
+        and all(cp.source != "manual" for cp, _owner in group.coverage.values())
+    ):
+        verified = False
+        state = "not_on_certificate"
+    return {
+        "products": products,
+        "boxes": boxes,
+        "box_source": source,
+        "marked": {"count": count, "state": state},
+        "verified": verified,
+    }
 
 
 # ----------------------------------------------------------------------------- rows
 
 
-def _effective_send(marker, validity: str, has_file: bool) -> bool:
+def _effective_send(marker, validity: str, has_file: bool, verified: bool = True) -> bool:
+    if marker is not None and marker.send_to_customer is True:
+        return True
+    if not verified:
+        return False
     if marker is not None and marker.send_to_customer is not None:
         return bool(marker.send_to_customer)
     return validity != "expired" and has_file
@@ -322,7 +345,8 @@ def _effective_send(marker, validity: str, has_file: bool) -> bool:
 def _row(db: Session, group: _Group, quoted, markers) -> Dict[str, Any]:
     cert, rev = group.rep, group.rev
     marker = markers.get(str(cert.id))
-    resolved = _resolve(db, group, quoted, marker)
+    hand_added = str(cert.id) not in group.derived and marker is not None
+    resolved = _resolve(db, group, quoted, marker, hand_added)
     validity = _validity(cert)
     has_file = group.attachment is not None
     return {
@@ -340,7 +364,8 @@ def _row(db: Session, group: _Group, quoted, markers) -> Dict[str, Any]:
         "source": "manual" if str(cert.id) not in group.derived and marker is not None else "auto",
         "products": [{"product_id": p["product_id"], "product_code": p["product_code"]} for p in resolved["products"]],
         "marked": resolved["marked"],
-        "send_to_customer": _effective_send(marker, validity, has_file),
+        "send_to_customer": _effective_send(marker, validity, has_file, resolved["verified"]),
+        "verified": resolved["verified"],
         "has_file": has_file,
         "_resolved": resolved,
     }
@@ -352,9 +377,10 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def list_rows(db: Session, document) -> List[Dict[str, Any]]:
     quoted, markers, groups = _context(db, document)
-    rows = [_public(_row(db, g, quoted, markers)) for g in groups]
+    rows = [_row(db, g, quoted, markers) for g in groups]
+    rows.sort(key=lambda r: not r["verified"])  # stable: verified first, scheme and number kept
     db.flush()
-    return rows
+    return [_public(r) for r in rows]
 
 
 def get_row(db: Session, document, certificate_id: str) -> Dict[str, Any]:
@@ -541,12 +567,9 @@ def drop_quote_boxes(db: Session, document, certificate_id: str) -> Dict[str, An
 
 def _sendable(db: Session, document) -> List[tuple[_Group, Dict[str, Any]]]:
     quoted, markers, groups = _context(db, document)
-    out = []
-    for group in groups:
-        row = _row(db, group, quoted, markers)
-        if row["send_to_customer"]:
-            out.append((group, row))
-    return out
+    pairs = [(group, _row(db, group, quoted, markers)) for group in groups]
+    pairs.sort(key=lambda pair: not pair[1]["verified"])
+    return [(group, row) for group, row in pairs if row["send_to_customer"]]
 
 
 def snapshot(db: Session, document) -> List[dict]:
