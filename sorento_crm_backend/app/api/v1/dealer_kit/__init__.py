@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.v1._request_own_scope import price_tag_request_own_scope
 from app.api.v1.dealer_kit import (
+    accessory_templates,
     assets,
     catalogue,
     editions,
@@ -40,4 +41,5 @@ router.include_router(
 )
 router.include_router(tag_templates.router)
 router.include_router(tag_sizes.router)
+router.include_router(accessory_templates.router)
 router.include_router(tag_data.router)

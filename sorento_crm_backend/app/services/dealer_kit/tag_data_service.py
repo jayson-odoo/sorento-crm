@@ -48,6 +48,7 @@ from app.services.accessory_service import (
     combo_tag_accessories,
     entry_text,
     names_text,
+    box_style_for,
     product_tag_accessories,
 )
 from app.services.dealer_kit.viewer import ViewerContext
@@ -384,6 +385,8 @@ def product_tag_data(
         "currency": prices.currency if prices else DEFAULT_CURRENCY,
         # PRICETAG-ACCESSORIES: the product's OWN list, in order (an Ala Carte tag prints it).
         "accessories": product_tag_accessories(db, product.id, viewer),
+        # PRICETAG-ACCESSORY-DESIGNER S6: this product's own box style, or None.
+        "accessory_box_style": box_style_for(db, product_id=product.id),
     }
 
 
@@ -737,6 +740,7 @@ def _part_row(
         "price_tag_description": data["price_tag_description"],
         # PRICETAG-ACCESSORIES: a layer pointed at this position reads this product's own list.
         "accessories": data.get("accessories") or [],
+        "accessory_box_style": data.get("accessory_box_style"),
     }
 
 
@@ -953,6 +957,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             sell_price = Decimal(str(tag.marketing_price_override))
 
         accessories = combo_obj["accessories"] if combo_obj is not None else data["accessories"]
+        # S6: the style follows the list: a combo line the combo's own, an Ala Carte line the product's.
+        box_style = combo_obj["accessory_box_style"] if combo_obj is not None else data.get("accessory_box_style")
 
         rows.append(
             {
@@ -984,6 +990,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 # PRICETAG-ACCESSORIES (owner Q1/Q5): a combo line prints the COMBO's list,
                 # an Ala Carte line its product's; the old free text is never read.
                 "accessories": accessories,
+                "accessory_box_style": box_style,
                 "included_accessories": names_text(accessories),
                 "combo": combo_obj,
                 "slots": slots,
@@ -1228,6 +1235,7 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
         "description": combo.description,
         "free_items": names_text(accessories),
         "accessories": accessories,
+        "accessory_box_style": box_style_for(db, combo_id=combo.id),
         "choices": [{"role": role, "options": options} for role, options in groups.items()],
         "upgrades": upgrades,
     }
@@ -1393,6 +1401,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "offer_price": data["offer_price"],
             "currency": data["currency"],
             "accessories": [],
+            "accessory_box_style": None,
         }
     if line.product_id:
         product = get_product(db, line.product_id)
@@ -1413,6 +1422,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "offer_price": data["offer_price"],
             "currency": data["currency"],
             "accessories": data["accessories"],
+            "accessory_box_style": data.get("accessory_box_style"),
         }
     return None
 
@@ -1838,6 +1848,8 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     )
     row["slots"] = _resign_slot_accessories(db, row["slots"])
     row["quantity"] = tag.quantity
+    # S6: the pinned box style travels with the pinned list; a row pinned before it reads None.
+    row["accessory_box_style"] = pinned.get("accessory_box_style")
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
     # line can resolve two different candidates where only one is covered,
@@ -1848,6 +1860,8 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     # column that answers a different question.
     # PRICETAG-COMBO: a payload pinned before the combo fields has no `combo` key.
     row["combo"] = _combo_with_picks(pinned.get("combo"), line, tag)
+    if isinstance(row["combo"], dict):
+        row["combo"].setdefault("accessory_box_style", None)
     # PRICETAG-ACCESSORIES (A9): the pinned list, pictures re-signed. A row pinned before the
     # list existed carries none and keeps the text it was pinned with.
     if "accessories" in pinned:
@@ -1875,7 +1889,26 @@ def _resign_accessories(db: Session, accessories: list) -> list:
     for item in accessories:
         image = item.get("image") or None
         fresh = image_of(db, image.get("attachment_id")) if image else None
-        out.append({**item, "image": fresh})
+        images = []
+        for picture in item.get("images") or []:
+            signed = image_of(db, picture.get("attachment_id"))
+            if signed is not None:
+                images.append(
+                    {
+                        **signed,
+                        "colour_name": picture.get("colour_name"),
+                        "colour_hex": picture.get("colour_hex"),
+                    }
+                )
+        out.append(
+            {
+                **item,
+                "remark": item.get("remark"),
+                "image": fresh,
+                "images": images,
+                "colours": item.get("colours") or [],
+            }
+        )
     return out
 
 

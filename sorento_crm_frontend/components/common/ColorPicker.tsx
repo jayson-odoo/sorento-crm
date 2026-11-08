@@ -279,9 +279,11 @@ interface ColorPickerProps {
   label?: string;
   /** Colours already used on this tag (S3, AC-S3-5), most-used first. */
   usedColours?: string[];
+  /** The swatch button's accessible name when it needs to say more than "Colour" (e.g. "Colour 2"). */
+  ariaLabel?: string;
 }
 
-export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorPickerProps) {
+export function ColorPicker({ value, onChange, label, usedColours = [], ariaLabel }: ColorPickerProps) {
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState(value);
   const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(toSpectrumHex(value)));
@@ -369,7 +371,7 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label={label ? `${label} colour` : 'Colour'}
+              aria-label={ariaLabel ?? (label ? `${label} colour` : 'Colour')}
               className="size-7 shrink-0 rounded border border-input shadow-sm"
               style={{
                 backgroundColor: value === 'transparent' ? undefined : value,
