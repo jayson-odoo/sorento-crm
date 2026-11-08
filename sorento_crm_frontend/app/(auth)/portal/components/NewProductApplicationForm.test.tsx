@@ -622,12 +622,12 @@ describe('portal: PRODUCT CODES and NEW PRODUCT CODE rows', () => {
     expect(screen.queryByText(/From AutoCount/)).toBeNull();
   });
 
-  it('shows Not opening with the reason', async () => {
+  it('shows an older closed one as Rejected with the reason', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       submitted({ new_code_closed_reason: 'Customer walked away' }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    expect(await screen.findByText('Not opening: Customer walked away')).toBeInTheDocument();
+    expect(await screen.findByText('Rejected: Customer walked away')).toBeInTheDocument();
   });
 });
 
@@ -653,7 +653,7 @@ describe('portal: Brand column gone, per-row Opened as for older applications (N
     expect(screen.queryByText('Example Brand')).toBeNull();
   });
 
-  it('shows the Opened as column with the opened code and the Not opening reason per row', async () => {
+  it('shows the Opened as column with the opened code and the Rejected reason per row', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({
         status: 'approved',
@@ -676,8 +676,8 @@ describe('portal: Brand column gone, per-row Opened as for older applications (N
     expect(await screen.findByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
     const rows = screen.getAllByTestId('npa-line');
     expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Not opening: Customer walked away/)).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Not opening/)).toBeNull();
+    expect(within(rows[1]).getByText(/Rejected: Customer walked away/)).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/Rejected:/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 

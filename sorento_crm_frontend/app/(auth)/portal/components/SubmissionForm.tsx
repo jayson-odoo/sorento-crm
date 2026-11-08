@@ -98,6 +98,7 @@ import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { AsyncCombobox } from './AsyncCombobox';
+import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
@@ -3385,19 +3386,16 @@ function FieldControl({
       );
     case 'debtor-async':
       return (
-        <AsyncCombobox<DebtorLookupItem>
+        <CustomerDebtorCombobox
           id={field.name}
           value={stringValue}
           onChange={(v, item) => {
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => client.lookupDebtors(q, 20, field.lookupKind)}
-          allowFreeText={!field.pickOnly}
-          optionValue={(o) => o.debtor_name}
-          optionLabel={(o) => o.debtor_name}
-          optionMeta={(o) => o.customer_code}
-          placeholder={field.placeholder ?? 'Search debtors...'}
+          lookup={(q) => client.lookupDebtors(q, 20, field.lookupKind)}
+          pickOnly={field.pickOnly}
+          placeholder={field.placeholder}
           disabled={disabled}
         />
       );

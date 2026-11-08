@@ -35,7 +35,7 @@ export function NewProductApplicationNewCodeValue({
     );
   }
   if (closedReason) {
-    return <span className="break-words">Not opening: {closedReason}</span>;
+    return <span className="break-words">Rejected: {closedReason}</span>;
   }
   return (
     <p className="text-muted-foreground">

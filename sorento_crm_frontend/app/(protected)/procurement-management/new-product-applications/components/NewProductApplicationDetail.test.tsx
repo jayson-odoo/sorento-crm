@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   data: undefined as unknown,
   link: vi.fn(),
   purchasing: vi.fn(),
+  purchasingReject: vi.fn(),
   closeCode: vi.fn(),
   undoCode: vi.fn(),
   undoLine: vi.fn(),
@@ -115,6 +116,11 @@ vi.mock('../hooks/useNewProductApplications', () => ({
       },
       undo: { mutate: state.undoLine, mutateAsync: state.undoLine, isPending: false },
       undoNewCode: { mutate: state.undoCode, mutateAsync: state.undoCode, isPending: false },
+      purchasingReject: {
+        mutate: state.purchasingReject,
+        mutateAsync: state.purchasingReject,
+        isPending: false,
+      },
       purchasingResponse: {
         mutate: state.purchasing,
         mutateAsync: state.purchasing,
@@ -703,20 +709,20 @@ describe('NEW PRODUCT CODE (header)', () => {
     });
   });
 
-  it('Not opening needs a reason and sends outcome not_opening with it', async () => {
+  it('Reject (header) needs a reason, then rejects through purchasingReject', async () => {
     render(<Page />);
-    const dialog = await openPurchasingDialog();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /^not opening$/i }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
-    expect(state.purchasing).not.toHaveBeenCalled();
-    fireEvent.change(within(dialog).getByRole('textbox', { name: /reason/i }), {
-      target: { value: 'Customer walked away' },
+    fireEvent.click(await screen.findByRole('button', { name: /^reject$/i }));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: /^reject$/i });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /rejection reason/i }), {
+      target: { value: 'Supplier cannot make it' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    fireEvent.click(confirm);
     await waitFor(() =>
-      expect(state.purchasing.mock.calls[0][0].data).toMatchObject({
-        outcome: 'not_opening',
-        reason: 'Customer walked away',
+      expect(state.purchasingReject).toHaveBeenCalledWith({
+        id: 'a-1',
+        reason: 'Supplier cannot make it',
       }),
     );
   });
@@ -740,11 +746,11 @@ describe('NEW PRODUCT CODE (header)', () => {
     expect(button(/^link/i)).toBeNull();
   });
 
-  it('shows the reason when it is not opening, and no Edit button to a viewer without open_code', () => {
+  it('shows an older closed one as Rejected with the reason, and no Edit button to a viewer without open_code', () => {
     state.perms = new Set();
     state.data = approved({ new_code_closed_reason: 'Customer walked away' });
     render(<Page />);
-    expect(screen.getByText('Not opening: Customer walked away')).toBeInTheDocument();
+    expect(screen.getByText('Rejected: Customer walked away')).toBeInTheDocument();
     expect(button(/edit purchasing response/i)).toBeNull();
     expect(button(/^undo$/i)).toBeNull();
   });
@@ -807,15 +813,15 @@ describe('older applications worked row by row (NPA-FROM-SI v3)', () => {
       ],
     });
 
-  it('shows the Opened as column with the opened code and the Not opening reason per row', () => {
+  it('shows the Opened as column with the opened code and the Rejected reason per row', () => {
     state.data = opened();
     state.perms = new Set([OPEN]);
     render(<Page />);
     expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
     const rows = screen.getAllByTestId('npa-line');
     expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Not opening: Customer walked away/)).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Not opening/)).toBeNull();
+    expect(within(rows[1]).getByText(/Rejected: Customer walked away/)).toBeInTheDocument();
+    expect(within(rows[2]).queryByText(/Rejected:/)).toBeNull();
     expect(within(rows[2]).queryByText(/XY-1234-MB-9/)).toBeNull();
   });
 

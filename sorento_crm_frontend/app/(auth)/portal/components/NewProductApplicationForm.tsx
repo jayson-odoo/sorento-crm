@@ -58,7 +58,6 @@ import { isAwaitingReview } from '@/lib/submission-status';
 import { submitVerb, type PortalAttachment } from '../lib/portal-client';
 import * as portalNewProductApplication from '../lib/new-product-application-service';
 import type {
-  PortalCustomerHit,
   PortalInquiryHit,
 } from '../lib/new-product-application-service';
 import {
@@ -68,10 +67,8 @@ import {
   useSubmissionClient,
 } from '../lib/submission-client';
 import { AsyncCombobox } from './AsyncCombobox';
+import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { AttachmentDropzone } from './AttachmentDropzone';
-
-const LOCK_SENTENCE =
-  'Locked: Revise to change it; it goes back to Draft and needs approval again.';
 
 function ReasonDialog({
   title,
@@ -481,11 +478,6 @@ export default function NewProductApplicationForm({
         </p>
       )}
 
-      {locked && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {LOCK_SENTENCE}
-        </p>
-      )}
       {status === 'rejected' && (
         <RejectionReasonBanner reason={application?.reject_reason} />
       )}
@@ -517,7 +509,11 @@ export default function NewProductApplicationForm({
         <CardContent className="pt-6 pb-8 px-5 sm:px-10">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <Badge variant="secondary">New Product Application</Badge>
-            <Badge status={status}>
+            <Badge
+              status={
+                application?.status_label === 'Rejected' ? 'rejected' : status
+              }
+            >
               {application?.status_label ?? 'Draft'}
             </Badge>
           </div>
@@ -587,7 +583,7 @@ export default function NewProductApplicationForm({
                 {readOnly ? (
                   <span>{state.customer_name || '-'}</span>
                 ) : (
-                  <AsyncCombobox<PortalCustomerHit>
+                  <CustomerDebtorCombobox
                     ariaLabel="Customer"
                     value={state.customer_name}
                     onChange={(v, item) =>
@@ -597,12 +593,7 @@ export default function NewProductApplicationForm({
                         customer_name: v,
                       }))
                     }
-                    fetchOptions={(q) =>
-                      service().lookupNewProductApplicationCustomers(q)
-                    }
-                    optionValue={(o) => o.debtor_name}
-                    optionLabel={(o) => o.debtor_name}
-                    optionMeta={(o) => o.customer_code}
+                    lookup={(q) => client.lookupDebtors(q, 20, undefined)}
                     placeholder="Customer name"
                   />
                 )}
@@ -638,7 +629,7 @@ export default function NewProductApplicationForm({
                         </span>
                       ) : l.closed_reason ? (
                         <span className="break-words">
-                          Not opening: {l.closed_reason}
+                          Rejected: {l.closed_reason}
                         </span>
                       ) : (
                         <span className="text-muted-foreground">-</span>

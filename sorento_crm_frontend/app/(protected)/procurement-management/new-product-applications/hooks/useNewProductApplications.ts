@@ -30,6 +30,7 @@ import {
   linkNewProductApplicationNewCode,
   closeNewProductApplicationNewCode,
   undoNewProductApplicationNewCode,
+  purchasingRejectNewProductApplication,
   rejectNewProductApplication,
   saveNewProductApplicationPurchasingResponse,
   reviseNewProductApplication,
@@ -291,6 +292,11 @@ export function useNewProductApplicationMutations() {
     mutationFn: (id: string) => undoNewProductApplicationNewCode(id),
     ...move('Failed to undo the code'),
   });
+  const purchasingReject = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      purchasingRejectNewProductApplication(id, reason),
+    ...move('Failed to reject the application', 'Application rejected'),
+  });
   const purchasingResponse = useMutation({
     mutationFn: ({
       id,
@@ -333,5 +339,6 @@ export function useNewProductApplicationMutations() {
     closeNewCode,
     undoNewCode,
     purchasingResponse,
+    purchasingReject,
   };
 }

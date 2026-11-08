@@ -64,9 +64,6 @@ const DETAIL_TABS = ['details', 'stock_inquiry'] as const;
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
-const LOCK_SENTENCE =
-  'Locked: Revise to change it; it goes back to Draft and needs approval again.';
-
 const day = (value: string | null | undefined) =>
   value ? formatDateInMalaysia(value) : '';
 const isResolved = (l: Line) => Boolean(l.opened_product_id || l.closed_reason);
@@ -126,7 +123,11 @@ function ReasonDialog({
   );
 }
 
-type Asking = { kind: 'reject' } | { kind: 'revise' } | { kind: 'cancel' };
+type Asking =
+  | { kind: 'reject' }
+  | { kind: 'revise' }
+  | { kind: 'cancel' }
+  | { kind: 'purchasingReject' };
 
 /** The NEW PRODUCT CODE row, read-only: the product (with what AutoCount knows), the typed code, the reason, or the waiting line. */
 function NewCodeResult({ application: r }: { application: Detail }) {
@@ -212,7 +213,7 @@ function StaffNewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const { submit, approve, reject, revise, cancel, undo } =
+  const { submit, approve, reject, revise, cancel, undo, purchasingReject } =
     useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
@@ -256,7 +257,8 @@ function StaffNewProductApplicationDetail({
     reject.isPending ||
     revise.isPending ||
     cancel.isPending ||
-    undo.isPending;
+    undo.isPending ||
+    purchasingReject.isPending;
 
   if (isLoading) {
     return (
@@ -287,6 +289,8 @@ function StaffNewProductApplicationDetail({
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
+  // An older application closed as not opening reads Rejected, pill included.
+  const pillStatus = r.status_label === 'Rejected' ? 'rejected' : r.status;
   const stamp = r.submitted_at ?? r.created_at;
   const canAnswer =
     canOpen && (r.status === 'approved' || r.status === 'completed');
@@ -343,6 +347,16 @@ function StaffNewProductApplicationDetail({
             required
           />
         );
+      case 'purchasingReject':
+        return (
+          <ReasonDialog
+            {...common}
+            title="Reject new product application"
+            label="Rejection reason"
+            confirmLabel="Reject"
+            required
+          />
+        );
       default:
         return (
           <ReasonDialog
@@ -368,7 +382,7 @@ function StaffNewProductApplicationDetail({
             {stamp ? formatDateInMalaysia(stamp) : '-'}
             {' · '}
             <span
-              className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
+              className={`${STATUS_PILL_BASE} ${statusPillClass(pillStatus)}`}
             >
               {r.status_label}
             </span>
@@ -470,12 +484,9 @@ function StaffNewProductApplicationDetail({
         />
       </div>
 
-      {locked && (
+      {r.status === 'approved' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {r.status === 'approved'
-            ? `Approved${r.decided_by_name ? ` by ${r.decided_by_name}` : ''}${r.decided_at ? ` on ${day(r.decided_at)}` : ''}. `
-            : 'Waiting for approval. '}
-          {LOCK_SENTENCE}
+          {`Approved${r.decided_by_name ? ` by ${r.decided_by_name}` : ''}${r.decided_at ? ` on ${day(r.decided_at)}` : ''}.`}
         </div>
       )}
       {r.status === 'rejected' && (
@@ -505,7 +516,7 @@ function StaffNewProductApplicationDetail({
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">New Product Application</Badge>
                 <span
-                  className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
+                  className={`${STATUS_PILL_BASE} ${statusPillClass(pillStatus)}`}
                 >
                   {r.status_label}
                 </span>
@@ -618,7 +629,7 @@ function StaffNewProductApplicationDetail({
                                       </div>
                                     ) : (
                                       <span className="break-words">
-                                        Not opening: {l.closed_reason}
+                                        Rejected: {l.closed_reason}
                                       </span>
                                     )}
                                     {showUndo && (

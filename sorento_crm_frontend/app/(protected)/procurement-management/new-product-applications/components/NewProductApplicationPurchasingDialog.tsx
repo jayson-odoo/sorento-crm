@@ -33,19 +33,13 @@ import type {
 import { useNewProductApplicationMutations } from '../hooks/useNewProductApplications';
 import { searchNewProductApplicationProducts } from '../services/newProductApplicationService';
 
-type Outcome = 'link' | 'new' | 'not_opening' | 'none';
+type Outcome = 'link' | 'new' | 'none';
 
 const figure = (v: string | number | null | undefined) =>
   v === null || v === undefined ? '' : String(v);
 
 const savedOutcome = (r: Detail): Outcome | null =>
-  r.new_product_id
-    ? 'link'
-    : r.new_code_text
-      ? 'new'
-      : r.new_code_closed_reason
-        ? 'not_opening'
-        : null;
+  r.new_product_id ? 'link' : r.new_code_text ? 'new' : null;
 
 export default function NewProductApplicationPurchasingDialog({
   application: r,
@@ -65,7 +59,6 @@ export default function NewProductApplicationPurchasingDialog({
   const [outcome, setOutcome] = useState<Outcome | null>(initial);
   const [product, setProduct] = useState(initialProduct);
   const [newCode, setNewCode] = useState(r.new_code_text ?? '');
-  const [reason, setReason] = useState(r.new_code_closed_reason ?? '');
   const [leadTime, setLeadTime] = useState(r.lead_time ?? '');
   const [cost, setCost] = useState(figure(r.cost_price));
   const [lineCosts, setLineCosts] = useState<Record<string, string>>(
@@ -97,10 +90,6 @@ export default function NewProductApplicationPurchasingDialog({
       setError('Enter the new product code.');
       return;
     }
-    if (outcome === 'not_opening' && !reason.trim()) {
-      setError('Enter the reason.');
-      return;
-    }
     const body: Write = { lead_time: leadTime.trim() || null };
     if (r.lines.length) {
       body.lines = r.lines.map((l) => ({
@@ -123,13 +112,6 @@ export default function NewProductApplicationPurchasingDialog({
     ) {
       body.outcome = 'new';
       body.new_code = newCode.trim();
-    } else if (
-      outcome === 'not_opening' &&
-      (initial !== 'not_opening' ||
-        reason.trim() !== (r.new_code_closed_reason ?? ''))
-    ) {
-      body.outcome = 'not_opening';
-      body.reason = reason.trim();
     }
     if (outcome === 'none') body.outcome = null;
     setError(null);
@@ -223,20 +205,6 @@ export default function NewProductApplicationPurchasingDialog({
                   value={newCode}
                   maxLength={100}
                   onChange={(e) => setNewCode(e.target.value)}
-                />
-              )}
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <RadioGroupItem value="not_opening" id="npa-out-no" />
-                <Label htmlFor="npa-out-no">Not opening</Label>
-              </div>
-              {outcome === 'not_opening' && (
-                <Textarea
-                  aria-label="Reason"
-                  rows={2}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
                 />
               )}
             </div>

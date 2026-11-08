@@ -196,6 +196,12 @@ export const closeNewProductApplicationNewCode = (id: string, reason: string) =>
 export const undoNewProductApplicationNewCode = (id: string) =>
   post(`${at(id)}/new-code/undo`, 'Failed to undo the code');
 
+/** Purchasing refuses an Approved application: it becomes Rejected with the reason. */
+export const purchasingRejectNewProductApplication = (id: string, reason: string) =>
+  post(`${at(id)}/purchasing-reject`, 'Failed to reject the application', {
+    reason,
+  });
+
 /** Purchasing's one save: the answer on the new code, lead time and cost(s). */
 export async function saveNewProductApplicationPurchasingResponse(
   id: string,
