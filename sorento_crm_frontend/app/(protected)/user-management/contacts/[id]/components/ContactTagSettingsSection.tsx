@@ -47,7 +47,7 @@ function ItemRow({ item }: { item: TagSettingsItem }) {
       ) : (
         <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>
-            <span className="text-muted-foreground">Now </span>
+            <span className="text-muted-foreground">Own change </span>
             {show(item.current)}
           </span>
           <span>
@@ -65,7 +65,7 @@ function ItemRow({ item }: { item: TagSettingsItem }) {
   );
 }
 
-/** The contact page's Tags section: its tags, then each setting that differs from what they say. */
+/** The contact page's Tags section: its tags, then each own change (a setting that differs from what they say). */
 export default function ContactTagSettingsSection({
   contactId,
   canApply = true,
@@ -126,7 +126,7 @@ export default function ContactTagSettingsSection({
                 <p className="text-sm text-muted-foreground">
                   {data.status === 'none'
                     ? 'None of this contact’s tags set anything.'
-                    : 'No differences found.'}
+                    : 'No own changes.'}
                 </p>
               </div>
             )}
