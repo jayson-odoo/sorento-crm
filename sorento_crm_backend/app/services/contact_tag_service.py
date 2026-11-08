@@ -175,7 +175,14 @@ class ContactTagService:
         row.updated_by = actor_id
         self.db.flush()
         if holders:
-            keys = contact_tag_union.keys_of(old_settings) | contact_tag_union.keys_of(row.settings or {})
+            new_settings = row.settings or {}
+            if toggled:  # gated above on every section the tag sets, old and new
+                keys = contact_tag_union.keys_of(old_settings) | contact_tag_union.keys_of(new_settings)
+            else:  # only the sections that changed: exactly what assert_gates checked
+                changed = {s for s in set(old_settings) | set(new_settings) if old_settings.get(s) != new_settings.get(s)}
+                keys = contact_tag_union.keys_of({s: old_settings[s] for s in changed if s in old_settings}) | (
+                    contact_tag_union.keys_of({s: new_settings[s] for s in changed if s in new_settings})
+                )
             for chunk in _chunks(holders):
                 contact_tag_union.recompute(
                     self.db, chunk, keys=keys, actor_id=actor_id,
@@ -185,7 +192,7 @@ class ContactTagService:
         self.db.refresh(row)
         return self._with_count([row])[0]
 
-    def delete_tag(self, tag_id: str, gates=None) -> None:
+    def delete_tag(self, tag_id: str, gates=None, actor_id: Optional[str] = None) -> None:
         """Remove the tag; its contact links go by cascade, and every holder loses what only it granted.
 
         Deleting clears every section the tag sets, so it needs the same gates as clearing them by PATCH."""
@@ -200,7 +207,9 @@ class ContactTagService:
         self.db.execute(delete(ContactTag).where(ContactTag.id == str(row.id)))
         self.db.flush()
         for chunk in _chunks(holders):
-            contact_tag_union.recompute(self.db, chunk, keys=keys, trigger=f"Tag deleted: {name}")
+            contact_tag_union.recompute(
+                self.db, chunk, keys=keys, actor_id=actor_id, trigger=f"Tag deleted: {name}"
+            )
         self.db.commit()
 
     # ---------------------------------------------------------------- tagging
@@ -256,7 +265,7 @@ class ContactTagService:
         self.db.flush()
         if changed_rows:
             contact_tag_union.recompute(
-                self.db, [contact], keys=_keys(changed_rows.values()), actor_id=actor_id,
+                self.db, [contact], keys=_keys(r for r in changed_rows.values() if r.is_active), actor_id=actor_id,
                 trigger="Tags changed: " + ", ".join(sorted(r.name for r in changed_rows.values())),
             )
         self.db.commit()
@@ -397,6 +406,13 @@ def assert_tag_gates(settings_list, gates) -> None:
 
     can, is_superadmin = gates
     for settings in settings_list:
+        # The AI model a tag puts its holders on spends AI quota (the same right as setting it on a tag).
+        if ((settings or {}).get("chatbot") or {}).get("llm") is not None and not can(cts.AI_SETTINGS_EDIT):
+            raise AppException(
+                status_code=403,
+                message="You may not add or remove a tag that sets the AI model.",
+                code="FORBIDDEN",
+            )
         for section in (settings or {}):
             if section not in cts._GATES or (settings or {}).get(section) is None:
                 continue

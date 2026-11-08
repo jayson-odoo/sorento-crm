@@ -514,3 +514,70 @@ def test_handtest_sequence(client, db, su):
     assert resp.status_code == 200, resp.text
     assert _companies(db, c) == {s.id, m.id}
     assert client.get(f"{CONTACTS}/{c.id}/tag-settings").json()["status"] == "matches"
+
+
+# ---------------------------------------------------------------- security review fixes
+
+
+def test_sec_b1_own_removal_never_writes_an_empty_brand_list(client, db, su):
+    """An empty brand list means EVERY brand: the recompute must never write one (fail closed)."""
+    from tests.test_contact_tags_s2 import _brand
+
+    b1, b2 = _brand(db), _brand(db)
+    t1 = _stag(client, db, {"brands": [b1.id]})
+    t2 = _stag(client, db, {"brands": [b2.id]})
+    c = _contact(db)
+    _tags(client, c, [t1, t2])
+    row = _fresh(db, c)
+    row.brand_ids = [b2.id]  # a person takes brand 1 away by hand
+    db.flush()
+    _tags(client, c, [t1])  # tags {b1} + own removal of b1 would be empty
+    assert _fresh(db, c).brand_ids == [b2.id]
+
+
+def test_sec_b1_an_empty_brand_list_on_a_tag_is_refused(client, db, su):
+    tag = _tag(client)
+    resp = client.patch(f"{TAGS}/{tag['id']}", json={"settings": {"brands": []}})
+    assert resp.status_code == 422, resp.text
+
+
+def test_sec_s1_inactive_tag_added_by_an_editor_writes_no_companies(client, db, su, editor):
+    s, m = _company(db, "s"), _company(db, "m")
+    a = _stag(client, db, {"companies": [s.id]})
+    b = _stag(client, db, {"companies": [m.id]})
+    off = _stag(client, db, {"companies": [s.id], "chatbot": {"chatbot_stock_allowed": True}}, active=False)
+    c = _contact(db)
+    _link_raw(db, c, [a, b])  # a prod contact the old rule left with no company
+    assert _put(client, c, [a, b, off]).status_code == 200
+    assert _companies(db, c) == set()
+
+
+def test_sec_s1_editing_an_ungated_section_does_not_recompute_gated_ones(client, db, su, editor):
+    s, m = _company(db, "s"), _company(db, "m")
+    a = _stag(client, db, {"companies": [s.id], "chatbot": {"chatbot_stock_allowed": True}})
+    b = _stag(client, db, {"companies": [m.id]})
+    c = _contact(db)
+    _link_raw(db, c, [a, b])
+    resp = client.patch(f"{TAGS}/{a['id']}", json={"settings": {"companies": [s.id],
+                                                                "chatbot": {"chatbot_stock_allowed": False}}})
+    assert resp.status_code == 200, resp.text
+    assert _companies(db, c) == set()  # companies untouched until a superadmin change or the script
+
+
+def test_sec_s2_tag_delete_audit_names_the_actor(client, db, su):
+    s = _company(db, "s")
+    a = _stag(client, db, {"companies": [s.id]})
+    c = _contact(db)
+    _tags(client, c, [a])
+    assert client.delete(f"{TAGS}/{a['id']}").status_code == 204
+    actor = db.execute(
+        text("SELECT user_id FROM audit_logs WHERE entity_id = :c AND description LIKE 'Tag deleted:%'"),
+        {"c": str(c.id)},
+    ).scalar()
+    assert actor is not None
+
+
+def test_sec_n1_adding_a_tag_that_sets_the_ai_model_needs_the_ai_settings_right(client, db, editor):
+    a = _stag(client, db, {"chatbot": {"llm": {"provider": "openai", "model": "gpt-x"}}})
+    c = _contact(db)
+    assert _put(client, c, [a]).status_code == 403

@@ -25,6 +25,8 @@ from app.services import contact_tag_settings as cts
 logger = logging.getLogger(__name__)
 
 LIVE_TRIGGER = "Tag settings recomputed"
+#: An empty list on these columns means EVERY brand / class, so the recompute never writes one.
+NEVER_EMPTY = ("brands", "item_classes")
 SCRIPT_TRIGGER = "Tag union recompute"
 
 
@@ -161,6 +163,10 @@ def plan_contact(db: Session, contact, evaluated: dict, keys: Optional[set], cat
         else:
             base = cts.from_json(entry["base"]) if "base" in entry else None
             target = _three_way(tags, cts.from_json(entry.get("v")), current)
+        if section in NEVER_EMPTY and target == frozenset():
+            # Own removals took every brand / class away: an empty list would mean ALL of them
+            # (contact_brand_scope), so the contact keeps what it holds (fail closed).
+            target = current
         new_entry = {"v": cts.to_json(tags)}
         if entry is None or "base" in entry:
             new_entry["base"] = cts.to_json(base)
@@ -176,6 +182,8 @@ def plan_contact(db: Session, contact, evaluated: dict, keys: Optional[set], cat
             continue  # what it was before the tags is unknown: the value stays, as the contact's own
         current = reader.current(cid, section, key, cat)
         target = _three_way(cts.from_json(entry["base"]), cts.from_json(entry.get("v")), current)
+        if section in NEVER_EMPTY and target == frozenset():
+            target = current  # an empty list means every brand / class: keep what the contact holds
         if target != current:
             todo.append(_item(cat, section, key, target, current))
     return todo, snapshot

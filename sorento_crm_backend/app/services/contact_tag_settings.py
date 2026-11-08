@@ -264,7 +264,10 @@ def _v_codes(name: str):
 def _v_brands(db, cat, section, value):
     if value == ALL:
         return
-    _check_known(cat, "brands", _str_list(section, value))
+    values = _str_list(section, value)
+    if not values:  # an empty brand list on a contact means every brand: say "all" instead
+        raise _bad(section, "needs at least one brand (or \"all\")")
+    _check_known(cat, "brands", values)
 
 
 def _v_item_classes(db, cat, section, value):
@@ -620,10 +623,13 @@ def _m_memory_max(vals):
 
 
 def _m_union_all(vals):
-    """TAG-UNION brands / item classes: any tag "all" gives all, otherwise the union."""
+    """TAG-UNION brands / item classes: any tag "all" gives all, otherwise the union. An empty list on
+    the contact row means EVERY brand / class (contact_brand_scope), so an empty union is a conflict
+    and never written (fail closed)."""
     if any(v == ALL for v in vals):
         return ALL, False
-    return _m_union(vals)
+    res, _ = _m_union(vals)
+    return (None, True) if not res else (res, False)
 
 
 def _m_intersect_sets(vals):
