@@ -260,6 +260,16 @@ describe('ProductsList - List Price cell history icon', () => {
     await waitFor(() => expect((historyDialog.props as { product: unknown }).product).toBeNull());
   });
 
+  it('a saved layout narrower than the price + icon still renders List Price at its minimum', async () => {
+    // Every saved Products layout carried list_price: 120 from before the icon (crew pass).
+    await mounted();
+    const column = tableRef().getColumn('list_price')!;
+    const min = column.columnDef.minSize ?? 0;
+    expect(min).toBeGreaterThanOrEqual(170);
+    act(() => tableRef().setColumnSizing({ list_price: 120 }));
+    expect(tableRef().getColumn('list_price')!.getSize()).toBe(min);
+  });
+
   it('a never-changed row shows the price without the icon', async () => {
     await mounted();
     renderCell('list_price', UNCHANGED_ROW);

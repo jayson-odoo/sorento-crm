@@ -698,8 +698,10 @@ const ProductsList = () => {
             </div>
           );
         },
-        // Room for a five-figure price AND the history icon without clipping either.
+        // Room for a five-figure price AND the history icon without clipping either. The
+        // minimum also wins over a narrower SAVED layout (every saved one said 120).
         size: 170,
+        minSize: 170,
         meta: {
           headerTitle: 'List Price',
           skeleton: <Skeleton className="h-4 w-20" />,
