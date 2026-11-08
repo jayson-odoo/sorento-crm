@@ -624,3 +624,28 @@ def test_r2_a_written_value_changed_to_something_unlisted_is_still_refused(db):
     wrong = {**first, "agent": stranger.sales_agent}
     steps, skipped, _ = propose_rows(db, w, [wrong], previous_waiting=waiting, user_text="row 1: the first one")
     assert steps == [] and "pick from the list" in reason_of(skipped, 1)
+
+
+def test_r2_the_crew_repro_through_two_turns_keeps_row_4_waiting(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    tiers(db, None, person)
+    names = f"ZZT Yee {uuid.uuid4().hex[:4]}"
+    pick = customer_(db, w.srt, f"{names} One")
+    customer_(db, w.srt, f"{names} Two")
+    cust = customer_(db, w.srt, "ZZT Oscar Waiting")
+    table = [
+        {**row_(name=names, agent=new.sales_agent), "row": 3},
+        {**row_(customer=cust.customer_code, agent=person), "row": 4},
+        {**row_(customer="ZZTNOPE999", agent=new.sales_agent), "row": 6},
+    ]
+    first = say(db, w, table, "assign these sales agents").reply_text
+    assert NEEDS in first
+
+    again = [{**table[0], "customer_code": pick.customer_code}, *table[1:]]
+    second = say(db, w, again, f"row 3: {pick.customer_code}").reply_text
+    assert READY in second and NEEDS in second and "pick from the list" not in second
+    needs = second.split(NEEDS, 1)[1].split(NOT_CHANGED, 1)[0]
+    assert "| 4 |" in needs and person in needs
+    assert "ZZTNOPE999" in second.split(NOT_CHANGED, 1)[1]

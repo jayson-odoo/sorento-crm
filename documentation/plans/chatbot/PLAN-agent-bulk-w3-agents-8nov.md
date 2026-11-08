@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 3, sales agent -> customers from a pasted table (AGENT-BULK-W3-AGENTS)
 
-Status: Merge-ready pending crew live run (laneboard/scripts/2253.md) + router gate; PR #2253, reviewer READY after fix round 1 (pick check by row number, hidden-company guards). Track: full (agent write path; no migration, no new permission, no new ingest surface).
+Status: Merge-ready pending crew live run (laneboard/scripts/2253.md) + router gate; PR #2253, reviewer READY after fix round 1 (pick check by row number, hidden-company guards); fix round 2 (crew live x3: a partial answer kept other rows waiting) applied. Track: full (agent write path; no migration, no new permission, no new ingest surface).
 
 Wave 3 after AGENT-BULK-W2-TAGS (#2247). Owner wave order (8 Nov): 2 contact tags (#2247), 3 sales agent ->
 customers (this lane), 4 contact edits keyed by phone, 5 product fields, 6 supplier fields.
@@ -63,7 +63,9 @@ A row = company (optional) + customer code and / or name + the agent it should b
   the company; both dev companies are `document`) it adds `Past invoiced sales of this customer move to <new> (RM n in
   the last 12 months)`, the sales reports' figure (`invoiced_sales.posted` / `signed_amount`, Malaysia date).
 - **Pick check**: a picked code must be one the last table listed for that row (found by the row key, else by the
-  table row number, since a pick may change the customer fields the key is built from) or typed by the user.
+  table row number, since a pick may change the customer fields the key is built from) or typed by the user. The
+  text a row is still waiting on, re-sent unchanged when the user answers only other rows, is not a pick: that row
+  waits again (crew live fix round 2).
 - **Confirm**: per row, recheck the customer's agent is still `before`, then `assign_sales_agent_many([c], agent)`
   (the route's checks), audit = the listener's customer row + one `customer.sales_agent_agent` row. CRM only; no
   AutoCount write. Assign only: a row asking to clear an agent is not understood as clearing (it reads as an agent
@@ -79,6 +81,13 @@ Dev examples (crew-data-request answered 8 Nov, agent names masked by crew):
 | E4 | `MCH / 300-H100 / <AGENT B's person name>` | Needs your choice: the 5 AGENT B codes |
 | E5 | `SRT / 300-H100 / AGENT C I` | Not changed: Customer "300-H100" is inactive |
 | E6 | MCH set to `customer`: `MCH / 300-Y031 / AGENT C I` | Ready + "Past invoiced sales ... (RM 27,121.69 in the last 12 months)" |
+
+## Scope note (crew live, 8 Nov)
+
+The agent reads and writes under every company the user is granted (`grants_scope`, the #2241 rule), so one table
+can hold MCH and SRT rows. The screen route `POST /master-data/sales-agents/{id}/customers` reads under the ACTIVE
+company only: putting MCH 300-H100 back through that route while SRT is active answers 404. That is the route's
+existing behaviour and is intended here; switch the active company (or use the customer form) to undo by hand.
 
 ## Crew answers (8 Nov)
 
