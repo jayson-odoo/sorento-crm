@@ -21,12 +21,22 @@ from app.services.error_handler import AppException
 from app.services.queue_service import redis_conn
 from app.services.sales.invoiced_sales import INVOICED_SLUG
 from app.services.town import snapshot as town
-from app.services.user_service import holds_permission
+from app.models.user import User
+from app.services.phone_signin_service import is_salesperson
+from app.services.user_service import UserService, holds_permission
 
 router = APIRouter()
 
 RATE_LIMIT_PER_MINUTE = 30
 _HEADERS = {"Cache-Control": "private, no-cache"}
+
+
+def _staff_only(db: Session, current_user: dict) -> None:
+    """Staff only, as the menu is: a portal contact or a salesperson also holds a real session."""
+    user_id = str(current_user["id"])
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not UserService(db).is_staff(user_id) or is_salesperson(db, user):
+        raise AppException(status_code=403, message="Town is for staff", code="town_staff_only")
 
 
 def _rate_limit(user_id: str) -> None:
@@ -63,6 +73,7 @@ def get_snapshot(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _staff_only(db, current_user)
     _rate_limit(str(current_user["id"]))
     company_id = _company_id(request, db)
     variant = "full" if holds_permission(db, current_user, INVOICED_SLUG) else "redacted"

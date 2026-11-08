@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import gzip
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from app.main import app  # noqa: F401
@@ -22,7 +22,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 from tests._pg_fixture import blank_session
 from tests._sales_unified_seed import cust, doc, line, so
-from tests.test_sales_yearly_routes import _client, _user
+from tests.test_sales_yearly_routes import _client
 from tests.town._town_seed import (
     DAY, NOW, D, all_keys, dealer_doc, fake_full, project_doc, report_total,
 )
@@ -47,12 +47,18 @@ def _build(db, company_id=DEFAULT_COMPANY_ID):
 # ------------------------------------------------------------------------------ compare
 
 
+def _at(d, hh, mm=0):
+    """Stamp a seeded document's `created_at` (naive UTC, as stored) at hh:mm UTC on its own day."""
+    d.created_at = datetime(d.doc_date.year, d.doc_date.month, d.doc_date.day, hh, mm)
+    return d
+
+
 def test_compare_is_day_minus_7_with_the_same_calculation(db):
     a, b = cust(db), cust(db)
-    doc(db, "invoice", "200.00", WEEK_AGO, customer=a, lines=[line()])
-    dealer_doc(db, b, "50.00", WEEK_AGO, kind="cash_sale")
-    doc(db, "credit_note", "30.00", WEEK_AGO, customer=a, lines=[line()])
-    doc(db, "invoice", "999.00", WEEK_AGO, customer=a, status="cancelled")
+    _at(doc(db, "invoice", "200.00", WEEK_AGO, customer=a, lines=[line()]), 1)
+    _at(dealer_doc(db, b, "50.00", WEEK_AGO, kind="cash_sale"), 1)
+    _at(doc(db, "credit_note", "30.00", WEEK_AGO, customer=a, lines=[line()]), 1)
+    _at(doc(db, "invoice", "999.00", WEEK_AGO, customer=a, status="cancelled"), 1)
     doc(db, "invoice", "111.00", WEEK_AGO + timedelta(days=1), customer=a)  # day-6
     doc(db, "invoice", "222.00", WEEK_AGO - timedelta(days=1), customer=a)  # day-8
     doc(db, "invoice", "5000.00", WEEK_AGO, customer=cust(db, company_id=MOCHA_ID), company_id=MOCHA_ID)
@@ -62,6 +68,19 @@ def test_compare_is_day_minus_7_with_the_same_calculation(db):
     assert compare["last_week_amount"] == "220.00"
     assert compare["last_week_invoice_count"] == 2  # IV + CS; the credit note is not an invoice
     assert set(compare) == {"label", "last_week_amount", "last_week_invoice_count"}
+
+
+def test_compare_stops_at_the_same_time_of_day_in_the_daytime_and_takes_the_whole_day_at_night(db):
+    from app.services.town.snapshot import build_snapshot
+    from tests.town._town_seed import myt
+
+    c = cust(db)
+    _at(doc(db, "invoice", "100.00", WEEK_AGO, customer=c), 1)  # 01:00 UTC = 09:00 MYT, before 15:42
+    _at(doc(db, "invoice", "40.00", WEEK_AGO, customer=c), 12)  # 12:00 UTC = 20:00 MYT, after 15:42
+    day = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=NOW)["compare"]
+    assert day["last_week_amount"] == "100.00" and day["last_week_invoice_count"] == 1
+    night = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=myt(DAY, 22, 0))["compare"]
+    assert night["last_week_amount"] == "140.00" and night["last_week_invoice_count"] == 2
 
 
 def test_compare_for_a_quiet_week_ago_is_zero_not_missing(db):
@@ -129,6 +148,8 @@ def test_endpoint_serves_the_v3_keys_per_variant():
         full = _v3_full()
         full["day"] = _today().isoformat()
         store(redis_conn, DEFAULT_COMPANY_ID, _today(), full)
+        from tests.town.test_town_snapshot_endpoint import _user
+
         principal = _user(db, DEFAULT_COMPANY_ID)
         with _client(db, principal, allow=("sales.reports.view",)) as client:
             holder = client.get(URL).json()

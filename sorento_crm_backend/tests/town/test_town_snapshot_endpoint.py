@@ -23,7 +23,7 @@ from app.models.user import User, UserRole, UserRoleAssignment
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from tests._pg_fixture import blank_session, unique_code
-from tests.test_sales_yearly_routes import _client, _user
+from tests.test_sales_yearly_routes import _client, _user as _plain_user
 from tests.town._town_seed import AMOUNT_KEYS, FAKE_RM_FIGURES, all_keys, fake_full
 
 URL = "/api/v1/town/snapshot"
@@ -32,6 +32,13 @@ BUSINESS_TABLES = (
     "billing_documents", "billing_document_lines", "customers", "stock", "warehouses", "reorder_level",
     "purchase_requests", "quotation_documents", "products",
 )
+
+
+def _user(db, *companies):
+    """A staff user: a signed-in principal holding one ordinary (non portal) role."""
+    principal = _plain_user(db, *companies)
+    _with_role(db, principal, "zzt_staff_role")
+    return principal
 
 
 def _today():
@@ -136,6 +143,26 @@ def test_ac3_user_without_sales_reports_view_gets_counts_and_no_amount_in_the_bo
     assert body["shops"][0]["today_docs"] == 3
 
 
+def test_a_redacted_shop_list_is_not_in_ranking_order(db):
+    from app.services.queue_service import redis_conn
+    from app.services.town.snapshot import store
+
+    full = fake_full(_today(), DEFAULT_COMPANY_ID)
+    full["shops"] = [
+        {"key": f"ZZT-key-{i}", "code": f"C{i}", "name": f"N{i}", "account_label": f"L{i}", "kind": "shop",
+         "rank": i, "ninety_day_amount": "1.00", "today_amount": "1.00", "today_docs": 1}
+        for i in range(1, 9)
+    ]
+    store(redis_conn, DEFAULT_COMPANY_ID, _today(), full)
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal, allow=()) as client:
+        first = [s["account_label"] for s in client.get(URL).json()["shops"]]
+        again = [s["account_label"] for s in client.get(URL).json()["shops"]]
+    assert first == again  # stable across refreshes
+    assert first != [f"L{i}" for i in range(1, 9)]  # but not the ranking
+    assert sorted(first) == sorted(f"L{i}" for i in range(1, 9))
+
+
 def test_ac3_redacted_body_has_no_dealer_identity_ranking_or_customer_id(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
     with _client(db, principal, allow=()) as client:
@@ -169,12 +196,34 @@ def test_ac3_admin_and_superadmin_get_amounts_without_the_slug(db, stored, role)
     assert r.json()["today"]["amount"] == "512345.60"
 
 
-def test_ac3_a_signed_in_user_with_no_role_at_all_is_redacted_not_refused(db, stored):
-    principal = _user(db, DEFAULT_COMPANY_ID)
+def test_ac3_a_signed_in_user_with_no_role_at_all_is_refused(db, stored):
+    principal = _plain_user(db, DEFAULT_COMPANY_ID)
     with _real_rbac_client(db, principal) as client:
         r = client.get(URL)
-    assert r.status_code == 200
-    assert not (all_keys(r.json()) & AMOUNT_KEYS)
+    assert r.status_code == 403
+
+
+def test_a_portal_contact_session_is_refused(db, stored):
+    principal = _plain_user(db, DEFAULT_COMPANY_ID)
+    _with_role(db, principal, "portal_user")
+    with _real_rbac_client(db, principal) as client:
+        r = client.get(URL)
+    assert r.status_code == 403
+
+
+def test_a_salesperson_only_session_is_refused(db, stored):
+    from app.models.access import RespondContact
+
+    contact = RespondContact(id=str(uuid.uuid4()), phone_number=f"+0{uuid.uuid4().int % 10**10}")
+    db.add(contact)
+    db.flush()
+    principal = _plain_user(db, DEFAULT_COMPANY_ID)
+    db.query(User).filter(User.id == principal["id"]).update({"respond_contact_id": contact.id})
+    _with_role(db, principal, "salesperson")
+    _with_role(db, principal, "portal_user")
+    with _real_rbac_client(db, principal) as client:
+        r = client.get(URL)
+    assert r.status_code == 403
 
 
 # --------------------------------------------------------------------------- AC-4

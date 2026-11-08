@@ -75,12 +75,17 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
-    """Today's figures and the same weekday last week, from one query over the two days."""
+def _today_and_compare(db: Session, company_id: str, day: date, now: datetime) -> tuple:
+    """Today's figures and the same weekday last week, from one query over the two days. Last week
+    stops at the same time of day (documents created by `now - 7 days`); at night it is the whole day."""
     week_ago = day - timedelta(days=7)
     sales_type = inv.document_sales_type()
     today = BillingDocument.doc_date == day
+    now_myt = now.astimezone(MYT)
     last = BillingDocument.doc_date == week_ago
+    if now_myt.hour * 60 + now_myt.minute < NIGHT_MINUTE:
+        cutoff = (now_myt - timedelta(days=7)).astimezone(timezone.utc).replace(tzinfo=None)
+        last = sa.and_(last, BillingDocument.created_at <= cutoff)
     not_credit = BillingDocument.document_type != CREDIT_NOTE
     row = db.execute(
         sa.select(
@@ -308,7 +313,7 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
             BillingDocument.company_id == company_id, BillingDocument.doc_date >= day - timedelta(days=7)
         )
     ).scalar_one()
-    today, compare = _today_and_compare(db, company_id, day)
+    today, compare = _today_and_compare(db, company_id, day, now)
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -364,7 +369,13 @@ def redact(snapshot: dict) -> dict:
     out = copy.deepcopy(snapshot)
     out.get("today", {}).pop("amount", None)
     out.get("compare", {}).pop("last_week_amount", None)
-    for shop in out.get("shops", []):
+    # Not in revenue order: by kind, then today's documents, then a hash of the key. The hash is
+    # the same on every refresh, so the buildings stay put, and it is not the ranking.
+    out["shops"] = sorted(
+        out.get("shops", []),
+        key=lambda s: (s["kind"], -s["today_docs"], hashlib.sha1(str(s["key"]).encode()).hexdigest()),
+    )
+    for shop in out["shops"]:
         for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
     _opaque_keys(out)
