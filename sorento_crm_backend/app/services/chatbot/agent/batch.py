@@ -104,15 +104,19 @@ def _cells(definition: writes.WriteDef, args: Any, shown: dict | None, summary: 
     return {"Change": summary} if shown is not None else {}
 
 
-def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> str | None:
-    """The skip reason when a row picks a code that neither the last table turn listed for this phone nor the user
-    typed this turn; None when every code is allowed (or the row picks nothing)."""
+def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str, row: Any = None) -> str | None:
+    """The skip reason when a row picks a code that neither the last table turn listed for this row nor the user
+    typed this turn; None when every code is allowed (or the row picks nothing). The row is found by its key (a
+    grant's phone), else by its table row number: a customer-agent row's key is the customer as written, which a pick
+    may change, and a changed key must not escape the check (review 8 Nov)."""
     codes = [
         c for name in PICK_ARGS
         for c in (args[name] if isinstance(args.get(name), list) else [args[name]] if isinstance(args.get(name), str) else [])
         if str(c).strip()
     ]
     mine = [p for p in previous if key is not None and p.get("key") == key]
+    if not mine and row is not None:
+        mine = [p for p in previous if p.get("row") == row]
     if not mine or not codes:
         return None
     # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick.
@@ -192,7 +196,7 @@ def propose_rows(
             skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
-            unlisted = _not_listed(args, key, previous_waiting or [], user_text) or _closed_reason(
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text, n) or _closed_reason(
                 write, args, key, closed or {}, user_text
             )
             if unlisted:

@@ -292,6 +292,46 @@ def test_03_the_pick_by_reply_proposes_the_row_and_an_unlisted_pick_is_refused(d
     assert steps == [] and "pick from the list" in reason_of(skipped, 1)
 
 
+def test_03_a_pick_that_changes_the_rows_key_is_still_checked_against_that_rows_list(db):
+    """Review 8 Nov: the row key is the customer as written, so a pick that drops the name or adds a company must not
+    escape the pick check."""
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = f"ZZT Fox {uuid.uuid4().hex[:4]}"
+    customer_(db, w.srt, f"{stem} One")
+    customer_(db, w.srt, f"{stem} Two")
+    stranger = customer_(db, w.srt, "ZZT Unrelated Stranger")
+    first = {**row_(name=stem, agent=new.sales_agent), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    dropped = {"company": "SRT", "customer_code": stranger.customer_code, "agent": new.sales_agent, "row": 1}
+    steps, skipped, _ = propose_rows(db, w, [dropped], previous_waiting=waiting, user_text="row 1: the first one")
+    assert steps == [] and "pick from the list" in reason_of(skipped, 1)
+
+    person = f"ZZT Person {uuid.uuid4().hex[:4]}"
+    tiers(db, None, person)
+    q = agent_(db, w.srt, "Q")
+    cust = customer_(db, w.srt, "ZZT Golf Two")
+    first = {**row_(company=None, customer=cust.customer_code, agent=person), "row": 1}
+    _, _, waiting = propose_rows(db, w, [first])
+    assert waiting
+    added = {"company": "SRT", "customer_code": cust.customer_code, "agent": q.sales_agent, "row": 1}
+    steps, skipped, _ = propose_rows(db, w, [added], previous_waiting=waiting, user_text="row 1: the second one")
+    assert steps == [] and "pick from the list" in reason_of(skipped, 1)
+
+
+def test_03_inactive_accounts_are_never_offered_as_a_pick(db):
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    stem = f"ZZT Kilo {uuid.uuid4().hex[:4]}"
+    live = customer_(db, w.srt, f"{stem} Live")
+    closed = customer_(db, w.srt, f"{stem} Closed")
+    with company_scope(db, None):
+        db.get(Customer, str(closed.id)).is_active = False
+    db.commit()
+    _, _, waiting = propose_rows(db, w, [row_(name=stem, agent=new.sales_agent)])
+    assert [c["code"] for c in waiting[0]["candidates"]] == [live.customer_code]
+
+
 def test_03_a_customer_name_pick_keeps_the_written_name_and_takes_the_listed_code(db):
     w = world(db)
     new = agent_(db, w.srt, "SEAN")
@@ -396,6 +436,19 @@ def test_04_a_customer_name_without_a_company_asks_for_the_company(db):
     customer_(db, w.srt, "ZZT Yee Tat One")
     steps, skipped, waiting = propose_rows(db, w, [row_(company=None, name="ZZT Yee Tat", agent=new.sales_agent)])
     assert steps == [] and waiting == [] and "Give the company" in reason_of(skipped, 1)
+
+
+def test_04_a_hidden_companys_agent_or_company_is_never_named(db):
+    """Review 8 Nov: the other-company agent message and the row's company read only companies the user sees."""
+    w = world(db, superadmin=False)
+    hidden_agent = agent_(db, w.hidden, "HID")
+    cust = customer_(db, w.srt, "ZZT Papa Hidden")
+    steps, skipped, _ = propose_rows(db, w, [row_(customer=cust.customer_code, agent=hidden_agent.sales_agent)])
+    reason = reason_of(skipped, 1)
+    assert steps == [] and "ZZH" not in reason and f'No sales agent named "{hidden_agent.sales_agent}"' in reason
+
+    steps, skipped, _ = propose_rows(db, w, [row_(company="ZZH", customer=cust.customer_code, agent="x")])
+    assert steps == [] and 'No company "ZZH"' in reason_of(skipped, 1)
 
 
 def test_04_the_same_customer_twice_is_skipped_as_the_same_row(db):

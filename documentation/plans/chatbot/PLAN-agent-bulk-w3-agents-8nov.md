@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 3, sales agent -> customers from a pasted table (AGENT-BULK-W3-AGENTS)
 
-Status: Step 1 done (mapping + behaviour card); waiting on crew answers Q1-Q3 and the dev examples (crew-data-request on #2253). Track: full (agent write path; no migration, no new permission, no new ingest surface).
+Status: Built (PR #2253); reviewer fix round 1 applied (pick check by row number, hidden-company guards); crew live run pending (laneboard/scripts/2253.md) + router gate. Track: full (agent write path; no migration, no new permission, no new ingest surface).
 
 Wave 3 after AGENT-BULK-W2-TAGS (#2247). Owner wave order (8 Nov): 2 contact tags (#2247), 3 sales agent ->
 customers (this lane), 4 contact edits keyed by phone, 5 product fields, 6 supplier fields.
@@ -42,43 +42,49 @@ cards), `chatbot/agent/writes.py` `WriteDef(batchable=True)`, `chatbot/agent/act
 transaction + recheck), `chatbot/agent/contact_grant._customers` (customer by exact code, else contained-name
 candidates of the row's companies).
 
-## Behaviour card (one write, `crm_customer_agent`, batchable)
+## Behaviour card (one write, `crm_customer_agent`, batchable; as built after crew answers + dev data)
 
-A row = one customer + the agent it should be under. Slug `master_data.sales_agents.edit` (same as the route).
+A row = company (optional) + customer code and / or name + the agent it should be under. Slug
+`master_data.sales_agents.edit` (same as the route). Reads under every company the user is granted.
 
-- **Customer**: by exact customer code (case and spaces aside) in the row's company; a name only -> the row WAITS
-  with that company's active customers whose name contains it (max 10), picked by chat reply; nothing auto-picked.
-  Not found / another company's / hidden -> Not changed with the reason.
-- **Agent**: exact agent code (`sales_agents.sales_agent`) or exact name (`person_label`, else `description`),
-  case and spaces aside, among agents that fit the customer's company (own company or shared). Not exact -> WAITS
-  with the agents whose code or name contains it (max 10). None -> Not changed "No sales agent named X".
-  Inactive -> Not changed "Agent X is inactive". Another company's agent -> Not changed "X is a <co> agent".
-- **Already on that agent** -> Not changed "Already under X; nothing to change."
-- **Ready row** shows `Agent: <old or none> -> <new>`; for a `customer`-source company it adds
-  "Past invoiced sales of this customer move to <new> (this company credits the customer's current agent)."
+- **Company**: a code the user may see; any other is Not changed `No company "X"`.
+- **Customer**: exact customer code (case and spaces aside), read in the row's company (2470 codes exist in both
+  companies on dev); a code two companies hold and no company given -> "give the company". Inactive -> Not changed
+  `Customer "X" is inactive.` A name only needs the company and always WAITS with that company's ACTIVE accounts whose
+  name contains it (max 10), even one; picked by chat reply.
+- **Agent**: an exact code first; a code is never matched by containment (tier codes contain each other, `X I` sits
+  inside `X III`). Then an exact person name (`person_label`, else `description`): one agent is that agent, several
+  (one person holds a code per tier, 3-5 on dev) WAIT. Otherwise the active agents whose NAME contains the text wait
+  (max 10); none -> `No sales agent named "X"`. Inactive -> `Sales agent "X" is inactive.` An agent of another company
+  than the customer's (the route's own `_resolve_sales_agent` rule; every dev agent is shared, so it never fires
+  there) -> `"X" is a <co> agent`, naming only companies the user sees.
+- **Already on that agent** -> Not changed `Already under X; nothing to change.`
+- **Ready row**: `agent <old or none> -> <new>`; for a company whose `sales_agent_source` is `customer` (read from
+  the company; both dev companies are `document`) it adds `Past invoiced sales of this customer move to <new> (RM n in
+  the last 12 months)`, the sales reports' figure (`invoiced_sales.posted` / `signed_amount`, Malaysia date).
+- **Pick check**: a picked code must be one the last table listed for that row (found by the row key, else by the
+  table row number, since a pick may change the customer fields the key is built from) or typed by the user.
 - **Confirm**: per row, recheck the customer's agent is still `before`, then `assign_sales_agent_many([c], agent)`
-  (the route's own checks), audit = the listener's customer row + one `customer.sales_agent_agent` row naming
-  the agent table. CRM only; no AutoCount write.
+  (the route's checks), audit = the listener's customer row + one `customer.sales_agent_agent` row. CRM only; no
+  AutoCount write. Assign only: a row asking to clear an agent is not understood as clearing (it reads as an agent
+  name, so `No sales agent named "none"` or "Name the sales agent"); clearing stays on the customer form.
 
-Examples: real masked dev rows requested from crew (crew-data-request on #2253); shapes until then.
+Dev examples (crew-data-request answered 8 Nov, agent names masked by crew):
 
 | # | Pasted row | Result |
 |---|---|---|
-| E1 | `SRT / 300-A001 / agent SEAN` (now under JOHN) | Ready: Agent JOHN -> SEAN |
-| E2 | `MOC / 300-M010 / agent LISA` (Mocha, customer source) | Ready: Agent none -> LISA; past sales move with it |
-| E3 | `SRT / Ace Hardware / agent SEAN` (no code) | Needs your choice: the Ace accounts of SRT; reply "row 3: 300-A044" |
-| E4 | `SRT / 300-A001 / agent SEAN` (already) | Not changed: Already under SEAN; nothing to change |
-| E5 | `SRT / 300-A002 / agent OLDBOY` (inactive) | Not changed: Agent OLDBOY is inactive |
+| E1 | `MCH / 300-Y031 / <its current agent AGENT A - I>` | Not changed: Already under AGENT A - I |
+| E2 | `SRT / 300-T009 / AGENT C I` (now AGENT D I) | Ready: agent AGENT D I -> AGENT C I |
+| E3 | `SRT / YEE TAT HARDWARE / AGENT C I` | Needs your choice: SRT 300-Y045, 300-Y046 only (never the 3 MCH Yee Tat accounts) |
+| E4 | `MCH / 300-H100 / <AGENT B's person name>` | Needs your choice: the 5 AGENT B codes |
+| E5 | `SRT / 300-H100 / AGENT C I` | Not changed: Customer "300-H100" is inactive |
+| E6 | MCH set to `customer`: `MCH / 300-Y031 / AGENT C I` | Ready + "Past invoiced sales ... (RM 27,121.69 in the last 12 months)" |
 
-## Questions (crew-ask on #2253)
+## Crew answers (8 Nov)
 
-- Q1 AutoCount: (a) CRM only, no write (nothing ships, so no switch needed), recommended because the field is
-  CRM-owned today (above); (b) build an AutoCount debtor-agent write behind the admin switch, OFF (new lane).
-- Q2 `customer`-source companies (Mocha): (a) allow, Ready row warns that past sales move, recommended (same as the
-  screen today); (b) refuse those rows here.
-- Q3 Clearing an agent ("no agent"): (a) not in this wave, Not changed "Clearing an agent is done on the customer
-  form", recommended (one write = assign); (b) allow clearing.
+Q1 (a) CRM only, no AutoCount write. Q2 (a) allow, with the Ready-row warning and the 12-month RM, conditional on the
+company's actual `sales_agent_source`. Q3 (a) assign only.
 
 ## UAC
 
-To follow once Q1-Q3 are answered: `agent-bulk-w3-agents-8nov-acceptance-criteria.md`.
+See `agent-bulk-w3-agents-8nov-acceptance-criteria.md`.

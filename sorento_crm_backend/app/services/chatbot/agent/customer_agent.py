@@ -15,7 +15,7 @@ that cannot apply; the batch tool shows that message as the row's skip reason.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -46,12 +46,15 @@ def _code_of(db, company_id: Any) -> str:
     return row.code if row is not None else "another company"
 
 
-def _company(db, written: str, problems: list[str]):
+def _company(db, written: str, problems: list[str], scope):
+    """The row's company, only one the user may see (the read scope is every granted company)."""
     from sqlalchemy import func
 
     from app.models.company import Company
 
     rows = db.query(Company).filter(func.lower(func.trim(Company.code)) == written.lower()).all()
+    if isinstance(scope, frozenset):
+        rows = [r for r in rows if str(r.id) in scope]
     if len(rows) != 1:
         problems.append(f'No company "{written}".')
         return None
@@ -200,7 +203,8 @@ def moving_amount(db, customer_id: str, today: date | None = None) -> Decimal:
     from app.models.finance import BillingDocument
     from app.services.sales import invoiced_sales
 
-    today = today or date.today()
+    # Malaysia's date (UTC+8, no DST), as `chatbot.do_ask.today_myt`.
+    today = today or (datetime.now(timezone.utc) + timedelta(hours=8)).date()
     total = db.query(sa.func.coalesce(sa.func.sum(invoiced_sales.signed_amount()), 0)).filter(
         invoiced_sales.posted(),
         BillingDocument.customer_id == str(customer_id),
@@ -225,7 +229,7 @@ def plan(db, user: dict, args: dict) -> dict:
         choices: list[dict] = []
         kept: list[str] = []
         said_company = _clean(args.get("company"))
-        company = _company(db, said_company, problems) if said_company else None
+        company = _company(db, said_company, problems, scope) if said_company else None
         if said_company and company is None:
             customer = None
         else:
