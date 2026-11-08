@@ -1,6 +1,7 @@
 # PLAN: REPORT-SPEC-W1, golden corpus + harness (8 Nov 2026)
 
-Status: in progress. Track: small fix (tests + data only, no app change, no migration, no auth/RBAC, no screen).
+Status: built, corpus green on main; held lines and the step-18 re-run wait on crew's extraction. UAC:
+`report-spec-w1-acceptance-criteria.md`. Track: small fix (tests + data only, no app change, no migration, no auth/RBAC, no screen).
 
 Source: `ARCH-report-engine-7nov.md` sections 3.0 and 3.2 (W1) and 3.2.1 (re-record runbook).
 
