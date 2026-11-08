@@ -141,3 +141,17 @@ def test_single_bucket_target_has_one_share():
 def test_no_commission_method_has_no_shares():
     out = payout_for("none", [tier(1000, 2)], D("0"), SALES, threshold_unit="amount")
     assert out.by_account == {}
+
+
+def test_assistant_share_label_adds_the_code_when_two_accounts_print_the_same():
+    """Review nit: two counted accounts with one label never merge into one share."""
+    from types import SimpleNamespace
+
+    from app.services.assistant_registry.sales import _share_label
+
+    a = SimpleNamespace(account_level=None, customer_name="ZZT SAME", customer_code="C-1")
+    b = SimpleNamespace(account_level=None, customer_name="ZZT SAME", customer_code="C-2")
+    c = SimpleNamespace(account_level=1, customer_name="ZZT OTHER", customer_code="C-3")
+    assert _share_label(a, [a, b, c]) == "ZZT SAME (C-1)"
+    assert _share_label(b, [a, b, c]) == "ZZT SAME (C-2)"
+    assert _share_label(c, [a, b, c]) == "A/C I"

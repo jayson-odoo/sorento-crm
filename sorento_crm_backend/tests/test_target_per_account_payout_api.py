@@ -186,3 +186,27 @@ def test_marginal_takes_a_rate_per_account(api):
     period = res.json()["periods"][0]
     assert {x["customer_id"]: x["commission_earned"] for x in period["accounts"]} == {a.id: 12000.0, b.id: 14000.0}
     assert period["commission_earned"] == 26000
+
+
+def test_an_account_bonus_for_an_uncounted_or_foreign_customer_is_refused(api):
+    """Security review nit: a per-account RM Additional only for a counted account of this company."""
+    from sqlalchemy import text
+
+    from app.models.base import company_scope
+
+    client, db, company_id = api
+    (a1, _a2, _a3), combined = _deluxe(client, db, company_id)
+    stranger = _customer(db, company_id, "ZZT NOT COUNTED")
+    other_company = db.execute(
+        text("select id from companies where id <> :c order by code limit 1"), {"c": company_id}
+    ).scalar()
+    with company_scope(db, frozenset({other_company})):
+        foreign = _customer(db, other_company, "ZZT THEIRS")
+    for customer in (stranger, foreign):
+        res = client.patch(f"{BASE}/{combined['id']}", json={"tiers": [
+            {"threshold": 1000000, "rate": 0, "account_rates": [
+                {"customer_id": a1.id, "rate": 1.5}, {"customer_id": customer.id, "rate": 0, "bonus_amount": 500},
+            ]},
+        ]})
+        assert res.status_code == 422, res.text
+        assert res.json().get("code") == "INVALID_TIERS", res.text
