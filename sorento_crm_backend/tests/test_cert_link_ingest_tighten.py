@@ -1,0 +1,133 @@
+"""CERT-LINK-CLEANUP red tests: the certificate ingest links only what the certificate prints (R8, Q2 (a)).
+
+A string the reader returns links a product only when (1) it is printed as a whole token on the PDF,
+when the PDF has text, and (2) it resolves through exact, product set or `+` split, or as a contained
+run of 3+ characters with a digit (never digits only). The family-prefix tier is off for certificates.
+A string that fails is reported in the revision's unmatched list, never dropped silently.
+Reuses the ingest harness of tests/test_certificate_api.py.
+"""
+from __future__ import annotations
+
+import pymupdf
+import pytest
+
+from app.models.certificate import Certificate, CertificateProduct, CertificateRevision
+
+from .test_certificate_api import EXTERNAL, _cert_payload, env  # noqa: F401  (fixture + helper)
+
+
+def _pdf(lines):
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for i, line in enumerate(lines):
+        page.insert_text((60, 100 + 20 * i), line, fontsize=11)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+@pytest.fixture
+def pdf_bytes(monkeypatch):
+    holder = {"data": None}
+
+    def fake(self, attachment):
+        if holder["data"] is None:
+            raise Exception("no file")
+        return holder["data"]
+
+    from app.services.resources_service import AttachmentService
+
+    monkeypatch.setattr(AttachmentService, "get_file_content_for", fake)
+    return holder
+
+
+def _covered_codes(env, number) -> set[str]:
+    cert = env.db.query(Certificate).filter(Certificate.certificate_number == number).one()
+    env.db.expire_all()
+    rows = env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id).all()
+    return {row.product.product_code for row in rows}
+
+
+def _unmatched(env, number) -> list[str]:
+    cert = env.db.query(Certificate).filter(Certificate.certificate_number == number).one()
+    rev = env.db.query(CertificateRevision).filter(CertificateRevision.certificate_id == cert.id).one()
+    return list(rev.unmatched_products or [])
+
+
+def _post(env, number, codes):
+    attachment = env.attachment(env.attachment_type(is_certificate=True, name="Certification"), number)
+    payload = _cert_payload(attachment, [], certificate_number=number)
+    payload["products"] = codes
+    r = env.client.post(EXTERNAL, json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_printed_short_code_links_only_products_that_contain_it(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["SPAN stop valve", "Model 14A DN20"])
+    for code in ("SV-14A-CP", "CSK14A-BL", "BRD7711CP", "BRHSD213C", "FUR-A11C"):
+        env.product("T", code=code)
+    _post(env, "TIGHT-1", ["14A"])
+    assert _covered_codes(env, "TIGHT-1") == {"SV-14A-CP", "CSK14A-BL"}
+
+
+def test_a_string_not_printed_on_the_pdf_links_nothing_and_is_reported(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["Model 14A DN20"])
+    env.product("T", code="SV-14A-CP")
+    env.product("T", code="BRD7711CP")
+    body = _post(env, "TIGHT-2", ["14A", "BRD7711CP"])
+    assert _covered_codes(env, "TIGHT-2") == {"SV-14A-CP"}
+    assert "BRD7711CP" in _unmatched(env, "TIGHT-2")
+    assert "BRD7711CP" in body["skipped_product_codes"]
+
+
+def test_the_family_prefix_tier_is_off_for_certificates(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["ZZTFAMILY7 - FAMILY NAME"])
+    env.product("T", code="ZZTFAMILY7-RL")
+    _post(env, "TIGHT-3", ["ZZTFAMILY7 - FAMILY NAME"])
+    assert _covered_codes(env, "TIGHT-3") == set()
+    assert _unmatched(env, "TIGHT-3") == ["ZZTFAMILY7 - FAMILY NAME"]
+
+
+def test_a_digits_only_string_never_fans_out(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["Size 120 mm"])
+    env.product("T", code="SRT120-CP")
+    _post(env, "TIGHT-4", ["120"])
+    assert _covered_codes(env, "TIGHT-4") == set()
+    assert _unmatched(env, "TIGHT-4") == ["120"]
+
+
+def test_a_short_letter_run_never_fans_out(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["Model A1"])
+    env.product("T", code="SRTA1-CP")
+    _post(env, "TIGHT-5", ["A1"])
+    assert _covered_codes(env, "TIGHT-5") == set()
+
+
+def test_an_exact_code_still_links(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["Model SRTWC8355-RL"])
+    env.product("T", code="SRTWC8355-RL")
+    _post(env, "TIGHT-6", ["SRTWC8355-RL"])
+    assert _covered_codes(env, "TIGHT-6") == {"SRTWC8355-RL"}
+
+
+def test_a_scan_skips_the_printed_check_but_not_the_tier_rule(env, pdf_bytes):
+    """No text layer: the PDF cannot say no, so the printed check is skipped; the prefix and
+    digits-only rules still hold."""
+    doc = pymupdf.open()
+    doc.new_page()
+    pdf_bytes["data"] = doc.tobytes()
+    doc.close()
+    env.product("T", code="SV-14A-CP")
+    env.product("T", code="SRT120-CP")
+    _post(env, "TIGHT-7", ["14A", "120"])
+    assert _covered_codes(env, "TIGHT-7") == {"SV-14A-CP"}
+
+
+def test_a_renewal_adds_only_printed_links(env, pdf_bytes):
+    pdf_bytes["data"] = _pdf(["Model 14A"])
+    env.product("T", code="SV-14A-CP")
+    env.product("T", code="BRD7711CP")
+    _post(env, "TIGHT-8", ["14A"])
+    _post(env, "TIGHT-8", ["14A", "BRD7711CP"])
+    assert _covered_codes(env, "TIGHT-8") == {"SV-14A-CP"}

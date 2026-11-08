@@ -2,7 +2,7 @@
 
 `_link_via_certificate` (app/api/v1/external/product_attachments.py) stores each matched product's
 `requested_code` as `certificate_products.model_code` with `model_code_source = 'ai'`, except when the
-match came `via == prefix` (the requested text names a family, not the printed code) and never over a
+match came `via == prefix` (no longer reached on this path, CERT-LINK-CLEANUP) and never over a
 `manual` code. Reuses the ingest harness of tests/test_certificate_api.py.
 """
 from __future__ import annotations
@@ -31,16 +31,17 @@ def test_ingest_stores_the_requested_code_as_an_ai_model_code(env):
     assert row.model_code == "ZZTQCERT8355" and row.model_code_source == "ai"
 
 
-def test_ingest_does_not_store_a_code_for_a_prefix_match(env):
+def test_ingest_no_longer_links_a_family_prefix(env):
+    """CERT-LINK-CLEANUP R8 (owner Q2 (a), 8 Nov): the family-prefix tier is off for certificates, so
+    a family head links nothing and is reported unmatched (it used to link the family code-less)."""
     attachment = env.attachment(env.attachment_type(is_certificate=True, name="Certification"), "qcert-pfx")
     env.product("QPFX", code="ZZTFAMILY7-RL")
     payload = _cert_payload(attachment, [], certificate_number="QCERT-ING-2")
     payload["products"] = ["ZZTFAMILY7 - FAMILY NAME"]
     r = env.client.post(EXTERNAL, json=payload)
     assert r.status_code == 200, r.text
-    rows = _coverage(env, "QCERT-ING-2")
-    assert rows, "the family prefix still links its products"
-    assert all(row.model_code is None and row.model_code_source is None for row in rows)
+    assert _coverage(env, "QCERT-ING-2") == []
+    assert r.json()["skipped_product_codes"] == ["ZZTFAMILY7 - FAMILY NAME"]
 
 
 def test_ingest_never_overwrites_a_manual_code(env):
