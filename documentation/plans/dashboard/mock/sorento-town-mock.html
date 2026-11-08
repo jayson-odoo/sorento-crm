@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sorento Town mock</title>
+<title>Sorento Town mock v2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -34,8 +34,8 @@ html, body { margin: 0; background: var(--background); color: var(--foreground);
 .btn { font: inherit; border-radius: var(--radius); padding: 7px 14px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; transition: background var(--duration-base) var(--ease-standard); }
 .btn:hover { background: var(--muted); }
 .btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
-.stage { position: relative; height: min(68vh, 680px); min-height: 420px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(#dbeafe, #f0f9ff); }
-:root.night .stage { background: linear-gradient(#0b1026, #1e1b4b); }
+.stage { position: relative; height: min(68vh, 680px); min-height: 420px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; background: linear-gradient(180deg, #fde7c8 0%, #fbcfe8 35%, #bfdbfe 75%, #e0f2fe 100%); }
+:root.night .stage { background: radial-gradient(ellipse at 70% 10%, #312e81 0%, #1e1b4b 40%, #0b1026 100%); }
 #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .float { position: absolute; background: var(--material-regular); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--material-edge); border-radius: var(--radius); box-shadow: 0 4px 16px rgb(0 0 0 / 0.08); }
 .banner { top: 12px; left: 50%; transform: translateX(-50%); padding: 10px 16px; display: flex; gap: 18px; align-items: baseline; white-space: nowrap; max-width: calc(100% - 24px); overflow-x: auto; }
@@ -100,16 +100,17 @@ section.map h2 { font-size: 1.125rem; letter-spacing: -0.01em; margin: 0 0 8px; 
     <div class="float closed">Closed for the day</div>
     <div class="float panel" id="panel"><button class="close" aria-label="Close panel" id="panelClose">&times;</button><div id="panelBody"></div></div>
     <div class="float legend">
-      <span style="--c:#f59e0b">Dealer shop (top 30, 90 days)</span>
-      <span style="--c:#fb7185">Stall (invoiced today)</span>
+      <span style="--c:#f97316">Dealer shop (top 30, 90 days)</span>
+      <span style="--c:#facc15">Coin: invoiced today</span>
+      <span style="--c:#fb7185">Market stall</span>
       <span style="--c:#64748b">Warehouse pool</span>
-      <span style="--c:#8b5cf6">Town hall</span>
+      <span style="--c:#7c3aed">Town hall</span>
     </div>
   </div>
   <div class="cards" id="cards"></div>
 
   <div class="mockbar">
-    <b>Mock controls (not in the product):</b>
+    <b>Mock controls (not in the product):</b> <span>Drag the town to turn it.</span>
     <label><input type="checkbox" id="tNight"> Night (after 22:00)</label>
     <label><input type="checkbox" id="tRedact"> Viewer without sales report permission</label>
     <label><input type="checkbox" id="tCards"> Fallback card view (no WebGL / reduced motion)</label>
@@ -131,6 +132,8 @@ section.map h2 { font-size: 1.125rem; letter-spacing: -0.01em; margin: 0 0 8px; 
         <tr><td>Warehouse pools (height = stock on hand)</td><td><code>warehouses[]</code></td><td>Active warehouses folded on <code>pool_warehouse_id</code></td><td>InstancedMesh + <code>WarehousePanel</code></td><td>Stock balances, filtered to the pool</td></tr>
         <tr><td>"!" over the warehouse district</td><td><code>reorder.below_count</code></td><td><code>scm.reorder_level.level</code> (product-wide) vs available stock</td><td><code>ReorderMarker</code> sprite</td><td>Existing SCM reorder list</td></tr>
         <tr><td>Approvals sign</td><td><code>approvals.*</code></td><td>Pending purchase requests + quotation documents awaiting approval</td><td><code>ApprovalsSign</code></td><td>Purchase requests / quotation approvals</td></tr>
+        <tr><td>Supplier factories (smoking chimneys), port with container stacks and ship</td><td>phase 2: <code>suppliers[]</code>, <code>inbound[]</code></td><td>Supplier / PurchaseOrder / InboundShipment (procurement.py); decorative in this mock, no figures shown</td><td>InstancedMesh</td><td>Purchase orders / inbound containers</td></tr>
+        <tr><td>Lorries on the roads, people on the plaza, gold coins</td><td><code>shops[].today_docs</code>; phase 2 <code>town_days.events</code></td><td>-</td><td><code>TownWalkers</code> (one InstancedMesh each)</td><td>-</td></tr>
         <tr><td>Night, "Closed for the day", Replay</td><td><code>phase</code>; <code>town_days</code> row</td><td>22:00 MYT freeze</td><td><code>TownScene</code> lighting + <code>ReplayButton</code></td><td>-</td></tr>
         <tr><td>Card view</td><td>same snapshot</td><td>-</td><td><code>TownCards</code> (no WebGL, reduced motion)</td><td>Same targets</td></tr>
       </tbody>
@@ -962,145 +965,342 @@ let api = null;
 if (webgl) api = buildScene();
 
 function buildScene() {
+  /* v2: a crafted low-poly island town. Every repeated thing is ONE InstancedMesh of a merged,
+     vertex-coloured prototype (Kenney-style: flat shading, chunky shapes, warm palette), so the
+     whole town stays around 40 draw calls. Phase 1 swaps the procedural prototypes for one Kenney
+     CC0 kit family loaded as GLB, keeping the same instancing layout. */
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   const scene = new THREE.Scene();
-  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
-  cam.position.set(57, 60, 60); cam.lookAt(-3, 0, 0);
-  let zoom = 26;
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
+  let yaw = Math.PI / 4, dirty = true;
+  const placeCam = () => { cam.position.set(Math.cos(yaw) * 90, 78, Math.sin(yaw) * 90); cam.lookAt(0, 3.5, 0); dirty = true; };
+  placeCam();
+  const ZOOM = 28;
   function resize() {
     const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false);
-    const a = w / h; const z = a < 1 ? zoom * 0.95 / a : zoom;
+    const a = w / h; const z = a < 1 ? ZOOM * 0.92 / a : ZOOM;
     cam.left = -z * a; cam.right = z * a; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix(); dirty = true;
   }
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x94a3b8, 1.6); scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(30, 50, 10); scene.add(sun);
+  const hemi = new THREE.HemisphereLight(0xfff4e0, 0x7c8b6a, 1.9); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffe2b8, 1.7); sun.position.set(-30, 60, 25); scene.add(sun);
 
-  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
-  // ground + roads: 3 meshes
-  const ground = new THREE.Mesh(new THREE.BoxGeometry(64, 1, 52), mat(0x86efac)); ground.position.y = -0.5; scene.add(ground);
-  const roadM = mat(0x94a3b8);
-  const road1 = new THREE.Mesh(new THREE.BoxGeometry(64, 0.05, 3), roadM); road1.position.set(0, 0.02, 2); scene.add(road1);
-  const road2 = new THREE.Mesh(new THREE.BoxGeometry(3, 0.06, 52), roadM); road2.position.set(-6, 0.03, 0); scene.add(road2);
-
-  const box = new THREE.BoxGeometry(1, 1, 1); box.translate(0, 0.5, 0);
-  const cone = new THREE.ConeGeometry(0.75, 0.6, 4); cone.rotateY(Math.PI / 4); cone.translate(0, 0.3, 0);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), s3 = new THREE.Vector3();
+  /* ---------- tiny toolkit: seeded RNG, vertex-coloured parts, merge ---------- */
+  let seed = 20261103; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const C = (hex) => new THREE.Color(hex);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V = new THREE.Vector3(), S = new THREE.Vector3(), E = new THREE.Euler();
+  function part(geo, color, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1, ry = 0, rx = 0, rz = 0) {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    g.applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz)));
+    const c = C(color), n = g.attributes.position.count, arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3)); g.deleteAttribute('uv'); return g;
+  }
+  function merge(parts) {
+    const out = new THREE.BufferGeometry(); const keys = ['position', 'normal', 'color'];
+    keys.forEach(k => {
+      const total = parts.reduce((s, p) => s + p.attributes[k].array.length, 0); const arr = new Float32Array(total);
+      let o = 0; parts.forEach(p => { arr.set(p.attributes[k].array, o); o += p.attributes[k].array.length; });
+      out.setAttribute(k, new THREE.BufferAttribute(arr, 3));
+    });
+    return out;
+  }
+  const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+  const CYL = (r1, r2, h, s = 8) => new THREE.CylinderGeometry(r1, r2, h, s).translate(0, h / 2, 0);
+  const PRISM = (() => { const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 3); g.rotateZ(Math.PI / 2); g.rotateX(Math.PI / 2); g.rotateY(Math.PI / 2); g.translate(0, 0.25, 0); g.scale(1, 1, 1); return g; })();
+  const mat = (opts = {}) => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, ...opts });
   const pickables = [];
+  function instanced(geo, material, list, place, onPick) {
+    const mesh = new THREE.InstancedMesh(geo, material, Math.max(1, list.length));
+    list.forEach((item, i) => { place(item, i, M); mesh.setMatrixAt(i, M); });
+    mesh.count = list.length; scene.add(mesh); if (onPick) pickables.push([mesh, (i) => onPick(list[i], i)]); return mesh;
+  }
+  const at = (x, z, ry = 0, s = 1, sy = s, y = 0) => M.compose(V.set(x, y, z), Q.setFromEuler(E.set(0, ry, 0)), S.set(s, sy, s));
+  const polar = (r, deg) => [Math.cos(deg * Math.PI / 180) * r, Math.sin(deg * Math.PI / 180) * r];
+  const faceCentre = (x, z) => Math.atan2(x, z) + Math.PI; // local +z towards the island centre
 
-  // dealer shops: 30 on a 6 x 5 grid east of the avenue; height from 90-day rank
+  /* ---------- island, water, plaza ---------- */
+  const water = new THREE.Mesh(new THREE.CircleGeometry(50, 48).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x7dd3fc }));
+  water.position.y = -0.9; scene.add(water);
+  const island = merge([
+    part(CYL(34, 35.5, 1.6, 40), 0xd9b98a, 0, -1.75),            // sandy rim
+    part(CYL(33, 33.6, 0.4, 40), 0x8fd17b, 0, -0.4),            // grass
+    part(CYL(6, 6, 0.08, 24), 0xf1e5cf, 0, 0),                  // plaza paving
+    part(CYL(1.6, 1.8, 0.6, 12), 0xcbd5e1, 0, 0),               // fountain basin
+    part(CYL(1.3, 1.3, 0.05, 12), 0x60a5fa, 0, 0.58),           // fountain water
+    part(CYL(0.25, 0.35, 1.6, 8), 0xe2e8f0, 0, 0.6),            // fountain column
+    part(new THREE.SphereGeometry(0.45, 8, 6).translate(0, 2.35, 0), 0x93c5fd),
+  ]);
+  scene.add(new THREE.Mesh(island, mat()));
+
+  /* ---------- roads: one merged ribbon mesh (curves, roundabout, spokes) ---------- */
+  function ribbon(points, width, color, y) {
+    const curve = new THREE.CatmullRomCurve3(points.map(([x, z]) => new THREE.Vector3(x, y, z)));
+    const n = Math.max(24, Math.round(curve.getLength() * 1.2)); const pos = [];
+    const pt = (t) => curve.getPointAt(t), tan = (t) => curve.getTangentAt(t);
+    for (let i = 0; i < n; i++) {
+      const a = pt(i / n), b = pt((i + 1) / n), ta = tan(i / n), tb = tan((i + 1) / n);
+      const na = new THREE.Vector3(-ta.z, 0, ta.x).multiplyScalar(width / 2), nb = new THREE.Vector3(-tb.z, 0, tb.x).multiplyScalar(width / 2);
+      const p1 = a.clone().add(na), p2 = a.clone().sub(na), p3 = b.clone().add(nb), p4 = b.clone().sub(nb);
+      pos.push(...p1.toArray(), ...p3.toArray(), ...p2.toArray(), ...p2.toArray(), ...p3.toArray(), ...p4.toArray());
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+    return part(g, color);
+  }
+  const arc = (r, a0, a1, step = 6) => { const out = []; for (let a = a0; a <= a1 + 0.01; a += step) out.push(polar(r, a)); return out; };
+  const ROAD = 0x6b7280, WALK = 0xe7dcc8;
+  const roadParts = [];
+  const addRoad = (pts, w = 2.4) => { roadParts.push(ribbon(pts, w + 1.2, WALK, 0.02), ribbon(pts, w, ROAD, 0.05)); };
+  addRoad(arc(8.2, 0, 360, 10), 2.2);                       // roundabout
+  addRoad(arc(18, -75, 55));                                 // dealer high street (curved)
+  addRoad(arc(20, 140, 235));                                // warehouse ring
+  addRoad([polar(9.3, -12), polar(13, -14), polar(18, -12)]);   // east spoke
+  addRoad([polar(9.3, 188), polar(14, 186), polar(20, 188)]);  // west spoke
+  addRoad([polar(9.3, 95), polar(16, 98), polar(23, 100)]);    // north spoke to suppliers
+  addRoad([polar(9.3, 278), polar(18, 276), polar(27, 272)]);  // south spoke to the port
+  scene.add(new THREE.Mesh(merge(roadParts), mat()));
+
+  /* ---------- dealer shops: varied silhouettes, awning + signboard in the shop's colour ---------- */
+  const shopColours = [0xef4444, 0xf97316, 0xf59e0b, 0x10b981, 0x06b6d4, 0x3b82f6, 0x8b5cf6, 0xec4899];
   const shops = DATA.shops.filter(s => s.kind === 'shop');
   const stalls = DATA.shops.filter(s => s.kind === 'stall');
-  const shopBody = new THREE.InstancedMesh(box, mat(0xffffff), shops.length);
-  const shopRoof = new THREE.InstancedMesh(cone, mat(0xffffff), shops.length);
-  const palette = [0xf59e0b, 0xfbbf24, 0xf97316, 0xfcd34d];
-  const shopPos = [];
-  shops.forEach((s, i) => {
-    const col = i % 6, row = Math.floor(i / 6);
-    const x = -1 + col * 4.2, z = -20 + row * 4.2 + (row >= 3 ? 7.5 : 0);
-    const h = 1.2 + (30 - s.rank) / 30 * 3.2;
-    m4.compose(v.set(x, 0, z), q.identity(), s3.set(2.6, h, 2.6)); shopBody.setMatrixAt(i, m4);
-    m4.compose(v.set(x, h, z), q.identity(), s3.set(2.6, 1.3, 2.6)); shopRoof.setMatrixAt(i, m4);
-    const lit = s.today_amount != null;
-    shopBody.setColorAt(i, new THREE.Color(lit ? 0xfff7ed : 0xf1f5f9));
-    shopRoof.setColorAt(i, new THREE.Color(palette[i % palette.length]));
-    shopPos.push(new THREE.Vector3(x, 0, z));
+  const slots = [];
+  for (let i = 0; i < 12; i++) slots.push(polar(14.2, -68 + i * (118 / 11)));
+  for (let i = 0; i < 18; i++) slots.push(polar(21.8, -72 + i * (124 / 17)));
+  const shopSlot = shops.map((s, i) => ({ s, i, x: slots[i][0], z: slots[i][1], ry: faceCentre(slots[i][0], slots[i][1]) + (i >= 12 ? Math.PI : 0),
+    h: 1.6 + (30 - s.rank) / 30 * 2.6, w: 2.1 + rnd() * 0.3, style: Math.floor(rnd() * 3) }));
+  const wall = [0xfff7ed, 0xfef3c7, 0xf5f5f4, 0xfde68a, 0xe0f2fe];
+  // body: walls + door + shop window, vertex coloured; one prototype, scaled per shop
+  const shopBodyGeo = merge([
+    part(BOX, 0xffffff, 0, 0, 0, 1, 1, 1),
+    part(BOX, 0x7c4a1e, 0.25, 0, 0.505, 0.22, 0.42, 0.02),       // door
+    part(BOX, 0x93c5fd, -0.18, 0.18, 0.505, 0.38, 0.32, 0.02),   // shop window
+  ]);
+  const bodyMesh = instanced(shopBodyGeo, mat(), shopSlot, (o) => M.compose(V.set(o.x, 0, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w, o.h, o.w * 0.9)), (o) => shopPanel(o.s));
+  shopSlot.forEach((o, i) => bodyMesh.setColorAt(i, C(wall[i % wall.length])));
+  // three roof families
+  const gable = merge([part(PRISM, 0xffffff, 0, 0, 0, 1.12, 1.4, 1.05)]);
+  const hip = merge([part(new THREE.ConeGeometry(0.78, 0.7, 4).rotateY(Math.PI / 4).translate(0, 0.35, 0), 0xffffff)]);
+  const flat = merge([part(BOX, 0xffffff, 0, 0, 0, 1.06, 0.18, 1.0), part(BOX, 0x9ca3af, 0.25, 0.18, -0.1, 0.25, 0.25, 0.25)]);
+  const roofTone = [0xb45309, 0x9a3412, 0x475569, 0x166534, 0x7f1d1d];
+  [gable, hip, flat].forEach((geo, style) => {
+    const list = shopSlot.filter(o => o.style === style);
+    const m = instanced(geo, mat(), list, (o) => M.compose(V.set(o.x, o.h, o.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w, style === 2 ? 1 : o.w * 0.75, o.w * 0.9)), (o) => shopPanel(o.s));
+    list.forEach((o, k) => m.setColorAt(k, C(roofTone[(o.i * 7) % roofTone.length])));
   });
-  scene.add(shopBody, shopRoof); pickables.push([shopBody, (i) => shopPanel(shops[i])], [shopRoof, (i) => shopPanel(shops[i])]);
+  // awning (slanted) + signboard, tinted with the shop's colour
+  const awningGeo = merge([part(BOX, 0xffffff, 0, 0, 0, 1, 0.08, 0.45, 0, -0.45), part(BOX, 0xffffff, 0, 0.62, -0.18, 0.7, 0.32, 0.06)]);
+  const awn = instanced(awningGeo, mat(), shopSlot, (o) => {
+    const fwd = new THREE.Vector3(Math.sin(o.ry), 0, Math.cos(o.ry)).multiplyScalar(o.w * 0.45 + 0.2);
+    M.compose(V.set(o.x + fwd.x, Math.min(o.h * 0.55, 1.5), o.z + fwd.z), Q.setFromEuler(E.set(0, o.ry, 0)), S.set(o.w * 0.95, 1, 1));
+  }, (o) => shopPanel(o.s));
+  shopSlot.forEach((o, i) => awn.setColorAt(i, C(shopColours[i % shopColours.length])));
+  // windows (upper floors): emissive at night
+  const winMat = new THREE.MeshLambertMaterial({ color: 0xfef3c7, emissive: 0xfbbf24, emissiveIntensity: 0, flatShading: true });
+  const winRows = []; shopSlot.forEach(o => { for (let f = 1; f * 1.05 + 0.9 < o.h; f++) winRows.push({ o, y: 0.55 + f * 1.05 }); });
+  instanced(merge([part(BOX, 0xffffff, -0.25, 0, 0.505, 0.22, 0.3, 0.03), part(BOX, 0xffffff, 0.25, 0, 0.505, 0.22, 0.3, 0.03)]), winMat, winRows,
+    (w) => M.compose(V.set(w.o.x, w.y, w.o.z), Q.setFromEuler(E.set(0, w.o.ry, 0)), S.set(w.o.w, 1, w.o.w * 0.9)));
+  // today's sales: a gold coin spinning above shops invoiced today
+  const coinShops = shopSlot.filter(o => o.s.today_amount != null || o.s.today_docs);
+  const coins = instanced(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 14).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xfacc15, emissive: 0x854d0e, emissiveIntensity: 0.4 }), coinShops, () => {});
 
-  // stalls: small awnings along the avenue's south side
-  const stallBody = new THREE.InstancedMesh(box, mat(0xfb7185), Math.max(1, stalls.length));
-  stalls.forEach((s, i) => { m4.compose(v.set(-1 + i * 2.4, 0, 6), q.identity(), s3.set(1.6, 1, 1.4)); stallBody.setMatrixAt(i, m4); });
-  stallBody.count = stalls.length; scene.add(stallBody); pickables.push([stallBody, (i) => shopPanel(stalls[i])]);
+  /* ---------- market stalls on the plaza (invoiced today, outside the top 30) ---------- */
+  const stallGeo = merge([
+    part(BOX, 0xa16207, 0, 0, 0, 1.4, 0.7, 0.8),
+    part(CYL(0.05, 0.05, 1.4, 5), 0x78350f, -0.62, 0.7, -0.32), part(CYL(0.05, 0.05, 1.4, 5), 0x78350f, 0.62, 0.7, -0.32),
+    part(PRISM, 0xffffff, 0, 1.95, 0, 1.7, 0.9, 1.2),
+  ]);
+  const stallSlot = stalls.map((s, i) => { const [x, z] = polar(4.4, 200 + i * 40); return { s, x, z, ry: faceCentre(x, z) }; });
+  const stallMesh = instanced(stallGeo, mat(), stallSlot, (o) => at(o.x, o.z, o.ry), (o) => shopPanel(o.s));
+  stallSlot.forEach((o, i) => stallMesh.setColorAt(i, C([0xfb7185, 0x38bdf8, 0xa3e635, 0xfbbf24][i % 4])));
 
-  // warehouse pools: west of the avenue, height from log(on hand)
+  /* ---------- town hall with the approvals sign ---------- */
+  const hallGeo = merge([
+    part(BOX, 0xf5f5f4, 0, 0, 0, 5, 2.6, 3.2), part(PRISM, 0x7c3aed, 0, 2.6, 0, 5.4, 2.4, 3.6),
+    part(BOX, 0xe7e5e4, 0, 0, 1.75, 5.4, 0.3, 0.6),
+    ...[-1.8, -0.6, 0.6, 1.8].map(x => part(CYL(0.18, 0.18, 2.3, 8), 0xffffff, x, 0.3, 1.8)),
+    part(CYL(0.6, 0.6, 1.2, 10), 0xe9d5ff, 0, 3.5, 0), part(new THREE.ConeGeometry(0.75, 1, 10).translate(0, 5.2, 0), 0x6d28d9),
+    part(BOX, 0x4c1d95, 0, 0, 1.62, 0.9, 1.5, 0.05),
+  ]);
+  const hallPos = polar(10.8, 130);
+  const hall = new THREE.Mesh(hallGeo, mat()); hall.position.set(hallPos[0], 0, hallPos[1]); hall.rotation.y = faceCentre(...hallPos); scene.add(hall);
+  pickables.push([hall, () => approvalsPanel()]);
+
+  /* ---------- warehouse pools: curved roofs, roller doors, loading bay; pallets show stock ---------- */
   const wh = DATA.warehouses;
-  const whBody = new THREE.InstancedMesh(box, mat(0x64748b), wh.length);
-  const whBar = new THREE.InstancedMesh(box, mat(0x3b82f6), wh.length);
-  const maxOh = Math.max(...wh.map(w => w.on_hand), 1);
-  wh.forEach((w, i) => {
-    const col = i % 3, row = Math.floor(i / 3);
-    const x = -26 + col * 6, z = -20 + row * 6.2;
-    const big = i < 4;
-    m4.compose(v.set(x, 0, z), q.identity(), s3.set(big ? 4.6 : 3.4, big ? 2.6 : 1.8, big ? 4.6 : 3.4)); whBody.setMatrixAt(i, m4);
-    const bh = 0.15 + 4 * Math.log10(1 + w.on_hand) / Math.log10(1 + maxOh);
-    m4.compose(v.set(x + (big ? 2.6 : 2), 0, z), q.identity(), s3.set(0.5, bh, 0.5)); whBar.setMatrixAt(i, m4);
+  const whSlot = wh.map((w, i) => {
+    const inner = i < 5; const k = inner ? i : i - 5; const n = inner ? 5 : 7;
+    const [x, z] = polar(inner ? 15.2 : 25.4, 146 + k * (84 / (n - 1)));
+    const big = i < 4; return { w, i, x, z, ry: faceCentre(x, z) + (inner ? 0 : Math.PI), s: big ? 1.25 : 0.95 };
   });
-  scene.add(whBody, whBar); pickables.push([whBody, (i) => warehousePanel(wh[i])], [whBar, (i) => warehousePanel(wh[i])]);
+  const barrel = new THREE.CylinderGeometry(1, 1, 1, 12, 1, false, 0, Math.PI); barrel.rotateZ(Math.PI / 2); barrel.rotateY(Math.PI / 2);
+  const whGeo = merge([
+    part(BOX, 0xcbd5e1, 0, 0, 0, 4, 1.8, 3.2),
+    part(barrel, 0x64748b, 0, 1.8, 0, 2, 0.9, 1.0, Math.PI / 2),
+    ...[-1.1, 0, 1.1].map(x => part(BOX, 0x94a3b8, x, 0.02, 1.61, 0.8, 1.2, 0.04)),           // roller doors
+    ...[-1.1, 0, 1.1].flatMap(x => [0.3, 0.6, 0.9].map(y => part(BOX, 0x64748b, x, y, 1.64, 0.8, 0.04, 0.02))),
+    part(BOX, 0x9ca3af, 0, 0, 2.05, 4, 0.45, 0.9),                                              // loading bay
+    part(BOX, 0xfacc15, 1.75, 0.45, 2.45, 0.15, 0.06, 0.06),
+  ]);
+  instanced(whGeo, mat(), whSlot, (o) => at(o.x, o.z, o.ry, o.s), (o) => warehousePanel(o.w));
+  // pallet stacks next to each building: number of crates from log(on hand)
+  const maxOh = Math.max(...wh.map(w => w.on_hand), 1); const crates = [];
+  whSlot.forEach(o => {
+    const n = Math.round(1 + 8 * Math.log10(1 + o.w.on_hand) / Math.log10(1 + maxOh)) * (o.w.on_hand > 0 ? 1 : 0);
+    const side = new THREE.Vector3(Math.cos(o.ry), 0, -Math.sin(o.ry)).multiplyScalar(2.9 * o.s);
+    for (let c = 0; c < n; c++) crates.push({ o, x: o.x + side.x + ((c % 2) - 0.5) * 0.7, z: o.z + side.z + ((Math.floor(c / 2) % 2) - 0.5) * 0.7, y: Math.floor(c / 4) * 0.62 });
+  });
+  instanced(merge([part(BOX, 0xd97706, 0, 0.08, 0, 0.62, 0.5, 0.62), part(BOX, 0x92400e, 0, 0, 0, 0.66, 0.08, 0.66)]), mat(), crates,
+    (c) => at(c.x, c.z, c.o.ry, 1, 1, c.y), (c) => warehousePanel(c.o.w));
 
-  // "!" marker over the warehouse district (canvas sprite)
-  function labelSprite(text, bg, fg, w = 256) {
+  /* ---------- suppliers (factories with smoking chimneys) and the port ---------- */
+  const factoryGeo = merge([
+    part(BOX, 0xe5e7eb, 0, 0, 0, 5, 2.2, 3.4),
+    ...[-1.7, -0.55, 0.6, 1.75].map(x => part(PRISM, 0x0f766e, x, 2.2, 0, 1.15, 1.6, 3.4)),
+    part(CYL(0.35, 0.45, 4.8, 8), 0xb91c1c, 1.9, 0, -1.1), part(CYL(0.47, 0.47, 0.35, 8), 0xf5f5f4, 1.9, 4.0, -1.1),
+    part(BOX, 0x334155, -1.2, 0, 1.71, 1.2, 1.4, 0.04),
+  ]);
+  const factories = [0, 1, 2].map(k => { const [x, z] = polar(26, 82 + k * 17); return { x, z, ry: faceCentre(x, z) }; });
+  instanced(factoryGeo, mat(), factories, (o) => at(o.x, o.z, o.ry));
+  const puffs = []; factories.forEach(o => { for (let p = 0; p < 4; p++) puffs.push({ o, p }); });
+  const smoke = instanced(new THREE.IcosahedronGeometry(0.45, 0), new THREE.MeshLambertMaterial({ color: 0xf1f5f9, flatShading: true, transparent: true, opacity: 0.85 }), puffs, () => {});
+  const chimneyTop = (o) => { const c = new THREE.Vector3(1.9, 4.4, -1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), o.ry); return c.add(new THREE.Vector3(o.x, 0, o.z)); };
+
+  const portBase = polar(31, 272);
+  const dockGeo = merge([
+    part(BOX, 0x92400e, 0, -0.6, 0, 12, 0.7, 6),                                   // timber quay
+    ...[-5, -2.5, 0, 2.5, 5].map(x => part(CYL(0.2, 0.2, 1.6, 6), 0x78350f, x, -1.6, 3)),
+    part(BOX, 0xf59e0b, 4, 0.1, -1.6, 0.4, 6.5, 0.4), part(BOX, 0xf59e0b, 4, 0.1, 1.2, 0.4, 6.5, 0.4),   // crane legs
+    part(BOX, 0xf59e0b, 4, 6.4, 1.5, 0.5, 0.5, 9), part(BOX, 0x1f2937, 4, 5.6, 4.6, 0.8, 0.8, 0.8),
+  ]);
+  const dock = new THREE.Mesh(dockGeo, mat()); dock.position.set(portBase[0], 0.1, portBase[1] + 1); dock.rotation.y = faceCentre(...portBase) + Math.PI; scene.add(dock);
+  const boxes = []; const boxCols = [0xdc2626, 0x2563eb, 0x16a34a, 0xf59e0b, 0x0891b2, 0x7c3aed];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) for (let l = 0; l < 1 + ((r * 4 + c) % 3); l++) boxes.push({ r, c, l });
+  const boxDir = faceCentre(...portBase) + Math.PI;
+  const cont = instanced(merge([part(BOX, 0xffffff, 0, 0, 0, 2.2, 0.9, 0.95), ...[-0.7, -0.35, 0, 0.35, 0.7].map(x => part(BOX, 0xe5e7eb, x, 0.05, 0.48, 0.05, 0.8, 0.02))]), mat(), boxes, (b) => {
+    const local = new THREE.Vector3(-4 + b.c * 2.4, 0, -1.6 + b.r * 1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), boxDir);
+    M.compose(V.set(portBase[0] + local.x, b.l * 0.92, portBase[1] + 1 + local.z), Q.setFromEuler(E.set(0, boxDir, 0)), S.set(1, 1, 1));
+  });
+  boxes.forEach((b, i) => cont.setColorAt(i, C(boxCols[(b.r * 5 + b.c * 3 + b.l) % boxCols.length])));
+  const shipGeo = merge([
+    part(BOX, 0x1e3a8a, 0, -0.9, 0, 11, 1.6, 3.4), part(BOX, 0xdc2626, 0, -1.05, 0, 11.1, 0.35, 3.45),
+    part(BOX, 0xf8fafc, -3.6, 0.7, 0, 2.4, 1.8, 2.8), part(CYL(0.3, 0.3, 1.2, 8), 0xf59e0b, -3.6, 2.5, 0),
+    ...[0, 1, 2, 3].map(k => part(BOX, boxCols[k], -1 + k * 1.7, 0.7, 0, 1.5, 0.85, 2.6)),
+  ]);
+  const ship = new THREE.Mesh(shipGeo, mat()); const shipPos = polar(43, 274); ship.position.set(shipPos[0], 0, shipPos[1]); ship.rotation.y = boxDir + Math.PI / 2; scene.add(ship);
+
+  /* ---------- street furniture, trees: seeded scatter, avoiding roads and lots ---------- */
+  const busy = (x, z) => {
+    const r = Math.hypot(x, z), a = (Math.atan2(z, x) * 180 / Math.PI + 360) % 360;
+    if (r < 12.5 || r > 32.5) return true;
+    if ((a > 285 || a < 60) && r > 12 && r < 24.5) return true;          // high street + shops
+    if (a > 138 && a < 240 && r > 12.5 && r < 28.5) return true;         // warehouses
+    if (a > 75 && a < 126 && r > 21 && r < 30) return true;              // factories
+    if (a > 255 && a < 290 && r > 24) return true;                       // port
+    if (a > 120 && a < 140 && r < 15) return true;                       // hall
+    return [-12, 188, 98, 276].some(sp => Math.abs(((a - sp + 540) % 360) - 180) < 5);
+  };
+  const trees = [];
+  for (let k = 0; trees.length < 70 && k < 3000; k++) { const r = 12 + rnd() * 21, a = rnd() * 360; const [x, z] = polar(r, a); if (!busy(x, z)) trees.push({ x, z, s: 0.75 + rnd() * 0.7, kind: rnd() < 0.55 ? 0 : 1, ry: rnd() * 6 }); }
+  const roundTree = merge([part(CYL(0.15, 0.2, 0.9, 6), 0x854d0e), part(new THREE.IcosahedronGeometry(0.85, 0).translate(0, 1.5, 0), 0x22c55e)]);
+  const pine = merge([part(CYL(0.12, 0.16, 0.6, 6), 0x78350f), part(new THREE.ConeGeometry(0.75, 1.3, 7).translate(0, 1.15, 0), 0x15803d), part(new THREE.ConeGeometry(0.55, 1.0, 7).translate(0, 1.9, 0), 0x16a34a)]);
+  [roundTree, pine].forEach((geo, kind) => {
+    const list = trees.filter(t => t.kind === kind);
+    const m = instanced(geo, mat(), list, (t) => at(t.x, t.z, t.ry, t.s));
+    list.forEach((t, i) => m.setColorAt(i, C([0xffffff, 0xd9f99d, 0xbbf7d0, 0xfef9c3][i % 4])));
+  });
+  const lampsAt = [...arc(16.6, -70, 50, 15), ...arc(19.4, -62, 50, 15), ...arc(21.6, 145, 230, 14), ...arc(6.6, 0, 360, 45)];
+  instanced(merge([part(CYL(0.07, 0.09, 2.2, 6), 0x334155), part(BOX, 0x334155, 0.18, 2.15, 0, 0.45, 0.06, 0.08)]), mat(), lampsAt, ([x, z]) => at(x, z, faceCentre(x, z)));
+  const bulbMat = new THREE.MeshLambertMaterial({ color: 0xfef9c3, emissive: 0xfde047, emissiveIntensity: 0.1 });
+  instanced(new THREE.SphereGeometry(0.16, 6, 4), bulbMat, lampsAt, ([x, z]) => { const r = faceCentre(x, z); M.compose(V.set(x + Math.sin(r) * 0.36 * 0 + Math.cos(r) * 0.36, 2.08, z - Math.sin(r) * 0.36), Q.identity(), S.set(1, 1, 1)); });
+  const benches = arc(5.3, 20, 340, 40).filter((_, i) => i % 2 === 0);
+  instanced(merge([part(BOX, 0x92400e, 0, 0.35, 0, 1.2, 0.1, 0.4), part(BOX, 0x92400e, 0, 0.55, -0.18, 1.2, 0.35, 0.08), part(BOX, 0x374151, -0.5, 0, 0, 0.08, 0.35, 0.36), part(BOX, 0x374151, 0.5, 0, 0, 0.08, 0.35, 0.36)]), mat(), benches,
+    ([x, z]) => at(x, z, faceCentre(x, z) + Math.PI));
+  const flowers = []; for (let k = 0; k < 40; k++) { const [x, z] = polar(6.4 + rnd() * 0.7, rnd() * 360); flowers.push({ x, z }); }
+  const fl = instanced(new THREE.IcosahedronGeometry(0.22, 0), mat(), flowers, (f) => at(f.x, f.z, 0, 1, 1, 0.15));
+  fl.material = new THREE.MeshLambertMaterial({ flatShading: true }); flowers.forEach((f, i) => fl.setColorAt(i, C([0xf472b6, 0xfacc15, 0xf87171, 0xc084fc][i % 4])));
+
+  /* ---------- labels: "!" on the warehouse district, approvals, district names ---------- */
+  function labelSprite(text, bg, fg, w = 256, font = 44) {
     const c = document.createElement('canvas'); c.width = w; c.height = 96; const g = c.getContext('2d');
-    g.fillStyle = bg; g.beginPath(); g.roundRect(4, 4, w - 8, 88, 22); g.fill();
-    g.fillStyle = fg; g.font = '600 44px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, 50);
+    g.fillStyle = bg; g.beginPath(); g.roundRect(4, 4, w - 8, 88, 30); g.fill();
+    g.fillStyle = fg; g.font = `600 ${font}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, w / 2, 50);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
-    sp.scale.set(w / 40, 96 / 40, 1); return sp;
+    sp.scale.set(w / 44, 96 / 44, 1); scene.add(sp); return sp;
   }
-  const bang = labelSprite('! ' + n(DATA.reorder.below_count) + ' low', '#facc15', '#422006', 340); bang.position.set(-20, 6.5, -2); scene.add(bang);
+  const whCentre = polar(20.5, 188);
+  const bang = labelSprite('! ' + n(DATA.reorder.below_count) + ' low', '#facc15', '#422006', 360); bang.position.set(whCentre[0], 8.5, whCentre[1]);
   pickables.push([bang, () => reorderPanel()]);
+  const sign = labelSprite(DATA.approvals.total ? 'Approvals ' + DATA.approvals.total : 'Approvals: all clear', DATA.approvals.total ? '#ffffff' : '#dcfce7', '#14532d', 440);
+  sign.position.set(hallPos[0], 8.2, hallPos[1]); pickables.push([sign, () => approvalsPanel()]);
+  const district = (t, r, a, y = 3.2) => { const s = labelSprite(t, 'rgba(255,255,255,0.9)', '#1f2937', 360, 40); const [x, z] = polar(r, a); s.position.set(x, y, z); return s; };
+  district('Dealer high street', 25, 20, 6.5); district('Warehouses', 31, 200, 4); district('Suppliers', 31, 112, 8); district('Port', 37, 256, 5);
 
-  // approvals sign + town hall
-  const hall = new THREE.Mesh(new THREE.BoxGeometry(5, 3.6, 4).translate(0, 1.8, 0), mat(0x8b5cf6)); hall.position.set(-12, 0, 13); scene.add(hall);
-  const sign = labelSprite(DATA.approvals.total ? 'Approvals ' + DATA.approvals.total : 'Approvals: all clear', DATA.approvals.total ? '#ffffff' : '#dcfce7', '#14532d', 420);
-  sign.position.set(-12, 6.4, 13); scene.add(sign); pickables.push([hall, () => approvalsPanel()], [sign, () => approvalsPanel()]);
+  /* ---------- life: lorries on the roads, people on the plaza ---------- */
+  const lorryGeo = merge([part(BOX, 0xffffff, 0.45, 0.25, 0, 1.3, 0.85, 0.75), part(BOX, 0x1d4ed8, -0.55, 0.25, 0, 0.6, 0.7, 0.72), part(BOX, 0xbfdbfe, -0.86, 0.6, 0, 0.02, 0.28, 0.6),
+    ...[-0.55, 0.65].flatMap(x => [-0.36, 0.36].map(z => part(CYL(0.18, 0.18, 0.12, 8), 0x111827, x, 0.18, z, 1, 1, 1, 0, Math.PI / 2)))]);
+  const targets = coinShops.length ? coinShops : shopSlot.slice(0, 3);
+  const paths = targets.map((o, k) => {
+    const start = whSlot[k % whSlot.length], aS = Math.atan2(start.z, start.x) * 180 / Math.PI, aT = Math.atan2(o.z, o.x) * 180 / Math.PI;
+    const pts = [polar(20, aS), polar(20, 188), polar(14, 186), polar(8.2, 180), polar(8.2, 120), polar(8.2, 60), polar(8.2, 0), polar(13, -14), polar(18, -12), polar(18, (aT - 12) / 2), polar(18, aT)];
+    const v3 = pts.map(([x, z]) => new THREE.Vector3(x, 0.08, z)).filter((v, i, a) => i === 0 || v.distanceTo(a[i - 1]) > 0.5);
+    return new THREE.CatmullRomCurve3(v3);
+  });
+  const lorries = instanced(lorryGeo, mat(), targets, () => {});
+  const people = []; for (let k = 0; k < 36; k++) people.push({ r: 2.6 + rnd() * 3, a: rnd() * 6.28, sp: (0.1 + rnd() * 0.25) * (rnd() < 0.5 ? -1 : 1) });
+  const folk = instanced(merge([part(CYL(0.16, 0.2, 0.55, 6), 0xffffff), part(new THREE.SphereGeometry(0.14, 6, 4).translate(0, 0.7, 0), 0xfcd34d)]), mat(), people, () => {});
+  people.forEach((p, i) => folk.setColorAt(i, C([0x60a5fa, 0xf87171, 0x34d399, 0xfbbf24, 0xa78bfa, 0xf472b6][i % 6])));
 
-  // trees (one instanced mesh)
-  const treeG = new THREE.ConeGeometry(0.7, 2, 6); treeG.translate(0, 1, 0);
-  const trees = new THREE.InstancedMesh(treeG, mat(0x16a34a), 40);
-  const rnd = (k) => (Math.sin(k * 12.9898) * 43758.5453) % 1;
-  for (let i = 0; i < 40; i++) { m4.compose(v.set(-30 + Math.abs(rnd(i)) * 60, 0, 22 + Math.abs(rnd(i + 99)) * 3), q.identity(), s3.set(1, 0.8 + Math.abs(rnd(i + 7)), 1)); trees.setMatrixAt(i, m4); }
-  scene.add(trees);
-
-  // walkers: one instanced mesh of small lorries, warehouse -> shops invoiced today
-  const targets = shops.map((s, i) => [s, shopPos[i]]).filter(([s]) => s.today_amount != null)
-    .concat(stalls.map((s, i) => [s, new THREE.Vector3(-1 + i * 2.4, 0, 6)]));
-  const walkers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.7, 0.6).translate(0, 0.35, 0), mat(0x2563eb), Math.max(1, targets.length));
-  walkers.count = targets.length; scene.add(walkers);
-  const from = new THREE.Vector3(-20, 0, 2);
-
-  const windows = mat(0xfde68a); windows.emissive = new THREE.Color(0xfbbf24); windows.emissiveIntensity = 0;
-
-  // render on demand, 30 fps cap, pause when hidden
-  let dirty = true, t0 = performance.now(), last = 0, replay = 0;
+  /* ---------- loop: render on demand, 30 fps cap, pause on hidden tab ---------- */
+  let last = 0, t0 = performance.now(), replayUntil = 0, night = false;
+  const UP = new THREE.Vector3(0, 1, 0);
+  function animate(now) {
+    const tt = (now - t0) / 1000 * (replayUntil > now ? 4 : 1);
+    paths.forEach((p, i) => {
+      const k = ((tt * 0.035 + i * 0.29) % 2); const u = Math.min(0.999, Math.max(0.001, k < 1 ? k : 2 - k));
+      const pos = p.getPointAt(u), tan = p.getTangentAt(u).multiplyScalar(k < 1 ? 1 : -1);
+      M.compose(pos, Q.setFromAxisAngle(UP, Math.atan2(-tan.z, tan.x) + Math.PI), S.set(1, 1, 1)); lorries.setMatrixAt(i, M);
+    });
+    lorries.instanceMatrix.needsUpdate = true;
+    people.forEach((p, i) => { const a = p.a + tt * p.sp * 0.6; M.compose(V.set(Math.cos(a) * p.r, 0.05 + Math.abs(Math.sin(tt * 6 + i)) * 0.05, Math.sin(a) * p.r), Q.setFromAxisAngle(UP, -a), S.set(1, 1, 1)); folk.setMatrixAt(i, M); });
+    folk.instanceMatrix.needsUpdate = true;
+    puffs.forEach((pf, i) => { const top = chimneyTop(pf.o); const ph = (tt * 0.25 + pf.p / 4) % 1; M.compose(V.set(top.x + ph * 1.2, top.y + ph * 3, top.z), Q.identity(), S.setScalar(0.5 + ph * 1.3)); smoke.setMatrixAt(i, M); });
+    smoke.instanceMatrix.needsUpdate = true;
+    coinShops.forEach((o, i) => { M.compose(V.set(o.x, o.h + 2.2 + Math.sin(tt * 2 + i) * 0.15, o.z), Q.setFromAxisAngle(UP, tt * 1.6 + i), S.set(1, 1, 1)); coins.setMatrixAt(i, M); });
+    coins.instanceMatrix.needsUpdate = true;
+  }
   function frame(now) {
     requestAnimationFrame(frame);
     if (document.hidden) return;
-    const animating = targets.length && (!state.night || replay > 0);
-    if (!dirty && !animating) return;
+    const moving = !state.night || replayUntil > now;
+    if (!dirty && !moving) return;
     if (now - last < 1000 / 30) return; last = now;
-    const tt = (now - t0) / 1000 * (replay > 0 ? 3 : 0.6);
-    targets.forEach(([, p], i) => {
-      const k = (tt + i * 0.37) % 2; const f = k < 1 ? k : 2 - k;
-      const mid = new THREE.Vector3(-6, 0, 2);
-      const pos = f < 0.5 ? from.clone().lerp(mid, f * 2) : mid.clone().lerp(new THREE.Vector3(p.x, 0, 2), (f - 0.5) * 2);
-      m4.compose(pos, q.identity(), s3.set(1, 1, 1)); walkers.setMatrixAt(i, m4);
-    });
-    walkers.instanceMatrix.needsUpdate = true;
-    if (replay > 0 && now > replay) replay = 0;
-    renderer.render(scene, cam); dirty = false;
+    animate(now); renderer.render(scene, cam); dirty = false;
     document.getElementById('calls').textContent = `draw calls: ${renderer.info.render.calls} · pixel ratio ${renderer.getPixelRatio()}`;
   }
   new ResizeObserver(resize).observe(canvas); resize(); requestAnimationFrame(frame);
 
-  // picking
-  const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
-  canvas.addEventListener('click', (e) => {
+  /* ---------- picking + drag to turn the island ---------- */
+  const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let drag = null;
+  canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, yaw, moved: false }; });
+  window.addEventListener('pointermove', (e) => { if (!drag) return; const dx = e.clientX - drag.x; if (Math.abs(dx) > 4) drag.moved = true; yaw = drag.yaw - dx * 0.006; placeCam(); });
+  window.addEventListener('pointerup', (e) => {
+    const wasDrag = drag && drag.moved; drag = null; if (wasDrag || e.target !== canvas) return;
     const r = canvas.getBoundingClientRect(); ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ptr, cam);
-    const hits = ray.intersectObjects(pickables.map(p => p[0]), false);
-    if (!hits.length) return;
+    ray.setFromCamera(ptr, cam); const hits = ray.intersectObjects(pickables.map(p => p[0]), false); if (!hits.length) return;
     const entry = pickables.find(p => p[0] === hits[0].object); entry[1](hits[0].instanceId ?? 0);
   });
 
   return {
     setNight(on) {
-      hemi.intensity = on ? 0.35 : 1.6; sun.intensity = on ? 0.15 : 1.6;
-      shopBody.material.emissive = new THREE.Color(on ? 0x3b2a05 : 0x000000);
-      ground.material.color.set(on ? 0x14532d : 0x86efac); dirty = true;
+      night = on; hemi.intensity = on ? 0.45 : 1.9; hemi.color.set(on ? 0x93a5ff : 0xfff4e0); sun.intensity = on ? 0.12 : 1.7;
+      winMat.emissiveIntensity = on ? 1.8 : 0; bulbMat.emissiveIntensity = on ? 1.4 : 0.1;
+      water.material.color.set(on ? 0x1e3a8a : 0x7dd3fc); dirty = true;
     },
-    replay() { replay = performance.now() + 8000; t0 = performance.now(); dirty = true; },
+    replay() { replayUntil = performance.now() + 9000; t0 = performance.now(); dirty = true; },
   };
 }
+
 
 /* ---------------------------------------------------------------- controls */
 const tNight = document.getElementById('tNight'), tRedact = document.getElementById('tRedact');
