@@ -91,7 +91,8 @@ def _customers(
     """(customers, problems, choices) for what the row names, read under the user's companies (the caller set that
     scope). A code is exact (case and spaces aside). A name is exact (case and spaces aside) with exactly one match in
     the row's companies; otherwise the active accounts of those companies whose name CONTAINS the written text, or
-    failing that shares a significant word with it, are offered as a pick (never linked on their own, even one). A
+    failing that (own scope only) carries its first significant word, are offered as a pick (never linked on their
+    own, even one). A
     customer of a company the row does not name is refused: an account links only to a contact of its own company
     (sheet rule). `own_agents` (own scope, DEALER-ACCESS-PORTAL A2-A4): only active customers of those sales agents
     exist at all, so another salesperson's account reads exactly like one that does not exist."""
@@ -156,12 +157,16 @@ def _customers(
         if found:
             offer(name, found)
             continue
-        words = _significant_words(name)
+        words = _significant_words(name) if own_agents is not None else []
         if words:
-            # Whole-word matches (\m \M), most shared words first (UAC A4). The words are [a-z0-9] only.
-            shared = sum((case((norm.op("~")(literal(rf"\m{w}\M")), 1), else_=0) for w in words), literal(0))
+            # Own scope only (UAC A4): the account carries the written name's first significant word, most shared
+            # words first. Whole-word matches (\m \M); the words are [a-z0-9] only.
+            def has(w: str):
+                return norm.op("~")(literal(rf"\m{w}\M"))
+
+            shared = sum((case((has(w), 1), else_=0) for w in words), literal(0))
             found = (
-                query(*columns).filter(Customer.is_active.is_(True), Customer.company_id.in_(mine_ids), shared > 0)
+                query(*columns).filter(Customer.is_active.is_(True), Customer.company_id.in_(mine_ids), has(words[0]))
                 .order_by(shared.desc(), Customer.customer_code).limit(MAX_CHOICES + 1).all()
             )
             if found:
