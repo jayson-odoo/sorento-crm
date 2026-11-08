@@ -83,6 +83,8 @@ class ListQuerySearchService:
             item_type=req.item_type,
             discontinued_from=req.discontinued_from,
             discontinued_to=req.discontinued_to,
+            list_price_changed_from=req.list_price_changed_from,
+            list_price_changed_to=req.list_price_changed_to,
             sort_field=sort_field,
             sort_dir=sort_dir,
             advanced_filter_clause=clause,
