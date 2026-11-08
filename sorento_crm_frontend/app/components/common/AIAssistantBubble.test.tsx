@@ -1097,4 +1097,24 @@ describe('AIAssistantBubble: a failed send (fix round 2, B-3)', () => {
     await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
     expect((screen.getByPlaceholderText('Ask the assistant...') as HTMLTextAreaElement).value).toBe('ZZT retry me');
   });
+
+  it('a failed Confirm click does not put "Confirm" in the box', async () => {
+    grant();
+    await openThread([
+      user(),
+      {
+        id: 'm-old',
+        role: 'assistant',
+        content: 'ZZT change the phone number?',
+        created_at: '2026-10-30T09:00:05Z',
+        metadata_json: { pending_confirmation: { tool_name: 'zzt_tool', status: 'pending', summary: 'x' } },
+      },
+    ]);
+    vi.mocked(chatApi.sendAIAssistantMessage).mockRejectedValueOnce(new Error('ZZT server down'));
+
+    fireEvent.click(screen.getByTestId('write-confirm-btn'));
+
+    await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
+    expect((screen.getByPlaceholderText('Ask the assistant...') as HTMLTextAreaElement).value).toBe('');
+  });
 });

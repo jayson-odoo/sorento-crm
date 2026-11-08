@@ -129,6 +129,8 @@ class SheetRead:
     rows: list[list[str]]
     total_rows: int
     header_found: bool
+    #: Rows read from the stream, blank ones included: what the scan budget is charged.
+    scanned: int = 0
 
 
 def _clean(value: Any) -> str:
@@ -177,9 +179,12 @@ def _parse(
 
     kept: list[list[Any]] = []
     total = 0
-    for scanned, row in enumerate(body):
-        if scanned >= limit:
+    prefix = header_at + 1 if header_at is not None else 0  # rows above and including the header
+    body_rows = 0
+    for row in body:
+        if body_rows >= limit:
             break
+        body_rows += 1
         cells = list(row)
         if all(_blank(c) for c in cells):
             continue
@@ -197,7 +202,11 @@ def _parse(
         header = [_clean(c) or f"Column {i + 1}" for i, c in enumerate(padded)]
     else:
         header = [f"Column {i + 1}" for i in range(width)]
-    return SheetRead(name=name, header=header, rows=rows, total_rows=total, header_found=header_raw is not None)
+    return SheetRead(
+        name=name, header=header, rows=rows, total_rows=total, header_found=header_raw is not None,
+        # Every row pulled from the stream: the header scan reads `len(head)` whatever the limit.
+        scanned=max(len(head), prefix + body_rows),
+    )
 
 
 def _decode_csv(data: bytes) -> str:
@@ -274,12 +283,16 @@ def read_sheet(data: bytes, ext: str, sheet: Optional[str] = None) -> SheetRead:
         for name, rows in _sheets(data, ext):
             if name == sheet:
                 return _parse(rows, name)
+    budget = MAX_SCAN_ROWS_TOTAL
     for name, rows in _sheets(data, ext):
         if not seen_any:
             first_name, seen_any = name, True
-        got = _parse(rows, name)
+        if budget <= 0:
+            break
+        got = _parse(rows, name, min(MAX_SCAN_ROWS_PER_SHEET, budget))
         if got.total_rows:
             return got
+        budget -= got.scanned
     return SheetRead(name=first_name, header=[], rows=[], total_rows=0, header_found=False)
 
 
@@ -291,7 +304,7 @@ def list_sheets(data: bytes, ext: str) -> list[dict[str, Any]]:
         if budget <= 0:
             break
         got = _parse(rows, name, min(MAX_SCAN_ROWS_PER_SHEET, budget))
-        budget -= got.total_rows
+        budget -= got.scanned
         if got.total_rows:
             out.append({"name": name if name is not None else "Sheet 1", "rows": got.total_rows})
     return out

@@ -532,3 +532,58 @@ def test_r2b_a_workbook_under_the_budget_is_counted_in_full():
     data = _book(300, nsheets=3, far_cell=False)
 
     assert list_sheets(data, "xlsx") == [{"name": f"S{i}", "rows": 300} for i in (1, 2, 3)]
+
+
+# --------------------------------------------------------------------------- #
+# R2c (final review): the total budget counts every row SCANNED, blank or not,
+# in list_sheets and in read_sheet's fallback search; a sheet past part of the
+# budget is cut at what is left.
+# --------------------------------------------------------------------------- #
+
+
+class _Pulls:
+    def __init__(self):
+        self.n = 0
+
+
+def _fake_sheets(monkeypatch, spec):
+    """Replace the workbook reader with sheets of `(name, rows, blank)`; count every row pulled."""
+    pulls = _Pulls()
+
+    def rows(count, blank):
+        for i in range(count):
+            pulls.n += 1
+            yield [None, None] if blank else (["Phone", "Name"] if i == 0 else [f"60{i:09d}", f"P{i}"])
+
+    def fake(data, ext):
+        for name, count, blank in spec:
+            yield name, rows(count, blank)
+
+    monkeypatch.setattr(panel_files, "_sheets", fake)
+    return pulls
+
+
+def test_r2c_blank_rows_count_against_the_total_budget_in_list_sheets(monkeypatch):
+    pulls = _fake_sheets(monkeypatch, [(f"S{i}", 10_050, True) for i in range(20)])
+
+    assert list_sheets(b"x", "xlsx") == []
+    assert pulls.n <= panel_files.MAX_SCAN_ROWS_TOTAL + 2 * 20, pulls.n
+
+
+def test_r2c_blank_sheets_count_against_the_total_budget_in_read_sheet(monkeypatch):
+    pulls = _fake_sheets(monkeypatch, [(f"S{i}", 10_050, True) for i in range(20)])
+
+    got = read_sheet(b"x", "xlsx")
+
+    assert got.total_rows == 0
+    assert pulls.n <= panel_files.MAX_SCAN_ROWS_TOTAL + 2 * 20, pulls.n
+
+
+def test_r2c_a_sheet_past_part_of_the_budget_is_cut_at_what_is_left(monkeypatch):
+    # 10,000 + 5,000 leave 5,000 of the 20,000 budget for the third sheet.
+    _fake_sheets(monkeypatch, [("A", 10_001, False), ("B", 5_001, False), ("C", 15_001, False)])
+
+    got = {s["name"]: s["rows"] for s in list_sheets(b"x", "xlsx")}
+
+    assert got["A"] == 10_000 and got["B"] == 5_000
+    assert got["C"] <= 5_000, got

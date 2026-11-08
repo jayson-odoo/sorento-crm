@@ -306,6 +306,29 @@ describe('F4 chips', () => {
   });
 });
 
+describe('B-2 the chip shows the file size (final review F17, F18)', () => {
+  it('a sheet chip reads "<size>, <rows> rows"', async () => {
+    upload.mockResolvedValue(uploaded());
+    const { container } = render(<Harness />);
+    attach(file('people.csv', 'text/csv', 12 * 1024));
+    await screen.findByText('3 rows');
+
+    expect(container.textContent).toContain('12.0 KB, 3 rows');
+  });
+
+  it('a PDF chip reads "<size>, <pages> pages"', async () => {
+    upload.mockResolvedValue(
+      uploaded({
+        filename: 'list.pdf', mime_type: 'application/pdf', kind: 'pdf', sheets: [], pages: 3,
+      }),
+    );
+    const { container } = render(<Harness />);
+    attach(file('list.pdf', 'application/pdf', Math.round(2.1 * 1024 * 1024)));
+
+    await waitFor(() => expect(container.textContent).toContain('2.1 MB, 3 pages'));
+  });
+});
+
 describe('R8 a chip removed while uploading', () => {
   it('has its file deleted as soon as the upload lands', async () => {
     let finish: (v: AssistantFile) => void = () => undefined;
