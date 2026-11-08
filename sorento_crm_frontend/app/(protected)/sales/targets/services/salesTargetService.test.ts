@@ -22,6 +22,7 @@ import {
   getSalesTargets,
   patchSalesTarget,
   patchSalesTargetPeriod,
+  updatePointRatio,
 } from './salesTargetService';
 
 function ok(body: unknown) {
@@ -180,5 +181,15 @@ describe('salesTargetService', () => {
       body: JSON.stringify({ ids: ['t1', 't2'] }),
     });
     expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+
+  it('edits a point ratio with PATCH on its id (POINT-RATIO-EDIT)', async () => {
+    apiFetch.mockResolvedValue(ok({ id: 'r1' }));
+    await updatePointRatio('r1', { effective_from: '2026-02-01', rm_per_point: 1.25 });
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets/point-ratios/r1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ effective_from: '2026-02-01', rm_per_point: 1.25 }),
+    });
   });
 });
