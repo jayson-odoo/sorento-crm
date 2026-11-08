@@ -1,6 +1,7 @@
 # PLAN: Dealer access portal (salesperson self-service dealer user access)
 
-Status: Build, agent path (owner answered 9 Nov ~00:50: tags, Q2-Q5 a, agent first; screen second, mock v1 parked).
+Status: Review done for the agent path (reviewer READY, security SAFE TO MERGE after 2 fix rounds; crew-tests 267/0 on
+the merged head); waiting on crew live x3 + owner hand test. Screen (mock v2) not started: second slice.
 Track: full (RBAC grant migration, data access grants, Respond.io create). Agent-path design: card section 0.
 Lane: DEALER-ACCESS-PORTAL. Card `CARD-dealer-access-portal-09nov.md`; UAC
 `dealer-access-portal-09nov-acceptance-criteria.md`; mock `dealer-access-portal-mock.html`.
