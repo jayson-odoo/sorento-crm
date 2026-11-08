@@ -254,6 +254,18 @@ def test_a_two_company_contact_gets_the_si_list_and_another_companys_pick_is_kep
     kept = _create(p, customer_id=there.id, customer_name=there.customer_name)
     assert kept["customer_id"] is None
     assert kept["customer_name"] == f"300-{tag} - {MARKER} twoco {tag} there"
+    # The application stays in its own company (the nested scope is restored).
+    from app.models.new_product_application import NewProductApplication
+
+    with company_scope(p.db, None):
+        assert str(p.db.get(NewProductApplication, kept["id"]).company_id) == str(linked_company(p, linked["id"]))
+
+
+def linked_company(p, application_id):
+    from app.models.new_product_application import NewProductApplication
+
+    with company_scope(p.db, None):
+        return p.db.get(NewProductApplication, application_id).company_id
 
 
 def test_another_companys_pick_on_an_update_is_kept_as_text_too(portal):

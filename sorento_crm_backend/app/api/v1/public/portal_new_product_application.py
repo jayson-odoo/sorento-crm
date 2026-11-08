@@ -104,7 +104,9 @@ def _keep_other_company_customer_as_text(db: Session, token: PortalToken, data: 
         return
     with company_scope(db, portal_contact_scope(db, str(token.contact_id))):
         row = (
-            db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == customer_id).first()
+            db.query(Customer.customer_code, Customer.customer_name)
+            .filter(Customer.id == customer_id, Customer.is_active.is_(True))  # what the SI list offers
+            .first()
             if svc._is_uuid(customer_id)
             else None
         )
