@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quote Certification Tab</title>
+<!-- QUOTE-CERT-TAB mock (8 Nov). Static HTML in the app's design system (Metronic/ReUI tokens,
+     line tabs, PanelDataGrid, PdfViewer). MASKED data only (public repo): product codes, certificate
+     numbers and the project are invented in the shape of the owner's SPAN/WCM example.
+     Plan: ../PLAN-quote-cert-tab-08nov.md  Card: ../CARD-quote-cert-tab-08nov.md -->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #09090b; --muted: #71717a; --border: #e4e4e7; --soft: #fafafa;
+    --primary: #1b84ff; --primary-soft: #eff6ff; --primary-fg: #ffffff;
+    --amber: #b45309; --amber-soft: #fffbeb; --amber-border: #fcd34d;
+    --red: #dc2626; --red-soft: #fef2f2; --red-border: #fca5a5;
+    --green: #15803d; --green-soft: #f0fdf4; --green-border: #86efac;
+    --paper: #ffffff; --ink: #111827; --radius: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #09090b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a; --soft: #111113;
+      --primary: #3b9bff; --primary-soft: #0c1a33;
+      --amber: #fbbf24; --amber-soft: #2a1d05; --amber-border: #92400e;
+      --red: #f87171; --red-soft: #2a0f0f; --red-border: #7f1d1d;
+      --green: #4ade80; --green-soft: #052e16; --green-border: #166534;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #09090b; --fg: #fafafa; --muted: #a1a1aa; --border: #27272a; --soft: #111113;
+    --primary: #3b9bff; --primary-soft: #0c1a33;
+    --amber: #fbbf24; --amber-soft: #2a1d05; --amber-border: #92400e;
+    --red: #f87171; --red-soft: #2a0f0f; --red-border: #7f1d1d;
+    --green: #4ade80; --green-soft: #052e16; --green-border: #166534;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 64px; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; }
+  h1.doc { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p.lead { color: var(--muted); margin: 0 0 24px; max-width: 80ch; }
+  h2.sec { font-size: 15px; margin: 48px 0 6px; padding-top: 16px; border-top: 1px dashed var(--border); }
+  p.cap { font-size: 12px; color: var(--muted); margin: 0 0 12px; max-width: 90ch; }
+  code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+  /* App frame */
+  .frame { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+  .ph { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 16px 20px 8px; }
+  .crumb { font-size: 12px; color: var(--muted); }
+  .ph h3 { font-size: 18px; margin: 2px 0 0; letter-spacing: -0.01em; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); padding: 0 20px 12px; }
+  .meta b { color: var(--fg); font-weight: 500; }
+  .tabs { display: flex; gap: 20px; padding: 0 20px; border-bottom: 1px solid var(--border); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .tabs span { padding: 10px 0; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; display: inline-flex; gap: 6px; align-items: center; }
+  .tabs span.on { color: var(--fg); border-color: var(--primary); font-weight: 500; }
+  .tabs span.new::after { content: "new"; font-size: 10px; color: var(--primary); border: 1px solid var(--primary); border-radius: 999px; padding: 0 5px; }
+  .body { padding: 16px 20px 20px; }
+  /* Buttons, badges */
+  .btn { font: inherit; font-size: 13px; height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  .btn.sm { height: 28px; font-size: 12px; padding: 0 10px; }
+  .btn.ghost { border-color: transparent; }
+  .btn.danger { color: var(--red); }
+  .btn.count { background: var(--red-soft); border-color: var(--red-border); color: var(--red); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .badge.ok { color: var(--green); background: var(--green-soft); border-color: var(--green-border); }
+  .badge.warn { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border); }
+  .badge.bad { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+  .badge.info { color: var(--primary); background: var(--primary-soft); border-color: color-mix(in oklab, var(--primary) 40%, transparent); }
+  .chip { display: inline-block; font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; margin: 1px 2px 1px 0; background: var(--soft); }
+  /* PanelDataGrid */
+  .panel { border: 1px solid var(--border); border-radius: var(--radius); }
+  .panel-h { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .panel-h h4 { margin: 0; font-size: 14px; }
+  .scroller { overflow-x: auto; min-width: 0; }
+  table.grid { border-collapse: collapse; width: 100%; min-width: 980px; table-layout: fixed; }
+  table.grid th, table.grid td { border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  table.grid th { background: var(--soft); font-weight: 500; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  table.grid tbody tr:hover { background: var(--soft); cursor: pointer; }
+  .sub { display: block; font-size: 12px; color: var(--muted); }
+  .pager { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; font-size: 12px; color: var(--muted); }
+  tr.pending td { opacity: .55; }
+  tr.pending td.act { opacity: 1; }
+  /* Viewer page */
+  .viewer { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0; min-height: 640px; }
+  .viewer .stage { background: var(--soft); border-right: 1px solid var(--border); padding: 12px; min-width: 0; overflow: auto; }
+  .vbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+  .vbar .sep { flex: 1; }
+  .side { padding: 14px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .side h5 { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  .pl { border: 1px solid var(--border); border-radius: var(--radius); }
+  .pl .r { padding: 10px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
+  .pl .r:last-child { border-bottom: 0; }
+  .pl .r .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .pl .r .code { font-weight: 600; }
+  .box-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
+  .box-row .sw { width: 10px; height: 10px; border: 2px solid var(--red); border-radius: 2px; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  .field { display: grid; gap: 4px; font-size: 12px; }
+  .field input { font: inherit; font-size: 13px; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; padding: 2px; font-size: 12px; }
+  .seg span { padding: 3px 10px; border-radius: 4px; }
+  .seg .on { background: var(--primary); color: #fff; }
+  /* Fake PDF page */
+  .page { position: relative; width: 640px; max-width: 100%; margin: 0 auto 16px; background: var(--paper); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); padding: 28px 26px 34px; font-family: "Times New Roman", serif; }
+  .page .ttl { text-align: center; font-weight: 700; font-size: 13px; letter-spacing: .03em; }
+  .page .st { text-align: center; font-size: 10px; margin: 2px 0 12px; }
+  .page table { border-collapse: collapse; width: 100%; font-size: 9.5px; line-height: 1.25; }
+  .page th, .page td { border: 0.75px solid #444; padding: 3px 4px; vertical-align: top; text-align: left; }
+  .page th { background: #eee; font-weight: 700; }
+  .page tr.hit { outline: 2px solid #e11d48; outline-offset: -1px; }
+  .page tr.hit.edit { outline-style: solid; box-shadow: 0 0 0 4px rgba(225,29,72,.15); }
+  .page tr.hit td:last-child { position: relative; }
+  .page tr.ghost { outline: 2px dashed #e11d48; outline-offset: -1px; background: rgba(225,29,72,.06); }
+  .page td .tag { position: absolute; right: -2px; top: -16px; font: 10px Inter, system-ui, sans-serif; background: #e11d48; color: #fff; padding: 1px 5px; border-radius: 3px 3px 0 0; white-space: nowrap; }
+  .page td .h { position: absolute; width: 8px; height: 8px; background: #fff; border: 1.5px solid #e11d48; bottom: -5px; right: -5px; }
+  .rbox { position: absolute; border: 2px solid #e11d48; border-radius: 1px; pointer-events: none; }
+  .rbox.edit { border-style: solid; outline: 1px dashed #e11d48; outline-offset: 2px; }
+  .rbox .h { position: absolute; width: 8px; height: 8px; background: #fff; border: 1.5px solid #e11d48; }
+  .rbox .h.tl { left: -5px; top: -5px; } .rbox .h.tr { right: -5px; top: -5px; } .rbox .h.bl { left: -5px; bottom: -5px; } .rbox .h.br { right: -5px; bottom: -5px; }
+  .rbox .tag { position: absolute; right: -2px; top: -18px; font: 10px Inter, system-ui, sans-serif; background: #e11d48; color: #fff; padding: 1px 5px; border-radius: 3px 3px 0 0; white-space: nowrap; }
+  .textmark { background: rgba(250, 204, 21, .55); }
+  .pageno { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 9px; color: #666; }
+  .scan { filter: grayscale(1) contrast(.9) blur(.3px); transform: rotate(-.4deg); }
+  .draw-ghost { position: absolute; border: 2px dashed #e11d48; background: rgba(225,29,72,.06); }
+  .cursor { position: absolute; font: 11px system-ui; background: var(--fg); color: var(--bg); padding: 2px 6px; border-radius: 4px; }
+  /* Dialog */
+  .dlg-wrap { background: color-mix(in oklab, black 45%, transparent); padding: 28px 12px; border-radius: 12px; }
+  .dlg { max-width: 560px; margin: 0 auto; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,.2); }
+  .dlg header { padding: 16px 18px 6px; font-weight: 600; font-size: 16px; }
+  .dlg .c { padding: 8px 18px 14px; display: grid; gap: 12px; }
+  .dlg footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .select { border: 1px solid var(--primary); border-radius: 6px; box-shadow: 0 0 0 3px var(--primary-soft); }
+  .select .in { padding: 7px 10px; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .select .opt { padding: 7px 10px; font-size: 13px; display: flex; justify-content: space-between; gap: 8px; }
+  .select .opt.on { background: var(--primary-soft); }
+  /* Map table */
+  table.map { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.map th, table.map td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: left; vertical-align: top; }
+  table.map th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .wrapx { overflow-x: auto; }
+  .note { font-size: 12px; color: var(--muted); border-left: 3px solid var(--primary); padding: 4px 10px; margin: 10px 0; max-width: 90ch; }
+  .phone { width: 375px; max-width: 100%; border: 10px solid #18181b; border-radius: 28px; overflow: hidden; margin: 0 auto; }
+  .phone .frame { border: 0; border-radius: 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .toast { display: inline-flex; gap: 10px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg); box-shadow: 0 4px 16px rgba(0,0,0,.08); font-size: 13px; }
+  @media (max-width: 900px) {
+    .viewer { grid-template-columns: 1fr; }
+    .viewer .stage { border-right: 0; border-bottom: 1px solid var(--border); }
+    .two { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1 class="doc">Quotation: Certification tab (mock v1)</h1>
+<p class="lead">Owner ask of 8 Nov. One new tab on a quotation listing the distinct certificates of the quoted
+products, with the quoted product's row boxed on each certificate, editable, and sent to the customer as a PDF.
+Static mock, masked data. Every screen below names the existing component it is built from (map at the bottom).</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="sec">1. The tab: Certification (standard list view)</h2>
+<p class="cap">Quotation document detail, new last tab. Rows = distinct certificates of the quoted products (via the
+existing <code>certificate_products</code> links), plus any added by hand. One row per certificate even when it covers
+several quoted products; the "Quoted products" cell lists them all. Row click opens the certificate (screen 2).</p>
+
+<div class="frame">
+  <div class="ph">
+    <div>
+      <div class="crumb">Project Sales / PRJ-0xx Residensi Contoh / Quotations</div>
+      <h3>QT-2026-0xxx &nbsp;<span class="badge info">Draft R2</span></h3>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn">Download PDF</button>
+      <button class="btn primary">Send to Customer R2 &#9662;</button>
+    </div>
+  </div>
+  <div class="meta"><span>Customer <b>Contoh Builders Sdn Bhd</b></span><span>Salesperson <b>Sales A</b></span><span>Updated <b>8 Nov 2026, 10:42</b></span></div>
+  <div class="tabs">
+    <span>Header</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Feedback</span><span>Spec sheet</span><span class="on new">Certification</span>
+  </div>
+  <div class="body">
+    <div class="panel">
+      <div class="panel-h">
+        <h4>Certificates <span class="badge">4</span></h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm">Download certificates PDF</button>
+          <button class="btn sm primary">+ Add certificate</button>
+        </div>
+      </div>
+      <div class="scroller">
+        <table class="grid">
+          <colgroup><col style="width:220px"><col style="width:110px"><col style="width:130px"><col style="width:220px"><col style="width:170px"><col style="width:90px"><col style="width:140px"></colgroup>
+          <thead><tr><th>Certificate</th><th>Scheme</th><th>Valid until</th><th>Quoted products</th><th>Rows marked</th><th>Source</th><th><span style="position:absolute;left:-9999px">Actions</span></th></tr></thead>
+          <tbody>
+            <tr>
+              <td title="WCM PC 00xxxx"><b>WCM PC 00xxxx</b><span class="sub">Watermark product certificate</span></td>
+              <td>SPAN</td>
+              <td>23 Dec 2026<br><span class="badge ok">Valid</span></td>
+              <td><span class="chip">SV-14A-CP</span><span class="chip">SV-15A-CP</span><span class="sub">2 of 9 lines</span></td>
+              <td><span class="badge ok">2 rows, found</span><span class="sub">p.2 rows 17, 18</span></td>
+              <td>Auto</td>
+              <td class="act"><button class="btn sm ghost" aria-label="Row actions">&#8943;</button></td>
+            </tr>
+            <tr>
+              <td title="PPS 04xxxFC"><b>PPS 04xxxFC</b><span class="sub">Product certification, basin mixers</span></td>
+              <td>PPS</td>
+              <td>07 Jan 2027<br><span class="badge warn">Expires in 60 days</span></td>
+              <td><span class="chip">BM-2201</span><span class="sub">1 of 9 lines</span></td>
+              <td><span class="badge info">1 row, edited</span><span class="sub">p.1, moved by Sales A</span></td>
+              <td>Auto</td>
+              <td class="act"><button class="btn sm ghost" aria-label="Row actions">&#8943;</button></td>
+            </tr>
+            <tr>
+              <td title="SIRIM 2024-xxxx"><b>SIRIM 2024-xxxx</b><span class="sub">Scanned copy</span></td>
+              <td>SIRIM</td>
+              <td>30 Jun 2027<br><span class="badge ok">Valid</span></td>
+              <td><span class="chip">WC-8038</span><span class="sub">1 of 9 lines</span></td>
+              <td><span class="badge warn">No text, draw a box</span><span class="sub">scanned PDF</span></td>
+              <td>Auto</td>
+              <td class="act"><button class="btn sm ghost" aria-label="Row actions">&#8943;</button></td>
+            </tr>
+            <tr>
+              <td title="IKRAM 04xxxFC"><b>IKRAM 04xxxFC</b><span class="sub">Water efficiency</span></td>
+              <td>PPS</td>
+              <td>23 Dec 2026<br><span class="badge ok">Valid</span></td>
+              <td><span class="sub">None of the quoted lines</span></td>
+              <td><span class="badge">No rows marked</span><span class="sub">whole certificate sent</span></td>
+              <td>Added by hand</td>
+              <td class="act"><button class="btn sm ghost" aria-label="Row actions">&#8943;</button></td>
+            </tr>
+            <tr class="pending">
+              <td><b>SPAN WCM PC 00yyyy</b><span class="sub">Watermark product certificate</span></td>
+              <td>SPAN</td>
+              <td>11 Mar 2026<br><span class="badge bad">Expired</span></td>
+              <td><span class="chip">SH-3300</span></td>
+              <td><span class="badge">1 row, found</span></td>
+              <td>Auto</td>
+              <td class="act"><button class="btn sm count">Removing 4s · Cancel</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager"><span>1 - 4 of 4</span><span>Rows per page 25</span></div>
+    </div>
+    <p class="cap" style="margin-top:10px">Row menu: <b>Open</b>, <b>Download (with boxes)</b>, <b>Remove from this quote</b>.
+    Remove is the 5 s reversible countdown with Cancel (detach, never a confirm dialog). Removing only hides it on this
+    quote; the certificate and its product links are untouched. An expired certificate is listed (red pill) but left out of
+    the customer PDF unless the user keeps it (card Q5).</p>
+  </div>
+</div>
+
+<div class="two" style="margin-top:16px">
+  <div>
+    <p class="cap"><b>Empty state</b> (no quoted product has a certificate, nothing added). Heading + hint, no button
+    in the body; the one action is the toolbar's Add.</p>
+    <div class="panel">
+      <div class="panel-h"><h4>Certificates <span class="badge">0</span></h4><button class="btn sm primary">+ Add certificate</button></div>
+      <div style="padding:36px 16px;text-align:center"><b>No certificates</b><br><span class="sub">None of the quoted products has a certificate on file.</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="cap"><b>Toast after Remove commits</b> and after an Add.</p>
+    <div class="toast">Removed SPAN WCM PC 00yyyy from this quote</div><br><br>
+    <div class="toast">Added IKRAM 04xxxFC</div>
+  </div>
+</div>
+
+<!-- ============================================================ 2 -->
+<h2 class="sec">2. Certificate on this quote: rows boxed (text PDF, found automatically)</h2>
+<p class="cap">Row click opens a full page under the tab (same shape as a spec sheet opening its reader). Left: the
+existing <code>PdfViewer</code> (pdf.js) with a new box overlay. Right: the quoted products this certificate covers,
+each with the code searched and the boxes found. The box spans the table row that holds the code (between the row's
+ruled lines), so a wrapped description stays inside it.</p>
+
+<div class="frame">
+  <div class="ph">
+    <div>
+      <div class="crumb">QT-2026-0xxx / Certification</div>
+      <h3>SPAN · WCM PC 00xxxx &nbsp;<span class="badge ok">Valid until 23 Dec 2026</span></h3>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn">Download with boxes</button><button class="btn primary">Done</button></div>
+  </div>
+  <div class="viewer">
+    <div class="stage">
+      <div class="vbar"><span>Page 2 of 3</span><span class="sep"></span><button class="btn sm">&#8722;</button><span>100%</span><button class="btn sm">+</button><button class="btn sm">Search</button><button class="btn sm primary">&#9633; Draw box</button></div>
+      <div class="page" id="p2">
+        <div class="ttl">SCHEDULE OF CERTIFIED PRODUCTS</div>
+        <div class="st">Certificate No. WCM PC 00xxxx &nbsp;·&nbsp; Licensee: Example Valves Pty Ltd &nbsp;·&nbsp; Page 2 of 3</div>
+        <table>
+          <thead><tr><th style="width:26px">Item</th><th style="width:44px">Model</th><th>Description</th><th>Size / Material / Standard</th></tr></thead>
+          <tbody>
+            <tr><td>15</td><td>12A</td><td>STOP VALVE / FLOW RATE: CLASS VA<br>LOOSE JUMPER</td><td>NOMINAL SIZE: DN15 / MATERIAL: CW614N<br>AS 1718</td></tr>
+            <tr><td>16</td><td>13A</td><td>STOP VALVE / FLOW RATE: CLASS VA<br>FIXED JUMPER</td><td>NOMINAL SIZE: DN15 / MATERIAL: CW614N<br>AS 1718</td></tr>
+            <tr class="hit"><td>17</td><td><span class="textmark">14A</span></td><td>STOP VALVE / FLOW RATE: CLASS VA<br>LOOSE JUMPER, CHROME PLATED</td><td>NOMINAL SIZE: DN20 / MATERIAL: CW614N<br>AS 1718<span class="tag">SV-14A-CP</span></td></tr>
+            <tr class="hit edit"><td>18</td><td><span class="textmark">15A</span></td><td>STOP VALVE / FLOW RATE: CLASS VA<br>FIXED JUMPER, CHROME PLATED</td><td>NOMINAL SIZE: DN20 / MATERIAL: CW614N<br>AS 1718<span class="tag" style="top:auto;bottom:-16px;border-radius:0 0 3px 3px">SV-15A-CP, selected</span><i class="h"></i></td></tr>
+            <tr><td>19</td><td>114A</td><td>STOP VALVE / FLOW RATE: CLASS VB<br>LOOSE JUMPER</td><td>NOMINAL SIZE: DN25 / MATERIAL: CW617N<br>AS 1718</td></tr>
+            <tr><td>20</td><td>14AB</td><td>STOP VALVE (ANGLE) / FLOW RATE: CLASS VA</td><td>NOMINAL SIZE: DN20 / MATERIAL: CW614N<br>AS 1718</td></tr>
+            <tr><td>21</td><td>16C</td><td>BALL VALVE / FLOW RATE: CLASS VA</td><td>NOMINAL SIZE: DN20 / MATERIAL: CW617N<br>AS 1718</td></tr>
+          </tbody>
+        </table>
+        <div class="pageno">2</div>
+      </div>
+      <p class="cap" style="text-align:center">Rows 19 (<code>114A</code>) and 20 (<code>14AB</code>) are NOT boxed: the code must
+      match as a whole word, so <code>14A</code> never hits <code>114A</code> or <code>14AB</code>. Selected box shows handles: drag to move,
+      corners to resize, Delete key or the side panel to remove.</p>
+    </div>
+    <div class="side">
+      <div>
+        <h5>Quoted products on this certificate</h5>
+        <div class="pl">
+          <div class="r">
+            <div class="top"><span class="code">SV-14A-CP</span><span class="sub">Line 3 · qty 24</span></div>
+            <div class="sub">Stop valve DN20 chrome</div>
+            <div class="field"><label>Code on certificate</label><input value="14A" aria-label="Code on certificate for SV-14A-CP"></div>
+            <div class="box-row"><span><i class="sw"></i>p.2, row 17 · found</span><button class="btn sm ghost danger">Remove</button></div>
+          </div>
+          <div class="r" style="background:var(--primary-soft)">
+            <div class="top"><span class="code">SV-15A-CP</span><span class="sub">Line 4 · qty 12</span></div>
+            <div class="sub">Stop valve DN20 chrome, fixed jumper</div>
+            <div class="field"><label>Code on certificate</label><input value="15A" aria-label="Code on certificate for SV-15A-CP"></div>
+            <div class="box-row"><span><i class="sw"></i>p.2, row 18 · moved</span><button class="btn sm ghost danger">Remove</button></div>
+            <button class="btn sm" style="justify-self:start">&#9633; Draw another box</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h5>Save my box changes for</h5>
+        <div class="seg"><span class="on">This quote only</span><span>Every quote (this product)</span></div>
+        <p class="cap" style="margin-top:6px">"Every quote" needs Certificates edit and becomes the default the next quote starts from.</p>
+      </div>
+      <div>
+        <h5>Customer copy</h5>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" checked> Include in the certificates PDF</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 class="sec">3. Edge states on the same page</h2>
+<div class="two">
+  <div>
+    <p class="cap"><b>Code not found</b> (text PDF, the code is not printed, e.g. the product is <code>BM-2201</code> and the
+    certificate prints <code>2201-B</code>). No guess is made. The user types the code as printed, or draws the box.</p>
+    <div class="pl">
+      <div class="r">
+        <div class="top"><span class="code">BM-2201</span><span class="sub">Line 7 · qty 40</span></div>
+        <div class="field"><label>Code on certificate</label><input placeholder="BM-2201" aria-label="Code on certificate"></div>
+        <div class="box-row"><span class="badge warn">"BM-2201" not on this certificate</span></div>
+        <button class="btn sm" style="justify-self:start">&#9633; Draw box</button>
+      </div>
+    </div>
+  </div>
+  <div>
+    <p class="cap"><b>Scanned certificate</b> (no text layer: pdf.js and PyMuPDF both read zero characters). Nothing
+    can be found; the user draws. The drag shows a dashed box until released.</p>
+    <div class="page scan" style="width:100%;padding:20px 18px 26px">
+      <div class="ttl">SIJIL PENSIJILAN PRODUK</div>
+      <div class="st">No. SIRIM 2024-xxxx</div>
+      <table><thead><tr><th>No.</th><th>Model</th><th>Keterangan</th></tr></thead>
+      <tbody><tr><td>1</td><td>WC-8036</td><td>Close coupled WC, 4.5/3L</td></tr><tr class="ghost"><td>2</td><td>WC-8038</td><td>Close coupled WC, 4.5/3L, soft close</td></tr><tr><td>3</td><td>WC-8040</td><td>Wall hung WC, 4.5/3L</td></tr></tbody></table>
+      <span class="cursor" style="right:20px;bottom:4px">Release to place</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ 4 -->
+<h2 class="sec">4. Add certificate (dialog)</h2>
+<p class="cap">Toolbar "Add certificate". One searchable select over the company's active certificates (same list as
+Master Data &gt; Certificates), showing scheme, number and validity. A certificate added by hand starts with no boxes
+when it covers none of the quoted products, and with found boxes when it does.</p>
+<div class="dlg-wrap">
+  <div class="dlg">
+    <header>Add certificate</header>
+    <div class="c">
+      <div class="field"><label>Certificate</label>
+        <div class="select">
+          <div class="in">ikram&#9612;</div>
+          <div class="opt on"><span><b>PPS · IKRAM 04xxxFC</b> <span class="sub" style="display:inline">Water efficiency</span></span><span class="badge ok">to 23 Dec 2026</span></div>
+          <div class="opt"><span><b>PPS · IKRAM 04yyyFC</b></span><span class="badge warn">to 07 Jan 2027</span></div>
+          <div class="opt"><span><b>SPAN · IKRAM 01zzzFC</b></span><span class="badge bad">Expired</span></div>
+        </div>
+      </div>
+    </div>
+    <footer><button class="btn">Cancel</button><button class="btn primary">Add</button></footer>
+  </div>
+</div>
+
+<!-- ============================================================ 5 -->
+<h2 class="sec">5. Product side: "Code on certificate" on the certificate's covered products</h2>
+<p class="cap">Master Data &gt; Certificates &gt; detail, existing Covered products section gains one column. This is the
+explicit link the quote searches with (no fuzzy name matching). Empty means the product's own code is searched.</p>
+<div class="panel">
+  <div class="panel-h"><h4>Covered products <span class="badge">9</span></h4><button class="btn sm">+ Add product</button></div>
+  <div class="scroller">
+    <table class="grid" style="min-width:720px">
+      <colgroup><col style="width:150px"><col style="width:250px"><col style="width:160px"><col style="width:90px"><col style="width:120px"></colgroup>
+      <thead><tr><th>Product</th><th>Name</th><th>Code on certificate</th><th>Source</th><th>Default box</th></tr></thead>
+      <tbody>
+        <tr><td>SV-14A-CP</td><td>Stop valve DN20 chrome</td><td><code>14A</code></td><td>AI</td><td>Found p.2</td></tr>
+        <tr><td>SV-15A-CP</td><td>Stop valve DN20 chrome, fixed</td><td><code>15A</code></td><td>AI</td><td>Edited p.2</td></tr>
+        <tr><td>SV-12A-CP</td><td>Stop valve DN15 chrome</td><td><span class="sub">product code</span></td><td>Manual</td><td><span class="badge warn">Not found</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================ 6 -->
+<h2 class="sec">6. What the customer receives</h2>
+<p class="cap">Recommended (card Q3 a): one <b>Certificates PDF</b> per issued revision, queued like the quote PDF and
+landing in My Downloads, named <code>QT-2026-0xxx R2 Certificates.pdf</code>. Every included certificate in list order, red
+boxes burned in on a copy (originals never change), expired ones left out unless kept. Frozen at issue: later box edits
+change the next revision, not the one already sent.</p>
+<div class="two">
+  <div class="page" style="width:100%">
+    <div class="ttl">SCHEDULE OF CERTIFIED PRODUCTS</div>
+    <div class="st">Certificate No. WCM PC 00xxxx · Page 2 of 3</div>
+    <table><thead><tr><th>Item</th><th>Model</th><th>Description</th></tr></thead><tbody>
+    <tr><td>16</td><td>13A</td><td>STOP VALVE / CLASS VA, FIXED JUMPER</td></tr>
+    <tr class="hit"><td>17</td><td>14A</td><td>STOP VALVE / CLASS VA, LOOSE JUMPER, CP</td></tr>
+    <tr class="hit"><td>18</td><td>15A</td><td>STOP VALVE / CLASS VA, FIXED JUMPER, CP</td></tr>
+    <tr><td>19</td><td>114A</td><td>STOP VALVE / CLASS VB</td></tr></tbody></table>
+    <div class="pageno">Burned-in copy, no labels, no handles</div>
+  </div>
+  <div>
+    <p class="cap"><b>Send to Customer &gt; WhatsApp dialog</b> gains one line, as it is a hand-sent <code>wa.me</code> link today:</p>
+    <div class="dlg" style="margin:0">
+      <header>Send R2 on WhatsApp</header>
+      <div class="c">
+        <div class="field"><label>Files to attach in the chat</label>
+          <div class="box-row" style="color:var(--fg)"><span>QT-2026-0xxx R2.pdf</span><button class="btn sm">Download</button></div>
+          <div class="box-row" style="color:var(--fg)"><span>QT-2026-0xxx R2 Certificates.pdf (3)</span><button class="btn sm">Download</button></div>
+        </div>
+      </div>
+      <footer><button class="btn primary">Open WhatsApp</button></footer>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ 7 -->
+<h2 class="sec">7. Phone, 375 px</h2>
+<div class="phone">
+  <div class="frame">
+    <div class="ph"><div><div class="crumb">Quotations</div><h3 style="font-size:16px">QT-2026-0xxx</h3></div><button class="btn sm primary">Send R2 &#9662;</button></div>
+    <div class="tabs"><span>Feedback</span><span>Spec sheet</span><span class="on">Certification</span></div>
+    <div class="body" style="padding:12px">
+      <div class="panel">
+        <div class="panel-h"><h4>Certificates <span class="badge">4</span></h4><button class="btn sm primary">+ Add</button></div>
+        <div class="scroller">
+          <table class="grid"><colgroup><col style="width:200px"><col style="width:110px"><col style="width:130px"></colgroup>
+            <thead><tr><th>Certificate</th><th>Scheme</th><th>Valid until</th></tr></thead>
+            <tbody><tr><td><b>WCM PC 00xxxx</b></td><td>SPAN</td><td><span class="badge ok">Valid</span></td></tr>
+            <tr><td><b>PPS 04xxxFC</b></td><td>PPS</td><td><span class="badge warn">60 days</span></td></tr></tbody></table>
+        </div>
+      </div>
+      <p class="cap" style="margin-top:8px">The grid scrolls sideways inside its own scroller. The certificate page stacks: PDF on top, products panel below. Drawing a box needs a pointer; on touch, Draw box takes a press-and-drag.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ 8 -->
+<h2 class="sec">8. Element to existing component map</h2>
+<div class="wrapx">
+<table class="map">
+  <thead><tr><th>Element</th><th>Built from (existing)</th><th>New</th></tr></thead>
+  <tbody>
+    <tr><td>Certification tab in the strip</td><td><code>project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationDocumentTabs.tsx:32-44</code> (line tabs)</td><td>1 entry + <code>(view)/certification/page.tsx</code></td></tr>
+    <tr><td>Certificates list</td><td><code>components/common/PanelDataGrid.tsx</code>, pattern of <code>QuotationSpecSheetsList.tsx:258</code> (toolbar button, row click)</td><td><code>QuotationCertificatesList.tsx</code></td></tr>
+    <tr><td>Validity pill</td><td><code>Badge</code> via <code>master-data-management/certificates/lib/certificateDisplay.ts</code></td><td>none</td></tr>
+    <tr><td>Remove countdown</td><td>the deferred pending-action button (5 s reversible, System Settings)</td><td>none</td></tr>
+    <tr><td>Certificate page with PDF</td><td><code>components/common/pdf-viewer/PdfViewerImpl.tsx</code> (pdf.js 5.4.624, text layer :914, search :382, <code>hasSearchableText</code>)</td><td>optional <code>overlay</code> prop on <code>PdfPage</code>: boxes in PDF points, drag/resize</td></tr>
+    <tr><td>PDF bytes</td><td><code>loadData</code> prop through the authenticated attachment download route (as <code>AttachmentPreviewModal.tsx:480</code>)</td><td>none</td></tr>
+    <tr><td>Add certificate dialog</td><td><code>SearchableSelect</code>; data from <code>certificateService.ts:68</code> / <code>useCertificates</code></td><td>small dialog</td></tr>
+    <tr><td>Code on certificate column</td><td><code>certificates/components/CertificateCoveredProducts.tsx</code></td><td>1 column, inline edit</td></tr>
+    <tr><td>Auto-find + burn-in</td><td>PyMuPDF already in <code>requirements.txt:52</code>; merge pattern <code>promotions_pdf_service.py:69,110</code>; word boxes <code>project_schedule_service.py:252</code></td><td><code>quotation_certificate_service.py</code></td></tr>
+    <tr><td>Certificates PDF download</td><td>RQ export like <code>generate_quotation_issue_pdf</code> (<code>app/tasks/export_tasks.py:426</code>) to My Downloads</td><td>1 task + 1 endpoint</td></tr>
+    <tr><td>Freeze at issue</td><td>as line images, <code>project_quotation_image_service.py:270</code></td><td>snapshot on <code>quotation_issues</code></td></tr>
+    <tr><td>WhatsApp files line</td><td><code>QuotationWhatsAppDialog.tsx</code></td><td>1 row</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">Not reused, on purpose: the spec sheet v2 reader (<code>SpecSheetReader.tsx</code>) draws pages from template
+JSON, not from a PDF, so it cannot show a certificate. The image rendition pipeline (<code>image_thumbnailer.py</code>) is
+images only; a certificate stays a PDF end to end, so no second rendition path is added.</p>
+</main>
+</body>
+</html>

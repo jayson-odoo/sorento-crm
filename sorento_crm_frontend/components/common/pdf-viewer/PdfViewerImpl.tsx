@@ -102,6 +102,7 @@ export default function PdfViewerImpl({
   pageCountHint,
   fileActions = true,
   unavailable,
+  renderPageOverlay,
   className,
 }: PdfViewerProps) {
   const hasSource = Boolean(url || loadData);
@@ -821,6 +822,7 @@ export default function PdfViewerImpl({
                 draw={index + 1 >= range[0] && index + 1 <= range[1]}
                 highlights={highlightsByPage.get(index + 1) ?? NO_HIGHLIGHTS}
                 onSelectedMark={revealMark}
+                overlay={renderPageOverlay?.(index + 1)}
                 nodeRef={(node) => {
                   pageRefs.current[index] = node;
                 }}
@@ -857,6 +859,7 @@ function PdfPage({
   draw,
   highlights,
   onSelectedMark,
+  overlay,
   nodeRef,
 }: {
   pdfjs: PdfJs;
@@ -866,6 +869,7 @@ function PdfPage({
   draw: boolean;
   highlights: Highlight[];
   onSelectedMark: (mark: HTMLElement) => void;
+  overlay?: React.ReactNode;
   nodeRef: (node: HTMLDivElement | null) => void;
 }) {
   const viewport = React.useMemo(
@@ -968,6 +972,7 @@ function PdfPage({
           <div ref={textRef} className="textLayer" />
         </>
       )}
+      {overlay}
     </div>
   );
 }

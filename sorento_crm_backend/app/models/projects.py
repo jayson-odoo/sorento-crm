@@ -1400,6 +1400,8 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
     grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+    # QUOTE-CERT-TAB: the certificates sent with this issue, frozen at issue (CERT-11).
+    certificates = Column(JSONB, nullable=True)
 
     pdf_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
@@ -1519,6 +1521,42 @@ class ProjectQuotationSpecSheet(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("document_id", "sheet_no", name="uq_project_quotation_spec_sheets_no"),
         Index("ix_project_quotation_spec_sheets_document", "document_id"),
+        {"schema": "projects"},
+    )
+
+
+class ProjectQuotationDocumentCertificate(Base, CompanyScopedMixin):
+    """A user's change to one certificate of a quotation document (QUOTE-CERT-TAB).
+
+    The Certification tab list is derived from the quoted products; a row exists only when a user
+    removed, added by hand, re-boxed or set the send flag of a certificate.
+    """
+
+    __tablename__ = "quotation_document_certificates"
+    __audit_skip__ = "per-quote UI markers, derived list; no audit value"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    certificate_id = Column(
+        UUID(as_uuid=False), ForeignKey("certificates.id", ondelete="CASCADE"), nullable=False
+    )
+    included = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    source = Column(String(10), nullable=False)
+    send_to_customer = Column(Boolean, nullable=True)
+    boxes = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "certificate_id", name="uq_quotation_document_certificates"),
+        CheckConstraint("source IN ('auto', 'manual')", name="ck_quotation_document_certificates_source"),
         {"schema": "projects"},
     )
 
