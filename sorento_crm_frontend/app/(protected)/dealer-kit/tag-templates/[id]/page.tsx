@@ -96,6 +96,21 @@ import { TagSizeControl } from '../../components/TagSizeControl';
 import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
+import {
+  designKey,
+  detachLinked,
+  setLinkedDesign,
+  linkCorrectionPatches,
+  type LayerPropsPatch,
+  type LinkAction,
+} from '@/lib/dealer-kit/accessory-card';
+import { captureBaselines, syncLinkedBoxes, type LinkBaseline, type LinkSyncDeps } from '@/lib/dealer-kit/accessory-link-sync';
+import { StaleTemplateError } from '../../services/accessoryTemplateService';
+import {
+  useFetchAccessoryTemplate,
+  useRefreshAccessoryTemplates,
+  useUpdateAccessoryTemplate,
+} from '../../accessory-templates/hooks/useAccessoryTemplates';
 import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
@@ -174,6 +189,74 @@ function TagTemplateEditor() {
   const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
+  // Live link (PRICETAG-ACCESSORY-DESIGNER): after a save lands, every linked accessories box whose
+  // design moved since it was loaded is written to its saved template, which rewrites the other
+  // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
+  const linkBaselineRef = useRef<Map<string, LinkBaseline>>(new Map());
+  // Set by an insert from the menu (its baseline is taken at once, so the sync alone would not notice that
+  // this tag template now uses one more template): the next sync refreshes the usage counts.
+  const usageDirtyRef = useRef(false);
+  const pushTemplate = useUpdateAccessoryTemplate();
+  const fetchTemplate = useFetchAccessoryTemplate();
+  const refreshTemplates = useRefreshAccessoryTemplates();
+  // The autosave callback is created once, so it reaches the latest hooks through this ref.
+  const layerPatchesRef = useRef<((patches: LayerPropsPatch[]) => void) | null>(null);
+  const syncLinksRef = useRef<(layers: TagLayer[]) => Promise<void>>(async () => {});
+  const linkDeps = (): LinkSyncDeps => ({
+    fetch: async (id) => {
+      const record = await fetchTemplate(id);
+      return record ? { design: record.design, updated_at: record.updated_at } : null;
+    },
+    push: async (id, design, baseUpdatedAt) => {
+      const saved = await pushTemplate.mutateAsync({ id, input: { design, base_updated_at: baseUpdatedAt } });
+      return { design: saved.design, updated_at: saved.updated_at };
+    },
+    isStale: (error) => error instanceof StaleTemplateError,
+  });
+  // The baseline a loaded (or restored) draft starts from: its linked boxes as saved, each template's
+  // version now. Read through a ref so the load effect below stays stable.
+  const rebaseLinksRef = useRef<(layers: TagLayer[]) => void>(() => {});
+  // Resolves once the baselines of the latest load / restore exist; the sync waits for it, so an edit
+  // is pushed on the first autosave AFTER the baselines are known, never before.
+  const baselinesReadyRef = useRef<Promise<void>>(Promise.resolve());
+  rebaseLinksRef.current = (layers: TagLayer[]) => {
+    linkBaselineRef.current = new Map();
+    baselinesReadyRef.current = captureBaselines(layers, linkDeps().fetch).then((captured) => {
+      linkBaselineRef.current = captured;
+    });
+  };
+  const rebaseLinks = useCallback((layers: TagLayer[]) => rebaseLinksRef.current(layers), []);
+  syncLinksRef.current = async (layers: TagLayer[]) => {
+    await baselinesReadyRef.current;
+    const result = await syncLinkedBoxes(layers, linkBaselineRef.current, linkDeps());
+    for (const message of result.messages) {
+      if (message === 'deleted') toast.warning('Saved accessories template was deleted; box detached');
+      else if (message === 'elsewhere')
+        toast.warning('Saved accessories template was changed elsewhere; this tag now shows the latest design');
+      else toast.error(message.error);
+    }
+    const { actions } = result;
+    if (actions.length > 0) {
+      const patches = linkCorrectionPatches(layers, actions);
+      if (layerPatchesRef.current) {
+        // Corrected on the live canvas with no undo step and no remount.
+        layerPatchesRef.current(patches);
+      } else {
+        // No canvas to patch (not mounted): correct the draft and reopen it.
+        setDraftLayers((prev) =>
+          actions.reduce(
+            (acc, action) =>
+              action.kind === 'detach' ? detachLinked(acc, action.id) : setLinkedDesign(acc, action.id, action.design),
+            prev,
+          ),
+        );
+        setEditorGeneration((n) => n + 1);
+      }
+    }
+    if (result.usageChanged || usageDirtyRef.current) void refreshTemplates();
+    usageDirtyRef.current = false;
+  };
+
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
@@ -183,6 +266,7 @@ function TagTemplateEditor() {
         if (!cancelled) {
           setTemplate(t);
           setDraftLayers(t.doc.layers);
+          rebaseLinks(t.doc.layers);
         }
       })
       .catch((err) => {
@@ -194,7 +278,7 @@ function TagTemplateEditor() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, rebaseLinks]);
 
   // -- Autosave (D22, S8) -----------------------------------------------------
 
@@ -227,6 +311,7 @@ function TagTemplateEditor() {
         { keepalive: teardownRef.current },
       );
       setTemplate(updated);
+      await syncLinksRef.current(layers);
     }, []),
   );
 
@@ -444,6 +529,7 @@ function TagTemplateEditor() {
         const updated = await restoreTemplateVersion(template.id, versionId);
         setTemplate(updated);
         setDraftLayers(updated.doc.layers);
+        rebaseLinks(updated.doc.layers);
         setEditorGeneration((n) => n + 1);
         setViewing(null);
         toast.success('Draft restored', {
@@ -454,6 +540,7 @@ function TagTemplateEditor() {
                 const reverted = await updateTemplate(template.id, priorDraft);
                 setTemplate(reverted);
                 setDraftLayers(reverted.doc.layers);
+                rebaseLinks(reverted.doc.layers);
                 setEditorGeneration((n) => n + 1);
                 toast.success('Restore undone');
               } catch (err) {
@@ -468,7 +555,7 @@ function TagTemplateEditor() {
         setRestoringVersionId(null);
       }
     },
-    [template, draftLayers],
+    [template, draftLayers, rebaseLinks],
   );
 
   if (isLoading) {
@@ -608,6 +695,14 @@ function TagTemplateEditor() {
             doc={{ ...template.doc, layers: draftLayers }}
             onChange={(doc) => setDraftLayers(doc.layers)}
             onLayersChange={setDraftLayers}
+            layerPatchesRef={layerPatchesRef}
+            onAccessoryTemplateInserted={(id, design, updatedAt) =>
+              // The editor already made every older box of this template follow `design`.
+              {
+                linkBaselineRef.current.set(id, { key: designKey(design), updatedAt });
+                usageDirtyRef.current = true;
+              }
+            }
             hideSaveBar
             docId={template.id}
             specSheet={isSpecSheetFamily(template.family)}
