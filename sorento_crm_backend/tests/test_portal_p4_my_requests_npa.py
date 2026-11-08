@@ -189,7 +189,10 @@ def test_p4_npa_foreign_row_answers_what_the_portal_answers(world):
         mine = w.rep.me.call(method, path, **kw)
         theirs = w.rep.portal.call(method, path, **kw)
         s.not_a_missing_route(mine)
-        assert theirs.status_code == 404, (name, theirs.status_code)
+        # Opening it is the SI portal's 403 OWNER_MISMATCH (NPA-FROM-SI, owner "just like the SI");
+        # every write and the download stay 404. Both surfaces answer the same either way.
+        expected = 403 if name == "get" else 404
+        assert theirs.status_code == expected, (name, theirs.status_code)
         assert (mine.status_code, mine.json()) == (theirs.status_code, theirs.json()), name
     assert s.ok(w.other.portal.call("GET", f"{SUB}/{foreign}")).json()["status"] == "draft"
 

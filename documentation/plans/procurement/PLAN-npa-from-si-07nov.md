@@ -148,3 +148,16 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
   contact and gets no link (no contact copy, no SI fallback, no backfill).
 - Unmapped: as the SI use case (in-window text, out-of-window skipped and logged failed). No new refusal.
 - The owner creates and submits the template in Respond.io himself.
+
+## Crew passes on f2b05777 / c2705b8b: the View link lands like the SI's
+
+- A cold View link (no portal session) goes to the OTP verify page: the shared `portalSessionRedirectPath`
+  (`app/(auth)/portal/lib/portal-auth-redirect.ts`), used by SubmissionForm and the NPA form.
+- After the code, the verify card deep-links any kind with a portal detail page of its own
+  (`hasPortalDetailPage`, `lib/portal-form-kinds.ts`: submission kinds + `new_product_application`), so the
+  NPA lands on the application itself (CRM detail for a contact with a user, portal detail otherwise), never
+  its list.
+- Another contact's session: the portal detail GET answers the SI portal's 403 `OWNER_MISMATCH`
+  (`PortalService._raise_submission_missing`, the SI's wording), and the service throws the SI's
+  `PortalOwnerMismatchError` (`throwIfOwnerMismatch`, shared with `fetchSubmission`), so the owner's verify card
+  shows. Like the SI, this tells a portal session that the id exists; writes, uploads and the download stay 404.

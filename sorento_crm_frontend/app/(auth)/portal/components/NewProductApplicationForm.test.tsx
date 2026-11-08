@@ -806,9 +806,9 @@ describe('a View link opened with no portal session (crew pass on c2705b8b)', ()
     expect(screen.queryByRole('heading', { name: 'Application not found' })).toBeNull();
   });
 
-  // The NPA backend answers another contact's id with 404 (never 403 OWNER_MISMATCH), so in practice
-  // that case shows "Application not found"; this only pins that the form uses the SHARED rule.
-  it('follows the shared session rule for an owner mismatch too (the stock inquiry form\'s rule)', async () => {
+  // The portal answers another contact's application with the SI's 403 OWNER_MISMATCH (crew pass on
+  // f2b05777), which the service throws as PortalOwnerMismatchError.
+  it('a session of another contact goes to the owner\'s verify card, as the stock inquiry', async () => {
     const { PortalOwnerMismatchError } = await import('../lib/portal-client');
     asMock(getNewProductApplication).mockRejectedValue(new PortalOwnerMismatchError());
     render(<NewProductApplicationForm slug="acme" applicationId="a-9" />);

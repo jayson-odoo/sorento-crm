@@ -291,7 +291,34 @@ def register_new_product_application_routes(
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return svc.serialize_detail(db, _own(db, token, application_id), portal=True)
+            try:
+                app_row = _own(db, token, application_id)
+            except AppException as exc:
+                if exc.status_code != 404:
+                    raise
+                # NPA-FROM-SI (owner "just like the SI"): another contact's application is the
+                # SI portal's 403 OWNER_MISMATCH, so a View link opened in the wrong session offers
+                # the owner's sign-in; a truly absent id stays 404. Only the open; writes stay 404.
+                from app.models.new_product_application import NewProductApplication
+                from app.services.portal_service import PortalService
+
+                # A malformed id never reaches the query (_own already refused it: 404).
+                if not svc._is_uuid(application_id):
+                    raise
+                with company_scope(db, None):
+                    owner = (
+                        db.query(NewProductApplication.contact_id)
+                        .filter(NewProductApplication.id == application_id)
+                        .first()
+                    )
+                    # Only ANOTHER contact's row is a mismatch; the contact's own row read
+                    # outside its resolved company stays the plain 404 (no verify-card loop).
+                    if owner is not None and str(owner[0] or "") != str(token.contact_id):
+                        PortalService(db)._raise_submission_missing(
+                            "New product application", NewProductApplication, application_id
+                        )
+                raise
+            return svc.serialize_detail(db, app_row, portal=True)
 
 
     @router.put(f"{BASE}/{{application_id}}")

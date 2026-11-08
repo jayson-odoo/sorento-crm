@@ -21,7 +21,7 @@ import {
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
 } from '@/types/newProductApplication';
-import { portalFetch, type PortalSubmissionSummary } from './portal-client';
+import { portalFetch, throwIfOwnerMismatch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/new_product_application';
 const OWN = '/api/v1/public/portal/new-product-application';
@@ -176,6 +176,8 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
     id: string,
   ): Promise<NewProductApplicationDetail> {
     const res = await fetcher(`${BASE}/${at(id)}`);
+    // Another contact's application: the SI portal's owner mismatch (the owner's verify card).
+    await throwIfOwnerMismatch(res);
     return unwrap<NewProductApplicationDetail>(
       res,
       'Failed to load the application',

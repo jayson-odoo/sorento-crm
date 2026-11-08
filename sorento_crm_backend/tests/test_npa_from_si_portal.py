@@ -283,3 +283,47 @@ def test_another_companys_pick_on_an_update_is_kept_as_text_too(portal):
     assert res.status_code == 200, res.text
     assert res.json()["customer_id"] is None
     assert res.json()["customer_name"] == "300-1002 - 1 LIVING DEPOT SDN BHD - [CERAMIC]"
+
+
+# ------------------------------------------------------------------ crew pass on f2b05777: wrong-owner session
+
+
+def test_opening_another_contacts_application_is_the_sis_owner_mismatch(portal):
+    """Owner "just like the SI": another contact's NPA answers the SI portal's 403 OWNER_MISMATCH
+    (`PortalService._raise_submission_missing`), so the View link shows the owner's verify card."""
+    import uuid
+
+    d = _create(portal)
+    other = _as(portal, portal.granted_b)
+    res = other.get(f"{BASE}/{d['id']}")
+    assert res.status_code == 403, res.text
+    body = res.json()
+    assert body["code"] == "OWNER_MISMATCH"
+    assert body["message"] == (
+        "This new product application belongs to another contact. Log in with that number to open it."
+    )
+    # A truly absent id is still the plain 404, as the SI's.
+    assert other.get(f"{BASE}/{uuid.uuid4()}").status_code == 404
+    # The owner still opens it.
+    assert _as(portal, portal.granted).get(f"{BASE}/{d['id']}").status_code == 200
+
+
+def test_a_malformed_id_is_still_a_clean_404(portal):
+    """Security review: the owner-mismatch fallback must never query a non-UUID id (a 500)."""
+    res = _as(portal, portal.granted).get(f"{BASE}/not-a-uuid")
+    assert res.status_code == 404, res.text
+
+
+def test_my_own_application_outside_my_resolved_company_is_404_not_a_mismatch(portal):
+    """Security review nit: the 403 means ANOTHER contact's; the contact's own row read outside its
+    resolved company stays 404 (never the owner's verify card for the owner, which would loop)."""
+    from sqlalchemy import text
+
+    d = _create(portal)
+    portal.db.execute(
+        text("update new_product_applications set company_id = :c where id = :i"),
+        {"c": portal.other_company, "i": d["id"]},
+    )
+    portal.db.commit()
+    res = _as(portal, portal.granted).get(f"{BASE}/{d['id']}")
+    assert res.status_code == 404, res.text
