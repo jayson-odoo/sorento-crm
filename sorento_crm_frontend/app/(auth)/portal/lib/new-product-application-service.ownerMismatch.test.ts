@@ -28,3 +28,16 @@ describe('getNewProductApplication', () => {
     expect(err).toBeInstanceOf(Error);
   });
 });
+
+describe('searchNewProductApplicationProducts (owner hand test 8 Nov 20:45)', () => {
+  it('an empty search asks the server, which lists the first products of the company', async () => {
+    const urls: string[] = [];
+    const svc = makeNewProductApplicationService((async (url: string) => {
+      urls.push(url);
+      return json([{ id: 'p-1', product_code: 'CB313', product_name: 'Basin', brand_name: null }], 200);
+    }) as never);
+    const hits = await svc.searchNewProductApplicationProducts('');
+    expect(urls).toEqual(['/api/v1/public/portal/new-product-application/products?q=']);
+    expect(hits.map((h) => h.product_code)).toEqual(['CB313']);
+  });
+});

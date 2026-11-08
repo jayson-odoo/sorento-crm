@@ -92,11 +92,11 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
     );
   }
 
-  /** Catalogue codes of the contact's company, for the Product code cell. */
+  /** Catalogue codes of the contact's company, for the Product code cell. An empty search goes
+   *  to the server too, which lists the first active products of the company (owner 8 Nov). */
   async function searchNewProductApplicationProducts(
     q: string,
   ): Promise<NewProductApplicationProductHit[]> {
-    if (!q.trim()) return [];
     const res = await fetcher(`${OWN}/products?q=${encodeURIComponent(q)}`);
     return unwrap<NewProductApplicationProductHit[]>(
       res,
