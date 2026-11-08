@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealer access mock</title>
+<!--
+  DEALER-ACCESS-PORTAL mock v1 (CARD-dealer-access-portal-09nov.md, drawn on the card's recommendations (a);
+  owner answers pending). Static, no data fetch. Sample rows are invented: dealer names masked as the card's
+  examples (first 3 letters + ***), people are "Sample ...", phones end in sample digits.
+
+  Screen: salesperson sidebar MY WORK > "Dealer access" (config/menu.config.tsx MENU_SIDEBAR, audience 'salesperson',
+  permission user_management.contacts.edit_own), route /sales/dealer-access.
+
+  Element -> reused component (repo path, sorento_crm_frontend/):
+    [1] Page header + the ONE CTA "Add people"       components/common/PageHeader.tsx
+    [2] Company line tabs (Sorento / Mocha)           components/ui/tabs.tsx (line variant, as other list pages)
+    [3] Search + Access filter                        components/common/SearchableSelect.tsx (clearable), DataGrid toolbar
+    [4] Listing                                       components/ui/data-grid.tsx, tableLayout fixed + columnsResizable,
+                                                      columnResizeMode onChange, explicit sizes, truncate + title
+    [5] Access / WhatsApp pills                       components/ui/badge.tsx
+    [6] Remove (5 s countdown, Cancel)                components/common/DeferredActionButton.tsx
+    [7] Change level                                  components/common/SearchableSelect.tsx inside a row menu
+    [8] Empty state (heading + hint, no button)       DESIGN-LANGUAGE.md section 6 pattern
+    [9] Add people modal                              components/common/FormDialogScaffold.tsx + components/ui/dialog.tsx
+    [10] Accounts (own accounts of the tab's company, nothing pre-ticked)
+                                                      components/common/SearchableMultiSelect.tsx (clearable)
+    [11] Phone                                        components/common/PhoneInput.tsx (default country MY)
+    [12] Access level                                 components/common/SearchableSelect.tsx
+    [13] Row error                                    components/ui/alert.tsx (inline, destructive)
+  No detail page: a row is a contact-customer link; the person's full record is the staff contact page.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --primaryfg:#fff;
+          --ok:#047857; --okbg:#ecfdf5; --warn:#b45309; --warnbg:#fffbeb; --info:#3730a3; --infobg:#eef2ff; --err:#b91c1c; --errbg:#fef2f2; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a;
+          --ok:#6ee7b7; --okbg:#0b2a20; --warn:#fcd34d; --warnbg:#2a2210; --info:#c7d2fe; --infobg:#1e2547; --err:#fca5a5; --errbg:#2a1215; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a;
+          --ok:#6ee7b7; --okbg:#0b2a20; --warn:#fcd34d; --warnbg:#2a2210; --info:#c7d2fe; --infobg:#1e2547; --err:#fca5a5; --errbg:#2a1215; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 Inter, system-ui, sans-serif; padding:24px 16px; }
+  .wrap { max-width:1280px; margin:0 auto; display:grid; gap:24px; }
+  .state { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin:0 0 8px; }
+  .tag { display:inline-block; font-size:11px; color:var(--muted); border:1px dashed var(--line); border-radius:4px; padding:0 4px; margin-left:4px; vertical-align:middle; }
+  .wrap > section, .card { min-width:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .header h1 { font-size:18px; margin:0; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; }
+  .btn.primary { background:var(--primary); color:var(--primaryfg); border-color:var(--primary); }
+  .btn.ghost { border-color:transparent; color:var(--muted); }
+  .btn.sm { padding:2px 8px; font-size:12px; }
+  .tabs { display:flex; gap:20px; border-bottom:1px solid var(--line); margin:16px 0 12px; }
+  .tabs span { padding:6px 0; color:var(--muted); }
+  .tabs span.on { color:var(--fg); border-bottom:2px solid var(--primary); font-weight:600; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .input { border:1px solid var(--line); border-radius:6px; padding:6px 10px; background:var(--card); color:var(--fg); min-width:0; }
+  .toolbar .input { flex:1 1 200px; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; table-layout:fixed; width:100%; min-width:980px; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  .badge { display:inline-block; border-radius:999px; padding:1px 8px; font-size:12px; }
+  .b-owner { background:var(--infobg); color:var(--info); }
+  .b-emp { background:var(--bg); color:var(--muted); border:1px solid var(--line); }
+  .b-ok { background:var(--okbg); color:var(--ok); }
+  .b-wait { background:var(--warnbg); color:var(--warn); }
+  .muted { color:var(--muted); font-size:12px; }
+  .empty { text-align:center; padding:40px 16px; }
+  .empty h3 { margin:0 0 4px; font-size:15px; }
+  .modal { max-width:720px; }
+  .modal h2 { font-size:16px; margin:0 0 12px; }
+  .field { display:grid; gap:4px; margin-bottom:12px; }
+  .field label { font-size:12px; font-weight:600; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; border:1px solid var(--line); border-radius:6px; padding:6px; }
+  .chip { background:var(--infobg); color:var(--info); border-radius:4px; padding:1px 6px; font-size:12px; }
+  .person { display:grid; grid-template-columns: 1.2fr 1.2fr 1fr auto; gap:8px; align-items:start; padding:8px 0; border-top:1px solid var(--line); }
+  .person .input { width:100%; }
+  .alert { grid-column:1 / -1; background:var(--errbg); color:var(--err); border-radius:6px; padding:6px 10px; font-size:12px; }
+  .note { grid-column:1 / -1; background:var(--infobg); color:var(--info); border-radius:6px; padding:6px 10px; font-size:12px; }
+  .foot { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  @media (max-width: 600px) {
+    .person { grid-template-columns: 1fr; }
+    .header .btn.primary { width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- STATE 1: the list -->
+  <section>
+    <p class="state">State 1: list, Sorento tab</p>
+    <div class="card">
+      <div class="header">
+        <h1>Dealer access <span class="tag">[1] PageHeader</span></h1>
+        <button class="btn primary">Add people</button>
+      </div>
+      <div class="tabs"><span class="on">Sorento</span><span>Mocha</span><span class="tag">[2] tabs (line)</span></div>
+      <div class="toolbar">
+        <input class="input" placeholder="Search person, phone or account">
+        <select class="input" style="flex:0 1 180px"><option>Access: any</option><option>Business Owner</option><option>Employee</option></select>
+        <span class="tag">[3]</span>
+      </div>
+      <div class="scroll">
+        <table>
+          <colgroup><col style="width:170px"><col style="width:140px"><col style="width:240px"><col style="width:150px"><col style="width:130px"><col style="width:170px"><col style="width:120px"></colgroup>
+          <thead><tr><th>Person</th><th>Phone</th><th>Account</th><th>Access <span class="tag">[5]</span></th><th>WhatsApp</th><th>Added</th><th></th></tr></thead>
+          <tbody>
+            <tr><td title="Sample Owner A">Sample Owner A</td><td>+60 12-345 6001</td><td title="300-A091 ABA*** SDN BHD (A/C I)">300-A091 ABA*** SDN BHD (A/C I)</td>
+                <td><span class="badge b-owner">Business Owner</span></td><td><span class="badge b-ok">Linked</span></td>
+                <td title="By you, 9 Nov 2026">You, 9 Nov 2026</td><td><button class="btn ghost sm">Change</button><button class="btn ghost sm">Remove</button></td></tr>
+            <tr><td>Sample Owner A</td><td>+60 12-345 6001</td><td title="300-A092 ABA*** SDN BHD (A/C III)">300-A092 ABA*** SDN BHD (A/C III)</td>
+                <td><span class="badge b-owner">Business Owner</span></td><td><span class="badge b-ok">Linked</span></td>
+                <td>You, 9 Nov 2026</td><td><button class="btn ghost sm">Change</button><button class="btn ghost sm">Remove</button></td></tr>
+            <tr><td>Sample Staff B</td><td>+60 16-222 7002</td><td title="300-A091 ABA*** SDN BHD (A/C I)">300-A091 ABA*** SDN BHD (A/C I)</td>
+                <td><span class="badge b-emp">Employee</span></td><td><span class="badge b-wait">Waiting</span></td>
+                <td>You, 9 Nov 2026</td><td><button class="btn ghost sm">Change</button><button class="btn sm">Undo 4s</button> <span class="tag">[6]</span></td></tr>
+            <tr><td>Sample Staff C</td><td>+60 17-888 9003</td><td title="300-K124 KBO*** LOGISTICS">300-K124 KBO*** LOGISTICS</td>
+                <td><span class="badge b-emp">Employee</span></td><td><span class="badge b-ok">Linked</span></td>
+                <td title="By the office, 26 Oct 2026">Office, 26 Oct 2026</td><td><button class="btn ghost sm">Change</button><button class="btn ghost sm">Remove</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">[4] DataGrid. One row per person per account. "Waiting" = the WhatsApp contact is still being created.</p>
+    </div>
+  </section>
+
+  <!-- STATE 2: empty -->
+  <section>
+    <p class="state">State 2: no customers assigned (or none with people yet)</p>
+    <div class="card">
+      <div class="header"><h1>Dealer access</h1><button class="btn primary">Add people</button></div>
+      <div class="tabs"><span class="on">Sorento</span><span>Mocha</span></div>
+      <div class="empty"><h3>No dealer people yet <span class="tag">[8]</span></h3><p class="muted">People you add to your customers appear here.</p></div>
+    </div>
+  </section>
+
+  <!-- STATE 3: the modal -->
+  <section>
+    <p class="state">State 3: Add people (opened from the Sorento tab)</p>
+    <div class="card modal">
+      <h2>Add people, Sorento <span class="tag">[9] FormDialogScaffold</span></h2>
+      <div class="field">
+        <label>Accounts <span class="tag">[10] SearchableMultiSelect, your accounts only</span></label>
+        <div class="chips"><span class="chip">300-A091 ABA*** SDN BHD (A/C I) x</span><span class="chip">300-A093 ABA*** SDN BHD (A/C IV) x</span></div>
+      </div>
+      <div class="person">
+        <div class="field"><label>Name</label><input class="input" value="Sample Owner A"></div>
+        <div class="field"><label>Phone <span class="tag">[11]</span></label><input class="input" value="+60 12-345 6001"></div>
+        <div class="field"><label>Access <span class="tag">[12]</span></label><select class="input"><option>Business Owner (dealer prices)</option><option>Employee (end-user prices)</option></select></div>
+        <button class="btn ghost sm" aria-label="Remove person" style="margin-top:22px">x</button>
+      </div>
+      <div class="person">
+        <div class="field"><label>Name</label><input class="input" value="Sample Staff D"></div>
+        <div class="field"><label>Phone</label><input class="input" value="012-34"></div>
+        <div class="field"><label>Access</label><select class="input"><option>Employee (end-user prices)</option></select></div>
+        <button class="btn ghost sm" aria-label="Remove person" style="margin-top:22px">x</button>
+        <div class="alert">"012-34" is not a Malaysian mobile number. <span class="tag">[13] Alert</span></div>
+      </div>
+      <div class="person">
+        <div class="field"><label>Name</label><input class="input" value="Sample Staff E"></div>
+        <div class="field"><label>Phone</label><input class="input" value="+60 19-555 4005"></div>
+        <div class="field"><label>Access</label><select class="input"><option>Employee (end-user prices)</option></select></div>
+        <button class="btn ghost sm" aria-label="Remove person" style="margin-top:22px">x</button>
+        <div class="note">Also has access through another account. Their other access stays as it is.</div>
+      </div>
+      <button class="btn sm">Add another person</button>
+      <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Give access</button></div>
+      <p class="muted">Submit applies every row or none. Rows with an error block Submit.</p>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
