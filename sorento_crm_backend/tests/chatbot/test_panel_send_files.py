@@ -396,17 +396,8 @@ def test_t7_an_agent_decision_stays_agent(brain):
     assert len(brain.box.calls) == 1
 
 
-def test_t7_not_eligible_replies_the_fixed_line_and_runs_nothing(brain):
-    made = up(brain, "d.csv", csv_bytes(), "text/csv")
-    brain.box.decision = RouteDecision("chat", "not_eligible:no_linked_user")
-
-    resp = send(brain, [{"id": made["id"], "sheet": None}])
-
-    assert resp.status_code == 200, resp.text
-    last = resp.json()["messages"][-1]
-    assert last["content"] == NOT_READABLE_HERE
-    assert last["metadata_json"]["route"] == "chat" and last["metadata_json"]["status"] == "refused"
-    assert brain.box.calls == []
+# T7's not_eligible case moved to R4 (a file turn never calls decide_route):
+# test_r4_an_ineligible_user_gets_the_fixed_line_without_the_classifier.
 
 
 # --------------------------------------------------------------------------- #
