@@ -702,21 +702,19 @@ def test_an_older_not_opening_result_no_longer_answers_the_inquirys_ask(world):
 
 @pytest.fixture()
 def reply_spy(monkeypatch):
-    from app.api.v1.procurement import stock_inquiries as si_routes
-    from app.services import queue_service, respond_chat_template_service
+    """Crew pass 8 Nov: the NPA's Update & Reply is the SI's Update & Reply. It enqueues the SI's
+    own worker send (`send_stock_inquiry_respond_message`, use case stock_inquiry, template
+    stock_inquiry_update_with_button) with the NPA facts inside the `update` text."""
+    from app.services import queue_service, respond_identifier
 
     sent = []
-    monkeypatch.setattr(si_routes, "_resolve_stock_inquiry_chat_contact", lambda db, sid: ("901234", "contact-1"))
-    monkeypatch.setattr(si_routes, "_build_stock_inquiry_chat_context", lambda db, sid: {"portal_url": "u"})
-    monkeypatch.setattr(
-        respond_chat_template_service, "precheck_chat_send", lambda db, **kw: {"sent_as": "text", "window_state": "open"}
-    )
+    monkeypatch.setattr(respond_identifier, "resolve_send_identifier", lambda db, raw: raw)
 
     class _Job:
         id = "job-1"
 
     def capture(fn, *args, **kwargs):
-        sent.append(args)
+        sent.append((fn, args, kwargs))
         return _Job()
 
     monkeypatch.setattr(queue_service, "enqueue_job", capture)
@@ -731,7 +729,10 @@ def test_the_purchasing_response_text_is_saved_like_the_sis(world):
     assert res.json()["status"] == "approved"  # text alone answers nothing
 
 
-def test_update_and_reply_saves_and_sends_through_the_inquirys_conversation(world, reply_spy):
+def test_update_and_reply_sends_the_sis_own_update_reply(world, reply_spy):
+    from app.services.procurement_service import StockInquiryService
+    from app.tasks.respond_io_tasks import send_stock_inquiry_respond_message
+
     world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
     world.db.flush()
     newp = make_product(world.db, code="ZZT-RPL-1")
@@ -745,10 +746,41 @@ def test_update_and_reply_saves_and_sends_through_the_inquirys_conversation(worl
     body = res.json()
     assert body["status"] == "completed"
     assert body["purchasing_response"] == "Code opened."
-    [args] = reply_spy
-    identifier, contact, text, use_case, table, entity_id = args[:6]
-    assert (identifier, use_case, table, entity_id) == ("901234", "stock_inquiry_chat", "stock_inquiries", world.inquiry.id)
-    assert d["application_no"] in text and "Code opened." in text and "ZZT-RPL-1" in text
+    [(fn, args, kwargs)] = reply_spy
+    # The SI's worker send, so the template is the SI's (use case stock_inquiry, not stock_inquiry_chat).
+    assert fn is send_stock_inquiry_respond_message
+    assert kwargs.get("queue_name") == "respond_io"
+    inquiry_id, identifier, text = args[:3]
+    extra = args[7]
+    assert (inquiry_id, identifier) == (str(world.inquiry.id), "901234")
+    assert text.startswith(StockInquiryService.STOCK_INQUIRY_REPLY_PREAMBLE + ":")
+    update = extra["update"]
+    assert update.splitlines()[0] == f"{d['application_no']}: Code opened."
+    assert "New product code: ZZT-RPL-1" in update and "Lead time: 8 weeks" in update
+    assert update in text
+    assert set(extra) == {"update", "portal_url", "view_url"}
+
+
+def test_the_npa_reply_and_the_si_reply_share_one_composer(world, reply_spy, monkeypatch):
+    """The SI's own Update & Reply goes through the same method, so the two cannot drift."""
+    from app.services.procurement_service import StockInquiryService
+
+    calls = []
+    real = StockInquiryService.enqueue_update_reply
+
+    def spy(self, inquiry, **kw):
+        calls.append(kw["update_text"])
+        return real(self, inquiry, **kw)
+
+    monkeypatch.setattr(StockInquiryService, "enqueue_update_reply", spy)
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    d = _si_approved(world)
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Code opened."}
+    )
+    assert res.status_code == 200, res.text
+    assert calls == [f"{d['application_no']}: Code opened."]
 
 
 def test_reply_needs_the_response_text_and_an_inquiry_conversation(world, reply_spy):
@@ -771,14 +803,9 @@ def test_reply_is_purchasing_only(world, reply_spy):
     assert reply_spy == []
 
 
-def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy, monkeypatch):
-    from app.services import respond_chat_template_service
-    from app.services.error_handler import AppException
-
-    def no_template(db, **kw):
-        raise AppException(status_code=422, message="No chat template.", code="no_chat_template")
-
-    monkeypatch.setattr(respond_chat_template_service, "precheck_chat_send", no_template)
+def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy):
+    world.inquiry.respond_inbox_url = None  # the SI's own refusal: no conversation to reply into
+    world.db.flush()
     d = _si_approved(world)
     res = world.api.as_(world.buyer).post(
         f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Code opened.", "lead_time": "9 weeks"}
@@ -787,3 +814,33 @@ def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy, monkeypatch
     after = _get(world, d["id"])
     assert (after["purchasing_response"], after["lead_time"]) == (None, None)
     assert reply_spy == []
+
+
+def test_save_only_sends_nothing(world, reply_spy):
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    d = _si_approved(world)
+    assert _respond(world, d["id"], purchasing_response="Supplier can cut 600 x 900.").status_code == 200
+    assert reply_spy == []
+
+
+# ------------------------------------------------------------------ crew pass 8 Nov: long project names
+
+
+LONG_PROJECT = ("CADANGAN PEMBANGUNAN BERCAMPUR 2 BLOK PANGSAPURI SERVIS 38 TINGKAT " * 9).strip()
+
+
+def test_a_project_name_over_255_characters_is_stored_in_full(world):
+    assert len(LONG_PROJECT) > 500
+    d = _si_draft(world, project_name=LONG_PROJECT)
+    assert _get(world, d["id"])["project_name"] == LONG_PROJECT
+
+
+def test_an_application_raised_from_an_si_with_a_long_project_name_saves(world):
+    world.inquiry.project_name = LONG_PROJECT
+    world.db.flush()
+    prefill = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": world.inquiry.id})
+    assert prefill.status_code == 200, prefill.text
+    assert prefill.json()["project_name"] == LONG_PROJECT
+    d = _si_draft(world, project_name=prefill.json()["project_name"])
+    assert _get(world, d["id"])["project_name"] == LONG_PROJECT

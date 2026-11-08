@@ -7,6 +7,8 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
   New Product Application on its reply. Non-blocking.
 - `new_product_applications.new_product_id` (+ not-opening reason, who / when): the ONE new code
   purchasing links (owner, mock v3).
+- `new_product_applications.project_name` widened to TEXT, as the stock inquiry's (crew pass 8 Nov).
+  The downgrade leaves it TEXT: narrowing back would truncate long names.
 - `new_product_application_sources`: the CURRENT product codes that new code is built from
   (lineage current codes -> new code).
 
@@ -38,6 +40,9 @@ UPGRADE = (
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_text VARCHAR(100)",
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12, 2)",
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS purchasing_response TEXT",
+    # Crew pass 8 Nov: the project name copied from a stock inquiry (Text there) can exceed 255.
+    # A widening: no data loss, binary compatible (no table rewrite), a no-op when repeated.
+    "ALTER TABLE new_product_applications ALTER COLUMN project_name TYPE TEXT",
     "CREATE INDEX IF NOT EXISTS ix_new_product_applications_new_product "
     "ON new_product_applications (new_product_id)",
     """

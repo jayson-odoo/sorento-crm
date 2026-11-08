@@ -139,11 +139,6 @@ export default function NewProductApplicationPurchasingDialog({
       replying={purchasingReply.isPending}
       saveDisabled={purchasingReply.isPending}
       replyDisabled={purchasingResponse.isPending}
-      description={
-        <span className="sr-only">
-          Purchasing response for {r.application_no}
-        </span>
-      }
     >
       <div className="space-y-4">
         {earlier && (

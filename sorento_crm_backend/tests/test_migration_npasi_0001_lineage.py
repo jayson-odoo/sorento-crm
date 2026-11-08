@@ -31,10 +31,17 @@ def test_revision_id_fits_and_alembic_has_one_head():
     assert NAME in {r.revision for r in script.walk_revisions("base", heads[0])}
 
 
+#: The one non-ADD statement (crew pass 8 Nov): a varchar -> text widening, no data loss, a no-op when
+#: repeated, and binary compatible in Postgres (no table rewrite). Nothing else may alter a column.
+WIDENINGS = {"ALTER TABLE NEW_PRODUCT_APPLICATIONS ALTER COLUMN PROJECT_NAME TYPE TEXT"}
+
+
 def test_the_ddl_is_additive_and_idempotent():
     module = _load()
     for statement in module.UPGRADE:
         upper = " ".join(statement.split()).upper()
+        if upper in WIDENINGS:
+            continue
         assert "IF NOT EXISTS" in upper, statement
         assert upper.startswith(
             ("ALTER TABLE", "CREATE TABLE IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS", "DO $$ BEGIN IF NOT EXISTS")
@@ -59,6 +66,16 @@ def test_the_models_carry_what_the_ddl_adds():
         assert needle in source, needle
     src = {c.name for c in NewProductApplicationSource.__table__.columns}
     assert src == {"id", "application_id", "product_id", "position"}
+
+
+def test_the_project_name_is_widened_to_text_and_never_narrowed_back():
+    from app.models.new_product_application import NewProductApplication
+
+    module = _load()
+    assert {" ".join(s.split()).upper() for s in module.UPGRADE} >= WIDENINGS
+    assert isinstance(NewProductApplication.__table__.c.project_name.type, sa.Text)
+    source = (ROOT / "alembic" / "versions" / f"{NAME}.py").read_text()
+    assert "project_name TYPE VARCHAR" not in source  # a downgrade must not truncate long names
 
 
 def test_running_the_upgrade_again_is_a_no_op():

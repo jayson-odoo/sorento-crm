@@ -238,6 +238,27 @@ describe('the Edit purchasing response button', () => {
   });
 });
 
+describe('crew pass 8 Nov', () => {
+  it("(d) the dialog carries the stock inquiry's description line", async () => {
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(
+      within(dialog).getByText(
+        'Save updates the record only. Update & Reply saves your text and sends it to the contact.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('(c) a long PROJECT clamps, with the full text in its title and behind the eye button', async () => {
+    const long = 'CADANGAN PEMBANGUNAN BERCAMPUR 2 BLOK PANGSAPURI SERVIS 38 TINGKAT '.repeat(9).trim();
+    state.data = app({ project_name: long });
+    render(<Page />);
+    const value = await screen.findByTitle(long);
+    expect(value.className).toMatch(/line-clamp-2/);
+    expect(value).toHaveTextContent(long);
+  });
+});
+
 describe('the dialog', () => {
   it('is titled like the stock inquiry one and offers the three outcomes, Lead time, one Cost and Save', async () => {
     render(<Page />);

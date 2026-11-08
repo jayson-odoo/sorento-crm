@@ -6895,6 +6895,43 @@ class StockInquiryService:
         idx = s.rfind(": ")
         return s[idx + 2 :].strip() if idx != -1 else s
 
+    def enqueue_update_reply(
+        self,
+        inquiry: StockInquiry,
+        *,
+        identifier: str,
+        update_text: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Queue purchasing's "Update & Reply" message on the inquiry's conversation.
+
+        The one composer for the SI's own reply and the New Product Application's (crew pass
+        8 Nov: the NPA sends the SAME reply, template stock_inquiry_update_with_button), so the
+        two cannot drift. Call AFTER the business write commits.
+
+        Structured-template vars: the bare ``update`` text + links (mirrors complaint's bare
+        ``stored_body``). One portal URL resolution, shared by the in-window text and the
+        out-of-window template, so both carry the same interactive portal link.
+        """
+        inquiry_id = str(inquiry.id)
+        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, inquiry_id)
+        reply_extra_vars = {
+            "update": update_text,
+            "portal_url": portal_url,
+            "view_url": (self._build_stock_inquiry_view_url(inquiry_id) or "").strip(),
+        }
+        self._enqueue_stock_inquiry_respond_message(
+            inquiry_id=inquiry_id,
+            identifier=identifier,
+            message_text=self.compose_stock_inquiry_reply_message(update_text, portal_url),
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(inquiry, "space_id", None),
+            verify_delivery=True,
+            extra_context_vars=reply_extra_vars,
+        )
+
     def update_inquiry_and_reply(
         self,
         inquiry_id: str,
@@ -7065,27 +7102,12 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
 
-        # Structured-template vars: bare purchasing_response text (+ attachment
-        # sentence, D10) as `update` core + links. Mirrors complaint's bare
-        # `stored_body`.
-        # One resolution, shared by the in-window text and the out-of-window
-        # template, so both carry the same interactive portal link.
-        portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
-        reply_extra_vars = {
-            "update": outgoing_bare,
-            "portal_url": portal_url,
-            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
-        }
-        outgoing_text = self.compose_stock_inquiry_reply_message(outgoing_bare, portal_url)
-        self._enqueue_stock_inquiry_respond_message(
-            inquiry_id=inquiry_id,
+        self.enqueue_update_reply(
+            inquiry,
             identifier=identifier,
-            message_text=outgoing_text,
+            update_text=outgoing_bare,
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
-            space_id=getattr(inquiry, "space_id", None),
-            verify_delivery=True,
-            extra_context_vars=reply_extra_vars,
         )
 
         if transition_to_responded_workflow:

@@ -76,7 +76,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     )
     #: Typed when the customer has no debtor code; copied as TEXT from the inquiry, never matched.
     customer_name = Column(String(255), nullable=True)
-    project_name = Column(String(255), nullable=True)
+    project_name = Column(Text, nullable=True)  # as stock_inquiries.project_name (npasi_0001)
     needed_by = Column(Date, nullable=True)
     remark = Column(Text, nullable=True)
 

@@ -109,3 +109,19 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
 - Accepted (security round 6, nit 1): staff can link any existing SI, and Update & Reply then reaches that SI's
   requester. It adds no reach (any procurement user can already message an SI's contact) and the reply's purpose is
   the SI's requester, so the contact-match rule was not added.
+
+## Crew pass on 62534a9c25 (8 Nov): the same reply, long project names
+
+- Update & Reply now sends the SI's OWN reply, not a chat message: `StockInquiryService.enqueue_update_reply`
+  (extracted from `update_inquiry_and_reply`, which calls it too, so the two cannot drift) queues
+  `send_stock_inquiry_respond_message` (use case stock_inquiry, template stock_inquiry_update_with_button out of the
+  window) with `update` = "NPA-xxxxxx: <response>" + "New product code: <code>" + "Lead time: <lead time>". Its View
+  button keeps opening the SI portal page. The SI's refusal (no Respond.io conversation) runs before the commit, so
+  nothing is saved; there is no separate chat precheck any more (the SI has none). The `enqueue_chat_send`
+  extraction is reverted to main.
+- The dialog's description line is the SI's on every caller (the prop is gone).
+- The bell "NPA-xxxxxx is done: the codes are open" on Save only is main's lifecycle notice (#1769, every
+  Approved -> Completed move), not a reply; it stays. Save only sends no message.
+- `new_product_applications.project_name` is TEXT, as the SI's (SI26-0139 is 586 characters): one widening statement
+  in the unmerged `npasi_0001_lineage`, never narrowed on downgrade. The detail's PROJECT clamps to two lines with
+  the full name behind the eye button (`TruncatedTextCell`).

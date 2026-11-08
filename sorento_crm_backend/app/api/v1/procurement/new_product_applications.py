@@ -365,48 +365,43 @@ def save_purchasing_response_and_reply(
     db: Session = Depends(get_db),
 ):
     """Owner 8 Nov 15:10: the stock inquiry's "Update & Reply" on the NPA. Saves like Save only,
-    then sends the reply to the salesperson through the linked stock inquiry's conversation, with
-    the stock inquiry's own chat send (`enqueue_chat_send`, use case stock_inquiry_chat)."""
-    from app.api.v1._respond_chat_template_routes import enqueue_chat_send
-    from app.api.v1.procurement import stock_inquiries as si_routes
+    then sends the SAME reply the stock inquiry's Update & Reply sends (crew pass 8 Nov: template
+    stock_inquiry_update_with_button, use case stock_inquiry), with the NPA facts as its update text."""
+    from app.api.v1.procurement.stock_inquiries import _respond_user_id_from_current_user
+    from app.models.procurement import StockInquiry
     from app.services.error_handler import AppException
+    from app.services.procurement_service import StockInquiryService
 
     def refuse(message: str, field: str) -> AppException:
         return AppException(status_code=422, message=message, code="VALIDATION_ERROR", details={"field": field})
 
     if not (payload.purchasing_response or "").strip():
         raise refuse("Enter a purchasing response first.", "purchasing_response")
+    si_service = StockInquiryService(db)
     try:
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
         event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
-        if not app.stock_inquiry_id:
+        inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+        if inquiry is None:
             raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
-        identifier, contact_id = si_routes._resolve_stock_inquiry_chat_contact(db, str(app.stock_inquiry_id))
+        # The SI's own refusal, BEFORE the commit, so a reply that cannot go saves nothing.
+        identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
         if not identifier:
-            raise refuse("The stock inquiry has no Respond.io contact to reply to.", "stock_inquiry_id")
-        # The send's own DB-only precheck (template / window) BEFORE the commit, so a reply that
-        # cannot be sent refuses with nothing saved (review round 6).
-        from app.services.respond_chat_template_service import precheck_chat_send
-
-        precheck_chat_send(db, identifier=identifier, respond_contact_id=contact_id, chat_use_case="stock_inquiry_chat")
-        message = svc.reply_message(db, app)
-        inquiry_id = str(app.stock_inquiry_id)
+            raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
+        respond_user_id = _respond_user_id_from_current_user(user)
+        update_text = svc.reply_message(db, app)
         detail = _done(db, app, event, actor.user_id)
     except Exception:
         db.rollback()
         raise
-    enqueue_chat_send(
-        db,
+    si_service.enqueue_update_reply(
+        inquiry,
         identifier=identifier,
-        respond_contact_id=contact_id,
-        chat_use_case="stock_inquiry_chat",
-        business_table="stock_inquiries",
-        entity_id=inquiry_id,
-        text=message,
-        current_user=user,
-        context_builder=si_routes._build_stock_inquiry_chat_context,
+        update_text=update_text,
+        respond_user_id=respond_user_id,
+        crm_sender_user_id=user.get("id"),
     )
     return detail
 

@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import {
   InquiryFormTableRow,
   InquiryReadValue,
@@ -88,7 +89,16 @@ export function NewProductApplicationHeader({
       </InquiryFormTableRow>
       <InquiryFormTableRow label="PROJECT:">
         {readOnly ? (
-          <InquiryReadValue>{value.project_name}</InquiryReadValue>
+          // Long project titles clamp everywhere; the eye button opens the full name.
+          <InquiryReadValue>
+            {value.project_name?.trim() ? (
+              <TruncatedTextCell
+                text={value.project_name}
+                lines={2}
+                dialogTitle="Project"
+              />
+            ) : null}
+          </InquiryReadValue>
         ) : (
           <Input
             aria-label="Project"

@@ -35,7 +35,8 @@ class NewProductApplicationWrite(BaseModel):
     stock_inquiry_id: Optional[str] = None
     customer_id: Optional[str] = None
     customer_name: Optional[str] = Field(None, max_length=255)
-    project_name: Optional[str] = Field(None, max_length=255)
+    #: Text, as on the stock inquiry it is copied from (crew pass 8 Nov: SI26-0139 is 586 characters).
+    project_name: Optional[str] = None
     needed_by: Optional[Date] = None
     remark: Optional[str] = Field(None, max_length=2000)
     #: NPA-FROM-SI (mock v3): PRODUCT CODES, the CURRENT catalogue codes the new code is built from,

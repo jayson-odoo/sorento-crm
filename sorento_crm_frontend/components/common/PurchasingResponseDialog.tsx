@@ -35,7 +35,6 @@ export function PurchasingResponseDialog({
   replyTitle,
   saveGuideTarget,
   replyGuideTarget,
-  description = 'Save updates the record only. Update & Reply saves your text and sends it to the contact.',
   children,
 }: {
   open: boolean;
@@ -55,7 +54,6 @@ export function PurchasingResponseDialog({
   replyTitle?: string;
   saveGuideTarget?: string;
   replyGuideTarget?: string;
-  description?: ReactNode;
   children?: ReactNode;
 }) {
   const blank = !response.trim();
@@ -68,7 +66,10 @@ export function PurchasingResponseDialog({
       >
         <DialogHeader>
           <DialogTitle>Edit purchasing response</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          <DialogDescription>
+            Save updates the record only. Update &amp; Reply saves your text
+            and sends it to the contact.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
           <Label htmlFor="edit-purchasing-response">Purchasing response</Label>
