@@ -1,6 +1,6 @@
 # PLAN: Chatbot Console simulates any contact (synthetic envelope)
 
-Status: in progress (small fix track: under ~300 lines, no migration, no auth/RBAC change, no new ingest surface)
+Status: built, awaiting owner hand test (small fix track: under ~300 lines, no migration, no auth/RBAC change, no new ingest surface)
 Lane: CONSOLE-SYNTH-ENVELOPE
 
 ## Journey

@@ -44,3 +44,19 @@ db.execute(text(
 db.commit()
 print("turns for contact:", db.execute(text(
     "SELECT count(*) FROM chatbot.turns WHERE contact_respond_id = '900000777'")).scalar())
+
+# The sandbox tenant has no module rows, so the sidebar hides every module's menu. Install them all.
+import pathlib  # noqa: E402
+
+from app.modules.runtime.installer import DEFAULT_TENANT_ID, install_modules  # noqa: E402
+
+keys = []
+for f in sorted(pathlib.Path("app/modules").glob("*/bootstrap.py")):
+    for line in f.read_text().splitlines():
+        if line.startswith("MODULE_KEY = "):
+            keys.append(line.split("=", 1)[1].strip().strip('"'))
+admin_id = db.query(User.id).filter(User.email == "browse.admin@example.com").scalar()
+install_modules(db, DEFAULT_TENANT_ID, keys, actor_user_id=admin_id)
+db.execute(text("UPDATE respond_contacts SET chatbot_allowed = true WHERE respond_io_id = '900000777'"))
+db.commit()
+print("modules installed:", len(keys))
