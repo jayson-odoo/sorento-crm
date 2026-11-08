@@ -86,6 +86,9 @@ class NewProductApplication(Base, CompanyScopedMixin):
     reject_reason = Column(Text, nullable=True)
     #: The latest "What changed, and why?" (the audit trail keeps every earlier one).
     revise_reason = Column(Text, nullable=True)
+    #: How many times it was revised (NPA-FORM-SLA, owner 9 Nov: the list's Rev column, like the
+    #: stock inquiry's). 0 = never; each Revise adds one.
+    revision_no = Column(Integer, nullable=False, default=0, server_default="0")
     cancelled_at = Column(DateTime(timezone=False), nullable=True)
     cancel_reason = Column(Text, nullable=True)
     completed_at = Column(DateTime(timezone=False), nullable=True)

@@ -408,9 +408,10 @@ def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> No
 
 def validate_submit(app: NewProductApplication) -> None:
     # Owner 8 Nov: an application raised from a stock inquiry needs no product rows (the inquiry
-    # carries the product; PRODUCT CODES + REMARK say what is asked). A standalone one still does.
-    if not app.lines and not app.stock_inquiry_id:
-        raise _invalid("lines", "Add at least one product before you submit.")
+    # carries the product; PRODUCT CODES + REMARK say what is asked). Owner 9 Nov: the product rows
+    # are gone from the form, so a standalone one says what new product is wanted in REMARK.
+    if not app.lines and not app.stock_inquiry_id and not (app.remark or "").strip():
+        raise _invalid("remark", "Say in REMARK what new product is wanted before you submit.")
     missing = [line.line_no for line in app.lines if not (line.description or "").strip()]
     if missing:
         raise _invalid(
@@ -531,6 +532,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
         raise _invalid("reason", "Say what changed, and why.")
     app.status = DRAFT
     app.revise_reason = reason
+    app.revision_no = (app.revision_no or 0) + 1
     app.decided_at = None
     app.decided_by = None
     app.reject_reason = None
@@ -1342,25 +1344,11 @@ _SORTS = {
     "stock_inquiry_number": select(StockInquiry.inquiry_number)
     .where(StockInquiry.id == NewProductApplication.stock_inquiry_id)
     .scalar_subquery(),
-    "first_line": select(
-        func.coalesce(NewProductApplicationLine.description, NewProductApplicationLine.proposed_code)
-    )
-    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
-    .order_by(NewProductApplicationLine.line_no)
-    .limit(1)
+    # The stock inquiry list's columns (owner hand test 9 Nov): the applicant is the salesperson.
+    "salesperson": select(func.coalesce(User.name, User.email))
+    .where(User.id == NewProductApplication.applicant_id)
     .scalar_subquery(),
-    "lines_total": select(func.count(NewProductApplicationLine.id))
-    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
-    .scalar_subquery(),
-    "lines_done": select(func.count(NewProductApplicationLine.id))
-    .where(
-        NewProductApplicationLine.application_id == NewProductApplication.id,
-        or_(
-            NewProductApplicationLine.opened_product_id.isnot(None),
-            NewProductApplicationLine.closed_reason.isnot(None),
-        ),
-    )
-    .scalar_subquery(),
+    "revision_no": NewProductApplication.revision_no,
 }
 
 
@@ -1408,7 +1396,19 @@ def list_for(
             )
         )
     total = query.count()
-    column = _SORTS.get(sort or "", NewProductApplication.created_at)
+    from app.services.procurement_service import StockInquiryService
+
+    # Assigned To / Handled By / Print Count read exactly as on the stock inquiry list.
+    if sort in ("assigned_to_name", "handled_by_name"):
+        column = StockInquiryService._sla_person_name_sort(
+            "assigned_to_id" if sort == "assigned_to_name" else "handled_by_id",
+            ENTITY,
+            NewProductApplication,
+        )
+    elif sort == "print_count":
+        column = StockInquiryService._print_count_sort(actor.user_id, ENTITY, NewProductApplication)
+    else:
+        column = _SORTS.get(sort or "", NewProductApplication.created_at)
     ordered = column.asc() if direction == "asc" else column.desc()
     rows = (
         query.order_by(ordered.nulls_last(), NewProductApplication.application_no.desc())
@@ -1418,6 +1418,9 @@ def list_for(
     )
     opened = _opened_codes(db, [str(r.id) for r in rows])
     created = _created_codes_for(db, rows)
+    si = StockInquiryService(db)
+    si._attach_sla_handlers(rows, source_entity_type=ENTITY)  # noqa: SLF001
+    si._attach_print_counts(rows, actor.user_id, source_entity_type=ENTITY)  # noqa: SLF001
     return {
         "items": [serialize_summary(db, r, opened, created) for r in rows],
         "total": total,
@@ -1475,8 +1478,6 @@ def serialize_summary(
     opened: Optional[Dict[str, List[str]]] = None,
     created: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    lines = list(app.lines)
-    first = lines[0] if lines else None
     inquiry = (
         db.query(StockInquiry.inquiry_number).filter(StockInquiry.id == app.stock_inquiry_id).scalar()
         if app.stock_inquiry_id
@@ -1492,13 +1493,17 @@ def serialize_summary(
         "source": app.source,
         "applicant_id": app.applicant_id,
         "applicant_name": applicant,
+        # The stock inquiry list's columns (owner hand test 9 Nov). The three below are set on the
+        # row by `list_for` (the SI list's own helpers); a single serialize reads them as empty.
+        "salesperson": applicant,
+        "revision_no": app.revision_no or 0,
+        "assigned_to_name": getattr(app, "assigned_to_name", None),
+        "handled_by_name": getattr(app, "handled_by_name", None),
+        "print_count": getattr(app, "print_count", 0),
         "stock_inquiry_id": app.stock_inquiry_id,
         "stock_inquiry_number": inquiry,
         "customer_name": app.customer_name,
         "project_name": app.project_name,
-        "first_line": (first.description or first.proposed_code) if first else None,
-        "lines_total": len(lines),
-        "lines_done": sum(1 for line in lines if _resolved(line)),
         "opened_codes": (opened if opened is not None else _opened_codes(db, [str(app.id)])).get(
             str(app.id), []
         ),

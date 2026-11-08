@@ -515,11 +515,12 @@ def test_an_application_from_a_stock_inquiry_submits_without_product_rows(world)
     assert _act(world, d["id"], "submit", world.sales).status_code == 200
 
 
-def test_a_standalone_application_still_needs_a_product_row(world):
+def test_a_standalone_application_needs_its_remark(world):
+    # Owner hand test 9 Nov: product rows are gone; REMARK says what new product is wanted.
     d = world.api.as_(world.sales).post(NPA, json={"current_product_ids": [world.product.id]}).json()
     res = _act(world, d["id"], "submit", world.sales)
     assert res.status_code == 422
-    assert "Add at least one product" in res.text
+    assert "REMARK" in res.text
 
 
 def test_purchasing_links_an_existing_code_with_lead_time_and_cost_in_one_save(world):

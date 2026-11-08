@@ -16,15 +16,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
-  blankLine,
-  isBlankLine,
   numberErrors,
   payloadFromState,
   stateFromDetail,
@@ -87,10 +84,8 @@ function StaffNewProductApplicationForm({
     applicationId ? null : (stockInquiryId ?? null),
   );
   const lookups = useNewProductApplicationLookups();
-  const [state, setState] = useState<FormState>({
-    ...EMPTY_FORM,
-    lines: [blankLine()],
-  });
+  // Owner hand test 9 Nov: no product rows on the form; an older draft keeps (and resends) its own.
+  const [state, setState] = useState<FormState>(EMPTY_FORM);
   const [hydrated, setHydrated] = useState(!applicationId && !stockInquiryId);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
@@ -99,12 +94,7 @@ function StaffNewProductApplicationForm({
   useEffect(() => {
     if (hydrated) return;
     if (applicationId && existing.data) {
-      const loaded = stateFromDetail(existing.data);
-      setState(
-        loaded.lines.length || loaded.stock_inquiry_id
-          ? loaded
-          : { ...loaded, lines: [blankLine()] },
-      );
+      setState(stateFromDetail(existing.data));
       setHydrated(true);
     } else if (!applicationId && prefill.data) {
       setState(stateFromPrefill(prefill.data));
@@ -249,8 +239,6 @@ function StaffNewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
-                    // An inquiry replaces the product rows, unless some were already filled in.
-                    lines: prev.lines.every(isBlankLine) ? [] : prev.lines,
                   }))
                 }
               />
@@ -282,26 +270,9 @@ function StaffNewProductApplicationForm({
                   optionMeta={(o) => o.customer_code}
                   placeholder="Customer name"
                 />
-                {!state.customer_id && state.customer_name.trim() && (
-                  <Badge variant="secondary" className="mt-1.5">
-                    No debtor code
-                  </Badge>
-                )}
               </>
             }
           />
-          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
-          {(!state.stock_inquiry_id || state.lines.length > 0) && (
-            <div className="mt-6">
-              <NewProductApplicationLines
-                lines={state.lines}
-                onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-                errors={errors}
-                readOnly={Boolean(state.stock_inquiry_id && applicationId)}
-              />
-            </div>
-          )}
-
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"

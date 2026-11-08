@@ -225,6 +225,45 @@ def download_application(
     )
 
 
+@router.post("/{application_id}/export/xlsx")
+def export_application_xlsx(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The same workbook through My Downloads, the stock inquiry PDF's way (NPA-FORM-SLA, owner 9 Nov):
+    a `user_downloads` row the RQ worker fills, so the list's Print Count counts it and its button
+    re-downloads it. Whoever can view the record may take it."""
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_new_product_application_xlsx
+
+    app = _load(db, application_id)
+    svc.assert_can_view(app, _actor(db, user))
+    downloads = DownloadService(db)
+    download = downloads.create(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+        filename=f"{app.application_no}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_new_product_application_xlsx,
+            str(download.id),
+            str(app.id),
+            str(user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - the drawer must show it, never a pending row forever
+        downloads.mark_failed(str(download.id), f"Could not queue the workbook: {e}")
+        raise AppException(status_code=500, message="Could not queue the workbook. Please try again.", code="INTERNAL_ERROR")
+    return DownloadResponse.model_validate(downloads.get(str(download.id)))
+
+
 #: The approver's and purchasing's moves: gated by the form handling lock like every SI move
 #: (`api/v1/procurement/stock_inquiries.py`, NPA-FORM-SLA). The applicant's own moves (submit,
 #: revise, cancel) are not stage work and stay open to them.

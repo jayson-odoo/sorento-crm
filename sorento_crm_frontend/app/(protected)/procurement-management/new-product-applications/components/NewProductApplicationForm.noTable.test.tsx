@@ -136,30 +136,26 @@ describe('staff form from a stock inquiry', () => {
     expect(body.lines).toEqual([]);
   });
 
-  it('an older SI application with lines shows them read-only: text, no inputs, no add', async () => {
+  it('an older application with lines shows no table and resends its rows unchanged', async () => {
+    // Owner hand test 9 Nov: the table is gone; an older draft's rows stay in the record.
     mock.existing = saved({ stock_inquiry_id: 'si-1', stock_inquiry_number: 'SI26-0412' });
     renderForm({ applicationId: 'npa-1' });
-    expect(await screen.findByText('First sink')).toBeInTheDocument();
-    expect(screen.getByText('Second sink')).toBeInTheDocument();
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText('First sink')).toBeNull();
     expect(screen.queryByLabelText('Product type')).toBeNull();
-    expect(screen.queryByRole('button', { name: /add (row|product)/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^remove row/i })).toBeNull();
+    saveDraft();
+    await waitFor(() => expect(mock.updateAsync).toHaveBeenCalledTimes(1));
+    const rows = mock.updateAsync.mock.calls[0][0].data.lines as { id?: string }[];
+    expect(rows.map((l) => l.id)).toEqual(['l-1', 'l-2']);
   });
 });
 
 describe('staff form standalone (no stock inquiry)', () => {
-  it('still renders today\'s table with Add row', async () => {
+  it('has no product table either (owner hand test 9 Nov)', async () => {
     renderForm();
     await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getByRole('columnheader', { name: /product code/i })).toBeInTheDocument();
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /add row/i })).toBeInTheDocument();
-  });
-
-  it('a saved standalone draft keeps editable rows', async () => {
-    mock.existing = saved();
-    renderForm({ applicationId: 'npa-1' });
-    await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getAllByLabelText('Product type')).toHaveLength(2);
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add row/i })).toBeNull();
   });
 });

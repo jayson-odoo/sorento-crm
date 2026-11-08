@@ -847,7 +847,7 @@ def _real_slugs(db):
     return slugs
 
 
-def test_after_the_migration_the_si_stage_actors_open_and_work_the_npa(world, monkeypatch):
+def test_after_the_migration_the_si_stage_actors_open_and_work_the_npa(world):
     """Owner ruling (a): the Project Sales Manager (SI project_sales_approve) and the purchasing
     member (SI purchasing_reject) open the NPA and do their stage's move once the migration ran."""
     from app.services.user_service import UserPermissionService
@@ -863,22 +863,29 @@ def test_after_the_migration_the_si_stage_actors_open_and_work_the_npa(world, mo
     _grant(db, psm, {"procurement.stock_inquiries.view", "procurement.stock_inquiries.project_sales_approve"}, world.company_id)
     _grant(db, buyer, {"procurement.stock_inquiries.purchasing_reject"}, world.company_id)
     db.commit()
-    monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", _real_slugs(db))
+    # Restored here, not by `monkeypatch`: its teardown runs AFTER the world's, and would put the
+    # harness's per-test fake back on the class for every later test in the process.
+    harness_slugs = UserPermissionService.get_user_permission_slugs
+    UserPermissionService.get_user_permission_slugs = _real_slugs(db)
+    try:
+        d = _submitted(world)
+        assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 403
+        assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 403
 
-    d = _submitted(world)
-    assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 403
-    assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 403
+        module = _load_migration()
+        for statement in module.GRANTS:
+            db.execute(text(statement))
+        db.commit()
 
-    module = _load_migration()
-    for statement in module.GRANTS:
-        db.execute(text(statement))
-    db.commit()
-
-    assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 200
-    assert _act(world, d["id"], "approve", psm).status_code == 200
-    assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 200
-    res = world.api.as_(buyer).put(f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Quoting"})
-    assert res.status_code == 200, res.text
+        assert world.api.as_(psm).get(f"{NPA}/{d['id']}").status_code == 200
+        assert _act(world, d["id"], "approve", psm).status_code == 200
+        assert world.api.as_(buyer).get(f"{NPA}/{d['id']}").status_code == 200
+        res = world.api.as_(buyer).put(
+            f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Quoting"}
+        )
+        assert res.status_code == 200, res.text
+    finally:
+        UserPermissionService.get_user_permission_slugs = harness_slugs
 
 
 def test_the_downgrade_removes_only_the_grants_it_added(world, monkeypatch):
@@ -900,3 +907,135 @@ def test_the_downgrade_removes_only_the_grants_it_added(world, monkeypatch):
     db.commit()
     assert VIEW in _role_slugs(db, by_hand) and APPROVE not in _role_slugs(db, by_hand)
     assert not _role_slugs(db, fresh) & {VIEW, OPEN_CODE}
+
+
+# ------------------------------------------------------------------ owner hand test 9 Nov: no product rows, SI list columns
+
+
+def test_a_standalone_npa_submits_without_product_rows_when_remark_says_what_is_wanted(world):
+    d = world.api.as_(world.sales).post(NPA, json={"remark": "Kitchen sink, nanograin finish, 600x400"}).json()
+    res = _act(world, d["id"], "submit", world.sales)
+    assert res.status_code == 200, res.text
+
+
+def test_a_standalone_npa_with_no_rows_and_no_remark_asks_for_the_remark(world):
+    d = world.api.as_(world.sales).post(NPA, json={}).json()
+    res = _act(world, d["id"], "submit", world.sales)
+    assert res.status_code == 422
+    assert "REMARK" in res.text
+
+
+def test_the_list_carries_the_si_columns_salesperson_assigned_to_handled_by(world, sla):
+    d = _submitted(world)
+    tracker = open_tracker(world.db, KIND, d["id"])
+    tracker.handled_by_id = world.manager
+    world.db.commit()
+    res = world.api.as_(world.admin).get(NPA, params={"limit": 100})
+    assert res.status_code == 200, res.text
+    (row,) = [r for r in res.json()["items"] if r["id"] == d["id"]]
+    assert row["salesperson"] == row["applicant_name"] and row["salesperson"]
+    assert row["assigned_to_name"]  # the approval stage's tier-1 member
+    assert row["handled_by_name"]
+    for gone in ("first_line", "lines_total", "lines_done"):
+        assert gone not in row
+
+
+@pytest.mark.parametrize("sort", ["assigned_to_name", "handled_by_name", "salesperson"])
+def test_the_new_list_columns_sort(world, sla, sort):
+    _submitted(world)
+    _draft(world)
+    for direction in ("asc", "desc"):
+        res = world.api.as_(world.admin).get(NPA, params={"sort": sort, "dir": direction})
+        assert res.status_code == 200, res.text
+
+
+# ------------------------------------------------------------------ owner hand test 9 Nov: Rev and Print Count, the SI way
+
+
+def _row(w, aid, user=None):
+    res = w.api.as_(user or w.admin).get(NPA, params={"limit": 100})
+    assert res.status_code == 200, res.text
+    (row,) = [r for r in res.json()["items"] if r["id"] == aid]
+    return row
+
+
+def test_each_revise_counts_one_revision_and_the_list_shows_it(world):
+    d = _submitted(world)
+    assert _row(world, d["id"])["revision_no"] == 0
+    assert _act(world, d["id"], "revise", world.sales, reason="Wrong finish").status_code == 200
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    assert _act(world, d["id"], "revise", world.sales, reason="Wrong size").status_code == 200
+    assert _row(world, d["id"])["revision_no"] == 2
+    assert _get(world, d["id"])["revision_no"] == 2
+
+
+def test_export_xlsx_queues_a_my_downloads_row_and_print_count_counts_it(world, monkeypatch):
+    import app.services.queue_service as queue_service
+
+    queued = []
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda fn, *a, **kw: queued.append((fn.__name__, a, kw)))
+    d = _submitted(world)
+    for _ in range(2):
+        res = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["kind"] == "new_product_application_xlsx" and body["status"] == "pending"
+    assert [q[0] for q in queued] == ["generate_new_product_application_xlsx"] * 2
+    assert queued[0][1][1] == d["id"]
+    assert _row(world, d["id"], world.viewer)["print_count"] == 2
+    assert _row(world, d["id"], world.admin)["print_count"] == 0  # the viewer's own, as the SI
+
+
+def test_export_xlsx_is_refused_to_a_caller_who_cannot_view(world, monkeypatch):
+    import app.services.queue_service as queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
+    d = _submitted(world)
+    assert world.api.as_(world.stranger).post(f"{NPA}/{d['id']}/export/xlsx").status_code in (403, 404)
+
+
+def test_the_print_count_column_sorts(world, monkeypatch):
+    import app.services.queue_service as queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
+    first, second = _submitted(world), _submitted(world)
+    world.api.as_(world.admin).post(f"{NPA}/{second['id']}/export/xlsx")
+    res = world.api.as_(world.admin).get(NPA, params={"sort": "print_count", "dir": "desc", "limit": 100})
+    ids = [r["id"] for r in res.json()["items"]]
+    assert ids.index(second["id"]) < ids.index(first["id"])
+
+
+def test_the_worker_stores_the_workbook_and_marks_the_download_ready(world, monkeypatch):
+    import app.services.queue_service as queue_service
+    import app.tasks.export_tasks as export_tasks
+    from app.models.download import UserDownload
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **kw: None)
+    d = _submitted(world)
+    did = world.api.as_(world.viewer).post(f"{NPA}/{d['id']}/export/xlsx").json()["id"]
+
+    stored = {}
+
+    class _Backend:
+        def upload_file(self, *, file_content, file_path, content_type):
+            stored.update(key=file_path, size=len(file_content), type=content_type)
+            return file_path, "signed"
+
+    class _Session:
+        """The test's session, never closed by the task."""
+
+        def __getattr__(self, name):
+            return getattr(world.db, name)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _Session())
+    monkeypatch.setattr(export_tasks, "set_company_scope", lambda db, scope: None)
+    monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _Backend())
+    out = export_tasks.generate_new_product_application_xlsx(did, d["id"], world.viewer)
+    assert out["status"] == "ready", out
+    row = world.db.get(UserDownload, did)
+    world.db.refresh(row)
+    assert row.status == "ready" and row.storage_key == stored["key"]
+    assert stored["key"].startswith(f"exports/new-product-application-xlsx/{did}/") and stored["size"] > 0
