@@ -774,8 +774,8 @@ function dealerDetail(over: Record<string, unknown> = {}) {
         id: 'q2', period_start: '2026-04-01', period_end: '2026-06-30', target_value: 200000,
         achieved_value: 250000, achieved_pct: 125, is_current: true, commission_earned: 5400,
         bonus_earned: 0, accounts: [
-          { customer_id: A1, code: '300-A0123', name: 'DEALER A SDN BHD', label: 'A/C I', achieved_value: 180000 },
-          { customer_id: A3, code: '300-A0124', name: 'DEALER A SDN BHD (III)', label: 'A/C III', achieved_value: 70000 },
+          { customer_id: A1, code: '300-A0123', name: 'DEALER A SDN BHD', label: 'A/C I', achieved_value: 180000, commission_earned: 5400 },
+          { customer_id: A3, code: '300-A0124', name: 'DEALER A SDN BHD (III)', label: 'A/C III', achieved_value: 70000, commission_earned: 0 },
         ],
       },
     ],
@@ -790,13 +790,12 @@ function dealerDetail(over: Record<string, unknown> = {}) {
       { customer_id: A1, code: '300-A0123', name: 'DEALER A SDN BHD', label: 'A/C I' },
       { customer_id: A3, code: '300-A0124', name: 'DEALER A SDN BHD (III)', label: 'A/C III' },
     ],
-    payout_account: { customer_id: A1, code: '300-A0123', name: 'DEALER A SDN BHD', label: 'A/C I' },
     ...over,
   });
 }
 
 describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
-  it('a dealer target has an Accounts tab with each account and the account it pays to', () => {
+  it('a dealer target has an Accounts tab with each account and its own commission (lane TARGET-PER-ACCOUNT-PAYOUT)', () => {
     hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     expect(tabNames()).toEqual(['Details', 'Periods', 'Accounts', 'Commission']);
@@ -805,27 +804,50 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     expect(within(table).getByText('300-A0124')).toBeTruthy();
     expect(within(table).getByText('A/C III')).toBeTruthy();
     expect(within(table).getByText('70,000.00')).toBeTruthy();
-    expect(screen.getAllByText('300-A0123 - DEALER A SDN BHD (A/C I)').length).toBeGreaterThan(0);
+    // A/C I's own 5,400 on its row and the period total; A/C III's own 0.
+    const rows = within(table).getAllByRole('row');
+    const a1 = rows.find((r) => r.textContent?.includes('300-A0123'));
+    const a3 = rows.find((r) => r.textContent?.includes('300-A0124'));
+    const total = rows.find((r) => r.textContent?.includes('Period total'));
+    expect(a1?.textContent).toContain('5,400.00');
+    expect(a3?.textContent).toContain('0.00');
+    expect(a3?.textContent).not.toContain('5,400.00');
+    expect(total?.textContent).toContain('5,400.00');
     expect(within(table).getByText(/sales orders, incl\. tax/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
-  it('an account target its dealer target replaces names it, and a replaced period says so', () => {
+  it('no Pays to and no Replaced by anywhere on a dealer target (owner 8 Nov)', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    for (const tab of ['Details', 'Periods', 'Accounts', 'Commission']) {
+      openTab(tab);
+      expect(document.body.textContent).not.toMatch(/Pays to|Replaced by/);
+    }
+  });
+
+  it('a points target shows Points beside Sales (RM) on the Accounts tab (owner 8 Nov, Q6)', () => {
     const base = dealerDetail();
     hooks.useSalesTarget.mockReturnValue({
       data: dealerDetail({
-        replaced_by: { target_id: 'dealer-1', target_no: 'TGT-000009', name: 'Dealer A 2026 yearly' },
-        periods: base.periods.map((p: { id: string }) => ({ ...p, commission_earned: 0, replaced: p.id === 'q2' })),
+        threshold_unit: 'points',
+        periods: base.periods.map((p: { accounts: { customer_id: string }[] }) => ({
+          ...p,
+          point_ratio: 1.2,
+          achieved_points: 208333.33,
+          accounts: p.accounts.map((a) => ({ ...a, achieved_points: a.customer_id === A1 ? 150000 : 58333.33 })),
+        })),
       }),
       isLoading: false,
       isError: false,
     });
     render(<TargetRecord id="t1" />);
     openTab('Accounts');
-    expect(screen.getByRole('link', { name: 'TGT-000009 Dealer A 2026 yearly' })).toBeTruthy();
-    openTab('Periods');
-    expect(screen.getByText('Replaced by TGT-000009')).toBeTruthy();
-    expect(document.body.textContent).not.toMatch(UUID);
+    const table = screen.getByRole('group', { name: 'Counted accounts' });
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent?.trim())).toContain('Points');
+    const rows = within(table).getAllByRole('row');
+    expect(rows.find((r) => r.textContent?.includes('300-A0123'))?.textContent).toContain('150,000');
+    expect(rows.find((r) => r.textContent?.includes('Period total'))?.textContent).toContain('208,333');
   });
 
   it('Periods labels the SO-based figures of an Ordered dealer target marked as sales orders incl. tax', () => {
@@ -930,7 +952,7 @@ function tgt8(over: Record<string, unknown> = {}) {
     id, period_start: start, period_end: end, target_value: 60000, achieved_value: achieved, achieved_pct: pct,
     is_current: current, commission_earned: paid, bonus_earned: 0, tier_reached: tier,
     tier_rates: rate === null ? [] : [{ label: null, rate }],
-    accounts: [{ ...account, achieved_value: achieved }],
+    accounts: [{ ...account, achieved_value: achieved, commission_earned: paid }],
   });
   return dealerDetail({
     periods: [
@@ -940,7 +962,6 @@ function tgt8(over: Record<string, unknown> = {}) {
       period('q4', '2026-10-01', '2026-12-31', 1235.58, 2.1, 0, null, null, true),
     ],
     accounts: [account],
-    payout_account: account,
     commission_to_date: 6918.12,
     commission_current: 0,
     ...over,
@@ -948,7 +969,7 @@ function tgt8(over: Record<string, unknown> = {}) {
 }
 
 describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
-  it('shows what the target earned to date, the current period apart, and the account it pays to', () => {
+  it('shows what the target earned to date and the current period apart, no single payee', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     const summary = screen.getByRole('region', { name: 'Commission summary' });
@@ -956,14 +977,14 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     // Owner markup 5 Nov 11:40: the period's dates only, no subtexts.
     expect(within(summary).getByText('Current period commission (RM)')).toBeTruthy();
     expect(within(summary).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
-    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
+    expect(within(summary).queryByText(/Pays to/)).toBeNull();
     expect(within(summary).queryByText(/not final/)).toBeNull();
     expect(within(summary).queryByText('Periods that have ended')).toBeNull();
     expect(within(summary).queryByText('Payment is not tracked in the CRM')).toBeNull();
     expect(within(summary).queryByText('Current period so far (RM)')).toBeNull();
   });
 
-  it('Periods shows the tier reached, its rate, the commission in RM with 2 decimals, where it pays and a total', () => {
+  it('Periods shows the tier reached, its rate, the commission in RM with 2 decimals and a total, no Pays to', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     openTab('Periods');
@@ -971,8 +992,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     expect(within(q1).getByText('Tier 1')).toBeTruthy();
     expect(within(q1).getByText('6.00%')).toBeTruthy();
     expect(within(q1).getByText('3,681.10')).toBeTruthy();
-    // The cell names the code and account; the full name is its title and in the summary.
-    expect(within(q1).getByText('300-A077 (A/C I)').getAttribute('title')).toBe('300-A077 - A CRAFT IDEA SDN BHD (A/C I)');
+    expect(within(q1).queryByText('300-A077 (A/C I)')).toBeNull();
     expect(within(q1).getByText('61,351.64')).toBeTruthy();
     const q3 = screen.getByText('01/07/2026 - 30/09/2026').closest('tr') as HTMLElement;
     expect(within(q3).getByText('None')).toBeTruthy();
@@ -982,7 +1002,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     expect(within(total).getByText('240,000.00')).toBeTruthy();
   });
 
-  it('Accounts shows every period, its total, the commission and where it pays, not only the current one', () => {
+  it('Accounts shows every period, its total and each account own commission, not only the current one', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     openTab('Accounts');
@@ -991,7 +1011,8 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     for (const label of ['01/01/2026 - 31/03/2026', '01/04/2026 - 30/06/2026', '01/07/2026 - 30/09/2026', '01/10/2026 - 31/12/2026']) {
       expect(within(table).getByText(label)).toBeTruthy();
     }
-    expect(within(table).getAllByText('3,681.10')).toHaveLength(1);
+    // The one account's own 3,681.10 and the period total.
+    expect(within(table).getAllByText('3,681.10')).toHaveLength(2);
     expect(within(table).getByText('Period total (so far)')).toBeTruthy();
     // Q4's 1,235.58 now sits on its own period row, not under an ambiguous column header.
     const current = within(table).getByText('Period total (so far)').closest('tr') as HTMLElement;
@@ -1232,24 +1253,6 @@ describe('TargetRecord: crew browser pass on 1104 (lane TARGET-TIER-ADDITIONAL)'
     ]);
   });
 
-  it('Pays to names the account label once when the account name already carries it', () => {
-    const account = { customer_id: A1, code: '300-A077', name: 'A CRAFT IDEA SDN BHD (A/C I)', label: 'A/C I' };
-    hooks.useSalesTarget.mockReturnValue({ data: tgt8({ payout_account: account }), isLoading: false, isError: false });
-    render(<TargetRecord id="t1" />);
-    const summary = screen.getByRole('region', { name: 'Commission summary' });
-    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
-    expect(document.body.textContent).not.toContain('(A/C I) (A/C I)');
-  });
-
-  it('Pays to names the label once when the account name carries it in square brackets (1104)', () => {
-    const account = { customer_id: A1, code: '300-A077', name: 'A CRAFT IDEA SDN BHD [A/C I]', label: 'A/C I' };
-    hooks.useSalesTarget.mockReturnValue({ data: tgt8({ payout_account: account }), isLoading: false, isError: false });
-    render(<TargetRecord id="t1" />);
-    const summary = screen.getByRole('region', { name: 'Commission summary' });
-    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD [A/C I]')).toBeTruthy();
-    expect(document.body.textContent).not.toContain('[A/C I] (A/C I)');
-  });
-
   it('the Commission Period filter keeps its pick through Edit and Cancel', () => {
     hooks.useSalesTarget.mockReturnValue({ data: imported(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
@@ -1260,5 +1263,37 @@ describe('TargetRecord: crew browser pass on 1104 (lane TARGET-TIER-ADDITIONAL)'
     fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Cancel' }));
     filter = screen.getByRole('group', { name: 'Period' });
     expect((within(filter).getByLabelText('01/01/2026 - 31/03/2026') as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe('TargetRecord: the RM Additional per account (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov Q3)', () => {
+  it('a multi-account dealer tier takes each account its own RM Additional and saves it beside its rate', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    fireEvent.change(screen.getAllByLabelText('Tier 2 A/C I additional (RM)')[0], { target: { value: '500' } });
+    fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalled());
+    const sent = patchHeader.mutateAsync.mock.calls[0][0];
+    expect(sent.tiers[1].account_rates).toEqual([{ customer_id: A1, rate: 3, bonus_amount: 500 }]);
+    expect(sent.tiers[1].bonus_amount).toBeNull();
+  });
+
+  it('the read tier table names each account own RM Additional', () => {
+    const base = dealerDetail();
+    hooks.useSalesTarget.mockReturnValue({
+      data: dealerDetail({
+        tiers: [
+          base.tiers[0],
+          { ...base.tiers[1], account_rates: [{ customer_id: A1, rate: 3, bonus_amount: 500 }] },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    expect(screen.getAllByText('+ A/C I RM 500.00').length).toBeGreaterThan(0);
   });
 });

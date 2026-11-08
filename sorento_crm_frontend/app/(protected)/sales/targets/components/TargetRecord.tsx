@@ -1373,9 +1373,14 @@ function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
   return p.commission_earned + (p.bonus_earned ?? 0);
 }
 
-/** `+ 1.00%`, `+ RM 1.00/unit` or `+ RM 500.00`: a tier's Additional; `''` when it has none. */
+/** `+ 1.00%`, `+ RM 1.00/unit`, `+ RM 500.00` or, set per account, `+ A/C I RM 500.00, A/C III
+ * RM 100.00`: a tier's Additional; `''` when it has none. */
 export function additionalText(add: TierAdditional | null | undefined, metric: TargetMetric): string {
   if (!add || !add.value) return '';
+  if (add.kind === 'amount' && add.accounts?.length) {
+    const own = add.accounts.filter((e) => e.rate).map((e) => `${e.label ?? ''} RM ${formatMoney(e.rate)}`.trim());
+    return `+ ${own.join(', ')}`;
+  }
   if (add.kind === 'amount') return `+ RM ${formatMoney(add.value)}`;
   return metric === 'quantity' ? `+ RM ${formatMoney(add.value)}/unit` : `+ ${formatMoney(add.value)}%`;
 }
@@ -2086,6 +2091,8 @@ function CommissionTiers({
     );
   }
   const fromLabel = draft.thresholdUnit === 'pct' ? 'From (%)' : `From (${THRESHOLD_LABEL[draft.thresholdUnit]})`;
+  // Several counted accounts: each account's own RM Additional, like its rate (owner 8 Nov).
+  const ownBonus = dealer && accounts.length > 1;
   // Legacy "+ Additional" rows not yet folded onto their tier keep their Type column.
   const legacy = draft.tiers.some((t) => t.additional);
   const addKindOptions = [
@@ -2112,6 +2119,11 @@ function CommissionTiers({
               ) : (
                 <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
               )}
+              {ownBonus
+                ? accounts.map((a) => (
+                    <th key={`b-${a.id}`} className="px-3 py-2 text-end font-medium">{`${a.label} additional (RM)`}</th>
+                  ))
+                : null}
               <th className="px-3 py-2 text-end font-medium">Additional</th>
               <th className="w-10 px-3 py-2">
                 <span className="sr-only">Remove</span>
@@ -2183,6 +2195,24 @@ function CommissionTiers({
                     />
                   </td>
                 )}
+                {ownBonus
+                  ? accounts.map((a) => (
+                      <td key={`b-${a.id}`} className="px-3 py-1.5">
+                        {t.additional ? null : (
+                          <NumberInput
+                            min={0}
+                            step="any"
+                            aria-label={`Tier ${i + 1} ${a.label} additional (RM)`}
+                            value={t.accountBonuses[a.id] ?? ''}
+                            onChange={(e) =>
+                              setTier(t.key, { accountBonuses: { ...t.accountBonuses, [a.id]: e.target.value } })
+                            }
+                            className="ms-auto h-8 w-24 text-end"
+                          />
+                        )}
+                      </td>
+                    ))
+                  : null}
                 <td className="px-3 py-1.5">
                   {t.additional ? null : (
                     <div className="flex items-center justify-end gap-1.5">
@@ -2250,8 +2280,16 @@ function ColumnsButton<T>({ table }: { table: Table<T> }) {
 }
 
 /** A tier's Additional as the engine reads it: its % first, else its RM (Bonus). */
-function tierAdditional(t: CommissionTier): TierAdditional | null {
+function tierAdditional(t: CommissionTier, labelOf: (customerId: string) => string): TierAdditional | null {
   if (t.additional_rate) return { kind: 'pct', value: t.additional_rate };
+  const own = (t.account_rates ?? []).filter((r) => r.bonus_amount);
+  if (own.length) {
+    return {
+      kind: 'amount',
+      value: own.reduce((sum, r) => sum + (r.bonus_amount ?? 0), 0),
+      accounts: own.map((r) => ({ label: labelOf(r.customer_id), rate: r.bonus_amount ?? null })),
+    };
+  }
   if (t.bonus_amount) return { kind: 'amount', value: t.bonus_amount };
   return null;
 }
@@ -2379,7 +2417,11 @@ function TiersGrid({
       id: 'additional',
       accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
       header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
-      cell: ({ row }) => additionalText(tierAdditional(row.original.tier), target.metric) || '-',
+      cell: ({ row }) =>
+        additionalText(
+          tierAdditional(row.original.tier, (id) => target.accounts?.find((a) => a.customer_id === id)?.label ?? ''),
+          target.metric,
+        ) || '-',
       size: 130,
       meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
     });
