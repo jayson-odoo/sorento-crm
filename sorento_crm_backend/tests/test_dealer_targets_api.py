@@ -633,3 +633,30 @@ def test_the_dealer_list_reads_each_replacing_target_once(api, monkeypatch):
     replaced = [r for r in rows if r["name"] == "ZZT yearly" and r["commission_earned"] == 0]
     assert len(replaced) >= 4
     assert len(calls) <= 2
+
+
+def test_the_dealer_list_search_computes_achievement_for_matches_only(api, monkeypatch):
+    """Lane TARGET-SEARCH-FAST: the search filters targets before any achievement is computed,
+    so a search hitting 3 of N targets reads achievement for those 3 targets' periods only."""
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    needle = f"ZZTFAST{_code()}"
+    hits = []
+    for i in range(3):
+        acc = _customer(db, company_id, f"ZZT fast hit {i}", level=1)
+        res = client.post(BASE, json=_dealer_body([acc], name=f"{needle} {i}"))
+        assert res.status_code == 201, res.text
+        hits.append(res.json()["id"])
+    for i in range(3):
+        acc = _customer(db, company_id, f"ZZT fast miss {i}", level=1)
+        assert client.post(BASE, json=_dealer_body([acc], name=f"ZZT other {i}")).status_code == 201
+    seen: list = []
+    real = target_service._achieved_by_account
+    monkeypatch.setattr(
+        target_service, "_achieved_by_account",
+        lambda db_, cid, pairs, *a, **k: seen.extend(t.id for t, _ in pairs) or real(db_, cid, pairs, *a, **k),
+    )
+    rows = client.get(BASE, params={"subject": "dealer", "all": "true", "query": needle.lower()}).json()["rows"]
+    assert sorted(r["target_id"] for r in rows) == sorted(hits)
+    assert set(seen) == set(hits)
