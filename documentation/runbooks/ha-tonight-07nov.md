@@ -640,9 +640,9 @@ must print `2` or more on BOTH nodes. An older Compose that ignores `"*"` prints
 ```bash
 cd /opt/sorento-crm2
 cfg() { docker compose --profile '*' config --format json; }     # every service, every profile
-cp -p docker-compose.yml docker-compose.yml.bak-08nov
+[ -e docker-compose.yml.bak-08nov ] || cp -p docker-compose.yml docker-compose.yml.bak-08nov   # keep the first backup
 cfg | python3 -I /root/compose-env-hash.py --all > /root/env-before.txt && wc -l < /root/env-before.txt
-python3 -I /root/compose-ha-urls.py docker-compose.yml          # "changed lines: N", N >= 2; a STOP leaves the file untouched
+python3 -I /root/compose-ha-urls.py docker-compose.yml          # prints "line N: KEY -> HA_VAR" per change, then "changed lines: N"; a STOP leaves the file untouched
 cfg | python3 -I /root/compose-env-hash.py --all | diff /root/env-before.txt - && echo A-UNCHANGED
 grep -c '^HA_' .env                                              # 0: HA_ must NEVER be set on A
 # Permissions: stat first; the deploy user must keep READ access (every release runs compose as it).
@@ -654,7 +654,21 @@ for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do
 sudo -u "$DU" docker compose config -q && echo DEPLOY-READ-OK
 ```
 
-Expected: a line count above 0, `changed lines: 2` or more, `A-UNCHANGED`, `0`, and `DEPLOY-READ-OK`
+Expected (A's file as read 8 Nov: two blocks, the second already `${DATABASE_URL:-...}`):
+
+```
+line 16: DATABASE_URL -> HA_DATABASE_URL
+line 17: DIRECT_URL -> HA_DIRECT_URL
+line 77: DATABASE_URL -> HA_DATABASE_URL_2
+line 78: DIRECT_URL -> HA_DIRECT_URL_2
+changed lines: 4
+```
+
+(plus one line per `ANALYTICS_RO_DATABASE_URL` if the file sets it), then `A-UNCHANGED`, `0` and
+`DEPLOY-READ-OK`. Values that already hold `${...}` (lines 16-17 use `${POSTGRES_DB:-...}`, 77-78
+are `${DATABASE_URL:-...}` / `${DIRECT_URL:-${DATABASE_URL:-...}}`) are wrapped whole, e.g. line 78
+becomes `'${HA_DIRECT_URL_2:-${DIRECT_URL:-${DATABASE_URL:-...}}}'`: with no `HA_*` set, A
+resolves exactly as before, which `A-UNCHANGED` proves. Any other result:
 (no `DEPLOY-READ-OK`: the next release on A would fail; run `chgrp <DEPLOY_GROUP>` + `chmod 640` on the
 file it names, or post the error). `--all` hashes
 every env key of every service (the URLs included), each whole service definition and every
@@ -738,13 +752,24 @@ Afterwards `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh`.
 
 **S5.3 B's `.env` (backup first):** comment out the old `DATABASE_URL` / `DIRECT_URL` / `REDIS_URL`
 lines (they pointed at A), then append the generated lines (a `$` in the password is unescaped
-from compose's `$$`):
+from compose's `$$`). `--auto` finds every `HA_*` the compose uses, asks compose which service and
+key each feeds, and writes that key's CURRENT value on B with the host swapped to
+`sorento_crm_replica:5432` (database name and `?schema=public` kept). Expected on stderr:
+`wrote: HA_DATABASE_URL (<svc>.DATABASE_URL); HA_DIRECT_URL (<svc>.DIRECT_URL); HA_DATABASE_URL_2 (<svc>.DATABASE_URL); HA_DIRECT_URL_2 (<svc>.DIRECT_URL), REDIS_URL`
+and the name list `HA_DATABASE_URL HA_DIRECT_URL HA_DATABASE_URL_2 HA_DIRECT_URL_2`. A `note: ... feeds
+no service` is fine; a `STOP:` is not (post it). The compose file keeps A's public address as the
+last fallback of block 2: if B's `.env` ever lost `HA_*_2`, that block would aim at A's public
+5432, which S2.4 closes for good.
 
 ```bash
-cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov      # cp -p keeps owner and mode; re-run the S5.1c permissions block after this step
+cd /opt/sorento-crm2 && { [ -e .env.bak-08nov ] || cp -p .env .env.bak-08nov; }   # cp -p keeps owner and mode
+grep -c '^HA_' .env      # 0 (stop if not)
+# 1. Generate FIRST: block 2 (HA_*_2) still falls back to .env's DATABASE_URL, so read it before commenting it out.
+(umask 077; python3 -I /root/ha-env-for-replica.py --auto docker-compose.yml > /root/ha.env)
+# 2. Then comment out the old lines that pointed at A, append, and remove the scratch file.
 sed -i -E 's/^(DATABASE_URL|DIRECT_URL|REDIS_URL)=/#&/' .env
-grep -c '^HA_' .env      # 0
-docker compose --profile '*' config --format json | python3 -I /root/ha-env-for-replica.py >> .env
+cat /root/ha.env >> .env && shred -u /root/ha.env
+grep -o '^HA_[A-Z0-9_]*' .env    # the variable NAMES only
 ```
 
 **S5.3 check (B, read-only; prints key paths and masked hosts, never a password):**

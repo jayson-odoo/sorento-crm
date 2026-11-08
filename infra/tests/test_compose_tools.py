@@ -77,7 +77,8 @@ def test_rewrite_leaves_other_lines_alone(line):
 @pytest.mark.parametrize("line", [
     "  DATABASE_URL: *dburl",
     "  DATABASE_URL: &dburl postgresql://u:p@db:5432/d",
-    "  DATABASE_URL: ${DB:-postgresql://u:p@db:5432/d}",
+    "  DATABASE_URL: ${DB:-postgresql://u:p@db:5432/d",
+    "  DATABASE_URL: postgresql://u:p@db:5432/d}",
     '  DATABASE_URL: "postgresql://u:p\\tq@db/d"',
     '  DATABASE_URL: "postgresql://u:p@db/d" trailing',
     '  DATABASE_URL: "unterminated',
@@ -200,6 +201,16 @@ def compose_json(d):
     return r.stdout
 
 
+def auto_env(d):
+    """ha-env-for-replica.py --auto on node directory d; returns (stdout text, stderr)."""
+    out = d / "gen.env"
+    with open(out, "w") as fh:
+        p = subprocess.run([sys.executable, "-I", str(SCRIPTS / "ha-env-for-replica.py"), "--auto",
+                            str(d / "docker-compose.yml")], stdout=fh, stderr=subprocess.PIPE, text=True)
+    assert p.returncode == 0, p.stderr
+    return out.read_text(), p.stderr
+
+
 @needs_docker
 def test_round_trip_a_unchanged_and_b_reads_the_replica(tmp_path):
     a = tmp_path / "a"
@@ -213,10 +224,9 @@ def test_round_trip_a_unchanged_and_b_reads_the_replica(tmp_path):
     b = tmp_path / "b"
     b.mkdir()
     shutil.copy(a / "docker-compose.yml", b / "docker-compose.yml")
-    with open(b / ".env", "w") as fh:
-        r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "ha-env-for-replica.py")],
-                           input=compose_json(b), stdout=fh, stderr=subprocess.PIPE, text=True)
-    assert r.returncode == 0, r.stderr
+    text, err = auto_env(b)
+    assert "HA_DATABASE_URL_2 (worker.DATABASE_URL)" in err, err
+    (b / ".env").write_text(text)
     cfg = json.loads(compose_json(b))
     be = cfg["services"]["backend_blue"]["environment"]
     assert be["DATABASE_URL"] == be["DIRECT_URL"] == "postgresql://app:pa$$ss@sorento_crm_replica:5432/sorento"
@@ -242,3 +252,65 @@ def test_find_keys_catches_a_url_without_a_port():
     cfg = {"services": {"backend_blue": {"environment": {"X_URL": "postgresql://u:p@db/d"}}}}
     r = run("compose-find-keys", ["@pgbouncer", "@db:", "@db/"], json.dumps(cfg))
     assert "FOUND services.backend_blue.environment.X_URL" in r.stdout and "HITS: 1" in r.stdout
+
+
+# ------------------------------------------------------------------ 8 Nov: A's real shape (two blocks, nested ${...})
+
+A_SHAPE = """x-backend-env: &backend-env
+  DATABASE_URL: postgresql://app:pw@pgbouncer:5432/${POSTGRES_DB:-sorento_ai_automation}
+  DIRECT_URL: postgresql://app:pw@db:5432/${POSTGRES_DB:-sorento_ai_automation}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+x-other-env: &other-env
+  DATABASE_URL: ${DATABASE_URL:-postgresql://app:pw@203.0.113.9:5432/sorento_ai_automation?schema=public}
+  DIRECT_URL: ${DIRECT_URL:-${DATABASE_URL:-postgresql://app:pw@203.0.113.9:5432/sorento_ai_automation?schema=public}}
+services:
+  backend_blue:
+    image: busybox
+    environment:
+      <<: *backend-env
+  frontend_blue:
+    image: busybox
+    environment:
+      <<: *other-env
+"""
+
+
+def test_nested_values_get_numbered_names_and_a_line_map():
+    new, n = urls.rewrite(A_SHAPE)
+    assert n == 4
+    assert [(k, v) for _no, k, v in urls.rewrite.lines] == [
+        ("DATABASE_URL", "HA_DATABASE_URL"), ("DIRECT_URL", "HA_DIRECT_URL"),
+        ("DATABASE_URL", "HA_DATABASE_URL_2"), ("DIRECT_URL", "HA_DIRECT_URL_2")]
+    assert "'${HA_DIRECT_URL_2:-${DIRECT_URL:-${DATABASE_URL:-postgresql://app:pw@203.0.113.9:5432/" in new
+    again, n2 = urls.rewrite(new)
+    assert n2 == 0 and again == new
+
+
+@needs_docker
+def test_a_shape_round_trip(tmp_path):
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "docker-compose.yml").write_text(A_SHAPE)
+    (a / ".env").write_text("POSTGRES_DB=sorento_ai_automation\n")
+    before = run("compose-env-hash", ["--all"], compose_json(a)).stdout
+    r = run("compose-ha-urls", [str(a / "docker-compose.yml")])
+    assert "changed lines: 4" in r.stdout and "-> HA_DATABASE_URL_2" in r.stdout, r.stdout + r.stderr
+    assert run("compose-env-hash", ["--all"], compose_json(a)).stdout == before  # node A unchanged
+
+    # node B: same file; its .env still carries the old line that pointed at A's public address
+    b = tmp_path / "b"
+    b.mkdir()
+    shutil.copy(a / "docker-compose.yml", b / "docker-compose.yml")
+    (b / ".env").write_text("POSTGRES_DB=sorento_ai_automation\nDATABASE_URL=postgresql://app:pw@203.0.113.9:5432/sorento_ai_automation?schema=public\n")
+    gen, err = auto_env(b)   # BEFORE the old .env line is commented out (block 2 falls back to it)
+    assert "HA_DATABASE_URL_2 (frontend_blue.DATABASE_URL)" in err and "HA_DIRECT_URL (backend_blue.DIRECT_URL)" in err, err
+    gen = [gen]
+    env = (b / ".env").read_text().replace("\nDATABASE_URL=", "\n#DATABASE_URL=")
+    (b / ".env").write_text(env + "".join(gen))
+    cfg = json.loads(compose_json(b))
+    be, fe = cfg["services"]["backend_blue"]["environment"], cfg["services"]["frontend_blue"]["environment"]
+    assert be["DATABASE_URL"] == "postgresql://app:pw@sorento_crm_replica:5432/sorento_ai_automation"
+    assert fe["DATABASE_URL"] == "postgresql://app:pw@sorento_crm_replica:5432/sorento_ai_automation?schema=public"
+    assert fe["DIRECT_URL"] == fe["DATABASE_URL"]
+    hits = run("compose-find-keys", ["@pgbouncer", "@db:", "@db/", "203.0.113.9"], compose_json(b)).stdout
+    assert "HITS: 0" in hits, hits

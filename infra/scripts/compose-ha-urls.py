@@ -6,7 +6,7 @@ exactly the old value; node B sets them in its .env to reach its local replica.
 
 Handles plain, single-quoted and double-quoted values, a quoted list item, and a trailing
 `# comment` (kept after the new value). Anything it cannot parse safely is a STOP (exit 1, file
-untouched): anchors/aliases, a value that already uses ${...}, a double-quoted escape other than
+untouched): anchors/aliases/tags, unbalanced ${...}, a double-quoted escape other than
 \\" and \\\\, text after a closing quote that is not a comment.
 
 Usage: python3 -I compose-ha-urls.py docker-compose.yml   (rewrites in place; keep a backup)
@@ -62,19 +62,60 @@ def plain(rest):
     return m.group(1).rstrip(), (" " + m.group(2).strip()) if m.group(2) else ""
 
 
+def balanced(val):
+    """Every `}` closes a `${` opened before it (compose nests defaults: ${A:-${B:-x}})."""
+    depth, i = 0, 0
+    while i < len(val):
+        if val.startswith("$$", i):
+            i += 2
+            continue
+        if val.startswith("${", i):
+            depth += 1
+            i += 2
+            continue
+        if val[i] == "}":
+            depth -= 1
+            if depth < 0:
+                return False
+        i += 1
+    return depth == 0
+
+
+SEEN = {}
+
+
+def var_for(key, seen=None):
+    """1st occurrence of KEY in the file: HA_KEY; later ones HA_KEY_2, HA_KEY_3 (8 Nov: A's compose
+    has two blocks, x-backend-env and a second one that already reads ${DATABASE_URL:-...})."""
+    seen = SEEN if seen is None else seen
+    seen[key] = seen.get(key, 0) + 1
+    n = seen[key]
+    return "HA_%s" % key if n == 1 else "HA_%s_%d" % (key, n)
+
+
 def wrap(key, val):
     if not val:
         return None
-    if val[0] in "&*!" or "${" in val or "}" in val:
-        raise Stop("%s value is an anchor, alias, tag or already uses ${...}; edit it by hand" % key)
-    return "${HA_%s:-%s}" % (key, val)
+    if val[0] in "&*!":
+        raise Stop("%s value is an anchor, alias or tag; edit it by hand" % key)
+    if not balanced(val):
+        raise Stop("%s value has unbalanced ${...}; edit it by hand" % key)
+    var = var_for(key)
+    MAPPING.append((key, var))
+    return "${%s:-%s}" % (var, val)
+
+
+MAPPING = []
 
 
 def sq(s):
     return "'" + s.replace("'", "''") + "'"
 
 
-def rewrite_line(line):
+def rewrite_line(line, fresh=True):
+    """One line. Called alone (tests), names start again at HA_KEY; rewrite() numbers per file."""
+    if fresh:
+        SEEN.clear()
     m = MAP.match(line)
     if m:
         ind, key, sep, rest = m.groups()
@@ -87,6 +128,7 @@ def rewrite_line(line):
         else:
             val, com = plain(rest)
         if val.startswith("${HA_"):
+            var_for(key)  # keep the numbering stable on a re-run
             return line, False
         new = wrap(key, val)
         return ("%s%s: %s%s" % (ind, key, sq(new), com)), True
@@ -99,6 +141,7 @@ def rewrite_line(line):
         else:
             val, com = plain(rest)
         if val.startswith("${HA_"):
+            var_for(key)
             return line, False
         new = wrap(key, val)
         if new is None:
@@ -108,11 +151,16 @@ def rewrite_line(line):
 
 
 def rewrite(text):
-    out, n = [], 0
-    for line in text.split("\n"):
-        new, changed = rewrite_line(line)
+    SEEN.clear()
+    del MAPPING[:]
+    out, n, lines = [], 0, []
+    for no, line in enumerate(text.split("\n"), 1):
+        new, changed = rewrite_line(line, fresh=False)
         out.append(new)
         n += changed
+        if changed:
+            lines.append((no,) + MAPPING[-1])
+    rewrite.lines = lines
     return "\n".join(out), n
 
 
@@ -123,6 +171,8 @@ def main(path):
     except Stop as e:
         sys.exit("STOP: %s (file untouched)" % e)
     open(path, "w").write(new)
+    for no, key, var in rewrite.lines:
+        print("line %d: %s -> %s" % (no, key, var))
     print("changed lines:", n)
 
 
