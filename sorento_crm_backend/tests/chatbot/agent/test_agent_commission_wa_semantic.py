@@ -186,3 +186,38 @@ def test_S10_the_loop_runs_every_crm_query_through_query_as_asker(loop_db, monke
         assert sent == [{"entity": ENTITY, "agent": "Tan"}]
     else:
         assert sent == [{"entity": ENTITY, "agent": "Tan"}, {"entity": ENTITY}]
+
+
+def test_S11_a_colleagues_grouped_answer_shown_as_a_card_is_found_not_dropped():
+    """Review B1 on 740b01ce: "Tan's orders per month this year" is 12 groups, a code card whose summary for the model
+    carries `sample` and `total_groups`, not `groups`."""
+    from app.services.chatbot.agent.query_tools import as_card, query_as_asker
+
+    groups = [{"month": f"2026-{m:02d}", "count": m} for m in range(1, 13)]
+    data = {"entity": "order", "groups": groups, "total_groups": 12, "truncated": False,
+            "columns": [{"key": "month", "label": "Month", "group": True}, {"key": "count", "label": "Count"}]}
+    card = as_card(data, panel=True)
+    assert card is not None and "groups" not in card.data
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return card
+
+    args, out, note = query_as_asker({"entity": "order", "agent": "Tan", "group_by": ["month"]}, "Tan Wei Ming", run)
+    assert args["agent"] == "Tan" and note is None and len(calls) == 1
+
+
+@pytest.mark.parametrize("status", ["timeout", "invalid", "denied"])
+def test_S12_a_call_that_did_not_run_is_never_rerun_without_the_name(status):
+    from app.services.chatbot.agent.query_tools import query_as_asker
+    from app.services.chatbot.agent.tools import ToolResult
+
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return ToolResult(status, message="no")
+
+    args, out, note = query_as_asker({"entity": ENTITY, "agent": "Jayson"}, "Jayson Teh", run)
+    assert out.status == status and args["agent"] == "Jayson" and note is None and len(calls) == 1

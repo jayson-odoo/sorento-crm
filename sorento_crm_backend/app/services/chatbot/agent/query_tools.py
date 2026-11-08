@@ -427,10 +427,16 @@ def strip_self_agent(args: dict, user_name: str | None) -> tuple[dict, str | Non
 
 
 def _found_something(out: Any) -> bool:
+    """A call that ran found at least one row or group, read from any shape it returns: rows, groups, or a card's
+    summary (`as_card`: `sample`, `total` / `total_groups`, review on 740b01ce)."""
     data = getattr(out, "data", None)
     return getattr(out, "status", None) == "ok" and isinstance(data, dict) and bool(
-        data.get("rows") or data.get("groups") or data.get("total")
+        data.get("rows") or data.get("groups") or data.get("sample") or data.get("total") or data.get("total_groups")
     )
+
+
+#: The statuses of a call that ran; anything else (a refusal, a timeout) is never re-run without the name.
+_RAN = ("ok", "empty")
 
 
 def query_as_asker(args: dict, user_name: str | None, run) -> tuple[dict, Any, str | None]:
@@ -441,7 +447,7 @@ def query_as_asker(args: dict, user_name: str | None, run) -> tuple[dict, Any, s
     the message is never read (review on 8202e048)."""
     stripped, note = strip_self_agent(args, user_name)
     first = run(args)
-    if note is None or _found_something(first):
+    if note is None or getattr(first, "status", None) not in _RAN or _found_something(first):
         return args, first, None
     return stripped, run(stripped), note
 
