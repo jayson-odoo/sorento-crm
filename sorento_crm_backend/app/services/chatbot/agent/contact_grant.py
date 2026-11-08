@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.services.chatbot.agent import writes
+from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
 
@@ -68,41 +69,89 @@ def _new_contact(phone: str, name: str) -> SimpleNamespace:
     return out
 
 
-def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]) -> list:
-    """The customers the row names, read under the user's companies (the caller set that scope). A code is exact
-    (case and spaces aside); a name is exact (case and spaces aside) with exactly one match. A customer of a company
-    the row does not name is refused: an account links only to a contact of its own company (sheet rule)."""
+MAX_CHOICES = 10
+
+
+def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]) -> tuple[list, list[str], list[dict]]:
+    """(customers, problems, choices) for what the row names, read under the user's companies (the caller set that
+    scope). A code is exact (case and spaces aside). A name is exact (case and spaces aside) with exactly one match in
+    the row's companies; otherwise the active accounts of those companies whose name CONTAINS the written text are
+    offered as a pick (never linked on their own, even one). A customer of a company the row does not name is
+    refused: an account links only to a contact of its own company (sheet rule)."""
     from sqlalchemy import func
 
-    from app.models.order import Customer
-
     from app.models.company import Company
+    from app.models.order import Customer
 
     code_of = {str(cid): code for cid, code in db.query(Company.id, Company.code)}
     wanted = set(companies)
+    mine_ids = set(company_ids.values())
     out: dict[str, Any] = {}
+    problems: list[str] = []
+    choices: list[dict] = []
 
-    def keep(rows: list, said: str, kind: str) -> None:
+    def keep(rows: list, said: str, kind: str) -> bool:
+        """True when `rows` linked one account; else records the reason and returns False."""
         if not rows:
-            raise _refuse(f"No customer with the {kind} \"{said}\" in your companies.")
+            problems.append(f"No customer with the {kind} \"{said}\" in your companies.")
+            return False
         mine = [r for r in rows if code_of.get(str(r.company_id)) in wanted]
         if not mine:
             where = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in rows}))
-            raise _refuse(f"\"{said}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
+            problems.append(f"\"{said}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
+            return False
         if len(mine) > 1:
-            raise _refuse(f"More than one customer has the {kind} \"{said}\"; give its customer code.")
+            problems.append(f"More than one customer has the {kind} \"{said}\"; give its customer code.")
+            return False
         out[str(mine[0].id)] = mine[0]
+        return True
 
     columns = (Customer.id, Customer.customer_code, Customer.customer_name, Customer.company_id)
     for code in dict.fromkeys(_clean(c) for c in args.get("customer_codes") or []):
         if code:
             keep(db.query(*columns).filter(func.lower(func.trim(Customer.customer_code)) == code.lower()).all(),
                  code, "code")
+    norm = func.lower(func.regexp_replace(func.trim(Customer.customer_name), r"\s+", " ", "g"))
     for name in dict.fromkeys(_clean(n) for n in args.get("customer_names") or []):
-        if name:
-            norm = func.lower(func.regexp_replace(func.trim(Customer.customer_name), r"\s+", " ", "g"))
-            keep(db.query(*columns).filter(norm == name.lower()).all(), name, "name")
-    return list(out.values())
+        if not name:
+            continue
+        exact = [r for r in db.query(*columns).filter(norm == name.lower()).all() if str(r.company_id) in mine_ids]
+        if len(exact) == 1:
+            out[str(exact[0].id)] = exact[0]
+            continue
+        contains = (
+            db.query(*columns).filter(Customer.is_active.is_(True), func.strpos(norm, name.lower()) > 0)
+        )
+        found = contains.filter(Customer.company_id.in_(mine_ids)).order_by(Customer.customer_code).limit(MAX_CHOICES + 1).all()
+        if found:
+            choices.append({
+                "written": name, "company": ", ".join(companies),
+                "candidates": [{"code": r.customer_code, "name": r.customer_name} for r in found[:MAX_CHOICES]],
+                "more": len(found) > MAX_CHOICES,
+            })
+            continue
+        elsewhere = contains.with_entities(Customer.company_id).distinct().all()
+        if elsewhere:
+            where = _company_words(sorted({code_of.get(str(r.company_id), "another company") for r in elsewhere}))
+            problems.append(f"\"{name}\" is a {where} customer, but the row's company is {_company_words(companies)}.")
+        else:
+            problems.append(f"No customer named \"{name}\" in your companies.")
+    return list(out.values()), problems, choices
+
+
+def _fits(choice: dict) -> str:
+    n = len(choice["candidates"])
+    count = "more than 10 accounts" if choice.get("more") else f"{n} account{'' if n == 1 else 's'}"
+    return f"\"{choice['written']}\" fits {count}"
+
+
+class NeedsChoice(AppException):
+    """A row whose only problem is that a written customer name fits several accounts: the batch tool asks the user
+    to pick. `choices` = [{"written", "company", "candidates": [{"code", "name"}], "more"}]."""
+
+    def __init__(self, choices: list[dict]):
+        super().__init__(status_code=409, message="Which account? " + "; ".join(_fits(c) for c in choices), code="NEEDS_CHOICE")
+        self.choices = choices
 
 
 def _find_contact(db, phone: str):
@@ -137,27 +186,38 @@ def plan(db, user: dict, args: dict) -> dict:
     from app.services.contact_customer_service import list_links
 
     uid = str(user["id"])
+    problems: list[str] = []
     phone = engine.normalise_phone(args.get("phone"))
     if phone is None:
-        raise _refuse(f"\"{_clean(args.get('phone'))}\" is not a Malaysian mobile phone number.")
+        problems.append(f"Phone \"{_clean(args.get('phone'))}\" is not a Malaysian mobile number.")
     name = _clean(args.get("name"))[:255]
     role = args.get("role")
     if role not in ("owner", "employee"):
         # The model reads the access word; a word that is neither role is never forced into one (owner card Q3).
         said = _clean(args.get("access_as_written"))[:60] or "not given"
-        raise _refuse(f"Unknown access: {said}.")
+        problems.append(f"Unknown access: {said}.")
     companies = list(dict.fromkeys(_clean(c).upper() for c in args.get("companies") or []))
     unknown = [c for c in companies if c not in sheet.TEMPLATE["companies"].values()]
+    company_ids: dict[str, str] = {}
+    customers: list = []
+    choices: list[dict] = []
     if unknown or not companies:
-        raise _refuse("Name the company as SRT (Sorento) or MCH (Mocha).")
-    companies = [c for c in sheet.COMPANY_ORDER if c in companies]
-    company_ids = {code: str(cid) for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(companies))}
-    scope = get_company_scope(db)
-    outside = [c for c in companies if c not in company_ids or (isinstance(scope, frozenset) and company_ids[c] not in scope)]
-    if outside:
-        raise _refuse(f"{_company_words(outside)} is not one of your companies.")
-
-    customers = _customers(db, args, companies, company_ids)
+        problems.append("Name the company as SRT (Sorento) or MCH (Mocha).")
+    else:
+        companies = [c for c in sheet.COMPANY_ORDER if c in companies]
+        company_ids = {code: str(cid) for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(companies))}
+        scope = get_company_scope(db)
+        outside = [c for c in companies if c not in company_ids or (isinstance(scope, frozenset) and company_ids[c] not in scope)]
+        if outside:
+            problems.append(f"{_company_words(outside)} is not one of your companies.")
+        else:
+            customers, found, choices = _customers(db, args, companies, company_ids)
+            problems += found
+    if problems:
+        problems += [_fits(c) for c in choices]
+        raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
+    if choices:
+        raise NeedsChoice(choices)
     contact = _find_contact(db, phone)
     # Only what everyone acting may set on screen: the linked user and the console operator (security review B1).
     acting = dict.fromkeys(i for i in (uid, user.get("operator_user_id")) if i)
