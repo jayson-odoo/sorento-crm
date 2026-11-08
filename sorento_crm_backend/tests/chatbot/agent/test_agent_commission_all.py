@@ -597,21 +597,22 @@ def test_G1b_a_two_row_payout_table_is_code_rendered_and_survives_the_models_own
     assert "| ZZT SK | 182,413.18 |" not in text and "TGT-000064" in text and "182,413.18" in text
 
 
-def test_G2_the_asking_users_own_name_is_never_the_agent_unless_they_said_my():
-    """Q2 run 1: the first call filtered agent = the asking user's own name and found nothing."""
+def test_G2_the_asking_users_own_name_is_never_the_agent_unless_the_model_says_it_is_about_them():
+    """Q2 run 1: the first call filtered agent = the asking user's own name and found nothing. "my" / "for Jayson"
+    is the model's `about_self`, never a word read from the message (AGENT-COMMISSION-WA, owner rule)."""
     from app.services.chatbot.agent.query_tools import strip_self_agent
 
     args = {"entity": ENTITY, "agent": "Jayson", "period": "2026"}
-    kept, note = strip_self_agent(args, "Jayson Teh", "commission payout per dealer this year")
+    kept, note = strip_self_agent(args, "Jayson Teh")
     assert "agent" not in kept and kept["period"] == "2026" and "your own name" in note
     filt = {"entity": ENTITY, "filters": [{"field": "owner", "op": "eq", "value": "jayson teh"},
                                           {"field": "owner_kind", "op": "eq", "value": "dealer"}]}
-    kept, note = strip_self_agent(filt, "Jayson Teh", "payout per dealer")
+    kept, note = strip_self_agent(filt, "Jayson Teh")
     assert kept["filters"] == [{"field": "owner_kind", "op": "eq", "value": "dealer"}] and note
-    for said in ("what is my commission payout", "commission for Jayson this year"):
-        kept, note = strip_self_agent(args, "Jayson Teh", said)
-        assert kept == args and note is None
-    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Agent B"}, "Jayson Teh", "payout to agent b")
+    mine = {**args, "about_self": True}
+    kept, note = strip_self_agent(mine, "Jayson Teh")
+    assert kept == mine and note is None
+    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Agent B"}, "Jayson Teh")
     assert kept["agent"] == "Agent B" and note is None
 
 
@@ -667,8 +668,12 @@ def test_K1_an_empty_first_call_on_the_askers_name_never_hides_the_second_calls_
     table, the reply was the total only. The user never named the asker: the table must show."""
     from app.services.chatbot.agent.query_tools import shape_reply
 
+    from app.services.chatbot.agent.query_tools import strip_self_agent
+
+    # As the loop records it: the asker's name is stripped before the call runs (no text is read for it).
+    first, _note = strip_self_agent({"entity": ENTITY, "agent": "Jayson"}, "Jayson Teh")
     ledger = {
-        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "Jayson"},
+        "q1": {"name": "crm_query", "status": "ok", "args": first,
                "data": {"entity": ENTITY, "rows": [], "total": 0}, "display": None},
         "q2": {"name": "crm_query", "status": "ok",
                "args": {"entity": ENTITY, "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]},
@@ -679,16 +684,17 @@ def test_K1_an_empty_first_call_on_the_askers_name_never_hides_the_second_calls_
     assert "DEALER TABLE" in text and text.startswith("Total dealer payout")
 
 
-def test_K1b_the_askers_name_in_any_order_or_part_is_stripped_without_my():
+def test_K1b_the_askers_name_in_any_order_or_part_is_stripped_unless_about_self():
     from app.services.chatbot.agent.query_tools import strip_self_agent
 
     for said_agent in ("Teh", "teh jayson", "Jayson Teh", "JAYSON"):
-        kept, note = strip_self_agent({"entity": ENTITY, "agent": said_agent}, "Jayson Teh", "payout per dealer this year")
+        kept, note = strip_self_agent({"entity": ENTITY, "agent": said_agent}, "Jayson Teh")
         assert "agent" not in kept and note, said_agent
-    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Teh"}, "Jayson Teh", "saya punya commission")
+    # "saya punya commission": the model's about_self, in any language.
+    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Teh", "about_self": True}, "Jayson Teh")
     assert kept["agent"] == "Teh" and note is None
     # Another person who only shares a word is not the asker.
-    kept, _ = strip_self_agent({"entity": ENTITY, "agent": "Jayson Lim"}, "Jayson Teh", "payout to jayson lim")
+    kept, _ = strip_self_agent({"entity": ENTITY, "agent": "Jayson Lim"}, "Jayson Teh")
     assert kept["agent"] == "Jayson Lim"
 
 
