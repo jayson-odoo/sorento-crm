@@ -496,7 +496,10 @@ def test_history_empty_for_a_product_with_no_history(api, db):
 def test_history_limit_is_bounded(api, db):
     pid = _mk_product(db, f"{STEM}-LIM")
     db.commit()
-    assert _history(api, pid, limit=101).status_code == 422
+    from app.schemas.common import MAX_PAGE_LIMIT
+
+    assert _history(api, pid, limit=MAX_PAGE_LIMIT).status_code == 200
+    assert _history(api, pid, limit=MAX_PAGE_LIMIT + 1).status_code == 422
     assert _history(api, pid, page=0).status_code == 422
 
 
