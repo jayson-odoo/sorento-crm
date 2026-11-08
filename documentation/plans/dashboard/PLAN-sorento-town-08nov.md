@@ -1,6 +1,6 @@
 # PLAN: Sorento Town (2.5D daily overview, cached snapshot)
 
-Status: card answered 8 Nov 13:55 MYT (1a 2a 3a 4a 5a 6a, all recommendations). Step 2 (mock) and Phase 0 (snapshot backend, tester-first) in progress. Track: L (feature lane; new screen + new background job + new table). No code yet.
+Status: Phase 0 built (tests/town green), review round 1 fixes in progress; phase 1 screen waits for the owner mock OK. Track: L.
 
 Lane: SORENTO-TOWN. Owner go: 8 Nov 2026 ~13:35 MYT. Research: crew report of 8 Nov (embedded in the lane brief).
 
@@ -106,14 +106,14 @@ the auth allowlist (sessions, users, roles, permissions, company grants).
   "schema": 1, "company_id": "...", "day": "2026-11-03",
   "as_of": "2026-11-03T15:42:00+08:00", "data_as_of": "<max billing_documents.last_synced_at, ISO or null>",
   "phase": "day | night",                       // night when as_of >= 22:00 MYT
-  "today": {"amount": "671985.50", "invoice_count": 237, "credit_note_count": 1, "customer_count": 110},
+  "today": {"amount": "512345.60", "invoice_count": 237, "credit_note_count": 1, "customer_count": 110},
   "shops": [
-    {"key": "<customer_id>", "code": "300-Y020", "name": "YI HONG TILING SDN BHD [A/C III]",
+    {"key": "<customer_id>", "code": "300-X001", "name": "EXAMPLE TILES SDN BHD [A/C III]",
      "account_label": "A/C III", "kind": "shop", "rank": 1,
-     "ninety_day_amount": "148214.94", "today_amount": "27028.40", "today_docs": 3}
+     "ninety_day_amount": "123456.78", "today_amount": "20111.40", "today_docs": 3}
     // kind "stall": Dealer-type customer invoiced today, outside the top 30; rank null
   ],
-  "warehouses": [{"pool": "BRW", "on_hand": 901681, "available": 900000, "locations": 24}],
+  "warehouses": [{"pool": "WH01", "on_hand": 800000, "available": 900000, "locations": 24}],
   "reorder": {"below_count": 1749, "set_count": 11307},
   "approvals": {"total": 1, "purchase_requests": 1, "quotation_documents": 0}
 }

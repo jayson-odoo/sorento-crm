@@ -142,9 +142,9 @@ def test_ac3_sales_reports_view_holder_gets_amounts(db, stored):
         r = client.get(URL)
     assert r.status_code == 200
     body = r.json()
-    assert body["today"]["amount"] == "671985.50"
-    assert body["shops"][0]["today_amount"] == "27028.40"
-    assert body["shops"][0]["ninety_day_amount"] == "148214.94"
+    assert body["today"]["amount"] == "512345.60"
+    assert body["shops"][0]["today_amount"] == "20111.40"
+    assert body["shops"][0]["ninety_day_amount"] == "123456.78"
 
 
 @pytest.mark.parametrize("role", ["admin", "superadmin"])
@@ -154,7 +154,7 @@ def test_ac3_admin_and_superadmin_get_amounts_without_the_slug(db, stored, role)
     with _real_rbac_client(db, principal) as client:
         r = client.get(URL)
     assert r.status_code == 200
-    assert r.json()["today"]["amount"] == "671985.50"
+    assert r.json()["today"]["amount"] == "512345.60"
 
 
 def test_ac3_a_signed_in_user_with_no_role_at_all_is_redacted_not_refused(db, stored):
@@ -180,7 +180,7 @@ def test_ac4_wallboard_mode_has_no_name_or_code(db, stored):
         assert {"rank", "kind", "account_label", "today_docs"} <= set(shop)
     for text in ("ZZT Tiling One", "ZZT-S001", "ZZT Stall Three"):
         assert text not in r.text
-    assert body["today"]["amount"] == "671985.50"  # wallboard strips names only; amounts follow the holder
+    assert body["today"]["amount"] == "512345.60"  # wallboard strips names only; amounts follow the holder
     assert "name" in personal.json()["shops"][0]  # the signed-in personal view keeps names
 
 
@@ -239,7 +239,7 @@ def test_a_redacted_users_etag_does_not_validate_a_full_body(db, stored):
     with _client(db, principal, allow=(SLUG,)) as client:
         r = client.get(URL, headers={"If-None-Match": red_etag})
     assert r.status_code == 200
-    assert r.json()["today"]["amount"] == "671985.50"
+    assert r.json()["today"]["amount"] == "512345.60"
 
 
 def test_a_new_snapshot_version_is_a_new_etag_not_a_304(db, stored):

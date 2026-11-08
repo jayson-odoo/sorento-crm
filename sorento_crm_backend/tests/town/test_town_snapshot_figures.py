@@ -193,7 +193,7 @@ def test_ac5_credit_note_reduces_the_ninety_day_amount(db):
 
 
 def test_ac5_account_label_parsed_from_the_bracket_suffix(db):
-    labelled = cust(db, name="ZZT YI HONG TILING SDN BHD [A/C III]")
+    labelled = cust(db, name="ZZT EXAMPLE TILES SDN BHD [A/C III]")
     plain = cust(db, name="ZZT PLAIN TILING SDN BHD")
     dealer_doc(db, labelled, "200.00", DAY - timedelta(days=3))
     dealer_doc(db, plain, "100.00", DAY - timedelta(days=3))
