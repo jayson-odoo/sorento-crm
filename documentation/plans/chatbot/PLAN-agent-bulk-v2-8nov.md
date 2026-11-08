@@ -1,6 +1,6 @@
 # PLAN: Agent bulk actions v2, make #2226 work well (AGENT-BULK-V2)
 
-Status: Merge-ready pending owner hand test + crew live x3 (picker Q2 a built; reviewer + security READY; crew-tests 3349/0 on 75a77c764e). Track: full (agent write path).
+Status: Merge-ready pending crew live re-run P1-P6 x3 + owner hand test (live-run fix round V22-V26 built; reviewer READY; crew-tests 3357/0 on 60441885a2). Track: full (agent write path).
 
 Follow-up to merged #2226 (`PLAN-agent-bulk-actions-7nov.md`). Owner beta feedback 7-8 Nov: "it didn't really work
 well". This lane maps today's flow, reads the owner's failing sessions as masked evidence, files ONE behaviour card,
