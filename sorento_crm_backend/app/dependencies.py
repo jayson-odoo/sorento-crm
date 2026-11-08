@@ -61,13 +61,13 @@ def _load_user_and_contact(db: Session, user_id: str) -> tuple[Optional[dict], O
         db.query(UserRole.slug)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
         .filter(UserRoleAssignment.user_id == user_id)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .first()
     )
     role_id = (
         db.query(UserRoleAssignment.role_id)
         .filter(UserRoleAssignment.user_id == user_id)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .first()
     )
     return {

@@ -1135,15 +1135,31 @@ class UserService:
         return out
 
     def set_user_roles(self, user_id: str, role_ids: list[str]) -> dict:
-        """Replace user's role assignments with the given role_ids."""
+        """Make the user's role assignments equal ``role_ids`` (unknown ids skipped).
+
+        Diffs against the existing rows rather than delete-all + re-add: a kept role keeps
+        its row (id and ``assigned_at``), so saving Edit user with the same roles cannot
+        move the primary role (USER-ROLES-STABLE). Only added roles are inserted and only
+        removed ones deleted.
+        """
         self.get_user(user_id)
-        self.db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user_id).delete(
-            synchronize_session=False
-        )
-        self.db.flush()
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
+        wanted = list(dict.fromkeys(str(r) for r in (role_ids or []) if r))
+        if wanted:
+            known = {
+                str(r[0]) for r in self.db.query(UserRole.id).filter(UserRole.id.in_(wanted)).all()
+            }
+            wanted = [r for r in wanted if r in known]
+        existing = {
+            str(a.role_id): a
+            for a in self.db.query(UserRoleAssignment)
+            .filter(UserRoleAssignment.user_id == user_id)
+            .all()
+        }
+        for role_id, row in existing.items():
+            if role_id not in wanted:
+                self.db.delete(row)
+        for role_id in wanted:
+            if role_id not in existing:
                 self.db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
         self.db.commit()
         return {"message": "User roles updated successfully"}
@@ -1162,24 +1178,31 @@ class UserService:
         return [{"id": str(c.id), "name": c.name, "code": c.code} for c in rows]
 
     def set_user_companies(self, user_id: str, company_ids: list[str]) -> dict:
-        """Replace a user's company grants with the given ids (unknown ids skipped).
+        """Make a user's company grants equal the given ids (unknown ids skipped).
 
         If the user's ``last_active_company_id`` is no longer in the resulting set,
         repoint it to the first remaining grant (deterministic) or null it.
         """
         from app.models.company import Company, UserCompany
         user = self.get_user(user_id)
-        self.db.query(UserCompany).filter(UserCompany.user_id == user_id).delete(
-            synchronize_session=False
-        )
-        self.db.flush()
+        wanted = list(dict.fromkeys(str(c) for c in (company_ids or []) if c))
         granted: list[str] = []
-        for cid in company_ids or []:
-            if cid in granted:
-                continue
-            if self.db.query(Company).filter(Company.id == cid).first():
+        if wanted:
+            known = {
+                str(r[0]) for r in self.db.query(Company.id).filter(Company.id.in_(wanted)).all()
+            }
+            granted = [c for c in wanted if c in known]
+        # Diff, not delete-all + re-add: kept grants keep their row (USER-ROLES-STABLE).
+        existing = {
+            str(g.company_id): g
+            for g in self.db.query(UserCompany).filter(UserCompany.user_id == user_id).all()
+        }
+        for cid, row in existing.items():
+            if cid not in granted:
+                self.db.delete(row)
+        for cid in granted:
+            if cid not in existing:
                 self.db.add(UserCompany(company_id=cid, user_id=user_id))
-                granted.append(cid)
         if str(user.last_active_company_id or "") not in granted:
             user.last_active_company_id = granted[0] if granted else None
         self.db.commit()
