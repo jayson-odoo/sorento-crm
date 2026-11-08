@@ -23,9 +23,13 @@ SKIPPED_HEAD = "Not changed:"
 NEEDS_HEAD = "Needs your choice:"
 PREVIEW_TAIL = "Reply yes to go ahead, or tell me what to change."
 CHOICE_TAIL = "Reply with the account code(s) for each row under Needs your choice, all, or skip."
+TAG_CHOICE_TAIL = "Reply with the tag name(s) for each row under Needs your choice, all, or skip."
+#: The arguments whose values are picks from a Needs your choice list (grant: account codes; tags: tag names).
+PICK_ARGS = ("customer_codes", "tags_add", "tags_remove")
 READY_NOW = " Or reply yes to confirm the ready rows now."
 NOTHING_TAIL = "Nothing can change yet; fix the rows above and send the table again."
 MORE_NOTE = "more than 10 accounts match; give a longer name or the code"
+TAG_MORE_NOTE = "more than 10 tags match; give a longer name"
 
 
 def batchable_writes(db, ctx) -> list[writes.WriteDef]:
@@ -59,7 +63,9 @@ def schema_for(db, ctx) -> dict | None:
                 "waiting row (codes, or all) and do not repeat the table. When the user picks accounts for waiting "
                 "rows (codes; 'all' = every listed account of that row; 'skip' = leave the row out), call this again "
                 "with the WHOLE table, every row's `row` kept and the picked codes in customer_codes (no "
-                "customer_names for those rows). Nothing changes until the user confirms. Call it again with "
+                "customer_names for those rows). A tag name that is not exactly a tag waits the same way with the "
+                "tags containing it; the picked tag names go in tags_add / tags_remove, the row's other tags kept. "
+                "Nothing changes until the user confirms. Call it again with "
                 "corrected "
                 "rows to replace the proposal."
             ),
@@ -84,11 +90,12 @@ def _cells(definition: writes.WriteDef, args: Any, shown: dict | None, summary: 
 def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str) -> str | None:
     """The skip reason when a row picks a code that neither the last table turn listed for this phone nor the user
     typed this turn; None when every code is allowed (or the row picks nothing)."""
-    codes = args.get("customer_codes")
+    codes = [c for name in PICK_ARGS if isinstance(args.get(name), list) for c in args[name]]
     mine = [p for p in previous if key is not None and p.get("key") == key]
-    if not mine or not isinstance(codes, list) or not codes:
+    if not mine or not codes:
         return None
-    listed = {str(c).strip().lower() for p in mine for c in p.get("codes") or []}
+    # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick.
+    listed = {" ".join(str(c).split()).lower() for p in mine for c in [*(p.get("codes") or []), *(p.get("kept") or [])]}
     typed = " ".join(str(user_text or "").split()).lower()
     for code in codes:
         said = " ".join(str(code).split())
@@ -202,7 +209,8 @@ def propose(
                 "invalid", data=data,
                 message=(
                     "No row is ready. The user sees the tables of rows that need a choice and rows not changed. "
-                    "Ask which account(s) to use for each waiting row (codes, or all); do not repeat the tables."
+                    "Ask which account(s) or tag(s) to use for each waiting row (codes or tag names, or all); do not "
+                    "repeat the tables."
                 ),
             )
         return ToolResult("invalid", data=data, message="No row can be changed; tell the user why, row by row.")
@@ -212,7 +220,7 @@ def propose(
         message=(
             "Proposed, not done. The user sees the preview table and must confirm in a later message. "
             "Say in one line how many rows will change and how many are skipped or waiting; do not repeat the "
-            "table. When needs_choice is not empty, ask which account(s) to use for each waiting row (codes, or all)."
+            "table. When needs_choice is not empty, ask which account(s) or tag(s) to use for each waiting row (codes or tag names, or all)."
         ),
     )
 
@@ -253,6 +261,7 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
         body = [[s.get("row", n)] + [(s.get("cells") or {"Change": s.get("summary")}).get(h, "") for h in headers]
                 for n, s in enumerate(steps, 1)]
         parts += [PREVIEW_HEAD, _table(["#", *headers], body, uncapped=("Will change",))]
+    tags = bool(waiting) and all(w.get("noun") == "tag" for w in waiting)
     if waiting:
         heads = list(dict.fromkeys(k for w in waiting for k in w.get("cells") or {}))
         rows: list[list[Any]] = []
@@ -261,16 +270,16 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
             for i, c in enumerate(w["candidates"]):
                 first = i == 0
                 rows.append([w["row"], *cells] if first else [w["row"], *[""] * len(heads)])
-                rows[-1] += [w["written"] if first else "", f"{c['code']} {c['name']}"]
+                rows[-1] += [w["written"] if first else "", f"{c['code']} {c['name']}".strip()]
             if w.get("more"):
-                rows.append([w["row"], *[""] * len(heads), "", MORE_NOTE])
-        parts += [NEEDS_HEAD, _table(["#", *heads, "You wrote", "Account"], rows)]
+                rows.append([w["row"], *[""] * len(heads), "", MORE_NOTE if not tags else TAG_MORE_NOTE])
+        parts += [NEEDS_HEAD, _table(["#", *heads, "You wrote", "Tag" if tags else "Account"], rows)]
     if skipped:
         heads = list(dict.fromkeys(k for s in skipped for k in s.get("cells") or {}))
         rows = [[s["row"]] + [(s.get("cells") or {}).get(h, "") for h in heads] + [s["reason"]] for s in skipped]
         parts += [SKIPPED_HEAD, _table(["#", *heads, "Why"], rows)]
     if waiting:
-        parts.append(CHOICE_TAIL + (READY_NOW if steps else ""))
+        parts.append((TAG_CHOICE_TAIL if tags else CHOICE_TAIL) + (READY_NOW if steps else ""))
     else:
         parts.append(PREVIEW_TAIL if steps else NOTHING_TAIL)
     return "\n\n".join(parts)

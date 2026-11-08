@@ -267,7 +267,7 @@ def test_04_a_waiting_row_keeps_its_exact_tags_so_a_repropose_needs_no_retyping(
     tag_(db, f"{s} Project Salesperson")
     person = dealer(db, w)
 
-    first = [numbered(row_(person.phone_number, add=[exact.name, f"{s} salesperson"]), 1)]
+    first = [numbered(row_(person.phone_number, add=[exact.name, "salesperson"]), 1)]
     r1 = say(db, w, first, "tag these people")
     assert r1.pending_action is None and NEEDS in r1.reply_text and TAG_TAIL in r1.reply_text
 
@@ -286,7 +286,7 @@ def test_04_a_tag_neither_listed_nor_kept_nor_typed_is_not_changed(db):
     other = tag_(db, f"{s} Admin")
     person = dealer(db, w)
 
-    say(db, w, [numbered(row_(person.phone_number, add=[f"{s} salesperson"]), 1)], "tag this person")
+    say(db, w, [numbered(row_(person.phone_number, add=["salesperson"]), 1)], "tag this person")
     result = say(db, w, [numbered(row_(person.phone_number, add=[other.name]), 1)], "ok go ahead")
 
     assert result.pending_action is None
@@ -344,7 +344,7 @@ def test_05_a_missing_tag_next_to_an_ambiguous_one_is_not_changed_not_waiting(db
     tag_(db, f"{s} Project Salesperson")
     person = dealer(db, w)
 
-    steps, skipped, waiting = propose_rows(db, w, [row_(person.phone_number, add=[f"{s} Gold", f"{s} salesperson"])])
+    steps, skipped, waiting = propose_rows(db, w, [row_(person.phone_number, add=[f"{s} Gold", "salesperson"])])
 
     assert steps == [] and waiting == []
     r = reason_of(skipped, 1)
@@ -434,7 +434,7 @@ def test_08_the_reply_is_the_code_built_tables_with_tag_wording(db):
     a, b, c = dealer(db, w), dealer(db, w), dealer(db, w)
     rows = [
         numbered(row_(a.phone_number, add=[ready.name]), 1),
-        numbered(row_(b.phone_number, add=[f"{s} salesperson"]), 2),
+        numbered(row_(b.phone_number, add=["salesperson"]), 2),
         numbered(row_(c.phone_number, add=[f"{s} Gold"]), 3),
     ]
 
