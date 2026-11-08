@@ -322,6 +322,13 @@ class Product(Base, CompanyScopedMixin):
     # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag, never
     # touched by the AutoCount masters push (`remark` above is the same shape
     # for AutoCount's own text - the two never overwrite each other).
+    # PRICETAG-ACCESSORY-DESIGNER S6: this product's own "Accessories included" box style (a saved
+    # accessories template); NULL = the tag template's own box. Cleared when the template is deleted.
+    accessory_box_preset_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.accessory_box_preset.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     price_tag_description = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
