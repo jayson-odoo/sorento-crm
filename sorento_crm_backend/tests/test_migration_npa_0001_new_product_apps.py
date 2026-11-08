@@ -7,12 +7,26 @@ compare against the migration's own column list.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADDED_BY_NPA_0002 = {
     "dimension", "material", "thickness", "packing", "lead_time", "feedback_by", "feedback_at",
 }
+
+# NPA-FROM-SI (#2233, migration npasi_0001_lineage) added the purchasing new-code columns to the
+# header table. Read from that migration's own DDL, table-qualified, so a column is only excused
+# here when the later migration really adds it to new_product_applications.
+LATER_MIGRATIONS = ("npasi_0001_lineage",)
+
+
+def _added_by_later_migrations(table: str) -> set[str]:
+    added: set[str] = set()
+    for name in LATER_MIGRATIONS:
+        source = (ROOT / "alembic" / "versions" / f"{name}.py").read_text()
+        added |= set(re.findall(rf"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS (\w+) ", source))
+    return added
 
 
 def _load(name: str):
@@ -42,7 +56,10 @@ def test_migration_creates_every_model_column():
 
     source = (ROOT / "alembic" / "versions" / "npa_0001_new_product_apps.py").read_text()
     for model in (NewProductApplication, NewProductApplicationLine):
+        later = _added_by_later_migrations(model.__tablename__)
         for column in model.__table__.columns:
             if column.name in ADDED_BY_NPA_0002:
                 continue  # v4 columns live in npa_0002_paper_layout (its own test checks them)
+            if column.name in later:
+                continue  # added by a later migration (LATER_MIGRATIONS), found in its DDL
             assert f"            {column.name} " in source, (model.__tablename__, column.name)
