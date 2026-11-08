@@ -10,8 +10,12 @@ Inputs, nothing else:
   and 20 as that file asserts them), which are the owner's Expected list of the 7 Nov 04:41 crew-handtest on #2209;
 * the L0 gold rows whose engine outcome an existing test asserts (`GOLD` below, with the test that asserts it).
 
-No expectation is new. `expect.route_params` names values as shown (company name, brand code, agent name), never
-ids, so the agent's `crm_report_ask` (W5) can replay the same rows; an absent key is a slot the step does not decide.
+No expectation is new. `expect.route_params` names values as shown (company name, brand NAME upper-cased, agent
+name, supplier code), never ids, so the agent's `crm_report_ask` (W5) can replay the same rows; an absent key is a
+slot the step does not decide. Brands compare by name only: the test world holds two brands named Sorento, so the
+number of ids behind one name is the world's, not the owner's. Every live row also pins basis delivered and the
+1-30 Sep 2026 period (the owner's Expected: "Delivered, 1-30 Sep 2026", and "period and basis stay"), one step past
+`test_report_filter_all_live._check`, which checks basis and date_from.
 """
 from __future__ import annotations
 
@@ -119,7 +123,7 @@ def _live_rows() -> tuple[list[dict[str, Any]], bool]:
         head, run, step = r["head"], str(r["run"]), str(r["step"])
         prompt = r.get("prompt_md5") or md5(V72 if step.startswith("18.") and head in (EXPECTATION_HEAD, SEED_HEAD) else CANDIDATE)
         expect, parse, skip = _expect(step)
-        if head == SEED_HEAD:  # seed rows are replayed for their state, never asserted
+        if head == SEED_HEAD:  # seed rows are kept as data (counted, never replayed or asserted)
             expect, skip = None, None
         row: dict[str, Any] = {
             "head": head, "run": run, "step": step, "section": SECTION.get(step, "1"),
@@ -163,9 +167,13 @@ GOLD = {
     "fa-36": ("parser_report_filter_all", "test_report_filter_all.py::test_fa36_the_gold_step1_object_is_the_dealer_project_breakdown",
               {"route_params": {"company": SORENTO, "brand_ids": ["SORENTO"], "group_by": "channel"}},
               {"entities": [{"raw": "sorento", "canonical_code": "SORENTO", "kind_said": "brand"}]}),
-    "tf-13": ("parser_report_totals_filters", "test_report_totals_filters_ht1.py::test_g4_tf13_a_bare_name_with_said_as_null_asks_one_question_and_runs_nothing (docstring: a null basis asks the basis first)",
-              {"ask_field": "basis"}, {"entities": [{"raw": "Sorento", "canonical_code": "SORENTO", "said_as": None}]}),
-    "tf-29": ("parser_report_totals_filters", "test_report_totals_filters_ht1.py::test_g4_tf29_an_object_company_beside_said_as_brand_is_applied_as_written (docstring: brand only when the parse leaves the company null, HT1-3)",
+    # tf-13 replays the object its test sends (the model's own parse: company AND brands, basis delivered), not the
+    # gold object (basis null), so the asserted outcome is the test's: the one company-or-brand question.
+    "tf-13": ("parser_report_totals_filters", "test_report_totals_filters_ht1.py::test_g4_tf13_a_bare_name_with_said_as_null_asks_one_question_and_runs_nothing",
+              {"ask_field": "kind"}, {"entities": [{"raw": "Sorento", "canonical_code": "SORENTO", "said_as": None}],
+                                     "report_ask": {"kind": "sales", "frame": "total", "basis": "delivered", "company": SORENTO,
+                                                    "brands": ["SORENTO"], "date_from": "2026-09-01", "date_to": "2026-09-30"}}),
+    "tf-29": ("parser_report_totals_filters", "test_report_totals_filters_ht1.py::test_ht1_3_said_as_brand_is_the_brand_only (said_as brand, the parse leaves the company null: brand only)",
               {"route_params": {"basis": "delivered", "company": None, "brand_ids": ["SORENTO"]}},
               {"entities": [{"raw": "sorento", "canonical_code": "SORENTO", "kind_said": "brand", "said_as": "brand"}]}),
     "tf-30": ("parser_report_totals_filters", "test_report_totals_filters_ht1.py::test_g4_tf30_company_and_brand_runs_both_filters",
@@ -184,6 +192,7 @@ def _gold_rows() -> list[dict[str, Any]]:
     out = []
     cache: dict[str, dict[str, dict[str, Any]]] = {}
     for gid, (fname, source, expect, parse) in GOLD.items():
+        parse = dict(parse)
         if fname not in cache:
             lines = (GOLD_DIR / f"{fname}.jsonl").read_text(encoding="utf-8").splitlines()
             cache[fname] = {r["id"]: r for r in map(json.loads, filter(str.strip, lines))}
@@ -192,7 +201,7 @@ def _gold_rows() -> list[dict[str, Any]]:
         row: dict[str, Any] = {
             "head": "gold", "run": fname, "step": gid, "section": gid, "turn_id": None, "text": g["message"],
             "held": g["held"], "held_spec": spec, "held_recorded": True,
-            "report_ask": g["expect"]["report_ask"], "open_question": None, "prompt_md5": md5(CANDIDATE),
+            "report_ask": parse.pop("report_ask", None) or g["expect"]["report_ask"], "open_question": None, "prompt_md5": md5(CANDIDATE),
             "role": "expectation", "expect": expect, "source": source,
         }
         if spec is not None:

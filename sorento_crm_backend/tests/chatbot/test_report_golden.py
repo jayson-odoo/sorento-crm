@@ -112,6 +112,13 @@ def test_every_expectation_row_names_one_outcome_and_a_pinned_prompt() -> None:
         assert not r.get("xfail") or r["xfail"].startswith(("REPORT-SPEC-W3", "REPORT-SPEC-W4")), (_id(r), r["xfail"])
 
 
+def test_the_corpus_is_what_the_builder_writes() -> None:
+    """The corpus never drifts from its sources (EXPECT / PARSER_MISS, the recorded rows, the gold rows)."""
+    from tests.chatbot.golden._build_report_turns import build
+
+    assert build() == ROWS, "report_turns.jsonl is stale: rebuild it with tests.chatbot.golden._build_report_turns"
+
+
 @pytest.mark.parametrize("md5,name", sorted(PROMPTS.items()))
 def test_the_pinned_prompts_are_unchanged(md5, name) -> None:
     assert hashlib.md5((PLANS / name).read_bytes()).hexdigest() == md5, name
@@ -179,9 +186,9 @@ def _owner_world(rbot, monkeypatch) -> None:
 
 
 def _names(rbot, args: dict[str, Any]) -> dict[str, Any]:
-    """Route args in the names a row states: company name, agent name, supplier code, and brands by NAME (the route
-    sends brand codes, and the test world holds two brands named Sorento, ZZTSOR and SORENTO, where the owner's book
-    holds one: a brand is the name the report shows), upper-cased and de-duplicated."""
+    """Route args in the names a row states: company name, agent name, supplier code, and brands by NAME, upper-cased
+    and de-duplicated. Brands compare by name only: the test world holds two brands named Sorento (ZZTSOR and
+    SORENTO) where the owner's book holds one, so how many ids stand behind one name is not checked here."""
     from app.models.company import Company
     from app.models.procurement import Supplier
     from app.models.product import Brand
