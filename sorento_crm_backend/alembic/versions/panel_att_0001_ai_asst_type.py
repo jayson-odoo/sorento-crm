@@ -4,13 +4,13 @@ Files a staff member attaches to an AI assistant message: images, Excel, CSV and
 5 unsent per user. Idempotent, and a hand-edited type is left as the admin set it.
 
 Revision ID: panel_att_0001_ai_asst_type
-Revises: qcert_0001_quote_certificates
+Revises: tagu_0001_tag_snapshot
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "panel_att_0001_ai_asst_type"
-down_revision = "qcert_0001_quote_certificates"
+down_revision = "tagu_0001_tag_snapshot"
 branch_labels = None
 depends_on = None
 

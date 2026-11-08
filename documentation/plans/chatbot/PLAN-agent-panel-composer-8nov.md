@@ -134,3 +134,12 @@ them needs the file's random id, which only admins can see (audit log); the turn
 by any API. The reviewer's suggested global SQLAlchemy loader rule on `Attachment` is a new app-wide layer for that
 case; per "Simplest thing that works" it is deferred until an id is shown to a non-admin (trigger: any API or screen
 that returns `envelope.files` or a panel file id to a user other than the uploader).
+
+## DoD lines 6 to 8 (assistant coverage)
+
+- 6: n/a, no new list screen or paged list route (`scripts/ci_ai_coverage.py`: ok, 0 new paged list routes).
+- 7: n/a, no new record-changing button: attach, remove a chip and dictate act on the user's own unsent message,
+  never on a CRM record. Writes the agent makes from a file reuse the existing ActionDefs (bulk grant, tags).
+- 8: n/a, the feature is the panel's input surface, not something the assistant is asked about; an eval row is text
+  only (`scripts/chatbot_eval/cases.py`) and cannot carry a file. The file path into the agent is covered by
+  `tests/chatbot/test_panel_send_files.py` (real loop, scripted model), and the live agent check is crew's on the Mac.
