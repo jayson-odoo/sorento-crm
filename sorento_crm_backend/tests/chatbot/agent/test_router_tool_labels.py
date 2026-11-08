@@ -56,6 +56,8 @@ EXPECTED_LABELS = [
     "add or remove contact tags",
     # AGENT-BULK-W3-AGENTS: the customer agent row write.
     "assign sales agents to customers",
+    # AGENT-BULK-W4-CONTACTS: the contact edit row write.
+    "edit contacts from a pasted table",
     "your customer asks",
     "recent changes",
     "your sales opportunities",

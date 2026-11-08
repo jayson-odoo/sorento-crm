@@ -286,6 +286,8 @@ def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_
         "crm_contact_tags",
         # AGENT-BULK-W3-AGENTS.
         "crm_customer_agent",
+        # AGENT-BULK-W4-CONTACTS.
+        "crm_contact_edit",
     }
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]
