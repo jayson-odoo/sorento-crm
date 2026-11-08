@@ -203,7 +203,11 @@ def _resolve_product_codes(
     """
     from app.services import certificate_link_check as link_check
 
-    text = _certificate_text(db, attachment) if attachment is not None else None
+    text = (
+        _certificate_text(db, attachment, link_check.wanted_for_codes(codes))
+        if attachment is not None
+        else None
+    )
     resolved = _resolve_codes(db, codes, allow_prefix=False)
     unmatched = list(resolved.unmatched)
     matched: list[tuple[str, object, str]] = []
@@ -221,7 +225,7 @@ def _resolve_product_codes(
     return matched, unmatched
 
 
-def _certificate_text(db: Session, attachment):
+def _certificate_text(db: Session, attachment, wanted: set[str]):
     """The certificate PDF's printed runs, or None when the file cannot be read (cannot check)."""
     from app.services import certificate_link_check as link_check
     from app.services.resources_service import AttachmentService
@@ -231,7 +235,7 @@ def _certificate_text(db: Session, attachment):
     except Exception:  # noqa: BLE001 - an unreadable file means "cannot check", never a failed link
         logger.info("certificate text unreadable for attachment=%s", getattr(attachment, "id", None))
         return None
-    return link_check.read_text(data)
+    return link_check.read_text(data, wanted)
 
 def _store_printed_codes(db: Session, certificate_id: str, matched) -> None:
     """CERT-14: the requested text of a matched product is the code printed on the certificate,

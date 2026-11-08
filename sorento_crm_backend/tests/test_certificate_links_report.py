@@ -69,7 +69,7 @@ def _certificate(env, files, number, lines, codes, products, *, scanned=False):
 def _run_check(env, certificate_ids=None):
     from app.services import certificate_link_report_service as report
 
-    report.check_certificates(env.db, certificate_ids)
+    report.check_certificates(env.db, certificate_ids or report.pending_certificate_ids(env.db))
     env.db.expire_all()
 
 
@@ -167,6 +167,28 @@ def test_check_route_queues_only_certificates_with_pending_links(env, files, mon
     (func, args, kwargs) = queued[0]
     assert kwargs.get("queue_name") == "flyer_read"
     assert list(args[0]) == [str(stale.id)]
+    assert kwargs.get("job_id", "").startswith("certificate-link-check-")
+
+
+def test_check_route_does_not_queue_the_same_set_twice(env, files, monkeypatch):
+    """Security review S3: links stay pending until the job runs; a second visit must not stack jobs."""
+    _certificate(env, files, "RPT-11B", ["Model 14A"], ["14A"], ["SV-14A-CP"])
+    queued = []
+    from app.services import certificate_link_report_service as report
+
+    monkeypatch.setattr(report, "enqueue_job", lambda func, *a, **k: queued.append(k["job_id"]))
+    monkeypatch.setattr(report, "_already_queued", lambda job_id: job_id in queued)
+    assert env.client.post(f"{LINKS}/check").json() == {"queued": 1}
+    assert env.client.post(f"{LINKS}/check").json() == {"queued": 1}
+    assert len(queued) == 1
+
+
+def test_an_empty_check_list_checks_nothing(env, files):
+    """The worker runs with the scope off: an empty list must never widen to every pending link."""
+    from app.services import certificate_link_report_service as report
+
+    _certificate(env, files, "RPT-11C", ["Model 14A"], ["14A"], ["SV-14A-CP"])
+    assert report.check_certificates(env.db, []) == {"certificates": 0, "links": 0}
 
 
 def test_confirm_flips_source_to_manual_and_writes_one_audit_row_per_link(env, files):
@@ -252,3 +274,29 @@ def test_another_companys_links_are_invisible_and_untouchable(env, files):
     # The API pins the incumbent company only (see the env fixture).
     assert all(row["id"] != link_id for row in _rows(env)["data"])
     assert env.client.post(f"{LINKS}/confirm", json={"ids": [link_id]}).status_code == 404
+    # Remove at park time: refused before anything is parked (security review B1).
+    parked = env.client.post(
+        "/api/v1/pending-actions",
+        json={"action_key": "certificate_link.remove", "entity_type": "certificate_link", "entity_id": link_id},
+    )
+    assert parked.status_code == 404, parked.text
+    # Remove at commit time, under the incumbent scope: 404 and the row stays.
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.form_action_registry import action_for
+
+    set_company_scope(env.db, frozenset({DEFAULT_COMPANY_ID}))
+    with pytest.raises(Exception) as caught:
+        action_for("certificate_link.remove").execute(env.db, {"entity_id": link_id, "requested_by_id": None})
+    assert getattr(caught.value, "status_code", None) == 404
+    set_company_scope(env.db, frozenset({MOCHA_ID}))
+    assert env.db.query(CertificateProduct).filter(CertificateProduct.id == link_id).count() == 1
+
+
+def test_a_visible_link_parks_its_remove(env, files):
+    cert = _certificate(env, files, "RPT-16", ["Model 14A"], ["BRD7711CP"], ["BRD7711CP"])
+    (link,) = env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id).all()
+    parked = env.client.post(
+        "/api/v1/pending-actions",
+        json={"action_key": "certificate_link.remove", "entity_type": "certificate_link", "entity_id": str(link.id)},
+    )
+    assert parked.status_code == 202, parked.text

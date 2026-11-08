@@ -165,3 +165,25 @@ def test_ingest_printed_rule(span_text):
     # A scan or a missing file cannot be checked: the string is let through.
     assert printed_on({"has_text": False, "runs": set()}, "BRD7711CP") is True
     assert printed_on(None, "BRD7711CP") is True
+
+
+def test_printed_runs_keeps_only_what_the_caller_asks_about():
+    """Security review S2: a hostile file cannot grow the dict beyond the wanted set."""
+    from app.services.certificate_pdf_service import printed_runs
+
+    text = printed_runs(text_pdf(SPAN), {"14a", "zz99"})
+    assert text["has_text"] is True
+    assert set(text["runs"]) == {"14a"}
+    assert printed_runs(text_pdf(SPAN), set()) == {"has_text": True, "runs": {}}
+
+
+def test_wanted_for_links_covers_every_lookup_verdict_makes(span_text):
+    from app.services.certificate_link_check import verdict, wanted_for_links
+    from app.services.certificate_pdf_service import printed_runs
+
+    pairs = [("14A", "BRD7711CP"), (None, "SRTWB1515-W"), (None, "XX120"), ("WB 1515", "SRTWB1515")]
+    narrow = printed_runs(text_pdf(SPAN), wanted_for_links(pairs))
+    for code, product in pairs:
+        assert verdict(narrow, model_code=code, model_code_source="ai", product_code=product) == verdict(
+            span_text, model_code=code, model_code_source="ai", product_code=product
+        )

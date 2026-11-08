@@ -208,13 +208,18 @@ def find_boxes(pdf_bytes: bytes, code: str) -> dict[str, Any]:
 
 #: A printed run longer than any code a certificate prints is never looked up, so it is not kept.
 _MAX_RUN_CHARS = 60
+#: The printed form kept for display is capped too: a word padded with punctuation is unbounded.
+_MAX_PRINTED_CHARS = 120
 
 
-def printed_runs(pdf_bytes: bytes | None) -> dict[str, Any]:
-    """CERT-LINK-CLEANUP: every whole-token run printed on the PDF, read once.
+def printed_runs(pdf_bytes: bytes | None, wanted: set[str] | frozenset[str] | None = None) -> dict[str, Any]:
+    """CERT-LINK-CLEANUP: the whole-token runs printed on the PDF that the caller asks about, read once.
 
     `{"has_text", "runs": {normalised run: printed text}}`, runs of 1-4 consecutive words exactly as
     `find_boxes` matches them (so `14A` is a run, `4A` inside `14A` is not). First printed form wins.
+    `wanted` is the set of NORMALISED strings the caller will look up; only those are kept, so a
+    hostile file with 60 pages of unique words cannot grow the dict (security review S2). `None`
+    keeps every run, for tests and small files only.
     """
     doc = _open(pdf_bytes) if pdf_bytes else None
     if doc is None:
@@ -227,11 +232,15 @@ def printed_runs(pdf_bytes: bytes | None) -> dict[str, Any]:
             if not words:
                 continue
             has_text = True
+            if wanted is not None and not wanted:
+                break  # a text check only: the first page with text answers it
             for i, n, acc in _runs(words, _MAX_RUN):
-                if len(acc) > _MAX_RUN_CHARS:
+                if len(acc) > _MAX_RUN_CHARS or acc in runs:
                     continue
-                if acc not in runs:
-                    runs[acc] = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")
+                if wanted is not None and acc not in wanted:
+                    continue
+                printed = " ".join(w[2] for w in words[i : i + n]).strip(_EDGE_PUNCT + " ")
+                runs[acc] = printed[:_MAX_PRINTED_CHARS]
         return {"has_text": has_text, "runs": runs}
     except Exception:  # noqa: BLE001
         logger.warning("certificate pdf text read failed", exc_info=True)

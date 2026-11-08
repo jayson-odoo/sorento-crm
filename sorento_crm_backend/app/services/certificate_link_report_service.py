@@ -121,14 +121,20 @@ def _filtered(q, *, query, certificate_ids, attachment_type_ids, sources, status
     if statuses:
         q = q.filter(Certificate.status.in_(statuses))
     if query and str(query).strip():
-        needle = f"%{str(query).strip()}%"
+        raw = str(query).strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        needle = f"%{raw}%"
         q = q.filter(
             or_(
-                Product.product_code.ilike(needle),
-                Product.product_name.ilike(needle),
-                Certificate.certificate_number.ilike(needle),
-                Certificate.scheme.ilike(needle),
-                CertificateProduct.model_code.ilike(needle),
+                *(
+                    column.ilike(needle, escape="\\")
+                    for column in (
+                        Product.product_code,
+                        Product.product_name,
+                        Certificate.certificate_number,
+                        Certificate.scheme,
+                        CertificateProduct.model_code,
+                    )
+                )
             )
         )
     return q
@@ -233,16 +239,37 @@ def pending_certificate_ids(db: Session) -> list[str]:
 
 
 def queue_pending(db: Session) -> int:
-    """Queue one check job for every certificate with pending links. Returns how many were queued."""
+    """Queue one check job for the certificates with pending links. Returns how many are covered.
+
+    One job per distinct pending set (security review S3): the links stay `pending` until the job
+    stamps them, so a second visit or a double click before then finds the same set and the job
+    already waiting or running, and queues nothing new."""
     ids = pending_certificate_ids(db)
     if ids:
-        from app.tasks.certificate_link_tasks import check_certificate_links
+        import hashlib
 
-        enqueue_job(check_certificate_links, ids, queue_name=CHECK_QUEUE, job_timeout=3600)
+        job_id = "certificate-link-check-" + hashlib.sha1(",".join(ids).encode()).hexdigest()[:16]
+        if not _already_queued(job_id):
+            from app.tasks.certificate_link_tasks import check_certificate_links
+
+            enqueue_job(check_certificate_links, ids, queue_name=CHECK_QUEUE, job_timeout=3600, job_id=job_id)
     return len(ids)
 
 
-def _read_current_text(db: Session, certificate) -> Optional[dict]:
+def _already_queued(job_id: str) -> bool:
+    """Whether the job is waiting or running. False when Redis cannot say (then it is queued)."""
+    try:
+        from rq.job import Job, JobStatus
+
+        from app.services.queue_service import get_queue
+
+        job = Job.fetch(job_id, connection=get_queue(CHECK_QUEUE).connection)
+        return job.get_status() in {JobStatus.QUEUED, JobStatus.STARTED, JobStatus.DEFERRED, JobStatus.SCHEDULED}
+    except Exception:  # noqa: BLE001 - no such job, or no Redis
+        return False
+
+
+def _read_current_text(db: Session, certificate, wanted: set[str]) -> Optional[dict]:
     revision: Optional[CertificateRevision] = certificate.current_revision
     attachment = revision.attachment if revision is not None else None
     if attachment is None:
@@ -254,12 +281,11 @@ def _read_current_text(db: Session, certificate) -> Optional[dict]:
     except Exception:  # noqa: BLE001 - an unreadable file is the no_file verdict, not a failed job
         logger.info("certificate link check: file unreadable for certificate %s", certificate.id)
         return None
-    return link_check.read_text(data)
+    return link_check.read_text(data, wanted)
 
 
 def check_certificate(db: Session, certificate) -> int:
     """Read the certificate's current PDF once and stamp every link. Returns links stamped."""
-    text = _read_current_text(db, certificate)
     rev_id = certificate.current_revision_id
     now = datetime.utcnow()
     links = (
@@ -268,6 +294,8 @@ def check_certificate(db: Session, certificate) -> int:
         .filter(CertificateProduct.certificate_id == certificate.id)
         .all()
     )
+    wanted = link_check.wanted_for_links((cp.model_code, product_code) for cp, product_code in links)
+    text = _read_current_text(db, certificate, wanted)
     for cp, product_code in links:
         value, code = link_check.verdict(
             text, model_code=cp.model_code, model_code_source=cp.model_code_source, product_code=product_code
@@ -279,10 +307,11 @@ def check_certificate(db: Session, certificate) -> int:
     return len(links)
 
 
-def check_certificates(db: Session, certificate_ids: Optional[Iterable[str]] = None) -> dict:
-    """Check the given certificates, or every one with pending links. Commits per certificate, so a
-    long backfill keeps what it has done if it is stopped."""
-    ids = [str(x) for x in certificate_ids] if certificate_ids else pending_certificate_ids(db)
+def check_certificates(db: Session, certificate_ids: Iterable[str]) -> dict:
+    """Check exactly the given certificates (chosen in the requester's scope by `queue_pending`).
+    Commits per certificate, so a long run keeps what it has done if it is stopped. An empty list
+    checks nothing: the worker runs with the scope off, so it never widens to "every pending"."""
+    ids = [str(x) for x in (certificate_ids or [])]
     checked = links = 0
     for certificate_id in ids:
         certificate = db.query(Certificate).filter(Certificate.id == certificate_id).first()
@@ -317,6 +346,14 @@ def _scoped_links(db: Session, ids: Sequence[str]) -> list[tuple[CertificateProd
     return rows
 
 
+def assert_link_visible(db: Session, link_id: str) -> None:
+    """Park-time check of `certificate_link.remove`: a valid id of a link in the caller's scope."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(link_id, resource="Certificate link")
+    _scoped_links(db, [link_id])
+
+
 def _product_company(db: Session, product_id) -> Optional[str]:
     value = db.query(Product.company_id).filter(Product.id == str(product_id)).scalar()
     return str(value) if value else None
@@ -331,6 +368,7 @@ def confirm_links(db: Session, ids: Sequence[str], user_id: Optional[str]) -> in
     for cp, cert in _scoped_links(db, ids):
         if cp.source == "manual":
             continue
+        previous = cp.source
         cp.source = "manual"
         confirmed += 1
         log_audit(
@@ -338,7 +376,7 @@ def confirm_links(db: Session, ids: Sequence[str], user_id: Optional[str]) -> in
             "certificate_products",
             str(cp.id),
             "UPDATE",
-            old_values={"source": "ai"},
+            old_values={"source": previous},
             new_values={
                 "source": "manual",
                 "product_id": str(cp.product_id),

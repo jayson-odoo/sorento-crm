@@ -8,12 +8,12 @@ a verdict is a fact about the PDF, not about who asked.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Sequence
+from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
 
-def check_certificate_links(certificate_ids: Optional[Sequence[str]] = None) -> dict:
+def check_certificate_links(certificate_ids: Sequence[str]) -> dict:
     import app.database as database
     from app.services import certificate_link_report_service as report
     from app.services.company_scope import set_company_scope

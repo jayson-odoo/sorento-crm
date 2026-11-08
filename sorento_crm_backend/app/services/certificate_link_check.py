@@ -98,10 +98,30 @@ def verdict(
     return VERDICT_NOT_FOUND, None
 
 
-def read_text(data: Optional[bytes]) -> Optional[dict[str, Any]]:
-    """`printed_runs` of the file, or None when there is no file."""
+def wanted_for_codes(codes) -> set[str]:
+    """The normalised strings an ingest looks up: the requested codes themselves."""
+    return {n for n in (normalise(c or "") for c in codes) if n}
+
+
+def wanted_for_links(links) -> set[str]:
+    """What `verdict` can look up for `(model_code, product_code)` pairs: each code, and every
+    3+ character run of each product code (the no-code search)."""
+    out: set[str] = set()
+    for model_code, product_code in links:
+        if model_code:
+            out.add(normalise(model_code))
+        product_norm = normalise(product_code or "")
+        for start in range(len(product_norm)):
+            for end in range(start + MIN_CODE_LEN, len(product_norm) + 1):
+                out.add(product_norm[start:end])
+    out.discard("")
+    return out
+
+
+def read_text(data: Optional[bytes], wanted: set[str]) -> Optional[dict[str, Any]]:
+    """`printed_runs` of the file, restricted to `wanted`, or None when there is no file."""
     if not data:
         return None
     from app.services.certificate_pdf_service import printed_runs
 
-    return printed_runs(data)
+    return printed_runs(data, wanted)

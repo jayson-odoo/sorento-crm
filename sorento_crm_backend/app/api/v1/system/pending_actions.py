@@ -197,6 +197,7 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternative.unlink",
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
+    "quotation_certificate.remove",
     "quotation_document.delete",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
@@ -281,6 +282,12 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_certificate_removable
 
         assert_quotation_certificate_removable(db, entity_id, actor_id)
+    elif action_key == "certificate_link.remove":
+        # CERT-LINK-CLEANUP: `certificate_products` has no company column; the link is
+        # visible only through its scoped certificate. 404 before anything is parked.
+        from app.services.certificate_link_report_service import assert_link_visible
+
+        assert_link_visible(db, entity_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -410,6 +417,7 @@ _PARK_SCOPED_MODELS: dict = {
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
     "accessory_image.delete",
+    "certificate_link.remove",
     "combo.unlink_tag_templates",
     "contact_customer_link.unlink",
     "customer.remove_from_group",
