@@ -306,6 +306,50 @@ describe('F4 chips', () => {
   });
 });
 
+describe('R8 a chip removed while uploading', () => {
+  it('has its file deleted as soon as the upload lands', async () => {
+    let finish: (v: AssistantFile) => void = () => undefined;
+    upload.mockReturnValue(new Promise<AssistantFile>((res) => (finish = res)));
+    render(<Harness initial="hello" />);
+    attach(file('people.csv'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove people.csv' }));
+    expect(remove).not.toHaveBeenCalled(); // nothing to delete yet: the server has not answered
+    await act(async () => finish(uploaded({ id: 'late-1' })));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('late-1'));
+    expect(screen.queryByRole('button', { name: 'Remove people.csv' })).toBeNull();
+    expect(sendButton()).toBeEnabled();
+  });
+
+  it('is not sent: a removed chip leaves no attachment in the payload', async () => {
+    let finish: (v: AssistantFile) => void = () => undefined;
+    upload.mockReturnValue(new Promise<AssistantFile>((res) => (finish = res)));
+    const onSend = vi.fn();
+    render(<Harness initial="hello" onSend={onSend} />);
+    attach(file('people.csv'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove people.csv' }));
+    await act(async () => finish(uploaded({ id: 'late-2' })));
+
+    fireEvent.click(sendButton());
+
+    expect(onSend).toHaveBeenCalledWith({ text: 'hello', attachments: [] });
+  });
+
+  it('a removed chip whose upload fails calls no delete', async () => {
+    let fail: (e: Error) => void = () => undefined;
+    upload.mockReturnValue(new Promise<AssistantFile>((_res, rej) => (fail = rej)));
+    render(<Harness />);
+    attach(file('people.csv'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove people.csv' }));
+
+    await act(async () => fail(new Error('This file cannot be read.')));
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Remove people.csv' })).toBeNull();
+  });
+});
+
 describe('F5 sheet picker', () => {
   it('is absent for a single-sheet file, which shows its row count', async () => {
     upload.mockResolvedValue(uploaded({ sheets: [{ name: 'Dealers', rows: 12 }] }));
@@ -456,7 +500,7 @@ describe('F9 dictation', () => {
     render(<Harness />);
 
     expect(screen.queryByRole('button', { name: 'Dictate' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Dictation language' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Dictation language/ })).toBeNull();
   });
 
   it.each(['SpeechRecognition', 'webkitSpeechRecognition'] as const)('shows the mic with window.%s', (name) => {
@@ -508,17 +552,29 @@ describe('F9 dictation', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it('the language toggle switches to Bahasa Malaysia and is remembered', () => {
+  it('the language toggle switches to Malay and is remembered', () => {
     install();
     const first = render(<Harness />);
-    fireEvent.click(screen.getByRole('button', { name: 'Dictation language' }));
-    expect(screen.getByRole('button', { name: 'Dictation language' })).toHaveTextContent('BM');
+    fireEvent.click(screen.getByRole('button', { name: 'Dictation language: English' }));
+    expect(screen.getByRole('button', { name: 'Dictation language: Malay' })).toHaveTextContent('BM');
     first.unmount();
 
     render(<Harness />);
-    expect(screen.getByRole('button', { name: 'Dictation language' })).toHaveTextContent('BM');
+    expect(screen.getByRole('button', { name: 'Dictation language: Malay' })).toHaveTextContent('BM');
     fireEvent.click(screen.getByRole('button', { name: 'Dictate' }));
     expect(FakeRecognition.instances.at(-1)?.lang).toBe('ms-MY');
+  });
+
+  it('R10: the toggle is named for the current language and flips both ways', () => {
+    install();
+    render(<Harness />);
+
+    expect(screen.getByRole('button', { name: 'Dictation language: English' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Dictation language: English' }));
+    expect(screen.getByRole('button', { name: 'Dictation language: Malay' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dictation language: English' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Dictation language: Malay' }));
+    expect(screen.getByRole('button', { name: 'Dictation language: English' })).toBeInTheDocument();
   });
 
   it('a not-allowed error toasts the microphone message', () => {
@@ -560,7 +616,7 @@ describe('F10 labels', () => {
     };
     render(<Harness />);
 
-    for (const name of ['Attach files', 'Dictate', 'Dictation language', 'Send message']) {
+    for (const name of ['Attach files', 'Dictate', 'Dictation language: English', 'Send message']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
   });

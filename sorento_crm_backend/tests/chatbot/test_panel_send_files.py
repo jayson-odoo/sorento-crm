@@ -48,7 +48,7 @@ from tests.chatbot._panel_files_helpers import (
     upload,
     xlsx_bytes,
 )
-from tests.chatbot.test_panel_agent_side import answer_  # noqa: F401
+from tests.chatbot.test_panel_agent_side import answer_, note_write  # noqa: F401
 from tests.chatbot.test_panel_principal import (  # noqa: F401  (fixtures and helpers)
     AGENT,
     USE,

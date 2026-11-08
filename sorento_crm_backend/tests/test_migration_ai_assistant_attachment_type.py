@@ -88,3 +88,20 @@ def test_ensure_attachment_type_agrees_with_the_migration_and_is_idempotent(db):
     assert str(first.id) == str(second.id)
     assert len(_rows(db)) == 1
     assert first.max_file_size_mb == 10 and first.max_count_per_entity == 5
+
+
+def test_r5_the_migration_seeds_the_type_without_the_n8n_webhook(db):
+    """Otherwise every panel upload shows in the upload-activity drawer and sits on Processing for ever."""
+    _run_upgrade(db)
+
+    flag = db.execute(
+        text("SELECT triggers_n8n_webhook FROM attachment_types WHERE code = :c"), {"c": CODE}
+    ).scalar_one()
+
+    assert flag is False
+
+
+def test_r5_ensure_attachment_type_creates_it_without_the_n8n_webhook(db):
+    from app.services.chatbot.panel_files import ensure_attachment_type
+
+    assert ensure_attachment_type(db).triggers_n8n_webhook is False

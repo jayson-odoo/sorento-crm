@@ -135,3 +135,30 @@ def test_p1_a_storage_failure_on_one_file_does_not_stop_the_sweep(panel, monkeyp
     purge_drafts(panel.factory())
 
     assert calls["n"] >= 2, "the sweep stopped at the first storage error"
+
+
+def test_r9_a_file_whose_storage_delete_fails_keeps_its_row_and_link_while_the_rest_go(panel, monkeypatch):
+    from app.services.chatbot.panel_files import purge_drafts
+
+    a = make(panel, "a.csv")
+    b = make(panel, "b.csv")
+    age(panel, a["id"], 30)
+    age(panel, b["id"], 30)
+    a_key = panel.factory().query(Attachment).filter(Attachment.id == a["id"]).one().file_path
+    real = panel.store.delete_file
+
+    def fail_for_a(key):
+        if key == a_key:
+            raise RuntimeError("storage down")
+        return real(key)
+
+    monkeypatch.setattr(panel.store, "delete_file", fail_for_a)
+
+    removed = purge_drafts(panel.factory())
+
+    db = panel.factory()
+    assert removed == 1
+    assert db.query(Attachment).filter(Attachment.id == a["id"]).first() is not None, "a's row went with a failed delete"
+    assert db.query(EntityAttachmentLink).filter(EntityAttachmentLink.attachment_id == a["id"]).first() is not None
+    assert not exists(panel, b["id"])
+    assert a_key in panel.store.objects, "a's bytes are still stored, so the row must still point at them"
