@@ -91,8 +91,10 @@ the auth allowlist (sessions, users, roles, permissions, company grants).
 - `strip_names(snapshot: dict) -> dict` - wallboard: `shops[].name`, `code`, `today_amount`,
   `ninety_day_amount` removed and `key` made opaque (decision 4a: rank numbers and the total only).
 - 90-day ranking cached once per company per MYT day in `town:{company}:{day}:ranking` (owner 2a
-  "refreshed nightly"), built on its own session with a 30 s statement timeout; the 3-minute build
-  computes only today's figures (review round 1, S1).
+  "refreshed nightly"), computed on the first build of each day (about 07:00) inside a savepoint of the build's own session
+  with a 30 s statement timeout, back to 5 s afterwards; on failure an empty ranking is cached for 30
+  minutes (stalls only) instead of retrying every tick. The 3-minute build computes only today's
+  figures (review rounds 1 and 2).
 - `store(redis, company_id, day, full: dict) -> str` - writes gzip JSON under
   `town:{company_id}:{day}:full` and `town:{company_id}:{day}:redacted` plus
   `town:{company_id}:{day}:version` (sha1 hex of the full JSON, sorted keys); TTL 36 h; returns version.
@@ -156,8 +158,8 @@ order: `[{"at": "HH:MM" (MYT, from `billing_documents.created_at`), "shop_key": 
 ### Endpoint `GET /api/v1/town/snapshot?mode=wallboard`
 
 - Signed-in staff user (`get_current_user`); variant = full if the user holds `sales.reports.view` or is
-  superadmin/admin, else redacted; `mode=wallboard` additionally strips names (from the cached bytes,
-  no DB).
+  superadmin/admin, else redacted; `mode=wallboard` additionally strips names, codes, per-shop amounts and
+  customer ids (from the cached bytes, no DB).
 - Today's MYT date, the user's active company. Redis only. No snapshot yet -> 200 `{"pending": true}`.
 - `ETag: "<version>-<variant>[-wb]"`; `If-None-Match` equal -> 304, empty body.
 - Body served as the stored gzip bytes with `Content-Encoding: gzip`, `Content-Type: application/json`,
