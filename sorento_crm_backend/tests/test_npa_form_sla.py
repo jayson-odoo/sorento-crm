@@ -747,3 +747,82 @@ def test_upgrade_runs_the_seed_and_the_template_update(world, monkeypatch):
         text("SELECT layout_json FROM email_templates WHERE code = 'stock_inquiry_created'")
     ).scalar()
     assert layout["blocks"][3]["label"] == "{{ button_label or 'Open stock inquiry' }}"
+
+
+def test_my_pending_names_the_npa_number(world, sla):
+    """Crew pass 8 Nov: the assignee's My Pending row read "New product application" with no number;
+    an SI / PR row shows its number."""
+    from app.services.sla_service import ConversationSLATrackingService
+
+    d = _submitted(world)
+    tracker = open_tracker(world.db, KIND, d["id"])
+    refs = ConversationSLATrackingService(world.db)._resolve_my_pending_references([tracker])
+    assert refs[str(tracker.id)] == d["application_no"]
+
+
+# ------------------------------------------------------------------ crew pass item 1: the SI's actors may act on the NPA
+
+
+def _role_with(db, *slugs):
+    from app.models.user import UserPermission, UserRole, UserRolePermission
+
+    from ._forms_chain_support import uid as _uid
+
+    role = UserRole(id=_uid(), slug=f"zzt-npasla-{_uid()[:8]}", name=f"ZZT npasla role {_uid()[:8]}")
+    db.add(role)
+    db.flush()
+    for slug in slugs:
+        perm = db.query(UserPermission).filter(UserPermission.slug == slug).first()
+        if perm is None:
+            perm = UserPermission(id=_uid(), slug=slug, name=slug)
+            db.add(perm)
+            db.flush()
+        db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=perm.id))
+    db.flush()
+    return role.id
+
+
+def _role_slugs(db, role_id):
+    return {
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT p.slug FROM user_role_permissions urp JOIN user_permissions p ON p.id = urp.permission_id "
+                "WHERE urp.role_id = :r"
+            ),
+            {"r": role_id},
+        )
+    }
+
+
+def test_the_si_stage_actors_get_the_npa_grants_once(world):
+    db = world.db
+    for slug in (VIEW, APPROVE, OPEN_CODE):
+        _role_with(db, slug)  # make sure the NPA permission rows exist in this schema
+    psm = _role_with(db, "procurement.stock_inquiries.view", "procurement.stock_inquiries.project_sales_approve")
+    buyer = _role_with(db, "procurement.stock_inquiries.purchasing_reject")
+    other = _role_with(db, "procurement.stock_inquiries.view")
+    db.commit()
+    module = _load_migration()
+    for _ in range(2):  # idempotent
+        for statement in module.GRANTS:
+            db.execute(text(statement))
+        db.commit()
+    assert {VIEW, APPROVE} <= _role_slugs(db, psm) and OPEN_CODE not in _role_slugs(db, psm)
+    assert {VIEW, OPEN_CODE} <= _role_slugs(db, buyer) and APPROVE not in _role_slugs(db, buyer)
+    assert not _role_slugs(db, other) & {VIEW, APPROVE, OPEN_CODE}
+    dupes = db.execute(
+        text(
+            "SELECT count(*) FROM (SELECT role_id, permission_id FROM user_role_permissions "
+            "GROUP BY 1, 2 HAVING count(*) > 1) d"
+        )
+    ).scalar()
+    assert dupes == 0
+
+
+def test_the_grants_are_additive_inserts_only():
+    module = _load_migration()
+    for statement in module.GRANTS:
+        upper = " ".join(statement.split()).upper()
+        assert upper.startswith("INSERT INTO USER_ROLE_PERMISSIONS"), statement
+        assert "NOT EXISTS" in upper

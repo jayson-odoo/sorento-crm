@@ -13,6 +13,10 @@ A row is inserted only while no NPA row holds that team set, and only from an ex
 a database without the SI's rows (CI, a fresh tenant) gets nothing and a second run adds nothing.
 `grace_seconds` is not copied: the NPA has no deferred-action path (form_action_dispatch).
 
+Grants: every role holding the SI's project_sales_approve gets NPA view + approve, every role
+holding the SI's purchasing_reject gets NPA view + open_code (crew pass 8 Nov: the assignees
+could not open the NPA). The downgrade leaves grants alone: they may have been set by hand since.
+
 Also: the seeded `stock_inquiry_created` email row's button label becomes the notice's own
 `button_label` (the NPA sends that notice too), only while the row is exactly as seeded.
 
@@ -88,8 +92,37 @@ TEMPLATE_UPDATE = (
 )
 
 
+#: Crew pass 8 Nov (owner answer pending, option a): whoever acts on the SI stage acts on the NPA
+#: stage. (SI slug its holders have, NPA slug they get.) Copied from the SI's own holders, as
+#: npa_0001 did for `create`; no role is named. Additive and idempotent.
+_GRANT_FROM_SI = (
+    ("procurement.stock_inquiries.project_sales_approve", "procurement.new_product_applications.view"),
+    ("procurement.stock_inquiries.project_sales_approve", "procurement.new_product_applications.approve"),
+    ("procurement.stock_inquiries.purchasing_reject", "procurement.new_product_applications.view"),
+    ("procurement.stock_inquiries.purchasing_reject", "procurement.new_product_applications.open_code"),
+)
+
+
+def _grant(src: str, tgt: str) -> str:
+    return (
+        "INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at) "
+        "SELECT DISTINCT ON (urp.role_id) gen_random_uuid()::text, urp.role_id, tgt.id, now() "
+        "FROM user_role_permissions urp "
+        "JOIN user_permissions src ON src.id = urp.permission_id "
+        "CROSS JOIN user_permissions tgt "
+        f"WHERE src.slug = '{src}' AND tgt.slug = '{tgt}' "
+        "AND NOT EXISTS (SELECT 1 FROM user_role_permissions existing "
+        "WHERE existing.role_id = urp.role_id AND existing.permission_id = tgt.id)"
+    )
+
+
+GRANTS = tuple(_grant(src, tgt) for src, tgt in _GRANT_FROM_SI)
+
+
 def upgrade() -> None:
     for statement in SEED:
+        op.execute(text(statement))
+    for statement in GRANTS:
         op.execute(text(statement))
     op.get_bind().execute(text(TEMPLATE_UPDATE), {"new": LABELLED_LAYOUT, "old": SEEDED_LAYOUT})
 
