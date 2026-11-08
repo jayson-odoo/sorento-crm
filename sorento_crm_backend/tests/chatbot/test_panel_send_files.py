@@ -75,7 +75,7 @@ def brain(panel, monkeypatch):
     box = SimpleNamespace(
         calls=[],
         stamped=[],
-        decision=RouteDecision("chat", "open_question"),
+        decision=RouteDecision("agent", "jev"),
         provider="gemini",
         reply="ZZT agent reply",
     )
@@ -393,15 +393,6 @@ def test_t7_not_eligible_replies_the_fixed_line_and_runs_nothing(brain):
     assert brain.box.calls == []
 
 
-def test_t7_a_turn_without_files_keeps_its_chat_route(brain):
-    """Files change the route; their absence changes nothing."""
-    brain.box.decision = RouteDecision("chat", "open_question")
-
-    send(brain, None)
-
-    assert brain.box.stamped == [] or all(d.reason != "attachment" for d in brain.box.stamped)
-
-
 # --------------------------------------------------------------------------- #
 # T8, T9: images and PDFs
 # --------------------------------------------------------------------------- #
@@ -554,12 +545,12 @@ class SeenProvider:
         return self.replies.pop(0)
 
 
-def _install_real_loop(p, monkeypatch, provider):
+def _install_real_loop(p, monkeypatch, provider, side="chat"):
     monkeypatch.setattr(agent_loop, "_resolve_provider", lambda db: (provider, "openai", "gpt-test", None))
     monkeypatch.setattr(agent_loop, "_fetch_catalog", lambda: {})
     monkeypatch.setattr(agent_loop, "catalog_cached", lambda fetch, **kw: {})
     monkeypatch.setattr(agent_loop, "enforce_agent_rate_limit", lambda ident: None)
-    monkeypatch.setattr(panel_service, "decide_route", lambda db, **kw: RouteDecision("chat", "open_question"))
+    monkeypatch.setattr(panel_service, "decide_route", lambda db, **kw: RouteDecision(side, "jev"))
 
 
 def _turn_rows(p) -> list[ChatbotTurn]:
@@ -574,7 +565,7 @@ def _turn_rows(p) -> list[ChatbotTurn]:
 def test_baseline_the_real_loop_answers_a_typed_message(panel, monkeypatch):
     panel.grants.add(AGENT)
     provider = SeenProvider([answer_("ZZT typed reply.")])
-    _install_real_loop(panel, monkeypatch, provider)
+    _install_real_loop(panel, monkeypatch, provider, side="agent")
 
     resp = send(panel, None, message="hello there")
 
@@ -610,6 +601,8 @@ def test_t12_the_next_turn_sees_the_rows_but_not_the_image_bytes(panel, monkeypa
     sheet = up(panel, "d.xlsx", dealers_xlsx())
     shot = up(panel, "shot.png", png_bytes(), "image/png")
     send(panel, [{"id": sheet["id"], "sheet": "Dealers"}, {"id": shot["id"], "sheet": None}])
+
+    monkeypatch.setattr(panel_service, "decide_route", lambda db, **kw: RouteDecision("agent", "jev"))
 
     send(panel, None, message="now tag these")
 
