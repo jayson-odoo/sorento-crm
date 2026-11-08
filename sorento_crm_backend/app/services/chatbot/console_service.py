@@ -123,8 +123,8 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     """The contact's most recent REAL INBOUND envelope, as the shape to borrow.
 
     A contact with no real turn but a `respond_contacts` row gets `_synthetic_envelope`
-    instead (CONSOLE-SYNTH-ENVELOPE); only a contact with no row at all raises. The phone is filled in from `respond_contacts` when the borrowed
-    envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
+    instead (CONSOLE-SYNTH-ENVELOPE); only a contact with no row at all raises. The phone
+    is filled in from `respond_contacts` when the borrowed envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
 
     **Only a `webhook` ingress row that is not a test.** A console turn stores its OWN
@@ -200,7 +200,8 @@ def _synthetic_envelope(
     The console media path's shape: contact id, phone, first name and
     `is_human_intervened=false`, and no `message.channel` (nothing claims a source). The
     WhatsApp phone link gate cannot fire: it only acts on a contact with no
-    `respond_contacts` row, and a synthetic base exists only when there is one. Company, customer links and stock access come from the DB by contact id, not from the
+    `respond_contacts` row, and a synthetic base exists only when there is one. Company,
+    customer links and stock access come from the DB by contact id, not from the
     envelope, so the answer matches a borrowed envelope's. Built fresh for every turn and
     only ever passed through `_build_envelope`, which makes it a dry run.
     """
