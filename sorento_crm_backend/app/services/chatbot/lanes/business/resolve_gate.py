@@ -1822,19 +1822,17 @@ def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str
 
 
 def _supplier_family(name: str) -> str:
-    """A supplier line's trading-name key, the `ledger_family` rule with no customer group in play."""
-    from app.services.ledger_family import customer_groups, ledger_family_key
+    """A supplier line's family key (`ledger_family.supplier_family_key`: one trading name, one supplier)."""
+    from app.services.ledger_family import supplier_family_key
 
-    with customer_groups({}):
-        return ledger_family_key(str(name or ""))
+    return supplier_family_key(str(name or ""))
 
 
 def _supplier_family_label(name: str) -> str:
     """The trading name a family of supplier records is called by (its line without the bracketed code)."""
-    from app.services.ledger_family import customer_groups, ledger_family_label
+    from app.services.ledger_family import supplier_family_label
 
-    with customer_groups({}):
-        return ledger_family_label(str(name or ""))
+    return supplier_family_label(str(name or ""))
 
 
 def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:

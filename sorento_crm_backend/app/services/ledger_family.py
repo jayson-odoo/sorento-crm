@@ -140,6 +140,21 @@ def trading_name_key(text: str) -> str:
     return _words(_without_brackets(text.upper()))
 
 
+def supplier_family_key(text: str) -> str:
+    """The key the records of ONE supplier share: its trading name (`trading_name_key`), so
+    HANLIM TRADING (400-H018) and HANLIM TRADING (403-H007) are one supplier (owner ruling
+    "2120a", 7 Nov 2026: same-name suppliers are ONE supplier, grouped by `ledger_family`, and
+    the bot never asks which one). The `ledger_family` rule as it stood before
+    CUSTOMER-GROUP-GATE: that ruling (explicit groups only) is about customer ledgers, and a
+    supplier has no customer group (GATE-SUPPLIER-FAMILY)."""
+    return trading_name_key(text)
+
+
+def supplier_family_label(text: str) -> str:
+    """What a supplier family is CALLED: the record's name without its bracketed code."""
+    return without_ledger_marker(text)
+
+
 def group_named(text: str) -> str | None:
     """The key of the turn's customer group whose own name `text` is, or None (a word typed as
     a group's exact name speaks for that group)."""
