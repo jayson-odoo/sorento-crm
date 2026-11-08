@@ -6,7 +6,8 @@ exactly the old value; node B sets them in its .env to reach its local replica.
 
 Handles plain, single-quoted and double-quoted values, a quoted list item, and a trailing
 `# comment` (kept after the new value). Anything it cannot parse safely is a STOP (exit 1, file
-untouched): anchors/aliases, a value that already uses ${...}, a double-quoted escape other than
+untouched): anchors/aliases, a value that uses ${...} other than the key's own variable
+(`KEY: ${KEY:-<url>}` becomes `'${HA_KEY:-${KEY:-<url>}}'`), a double-quoted escape other than
 \\" and \\\\, text after a closing quote that is not a comment.
 
 Usage: python3 -I compose-ha-urls.py docker-compose.yml   (rewrites in place; keep a backup)
@@ -65,6 +66,11 @@ def plain(rest):
 def wrap(key, val):
     if not val:
         return None
+    # A's compose (owner, 8 Nov): `KEY: ${KEY:-<url>}`. Nest it, so a node without HA_KEY
+    # resolves exactly what it did, with or without KEY in its .env. Only the SAME key's own
+    # variable, with a plain default (or none); anything else stays a STOP.
+    if re.fullmatch(r"\$\{%s(?::?-(?:[^${}]|\$\$)*)?\}" % key, val):
+        return "${HA_%s:-%s}" % (key, val)
     if val[0] in "&*!" or "${" in val or "}" in val:
         raise Stop("%s value is an anchor, alias, tag or already uses ${...}; edit it by hand" % key)
     return "${HA_%s:-%s}" % (key, val)
