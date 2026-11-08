@@ -1,6 +1,6 @@
 # PLAN - TAG-UNION: contact tags add up
 
-Status: Build (Phase 2, red tests first). Track: full (migration, RBAC gate change, prod data recompute). Lane TAG-UNION, PR #2254.
+Status: PR ready for owner review (built red-first; reviewer + security review fixed; cloud browser pass done; prod recompute script pending owner run). Track: full (migration, RBAC gate change, prod data recompute). Lane TAG-UNION, PR #2254.
 Card: `CARD-tag-union-08nov.md` (rule table, owner answers). UAC: `tag-union-08nov-acceptance-criteria.md`.
 
 ## Decisions (owner, 8 Nov ~16:00)
