@@ -1,6 +1,6 @@
 # PLAN: agent batch keeps the not-changed rows of the current request (AGENT-BATCH-NOTCHANGED)
 
-Status: in build (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: built, in review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 ## Problem
 

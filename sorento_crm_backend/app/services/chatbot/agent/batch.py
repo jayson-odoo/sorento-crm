@@ -60,10 +60,10 @@ def schema_for(db, ctx) -> dict | None:
                 "rows (codes; 'all' = every listed account of that row; 'skip' = leave the row out), call this again "
                 "with the WHOLE table, every row's `row` kept and the picked codes in customer_codes (no "
                 "customer_names for those rows). Nothing changes until the user confirms. Call it again with "
-                "corrected rows to replace the proposal. Propose only the rows still open in the CURRENT request: "
-                "a row of a card the user already cancelled or confirmed (the history says 'Card cancelled' or "
-                "'Card confirmed') is closed; never send it again unless the user's latest message asks for that "
-                "row again. Such a row is not proposed and comes back as skipped."
+                "corrected rows to replace the proposal. Send EVERY row of the current request: ready, waiting and "
+                "not changed alike, so the user sees the whole table. Leave out only a row of an earlier card the "
+                "user already cancelled or confirmed (the history says 'Card cancelled' or 'Card confirmed'), "
+                "unless the user's latest message asks for that row again; such a row comes back as skipped."
             ),
             "parameters": {
                 "type": "object",
@@ -190,12 +190,30 @@ def propose_rows(
     return steps, skipped, waiting
 
 
+def carried_skips(
+    steps: list[dict], skipped: list[dict], waiting: list[dict],
+    previous_waiting: list[dict] | None, previous_skipped: list[dict] | None,
+) -> list[dict]:
+    """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on the
+    pick follow-up, i.e. that turn left rows waiting: the current request is still that table, so its not-changed
+    rows stay listed with their earlier reason, whatever rows the model chose to send. A new table inherits none."""
+    if not previous_waiting or not previous_skipped:
+        return []
+    sent = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
+    return [
+        {"row": s["row"], "reason": s["reason"], "cells": dict(s.get("cells") or {})}
+        for s in previous_skipped
+        if isinstance(s, dict) and s.get("row") not in sent and s.get("reason")
+    ]
+
+
 def propose(
     db, ctx, args: Any, steps: list[dict], *, seen_ids: set[str], skipped_out: list[dict] | None = None,
     waiting_out: list[dict] | None = None,
     user_text: str = "",
     previous_waiting: list[dict] | None = None,
     closed: dict | None = None,
+    previous_skipped: list[dict] | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -223,6 +241,8 @@ def propose(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed,
     )
+    carried = carried_skips(new_steps, skipped, waiting, previous_waiting, previous_skipped)
+    skipped += carried
     steps[:] = new_steps
     if skipped_out is not None:
         skipped_out[:] = skipped
@@ -236,7 +256,7 @@ def propose(
             for w in waiting
         ],
         # The counts the reply may say, so the number check finds them in this result.
-        "rows_total": len(rows), "rows_proposed": len(new_steps), "rows_skipped": len(skipped),
+        "rows_total": len(rows) + len(carried), "rows_proposed": len(new_steps), "rows_skipped": len(skipped),
         "rows_waiting": len({w["row"] for w in waiting}),
     }
     if not new_steps:

@@ -1316,9 +1316,9 @@ def _batch_reply(steps: list[dict], skipped: list[dict], waiting: list[dict], co
     return f"{reply}\n\n" + "\n".join(confirm_notes) if confirm_notes else reply
 
 
-def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
-    """The `batch_waiting` of the newest EARLIER turn of this conversation that kept one (a plain turn in between
-    does not hide it)."""
+def _previous_waiting(db, conv, turn_id: str) -> tuple[list[dict], list[dict]]:
+    """(`batch_waiting`, `batch_skipped`) of the newest EARLIER turn of this conversation that kept them (a plain
+    turn in between does not hide it). One query."""
     earlier = (
         db.query(ChatbotTurn)
         .filter(
@@ -1331,7 +1331,9 @@ def _previous_waiting(db, conv, turn_id: str) -> list[dict]:
         .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc())
         .first()
     )
-    return (earlier.response.get("batch_waiting") or []) if earlier is not None else []
+    if earlier is None:
+        return [], []
+    return earlier.response.get("batch_waiting") or [], earlier.response.get("batch_skipped") or []
 
 
 def _run(
@@ -1376,6 +1378,7 @@ def _run(
     batch_waiting: list[dict] = []
     batch_called = False
     previous_waiting: list[dict] | None = None
+    previous_skipped: list[dict] = []  # the earlier table turn's not-changed rows (AGENT-BATCH-NOTCHANGED)
     closed_rows: dict | None = None  # the rows of this conversation's decided cards (AGENT-DECIDED-CARDS)
 
     def batch_shown() -> bool:
@@ -1699,13 +1702,13 @@ def _run(
                 elif name == batch.BATCH:
                     batch_called = True
                     if previous_waiting is None:
-                        previous_waiting = _previous_waiting(db, conv, turn_id)
+                        previous_waiting, previous_skipped = _previous_waiting(db, conv, turn_id)
                     if closed_rows is None:
                         closed_rows = actions.closed_rows(db, contact_respond_id, conversation_id)
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
                         waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,
-                        closed=closed_rows,
+                        closed=closed_rows, previous_skipped=previous_skipped,
                     )
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}
@@ -1957,6 +1960,10 @@ def _run(
         turn.response["batch_waiting"] = [
             {"row": w["row"], "key": w.get("key"), "written": w["written"], "codes": [c["code"] for c in w["candidates"]]}
             for w in batch_waiting
+        ]
+        # The rows not changed, read by the pick follow-up so they stay listed when the model leaves them out.
+        turn.response["batch_skipped"] = [
+            {"row": s["row"], "reason": s["reason"], "cells": s.get("cells") or {}} for s in batch_skipped
         ]
     # Only a real final answer can ask back; a forced final at a limit never does.
     if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
