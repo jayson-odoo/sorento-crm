@@ -105,7 +105,7 @@ PARAM_VARIABLES = (
     # New Product Application update (``new_product_application_update``): the stock
     # inquiry it was raised from, the ONE new product code and purchasing's lead time.
     # ``entity_number`` / ``customer`` / ``project`` / ``product_code`` (the current codes)
-    # are filled from the application in build_context_vars.
+    # are filled from the application by new_product_application_service.template_vars.
     "inquiry_number",
     "new_product_code",
     "lead_time",

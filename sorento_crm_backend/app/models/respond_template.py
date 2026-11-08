@@ -162,7 +162,9 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # to ``entity_number`` (NPA no) / ``inquiry_number`` / ``customer`` / ``project`` /
     # ``product_code`` (current codes) / ``new_product_code`` / ``lead_time`` / ``update``
     # (purchasing's text) / ``portal_url`` (the NPA's portal page). Unmapped: in-window text,
-    # out-of-window skipped and logged failed, exactly as an unmapped SI.
+    # out-of-window skipped and logged failed, exactly as an unmapped SI. The variables are
+    # computed in the request (new_product_application_service.template_vars) and logged on
+    # the SI's conversation, like the SI's own reply.
     "new_product_application_update",
 )
 

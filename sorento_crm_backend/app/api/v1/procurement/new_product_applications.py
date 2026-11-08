@@ -398,6 +398,7 @@ def save_purchasing_response_and_reply(
         message_body = svc.reply_message(db, app)
         update_text = app.purchasing_response or ""
         link = svc.portal_url(db, app)
+        template_vars = svc.template_vars(db, app)
         detail = _done(db, app, event, actor.user_id)
     except Exception:
         db.rollback()
@@ -409,6 +410,7 @@ def save_purchasing_response_and_reply(
         update_text=update_text,
         message_body=message_body,
         portal_url=link,
+        template_vars=template_vars,
         respond_user_id=respond_user_id,
         crm_sender_user_id=user.get("id"),
     )

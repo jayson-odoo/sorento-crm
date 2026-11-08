@@ -796,13 +796,19 @@ def test_update_and_reply_sends_the_npa_use_case_with_the_npa_link(world, reply_
     [(fn, args, kwargs)] = reply_spy
     assert fn is send_new_product_application_respond_message
     assert kwargs.get("queue_name") == "respond_io"
-    application_id, identifier, text = args[:3]
+    inquiry_id, identifier, text = args[:3]
     extra = args[6]
-    assert (application_id, identifier) == (d["id"], "901234")
+    # Logged, mirrored and webhooked on the SI's conversation exactly as the SI's reply (review
+    # should-fix 1); only the template use case is the NPA's.
+    assert (inquiry_id, identifier) == (str(world.inquiry.id), "901234")
     # Q3 + 17:50: View opens the NPA portal page for the contact who raised it, the SI's link mechanism.
     assert links == [(contact_id, "new_product_application", d["id"], "space-npa")]
     npa_url = f"https://portal.example.com/portal/c/slug/new_product_application/{d['id']}"
-    assert extra == {"update": "Code opened.", "portal_url": npa_url}
+    assert extra["update"] == "Code opened."
+    assert extra["portal_url"] == npa_url
+    assert extra["entity_number"] == d["application_no"]
+    assert extra["new_product_code"] == "ZZT-RPL-1" and extra["lead_time"] == "8 weeks"
+    assert extra["status"] == "Completed"
     # Q4: an unmapped use case sends this text in the window, as the SI's does; it never says Stock Inquiry.
     assert "stock inquiry" not in text.lower()
     assert text.splitlines()[0] == "There is a response to your new product application:"
@@ -826,28 +832,31 @@ def test_a_staff_raised_npa_gets_no_link_and_no_si_fallback(world, reply_spy, mo
     assert args[6]["portal_url"] == ""
 
 
-def test_the_worker_sends_the_npa_use_case_logged_on_the_application(monkeypatch):
+def test_the_worker_sends_the_npa_use_case_on_the_sis_conversation(monkeypatch):
     from app.tasks import respond_io_tasks
 
     seen = {}
     monkeypatch.setattr(respond_io_tasks, "_send_and_log", lambda **kw: seen.update(kw) or {"ok": True})
     respond_io_tasks.send_new_product_application_respond_message(
-        "npa-1", "901234", "text", "ru-1", "u-1", "space-1", {"update": "x"}
+        "si-1", "901234", "text", "ru-1", "u-1", "space-1", {"update": "x"}
     )
     assert seen["use_case"] == USE_CASE
-    assert (seen["business_table"], seen["business_id"]) == ("new_product_applications", "npa-1")
+    # The SI's conversation: same outbox row, n8n webhook table and SLA assignee lookup as the SI's reply.
+    assert (seen["business_table"], seen["business_id"]) == ("stock_inquiries", "si-1")
+    assert seen["sla_entity_type"] == "stock_inquiry"
     assert seen["extra_context_vars"] == {"update": "x"}
 
 
 def test_the_npa_template_variables_come_from_the_application(world):
-    from app.services.respond_messaging_service import build_context_vars
-
     newp = make_product(world.db, code="ZZT-VAR-NEW")
     d = _si_approved(world, [world.product.id], customer_name="Example Customer", project_name="Tower B")
     assert _respond(
         world, d["id"], purchasing_response="ok", outcome="link", product_id=newp.id, lead_time="6 weeks"
     ).status_code == 200
-    out = build_context_vars(world.db, use_case=USE_CASE, business_id=d["id"], identifier="901234")
+    from app.models.new_product_application import NewProductApplication
+    from app.services import new_product_application_service as svc
+
+    out = svc.template_vars(world.db, world.db.get(NewProductApplication, d["id"]))
     assert out["entity_number"] == d["application_no"]
     assert out["inquiry_number"] == d["stock_inquiry_number"]
     assert out["customer"] == "Example Customer"
@@ -876,24 +885,6 @@ def test_reply_is_purchasing_only(world, reply_spy):
     res = world.api.as_(world.sales).post(f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "x"})
     assert res.status_code == 403
     assert reply_spy == []
-
-
-def test_the_worker_reads_the_npa_variables_with_no_company_scope_set(world):
-    """The RQ worker's session has no company scope (unset reads nothing); the variables must
-    still resolve for the enqueued id, read inside the application's own company."""
-    from app.models.base import UNSET, get_company_scope, set_company_scope
-    from app.services.respond_messaging_service import build_context_vars
-
-    d = _si_approved(world, [world.product.id])
-    world.db.commit()
-    before = get_company_scope(world.db)
-    set_company_scope(world.db, UNSET)
-    try:
-        out = build_context_vars(world.db, use_case=USE_CASE, business_id=d["id"], identifier="901234")
-    finally:
-        set_company_scope(world.db, before)
-    assert out["entity_number"] == d["application_no"]
-    assert out["product_code"] == world.product.product_code
 
 
 def _closed_si_refusal(world, monkeypatch):

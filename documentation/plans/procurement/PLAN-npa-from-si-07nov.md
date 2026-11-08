@@ -136,11 +136,13 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
   SI's `stock_inquiry` (its template says "Stock Inquiry"). Same dialog, same path: `enqueue_application_update_reply`
   beside the SI's `enqueue_update_reply` (respond_io queue, the same composer with the NPA preamble "There is a
   response to your new product application"), worker `send_new_product_application_respond_message` over the
-  shared `_send_and_log`, logged on `new_product_applications`.
+  shared `_send_and_log`, logged, mirrored and webhooked on the SI's conversation exactly as the SI's reply
+  (review: n8n keeps `stock_inquiries` and the SI's SLA assignee); only the use case differs.
 - No hard-coded body: the admin maps any approved template on WhatsApp Templates, like the SI's. Variables:
   `entity_number` (NPA no), `inquiry_number`, `customer`, `project`, `product_code` (current codes),
   `new_product_code`, `lead_time`, `update` (purchasing's text), `portal_url`, `status`, `reason`
-  (`new_product_application_service.template_vars`, read in the worker inside the row's own company). Blank -> "-".
+  (`new_product_application_service.template_vars`, computed in the request inside its company scope and passed
+  to the worker as extra context vars). Blank -> "-".
 - View opens the NPA's portal page for the contact who raised it (`portal_url`, `PortalService.submission_link`
   with the row's contact and space). NPAs are raised by the salesperson in the portal; a staff-raised row has no
   contact and gets no link (no contact copy, no SI fallback, no backfill).

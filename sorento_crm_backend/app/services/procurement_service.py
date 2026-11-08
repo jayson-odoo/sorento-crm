@@ -6946,6 +6946,7 @@ class StockInquiryService:
         update_text: str,
         message_body: str,
         portal_url: str,
+        template_vars: dict,
         respond_user_id: str,
         crm_sender_user_id: Optional[str],
     ) -> None:
@@ -6953,10 +6954,11 @@ class StockInquiryService:
         inquiry's conversation, with the NPA's own template use case (owner 8 Nov 17:35).
 
         The same path as the SI's reply (``enqueue_update_reply``): the respond_io queue, the
-        same composer, and the same worker send (``_send_and_log``). The template maps
-        ``update`` (purchasing's text) and ``portal_url`` (the NPA's portal page, built by
-        ``new_product_application_service.portal_url``); the rest comes from the application
-        row in the worker. ``message_body`` is the in-window text when no template is mapped.
+        same composer, and the same worker send (``_send_and_log``) on the SI's conversation.
+        The template maps ``template_vars`` (``new_product_application_service.template_vars``,
+        computed by the caller in its company scope), ``update`` (purchasing's text) and
+        ``portal_url`` (the NPA's portal page). ``message_body`` is the in-window text when no
+        template is mapped.
         """
         from app.services.queue_service import enqueue_job
         from app.tasks.respond_io_tasks import send_new_product_application_respond_message
@@ -6965,7 +6967,7 @@ class StockInquiryService:
         portal_url = (portal_url or "").strip()
         job = enqueue_job(
             send_new_product_application_respond_message,
-            application_id,
+            str(inquiry.id),
             identifier,
             self.compose_stock_inquiry_reply_message(
                 message_body, portal_url, preamble=self.NEW_PRODUCT_APPLICATION_REPLY_PREAMBLE
@@ -6973,7 +6975,7 @@ class StockInquiryService:
             respond_user_id,
             crm_sender_user_id,
             getattr(inquiry, "space_id", None),
-            {"update": update_text, "portal_url": portal_url},
+            {**template_vars, "update": update_text, "portal_url": portal_url},
             queue_name="respond_io",
             job_timeout=180,
         )

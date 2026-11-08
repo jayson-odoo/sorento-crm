@@ -399,7 +399,7 @@ def send_stock_inquiry_respond_message(
 
 
 def send_new_product_application_respond_message(
-    application_id: str,
+    inquiry_id: str,
     identifier: str,
     message_text: str,
     respond_user_id: str,
@@ -407,21 +407,23 @@ def send_new_product_application_respond_message(
     space_id: Optional[str],
     extra_context_vars: Optional[dict] = None,
 ) -> dict:
-    """Worker-side: purchasing's Update & Reply on a New Product Application, sent through the
-    linked stock inquiry's conversation with the NPA's own template use case (owner 8 Nov).
+    """Worker-side: purchasing's Update & Reply on a New Product Application.
 
-    The same window-aware send as the SI's reply; logged against the application.
+    The SI's reply send on the SI's conversation (same outbox row, n8n webhook table and SLA
+    assignee as ``send_stock_inquiry_respond_message``) with the NPA's OWN template use case
+    (owner 8 Nov). The NPA's variables arrive in ``extra_context_vars``, computed in the
+    request inside its company scope.
     """
     return _send_and_log(
         use_case="new_product_application_update",
-        business_table="new_product_applications",
-        business_id=application_id,
+        business_table="stock_inquiries",
+        business_id=inquiry_id,
         identifier=identifier,
         message_text=message_text,
         respond_user_id=respond_user_id,
         crm_sender_user_id=crm_sender_user_id,
         space_id=space_id,
-        sla_entity_type="",
+        sla_entity_type="stock_inquiry",
         extra_context_vars=extra_context_vars,
     )
 
