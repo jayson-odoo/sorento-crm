@@ -242,3 +242,74 @@ def test_find_keys_catches_a_url_without_a_port():
     cfg = {"services": {"backend_blue": {"environment": {"X_URL": "postgresql://u:p@db/d"}}}}
     r = run("compose-find-keys", ["@pgbouncer", "@db:", "@db/"], json.dumps(cfg))
     assert "FOUND services.backend_blue.environment.X_URL" in r.stdout and "HITS: 1" in r.stdout
+
+
+# ------------------------------------------------------------------ S5.1b on A (owner 8 Nov 23:53)
+# A's compose has, besides the literal anchor lines, `DATABASE_URL: ${DATABASE_URL:-<url>}` lines.
+# The rewrite nests them: `${HA_DATABASE_URL:-${DATABASE_URL:-<url>}}`, so A (no HA_) resolves
+# exactly what it did, whether or not its .env sets DATABASE_URL.
+
+
+@pytest.mark.parametrize("line, want", [
+    ("    DATABASE_URL: ${DATABASE_URL:-postgresql://u:p@203.0.113.9:5432/d}",
+     "    DATABASE_URL: '${HA_DATABASE_URL:-${DATABASE_URL:-postgresql://u:p@203.0.113.9:5432/d}}'"),
+    ('    DIRECT_URL: "${DIRECT_URL:-postgresql://u:p@203.0.113.9:5432/d}"  # c',
+     "    DIRECT_URL: '${HA_DIRECT_URL:-${DIRECT_URL:-postgresql://u:p@203.0.113.9:5432/d}}' # c"),
+    ("    DIRECT_URL: ${DIRECT_URL-postgresql://u:p@h:5432/d}",
+     "    DIRECT_URL: '${HA_DIRECT_URL:-${DIRECT_URL-postgresql://u:p@h:5432/d}}'"),
+    ("    DATABASE_URL: ${DATABASE_URL}",
+     "    DATABASE_URL: '${HA_DATABASE_URL:-${DATABASE_URL}}'"),
+    ("      - DATABASE_URL=${DATABASE_URL:-postgresql://u:pa$$s@h:5432/d}",
+     "      - 'DATABASE_URL=${HA_DATABASE_URL:-${DATABASE_URL:-postgresql://u:pa$$s@h:5432/d}}'"),
+])
+def test_rewrite_nests_a_same_key_variable(line, want):
+    new, changed = urls.rewrite_line(line)
+    assert changed and new == want
+    assert urls.rewrite_line(new) == (new, False)  # idempotent
+
+
+@pytest.mark.parametrize("line", [
+    "    DATABASE_URL: ${OTHER_URL:-postgresql://u:p@h/d}",          # a different variable
+    "    DATABASE_URL: ${DATABASE_URL:-${X}}",                       # nested already
+    "    DATABASE_URL: ${DATABASE_URL:?must be set}x",                # text after the brace
+    "    DATABASE_URL: ${DATABASE_URL:?must be set}",                 # required form: by hand
+    "    DATABASE_URL: postgresql://u:${PW}@h/d",                    # partial interpolation
+])
+def test_rewrite_still_stops_on_other_interpolation(line):
+    with pytest.raises(urls.Stop):
+        urls.rewrite_line(line)
+
+
+COMPOSE_A = COMPOSE + """  legacy:
+    image: busybox
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://app:pa$$ss@203.0.113.9:5432/sorento}
+      DIRECT_URL: ${DIRECT_URL:-postgresql://app:pa$$ss@203.0.113.9:5432/sorento}
+"""
+
+
+@needs_docker
+@pytest.mark.parametrize("a_env", ["", "DATABASE_URL=postgresql://app:x@198.51.100.7:5432/sorento\n"])
+def test_round_trip_with_a_variable_line(tmp_path, a_env):
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "docker-compose.yml").write_text(COMPOSE_A)
+    (a / ".env").write_text(a_env)
+    before = run("compose-env-hash", ["--all"], compose_json(a)).stdout
+    assert "changed lines: 5" in run("compose-ha-urls", [str(a / "docker-compose.yml")]).stdout
+    assert run("compose-env-hash", ["--all"], compose_json(a)).stdout == before  # A-UNCHANGED
+
+    b = tmp_path / "b"
+    b.mkdir()
+    shutil.copy(a / "docker-compose.yml", b / "docker-compose.yml")
+    (b / ".env").write_text("#DATABASE_URL=postgresql://app:x@203.0.113.9:5432/sorento\n")
+    with open(b / ".env", "a") as fh:
+        r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "ha-env-for-replica.py")],
+                           input=compose_json(b), stdout=fh, stderr=subprocess.PIPE, text=True)
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads(compose_json(b))
+    for svc in ("backend_blue", "legacy"):
+        e = cfg["services"][svc]["environment"]
+        assert e["DATABASE_URL"] == e["DIRECT_URL"] == "postgresql://app:pa$$ss@sorento_crm_replica:5432/sorento"
+    found = run("compose-find-keys", ["@pgbouncer", "@db:", "203.0.113.9"], compose_json(b)).stdout
+    assert "HITS: 0" in found, found
