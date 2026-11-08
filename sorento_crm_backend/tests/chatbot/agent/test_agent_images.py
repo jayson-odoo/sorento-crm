@@ -109,3 +109,34 @@ def test_agent_provider_name_defaults_to_the_agents_default_provider(db, contact
     from app.services.chatbot.agent import loop
 
     assert loop.agent_provider_name(db) == loop.DEFAULT_PROVIDER == "gemini"
+
+
+def test_n15_compaction_folds_a_file_turn_as_the_typed_words_and_the_reply_not_the_quoted_files(db, contact):
+    from app.models.user import SystemSetting
+    from app.services.chatbot.agent import memory
+    from app.services.chatbot.agent.access import build_context, grants_hash
+
+    ctx = build_context(db, contact["respond_id"])
+    conv = memory.current_conversation(db, contact["respond_id"], user_id=ctx.user_id, grants_hash=grants_hash(ctx))
+    for minute in range(10):
+        turn = seed_turn(db, conv, minute=minute, text=f"question {minute} " + "x" * 400, reply="answer " + "y" * 400)
+        if minute == 0:
+            turn.envelope = {
+                **turn.envelope,
+                "text": "grant access to these",
+                "file_text": 'Attached file "d.xlsx", sheet "Dealers": 1 rows.\n| Phone |\n| --- |\n| 60123456789 |',
+            }
+            turn.response = {**turn.response, "reply_text": "ZZT proposed the grant."}
+    row = db.query(SystemSetting).first() or SystemSetting()
+    row.chatbot_agent_compact_tokens = 100
+    db.add(row)
+    db.flush()
+    provider = KwProvider([plain("Earlier: a grant."), answer("Hello.")])
+
+    run(db, contact, provider)
+
+    prompt = provider.seen[0]["messages"][0]["content"]
+    assert "Fold the earlier conversation" in prompt, "the first call was not the compaction call"
+    assert "User: grant access to these\nAssistant: ZZT proposed the grant." in prompt
+    assert "User: Files the user attached" not in prompt, "the quoted files message was folded as the user's words"
+    assert "Assistant: grant access to these" not in prompt

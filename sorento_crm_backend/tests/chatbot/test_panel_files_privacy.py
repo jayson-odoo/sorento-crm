@@ -546,3 +546,111 @@ def test_r1c_an_ordinary_file_still_links_for_anyone(world, session_factory):
         db.rollback()
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Round 3 kill-test guards (green on the code as it stands; each pins a mutation the reviewer left alive)
+# --------------------------------------------------------------------------- #
+
+
+def _edit_type_row(p, **columns):
+    db = p.factory()
+    row = db.query(AttachmentType).filter(AttachmentType.code == "ai_assistant_attachment").one()
+    for key, value in columns.items():
+        setattr(row, key, value)
+    db.commit()
+
+
+def test_n20_a_type_row_raised_to_50_mb_cannot_lift_the_10_mb_ceiling(panel):
+    _edit_type_row(panel, max_file_size_mb=50)
+    # Many short rows, not one long line: the csv reader refuses a 10 MB field as unreadable.
+    at_ceiling = b"Phone,Name\n" + b"601,Ali\n" * 1_250_000  # 10.0 MB, under the 10 MiB ceiling
+    over = b"Phone,Name\n" + b"601,Ali\n" * 1_450_000  # 11.6 MB
+    assert len(at_ceiling) < 10 * 1024 * 1024 < len(over)
+
+    ok = upload(panel.client, "ok.csv", at_ceiling, "text/csv")
+    assert ok.status_code == 201, f"10 MB itself must still pass: {ok.text[:200]}"
+    resp = upload(panel.client, "over.csv", over, "text/csv")
+
+    assert resp.status_code == 422, resp.text
+    assert "10 MB" in resp.text
+
+
+def test_n20_the_size_limit_helper_is_capped_whatever_the_row_says():
+    from app.services.chatbot import panel_files
+
+    for mb in (None, 0, -5, 1, 10, 11, 50, 500):
+        limit = panel_files.size_limit_bytes(SimpleNamespace(max_file_size_mb=mb))
+        assert 0 < limit <= 10 * 1024 * 1024, (mb, limit)
+    assert panel_files.size_limit_bytes(SimpleNamespace(max_file_size_mb=1)) == 1024 * 1024
+
+
+def test_n21_a_type_row_raised_to_20_drafts_cannot_lift_the_5_draft_ceiling(panel):
+    _edit_type_row(panel, max_count_per_entity=20)
+    for i in range(5):
+        assert upload(panel.client, f"f{i}.csv", csv_bytes(), "text/csv").status_code == 201
+
+    resp = upload(panel.client, "f5.csv", csv_bytes(), "text/csv")
+
+    assert resp.status_code == 422, resp.text
+
+
+def test_n03_no_viewer_is_not_open_a_panel_file_is_404_and_an_ordinary_file_is_returned(world):
+    from app.models.resources import Attachment
+    from app.services.error_handler import AppException
+    from app.services.resources_service import AttachmentService
+
+    db = world.p.factory()
+    service = AttachmentService(db)
+
+    with pytest.raises(AppException) as raised:
+        service.get_attachment(world.panel_id)
+    assert raised.value.status_code == 404
+    assert str(service.get_attachment(world.control_id).id) == world.control_id
+    assert str(service.get_attachment(world.panel_id, viewer_id=world.p.staff.user_id).id) == world.panel_id
+    with pytest.raises(AppException):
+        service.get_attachment(world.panel_id, viewer_id=world.other.user_id)
+
+
+def test_n03_is_private_to_others_treats_a_missing_viewer_as_a_stranger(world):
+    from app.models.resources import Attachment
+    from app.services.entity_attachment_service import is_private_to_others
+    from sqlalchemy.orm import joinedload
+
+    db = world.p.factory()
+    panel_att = db.query(Attachment).options(joinedload(Attachment.attachment_type)).filter(Attachment.id == world.panel_id).one()
+    control = db.query(Attachment).options(joinedload(Attachment.attachment_type)).filter(Attachment.id == world.control_id).one()
+
+    assert is_private_to_others(panel_att, None) is True
+    assert is_private_to_others(panel_att, "") is True
+    assert is_private_to_others(panel_att, world.other.user_id) is True
+    assert is_private_to_others(panel_att, world.p.staff.user_id) is False
+    assert is_private_to_others(control, None) is False
+    assert is_private_to_others(control, world.other.user_id) is False
+
+
+@pytest.mark.parametrize("method,suffix,body", [
+    ("put", "", {"description": "hijacked"}),
+    ("put", "", {"original_filename": "hijacked.csv"}),
+    ("post", "/resubmit", None),
+])
+def test_n09_n10_update_and_resubmit_of_another_users_panel_file_are_404_and_change_nothing(drive, method, suffix, body):
+    before = raw_row(drive.p.factory(), drive.panel_id)
+    as_reader(drive)
+
+    resp = getattr(drive.p.client, method)(f"{ATT}/{drive.panel_id}{suffix}", **({"json": body} if body else {}))
+
+    assert resp.status_code == 404, f"{method.upper()} {suffix or '/{id}'}: {resp.status_code} {resp.text[:200]}"
+    assert raw_row(drive.p.factory(), drive.panel_id) == before
+
+
+def test_n09_update_works_for_an_ordinary_file(drive):
+    """Harness check for the 404 test above: B can edit a file that is not private."""
+    as_reader(drive)
+    assert drive.p.client.put(f"{ATT}/{drive.control_id}", json={"description": "ok"}).status_code == 200
+
+
+def test_n10_resubmit_of_an_ordinary_file_is_not_a_404(drive):
+    as_reader(drive)
+
+    assert drive.p.client.post(f"{ATT}/{drive.control_id}/resubmit").status_code != 404
