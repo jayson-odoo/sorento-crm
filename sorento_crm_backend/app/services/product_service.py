@@ -230,6 +230,20 @@ def malaysia_day_start_utc(day: date) -> datetime:
     return datetime.combine(day, time.min, tzinfo=MALAYSIA_TZ).astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def malaysia_day_range_filters(column, day_from: Optional[date], day_to: Optional[date]) -> list:
+    """Inclusive Malaysia-calendar-day range on a naive-UTC column, as filter clauses.
+
+    Either bound set also excludes NULL rows (a comparison with NULL is never true). One
+    helper for every date-range filter of the products list ("Discontinued between",
+    "List price changed between") and its list-query search and export."""
+    clauses = []
+    if day_from is not None:
+        clauses.append(column >= malaysia_day_start_utc(day_from))
+    if day_to is not None:
+        clauses.append(column < malaysia_day_start_utc(day_to + timedelta(days=1)))
+    return clauses
+
+
 class ProductService:
     """Service for product operations."""
     
@@ -354,6 +368,8 @@ class ProductService:
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
+        list_price_changed_from: Optional[date] = None,
+        list_price_changed_to: Optional[date] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -414,17 +430,17 @@ class ProductService:
         if list_price_batch_id:
             filters.append(Product.list_price_notify_batch_id == list_price_batch_id)
 
-        # "Discontinued at" date-range filter (issue #1287): inclusive by Malaysia
-        # calendar day, either bound set also excludes null (never-discontinued) rows.
-        if discontinued_from is not None:
-            filters.append(
-                Product.discontinued_notified_at >= malaysia_day_start_utc(discontinued_from)
+        # "Discontinued between" (issue #1287) and "List price changed between"
+        # (LIST-PRICE-CHANGE-UI): inclusive by Malaysia calendar day; either bound set also
+        # excludes null (never discontinued / never changed) rows.
+        filters.extend(
+            malaysia_day_range_filters(Product.discontinued_notified_at, discontinued_from, discontinued_to)
+        )
+        filters.extend(
+            malaysia_day_range_filters(
+                Product.list_price_notified_at, list_price_changed_from, list_price_changed_to
             )
-        if discontinued_to is not None:
-            filters.append(
-                Product.discontinued_notified_at
-                < malaysia_day_start_utc(discontinued_to + timedelta(days=1))
-            )
+        )
 
         if price_min or price_max:
             price_filters = []
@@ -518,6 +534,7 @@ class ProductService:
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
             "discontinued_at": Product.discontinued_notified_at,
+            "list_price_changed_at": Product.list_price_notified_at,
             # ITEM-CLASS: by class name, products with no class last (nulls_last below).
             "item_class": select(ItemClass.item_class_name)
             .where(ItemClass.id == Product.item_class_id)
@@ -561,6 +578,8 @@ class ProductService:
         variant_filter: Optional[str] = None,
         discontinued_from: Optional[date] = None,
         discontinued_to: Optional[date] = None,
+        list_price_changed_from: Optional[date] = None,
+        list_price_changed_to: Optional[date] = None,
     ):
         """List products with filtering and pagination.
 
@@ -621,6 +640,8 @@ class ProductService:
             variant_filter=variant_filter,
             discontinued_from=discontinued_from,
             discontinued_to=discontinued_to,
+            list_price_changed_from=list_price_changed_from,
+            list_price_changed_to=list_price_changed_to,
         )
         if q is self._EMPTY_RESULT:
             payload = {

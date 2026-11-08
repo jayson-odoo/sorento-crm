@@ -61,6 +61,9 @@ class ListSearchRequest(BaseModel):
     # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
     discontinued_from: Optional[date] = None
     discontinued_to: Optional[date] = None
+    # Products "List price changed at" range (LIST-PRICE-CHANGE-UI), Malaysia-day inclusive.
+    list_price_changed_from: Optional[date] = None
+    list_price_changed_to: Optional[date] = None
     # Workflow forms (list-query + UI quick filters)
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
@@ -103,6 +106,9 @@ class ListExportRequest(BaseModel):
     # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
     discontinued_from: Optional[date] = None
     discontinued_to: Optional[date] = None
+    # Products "List price changed at" range (LIST-PRICE-CHANGE-UI), Malaysia-day inclusive.
+    list_price_changed_from: Optional[date] = None
+    list_price_changed_to: Optional[date] = None
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
