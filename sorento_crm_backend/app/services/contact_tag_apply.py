@@ -445,7 +445,18 @@ def apply_settings(
                 )
         changes = [_change(cat, i) for i in todo]
         changes += _cleared_sibling_changes(db, contact, cat, items, todo)
+        # Reset to tags: every setting the actor may write now counts as the tags' value, written or not
+        # (a contact already holding it must not keep an own change hidden in an older snapshot).
+        resettable = [
+            i for i in items
+            if not i["conflict"] and not i.get("blocked_reason") and (i["section"], i["key"]) != ("chatbot", "llm")
+            and i["section"] not in held_back and _can_write(i["section"], can, is_superadmin)
+            and (i in todo or not i["differs"])
+        ]
         if not todo:
+            if not dry_run and resettable:
+                _record_reset(contact, resettable)
+                db.flush()
             results.append(_row(cid, label, "unchanged", conflicts=conflicts, not_applied=not_applied))
             continue
         if not dry_run:
@@ -456,7 +467,7 @@ def apply_settings(
                     if group:
                         _WRITERS[section](db, contact, group, actor_id)
                 _audit(db, cid, actor_id, todo)
-                _record_reset(contact, todo)
+                _record_reset(contact, resettable)
                 db.flush()
                 savepoint.commit()
             except Exception as exc:  # noqa: BLE001 - every failure becomes that contact's row

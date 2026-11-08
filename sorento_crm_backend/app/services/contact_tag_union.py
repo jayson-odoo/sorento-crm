@@ -173,6 +173,9 @@ def plan_contact(db: Session, contact, evaluated: dict, keys: Optional[set], cat
         snapshot[sk] = new_entry
         if target != current:
             todo.append(_with_target(item, cat, target))
+    resolved_away = {
+        cts.snap_key(sec, inc) for sec, inc, exc in cts.INCLUDE_EXCLUDE if cts.snap_key(sec, exc) in seen
+    }
     for sk in [k for k in snapshot if k not in seen]:
         section, key = _split(sk)
         if keys is not None and (section, key) not in keys:
@@ -180,6 +183,10 @@ def plan_contact(db: Session, contact, evaluated: dict, keys: Optional[set], cat
         entry = snapshot.pop(sk)
         if "base" not in entry:
             continue  # what it was before the tags is unknown: the value stays, as the contact's own
+        if sk in resolved_away:
+            # The tags' include and exclude lists were folded into one exclude list (one rule per row):
+            # the include list's old base cannot sit beside it, so it is dropped, not written back.
+            continue
         current = reader.current(cid, section, key, cat)
         target = _three_way(cts.from_json(entry["base"]), cts.from_json(entry.get("v")), current)
         if section in NEVER_EMPTY and target == frozenset():
@@ -307,13 +314,13 @@ def run(db: Session, *, apply: bool, expect: Optional[int], contact_ids: Optiona
             report["inactive_only"] += 1
 
     outer = db.begin_nested()
+    cat = cts.Catalog(db, scope_brands=True)
     try:
         for contact in contacts:
             sp = db.begin_nested()
             try:
                 ensure_seeded(db, [contact])
                 evaluated = cts.evaluate(db, [contact])
-                cat = cts.Catalog(db, scope_brands=True)
                 reader = cts._Reader(db, [contact])
                 todo, snapshot = plan_contact(db, contact, evaluated[str(contact.id)], None, cat, reader)
                 if todo:

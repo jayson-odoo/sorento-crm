@@ -581,3 +581,87 @@ def test_sec_n1_adding_a_tag_that_sets_the_ai_model_needs_the_ai_settings_right(
     a = _stag(client, db, {"chatbot": {"llm": {"provider": "openai", "model": "gpt-x"}}})
     c = _contact(db)
     assert _put(client, c, [a]).status_code == 403
+
+
+# ---------------------------------------------------------------- reviewer fixes
+
+
+def test_rev1_hand_set_include_list_then_an_exclude_tag_resolves_without_a_500(client, db, su):
+    w1, w3, w5 = _wh(db), _wh(db), _wh(db)
+    c = _contact(db)
+    db.add(StockVisibilityPolicy(contact_id=str(c.id), mode="detailed", warehouse_ids=[w5.id]))
+    db.flush()
+    a = _stag(client, db, {"stock_visibility": {"warehouse_ids": [w1.id]}})
+    b = _stag(client, db, {"stock_visibility": {"excluded_warehouse_ids": [w3.id]}})
+    _tags(client, c, [a])
+    resp = _put(client, c, [a, b])
+    assert resp.status_code == 200, resp.text
+    db.expire_all()
+    pol = db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == str(c.id)).one()
+    assert pol.warehouse_ids is None and set(pol.excluded_warehouse_ids) == {w3.id}
+
+
+def test_rev2_specs_shown_add_up_and_specs_hidden_need_every_tag(client, db, su):
+    from app.models.access import SpecVisibilityPolicy
+
+    a = _stag(client, db, {"spec_visibility": {"spec_keys": ["zzt_a", "zzt_b"]}})
+    b = _stag(client, db, {"spec_visibility": {"spec_keys": ["zzt_c"]}})
+    x = _stag(client, db, {"spec_visibility": {"excluded_spec_keys": ["zzt_a", "zzt_b"]}})
+    y = _stag(client, db, {"spec_visibility": {"excluded_spec_keys": ["zzt_b", "zzt_c"]}})
+    c1, c2 = _contact(db), _contact(db)
+    _tags(client, c1, [a, b])
+    _tags(client, c2, [x, y])
+    db.expire_all()
+    p1 = db.query(SpecVisibilityPolicy).filter(SpecVisibilityPolicy.contact_id == str(c1.id)).one()
+    p2 = db.query(SpecVisibilityPolicy).filter(SpecVisibilityPolicy.contact_id == str(c2.id)).one()
+    assert set(p1.spec_keys) == {"zzt_a", "zzt_b", "zzt_c"}
+    assert set(p2.excluded_spec_keys) == {"zzt_b"}
+
+
+def test_rev2_market_segments_and_attachment_types_add_up(client, db, su):
+    from app.models.access import MarketSegment
+    from app.models.resources import AttachmentType
+
+    s1, s2 = (MarketSegment(code=unique_code("zseg")[:50], name=f"ZZT seg {i}", is_active=True) for i in (1, 2))
+    t1, t2 = (AttachmentType(type_name=f"ZZT at {unique_code('a')}", allowed_extensions="pdf") for _ in (1, 2))
+    db.add_all([s1, s2, t1, t2])
+    db.flush()
+    a = _stag(client, db, {"market_segments": [s1.code], "attachment_types": [t1.id]})
+    b = _stag(client, db, {"market_segments": [s2.code], "attachment_types": [t2.id]})
+    c = _contact(db)
+    _tags(client, c, [a, b])
+    segs = {r for (r,) in db.execute(
+        text("SELECT segment_code FROM respond_contact_market_segments WHERE contact_id = :c"), {"c": str(c.id)})}
+    types = {str(r) for (r,) in db.execute(
+        text("SELECT attachment_type_id FROM contact_attachment_types WHERE contact_id = :c"), {"c": str(c.id)})}
+    assert segs == {s1.code, s2.code}
+    assert types == {t1.id, t2.id}
+
+
+def test_rev3_apply_settings_clears_an_own_change_hidden_in_an_old_snapshot(client, db, su):
+    s, m = _company(db, "s"), _company(db, "m")
+    a = _stag(client, db, {"companies": [s.id]})
+    b = _stag(client, db, {"companies": [m.id]})
+    c = _contact(db)
+    _link_raw(db, c, [a, b])
+    db.add_all([RespondContactCompany(respond_contact_id=str(c.id), company_id=x.id) for x in (s, m)])
+    db.flush()  # holds the union already; the old rule's snapshot would say {}
+    resp = client.post(f"{CONTACTS}/bulk-apply-tag-settings", json={"contact_ids": [str(c.id)], "dry_run": False})
+    assert resp.status_code == 200, resp.text
+    _tags(client, c, [a])
+    assert _companies(db, c) == {s.id}
+
+
+def test_rev4_agents_and_messaging_tags_need_their_rights(client, db, perms, monkeypatch):
+    from tests.test_contact_tags_s2 import _agent
+
+    monkeypatch.setattr("app.api.v1.system.companies._is_superadmin", lambda db_, uid: False)
+    agent = _agent(db)
+    ta = _stag(client, db, {"agents": {str(agent.id): True}})
+    tm = _stag(client, db, {"outbound_enabled": True})
+    c = _contact(db)
+    perms["granted"] = {VIEW, EDIT}
+    assert _put(client, c, [ta]).status_code == 403
+    assert _put(client, c, [tm]).status_code == 403
+    perms["granted"] = {VIEW, EDIT, AGENTS_EDIT, OUTBOUND_EDIT}
+    assert _put(client, c, [ta, tm]).status_code == 200
