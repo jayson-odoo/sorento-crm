@@ -27,7 +27,7 @@ from app.schemas.product import (
     BulkDeleteProductsRequest,
     BulkUpdateProductsRequest,
 )
-from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 from app.services.stock_ask_limits import guard_chatbot_limits_edit, NULL_LIMITS
 from app.utils.heavy_work import heavy
@@ -329,7 +329,7 @@ def get_product_purchase_history(
 def get_product_list_price_history(
     product_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("changed_at"),
     dir: Optional[str] = Query("desc"),
     # The grant `/audit/logs` asks for a product's trail (security review on #2260).

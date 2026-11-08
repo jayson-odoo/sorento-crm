@@ -42,9 +42,9 @@ from app.schemas.ai_prompt import (
 )
 from app.schemas.chatbot_turn import AgentActionResponse
 from app.services import rate_limit
-from app.services.chatbot import panel_files
 from app.services.error_handler import AppException
 from app.api.v1.external.chat import (
+    panel_files,
     panel_service,
     CHATBOT_PROMPT_KEYS,
     DryRunTurnRefused,

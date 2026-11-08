@@ -649,10 +649,10 @@ def _panel_draft_purge_tick():
     """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
     Owns its own DB session; best-effort and never raises."""
     try:
-        from app.services.chatbot.panel_files import purge_drafts
+        from app.tasks.chat_turns import purge_panel_drafts
 
         with scheduler_session("panel_draft_purge") as db:
-            purge_drafts(db)
+            purge_panel_drafts(db)
     except Exception as e:
         logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
 
