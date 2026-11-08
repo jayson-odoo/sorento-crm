@@ -232,7 +232,7 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
                   <div
                     key={chip.key}
                     className={cn(
-                      'relative flex max-w-full items-center gap-2 rounded-xl border p-1 pe-1.5 text-xs',
+                      'relative flex min-w-0 max-w-full items-center gap-2 rounded-xl border p-1 pe-1.5 text-xs',
                       chip.status === 'error'
                         ? 'border-destructive bg-destructive/10'
                         : 'border-border bg-muted/40',
@@ -255,7 +255,7 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
                       ) : null}
                       <span
                         className={cn(
-                          'whitespace-nowrap text-2xs',
+                          'min-w-0 break-words text-2xs',
                           chip.status === 'error' ? 'text-destructive' : 'text-muted-foreground',
                         )}
                       >
@@ -264,9 +264,9 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
                           : chip.status === 'uploading'
                             ? `${formatSize(chip.size)}, uploading`
                             : picked
-                              ? `${picked.rows} rows`
+                              ? `${formatSize(chip.size)}, ${picked.rows} rows`
                               : chip.file?.kind === 'pdf' && chip.file.pages != null
-                                ? `${chip.file.pages} pages`
+                                ? `${formatSize(chip.size)}, ${chip.file.pages} pages`
                                 : formatSize(chip.size)}
                       </span>
                     </div>

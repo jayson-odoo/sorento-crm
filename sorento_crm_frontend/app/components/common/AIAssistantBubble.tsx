@@ -437,6 +437,8 @@ export default function AIAssistantBubble() {
         }
       } catch (err) {
         sent = false;
+        // The words stay in the box for a retry (the composer keeps its file chips too).
+        setInput((current) => current || text);
         drawCountRef.current += 1;
         if (openThreadRef.current !== startedOn) return false;
         const errorMessage: AIAssistantMessage = {

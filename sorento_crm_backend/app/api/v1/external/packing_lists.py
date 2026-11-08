@@ -18,6 +18,7 @@ from app.services.procurement_service import (
 from app.models.integration import IntegrationLog
 from app.models.procurement import Supplier, InboundShipment
 from app.models.resources import Attachment
+from app.services.entity_attachment_service import exclude_private_types
 from app.api.v1.external.utils import (
     parse_date_value,
     scope_to_attachment_company,
@@ -125,7 +126,7 @@ def create_packing_list(
             )
 
     # Validate attachment
-    attachment = db.query(Attachment).filter(Attachment.id == payload.packing_list.attachment_id).first()
+    attachment = exclude_private_types(db.query(Attachment)).filter(Attachment.id == payload.packing_list.attachment_id).first()
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

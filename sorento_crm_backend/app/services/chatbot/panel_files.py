@@ -51,8 +51,10 @@ PDF_TOO_LONG_MESSAGE = "PDFs over 20 pages are not read."
 
 _HEADER_SCAN_ROWS = 20
 _CELL_CHARS = 200
-#: Raw rows one sheet is scanned for, so a sheet of a million styled blanks cannot hold a request.
-_SCAN_ROWS = 100_000
+#: Rows scanned in one sheet, and across the sheets of one workbook, so a sheet of a million styled rows (or
+#: twenty of them) cannot hold a request. A sheet past its budget reports what was counted.
+MAX_SCAN_ROWS_PER_SHEET = 10_000
+MAX_SCAN_ROWS_TOTAL = 20_000
 #: Columns and sheets read, whatever a workbook declares about itself (R2).
 _MAX_COLUMNS = 100
 _MAX_SHEETS = 20
@@ -163,7 +165,9 @@ def _is_text(value: Any) -> bool:
     return False
 
 
-def _parse(raw_rows: Iterable[Iterable[Any]], name: Optional[str]) -> SheetRead:
+def _parse(
+    raw_rows: Iterable[Iterable[Any]], name: Optional[str], limit: int = MAX_SCAN_ROWS_PER_SHEET
+) -> SheetRead:
     """S1 to S3 over a stream of raw rows. Only the first `ROW_CAP` data rows are kept; all are counted."""
     it = iter(raw_rows)
     head = [list(r) for r in itertools.islice(it, _HEADER_SCAN_ROWS)]
@@ -174,7 +178,7 @@ def _parse(raw_rows: Iterable[Iterable[Any]], name: Optional[str]) -> SheetRead:
     kept: list[list[Any]] = []
     total = 0
     for scanned, row in enumerate(body):
-        if scanned >= _SCAN_ROWS:
+        if scanned >= limit:
             break
         cells = list(row)
         if all(_blank(c) for c in cells):
@@ -256,7 +260,7 @@ def _sheets(data: bytes, ext: str):
             # A read-only sheet trusts its declared `<dimension>`; a forged A1:XFD1048576 would pad every row.
             if hasattr(ws, "reset_dimensions"):
                 ws.reset_dimensions()
-            yield ws.title, _narrow(ws.iter_rows(values_only=True))
+            yield ws.title, _narrow(ws.iter_rows(max_col=_MAX_COLUMNS, values_only=True))
     finally:
         wb.close()
 
@@ -282,8 +286,12 @@ def read_sheet(data: bytes, ext: str, sheet: Optional[str] = None) -> SheetRead:
 def list_sheets(data: bytes, ext: str) -> list[dict[str, Any]]:
     """The non-empty sheets in workbook order with their data-row counts (a csv is one)."""
     out = []
+    budget = MAX_SCAN_ROWS_TOTAL
     for name, rows in _sheets(data, ext.lstrip(".").lower()):
-        got = _parse(rows, name)
+        if budget <= 0:
+            break
+        got = _parse(rows, name, min(MAX_SCAN_ROWS_PER_SHEET, budget))
+        budget -= got.total_rows
         if got.total_rows:
             out.append({"name": name if name is not None else "Sheet 1", "rows": got.total_rows})
     return out

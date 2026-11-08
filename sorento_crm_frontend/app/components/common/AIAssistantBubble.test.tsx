@@ -1085,3 +1085,16 @@ describe('AIAssistantBubble: kill gaps on a failed send and on the draw counter 
     expect(screen.getByText('ZZT ANSWER TWO')).toBeDefined();
   });
 });
+
+describe('AIAssistantBubble: a failed send (fix round 2, B-3)', () => {
+  it('keeps the typed words in the box so the user can retry', async () => {
+    grant();
+    await openThread(waitingThread(inAMinute()));
+    vi.mocked(chatApi.sendAIAssistantMessage).mockRejectedValueOnce(new Error('ZZT server down'));
+
+    typeAndSend('ZZT retry me');
+
+    await waitFor(() => expect(screen.getByText('ZZT server down')).toBeDefined());
+    expect((screen.getByPlaceholderText('Ask the assistant...') as HTMLTextAreaElement).value).toBe('ZZT retry me');
+  });
+});

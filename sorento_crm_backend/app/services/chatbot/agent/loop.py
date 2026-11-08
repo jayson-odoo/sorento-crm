@@ -1738,11 +1738,12 @@ def _run(
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
-                elif name == CONFIRM_ACTION and run.rounds > 1:
+                elif name == CONFIRM_ACTION and (run.rounds > 1 or file_text or images):
                     out = ToolResult(
                         "denied",
                         message="Not done: a change is confirmed only from the user's own message, "
-                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                        "before any tool runs this turn and never on a turn with attached files. "
+                        "Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)

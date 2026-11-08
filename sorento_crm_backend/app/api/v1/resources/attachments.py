@@ -38,7 +38,7 @@ from app.services.storage_router import (
     sanitize_storage_filename,
 )
 from app.services.uuid_list_param import parse_uuid_list
-from app.services.entity_attachment_service import EntityAttachmentService
+from app.services.entity_attachment_service import EntityAttachmentService, is_private_to_others
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
 from app.services.excel_macro_stripper import (
@@ -1482,6 +1482,14 @@ def bulk_download_attachments(
             message="Select at least one folder or file.",
             code="EMPTY_SELECTION",
         )
+    if attachment_ids:
+        # Another person's private file (the AI panel's) is left out like an id that does not exist.
+        stranger = {
+            str(a.id)
+            for a in db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+            if is_private_to_others(a, str(current_user["id"]))
+        }
+        attachment_ids = [i for i in attachment_ids if i not in stranger]
     if DownloadService(db).has_in_flight(
         user_id=current_user["id"], kind="attachment_bulk_zip", any_source=True
     ):
