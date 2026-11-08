@@ -496,6 +496,66 @@ describe('ChatbotConsole - where an escalation went (#865 fix round 3)', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows the simulated-contact badge once on a turn run on a synthetic envelope', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-synth',
+      branch_kind: 'business_query',
+      reply_text: 'MWB248 set is in stock.',
+      quick_replies: [],
+      send_messages: ['Anything else?'],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [], synthetic_envelope: true },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'MWB248 set' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    const badge = await screen.findByTestId('chatbot-console-simulated-badge');
+    expect(badge).toHaveTextContent('simulated contact, no real WhatsApp history');
+    expect(screen.getAllByTestId('chatbot-console-simulated-badge')).toHaveLength(1);
+  });
+
+  it('says AI replies are off instead of "(no reply)" on an ai_not_allowed turn', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-ai-off',
+      branch_kind: 'ai_not_allowed',
+      reply_text: '',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: null,
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [] },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'MWB248 set' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    expect(
+      await screen.findByText('AI replies are OFF for this contact; live, the bot would not answer.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('(no reply)')).toBeNull();
+  });
+
+  it('shows no simulated-contact badge on a borrowed-envelope turn', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-real',
+      branch_kind: 'business_query',
+      reply_text: 'Borrowed reply.',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [], synthetic_envelope: false },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'hi' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    expect(await screen.findByText('Borrowed reply.')).toBeInTheDocument();
+    expect(screen.queryByTestId('chatbot-console-simulated-badge')).toBeNull();
+  });
+
   it('shows no routing line on a turn that did not escalate', async () => {
     postConsoleTurn.mockResolvedValue({
       turn_id: 'turn-spec',
