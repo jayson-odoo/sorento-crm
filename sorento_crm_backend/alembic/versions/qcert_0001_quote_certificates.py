@@ -5,14 +5,14 @@ Additive and idempotent (IF NOT EXISTS) so the shared dev DB, which converges th
 Plan: documentation/plans/certificates/PLAN-quote-cert-tab-08nov.md.
 
 Revision ID: qcert_0001_quote_certificates
-Revises: sales_0007_targets_view_own
+Revises: ptag_0019_acc_colours
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "qcert_0001_quote_certificates"
-down_revision = "sales_0007_targets_view_own"
+down_revision = "ptag_0019_acc_colours"
 branch_labels = None
 depends_on = None
 
