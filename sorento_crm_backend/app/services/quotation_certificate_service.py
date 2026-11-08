@@ -237,7 +237,8 @@ _SAME_ROW = 0.002
 
 def _merge_rows(boxes: List[dict]) -> List[dict]:
     """Two products whose codes share one table row find the same box: keep one per row. The
-    merged box belongs to no single product when the products differ."""
+    merged box belongs to no single product when the products differ, and `product_ids` keeps
+    every product that fed it so a default save can give each its own box again."""
     out: List[dict] = []
     for box in boxes:
         twin = next(
@@ -249,9 +250,13 @@ def _merge_rows(boxes: List[dict]) -> List[dict]:
             ),
             None,
         )
+        pid = box.get("product_id")
         if twin is None:
-            out.append(dict(box))
-        elif twin.get("product_id") != box.get("product_id"):
+            out.append({**box, "product_ids": [pid] if pid else []})
+            continue
+        if pid and pid not in twin["product_ids"]:
+            twin["product_ids"].append(pid)
+        if twin.get("product_id") != pid:
             twin["product_id"] = None
     return out
 

@@ -38,6 +38,8 @@ class BoxIn(BaseModel):
     w: float
     h: float
     product_id: Optional[str] = None
+    # Sent back by the editor for a box merged from several products; the stored box keeps product_id.
+    product_ids: Optional[List[str]] = Field(None, max_length=50)
 
 
 class AddIn(BaseModel):

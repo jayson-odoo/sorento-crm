@@ -10,6 +10,8 @@ export interface PageBox {
   w: number;
   h: number;
   product_id: string | null;
+  /** A box merged from several products on one table row: every product that fed it. */
+  product_ids?: string[];
 }
 
 export type Corner = 'nw' | 'ne' | 'sw' | 'se';
@@ -55,4 +57,17 @@ export function resizeBox<T extends PageBox>(box: T, corner: Corner, dx: number,
   if (corner === 'nw' || corner === 'ne') top = clamp(top + dy, 0, bottom - MIN_BOX);
   else bottom = clamp(bottom + dy, top + MIN_BOX, 1);
   return { ...box, x: left, y: top, w: right - left, h: bottom - top };
+}
+
+/**
+ * The boxes to save as per-product defaults: a box merged from several products becomes one box
+ * per product (each product keeps its own default on that row); any other box goes to its own
+ * product, else to `fallbackProductId` (the product chosen while drawing).
+ */
+export function expandBoxesForDefault(boxes: PageBox[], fallbackProductId: string | null): PageBox[] {
+  return boxes.flatMap((box) => {
+    const { product_ids: ids, ...rest } = box;
+    const targets = ids && ids.length > 1 ? ids : [box.product_id ?? fallbackProductId];
+    return targets.map((product_id) => ({ ...rest, product_id }));
+  });
 }

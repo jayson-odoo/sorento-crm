@@ -14,7 +14,7 @@ import BackToList from '@/components/common/BackToList';
 import { PdfViewer } from '@/components/common/PdfViewer';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { BoxOverlay } from '@/components/common/pdf-viewer/BoxOverlay';
-import type { PageBox } from '@/components/common/pdf-viewer/box-geometry';
+import { expandBoxesForDefault, type PageBox } from '@/components/common/pdf-viewer/box-geometry';
 import { CoverageCodeEditor } from '@/app/(protected)/master-data-management/certificates/components/CoverageCodeEditor';
 
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -159,10 +159,7 @@ export function CertificateReader({
 
   const save = () => {
     if (!detail) return;
-    const payload =
-      scope === 'default'
-        ? boxes.map((b) => ({ ...b, product_id: b.product_id ?? productId }))
-        : boxes;
+    const payload = scope === 'default' ? expandBoxesForDefault(boxes, productId) : boxes;
     saveBoxes.mutate(
       { certificateId, scope, boxes: payload },
       { onSuccess: () => setDirty(false) },

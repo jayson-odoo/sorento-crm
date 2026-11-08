@@ -1368,3 +1368,35 @@ def test_r4_certificates_count_is_null_for_a_legacy_issue(files):
         db.commit()
         db.refresh(issue)
         assert qdocs.serialize_issue(db, issue)["certificates_count"] is None
+
+
+def test_r5_a_merged_box_names_its_products_and_a_default_save_gives_each_its_own(files):
+    with blank_session() as db:
+        c = _draft(db)
+        cr = _cert(
+            db,
+            c,
+            files,
+            covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")],
+            pdf=_row_with_both_codes_pdf(),
+        )
+        with _api(db, c, DEFAULTS) as client:
+            (merged,) = _detail(client, c, cr.id)["boxes"]
+            assert merged["product_id"] is None
+            assert set(merged["product_ids"]) == {c["a"].id, c["b"].id}
+            # What the editor sends: the merged box expanded to one box per product.
+            box = {k: merged[k] for k in ("page", "x", "y", "w", "h")}
+            payload = [{**box, "product_id": pid} for pid in merged["product_ids"]]
+            r = client.put(_u(c, f"/{cr.id}/boxes"), json={"scope": "default", "boxes": payload})
+            assert r.status_code == 200, r.text
+            db.expire_all()
+            for pid in (c["a"].id, c["b"].id):
+                cache = cr.cps[pid].boxes
+                assert cache["source"] == "manual" and len(cache["boxes"]) == 1
+            assert _items(client, c)[0]["marked"] == {"count": 1, "state": "edited"}
+            # product_ids is accepted and ignored on a quote-scope save.
+            q = client.put(
+                _u(c, f"/{cr.id}/boxes"),
+                json={"scope": "quote", "boxes": [{**merged, "product_id": None}]},
+            )
+            assert q.status_code == 200, q.text

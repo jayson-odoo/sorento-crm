@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { boxToStyle, moveBox, rectFromDrag, resizeBox } from '../box-geometry';
+import { boxToStyle, expandBoxesForDefault, moveBox, rectFromDrag, resizeBox } from '../box-geometry';
 
 const box = { page: 1, x: 0.25, y: 0.5, w: 0.125, h: 0.0625, product_id: null as string | null };
 const PAGE = { width: 600, height: 800 };
@@ -113,5 +113,22 @@ describe('resizeBox', () => {
     const o = resizeBox(box, 'nw', -5, -5);
     expect(o.x).toBe(0);
     expect(o.y).toBe(0);
+  });
+});
+
+describe('expandBoxesForDefault', () => {
+  const merged = { page: 1, x: 0.1, y: 0.2, w: 0.3, h: 0.05, product_id: null as string | null, product_ids: ['pa', 'pb'] };
+
+  it('gives every product of a merged box its own box on the row', () => {
+    const out = expandBoxesForDefault([merged], 'fallback');
+    expect(out).toHaveLength(2);
+    expect(out.map((b) => b.product_id)).toEqual(['pa', 'pb']);
+    expect(out.every((b) => b.x === 0.1 && b.y === 0.2 && !('product_ids' in b))).toBe(true);
+  });
+
+  it('keeps a single-product box and falls back to the chosen product for a drawn one', () => {
+    const own = { ...box, product_id: 'px' };
+    const drawn = { ...box, product_id: null as string | null };
+    expect(expandBoxesForDefault([own, drawn], 'fallback').map((b) => b.product_id)).toEqual(['px', 'fallback']);
   });
 });
