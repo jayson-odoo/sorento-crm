@@ -837,3 +837,133 @@ def test_12_the_previous_waiting_rows_are_read_without_loading_every_turn(db, mo
 
     assert len(result.pending_action["lines"]) == 1
     assert "was not in the list" not in result.reply_text
+
+
+# ------------------------------------------------------------------ live-run fix round (V22 to V26)
+
+
+def mixed_world(db):
+    """One ready row, one waiting row (accounts with codes the model might echo), one skipped row."""
+    w = make_world(db)
+    for code, i in (("300-ZZ1", 1), ("300-ZZ2", 2)):
+        account(db, f"ZZT DEALER H {SUFFIXES[i]} {i}", code, w.mch)
+    ready, waits, bad = dealer(db, w), dealer(db, w, companies=(w.mch,)), dealer(db, w)
+    rows = [
+        tag(row_(ready.phone_number, codes=[w.cust_a.customer_code]), 1),
+        tag(waiting_row(w, waits), 2),
+        tag(row_(bad.phone_number, names=["ZZT Nowhere Stores"]), 3),
+    ]
+    return w, rows
+
+
+def test_13_the_summary_line_counts_distinct_rows_and_leaves_zero_parts_out(db):
+    from app.services.chatbot.agent import batch
+
+    w, rows = mixed_world(db)
+    steps, skipped, waiting = propose_rows(db, w, rows)
+
+    assert batch.summary_line(steps, skipped, waiting) == (
+        "Rows from your table: 1 ready to confirm, 1 need your choice, 1 not changed."
+    )
+    assert batch.summary_line([], skipped, []) == "Rows from your table: 1 not changed."
+    assert batch.summary_line(steps, [], waiting) == "Rows from your table: 1 ready to confirm, 1 need your choice."
+
+
+def test_13_the_reply_is_the_summary_line_then_the_tables_and_never_the_models_own_text(db):
+    w, rows = mixed_world(db)
+    model_text = "Here you go: | 1 | MODELCOPY ROW | please pick 300-ZZ1 or 300-ZZ2 for row two."
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
+
+    result, _ = run_turn(db, w, script, text_="grant access to these people")
+
+    reply = result.reply_text
+    assert reply.startswith("Rows from your table: 1 ready to confirm, 1 need your choice, 1 not changed.\n\n")
+    assert "MODELCOPY" not in reply and "please pick" not in reply
+    for heading in (READY, NEEDS, NOT_CHANGED):
+        assert reply.count(heading) == 1
+
+
+def test_13_a_batch_turns_answer_is_not_checked_so_no_repair_round_is_spent(db):
+    w, rows = mixed_world(db)
+    final = tc("answer", {
+        "text": "There are 98765 units and nothing exists for the other shop.",
+        "figures": [], "not_checked": [],
+        "not_found": [{"what": "Some Other Shop", "call_id": "b1"}],
+    }, "ans-1")
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), round_of(final), round_of(final)]
+
+    result, provider = run_turn(db, w, script, text_="grant access to these people")
+
+    assert len(provider.seen) == 2, "the answer check spent a repair round on a batch turn"
+    assert "not verified" not in result.reply_text and "98765" not in result.reply_text
+
+
+def _backed_by_skip(what: str, reason: str) -> bool:
+    return _backed(what, reason)
+
+
+def test_14_a_quoted_or_repeated_no_customer_claim_is_backed_but_other_terms_are_not():
+    reason = 'No customer named "No Such Shop" in your companies.'
+    assert _backed_by_skip('Customer named "No Such Shop"', reason) is True
+    assert _backed_by_skip('No customer named "No Such Shop" in your companies.', reason) is True
+    assert _backed_by_skip("No Such Shop", reason) is True
+    assert _backed_by_skip('"Other Shop"', reason) is False
+    assert _backed_by_skip("ZZT Dealer H", '"ZZT Dealer H" fits 3 accounts.') is False
+
+
+def _item(row: int) -> dict:
+    return {"row": row, "cells": {"Phone": "+60190000000", "Name": "ZZT Person"}, "summary": "s"}
+
+
+def _wait(row: int) -> dict:
+    return {**_item(row), "written": "X", "company": "MCH", "more": False, "candidates": [{"code": "C1", "name": "N1"}]}
+
+
+def _skip(row: int) -> dict:
+    return {"row": row, "reason": "Unknown access: Manager.", "cells": {"Phone": "+60190000000", "Name": "ZZT Person"}}
+
+
+def test_14_the_closing_line_follows_what_is_ready_waiting_or_skipped():
+    from app.services.chatbot.agent import batch
+
+    pick = "Reply with the account code(s) for each row under Needs your choice, all, or skip."
+    assert batch.preview_block([], [], [_wait(1)]).endswith(f"\n\n{pick}")
+    assert batch.preview_block([_item(1)], [], [_wait(2)]).endswith(
+        f"\n\n{pick} Or reply yes to confirm the ready rows now."
+    )
+    assert batch.preview_block([_item(1)], [_skip(2)], []).endswith("\n\nReply yes to go ahead, or tell me what to change.")
+    assert batch.preview_block([], [_skip(1)], []).endswith(
+        "\n\nNothing can change yet; fix the rows above and send the table again."
+    )
+
+
+def _table_headers(block: str) -> list[list[str]]:
+    out = []
+    for line in block.splitlines():
+        if line.startswith("| #"):
+            out.append([c.strip() for c in line.strip().strip("|").split("|")])
+    return out
+
+
+def test_15_every_table_starts_with_number_phone_name_and_the_will_change_cell_is_never_cut(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    linked = [account(db, f"ZZT LONG NAME TRADING SDN BHD BRANCH NUMBER {i}", f"ZL-{i:02d}", w.srt) for i in range(10)]
+    dealer_h(db, w.mch)
+    ready, waits, bad = dealer(db, w), dealer(db, w, companies=(w.mch,)), dealer(db, w)
+
+    steps, skipped, waiting = propose_rows(db, w, [
+        row_(ready.phone_number, codes=[a.customer_code for a in linked]),
+        waiting_row(w, waits),
+        row_(bad.phone_number, names=["ZZT Nowhere Stores"]),
+    ])
+    block = batch.preview_block(steps, skipped, waiting)
+
+    heads = _table_headers(block)
+    assert len(heads) == 3
+    for head in heads:
+        assert head[:3] == ["#", "Phone", "Name"], head
+    for a in linked:
+        assert a.customer_code in block
+    assert "..." not in block
