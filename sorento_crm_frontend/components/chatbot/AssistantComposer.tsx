@@ -16,6 +16,7 @@ import {
   deleteAssistantFile,
   uploadAssistantFile,
   type AssistantFile,
+  type SentFile,
 } from '@/lib/aiAssistantChatApi';
 import { useDictation } from '@/hooks/useDictation';
 import { localStore } from '@/lib/storage';
@@ -51,9 +52,30 @@ export interface AssistantComposerProps {
   onSend: (payload: {
     text: string;
     attachments: { id: string; sheet: string | null }[];
+    /** What the sent bubble shows for each file while the reply is on its way. */
+    files: SentFile[];
   }) => Promise<void> | void;
   isSending: boolean;
   canAttach: boolean;
+}
+
+/** A ready chip as the sent bubble draws it (`MessageFiles`), before the server's copy replaces it. */
+function sentFile(chip: Chip): SentFile {
+  const f = chip.file!;
+  const picked = f.kind === 'sheet' ? (f.sheets.find((s) => s.name === chip.sheet) ?? f.sheets[0]) : undefined;
+  return {
+    id: f.id,
+    filename: f.filename,
+    size: chip.size,
+    mime_type: f.mime_type,
+    kind: f.kind,
+    sheet: picked?.name ?? null,
+    rows_read: null,
+    rows_total: picked?.rows ?? null,
+    pages: f.pages,
+    url: null,
+    thumb_url: f.thumb_url,
+  };
 }
 
 function clientRefusal(file: File): string | null {
@@ -193,11 +215,14 @@ const AssistantComposer = forwardRef<AssistantComposerHandle, AssistantComposerP
       if (!canSend) return;
       if (dictation.listening) dictation.stop();
       const attachments = ready.map((c) => ({ id: c.file!.id, sheet: c.sheet ?? null }));
+      // The files are part of the sent message: they leave the box when the send starts (the bubble shows
+      // them at once) and come back if the send fails, so the user can retry.
+      const sentChips = chips;
+      setChips([]);
       try {
-        await onSend({ text: value, attachments });
-        setChips([]);
+        await onSend({ text: value, attachments, files: ready.map(sentFile) });
       } catch {
-        // keep the chips so the user can retry
+        setChips((current) => [...sentChips, ...current]);
       }
     };
 

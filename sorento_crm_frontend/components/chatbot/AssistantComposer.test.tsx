@@ -106,7 +106,7 @@ describe('F1 keys', () => {
 
     fireEvent.keyDown(box(), { key: 'Enter' });
 
-    expect(onSend).toHaveBeenCalledWith({ text: 'hello', attachments: [] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello', attachments: [] }));
   });
 
   it('Shift+Enter does not send', () => {
@@ -137,7 +137,7 @@ describe('F1 keys', () => {
     expect(onSend).not.toHaveBeenCalled();
 
     fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith({ text: 'hello', attachments: [] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello', attachments: [] }));
   });
 
   it('an empty box cannot be sent', () => {
@@ -356,7 +356,7 @@ describe('R8 a chip removed while uploading', () => {
 
     fireEvent.click(sendButton());
 
-    expect(onSend).toHaveBeenCalledWith({ text: 'hello', attachments: [] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello', attachments: [] }));
   });
 
   it('a removed chip whose upload fails calls no delete', async () => {
@@ -403,7 +403,7 @@ describe('F5 sheet picker', () => {
     expect(await screen.findByRole('combobox', { name: 'Sheet of d.xlsx' })).toBeInTheDocument();
     expect(screen.getByText('12 rows')).toBeInTheDocument();
     fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith({ text: 'grant access', attachments: [{ id: 'att-2', sheet: 'Dealers' }] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'grant access', attachments: [{ id: 'att-2', sheet: 'Dealers' }] }));
   });
 });
 
@@ -429,7 +429,7 @@ describe('F6 send gating and payload', () => {
 
     fireEvent.click(sendButton());
 
-    expect(onSend).toHaveBeenCalledWith({ text: '', attachments: [{ id: 'att-3', sheet: 'people' }] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: '', attachments: [{ id: 'att-3', sheet: 'people' }] }));
   });
 
   it('an image has a null sheet in the payload', async () => {
@@ -441,7 +441,7 @@ describe('F6 send gating and payload', () => {
 
     fireEvent.click(sendButton());
 
-    expect(onSend).toHaveBeenCalledWith({ text: 'what is this', attachments: [{ id: 'img-2', sheet: null }] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'what is this', attachments: [{ id: 'img-2', sheet: null }] }));
   });
 
   it('clears its chips after onSend resolves', async () => {
@@ -494,7 +494,7 @@ describe('F8 canAttach false', () => {
 
     fireEvent.keyDown(box(), { key: 'Enter' });
 
-    expect(onSend).toHaveBeenCalledWith({ text: 'hi', attachments: [] });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: 'hi', attachments: [] }));
   });
 });
 
@@ -642,5 +642,68 @@ describe('F10 labels', () => {
     for (const name of ['Attach files', 'Dictate', 'Dictation language: English', 'Send message']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
+  });
+});
+
+describe('owner hand test 8 Nov: the files leave the composer when the send starts', () => {
+  function pending() {
+    let resolve!: () => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it('clears the chips at once and hands the sent bubble their details, while onSend is still pending', async () => {
+    upload.mockResolvedValue(
+      uploaded({ id: 'f-1', filename: 'list.pdf', mime_type: 'application/pdf', kind: 'pdf', sheets: [], pages: 8, size: 1_300_000 }),
+    );
+    const sending = pending();
+    const onSend = vi.fn(() => sending.promise);
+    render(<Harness initial="what is this" onSend={onSend} />);
+    attach(file('list.pdf', 'application/pdf', 1_300_000));
+    await waitFor(() => expect(sendButton()).not.toBeDisabled());
+
+    fireEvent.click(sendButton());
+
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    expect(screen.queryByLabelText('Remove list.pdf')).toBeNull();
+    const payload = (onSend.mock.calls[0] as unknown as [{ files: Array<Record<string, unknown>> }])[0];
+    expect(payload.files).toEqual([
+      expect.objectContaining({ id: 'f-1', filename: 'list.pdf', kind: 'pdf', pages: 8, size: 1_300_000 }),
+    ]);
+    await act(async () => sending.resolve());
+    expect(screen.queryByLabelText('Remove list.pdf')).toBeNull();
+  });
+
+  it('a sheet chip hands its picked sheet and row count', async () => {
+    upload.mockResolvedValue(uploaded({ id: 'f-2', sheets: [{ name: 'people', rows: 3 }] }));
+    const onSend = vi.fn(async () => undefined);
+    render(<Harness onSend={onSend} />);
+    attach(file('people.csv'));
+    await screen.findByText('3 rows');
+
+    fireEvent.click(sendButton());
+
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    const payload = (onSend.mock.calls[0] as unknown as [{ files: Array<Record<string, unknown>> }])[0];
+    expect(payload.files).toEqual([expect.objectContaining({ id: 'f-2', kind: 'sheet', rows_total: 3 })]);
+  });
+
+  it('puts the chips back when the send fails', async () => {
+    upload.mockResolvedValue(uploaded({ id: 'f-3' }));
+    const sending = pending();
+    const onSend = vi.fn(() => sending.promise);
+    render(<Harness initial="hi" onSend={onSend} />);
+    attach(file('people.csv'));
+    await screen.findByText('3 rows');
+
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.queryByLabelText('Remove people.csv')).toBeNull());
+    await act(async () => sending.reject(new Error('send failed')));
+
+    expect(await screen.findByLabelText('Remove people.csv')).toBeInTheDocument();
   });
 });

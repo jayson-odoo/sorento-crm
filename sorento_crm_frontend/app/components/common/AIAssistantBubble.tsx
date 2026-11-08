@@ -41,6 +41,7 @@ import {
   sendAIAssistantMessage,
   type AIAssistantConversationSummary,
   type AIAssistantMessage,
+  type SentFile,
 } from '@/lib/aiAssistantChatApi';
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -405,6 +406,7 @@ export default function AIAssistantBubble() {
       text: string,
       confirmAction?: 'confirm' | 'cancel',
       attachments: { id: string; sheet: string | null }[] = [],
+      files: SentFile[] = [],
     ): Promise<boolean> => {
       const trimmed = text.trim();
       if ((!trimmed && attachments.length === 0) || isSending) return false;
@@ -413,7 +415,8 @@ export default function AIAssistantBubble() {
         id: `temp-user-${Date.now()}`,
         role: 'user',
         content: trimmed,
-        metadata_json: {},
+        // The files show on the sent bubble at once; the server's copy (with links) replaces them.
+        metadata_json: files.length > 0 ? { files } : {},
         created_at: new Date().toISOString(),
       };
       drawCountRef.current += 1;
@@ -994,9 +997,9 @@ export default function AIAssistantBubble() {
                 ref={composerRef}
                 value={input}
                 onChange={setInput}
-                onSend={async ({ text, attachments }) => {
-                  // A failed send rejects so the composer keeps its file chips for a retry.
-                  if (!(await sendText(text, undefined, attachments))) throw new Error('Send failed');
+                onSend={async ({ text, attachments, files }) => {
+                  // A failed send rejects so the composer puts its file chips back for a retry.
+                  if (!(await sendText(text, undefined, attachments, files))) throw new Error('Send failed');
                 }}
                 isSending={isSending}
                 canAttach={canAttach}
