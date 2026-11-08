@@ -1597,6 +1597,16 @@ jobs:
         if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
         run: python3 scripts/pii_guard.py
 
+      # AI-GATE (PLAN-ai-tools-standard-5nov.md 2.5, DoD line 6): a GET route
+      # this PR ADDS that takes `page` or `limit` must be in an assistant
+      # registry EntityDef.routes, or carry `# ai: not-for-assistant <reason>`
+      # directly above its decorators. Diff against main's head (merged into
+      # the PR head by the step above, so the merge base is that main). Stdlib
+      # only, parses the source by AST, a few seconds.
+      - name: Assistant coverage of new list routes
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        run: python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"
+
       # DOCS-SYNC-AUTO: every guide must publish to Outline on merge (the
       # automatic push in outline-user-guides-sync.yml). Fails on a guide
       # folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages would be
