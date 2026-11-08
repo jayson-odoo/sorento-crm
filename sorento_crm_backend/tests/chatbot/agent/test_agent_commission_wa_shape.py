@@ -283,3 +283,54 @@ def test_R5_a_named_subject_not_found_is_answered_as_not_found(targets):
     reply = _turn(db, [{"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}], "Agent Zed was not found.")
     assert reply.startswith("Agent Zed was not found.") and NO_LADDER not in reply
     assert "Distance to the next tier" not in reply
+
+
+# ------------------------------------------------------------------ review on 94969a2f / 728bc296
+
+
+def test_R6_another_entitys_small_answer_keeps_the_models_text(targets):
+    """"... and how many open orders does he have": a count, no table; the model's text answers it."""
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    db, _c, t = targets
+    out = run(db, {"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"})
+    from app.services.chatbot.agent.query_tools import query_result
+
+    card = query_result(out, panel=True)
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"},
+               "data": card.data, "display": card.display},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": "order", "aggregates": [{"fn": "count"}]},
+               "data": {"entity": "order", "groups": [{"count": 7}], "columns": [{"key": "count", "label": "Count"}]},
+               "display": None},
+    }
+    reply = shape_reply("Agent A is RM 1,000 from tier 2. He has 7 open orders.", ledger, "")
+    assert "To the next tier" in reply and "He has 7 open orders." in reply
+
+
+def test_R7_one_subject_found_and_one_not_found_says_both(targets):
+    db, _c, t = targets
+    reply = _turn(db, [{"entity": ENTITY, "agent": "Agent A", "next_tier": "distance"},
+                       {"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}],
+                  "Agent A is RM 1,000.00 from tier 2. Agent Zed was not found.")
+    assert _a(t) in reply and "To the next tier" in reply and "Agent Zed was not found." in reply
+
+
+def test_R8_the_next_tier_lines_follow_the_tables_order(targets):
+    """RK8: the note's lines in the order the rows are shown (closest first)."""
+    db, _c, t = targets
+    reply = _turn(db, [{"entity": ENTITY, "next_tier": "closest", "subjects": "all"}])
+    note = reply[reply.index("Next tier: "):]
+    assert note.index(_a(t)) < note.index("ZZT DEALER W2")
+    far = _turn(db, [{"entity": ENTITY, "next_tier": "furthest", "subjects": "all"}])
+    note = far[far.index("Next tier: "):]
+    assert note.index("ZZT DEALER W2") < note.index(_a(t))
+
+
+def test_R9_a_not_found_next_tier_call_alone_never_becomes_a_code_reply(targets):
+    """RK10: only calls that found rows make the code reply; what was not done is still said."""
+    db, _c, _t = targets
+    # As `final_reply` hands it over: the admitted line is in the text too.
+    reply = _turn(db, [{"entity": ENTITY, "agent": "Agent Zed", "next_tier": "distance"}],
+                  "Agent Zed was not found.\n\nNot checked: team North.", admitted=["Not checked: team North."])
+    assert reply.startswith("Agent Zed was not found.") and "Not checked: team North." in reply

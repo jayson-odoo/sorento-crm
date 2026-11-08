@@ -467,15 +467,13 @@ def _next_tier_call(entry: dict) -> bool:
     return args.get("entity") == NEXT_TIER_ENTITY and bool(args.get("next_tier"))
 
 
-def _distance_reply(kept: list[dict], admitted: list[str]) -> str | None:
+def _distance_reply(text: str, kept: list[dict], admitted: list[str]) -> str | None:
     """A next-tier answer's reply, by code from the calls' arguments and results: the table (or the one "no
     commission ladder" line) of every next-tier call that found rows, with no lead line about the payout and no
-    targets table; any other call's table (a second question in the turn); what `final_reply` said was not done.
-    None when no next-tier call found rows (the reply is then shaped as any other: not found, not visible, ...)."""
-    calls = [e for e in kept if _next_tier_call(e) and (e.get("data") or {}).get("rows")]
-    if not calls:
-        # A card carries its rows only in its sample; a shown card counts.
-        calls = [e for e in kept if _next_tier_call(e) and e.get("display")]
+    targets table; a payout call's table of its own; then the model's own text when the turn holds something the
+    tables do not say (another entity's answer, a named subject that was not found); then what `final_reply` said
+    was not done. None when no next-tier call found rows (the reply is then shaped as any other)."""
+    calls = [e for e in kept if _next_tier_call(e) and ((e.get("data") or {}).get("rows") or e.get("display"))]
     if not calls:
         return None
     parts: list[str] = []
@@ -484,16 +482,39 @@ def _distance_reply(kept: list[dict], admitted: list[str]) -> str | None:
         line = next((n for n in _sentences(data.get("scope_note") or "") if n.endswith(NO_LADDER_SUFFIX)), None)
         # Rows, none with a ladder: the line alone, never a ranking of them (crew live x3 W6).
         parts.append(line or e.get("display") or "")
+    keep_text = False
+    # A ranking over everyone (no subject named) answers for any name an earlier call missed (an empty first call
+    # on a name the model made up never brings its text back, crew live round 6).
+    ranked = any(not _names_a_subject(NEXT_TIER_ENTITY, e.get("args") or {}) for e in calls)
     for e in kept:
         data = e.get("data") or {}
         entity = str(data.get("entity") or (e.get("args") or {}).get("entity") or "")
-        if _next_tier_call(e) or entity in _TARGET_TABLES:
+        if _next_tier_call(e):
+            if not ranked and data.get("rows") == [] and not data.get("total") and _names_a_subject(
+                entity, e.get("args") or {}
+            ):
+                keep_text = True  # a named subject not found: the model says so (review on 94969a2f)
             continue
+        if entity in _TARGET_TABLES:
+            continue
+        if entity == NEXT_TIER_ENTITY:
+            # A payout question in the same turn: its own table, never the model's total-payout line.
+            if e.get("display"):
+                parts.append(e["display"])
+            elif data.get("rows") and data.get("columns"):
+                parts.append(render_card(data, title=ENTITIES[entity].label, panel=True))
+            continue
+        # Another entity's answer (a count, a group, a lookup): its table when it has one, and the model's text,
+        # which is what answers it (review on 94969a2f: "7 open orders" was dropped).
         if e.get("display"):
             parts.append(e["display"])
-        elif data.get("rows") and data.get("columns"):
-            ent = ENTITIES.get(entity)
-            parts.append(render_card(data, title=ent.label if ent is not None else "Results", panel=True))
+        keep_text = True
+    if keep_text:
+        own = text
+        for line in admitted:
+            own = own.replace(line, "")
+        if own.strip():
+            parts.append(own.strip())
     parts += [a for a in admitted if a]
     return "\n\n".join(dict.fromkeys(p for p in parts if p)) or None
 
@@ -531,7 +552,7 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, ad
             per_entity[entity] = e["display"]
     if any(_next_tier_call(e) for e in kept):
         # `admitted`: what `loop.final_reply` added to say what was not done, kept as it is.
-        answer = _distance_reply(kept, admitted or [])
+        answer = _distance_reply(text, kept, admitted or [])
         if answer:
             return _ISO_DATE.sub(_dmy, answer)
     text = _year_as_range(text, kept)
