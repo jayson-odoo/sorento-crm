@@ -143,3 +143,10 @@ that returns `envelope.files` or a panel file id to a user other than the upload
 - 8: n/a, the feature is the panel's input surface, not something the assistant is asked about; an eval row is text
   only (`scripts/chatbot_eval/cases.py`) and cannot carry a file. The file path into the agent is covered by
   `tests/chatbot/test_panel_send_files.py` (real loop, scripted model), and the live agent check is crew's on the Mac.
+
+Reviewer round 2 (at 5838b5e4): its blocker (confirm dispatch on a file turn) was already closed by R3b; its 6
+surviving mutants got guard tests (N03, N10, N15, N20, N21 now killed). N09 (`PUT /{id}` route-level check) is an
+equivalent mutant: the service re-reads without a viewer and answers 404 itself. Side effect, accepted: the uploader
+cannot edit their own panel file through the generic `PUT /resources/attachments/{id}` (panel files are not managed
+in Files). `cancel_action` stays offered on a file turn: a file could at worst cancel a waiting change, which the user
+can ask for again; no write can happen from it.
