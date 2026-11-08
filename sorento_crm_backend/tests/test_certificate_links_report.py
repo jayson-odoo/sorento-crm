@@ -370,3 +370,19 @@ def test_manual_links_are_checked_too_and_counted_outside_the_view(env, files):
     _run_check(env)
     assert _rows(env, source="manual")["data"][0]["verdict"] == "found"
     assert _rows(env, source="ai")["pending_all"] == 0
+
+
+def test_confirm_reads_found_after_the_recheck(env, files):
+    """Reviewer round 3: a confirmed short link must not read Check forever."""
+    from app.services import certificate_link_report_service as report
+
+    cert = _certificate(env, files, "RPT-22", ["Model 14A"], ["14A"], ["SV-14A-CP"])
+    _run_check(env)
+    (link,) = env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id).all()
+    assert _rows(env, certificate_ids=str(cert.id), verdict="check")["data"][0]["id"] == str(link.id)
+    assert env.client.post(f"{LINKS}/confirm", json={"ids": [str(link.id)]}).status_code == 200
+    row = _rows(env, certificate_ids=str(cert.id), source="manual")["data"][0]
+    assert row["verdict"] == "pending"  # the source is part of the key, so it is read again
+    _run_check(env)
+    assert _rows(env, certificate_ids=str(cert.id), source="manual")["data"][0]["verdict"] == "found"
+    assert report.pending_link_count(env.db) == 0

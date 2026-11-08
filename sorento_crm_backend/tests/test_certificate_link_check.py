@@ -308,3 +308,34 @@ def test_none_of_the_over_linked_products_is_found(table_text):
     over_linked = {"BRD7711CP": "11C", "BRHSD213C": "13C", "FUR-A11C": "11C", "MGB5011C": "11C", "GB3011C": "11C"}
     for product, code in over_linked.items():
         assert _verdict(table_text, code, product)[0] in ("check", "not_found"), product
+
+
+# ------------------------------------------------------------------------- reviewer round 3
+def test_a_confirmed_link_counts_like_a_typed_code(table_text):
+    """Confirm flips `source` to manual: the person stands behind the link, so a printed short code
+    or a fragment no longer reads Check / Not found for it."""
+    from app.services.certificate_link_check import verdict
+
+    assert verdict(table_text, model_code="14A", model_code_source="ai", product_code="SV-14A-CP", source="manual")[0] == "found"
+    assert verdict(table_text, model_code="11C", model_code_source="ai", product_code="BRD7711CP", source="manual")[0] == "found"
+    # Still needs the code printed: a confirmed link whose code is not on the PDF stays Not found.
+    assert verdict(table_text, model_code="99Z", model_code_source="ai", product_code="SV-99Z", source="manual")[0] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "code,product_code,expect",
+    [
+        ("CSK14", "CSK140-BL", False),  # a code ending in a digit, followed by a digit
+        ("CSK14", "CSK14-BL", True),
+        ("WB1515", "SRTWB1515W", True),  # followed by a letter: unchanged
+        ("WB1515", "SRTWB15150", False),
+        ("WB1515", "SRTWB1515", True),  # crew answer 8 Nov: still backs
+        ("WC8355", "SRTWC8355-RL", True),  # crew answer 8 Nov: still backs
+        ("14A", "SV-14AB", False),  # kept: a letter after a digit-led code is a real over-match
+    ],
+)
+def test_a_code_ending_in_a_digit_is_not_followed_by_a_digit(code, product_code, expect):
+    from app.services.certificate_link_check import on_boundary
+    from app.services.certificate_pdf_service import normalise
+
+    assert on_boundary(normalise(code), product_code) is expect

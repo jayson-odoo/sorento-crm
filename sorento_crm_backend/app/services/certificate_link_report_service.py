@@ -45,9 +45,10 @@ def enqueue_job(func, *args, **kwargs):
 # ----------------------------------------------------------------------------- the key
 
 
-def check_key(revision_id: Any, model_code_source: Any, model_code: Any, product_code: Any) -> str:
-    """What a verdict was read against. Mirrored by `_live_key` in SQL: keep the two in lockstep."""
-    return "|".join(str(v or "") for v in (revision_id, model_code_source, model_code, product_code))
+def check_key(revision_id: Any, model_code_source: Any, model_code: Any, product_code: Any, source: Any) -> str:
+    """What a verdict was read against. Mirrored by `_live_key` in SQL: keep the two in lockstep.
+    `source` is part of it: a Confirm (ai -> manual) changes the verdict rule, so it reads again."""
+    return "|".join(str(v or "") for v in (revision_id, model_code_source, model_code, product_code, source))
 
 
 def _live_key():
@@ -60,6 +61,8 @@ def _live_key():
         + func.coalesce(CertificateProduct.model_code, "")
         + sep
         + func.coalesce(Product.product_code, "")
+        + sep
+        + func.coalesce(CertificateProduct.source, "")
     )
 
 
@@ -350,10 +353,11 @@ def check_certificate(db: Session, certificate) -> int:
             model_code_source=cp.model_code_source,
             product_code=product_code,
             set_codes=sets_of.get(str(cp.product_id), ()),
+            source=cp.source,
         )
         cp.check_verdict = value
         cp.check_code = (code or None) and str(code)[:60]
-        cp.check_key = check_key(rev_id, cp.model_code_source, cp.model_code, product_code)
+        cp.check_key = check_key(rev_id, cp.model_code_source, cp.model_code, product_code, cp.source)
         cp.checked_at = now
     return len(links)
 

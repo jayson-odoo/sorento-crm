@@ -45,7 +45,7 @@ import type { CertificateLink, CertificateLinkVerdict } from '../types/certifica
 
 export const VERDICT_LABELS: Record<CertificateLinkVerdict, string> = {
   found: 'Found',
-  check: 'Check, number only',
+  check: 'Check',
   not_found: 'Not found',
   scanned: 'Scanned, cannot check',
   no_file: 'No file',

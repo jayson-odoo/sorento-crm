@@ -8,8 +8,9 @@ Pure rules over `certificate_pdf_service.printed_runs` output (card
   `CSK14A-BL`). Boundary (crew ruling 8 Nov, on the real SPAN BPAI/1327-2024 file): a printed code that
   starts with a digit must not be preceded by a digit in the product code, and must not be followed by
   another letter or digit unless that is the end of a dash/space segment (`11C` is not in `BRD7711CP`,
-  `MGB5011C`; `14A` is not in `SV-14AB`). A code a person typed (`model_code_source = manual`) skips
-  every product-side rule. The exact tiers the ingest keeps count too: the product's own code, a printed
+  `MGB5011C`; `14A` is not in `SV-14AB`). Any code that ends in a digit must not run on into another
+  digit (`CSK14` is not in `CSK140-BL`). A code a person typed (`model_code_source = manual`) or a link a
+  person confirmed (`source = manual`) skips every product-side rule; the code must still be printed. The exact tiers the ingest keeps count too: the product's own code, a printed
   product-set code the product is a member of, and each part of an `A + B` code (reviewer round 1).
 - **check**: as found, but the code is SHORT (3 or fewer letters and digits: `14A`, `11C`) or digits only
   (`120`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
@@ -83,10 +84,15 @@ def on_boundary(norm: str, product_code: Optional[str]) -> bool:
     start = product_norm.find(norm)
     while start != -1:
         end = start + len(norm)
-        if not norm[0].isdigit():
-            return True
-        preceded = start > 0 and product_norm[start - 1].isdigit()
-        followed = end < len(product_norm) and end not in ends
+        nxt = product_norm[end] if end < len(product_norm) and end not in ends else ""
+        if norm[0].isdigit():
+            preceded = start > 0 and product_norm[start - 1].isdigit()
+            followed = bool(nxt)
+        else:
+            # A code ending in a digit must not run on into another digit (`CSK14` is not in
+            # `CSK140-BL`); a letter after it (`WB1515` in `SRTWB1515W`) is unchanged.
+            preceded = False
+            followed = norm[-1].isdigit() and nxt.isdigit()
         if not preceded and not followed:
             return True
         start = product_norm.find(norm, start + 1)
@@ -144,6 +150,7 @@ def verdict(
     model_code_source: Optional[str],
     product_code: Optional[str],
     set_codes=(),
+    source: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
     """`(verdict, code used)` of one link. `text` is `printed_runs(...)`, or None when no file.
     `set_codes`: normalised codes of the product sets this product belongs to (a printed set code
@@ -156,7 +163,8 @@ def verdict(
     product_norm = normalise(product_code or "")
 
     if model_code and model_code.strip():
-        typed = model_code_source == "manual"
+        # A typed code, or a link a person confirmed (Q3: Confirm flips `source` to manual).
+        typed = model_code_source == "manual" or source == "manual"
         sets = set(set_codes or ())
         parts = plus_parts(model_code) or [normalise(model_code)]
         backing = [p for p in parts if p and p in runs and _backs(p, product_code, typed=typed, set_codes=sets)]

@@ -2,7 +2,7 @@
 
 Status: Built, in review (PR #2249). Track: full (M: migration + new report + bulk actions + ingest change).
 Tests first, reviewer READY after round 2, security-reviewer findings fixed, cloud browser pass done, crew pass done;
-boundary + short-code rule (crew ruling 8 Nov) built test-first, reviewer round 3 pending.
+boundary + short-code rule (crew ruling 8 Nov) built test-first, reviewer round 3 findings fixed.
 Follow-up to #2245 (QUOTE-CERT-TAB). Behaviour card: `CARD-cert-link-cleanup-08nov.md`.
 UAC: `cert-link-cleanup-08nov-acceptance-criteria.md`.
 
@@ -29,7 +29,11 @@ the certificate also prints `11C` (row 14) and `13C` (row 16), so BRD7711CP, BRH
 MGB5011C and GB3011C read Found.
 - Boundary: a printed code that starts with a digit must not be preceded by a digit in the product
   code, and must not be followed by another letter or digit unless that is the end of a dash/space
-  segment. (Kills BRD7711CP, BRHSD213C, MGB5011C, GB3011C.)
+  segment. (Kills BRD7711CP, BRHSD213C, MGB5011C, GB3011C.) Crew answer (a), same day: a code that
+  ENDS with a digit may not be followed by a digit either (`CSK14` does not back `CSK140-BL`; `WB 1515`
+  still backs `SRTWB1515`, `WC 8355` still backs `SRTWC8355-RL`).
+- A confirmed link (`source` manual) counts like a typed code; its code must still be printed. `source`
+  is part of the check key, so a Confirm reads the link again (reviewer round 3).
 - Short codes (3 or fewer letters and digits after normalising: `14A`, `11C`, `13C`) are never
   auto-Found: Check. A person confirms once (the link becomes manual) or removes it. Longer codes
   (`WB 1515`, `WC 8355`, `CSK14A`) keep the found rule. A typed code still always counts.

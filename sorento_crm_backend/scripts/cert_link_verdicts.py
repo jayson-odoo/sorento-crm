@@ -71,6 +71,7 @@ def main() -> int:
                     model_code_source=cp.model_code_source,
                     product_code=code,
                     set_codes=sets_of.get(str(cp.product_id), ()),
+                    source=cp.source,
                 )
                 counts[value] += 1
                 rows.append((value, code, cp.model_code or "", used or "", cp.source, (name or "")[:40]))
