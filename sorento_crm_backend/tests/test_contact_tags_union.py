@@ -665,3 +665,19 @@ def test_rev4_agents_and_messaging_tags_need_their_rights(client, db, perms, mon
     assert _put(client, c, [tm]).status_code == 403
     perms["granted"] = {VIEW, EDIT, AGENTS_EDIT, OUTBOUND_EDIT}
     assert _put(client, c, [ta, tm]).status_code == 200
+
+
+# ---------------------------------------------------------------- crew pass: edit dialog companies
+
+
+def test_crew_companies_saved_equal_to_the_tags_result_record_no_own_change(client, db, su):
+    s, m = _company(db, "s"), _company(db, "m")
+    a = _stag(client, db, {"companies": [s.id]})
+    b = _stag(client, db, {"companies": [m.id]})
+    c = _contact(db)
+    _tags(client, c, [a, b])
+    resp = client.put(f"{CONTACTS}/{c.id}/companies", json={"company_ids": [s.id, m.id]})
+    assert resp.status_code == 200, resp.text
+    body = client.get(f"{CONTACTS}/{c.id}/tag-settings").json()
+    assert body["status"] == "matches", body["items"]
+    assert _companies(db, c) == {s.id, m.id}

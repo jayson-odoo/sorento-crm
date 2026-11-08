@@ -106,6 +106,9 @@ export default function ContactEditDialog({
   });
 
   const companiesResetRef = useRef<string | null>(null);
+  // The companies the dialog loaded: only a change against these is sent (TAG-UNION: saving tags
+  // recomputes the companies server-side, so re-sending the loaded list would overwrite that).
+  const loadedCompanyIdsRef = useRef<string[]>([]);
   useEffect(() => {
     if (open && contact) {
       form.reset({
@@ -129,7 +132,8 @@ export default function ContactEditDialog({
     if (!open || !isSuperadmin || !contact?.id || !companiesFetched) return;
     if (companiesResetRef.current === contact.id) return;
     companiesResetRef.current = contact.id;
-    form.setValue('company_ids', contactCompanies.map((c) => c.id));
+    loadedCompanyIdsRef.current = contactCompanies.map((c) => c.id);
+    form.setValue('company_ids', loadedCompanyIdsRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; guard prevents loops
   }, [open, isSuperadmin, contact?.id, companiesFetched, contactCompanies]);
 
@@ -178,13 +182,15 @@ export default function ContactEditDialog({
 
       const updated = await response.json();
 
-      const heldIds = heldTags.map((t) => t.id);
-      const tagsChanged =
-        tagIds.length !== heldIds.length || tagIds.some((id) => !heldIds.includes(id));
-      if (tagsChanged) await setTags.mutateAsync({ contactId: contact.id, tagIds });
-
-      // Superadmin-only: sync company grants (delete-all-then-reinsert server-side).
-      if (isSuperadmin) {
+      // Superadmin-only: sync company grants (delete-all-then-reinsert server-side), only when
+      // changed here, and BEFORE the tags: the tag save recomputes companies and keeps this edit
+      // as the contact's own change.
+      const picked = values.company_ids ?? [];
+      const loaded = loadedCompanyIdsRef.current;
+      const companiesChanged =
+        companiesResetRef.current === contact.id &&
+        (picked.length !== loaded.length || picked.some((id) => !loaded.includes(id)));
+      if (isSuperadmin && companiesChanged) {
         const companiesResponse = await apiFetch(`/api/user-management/contacts/${contact.id}/companies`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -194,6 +200,11 @@ export default function ContactEditDialog({
           throw new Error(await extractApiError(companiesResponse, 'Failed to update companies'));
         }
       }
+
+      const heldIds = heldTags.map((t) => t.id);
+      const tagsChanged =
+        tagIds.length !== heldIds.length || tagIds.some((id) => !heldIds.includes(id));
+      if (tagsChanged) await setTags.mutateAsync({ contactId: contact.id, tagIds });
 
       return updated;
     },

@@ -4,7 +4,7 @@
 crew test copy
 
 ## Setup
-1. Superadmin login. The test copy's backend has run `alembic upgrade head` (adds `respond_contacts.tag_settings_snapshot`).
+1. Sign in with a superadmin login (primary role Super Admin or Admin): the Companies field on the contact only shows for one (`lib/is-superadmin.ts`), and steps 7 and 12 need it. The test copy's backend has run `alembic upgrade head` (adds `respond_contacts.tag_settings_snapshot`).
 2. Two companies exist (Sorento and Mocha). Pick one test contact with no tags, called "Test contact" below.
 3. Contact tags screen: create tag "TU Sorento" with Access settings Companies = Sorento, and AI replies Off.
 4. Create tag "TU Mocha" with Companies = Mocha, and AI replies On.
