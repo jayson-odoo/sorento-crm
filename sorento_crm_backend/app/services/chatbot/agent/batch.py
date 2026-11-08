@@ -104,19 +104,22 @@ def _cells(definition: writes.WriteDef, args: Any, shown: dict | None, summary: 
     return {"Change": summary} if shown is not None else {}
 
 
-def _not_listed(args: dict, key: Any, previous: list[dict], user_text: str, row: Any = None) -> str | None:
+def _not_listed(
+    args: dict, key: Any, previous: list[dict], user_text: str, row: Any = None, write: str | None = None,
+) -> str | None:
     """The skip reason when a row picks a code that neither the last table turn listed for this row nor the user
     typed this turn; None when every code is allowed (or the row picks nothing). The row is found by its key (a
-    grant's phone), else by its table row number: a customer-agent row's key is the customer as written, which a pick
-    may change, and a changed key must not escape the check (review 8 Nov)."""
+    grant's phone); for a write whose key a pick may change (`pick_changes_key`, a customer-agent row) also by its
+    table row number on that same write's earlier list, so a changed key cannot escape the check (review 8 Nov). Pass
+    `write` only for such a write."""
     codes = [
         c for name in PICK_ARGS
         for c in (args[name] if isinstance(args.get(name), list) else [args[name]] if isinstance(args.get(name), str) else [])
         if str(c).strip()
     ]
     mine = [p for p in previous if key is not None and p.get("key") == key]
-    if not mine and row is not None:
-        mine = [p for p in previous if p.get("row") == row]
+    if not mine and row is not None and write is not None:
+        mine = [p for p in previous if p.get("row") == row and p.get("write") == write]
     if not mine or not codes:
         return None
     # A value the row resolved exactly last time (`kept`, tag rows) is the user's own, not a pick; so is the text the
@@ -201,7 +204,8 @@ def propose_rows(
             skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
-            unlisted = _not_listed(args, key, previous_waiting or [], user_text, n) or _closed_reason(
+            by_row = write if definition.pick_changes_key else None
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text, n, by_row) or _closed_reason(
                 write, args, key, closed or {}, user_text
             )
             if unlisted:
@@ -211,7 +215,9 @@ def propose_rows(
         if step is None:
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
-                waiting += [{"row": n, "key": key, "cells": _cells(definition, args, None), **c} for c in choices]
+                waiting += [
+                    {"row": n, "key": key, "write": write, "cells": _cells(definition, args, None), **c} for c in choices
+                ]
                 if key is not None:
                     keys[key] = n
                 continue

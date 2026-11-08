@@ -1957,7 +1957,7 @@ def _run(
         # The rows still waiting for a pick, read by the next table turn to check the codes it is given.
         turn.response["batch_waiting"] = [
             {"row": w["row"], "key": w.get("key"), "written": w["written"], "codes": [c["code"] for c in w["candidates"]],
-             "kept": list(w.get("kept") or [])}
+             "kept": list(w.get("kept") or []), "write": w.get("write")}
             for w in batch_waiting
         ]
     # Only a real final answer can ask back; a forced final at a limit never does.

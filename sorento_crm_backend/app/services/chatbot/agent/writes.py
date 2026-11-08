@@ -63,6 +63,10 @@ class WriteDef:
     preview: Callable[[dict, dict | None], dict] | None = None
     #: (args) -> what makes two rows the same record (a later duplicate is skipped); None = never the same.
     batch_key: Callable[[dict], Any] | None = None
+    #: True = a pick may change the fields `batch_key` reads (a customer-agent row: the picked code replaces the
+    #: written name), so the pick check also finds the row's earlier waiting list by its table row number, for this
+    #: write only. False (a phone key a pick never touches): a different key at the same number is another row.
+    pick_changes_key: bool = False
 
 
 @dataclass(frozen=True)

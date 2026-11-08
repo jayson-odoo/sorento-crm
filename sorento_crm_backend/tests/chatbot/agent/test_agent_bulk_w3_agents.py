@@ -649,3 +649,22 @@ def test_r2_the_crew_repro_through_two_turns_keeps_row_4_waiting(db):
     needs = second.split(NEEDS, 1)[1].split(NOT_CHANGED, 1)[0]
     assert "| 4 |" in needs and person in needs
     assert "ZZTNOPE999" in second.split(NOT_CHANGED, 1)[1]
+
+
+def test_r2_the_row_number_fallback_is_only_for_this_write_and_never_for_a_phone_keyed_row(db):
+    """Trial merge with #2252: a different grant phone at the same row number is another row (phone keys never move
+    on a pick), and another write's waiting list never refuses a customer-agent row."""
+    from app.services.chatbot.agent import batch
+
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    cust = customer_(db, w.srt, "ZZT Papa Fresh")
+    grant_wait = [{"row": 1, "key": "+60190000001", "write": GRANT, "written": "ZZT x", "codes": ["A1"], "kept": []}]
+    steps, skipped, _ = propose_rows(
+        db, w, [{**row_(customer=cust.customer_code, agent=new.sales_agent), "row": 1}],
+        previous_waiting=grant_wait, user_text="assign",
+    )
+    assert skipped == [] and len(steps) == 1
+
+    other_phone = {"phone": "+60190000002", "customer_codes": ["B9"]}
+    assert batch._not_listed(other_phone, "+60190000002", grant_wait, "x", 1, None) is None

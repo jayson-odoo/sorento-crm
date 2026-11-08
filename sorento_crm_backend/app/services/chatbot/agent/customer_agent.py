@@ -364,4 +364,5 @@ writes.WRITES[WRITE] = writes.WriteDef(
     batchable=True,
     preview=_preview,
     batch_key=_batch_key,
+    pick_changes_key=True,
 )
