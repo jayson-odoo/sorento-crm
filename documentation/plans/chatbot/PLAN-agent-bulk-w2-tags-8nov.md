@@ -1,6 +1,6 @@
 # PLAN: agent bulk wave 2, contact tags from a pasted table (AGENT-BULK-W2-TAGS)
 
-Status: Plan, behaviour card posted to crew (crew-ask on #2247); building the parts the questions do not block.
+Status: Build (crew answered Q1-Q3 = (a) on #2247, 8 Nov; tester-first red tests then code).
 Track: full (agent write path; no migration, no new permission, no new ingest surface).
 
 Wave 2 after AGENT-BULK-V2 (#2241). Owner wave order (8 Nov): 2 contact tags (this lane), 3 sales agent ->
@@ -63,23 +63,27 @@ A row = one contact + the tags to add and / or remove. Slug `user_management.con
 - Confirm: per-row transaction, recheck `before` (tags held + settings before), audit = the screen's rows
   ("Tag added: X" per tag + the tag-settings audit) plus `contact.tags_agent` naming the agent table.
 
-Examples (shapes; real masked rows requested from crew, crew-data-request on #2247):
+Examples (dev DB, read only by crew 8 Nov; people masked, tag names are business data): 13 tags, all active;
+Sorento Dealer Brand 215 contacts, Sorento Mocha Dealer Tag 121, Office Staff 58, Mocha Dealer Tag 25, Project
+Salesperson 16, Retail Salesperson 15, Admin 1, six with 0. 445 contacts hold 1 tag, 3 hold 2.
 
 | # | Pasted row | Result |
 |---|---|---|
-| E1 | `012-345 6789 / Dealer H / VIP` (tag "VIP" exists, contact holds none) | Ready: add VIP + VIP's settings (e.g. stock check on) |
-| E2 | `+60 11-2222 3333 / Hanlim / Johor` (tags "Johor Dealer", "Johor Project") | Needs your choice: row 2 lists both; reply "row 2: Johor Dealer" |
-| E3 | `0198887777 / remove Mocha Retail` (contact holds it) | Ready: remove Mocha Retail (settings stay) |
-| E4 | `0123334444 / VIP` (already holds VIP, settings match) | Not changed: Already tagged; nothing to change |
-| E5 | `0175556666 / Gold` (no tag contains "Gold") | Not changed: No tag named "Gold" |
+| E1 | `Person B 60...36 / add Office Staff` | Ready: add Office Staff + its chatbot settings (AI replies, stock checks, escalation, packing list on, memory Full) |
+| E2 | `Person C / add Sorento Mocha Dealer Tag` by a user without the stock-visibility gate | Ready: add the tag + companies, brands, item classes, image access; "not applied (needs more access): Stock visibility" |
+| E3 | `Person A 60...78 / remove Project Salesperson` | Ready: remove Project Salesperson (Office Staff stays; settings stay, as on the screen) |
+| E4 | `Person D / add Salesperson` | Needs your choice: the row lists Project Salesperson, Retail Salesperson; reply "row 4: Retail Salesperson" |
+| E5 | `Person B / add Sorento Mocha Dealer Tag` (already holds it, settings match) | Not changed: Already tagged; nothing to change |
+| E6 | `Person E / add Gold` | Not changed: No tag named "Gold" |
 
-Questions (each with a recommendation; the build follows the recommendation until answered):
-- Q1 Add applies the tag's settings now, as the screen's default? (a) yes, preview lists the setting changes and
-  what is not applied (rec, same result as the screen); (b) tag only, settings left for the tag screen's Apply.
-- Q2 A tag that does not exist: (a) Not changed "No tag named X" (rec: tags are access groups, created on the tag
-  screen with their settings); (b) the agent creates it.
-- Q3 A row with a name but no phone: (a) Not changed "Give the phone" (rec: explicit keys only); (b) list contacts
-  whose name contains it to pick from.
+Exact name wins: "Mocha Dealer" and "Sorento Dealer" are real tags (0 contacts each) next to "Mocha Dealer Tag" (25)
+and "Sorento Dealer Brand" (215). A row that writes "Mocha Dealer" gets the tag "Mocha Dealer" (the preview names it,
+with its settings), never "Mocha Dealer Tag"; the longer names are a pick only when the written text is not itself a
+tag name. Tags have no company (`access.py:119`); a tag's company is its `settings.companies`, applied as a setting.
+
+Crew answers (8 Nov, standing owner rules): Q1 (a) adding applies the tag's settings, the preview lists the setting
+changes and "not applied (needs more access)"; Q2 (a) unknown tag = Not changed "No tag named X"; Q3 (a) no phone =
+Not changed "Give the phone".
 
 ## UAC
 
