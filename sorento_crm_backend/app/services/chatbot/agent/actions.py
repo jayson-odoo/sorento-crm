@@ -88,15 +88,23 @@ def expire_proposed(db, contact_respond_id: str, *, test: bool | None = None) ->
     query.update({AgentAction.status: "expired"}, synchronize_session=False)
 
 
+def expire_previous(db, ctx, steps: list[dict], *, test: bool = False) -> None:
+    """A new proposal (or a table turn with no ready row) replaces the contact's older `proposed` actions. A contact
+    turn expires only its own kind (test or live); `test` is used when there are no steps to read it from."""
+    if str(ctx.user_id or "") == "":
+        expire_proposed(
+            db, ctx.contact_respond_id, test=any(bool((s.get("args") or {}).get("_is_test")) for s in steps) if steps else test
+        )
+    else:
+        expire_proposed(db, ctx.contact_respond_id)
+
+
 def store_proposal(
     db, ctx, *, conversation_id: str, turn_id: str, steps: list[dict], action_id: str | None = None
 ) -> AgentAction:
     """The turn's steps as a `proposed` action. Older `proposed` actions of the contact expire."""
     now = _now()
-    if str(ctx.user_id or "") == "":
-        expire_proposed(db, ctx.contact_respond_id, test=any(bool((s.get("args") or {}).get("_is_test")) for s in steps))
-    else:
-        expire_proposed(db, ctx.contact_respond_id)
+    expire_previous(db, ctx, steps)
     row = AgentAction(
         id=action_id or str(uuid.uuid4()),
         conversation_id=conversation_id,
@@ -202,7 +210,7 @@ def _recheck(db, ctx, step: dict) -> str | None:
     except Exception as exc:  # noqa: BLE001
         text = writes.error_text(exc)
         # A rule that now refuses (nothing left to change, a field no longer valid) means it moved on.
-        return f"This changed since it was proposed: {text}" if getattr(exc, "status_code", 0) == 422 else text
+        return f"This changed since it was proposed: {text}" if getattr(exc, "status_code", 0) in (409, 422) else text
     before = step.get("before") or {}
     for field in before:
         if now.get(field) != before[field]:

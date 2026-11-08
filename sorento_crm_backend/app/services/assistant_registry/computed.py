@@ -303,8 +303,15 @@ def _sorted(items: list[dict], order: list[tuple[str, str]]) -> list[dict]:
 def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set[str], spec: dict) -> dict:
     asked = _list(spec, "filters", MAX_FILTERS)
     date_from, date_to, rest, period = _window(entity, asked)
-    named = {f.get("field") for f in rest}
     notes = []
+    defaulted = period is None and bool(entity.default_window and entity.window_field)
+    if defaulted:
+        # No period named: the entity's own default window, said (crew live x3: a payout answered for today only).
+        default = {"field": entity.window_field, "op": "eq", "value": entity.default_window}
+        date_from, date_to, rest, period = _window(entity, [*asked, default])
+        shown = _display_date(date_from.isoformat(), "date"), _display_date(date_to.isoformat(), "date")
+        notes.append(f"No period named: {entity.default_window.replace('_', ' ')}, {shown[0]} to {shown[1]}.")
+    named = {f.get("field") for f in rest}
     for field, op, value, note in entity.default_filters:
         if field not in named:
             rest.append({"field": field, "op": op, "value": value})
@@ -316,6 +323,12 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    if entity.row_identity and (group_by or aggregates) and (
+        not group_by or any((g.get("field") if isinstance(g, dict) else g) in entity.row_identity for g in group_by)
+    ):
+        # Already one row per subject: the rows, ranked, with their totals row, never a regroup (crew live round 4).
+        group_by, aggregates = [], []
+        spec = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
     from app.services.assistant_registry.query import require_aggregate
 
     require_aggregate(entity, slugs, bool(group_by or aggregates))
@@ -330,11 +343,29 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
 
     # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
     # BEFORE computing (a count first).
-    computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+    try:
+        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+    except QueryRefused as exc:
+        if exc.code != "timeout" or not defaulted:
+            raise
+        # The default window is too wide for this company: the periods containing today instead, said (review
+        # round 2: the user never named a window to narrow).
+        date_from = date_to = _today()
+        period = None
+        notes = [n for n in notes if not n.startswith("No period named")]
+        notes.insert(0, f"No period named and too many periods this year: the periods containing today "
+                        f"({_display_date(date_from.isoformat(), 'date')}).")
+        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
     tests, named_agents = _exact_agents(entity, rest, tests, computed)
     if named_agents:
         notes.insert(0, named_agents)
     rows = [r for r in computed if all(t(r) for t in tests)]
+    if own_only and entity.own_note:
+        notes.append(entity.own_note)
+    if entity.row_note:
+        said = entity.row_note(rows)
+        if said:
+            notes.append(said)
 
     if key_rows or agg_rows:
         out = _groups(entity, rows, key_rows, agg_rows, sort, spec)
@@ -352,10 +383,9 @@ def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[
     "Agent B III", other owner records). On a field that prints an agent ("CODE - Name", `FieldDef.agent_id`), an
     `eq`, `contains` or `starts_with` whose value is some row's code, name or label keeps only those rows; a value
     that names none exactly matches as the op says."""
-    from app.services.assistant_registry.query import agent_exact
-
     tests = list(tests)
     taken: list[str] = []
+    agents_only = True
     for index, item in enumerate(filters):
         name = item.get("field") if isinstance(item, dict) else None
         field = entity.fields.get(name) if isinstance(name, str) else None
@@ -364,15 +394,30 @@ def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[
             continue
         if not isinstance(value, str) or not value.strip():
             continue
-        exact = sorted({str(r.get(name)) for r in computed if agent_exact(r.get(name), value)})
-        if not exact:
+        hits = [r for r in computed if names_exact(r, name, value)]
+        if not hits:
             continue
-        tests[index] = lambda row, path=name, want=value: agent_exact(row.get(path), want)
-        taken.extend(exact)
+        tests[index] = lambda row, path=name, want=value: names_exact(row, path, want)
+        taken.extend(sorted({str(r.get(name)) for r in hits}))
+        # The `agent` field always holds an agent, whatever kind of row carries it.
+        agents_only = agents_only and (name == "agent" or all(r.get("owner_kind", "agent") == "agent" for r in hits))
     if not taken:
         return tests, None
     shown = list(dict.fromkeys(taken))
-    return tests, f"Agent{'s' if len(shown) > 1 else ''}: {', '.join(shown[:5])}."
+    word = ("Agents" if len(shown) > 1 else "Agent") if agents_only else "Matched"
+    return tests, f"{word}: {', '.join(shown[:5])}."
+
+
+def names_exact(row: dict, path: str, value: Any) -> bool:
+    """Does `value` name the row's `path` exactly: the "CODE - Name" reading (`agent_exact`), or one of the names the
+    row carries for it in `_names` (AGENT-COMMISSION-ALL: a team with or without "Team", a dealer's account codes
+    and names, the person behind several agent codes)."""
+    from app.services.assistant_registry.query import _plain_text, agent_exact
+
+    if agent_exact(row.get(path), value):
+        return True
+    names = (row.get("_names") or {}).get(path)
+    return bool(names) and _plain_text(value) in names
 
 
 #: The most values listed when a text filter matched nothing.
@@ -401,17 +446,21 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
             _field(entity, slugs, name)  # raises unknown_field (a restricted one is dropped below, as in SQL)
     from app.services.assistant_registry.query import MAX_COLUMNS
 
-    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    picked = [f for f in dict.fromkeys(asked or entity.list_fields or list(entity.fields)) if f not in entity.always_fields]
     dropped = picked[MAX_COLUMNS:]
-    wanted = list(dict.fromkeys([*entity.name_by, *picked[:MAX_COLUMNS]]))
+    # The always-shown columns come on top of the cap, so they never push an asked figure out.
+    wanted = list(dict.fromkeys([*entity.name_by, *entity.always_fields, *picked[:MAX_COLUMNS]]))
     shown = [f for f in wanted if not entity.fields[f].permission or entity.fields[f].permission in slugs]
     restricted = [f for f in wanted if f not in shown]
     order = []
     for item in sort:
         path, _f = _field(entity, slugs, item["field"])
         order.append((path, _sort_dir(item)))
+    ranked = not order and entity.rank_by is not None
+    if ranked:
+        order = [(entity.rank_by, "desc")]
     rows = _sorted(list(rows), order) if order else rows
-    limit = _limit(spec, MAX_ROWS, DEFAULT_ROWS)
+    limit = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS)
     out_rows = []
     for row in rows[:limit]:
         item = {"id": str(row.get("id"))}
@@ -420,7 +469,12 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
         parts = [str(_plain(row.get(f))) for f in entity.name_by if f in shown and row.get(f) not in (None, "")]
         if parts:
             item["label"] = parts[0] if len(parts) == 1 else f"{parts[0]}: {' '.join(parts[1:])}"
-        item.update({f: _plain(row.get(f)) for f in shown if f not in entity.name_by})
+        # An empty figure the row explains in words ("no commission set"), never printed as 0 (crew live x3).
+        empty = row.get("_empty") or {}
+        item.update({
+            f: empty[f] if row.get(f) is None and f in empty else _plain(row.get(f))
+            for f in shown if f not in entity.name_by
+        })
         out_rows.append(item)
     columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
         {"key": f, "label": entity.fields[f].label} for f in shown if f not in entity.name_by
@@ -431,12 +485,17 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     }
     if dropped:
         out["columns_dropped"] = dropped
+    if ranked and out["truncated"]:
+        out["ranked_by"] = entity.fields[entity.rank_by].label
     shown_keys = {c["key"] for c in columns}
     totals = {}
     for f in entity.row_totals:
         if f in shown_keys:
-            # Over every matching row, not only those shown (`truncated` says how many are shown).
-            values = [r.get(f) or 0 for r in rows]
+            # Over every matching row, not only those shown (`truncated` says how many are shown). A column with
+            # no figure at all has no total (not 0).
+            values = [r.get(f) for r in rows if r.get(f) is not None]
+            if not values:
+                continue
             totals[f] = sum(values) if all(isinstance(v, int) for v in values) else round(sum(map(float, values)), 2)
     if totals:
         out["totals"] = totals
@@ -462,19 +521,28 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         if item["field"] not in names:
             raise QueryRefused("invalid", f"Sort by a group or aggregate: {', '.join(names)}.")
         order.append((item["field"], _sort_dir(item)))
+    rank = f"sum_{entity.rank_by}" if entity.rank_by else None
+    ranked = not order and rank in names
+    if ranked:
+        order = [(rank, "desc")]
     order += [(name, "asc") for name, _fn, _l in key_rows if name not in {o[0] for o in order}]
     groups = _sorted(groups, order)
     total_groups = len(groups)
+    every = groups
     groups = groups[: _limit(spec, MAX_GROUPS, MAX_GROUPS)]
     truncated = total_groups > len(groups)
     totals = {}
-    if key_rows and not truncated:
+    # Over every group, shown or not (crew live x3: a cut list had no totals row at all).
+    if key_rows:
         for alias, _fn, _label in agg_rows:
             if alias == "count" or alias.startswith(("count_", "sum_")):
-                totals[alias] = round(sum(float(g[alias] or 0) for g in groups), 2)
+                present = [g[alias] for g in every if g[alias] is not None]
+                if not present:
+                    continue
+                totals[alias] = round(sum(float(v) for v in present), 2)
                 if alias == "count" or alias.startswith("count_"):
                     totals[alias] = int(totals[alias])
-    return {
+    out = {
         "entity": entity.key,
         "groups": [{k: _plain(v) for k, v in g.items()} for g in groups],
         "total_groups": total_groups,
@@ -483,3 +551,6 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         + [{"key": alias, "label": label} for alias, _fn, label in agg_rows],
         "totals": totals,
     }
+    if ranked and truncated:
+        out["ranked_by"] = next(label for alias, _fn, label in agg_rows if alias == rank)
+    return out
