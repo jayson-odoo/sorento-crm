@@ -1,6 +1,6 @@
 # PLAN: Sorento Town (2.5D daily overview, cached snapshot)
 
-Status: Phase 0 built (tests/town green), review round 1 fixes in progress; phase 1 screen waits for the owner mock OK. Track: L.
+Status: mock v3 APPROVED (owner 8 Nov 15:51, "keep the solution simple and straightforward"). Phase 0 built and reviewed; Phase 0 extension (compare, deliveries) + Phase 1 screen in progress, tester-first. Track: L.
 
 Lane: SORENTO-TOWN. Owner go: 8 Nov 2026 ~13:35 MYT. Research: crew report of 8 Nov (embedded in the lane brief).
 
@@ -174,3 +174,49 @@ order: `[{"at": "HH:MM" (MYT, from `billing_documents.created_at`), "shop_key": 
 - Redis `town:{company}:{date}:{full|redacted}` gzip JSON + version; end-of-day `town_day` row (snapshot + event log).
 - `GET /api/v1/town/snapshot`: Redis only, ETag/304, ~30/min per user.
 - Tests (red first): town total == sales report for the day; endpoint makes no DB call; redacted variant has no amount keys; rate limit.
+
+
+## Mock v3 approved (owner 8 Nov 15:51): the screen answers five questions
+
+"Ok, keep the solution simple and straightforward." Build exactly v3
+(`documentation/plans/dashboard/mock/sorento-town-mock.html`), nothing more. Gamification is a later phase.
+
+1. How much did we sell today? Scoreboard: RM (full variant only), invoices, change vs same weekday last week.
+2. Who bought today? Only shops with `today_docs` lit, with a tag; the rest grey; "+N more dealers bought today".
+3. What stock is low? One red "! N low" bubble on the warehouse district.
+4. What must go out? Lorries at the depot, "To deliver: N" (lorries drawn capped at 10).
+5. What needs a decision? Approvals office with a badge.
+Always-on legend, a "Tap any building" hint on first open, and the 2D cards beside the 3D view
+(the same five answers; they are the only view without WebGL or with reduced motion).
+
+### Phase 0 extension (snapshot schema 1 gains two keys)
+
+- `compare`: `{"label": "Tue 27 Oct", "last_week_amount": "...", "last_week_invoice_count": n}` for
+  `day - 7`, same `invoiced_sales` expressions as `today` (posted, signed amount, company). Amount
+  removed by `redact()` and kept by the wallboard only for a full viewer (as `today.amount`).
+- `today.dealer_customer_count`: distinct `customer_id` of today's Dealer-type documents (feeds the
+  "+N more dealers" sign: N = dealer_customer_count minus lit shops).
+- `deliveries`: `{"to_deliver": n}` = distinct sales orders of the company with at least one line
+  where `line_status = 'open'`, `qty_ordered - qty_delivered > 0`, and
+  `coalesce(line.required_date, header.requested_delivery_date) <= day` (due today or overdue).
+  Definition (a) from the v3 ask; the owner's "keep it simple" approval did not pick another, so the
+  recommendation stands. A count only: no amount, no names, same in every variant.
+
+### Phase 1 screen (frontend)
+
+- Route `/town` under `app/(protected)/town/`, its own page; the three.js scene loads through
+  `next/dynamic` with `ssr: false` so no other page downloads it. Menu entry for every signed-in staff
+  user (no permission), in the existing menu config.
+- Layering per CLAUDE.md: `services/townService.ts` (`getSnapshot()` via `lib/api-client`, sends
+  `If-None-Match`, a 304 keeps the last snapshot) -> `hooks/useTownSnapshot.ts` (polls every 60 s only
+  while `document.visibilityState === 'visible'`) -> components.
+- Components: `TownPage` (PageHeader "Town" + as-of chip + the one CTA "Wallboard" toggling
+  `mode=wallboard`), `TownCards` (the five 2D cards), `TownScene` (three.js, orthographic, InstancedMesh,
+  render on demand, 30 fps cap while dragging, pixel ratio <= 1.5, no shadows, pauses on a hidden tab),
+  `TownPanel` (the side panel a tap opens; links go to the existing screens), legend + hint in TownScene.
+- WebGL missing or `prefers-reduced-motion: reduce` -> cards only. `{"pending": true}` -> an empty state
+  (heading + hint, no button). Amount fields absent -> show counts only, never "RM 0".
+- Tap targets reuse existing permission-checked screens: sales report, the customer's invoices, the SCM
+  reorder list, the outstanding sales orders / deliveries screen, purchase requests / quotation approvals.
+- Usable at 375 px and 1280 px. No UUIDs rendered. Hint dismissed on first tap or after 6 s, remembered
+  in localStorage (wrapped in try/catch).
