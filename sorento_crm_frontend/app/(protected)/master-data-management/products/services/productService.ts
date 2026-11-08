@@ -5,7 +5,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   Product,
   ProductFormData,
@@ -50,6 +50,9 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   /** "Discontinued at" range (issue #1287), YYYY-MM-DD, Malaysia calendar day inclusive. */
   discontinued_from?: string;
   discontinued_to?: string;
+  /** "List price changed at" range, YYYY-MM-DD, Malaysia calendar day inclusive. */
+  list_price_changed_from?: string;
+  list_price_changed_to?: string;
 }
 
 
@@ -76,6 +79,8 @@ export async function getProducts(
     list_price_batch_id,
     discontinued_from,
     discontinued_to,
+    list_price_changed_from,
+    list_price_changed_to,
   } = params;
 
   const sortField = sorting?.[0]?.id || '';
@@ -98,6 +103,8 @@ export async function getProducts(
     ...(list_price_batch_id ? { list_price_batch_id } : {}),
     ...(discontinued_from ? { discontinued_from } : {}),
     ...(discontinued_to ? { discontinued_to } : {}),
+    ...(list_price_changed_from ? { list_price_changed_from } : {}),
+    ...(list_price_changed_to ? { list_price_changed_to } : {}),
   });
 
   const response = await apiFetch(
@@ -427,24 +434,17 @@ export async function duplicateProduct(
 /**
  * Get price history for a product
  */
-export async function getPriceHistory(id: string): Promise<PriceHistory[]> {
+/** GET /api/v1/master-data/products/{id}/list-price-history, paged and sorted on the server. */
+export async function getPriceHistory(
+  id: string,
+  params: DataGridApiFetchParams,
+): Promise<PriceHistory> {
   const response = await apiFetch(
-    `/api/v1/master-data/products/${id}/price-history`,
-    {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    },
+    `/api/v1/master-data/products/${id}/list-price-history?${buildDataGridParams(params).toString()}`,
   );
-
   if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      message: 'Failed to fetch price history',
-    }));
-    throw new Error(error.message || 'Failed to fetch price history');
+    throw new Error(await extractApiError(response, 'Failed to load list price history'));
   }
-
   return response.json();
 }
 
