@@ -133,6 +133,10 @@ def get_products(
         None,
         description="Filter to products reported in one 'products discontinued' notification batch.",
     ),
+    list_price_batch_id: Optional[str] = Query(
+        None,
+        description="Filter to products reported in one 'list price changed' notification batch.",
+    ),
     discontinued_from: Optional[date] = Query(
         None,
         description="Discontinued-at range start (YYYY-MM-DD), inclusive by Malaysia calendar day.",
@@ -214,6 +218,7 @@ def get_products(
             brand_id=",".join(multi_values(brand_id) or []) or None,
             status=status,
             discontinued_batch_id=discontinued_batch_id,
+            list_price_batch_id=list_price_batch_id,
             discontinued_from=discontinued_from,
             discontinued_to=discontinued_to,
             price_min=price_min,

@@ -145,7 +145,9 @@ def delete_contact_tag(
     db: Session = Depends(get_db),
 ):
     try:
-        ContactTagService(db).delete_tag(tag_id, _gates(db, current_user))
+        ContactTagService(db).delete_tag(
+            tag_id, _gates(db, current_user), actor_id=str(current_user.get("id") or "") or None
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except AppException:
         raise
@@ -241,7 +243,7 @@ def set_contact_tags(
 ):
     try:
         tags = ContactTagService(db).set_contact_tags(
-            contact_id, body.tag_ids, str(current_user.get("id") or "") or None
+            contact_id, body.tag_ids, str(current_user.get("id") or "") or None, _gates(db, current_user)
         )
         return {"tags": tags}
     except AppException:

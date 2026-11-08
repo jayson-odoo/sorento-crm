@@ -9,9 +9,11 @@ import {
   numberErrors,
   payloadFromState,
   stateFromDetail,
+  stateFromPrefill,
 } from '@/lib/new-product-application-form';
 
 const HEADER_KEYS = [
+  'current_product_ids',
   'customer_id',
   'customer_name',
   'lines',
@@ -21,7 +23,6 @@ const HEADER_KEYS = [
   'stock_inquiry_id',
 ];
 const LINE_KEYS = [
-  'brand_id',
   'description',
   'dimension',
   'expected_qty',
@@ -64,6 +65,10 @@ describe('payloadFromState (v4)', () => {
       ...EMPTY_FORM,
       stock_inquiry_id: 'si-1',
       customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+      current_products: [
+        { id: 'p-2', product_code: 'B-2' },
+        { id: 'p-1', product_code: 'A-1' },
+      ],
       lines: [saved, fresh],
     }) as unknown as Record<string, unknown> & {
       lines: Record<string, unknown>[];
@@ -83,10 +88,17 @@ describe('payloadFromState (v4)', () => {
       material: 'Steel',
       thickness: '1.2mm',
       packing: 'Carton',
-      brand_id: 'b-1',
       expected_qty: '55',
     });
     expect(body.lines[1].id ?? null).toBeNull();
+    // header codes: ids only, picked order, always sent
+    expect(body.current_product_ids).toEqual(['p-2', 'p-1']);
+    for (const l of body.lines) expect(l).not.toHaveProperty('current_product_ids');
+  });
+
+  it('always sends the header codes so clearing the pick clears them', () => {
+    const body = payloadFromState({ ...EMPTY_FORM, lines: [blankLine()] });
+    expect(body.current_product_ids).toEqual([]);
   });
 
   it('sends null for an emptied quantity and for empty text', () => {
@@ -97,7 +109,15 @@ describe('payloadFromState (v4)', () => {
     const line = body.lines?.[0] as unknown as Record<string, unknown>;
     expect(line.expected_qty).toBeNull();
     expect(line.dimension).toBeNull();
-    expect(line.brand_id).toBeNull();
+    expect(line).not.toHaveProperty('brand_id');
+  });
+
+  it('never sends brand_id on a line, even when the draft still carries one (Brand column removed)', () => {
+    const body = payloadFromState({
+      ...EMPTY_FORM,
+      lines: [{ ...blankLine(), description: 'Sink', brand_id: 'b-1', brand_label: 'Example Brand' }],
+    });
+    expect(body.lines?.[0]).not.toHaveProperty('brand_id');
   });
 });
 
@@ -138,6 +158,45 @@ describe('stateFromDetail (v4)', () => {
   });
 });
 
+describe('header product codes (NPA-FROM-SI)', () => {
+  it('detail maps current_products and the suggestions', () => {
+    const state = stateFromDetail({
+      id: 'a-1',
+      stock_inquiry_id: null,
+      current_products: [
+        { id: 'p-1', product_code: 'A-1', product_name: 'A', is_active: true },
+      ],
+      suggestions: [{ product_id: 'p-9', product_code: 'A-1-69' }],
+      lines: [],
+    } as never);
+    expect(state.current_products).toEqual([{ id: 'p-1', product_code: 'A-1' }]);
+    expect(state.suggestions).toHaveLength(1);
+    expect(state.suggestions_for).toBe('p-1');
+  });
+
+  it('prefill with a matched code starts picked and has no hint', () => {
+    const state = stateFromPrefill({
+      stock_inquiry_id: 'si-1',
+      stock_inquiry_number: 'SI26-1',
+      current_products: [{ id: 'p-1', product_code: 'A-1' }],
+      lines: [{ proposed_code: 'A-1' }],
+    } as never);
+    expect(state.current_products).toEqual([{ id: 'p-1', product_code: 'A-1' }]);
+    expect(state.inquiry_code_hint).toBe('');
+  });
+
+  it('prefill with unmatched text starts empty and keeps the text as the hint', () => {
+    const state = stateFromPrefill({
+      stock_inquiry_id: 'si-1',
+      stock_inquiry_number: 'SI26-1',
+      current_products: [],
+      lines: [{ proposed_code: 'A-1 & B-2' }],
+    } as never);
+    expect(state.current_products).toEqual([]);
+    expect(state.inquiry_code_hint).toBe('A-1 & B-2');
+  });
+});
+
 describe('numberErrors (v4)', () => {
   it('checks the quantity only; cost is purchasing feedback, not a write field', () => {
     const line = { ...blankLine(), expected_qty: '-3' };
@@ -146,5 +205,44 @@ describe('numberErrors (v4)', () => {
     expect(Object.keys(found).some((k) => k.startsWith('selling_price'))).toBe(
       false,
     );
+  });
+});
+
+describe('applications from a stock inquiry carry no product rows (owner 8 Nov)', () => {
+  const prefill = {
+    stock_inquiry_id: 'si-1',
+    stock_inquiry_number: 'SI26-0412',
+    customer_id: null,
+    customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+    project_name: null,
+    needed_by: null,
+    remark: null,
+    lines: [{ proposed_code: 'XY-1234-MB', description: 'Example sinks', expected_qty: '55' }],
+  };
+
+  it('the pre-filled state has no lines and the write sends lines: []', () => {
+    const state = stateFromPrefill(prefill as never);
+    expect(state.lines).toEqual([]);
+    const body = payloadFromState(state);
+    expect(body.stock_inquiry_id).toBe('si-1');
+    expect(body.lines).toEqual([]);
+  });
+
+  it('a standalone state keeps the rows it has', () => {
+    const body = payloadFromState({
+      ...EMPTY_FORM,
+      lines: [{ ...blankLine(), description: 'Example sink' }],
+    });
+    expect(body.lines).toHaveLength(1);
+  });
+
+  it('an older SI application keeps its saved rows (ids travel so the server keeps them)', () => {
+    const state = stateFromDetail({
+      id: 'a-1',
+      stock_inquiry_id: 'si-1',
+      lines: [{ id: 'l-1', line_no: 1, description: 'First sink' }],
+    } as never);
+    expect(state.lines).toHaveLength(1);
+    expect(payloadFromState(state).lines?.[0]).toMatchObject({ id: 'l-1', description: 'First sink' });
   });
 });

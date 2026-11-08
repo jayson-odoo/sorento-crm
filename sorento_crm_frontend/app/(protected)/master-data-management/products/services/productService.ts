@@ -45,6 +45,8 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   variant_filter?: 'base' | 'variant' | 'all';
   /** Deep link from a "products discontinued" notification - show only that batch. */
   discontinued_batch_id?: string;
+  /** Deep link from a "list price changed" notification - show only that batch. */
+  list_price_batch_id?: string;
   /** "Discontinued at" range (issue #1287), YYYY-MM-DD, Malaysia calendar day inclusive. */
   discontinued_from?: string;
   discontinued_to?: string;
@@ -71,6 +73,7 @@ export async function getProducts(
     item_type,
     variant_filter,
     discontinued_batch_id,
+    list_price_batch_id,
     discontinued_from,
     discontinued_to,
   } = params;
@@ -92,6 +95,7 @@ export async function getProducts(
     ...(item_type ? { item_type } : {}),
     ...(variant_filter && variant_filter !== 'all' ? { variant_filter } : {}),
     ...(discontinued_batch_id ? { discontinued_batch_id } : {}),
+    ...(list_price_batch_id ? { list_price_batch_id } : {}),
     ...(discontinued_from ? { discontinued_from } : {}),
     ...(discontinued_to ? { discontinued_to } : {}),
   });

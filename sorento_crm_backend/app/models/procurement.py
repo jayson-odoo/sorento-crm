@@ -1067,6 +1067,11 @@ class StockInquiry(Base):
     remark = Column(Text, nullable=True)
     additional_remark = Column(Text, nullable=True)
     purchasing_response = Column(Text, nullable=True)
+    #: NPA-FROM-SI: purchasing asks the salesperson to create a New Product Application on its
+    #: reply. Non-blocking; "code created" is read from the linked NPA, not stored here.
+    npa_requested = Column(Boolean, nullable=False, default=False, server_default="false")
+    npa_requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    npa_requested_at = Column(DateTime(timezone=False), nullable=True)
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)

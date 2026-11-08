@@ -37,3 +37,15 @@ describe('getProducts discontinued_batch_id param', () => {
     expect(calledUrl()).not.toContain('discontinued_batch_id');
   });
 });
+
+describe('getProducts list_price_batch_id param', () => {
+  it('appends list_price_batch_id when set', async () => {
+    await getProducts({ ...base, list_price_batch_id: 'lp-9' });
+    expect(calledUrl()).toContain('list_price_batch_id=lp-9');
+  });
+
+  it('omits list_price_batch_id when not set', async () => {
+    await getProducts({ ...base });
+    expect(calledUrl()).not.toContain('list_price_batch_id');
+  });
+});

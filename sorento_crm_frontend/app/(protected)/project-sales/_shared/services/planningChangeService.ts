@@ -44,12 +44,8 @@
  *   line that far out may hold stock) and gains `placed` - how much of the line's demand is
  *   already on a document, which one, and when it lands (what "late by N days" measures).
  * ──────────────────────────────────────────────────────────────────────────────────────────
- *   POST /api/v1/project-sales/planning-changes/{batch_id}/apply             (AC-R05)
- *        -> ApplyPlanningChangesResult { applied_orders, failed_orders, already_applied,
- *           returned_to_review } - the last is B1 (code review, 20 Aug 2026): lines a revised
- *           order's PREVIOUS revision covered that this batch never named, dropped back to
- *           undecided as a side effect of a challenged/superseded revision rather than
- *           anything the batch decided. `[]` on a clean apply.
+ *   (No apply route: a batch is applied by the board's Confirm. FP-EMAIL-ONE-TRIGGER Q2,
+ *   owner 6 Nov 2026.)
  *
  * The upload confirmation response carries a batch pointer under
  * `result.upload.planning_change_batch` on the import job it queued (read on the import job
@@ -59,7 +55,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
-  ApplyPlanningChangesResult,
   PlanningChangeBatch,
   PlanningChangeListEnvelope,
   PlanningChangeListParams,
@@ -107,17 +102,5 @@ export async function updatePlanningChangeRow(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to save the decision'));
-  return response.json();
-}
-
-export async function applyPlanningChanges(
-  batchId: string,
-): Promise<ApplyPlanningChangesResult> {
-  const response = await apiFetch(
-    `${BASE}/planning-changes/${encodeURIComponent(batchId)}/apply`,
-    { method: 'POST' },
-  );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to apply the planning changes'));
   return response.json();
 }
