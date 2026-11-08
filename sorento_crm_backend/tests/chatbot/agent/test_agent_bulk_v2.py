@@ -551,3 +551,205 @@ def test_r7_a_recheck_that_now_needs_a_choice_gets_the_changed_since_prefix(db):
     assert outcome.steps[0]["status"] == "failed"
     assert outcome.steps[0]["error"].startswith("This changed since it was proposed: ")
     assert state(db, person.phone_number)["links"] == []
+
+
+# ------------------------------------------------------------------ Q2 (a): the chat-reply picker (V16 to V21)
+
+
+def family(db, letter: str, company_id: str, count: int, prefix: str) -> list:
+    made = [
+        account(db, f"ZZT DEALER {letter} {SUFFIXES[i % 3]} {i}", f"{prefix}-{i:02d}", company_id)
+        for i in reversed(range(1, count + 1))
+    ]
+    return sorted(made, key=lambda r: r.customer_code)
+
+
+def tag(row: dict, n: int) -> dict:
+    return {**row, "row": n}
+
+
+def say(db, w, rows, text_, final="Done."):
+    """One scripted table turn: the model calls the batch tool with `rows`, then answers."""
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(final)]
+    return run_turn(db, w, script, text_=text_)[0]
+
+
+def stored(db, result) -> dict:
+    from app.models.chatbot_turn import ChatbotTurn
+
+    db.expire_all()
+    return db.get(ChatbotTurn, result.turn_id).response
+
+
+def picker_world(db):
+    w = make_world(db)
+    f = family(db, "F", w.srt, 3, "ZF")
+    h = family(db, "H", w.mch, 3, "ZH")
+    pf, ph, pr = dealer(db, w), dealer(db, w, companies=(w.mch,)), dealer(db, w)
+    first = [
+        tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1),
+        tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 2),
+        tag(row_(pr.phone_number, codes=[w.cust_a.customer_code]), 3),
+    ]
+    return w, f, h, (pf, ph, pr), first
+
+
+# V16 (10)
+
+
+def test_10_picking_a_code_per_row_replaces_the_card_with_one_holding_all_three_rows(db):
+    from app.services.chatbot.agent import actions
+
+    w, f, h, (pf, ph, pr), first = picker_world(db)
+    r1 = say(db, w, first, "grant access to these people")
+    assert len(r1.pending_action["lines"]) == 1
+
+    second = [
+        tag(row_(pf.phone_number, companies=["SRT"], codes=[f[0].customer_code]), 1),
+        tag(row_(ph.phone_number, companies=["MCH"], codes=[h[1].customer_code]), 2),
+        first[2],
+    ]
+    r2 = say(db, w, second, f"row 1: {f[0].customer_code}, row 2: {h[1].customer_code}")
+
+    rows = action_rows(db, w.respond_id)
+    assert [a.status for a in rows] == ["expired", "proposed"]
+    steps = rows[1].steps
+    assert [s["row"] for s in steps] == [1, 2, 3]
+    assert f[0].customer_code in steps[0]["summary"] and h[1].customer_code in steps[1]["summary"]
+    assert len(r2.pending_action["lines"]) == 3
+
+    outcome = actions.confirm(db, w.respond_id, str(rows[1].id), via="console")
+    assert outcome.status == "executed", outcome.steps
+    assert state(db, pf.phone_number)["links"] == [str(f[0].id)]
+    assert state(db, ph.phone_number)["links"] == [str(h[1].id)]
+    assert state(db, pr.phone_number)["links"] == [str(w.cust_a.id)]
+
+
+# V17 (10)
+
+
+def test_10_row_all_links_every_listed_account_though_the_codes_were_not_typed(db):
+    from app.services.chatbot.agent import actions
+
+    w, f, h, (pf, ph, pr), first = picker_world(db)
+    say(db, w, first, "grant access to these people")
+
+    codes = [a.customer_code for a in h]
+    second = [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)]
+    say(db, w, second, "row 2 all")
+
+    rows = action_rows(db, w.respond_id)
+    step = rows[-1].steps[0]
+    assert rows[-1].status == "proposed" and step["row"] == 2
+    assert all(c in step["summary"] for c in codes)
+    outcome = actions.confirm(db, w.respond_id, str(rows[-1].id), via="console")
+    assert outcome.status == "executed", outcome.steps
+    assert state(db, ph.phone_number)["links"] == sorted(str(a.id) for a in h)
+
+
+# V18 (11)
+
+
+def test_11_rows_keep_the_pasted_tables_numbers_in_steps_waiting_skipped_and_the_preview(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    dealer_h(db, w.mch)
+    a, b, c = dealer(db, w), dealer(db, w), dealer(db, w, companies=(w.mch,))
+
+    steps, skipped, waiting = propose_rows(db, w, [
+        tag(row_(a.phone_number, codes=[w.cust_a.customer_code]), 2),
+        tag(row_(b.phone_number, names=["ZZT Nowhere Stores"]), 4),
+        tag(waiting_row(w, c), 5),
+    ])
+
+    assert [s["row"] for s in steps] == [2] and [s["row"] for s in skipped] == [4]
+    assert [x["row"] for x in waiting] == [5]
+    block = batch.preview_block(steps, skipped, waiting)
+    assert "| 2 |" in block and "| 4 |" in block and "| 5 |" in block and "| 1 |" not in block
+
+
+def test_11_a_skipped_first_row_leaves_the_others_numbered_two_and_three_at_turn_level(db):
+    w = make_world(db)
+    a, b = dealer(db, w), dealer(db, w)
+    rows = [
+        tag(row_(a.phone_number, codes=[w.cust_a.customer_code]), 2),
+        tag(row_(b.phone_number, codes=[w.cust_a.customer_code]), 3),
+    ]
+
+    result = say(db, w, rows, "row 1 skip")
+
+    assert [s["row"] for s in action_rows(db, w.respond_id)[0].steps] == [2, 3]
+    assert len(result.pending_action["lines"]) == 2
+
+
+# V19, V20 (11)
+
+
+def unlisted_world(db):
+    w = make_world(db)
+    family(db, "F", w.srt, 3, "ZF")
+    other = account(db, "ZZT UNRELATED SHOP", "ZU-01", w.srt)
+    person = dealer(db, w)
+    first = [tag(row_(person.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1)]
+    say(db, w, first, "grant access to this person")
+    return w, other, person
+
+
+def test_11_a_code_neither_listed_last_turn_nor_typed_this_turn_is_skipped_and_never_linked(db):
+    w, other, person = unlisted_world(db)
+
+    result = say(db, w, [tag(row_(person.phone_number, companies=["SRT"], codes=["ZU-01"]), 1)], "ok go ahead")
+
+    assert result.pending_action is None
+    assert '"ZU-01" was not in the list for "ZZT Dealer F" (row 1); pick from the list' in result.reply_text
+    assert state(db, person.phone_number)["links"] == []
+
+
+def test_11_a_code_typed_in_this_turns_message_is_accepted(db):
+    w, other, person = unlisted_world(db)
+
+    result = say(db, w, [tag(row_(person.phone_number, companies=["SRT"], codes=["ZU-01"]), 1)], "row 1:  zu-01")
+
+    assert len(result.pending_action["lines"]) == 1
+    assert "ZU-01" in action_rows(db, w.respond_id)[-1].steps[0]["summary"]
+
+
+# V21 (12)
+
+
+def test_12_a_table_turn_keeps_its_waiting_rows_on_the_turn_with_or_without_ready_rows(db):
+    w, f, h, (pf, ph, pr), first = picker_world(db)
+
+    mixed = stored(db, say(db, w, first, "grant access to these people"))
+    only = stored(db, say(db, w, first[:2], "grant access again"))
+
+    for response, count in ((mixed, 2), (only, 2)):
+        items = response["batch_waiting"]
+        assert [i["row"] for i in items] == [1, 2] and len(items) == count
+        assert items[0]["written"] == "ZZT Dealer F" and items[0]["codes"] == [a.customer_code for a in f]
+        assert items[1]["codes"] == [a.customer_code for a in h]
+        assert pf.phone_number.lstrip("+")[2:] in items[0]["key"]
+
+
+def test_12_a_table_turn_with_nothing_waiting_stores_an_empty_list_and_a_plain_turn_no_key(db):
+    w = make_world(db)
+    a = dealer(db, w)
+
+    table = stored(db, say(db, w, [row_(a.phone_number, codes=[w.cust_a.customer_code])], "grant access"))
+    plain, _ = run_turn(db, w, [answer_("Hello.")], text_="hello")
+
+    assert table["batch_waiting"] == []
+    assert "batch_waiting" not in stored(db, plain)
+
+
+def test_12_a_plain_turn_between_two_table_turns_does_not_hide_the_earlier_waiting_rows(db):
+    w, f, h, (pf, ph, pr), first = picker_world(db)
+    say(db, w, first[:2], "grant access to these people")
+    run_turn(db, w, [answer_("Hello.")], text_="thanks")
+
+    codes = [a.customer_code for a in h]
+    result = say(db, w, [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)], "row 2 all")
+
+    assert len(result.pending_action["lines"]) == 1
+    assert "was not in the list" not in result.reply_text
