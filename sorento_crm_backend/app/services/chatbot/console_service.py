@@ -71,17 +71,13 @@ _TRACE_ARGS_DROPPED = ("view", "contact_id", "space_id", "_diagnostics")
 
 
 class ConsoleContactUnknown(AppException):
-    """No stored turn for this contact: there is no envelope shape to borrow."""
+    """No stored turn and no `respond_contacts` row: there is no contact to simulate."""
 
     def __init__(self, contact_respond_id: str) -> None:
         super().__init__(
             status_code=404,
-            message="This contact has no chatbot turn to borrow a session from.",
-            detail=(
-                f"no chatbot.turns envelope exists yet for contact {contact_respond_id!r}. "
-                "Send one real WhatsApp message from this contact first, or pick a "
-                "different contact."
-            ),
+            message="This contact was not found.",
+            detail=f"no respond contact {contact_respond_id!r} exists. Pick a different contact.",
             code="CHATBOT_CONSOLE_NO_ENVELOPE",
         )
 
@@ -126,9 +122,8 @@ class ConsoleTurnResult:
 def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     """The contact's most recent REAL INBOUND envelope, as the shape to borrow.
 
-    Raises rather than inventing one: a hand-built envelope missing a field the engine
-    reads at `received` fails there, and a console whose failures are its own bug is worse
-    than no console. The phone is filled in from `respond_contacts` when the borrowed
+    A contact with no real turn but a `respond_contacts` row gets `_synthetic_envelope`
+    instead (CONSOLE-SYNTH-ENVELOPE); only a contact with no row at all raises. The phone is filled in from `respond_contacts` when the borrowed
     envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
 
@@ -162,17 +157,65 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
         .order_by(ChatbotTurn.created_at.desc())
         .first()
     )
+    contact = _contact_row(db, contact_respond_id)
+    phone = contact[0] if contact is not None else None
     if row is None:
-        raise ConsoleContactUnknown(contact_respond_id)
-    phone = db.execute(
-        sa_text("SELECT phone_number FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": str(contact_respond_id)},
-    ).scalar()
+        if contact is None:
+            raise ConsoleContactUnknown(contact_respond_id)
+        return _synthetic_envelope(contact_respond_id, phone=phone, first_name=contact[1])
     envelope = dict(row.envelope)
     stored = envelope.get("contact") or {}
     if not stored.get("phone") and phone:
         envelope["contact"] = {**stored, "phone": phone}
     return envelope
+
+
+def _contact_row(db: Session, contact_respond_id: str) -> Any:
+    """`(phone_number, first_name)` of this respond id's `respond_contacts` row, or None.
+
+    One respond id can sit on several rows (one per workspace), so the row is picked the
+    way `turn_runtime._profile_rows` resolves the profile: the default workspace's row
+    first, then a NULL-workspace row, then any other, by id so the pick is stable.
+    """
+    from app.services.chatbot.head.access import default_space_id
+
+    return db.execute(
+        sa_text(
+            "SELECT c.phone_number, c.first_name FROM respond_contacts c "
+            "LEFT JOIN respond_workspaces w ON w.id = c.workspace_id "
+            "WHERE c.respond_io_id = :c "
+            "ORDER BY (w.space_id IS NOT NULL AND w.space_id = :space) DESC, "
+            "(c.workspace_id IS NULL) DESC, c.id LIMIT 1"
+        ),
+        {"c": str(contact_respond_id), "space": default_space_id(db) or ""},
+    ).first()
+
+
+def _synthetic_envelope(contact_respond_id: str, *, phone: str | None, first_name: str | None) -> dict[str, Any]:
+    """A base envelope for a contact that never sent a real message (CONSOLE-SYNTH-ENVELOPE).
+
+    The console media path's shape: contact id, phone, first name and
+    `is_human_intervened=false`. No `message.channel`, so the WhatsApp phone gate stays off.
+    Company, customer links and stock access come from the DB by contact id, not from the
+    envelope, so the answer matches a borrowed envelope's. Built fresh for every turn and
+    only ever passed through `_build_envelope`, which makes it a dry run.
+    """
+    contact: dict[str, Any] = {
+        "id": str(contact_respond_id),
+        "custom_fields": [{"name": "is_human_intervened", "value": "false"}],
+    }
+    if phone:
+        contact["phone"] = phone
+    if first_name:
+        contact["firstName"] = first_name
+    return {
+        "contact": contact,
+        "message": {
+            "contact": {"id": str(contact_respond_id)},
+            "message": {"channelId": "whatsapp", "traffic": "incoming"},
+        },
+        "synthetic_envelope": True,
+    }
 
 
 def _reply_to_block(reply_to: dict[str, Any]) -> dict[str, Any]:
@@ -521,7 +564,10 @@ def run_console_turn(
         quick_replies=_quick_replies(body),
         send_messages=send_messages,
         session_vars=_next_state(body),
-        trace_summary=_trace_summary(db, body.get("turn_id")),
+        trace_summary={
+            **_trace_summary(db, body.get("turn_id")),
+            "synthetic_envelope": bool(envelope_dict.get("synthetic_envelope")),
+        },
         prompt_version=_turn_prompt_version(db, body.get("turn_id")),
         actions=body.get("actions"),
         message_id=envelope_dict["message"]["message"]["messageId"],
