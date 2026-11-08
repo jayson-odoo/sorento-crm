@@ -66,6 +66,8 @@ class PurchasingResponseIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: The stock inquiry's "Purchasing response" text (owner 8 Nov 15:10).
+    purchasing_response: Optional[str] = Field(None, max_length=4000)
     outcome: Optional[Literal["link", "new"]] = None
     product_id: Optional[str] = None
     new_code: Optional[str] = Field(None, max_length=100)

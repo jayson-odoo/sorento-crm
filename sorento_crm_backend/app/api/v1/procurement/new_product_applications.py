@@ -357,6 +357,55 @@ def purchasing_reject(
     return _move(db, user, application_id, svc.purchasing_reject, reason=payload.reason)
 
 
+@router.post("/{application_id}/purchasing-response/reply")
+def save_purchasing_response_and_reply(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 15:10: the stock inquiry's "Update & Reply" on the NPA. Saves like Save only,
+    then sends the reply to the salesperson through the linked stock inquiry's conversation, with
+    the stock inquiry's own chat send (`enqueue_chat_send`, use case stock_inquiry_chat)."""
+    from app.api.v1._respond_chat_template_routes import enqueue_chat_send
+    from app.api.v1.procurement import stock_inquiries as si_routes
+    from app.services.error_handler import AppException
+
+    def refuse(message: str, field: str) -> AppException:
+        return AppException(status_code=422, message=message, code="VALIDATION_ERROR", details={"field": field})
+
+    if not (payload.purchasing_response or "").strip():
+        raise refuse("Enter a purchasing response first.", "purchasing_response")
+    try:
+        app = _load(db, application_id, for_update=True)
+        actor = _actor(db, user)
+        svc.assert_can_view(app, actor)
+        event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
+        if not app.stock_inquiry_id:
+            raise refuse("Only an application raised from a stock inquiry can reply.", "stock_inquiry_id")
+        identifier, contact_id = si_routes._resolve_stock_inquiry_chat_contact(db, str(app.stock_inquiry_id))
+        if not identifier:
+            raise refuse("The stock inquiry has no Respond.io contact to reply to.", "stock_inquiry_id")
+        message = svc.reply_message(db, app)
+        inquiry_id = str(app.stock_inquiry_id)
+        detail = _done(db, app, event, actor.user_id)
+    except Exception:
+        db.rollback()
+        raise
+    enqueue_chat_send(
+        db,
+        identifier=identifier,
+        respond_contact_id=contact_id,
+        chat_use_case="stock_inquiry_chat",
+        business_table="stock_inquiries",
+        entity_id=inquiry_id,
+        text=message,
+        current_user=user,
+        context_builder=si_routes._build_stock_inquiry_chat_context,
+    )
+    return detail
+
+
 @router.put("/{application_id}/purchasing-response")
 def save_purchasing_response(
     application_id: str,

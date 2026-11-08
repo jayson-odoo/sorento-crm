@@ -102,6 +102,9 @@ class NewProductApplication(Base, CompanyScopedMixin):
     #: The code purchasing typed for a NEW item it opens in AutoCount (owner 8 Nov). Read as that
     #: product by exact code (case folded) once AutoCount sends it; `new_product_id` stays NULL.
     new_code_text = Column(String(100), nullable=True)
+    #: Purchasing's response text, the stock inquiry's "Purchasing response" (owner 8 Nov 15:10:
+    #: the same Edit purchasing response, Save only / Update & Reply).
+    purchasing_response = Column(Text, nullable=True)
     #: PURCHASING FEEDBACK cost for an application with no product rows (raised from an SI).
     cost_price = Column(Numeric(12, 2), nullable=True)
     new_code_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

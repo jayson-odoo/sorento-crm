@@ -276,63 +276,92 @@ def build_chat_template_router(
             raise handle_validation_error(
                 "No Respond.io contact linked; cannot send a message."
             )
-        sender_name = (current_user.get("name") or "").strip() or "Customer Service"
-        from app.services.respond_chat_template_service import precheck_chat_send
-
-        # DB-only precheck in-request: resolves sent_as (text vs template) for the
-        # optimistic response and still surfaces `no_chat_template` inline. The
-        # Respond.io send itself is deferred to the worker, so a 4xx (e.g. 401) lands
-        # in the Respond outbox, not the operator's screen.
-        pre = precheck_chat_send(
+        return enqueue_chat_send(
             db,
             identifier=identifier,
             respond_contact_id=respond_contact_id,
             chat_use_case=use_case,
+            business_table=business_table,
+            entity_id=str(entity_id),
+            text=body.text,
+            current_user=current_user,
+            context_builder=context_builder,
         )
-
-        # Only the out-of-window template path needs the entity portal/view link.
-        # Resolve it here (sync) because the context_builder callable can't cross the
-        # RQ boundary; in-window sends skip the cost entirely.
-        precomputed_context: dict = {}
-        if pre["sent_as"] == "template" and context_builder is not None:
-            try:
-                precomputed_context = context_builder(db, str(entity_id)) or {}
-            except Exception:
-                logger.exception(
-                    "chat send context_builder failed for %s %s",
-                    business_table,
-                    entity_id,
-                )
-                precomputed_context = {}
-
-        from app.services.queue_service import enqueue_job
-        from app.tasks.respond_io_tasks import deliver_chat_message
-
-        job = enqueue_job(
-            deliver_chat_message,
-            identifier,
-            respond_contact_id,
-            body.text,
-            use_case,
-            business_table,
-            str(entity_id),
-            sender_name,
-            str(current_user.get("id") or "") or None,
-            precomputed_context,
-            queue_name="respond_io",
-            job_timeout=180,
-        )
-        logger.info(
-            "Enqueued chat send job %s (%s) for %s %s",
-            job.id,
-            pre["sent_as"],
-            business_table,
-            entity_id,
-        )
-        return {
-            "sent_as": pre["sent_as"],
-            "queued": True,
-            "window_state": pre["window_state"],
-        }
 
     return router
+
+
+def enqueue_chat_send(
+    db: Session,
+    *,
+    identifier: str,
+    respond_contact_id: Optional[str],
+    chat_use_case: str,
+    business_table: str,
+    entity_id: str,
+    text: str,
+    current_user: dict,
+    context_builder: Optional[Callable[[Session, str], dict]] = None,
+) -> dict:
+    """The smart chat send of ``send-message`` (in-window text, out-of-window ``*_chat``
+    template), shared so another form can reply through an entity's conversation exactly as
+    that entity's own send does (NPA-FROM-SI: the NPA replies through its stock inquiry's)."""
+    use_case = chat_use_case
+    sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+    from app.services.respond_chat_template_service import precheck_chat_send
+
+    # DB-only precheck in-request: resolves sent_as (text vs template) for the
+    # optimistic response and still surfaces `no_chat_template` inline. The
+    # Respond.io send itself is deferred to the worker, so a 4xx (e.g. 401) lands
+    # in the Respond outbox, not the operator's screen.
+    pre = precheck_chat_send(
+        db,
+        identifier=identifier,
+        respond_contact_id=respond_contact_id,
+        chat_use_case=use_case,
+    )
+
+    # Only the out-of-window template path needs the entity portal/view link.
+    # Resolve it here (sync) because the context_builder callable can't cross the
+    # RQ boundary; in-window sends skip the cost entirely.
+    precomputed_context: dict = {}
+    if pre["sent_as"] == "template" and context_builder is not None:
+        try:
+            precomputed_context = context_builder(db, str(entity_id)) or {}
+        except Exception:
+            logger.exception(
+                "chat send context_builder failed for %s %s",
+                business_table,
+                entity_id,
+            )
+            precomputed_context = {}
+
+    from app.services.queue_service import enqueue_job
+    from app.tasks.respond_io_tasks import deliver_chat_message
+
+    job = enqueue_job(
+        deliver_chat_message,
+        identifier,
+        respond_contact_id,
+        text,
+        use_case,
+        business_table,
+        str(entity_id),
+        sender_name,
+        str(current_user.get("id") or "") or None,
+        precomputed_context,
+        queue_name="respond_io",
+        job_timeout=180,
+    )
+    logger.info(
+        "Enqueued chat send job %s (%s) for %s %s",
+        job.id,
+        pre["sent_as"],
+        business_table,
+        entity_id,
+    )
+    return {
+        "sent_as": pre["sent_as"],
+        "queued": True,
+        "window_state": pre["window_state"],
+    }

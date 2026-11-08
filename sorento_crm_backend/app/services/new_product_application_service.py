@@ -536,6 +536,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     # AC-NPA-75: purchasing's answer was for the old version of the request.
     app.lead_time = None
     app.cost_price = None
+    app.purchasing_response = None
     app.feedback_by = None
     app.feedback_at = None
     for line in app.lines:
@@ -772,6 +773,8 @@ def save_purchasing_response(
             app.new_code_at = datetime.utcnow()
             if app.status == APPROVED:
                 event = _maybe_complete(app)
+    if "purchasing_response" in data:
+        app.purchasing_response = _clean(data["purchasing_response"])
     if "lead_time" in data:
         app.lead_time = _clean(data["lead_time"])
     if "cost_price" in data:
@@ -1183,6 +1186,21 @@ def status_label(app: NewProductApplication) -> str:
     return STATUS_LABELS.get(display_status(app), app.status)
 
 
+def reply_message(db: Session, app: NewProductApplication) -> str:
+    """The text "Update & Reply" sends to the salesperson through the stock inquiry's
+    conversation: the application, the new code (when there is one) and purchasing's response."""
+    parts = [f"{app.application_no}: {app.purchasing_response or ''}".strip()]
+    code = None
+    if app.new_product_id:
+        code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
+    code = code or app.new_code_text
+    if code:
+        parts.append(f"New product code: {code}")
+    if app.lead_time:
+        parts.append(f"Lead time: {app.lead_time}")
+    return "\n".join(parts)
+
+
 #: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
 NPA_NEXT_STEP = "Next step: please create a New Product Application for this inquiry."
 #: An application that still answers the inquiry's ask (a rejected or cancelled one does not).
@@ -1538,12 +1556,14 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
             StockInquiry.item_description,
             StockInquiry.purchasing_response,
             StockInquiry.quantity,
+            StockInquiry.respond_inbox_url,
         )
         .filter(StockInquiry.id == app.stock_inquiry_id)
         .first()
         if app.stock_inquiry_id
         else None
     )
+    inquiry_inbox = (inquiry[6] or "").strip() if inquiry else ""
 
     def line_out(l: NewProductApplicationLine) -> Dict[str, Any]:
         prod = products.get(str(l.opened_product_id), (None, None, None))
@@ -1602,6 +1622,9 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "remark": app.remark,
         "lead_time": app.lead_time,
         "cost_price": _money(app.cost_price),
+        "purchasing_response": app.purchasing_response,
+        # "Update & Reply" goes through the linked stock inquiry's conversation, as the SI's does.
+        "can_reply": bool(not portal and inquiry_inbox),
         "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
         "feedback_at": _iso(app.feedback_at),
         "decided_at": _iso(app.decided_at),

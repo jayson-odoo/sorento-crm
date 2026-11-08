@@ -37,6 +37,7 @@ UPGRADE = (
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_at TIMESTAMP",
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_text VARCHAR(100)",
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12, 2)",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS purchasing_response TEXT",
     "CREATE INDEX IF NOT EXISTS ix_new_product_applications_new_product "
     "ON new_product_applications (new_product_id)",
     """
@@ -87,6 +88,7 @@ def downgrade() -> None:
         "DROP INDEX IF EXISTS ix_new_product_applications_new_product",
         "ALTER TABLE new_product_applications DROP CONSTRAINT IF EXISTS ck_new_product_applications_cost",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS cost_price",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS purchasing_response",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_text",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_at",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_by",
