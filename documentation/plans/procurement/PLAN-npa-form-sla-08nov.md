@@ -97,6 +97,19 @@ that starts a stage (a resubmit, an approve of an already-submitted one) starts 
   (voided, not resolved, out of the KPIs); the tab needs `voided_at` in the response and a Voided
   status, for every form type.
 
+## Who may open and act (crew pass 8 Nov)
+
+The stage assignees must be able to open the NPA. On dev the Project Sales Manager role (approval
+assignee) and the purchasing tier-1 role held no NPA permission, while on the SI they hold the stage
+slugs. The data migration copies the grants from the SI's own holders (as `npa_0001` did for
+`create`): `procurement.stock_inquiries.project_sales_approve` -> NPA `view` + `approve`,
+`procurement.stock_inquiries.purchasing_reject` -> NPA `view` + `open_code`. Additive, idempotent,
+no role named; the downgrade leaves grants alone. Owner answer to the crew-ask pending (option a
+recommended); built so it can ship on a yes.
+
+An applicant with only `create` + `view_own` is limited: like the SI, they see the portal form, no
+tab strip and so no SLA tab.
+
 ## Seed
 
 Data-only alembic migration `npasla_0001_seed_configs` (owner Q5 a): copies the two SI rows (by team set `project_sales` /
