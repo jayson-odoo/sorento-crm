@@ -540,14 +540,12 @@ def test_a_typed_code_that_already_exists_links_that_product(world):
     assert res.json()["new_product_id"] == world.product2.id
 
 
-def test_a_new_code_needs_the_code_and_not_opening_needs_a_reason(world):
+def test_a_new_code_needs_the_code_and_not_opening_is_no_longer_an_outcome(world):
+    """Owner 8 Nov 09:30: "not opening should be considered Reject" -> the Reject button."""
     d = _si_approved(world)
     assert _respond(world, d["id"], outcome="new", new_code="  ").status_code == 422
-    assert _respond(world, d["id"], outcome="not_opening").status_code == 422
-    res = _respond(world, d["id"], outcome="not_opening", reason="supplier cannot make it")
-    assert res.status_code == 200
-    assert res.json()["status"] == "completed"
-    assert res.json()["new_code_closed_reason"] == "supplier cannot make it"
+    assert _respond(world, d["id"], outcome="not_opening", reason="supplier cannot make it").status_code == 422
+    assert _get(world, d["id"])["status"] == "approved"
 
 
 def test_clearing_the_outcome_returns_to_approved_and_keeps_lead_time(world):
@@ -572,9 +570,9 @@ def test_lead_time_and_cost_alone_do_not_complete(world):
 
 def test_only_purchasing_and_only_on_approved_or_completed(world):
     d = _si_draft(world)
-    assert _respond(world, d["id"], outcome="not_opening", reason="x").status_code == 409
+    assert _respond(world, d["id"], outcome="new", new_code="ZZT-X").status_code == 409
     a = _si_approved(world)
-    assert _respond(world, a["id"], user=world.sales, outcome="not_opening", reason="x").status_code == 403
+    assert _respond(world, a["id"], user=world.sales, outcome="new", new_code="ZZT-X").status_code == 403
 
 
 def test_a_standalone_application_takes_one_cost_per_row_in_the_same_save(world):
@@ -634,3 +632,50 @@ def test_a_create_only_salesperson_does_not_see_another_salespersons_remark(worl
     got = _suggest(world, [world.product.id], user=world.sales_b)  # create only
     assert "Hotel X" not in str(got)
     assert got[0]["description"] == world.inquiry.item_description
+
+
+
+# ------------------------------------------------------------------ owner 8 Nov 09:30: purchasing Reject (like the SI)
+
+
+def _reject(w, aid, user=None, **body):
+    return w.api.as_(user or w.buyer).post(f"{NPA}/{aid}/purchasing-reject", json=body)
+
+
+def test_purchasing_rejects_an_approved_application_with_a_reason(world):
+    d = _si_approved(world)
+    world.sent.clear()
+    res = _reject(world, d["id"], reason="supplier cannot make it")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "rejected"
+    assert body["status_label"] == "Rejected"
+    assert body["reject_reason"] == "supplier cannot make it"
+    assert body["decided_by_name"] == f"{MARKER} purchasing"
+    assert any(t == "new_product_application_rejected" or "reject" in str(t) for (_u, t, e) in world.sent if e == d["id"])
+
+
+def test_purchasing_reject_needs_a_reason_open_code_and_an_approved_application(world):
+    d = _si_approved(world)
+    assert _reject(world, d["id"], reason="  ").status_code == 422
+    assert _reject(world, d["id"], user=world.sales, reason="x").status_code == 403
+    draft = _si_draft(world)
+    assert _reject(world, draft["id"], reason="x").status_code == 409
+
+
+def test_a_purchasing_rejected_application_is_fixed_and_submitted_again_by_the_applicant(world):
+    d = _si_approved(world)
+    assert _reject(world, d["id"], reason="wrong size").status_code == 200
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"remark": "size 600 x 1000"})
+    assert res.status_code == 200, res.text
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+
+
+def test_an_older_not_opening_result_reads_as_rejected(world):
+    d = _si_approved(world)
+    assert _new_code(world, d["id"], "close", reason="supplier dropped it").status_code == 200
+    body = _get(world, d["id"])
+    assert body["status"] == "completed"
+    assert body["status_label"] == "Rejected"
+    listed = world.api.as_(world.admin).get(NPA, params={"stock_inquiry_id": world.inquiry.id}).json()["items"]
+    assert next(r for r in listed if r["id"] == d["id"])["status_label"] == "Rejected"

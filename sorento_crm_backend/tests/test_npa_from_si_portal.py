@@ -163,7 +163,7 @@ def test_portal_inquiry_without_the_npa_form_lists_nothing_and_says_so(portal, m
 def test_portal_cannot_save_a_purchasing_response(portal):
     p = portal
     d = _create(p)
-    res = _as(p, p.granted).put(f"{BASE}/{d['id']}/purchasing-response", json={"outcome": "not_opening", "reason": "x"})
+    res = _as(p, p.granted).put(f"{BASE}/{d['id']}/purchasing-response", json={"outcome": "new", "new_code": "X"})
     assert res.status_code in (404, 405)
 
 
@@ -198,3 +198,30 @@ def test_portal_suggestion_never_carries_another_applications_remark(portal):
     got = _as(p, p.granted).get(f"{NPA}/reuse-suggestions", params={"product_ids": p.product.id}).json()
     assert [s["product_code"] for s in got] == ["ZZT-NEW-REM"]
     assert "Hotel X" not in str(got)
+
+
+
+def test_portal_cannot_purchasing_reject(portal):
+    p = portal
+    d = _create(p)
+    res = _as(p, p.granted).post(f"{BASE}/{d['id']}/purchasing-reject", json={"reason": "x"})
+    assert res.status_code in (404, 405)
+
+
+def test_portal_customer_is_any_customer_of_the_company_like_the_stock_inquiry(portal):
+    """Owner 8 Nov 09:30: the NPA customer is the SI customer dropdown (all customers)."""
+    from app.models.order import Customer
+
+    p = portal
+    with company_scope(p.db, frozenset({p.company_id})):
+        anyone = Customer(id=uid(), customer_code=f"ZZT-C{uid()[:6]}", customer_name=f"{MARKER} not my debtor")
+        p.db.add(anyone)
+        p.db.flush()
+    d = _create(p, customer_id=anyone.id, customer_name=anyone.customer_name)
+    assert d["customer_id"] == anyone.id
+    with company_scope(p.db, frozenset({p.other_company})):
+        foreign = Customer(id=uid(), customer_code=f"ZZT-F{uid()[:6]}", customer_name=f"{MARKER} other co")
+        p.db.add(foreign)
+        p.db.flush()
+    res = _as(p, p.granted).post(BASE, json={"stock_inquiry_id": p.mine.id, "customer_id": foreign.id, "lines": []})
+    assert res.status_code == 422

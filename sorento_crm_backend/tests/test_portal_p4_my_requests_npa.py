@@ -142,17 +142,17 @@ def test_p4_npa_start_from_an_own_responded_inquiry_and_refuse_a_foreign_one(wor
     assert refused.json() == twin.json()
 
 
-def test_p4_npa_customer_picker_is_limited_to_the_agents_own_customers(world):
+def test_p4_npa_customer_picker_lists_the_agents_own_but_any_company_customer_is_accepted(world):
     w = world
     _mounted(w)
     mine = s.ok(w.rep.me.call("GET", f"{OWN}/customers")).json()
     assert [c["customer_id"] for c in mine] == [w.rep.mine.id]
     assert mine == s.ok(w.rep.portal.call("GET", f"{OWN}/customers")).json()
     assert w.other.mine.id not in str(mine)
-    refused = w.rep.me.call("POST", SUB, json=w.body(customer_id=w.other.mine.id))
-    twin = w.rep.portal.call("POST", SUB, json=w.body(customer_id=w.other.mine.id))
-    assert refused.status_code == twin.status_code and refused.status_code >= 400
-    assert refused.json() == twin.json()
+    # Owner 8 Nov: the NPA customer is the stock inquiry's customer dropdown (every customer of
+    # the company), so another agent's customer is accepted on both twins alike.
+    s.ok(w.rep.me.call("POST", SUB, json=w.body(customer_id=w.other.mine.id)), 201)
+    s.ok(w.rep.portal.call("POST", SUB, json=w.body(customer_id=w.other.mine.id)), 201)
     s.ok(w.rep.me.call("POST", SUB, json=w.body(customer_id=w.rep.mine.id)), 201)
 
 
