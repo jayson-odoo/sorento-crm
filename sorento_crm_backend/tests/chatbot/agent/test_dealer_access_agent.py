@@ -926,3 +926,64 @@ def test_C4_a_link_the_user_cannot_see_still_counts_so_ai_replies_stay_on(db, el
         }
     assert left == {str(other_link.id)}
     assert state(db, person.phone_number)["chatbot_allowed"] is True
+
+
+# ------------------------------------------------------------------ C5 no leak in the update tool
+
+
+def _leak_check(blobs: dict, hidden: tuple) -> None:
+    for label, blob in blobs.items():
+        for secret in hidden:
+            assert secret not in blob, f"the other account's {secret!r} leaked into the {label}"
+
+
+@pytest.mark.parametrize("change", ["unlink own", "ai off"])
+def test_C5_own_scope_update_never_names_another_salespersons_account(db, change):
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent import batch
+
+    o = own_world(db)
+    w = o.w
+    person = ai_on(db, dealer(db, w, customers=(w.cust_a, o.theirs)))
+    hidden = (o.theirs.customer_code, o.theirs.customer_name)
+    if change == "unlink own":
+        args, seen = {"contact_id": person.id, "unlink_customer_ids": [str(w.cust_a.id)]}, {person.id, w.cust_a.id}
+    else:
+        args, seen = {"contact_id": person.id, "chatbot_allowed": False}, {person.id}
+
+    res, step = update_step(db, w, args, seen=seen)
+    assert res.status == "proposed", f"{res.status}: {res.message}"
+    action = store(db, w, [step])
+    preview = json.dumps([dataclasses.asdict(res) if dataclasses.is_dataclass(res) else vars(res), step], default=str)
+    preview += batch.preview_block([step], [])
+    audit_before = {str(i) for (i,) in db.query(AuditLog.id)}
+
+    outcome = confirm(db, w, action)
+
+    assert outcome.status == "executed", outcome.steps
+    db.expire_all()
+    stored = db.get(AgentAction, action.id).steps
+    new_audit = [a for a in db.query(AuditLog).all() if str(a.id) not in audit_before]
+    assert new_audit
+    audit_text = json.dumps(
+        [[a.event, a.entity_type, a.entity_id, a.old_values, a.new_values, a.description] for a in new_audit],
+        default=str,
+    )
+    _leak_check(
+        {
+            "preview": preview,
+            "stored steps": json.dumps(stored, default=str),
+            "confirm result": json.dumps(dataclasses.asdict(outcome), default=str),
+            "audit rows": audit_text,
+        },
+        hidden,
+    )
+    if change == "unlink own":
+        # The link that stays is named as such, never by its code.
+        assert "another account" in audit_text
+    with company_scope(db, None):
+        left = {
+            str(c) for (c,) in db.query(RespondContactCustomer.customer_id)
+            .filter(RespondContactCustomer.contact_id == person.id)
+        }
+    assert str(o.theirs.id) in left
