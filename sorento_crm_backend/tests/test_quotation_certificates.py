@@ -1287,3 +1287,84 @@ def test_r4_can_add_needs_the_edit_right_and_the_register_view_right(files):
             assert body["can_edit"] is True and body["can_add"] is False
         with _api(db, c, VIEW_ONLY) as client:
             assert client.get(_u(c)).json()["can_add"] is False
+
+
+# ------------------------------------------------------------------ 13 fix round 4
+
+
+def _row_with_both_codes_pdf():
+    # Row 1 prints WB 1515 in the model column and WC 8355 in the description: one ruled row.
+    return table_pdf([[("WB 1515", ["WC 8355"], 30), ("OTHER 1", ["x"], 30)]])
+
+
+def test_r4_two_products_on_one_row_are_one_box_and_one_row_counted(files, queued):
+    import pymupdf
+
+    with blank_session() as db:
+        c = _draft(db)
+        pdf = _row_with_both_codes_pdf()
+        cr = _cert(db, c, files, covers=[(c["a"], "WB 1515", "manual"), (c["b"], "WC 8355", "manual")], pdf=pdf)
+        with _api(db, c) as client:
+            row = _items(client, c)[0]
+            assert row["marked"] == {"count": 1, "state": "found"}
+            d = _detail(client, c, cr.id)
+            assert len(d["boxes"]) == 1 and d["boxes"][0]["product_id"] is None
+            assert client.post(_u(c, "/export"), json={"issue_id": None}).status_code == 202
+            _result, backend = _run_task(db, queued[0])
+            base = sum(len(p.get_drawings()) for p in pymupdf.open(stream=pdf, filetype="pdf"))
+            burned = sum(len(p.get_drawings()) for p in pymupdf.open(stream=backend.uploads[0][1], filetype="pdf"))
+            assert burned == base + 1
+
+
+def test_r4_a_legacy_issue_without_a_snapshot_exports_the_live_list(files, queued):
+    from app.models.projects import ProjectQuotationIssue
+    from app.models.download import UserDownload
+
+    with blank_session() as db:
+        c = _draft(db)
+        _cert(db, c, files, scheme="ZZT1", covers=[(c["a"], "WB 1515", "manual")], pdf=_pdf("WB 1515"))
+        _cert(db, c, files, scheme="ZZT2", covers=[(c["b"], "WC 8355", "manual")], pdf=_pdf("WC 8355"))
+        with _api(db, c) as client:
+            db.commit()
+            issue = _issue(db, c["document"], c["owner"])
+            db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.id == issue.id).update(
+                {"certificates": None}, synchronize_session=False
+            )
+            db.commit()
+            r = client.post(_u(c, "/export"), json={"issue_id": issue.id})
+            assert r.status_code == 202, r.text
+            result, backend = _run_task(db, queued[0])
+            assert result["status"] == "ready" and _pages(backend.uploads[0][1]) == 2
+            name = db.query(UserDownload).filter(UserDownload.id == r.json()["download_id"]).one().filename
+            assert name.endswith(" Certificates.pdf") and name != f"{c['document'].document_no} Certificates.pdf"
+
+
+def test_r4_an_issue_frozen_with_nothing_is_422_and_stores_an_empty_list(files, queued):
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        c = _draft(db)
+        with _api(db, c) as client:
+            db.commit()
+            issue = _issue(db, c["document"], c["owner"])
+            db.flush()
+            db.refresh(issue)
+            assert issue.certificates == []
+            assert qdocs.serialize_issue(db, issue)["certificates_count"] == 0
+            r = client.post(_u(c, "/export"), json={"issue_id": issue.id})
+            assert r.status_code == 422 and _code_of(r) == "quotation_certificates_empty"
+
+
+def test_r4_certificates_count_is_null_for_a_legacy_issue(files):
+    from app.models.projects import ProjectQuotationIssue
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        c = _draft(db)
+        issue = _issue(db, c["document"], c["owner"])
+        db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.id == issue.id).update(
+            {"certificates": None}, synchronize_session=False
+        )
+        db.commit()
+        db.refresh(issue)
+        assert qdocs.serialize_issue(db, issue)["certificates_count"] is None

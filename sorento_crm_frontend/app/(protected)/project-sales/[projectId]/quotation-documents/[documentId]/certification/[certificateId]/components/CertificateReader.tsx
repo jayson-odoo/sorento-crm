@@ -183,6 +183,9 @@ export function CertificateReader({
   }
 
   const title = `${detail.scheme} ${detail.certificate_number}`;
+  const alsoFiledAsText = `Also filed as ${detail.also_filed_as
+    .map((o) => `${o.scheme} ${o.certificate_number}`)
+    .join(', ')}`;
   const productOptions = detail.products.map((p) => ({ value: p.product_id, label: p.product_code }));
 
   return (
@@ -271,6 +274,14 @@ export function CertificateReader({
               {VALIDITY[detail.validity_state].label}
               {detail.valid_until ? ` ${formatDateInMalaysia(detail.valid_until)}` : ''}
             </Badge>
+            {detail.also_filed_as.length > 0 && (
+              <span
+                className="text-xs text-muted-foreground"
+                title={alsoFiledAsText}
+              >
+                {alsoFiledAsText}
+              </span>
+            )}
             {!detail.has_text && detail.has_file && (
               <Badge variant="secondary" appearance="light" size="sm">No text, draw the box</Badge>
             )}

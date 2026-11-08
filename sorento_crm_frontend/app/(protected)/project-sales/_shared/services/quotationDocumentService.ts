@@ -225,8 +225,8 @@ export type QuotationIssue = {
   issued_by_name: string | null;
   grand_total: string;
   scope_count: number;
-  /** QUOTE-CERT-TAB: certificates frozen with this revision. */
-  certificates_count?: number;
+  /** QUOTE-CERT-TAB: certificates frozen with this revision; null = issued before they were frozen. */
+  certificates_count?: number | null;
   /**
    * The customer's acceptance. It belongs to the ISSUE, because that is the thing they held and
    * signed, but the screen watching for it is the document, so it travels with the issue history.

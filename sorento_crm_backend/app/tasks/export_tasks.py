@@ -511,7 +511,7 @@ def generate_quotation_certificates_pdf(
         if document is None:
             raise ValueError("This quotation no longer exists, so its certificates cannot be exported.")
         issue = db.get(ProjectQuotationIssue, str(issue_id)) if issue_id else None
-        entries = (issue.certificates or []) if issue is not None else certs.live_export_rows(db, document)
+        entries = certs.export_entries(db, document, issue)
 
         merged = pymupdf.open()
         skipped = []

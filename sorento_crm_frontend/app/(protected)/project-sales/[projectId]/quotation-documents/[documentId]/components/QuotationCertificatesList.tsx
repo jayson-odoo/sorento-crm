@@ -43,6 +43,10 @@ const MARKED_WORDS: Record<MarkedState, string> = {
   not_on_certificate: 'not found on certificate',
 };
 
+/** CERT-15: the other certificates that are the same file as this row. */
+const alsoFiledAs = (row: CertificateRow) =>
+  `Also filed as ${row.also_filed_as.map((o) => `${o.scheme} ${o.certificate_number}`).join(', ')}`;
+
 function markedText(marked: CertificateRow['marked']): string {
   if (marked.state === 'none' || marked.state === 'no_file' || marked.state === 'no_text') {
     return MARKED_WORDS[marked.state];
@@ -161,6 +165,14 @@ export function QuotationCertificatesList({
             {row.original.title && (
               <span className="block truncate text-xs text-muted-foreground" title={row.original.title}>
                 {row.original.title}
+              </span>
+            )}
+            {row.original.also_filed_as.length > 0 && (
+              <span
+                className="block truncate text-xs text-muted-foreground"
+                title={alsoFiledAs(row.original)}
+              >
+                {alsoFiledAs(row.original)}
               </span>
             )}
           </div>

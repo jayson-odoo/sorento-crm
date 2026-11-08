@@ -232,6 +232,30 @@ def _tag(boxes: List[dict], product_id: Optional[str]) -> List[dict]:
     return [{**b, "product_id": product_id} for b in boxes]
 
 
+_SAME_ROW = 0.002
+
+
+def _merge_rows(boxes: List[dict]) -> List[dict]:
+    """Two products whose codes share one table row find the same box: keep one per row. The
+    merged box belongs to no single product when the products differ."""
+    out: List[dict] = []
+    for box in boxes:
+        twin = next(
+            (
+                kept
+                for kept in out
+                if kept["page"] == box["page"]
+                and all(abs(kept[k] - box[k]) <= _SAME_ROW for k in ("x", "y", "w", "h"))
+            ),
+            None,
+        )
+        if twin is None:
+            out.append(dict(box))
+        elif twin.get("product_id") != box.get("product_id"):
+            twin["product_id"] = None
+    return out
+
+
 def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_added: bool = False) -> Dict[str, Any]:
     """CERT-3/4/5/14: the products' codes and states, the boxes in force and the marked state."""
     rev = group.rev
@@ -332,7 +356,7 @@ def _resolve(db: Session, group: _Group, quoted: Dict[str, str], marker, hand_ad
     if override is not None:
         boxes, source = list(override.get("boxes") or []), SCOPE_QUOTE
     else:
-        boxes, source = all_boxes, SCOPE_DEFAULT
+        boxes, source = _merge_rows(all_boxes), SCOPE_DEFAULT
     count = len(boxes)
 
     if group.attachment is None or group.unreadable:
@@ -665,9 +689,17 @@ def live_export_rows(db: Session, document) -> List[dict]:
     return snapshot(db, document)
 
 
+def export_entries(db: Session, document, issue) -> List[dict]:
+    """What an export carries: the issue's frozen list; the live list for a draft, and for a
+    revision issued before certificates were frozen (snapshot NULL, never frozen)."""
+    if issue is not None and issue.certificates is not None:
+        return list(issue.certificates)
+    return live_export_rows(db, document)
+
+
 def export_count(db: Session, document, issue) -> int:
-    if issue is not None:
-        return len([c for c in (issue.certificates or []) if c.get("attachment_id")])
+    if issue is not None and issue.certificates is not None:
+        return len([c for c in issue.certificates if c.get("attachment_id")])
     return len([r for r in live_export_rows(db, document) if r["attachment_id"]])
 
 

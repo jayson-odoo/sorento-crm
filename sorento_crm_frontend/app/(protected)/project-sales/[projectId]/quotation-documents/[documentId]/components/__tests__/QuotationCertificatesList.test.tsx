@@ -154,6 +154,26 @@ describe('QuotationCertificatesList', () => {
     expect(document.body.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
 
+  it('names the other certificates filed as the same file', async () => {
+    ok([
+      row({
+        also_filed_as: [
+          { certificate_id: 'cert-9', scheme: 'WCM', certificate_number: '000318' },
+          { certificate_id: 'cert-8', scheme: 'PC', certificate_number: '000318' },
+        ],
+      }),
+    ]);
+    renderList();
+    expect(await screen.findByText('Also filed as WCM 000318, PC 000318')).toBeInTheDocument();
+  });
+
+  it('says nothing about other filings when there are none', async () => {
+    ok([row()]);
+    renderList();
+    await screen.findByText('ZZT-0119');
+    expect(screen.queryByText(/also filed as/i)).toBeNull();
+  });
+
   it('opens the certificate page when a row is clicked', async () => {
     ok([row()]);
     renderList();

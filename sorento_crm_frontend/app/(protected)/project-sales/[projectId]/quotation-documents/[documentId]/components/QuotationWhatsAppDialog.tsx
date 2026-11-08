@@ -142,8 +142,12 @@ function WhatsAppBody({
 }) {
   const mutations = useQuotationDocumentMutations(projectId, document.id);
   const certificates = useQuotationCertificateMutations(projectId, document.id);
-  const certificateCount = issue.certificates_count ?? 0;
-  const certificatesFile = `${document.document_no} ${revisionLabel(issue)} Certificates.pdf (${certificateCount})`;
+  // null = issued before certificates were frozen: the live list is exported, so no count is known.
+  const certificateCount = issue.certificates_count;
+  const showCertificates = certificateCount === null || (certificateCount ?? 0) > 0;
+  const certificatesFile = `${document.document_no} ${revisionLabel(issue)} Certificates.pdf${
+    certificateCount ? ` (${certificateCount})` : ''
+  }`;
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const [link, setLink] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
@@ -246,7 +250,7 @@ function WhatsAppBody({
             Could not create the counter-sign link.
           </p>
         )}
-        {certificateCount > 0 && (
+        {showCertificates && (
           <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
             <span className="truncate" title={certificatesFile}>
               {certificatesFile}
