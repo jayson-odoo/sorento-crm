@@ -95,3 +95,17 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
   (`display_status`), and no longer answer the SI's ask.
 - Crew took the recommendations: Excel BRAND row kept; SI attachments -> follow-up lane; old per-row routes kept until
   production shows none.
+
+## Owner hand-test round 4 (8 Nov 15:10): the SI's Edit purchasing response
+
+- One shared `components/common/PurchasingResponseDialog.tsx`, extracted from the SI's inline dialog, used by the SI
+  and the NPA: "Purchasing response" text, then the form's own fields (NPA: Link / New product code, Lead time, Cost),
+  then Cancel / Save only / Update & Reply. The NPA gains `purchasing_response` (additive, same unmerged migration).
+- Update & Reply (`POST /{id}/purchasing-response/reply`) saves, then replies to the salesperson through the linked
+  stock inquiry's conversation with the SI's own chat send (`enqueue_chat_send`, use case stock_inquiry_chat). The
+  send's precheck runs before the commit, so a reply that cannot go saves nothing. A standalone NPA cannot reply.
+- "No answer yet" is gone (the SI has no equivalent); a recorded outcome is not cleared back to Approved from the UI,
+  as on the SI (the API still accepts `outcome: null`).
+- Accepted (security round 6, nit 1): staff can link any existing SI, and Update & Reply then reaches that SI's
+  requester. It adds no reach (any procurement user can already message an SI's contact) and the reply's purpose is
+  the SI's requester, so the contact-match rule was not added.

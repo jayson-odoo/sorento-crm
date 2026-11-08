@@ -769,3 +769,21 @@ def test_reply_is_purchasing_only(world, reply_spy):
     res = world.api.as_(world.sales).post(f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "x"})
     assert res.status_code == 403
     assert reply_spy == []
+
+
+def test_a_reply_that_cannot_be_sent_saves_nothing(world, reply_spy, monkeypatch):
+    from app.services import respond_chat_template_service
+    from app.services.error_handler import AppException
+
+    def no_template(db, **kw):
+        raise AppException(status_code=422, message="No chat template.", code="no_chat_template")
+
+    monkeypatch.setattr(respond_chat_template_service, "precheck_chat_send", no_template)
+    d = _si_approved(world)
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Code opened.", "lead_time": "9 weeks"}
+    )
+    assert res.status_code == 422
+    after = _get(world, d["id"])
+    assert (after["purchasing_response"], after["lead_time"]) == (None, None)
+    assert reply_spy == []

@@ -386,6 +386,11 @@ def save_purchasing_response_and_reply(
         identifier, contact_id = si_routes._resolve_stock_inquiry_chat_contact(db, str(app.stock_inquiry_id))
         if not identifier:
             raise refuse("The stock inquiry has no Respond.io contact to reply to.", "stock_inquiry_id")
+        # The send's own DB-only precheck (template / window) BEFORE the commit, so a reply that
+        # cannot be sent refuses with nothing saved (review round 6).
+        from app.services.respond_chat_template_service import precheck_chat_send
+
+        precheck_chat_send(db, identifier=identifier, respond_contact_id=contact_id, chat_use_case="stock_inquiry_chat")
         message = svc.reply_message(db, app)
         inquiry_id = str(app.stock_inquiry_id)
         detail = _done(db, app, event, actor.user_id)
