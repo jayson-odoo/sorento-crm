@@ -67,7 +67,8 @@ breakdown, "All clear" at 0, PR count on every company's town. 4a wallboard show
 volume. 6a one building per warehouse pool, sub-locations folded in.
 
 Decision taken without an ask (simplest thing): the town itself needs only a signed-in staff session (no
-new permission slug); everything sensitive is either redacted (amounts) or already visible to staff.
+new permission slug). Without `sales.reports.view` a viewer sees no amounts and no dealer identity or
+ranking (crew ruling 8 Nov, security review S1). No module guard: the route mirrors no single module.
 
 ## Phase 0 contract (snapshot backend)
 
@@ -84,9 +85,14 @@ the auth allowlist (sessions, users, roles, permissions, company grants).
 
 - `build_snapshot(db, company_id: str, day: date, *, now: datetime) -> dict` - the FULL variant.
 - `redact(snapshot: dict) -> dict` - a deep copy with every amount key removed (`today.amount`,
-  `shops[].today_amount`, `shops[].ninety_day_amount`); counts stay.
-- `strip_names(snapshot: dict) -> dict` - wallboard: `shops[].name` and `shops[].code` removed
-  (rank, account label, kind, counts stay).
+  `shops[].today_amount`, `shops[].ninety_day_amount`) AND dealer identity removed (`name`, `code`,
+  `rank`; `key` becomes an opaque per-snapshot index): crew ruling 8 Nov on security review S1, mirroring
+  `leaderboard_service.py:28` (the per-customer ranking needs `sales.reports.view`). Counts stay.
+- `strip_names(snapshot: dict) -> dict` - wallboard: `shops[].name`, `code`, `today_amount`,
+  `ninety_day_amount` removed and `key` made opaque (decision 4a: rank numbers and the total only).
+- 90-day ranking cached once per company per MYT day in `town:{company}:{day}:ranking` (owner 2a
+  "refreshed nightly"), built on its own session with a 30 s statement timeout; the 3-minute build
+  computes only today's figures (review round 1, S1).
 - `store(redis, company_id, day, full: dict) -> str` - writes gzip JSON under
   `town:{company_id}:{day}:full` and `town:{company_id}:{day}:redacted` plus
   `town:{company_id}:{day}:version` (sha1 hex of the full JSON, sorted keys); TTL 36 h; returns version.
