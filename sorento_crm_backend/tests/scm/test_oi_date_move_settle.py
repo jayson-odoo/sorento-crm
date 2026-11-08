@@ -82,6 +82,12 @@ from ..test_planning_change_apply_on_board import (
     world,
 )
 
+import pytest
+
+# FP-EMAIL-ONE-TRIGGER: this suite pins the email's content; its writes stand in for the
+# board Confirm, the one trigger of the purchasing email (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("as_board_confirm")
+
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
 

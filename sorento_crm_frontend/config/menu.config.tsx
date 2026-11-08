@@ -660,6 +660,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/master-data-management/certificates',
             permission: 'master_data.certificates.view',
           },
+          {
+            title: 'Certificate Links',
+            path: '/master-data-management/certificates/links',
+            permission: 'master_data.certificates.view',
+          },
         ],
       },
     ],
@@ -2029,6 +2034,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Certificates',
       path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
+      title: 'Certificate Links',
+      path: '/master-data-management/certificates/links',
       permission: 'master_data.certificates.view',
     },
     {
