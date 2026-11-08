@@ -791,3 +791,32 @@ describe('portal: no product table from a stock inquiry, purchasing result read-
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
   });
 });
+
+describe('a View link opened with no portal session (crew pass on c2705b8b)', () => {
+  it('goes to the OTP verify page for this application, like the stock inquiry link', async () => {
+    const { PortalUnauthorizedError } = await import('../lib/portal-client');
+    asMock(getNewProductApplication).mockRejectedValue(new PortalUnauthorizedError());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-9" />);
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        '/portal/c/acme/verify?reason=expired&type=new_product_application&id=a-9',
+      ),
+    );
+    expect(screen.queryByRole('heading', { name: 'Application not found' })).toBeNull();
+  });
+
+  // The NPA backend answers another contact's id with 404 (never 403 OWNER_MISMATCH), so in practice
+  // that case shows "Application not found"; this only pins that the form uses the SHARED rule.
+  it('follows the shared session rule for an owner mismatch too (the stock inquiry form\'s rule)', async () => {
+    const { PortalOwnerMismatchError } = await import('../lib/portal-client');
+    asMock(getNewProductApplication).mockRejectedValue(new PortalOwnerMismatchError());
+    render(<NewProductApplicationForm slug="acme" applicationId="a-9" />);
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        '/portal/c/acme/verify?reason=expired&type=new_product_application&id=a-9',
+      ),
+    );
+  });
+});

@@ -70,7 +70,6 @@ import {
   PortalSubmissionDetail,
   PortalSubmissionKind,
   PortalSubmissionNeighbours,
-  PortalOwnerMismatchError,
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
@@ -97,6 +96,7 @@ import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
@@ -908,28 +908,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
           setReviseMode(true);
         }
       } catch (e) {
-        if (e instanceof PortalUnauthorizedError) {
-          routerRef.current.replace(
-            portalVerifyPath({
-              slug,
-              reason: 'expired',
-              type: kind,
-              id: submissionId,
-            }),
-          );
-          return;
-        }
-        // Logged in as a different contact than the form's owner - send them to
-        // the owner's confirm-identity card (deep-link slug), keep their token.
-        if (e instanceof PortalOwnerMismatchError) {
-          routerRef.current.replace(
-            portalVerifyPath({
-              slug,
-              reason: 'expired',
-              type: kind,
-              id: submissionId,
-            }),
-          );
+        // No / expired session, or logged in as a different contact than the form's owner:
+        // the owner's confirm-identity card (deep-link slug); a mismatch keeps its token.
+        const verify = portalSessionRedirectPath(e, { slug, type: kind, id: submissionId });
+        if (verify) {
+          routerRef.current.replace(verify);
           return;
         }
         if (!cancelled)

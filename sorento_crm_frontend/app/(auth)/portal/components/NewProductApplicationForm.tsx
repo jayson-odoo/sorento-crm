@@ -66,6 +66,7 @@ import {
   clientService,
   useSubmissionClient,
 } from '../lib/submission-client';
+import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { AttachmentDropzone } from './AttachmentDropzone';
@@ -206,7 +207,18 @@ export default function NewProductApplicationForm({
       .then((d) => {
         if (!cancelled) load(d);
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        // No / expired session (a View link opened cold) or another contact's session: the OTP
+        // verify page for this application, exactly as the stock inquiry form (shared rule).
+        const verify = portalSessionRedirectPath(e, {
+          slug,
+          type: 'new_product_application',
+          id: applicationId,
+        });
+        if (verify) {
+          router.replace(verify);
+          return;
+        }
         // Someone else's application and a removed one both answer 404: one state for both.
         if (!cancelled) setNotFound(true);
       })
@@ -216,7 +228,7 @@ export default function NewProductApplicationForm({
     return () => {
       cancelled = true;
     };
-  }, [applicationId, load, client]);
+  }, [applicationId, load, client, router, slug]);
 
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
