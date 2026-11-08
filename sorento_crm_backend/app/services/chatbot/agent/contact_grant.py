@@ -140,17 +140,19 @@ def _customers(db, args: dict, companies: list[str], company_ids: dict[str, str]
 
 
 def _fits(choice: dict) -> str:
-    n = len(choice["candidates"])
-    count = "more than 10 accounts" if choice.get("more") else f"{n} account{'' if n == 1 else 's'}"
+    n, noun = len(choice["candidates"]), choice.get("noun") or "account"
+    count = f"more than 10 {noun}s" if choice.get("more") else f"{n} {noun}{'' if n == 1 else 's'}"
     return f"\"{choice['written']}\" fits {count}"
 
 
 class NeedsChoice(AppException):
-    """A row whose only problem is that a written customer name fits several accounts: the batch tool asks the user
-    to pick. `choices` = [{"written", "company", "candidates": [{"code", "name"}], "more"}]."""
+    """A row whose only problem is that a written name fits several records: the batch tool asks the user to pick.
+    `choices` = [{"written", "company", "candidates": [{"code", "name"}], "more"}], plus "noun" ("account" when
+    absent) and "kept" (the row's values that resolved exactly, which a re-proposal may keep) for a tag row."""
 
     def __init__(self, choices: list[dict]):
-        super().__init__(status_code=409, message="Which account? " + "; ".join(_fits(c) for c in choices), code="NEEDS_CHOICE")
+        noun = (choices[0].get("noun") if choices else None) or "account"
+        super().__init__(status_code=409, message=f"Which {noun}? " + "; ".join(_fits(c) for c in choices), code="NEEDS_CHOICE")
         self.choices = choices
 
 
