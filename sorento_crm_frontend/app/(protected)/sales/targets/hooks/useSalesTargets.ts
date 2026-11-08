@@ -17,6 +17,7 @@ import {
   patchSalesTarget,
   patchSalesTargetPeriod,
   savePointRatio,
+  updatePointRatio,
   searchTargetCustomers,
   searchTargetProducts,
 } from '../services/salesTargetService';
@@ -159,6 +160,21 @@ export function useSavePointRatio() {
   const invalidate = useInvalidateTargets();
   return useMutation({
     mutationFn: savePointRatio,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: POINT_RATIOS_KEY });
+      invalidate();
+      toast.success('Ratio saved');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the ratio'),
+  });
+}
+
+export function useUpdatePointRatio() {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidateTargets();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string; effective_from: string; rm_per_point: number }) =>
+      updatePointRatio(id, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: POINT_RATIOS_KEY });
       invalidate();

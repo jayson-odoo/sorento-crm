@@ -101,6 +101,10 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 }));
 
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
+// The Point ratio dialog's deferred delete (POINT-RATIO-EDIT) needs a QueryClient this file does not mount.
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false, countdown: null }),
+}));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
 }));
@@ -110,6 +114,10 @@ const hooks = vi.hoisted(() => ({
   useSalesTargets: vi.fn(),
   usePointRatios: () => ({ data: { rows: [] }, isLoading: false }),
   useSavePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  POINT_RATIOS_KEY: ['sales-target-point-ratios'],
+  SALES_TARGETS_KEY: ['sales-targets'],
+  SALES_TARGET_KEY: ['sales-target'],
   useImportDealerTargets: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDownloadDealerTemplate: () => ({ mutate: vi.fn(), isPending: false }),
   useDownloadCommissionStatement: () => statement,

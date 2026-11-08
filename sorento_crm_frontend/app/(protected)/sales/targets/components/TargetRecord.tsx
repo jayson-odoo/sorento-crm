@@ -2758,7 +2758,7 @@ function AccountsGrid({
         accessorFn: (r) => r.account?.code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         cell: ({ row }) => row.original.account?.code ?? '',
-        size: 110,
+        size: 100,
         meta: { headerTitle: 'Code' },
       },
       {
@@ -2770,7 +2770,7 @@ function AccountsGrid({
             {row.original.account?.name ?? ''}
           </span>
         ),
-        size: 170,
+        size: 140,
         meta: { headerTitle: 'Customer' },
       },
       {
@@ -2821,7 +2821,7 @@ function AccountsGrid({
           const value = paid(row.original);
           return value === null ? '-' : formatMoney(value);
         },
-        size: 170,
+        size: 180,
         meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
       });
     }
