@@ -53,11 +53,11 @@ def _value_from_supplier(obj: Any, compile_key: str) -> Any:
 
 
 def _value_from_product(obj: Any, compile_key: str) -> Any:
-    """Discontinued at (issue #1287): the exported value is the Malaysia calendar
-    date (YYYY-MM-DD) the scheduler noticed, not the raw naive-UTC timestamp
-    `_value_from_obj`'s plain `getattr` would emit."""
-    if compile_key == "product.discontinued_notified_at":
-        dt = getattr(obj, "discontinued_notified_at", None)
+    """Discontinued at (issue #1287) and List price changed at (LIST-PRICE-CHANGE-UI): the
+    exported value is the Malaysia calendar date (YYYY-MM-DD), not the raw naive-UTC
+    timestamp `_value_from_obj`'s plain `getattr` would emit."""
+    if compile_key in ("product.discontinued_notified_at", "product.list_price_notified_at"):
+        dt = getattr(obj, compile_key.split(".", 1)[1], None)
         if dt is None:
             return None
         return dt.replace(tzinfo=timezone.utc).astimezone(MALAYSIA_TZ).date().isoformat()
