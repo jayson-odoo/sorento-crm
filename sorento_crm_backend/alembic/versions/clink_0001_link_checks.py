@@ -5,13 +5,13 @@ Additive and idempotent (IF NOT EXISTS) so the shared dev DB, which converges th
 Plan: documentation/plans/certificates/PLAN-cert-link-cleanup-08nov.md.
 
 Revision ID: clink_0001_link_checks
-Revises: tagu_0001_tag_snapshot
+Revises: pfcn_0001_list_price_notify
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "clink_0001_link_checks"
-down_revision = "tagu_0001_tag_snapshot"
+down_revision = "pfcn_0001_list_price_notify"
 branch_labels = None
 depends_on = None
 
