@@ -1,6 +1,6 @@
 # PLAN: AI assistant side panel composer (multiline, attachments, voice)
 
-Status: Build (Phase 1 FE + Phase 2 tester-first BE). Mock OK 8 Nov 15:23; Q1a-Q5a final 15:25.
+Status: Review fix round 1 (full track). Mock OK 8 Nov 15:23; Q1a-Q5a final 15:25.
 Track: full (size L: new upload surface, file parsing, a data migration seeding one attachment type).
 Lane: AGENT-PANEL-COMPOSER. Owner ask 8 Nov 2026 ~15:10 MYT.
 
@@ -108,3 +108,17 @@ Out of scope: server speech-to-text (unless Q4 picks it), other file types (Word
    encodings, header detection, cap note), chat payload + re-link + route reason, ImagePart / PDF on the agent call.
 3. Wire FE to BE, vitest for the composer keys and paste rules.
 4. Reviewer + security-reviewer + cloud browser pass. Live agent checks by crew on the Mac (no Gemini key here).
+
+## Review decisions (round 1, 8 Nov)
+
+Fixed in round 1: UAC R1-R10 (files hidden from other staff, bounded sheet reads, file content as quoted data with no
+confirm on a file turn, daily cap kept on file turns, no upload-activity rows, hard ceilings, no links for archived
+files, chip removed mid-upload deletes the file).
+
+Not changed, with the reason:
+- Sheet rows stay in the turn's stored history (`envelope.file_text`), visible to trace viewers
+  (`system.ai_assistant_settings.view`) like a pasted table today. The follow-up "now tag these" needs them, and the
+  owner accepted chat-text retention in Q5.
+- Files go to whichever agent model an admin configures (Gemini by default). The owner's "no OpenAI" ruling was on the
+  voice engine (Q4); refusing files on another provider is a new policy for the owner to ask for, not this lane.
+- No per-user stored-bytes cap and a deleted thumbnail may live up to a day in the CDN edge cache (signed URLs only).
