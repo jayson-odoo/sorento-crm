@@ -277,6 +277,10 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_spec_sheet_page_resettable
 
         assert_spec_sheet_page_resettable(db, entity_id, (payload or {}).get("page_key"), actor_id)
+    elif action_key == "quotation_certificate.remove":
+        from app.services.record_actions import assert_quotation_certificate_removable
+
+        assert_quotation_certificate_removable(db, entity_id, actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 

@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlTab } from '@/hooks/useUrlTab';
+import { useHasPermission } from '@/hooks/usePermissions';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 import DetailActions from '@/components/common/DetailActions';
 import { certificatesPagerQuery } from '../hooks/useCertificates';
@@ -42,6 +43,7 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
   const router = useRouter();
   const backHref = useBackToListHref(LIST_PATH);
   const { data: certificate, isLoading } = useCertificate(certificateId);
+  const canEditCodes = useHasPermission('master_data.certificates.edit');
   // `?tab=` so the record pager keeps the open tab on prev/next (NAV-KEEP-TAB).
   const [tab, setTab] = useUrlTab({ tabs: ['overview', 'products', 'revisions'], defaultTab: 'overview' });
 
@@ -298,7 +300,11 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
         </TabsContent>
 
         <TabsContent value="products">
-          <CertificateCoveredProducts certificateId={certificate.id} products={products} />
+          <CertificateCoveredProducts
+            certificateId={certificate.id}
+            products={products}
+            canEditCodes={canEditCodes}
+          />
         </TabsContent>
 
         <TabsContent value="revisions">
