@@ -654,5 +654,6 @@ def test_H1_tgt_and_payout_account_are_shown_whatever_columns_the_model_asks_for
         out = run(db, {"entity": ENTITY, "agent": "ZZT TWIN", "period": "2026", "fields": fields})
         keys = [c["key"] for c in out["columns"]]
         assert keys[:3] == ["label", "target_no", "payout_account"], fields
+        assert "payout" in keys and "columns_dropped" not in out
         twins = [(r["target_no"], r["payout_account"]) for r in out["rows"]]
         assert len(twins) == 2 and len(set(twins)) == 2 and {a for _n, a in twins} == {"A/C I"}

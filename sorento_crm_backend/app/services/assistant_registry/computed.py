@@ -446,9 +446,10 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
             _field(entity, slugs, name)  # raises unknown_field (a restricted one is dropped below, as in SQL)
     from app.services.assistant_registry.query import MAX_COLUMNS
 
-    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    picked = [f for f in dict.fromkeys(asked or entity.list_fields or list(entity.fields)) if f not in entity.always_fields]
     dropped = picked[MAX_COLUMNS:]
-    wanted = list(dict.fromkeys([*entity.name_by, *picked[:MAX_COLUMNS]]))
+    # The always-shown columns come on top of the cap, so they never push an asked figure out.
+    wanted = list(dict.fromkeys([*entity.name_by, *entity.always_fields, *picked[:MAX_COLUMNS]]))
     shown = [f for f in wanted if not entity.fields[f].permission or entity.fields[f].permission in slugs]
     restricted = [f for f in wanted if f not in shown]
     order = []

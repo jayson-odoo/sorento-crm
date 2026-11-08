@@ -121,3 +121,6 @@ class EntityDef:
     #: Code-render the table from this many rows (`query_tools.CARD_MIN_ROWS` otherwise), so the model passes it
     #: through instead of rewriting it.
     card_min_rows: int | None = None
+    #: A computed entity's columns shown on every rows result, right after the label, whatever `fields` the
+    #: query asks for (crew live round 5: same-name dealer rows looked identical once the model chose columns).
+    always_fields: tuple[str, ...] = ()
