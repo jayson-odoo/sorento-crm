@@ -59,6 +59,10 @@ C4. Unlinking the contact's LAST customer link (counted across every company, no
     replies off in the same change (preview line `AI replies on -> off`). Unlinking one of several links leaves AI
     replies as they are.
 
+C5. Own scope, no leak in the update tool either: the preview, the stored action steps (`shown.link_codes` and every
+    other field), the confirm result and the audit row never carry the code or name of an account that is not own;
+    such a link reads `another account`.
+
 ## D. Permission
 
 D1. Migration grants `user_management.contacts.edit_own` to role `salesperson` (idempotent) and seeds the two owner
