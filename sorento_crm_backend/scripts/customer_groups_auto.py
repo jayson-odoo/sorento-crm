@@ -6,7 +6,7 @@ Owner, 5 Oct 2026: "I need script to set automatically, not sheet". This overrid
 
 The rule is the one the dev seed used (`cust_group_0001` in ec2dd5b79, removed by #1451):
 
-- Per company, ledgers sharing `trading_name_key(customer_name)` are one family.
+- Per company, ledgers sharing `ledger_family_key(customer_name)` are one family.
 - A family becomes a group when it has 2+ ledgers and at least one numbered account
   (`account_level` set). CASH / SHOPEE / LAZADA families never do.
 - The group is named after the member with the lowest (account level, code): its name without
@@ -48,7 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import sqlalchemy as sa  # noqa: E402
 
-from app.services.ledger_family import _marker_level, trading_name_key  # noqa: E402
+from app.services.ledger_family import _marker_level, ledger_family_key  # noqa: E402
 
 #: Families whose trading name starts with one of these are channels, not one customer.
 EXCLUDED_FIRST_WORDS = frozenset({"CASH", "SHOPEE", "LAZADA"})
@@ -163,7 +163,7 @@ def plan(rows: Iterable[Row], existing_groups: dict[tuple[str, str], str]) -> Pl
     families: dict[tuple[str, str], list] = {}
     for row in rows:
         name = row[3]
-        key = trading_name_key(name) if name else ""
+        key = ledger_family_key(name) if name else ""
         if key and key.split()[0] not in EXCLUDED_FIRST_WORDS:
             families.setdefault((str(row[1]), key), []).append(row)
 

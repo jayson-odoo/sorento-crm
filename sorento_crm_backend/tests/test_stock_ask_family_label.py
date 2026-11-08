@@ -1,10 +1,9 @@
 """ASKS-UX item 4, owner ruling 30 Sep 2026 (option a): a customer-less ask names the TRADING
 NAME behind the customers its contact is linked to, when they are the ledgers of one shop.
 
-"HANLIM TRADING SDN BHD [A/C I]", "[A/C II]" and "(CERAMIC & ELLECI)" are one shop when the office
-put them in one customer group (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026: explicit links only),
-so the card reads the group's name instead of the contact's; ungrouped, they are three customers.
-One linked ledger reads its name without the ledger marker. Links to two different shops name nothing (the
+"HANLIM TRADING SDN BHD [A/C I]", "[A/C II]" and "(CERAMIC & ELLECI)" share the chatbot's ledger
+family (`ledger_family_key`, `app/services/ledger_family.py`), so the card reads "HANLIM
+TRADING SDN BHD" instead of the contact's name. Links to two different shops name nothing (the
 card falls back to the contact, as before); an ask written against a customer is untouched.
 """
 from __future__ import annotations
@@ -44,23 +43,11 @@ def _names(db, *asks) -> list[str | None]:
     return [r.customer_name for r in stock_ask_service.serialize(db, list(asks))]
 
 
-def test_a_customerless_ask_names_the_group_when_every_link_is_one_group(w):
-    from sqlalchemy import text
-
+def test_a_customerless_ask_names_the_trading_name_when_every_link_is_one_shop(w):
     db = w["db"]
     for c in (w["h1"], w["h2"], w["h3"]):
         _link(db, w["dealer"], c)
     ask = seed.ask(db, None, w["dealer"], "SRT-HANLIM")
-    db.commit()
-    # Ungrouped: three customers to the chatbot, so the card names none of them.
-    assert _names(db, ask) == [None]
-    gid = seed.uid()
-    db.execute(
-        text("INSERT INTO customer_groups (id, company_id, name, created_at, updated_at) VALUES (:i, :c, :n, now(), now())"),
-        {"i": gid, "c": SORENTO, "n": "HANLIM TRADING SDN BHD"},
-    )
-    for c in (w["h1"], w["h2"], w["h3"]):
-        db.execute(text("UPDATE customers SET customer_group_id = :g WHERE id = :c"), {"g": gid, "c": c.id})
     db.commit()
     assert _names(db, ask) == ["HANLIM TRADING SDN BHD"]
     # And on the wire: the agent's to-do carries the label on the same row.

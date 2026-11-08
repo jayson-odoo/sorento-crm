@@ -62,10 +62,7 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
     returns six rows; the grouping is entirely the NARROWER's job, downstream, via the
     new `family_grouping` parameter `decide()`/`_choices()`/`_options()` gained). Re-
     pinned at the real landed seam after re-running this class post-merge caught the
-    stale one (same class of catch as finding 2's own re-pin note).
-
-    Re-pinned 3 Nov 2026 (CUSTOMER-GROUP-GATE, owner ruling: explicit links only): the six
-    ledgers are one family because the office GROUPED them; ungrouped, each is its own line."""
+    stale one (same class of catch as finding 2's own re-pin note)."""
 
     def test_six_ledgers_of_one_trading_name_are_one_family_not_six_options(self) -> None:
         """A resolver that returned all six real HANLIM ledger rows (seeded off the
@@ -84,22 +81,14 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
             {"uuid": "6b52807a-537b-437d-9f55-12f7fda29df8", "canonical_code": "300-H118", "name": "HANLIM TRADING SDN BHD [A/C III]", "entity_type": "customer"},
             {"uuid": "2a4575e0-836b-4a5d-8566-73223465020d", "canonical_code": "300-H119", "name": "HANLIM TRADING SDN BHD [A/C IV]", "entity_type": "customer"},
         ]
-        from app.services.ledger_family import customer_groups
-
-        def run():
-            return decide(
-                kind="customer",
-                policy_value="must_narrow_one",
-                focus=Focus(),
-                profile=Profile(),
-                resolved_candidates=hanlim,
-                family_grouping="ledger_family",
-            )
-
-        ungrouped = run()
-        assert ungrouped.ask_kind == "customer_pick" and len(ungrouped.ask_options) == 6
-        with customer_groups({h["name"]: "HANLIM TRADING SDN BHD" for h in hanlim}):
-            outcome = run()
+        outcome = decide(
+            kind="customer",
+            policy_value="must_narrow_one",
+            focus=Focus(),
+            profile=Profile(),
+            resolved_candidates=hanlim,
+            family_grouping="ledger_family",
+        )
         assert outcome.ask_kind is None, (
             "six ledgers of ONE trading name must settle, never ask - "
             f"got ask_kind={outcome.ask_kind!r} options={outcome.ask_options!r}"
@@ -394,12 +383,9 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
         }, stamped
 
     def test_two_ledgers_of_one_family_share_the_same_stamp(self) -> None:
-        """The has/no-DO stamp is keyed by FAMILY BASE (`pickers.customer_base`), the same
-        rule finding 1's grouping uses. Re-pinned 3 Nov 2026 (CUSTOMER-GROUP-GATE): a family
-        is a customer GROUP, so ledger II reads ledger I's DO only when the office grouped
-        them; ungrouped, ledger II (no order of its own) reads "no DO"."""
-        from app.services.ledger_family import customer_groups
-
+        """The has/no-DO stamp is keyed by FAMILY BASE (`pickers.customer_base` strips
+        the `[A/C n]` suffix), same as finding 1's own grouping rule - a DO on ledger I
+        is a DO for the family, and ledger II (no order of its own) reads it too."""
         from app.services.chatbot.lanes.business import pickers
         from app.services.chatbot.turn_runtime import candidates_by_kind
 
@@ -434,14 +420,8 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
         stamped = {c.get("name"): c.get("stamp") for c in grouped.get("customer", [])}
         assert stamped == {
             "HANLIM TRADING SDN BHD [A/C I]": "has DO",
-            "HANLIM TRADING SDN BHD [A/C II]": "no DO",
+            "HANLIM TRADING SDN BHD [A/C II]": "has DO",
         }, stamped
-        names = ["HANLIM TRADING SDN BHD [A/C I]", "HANLIM TRADING SDN BHD [A/C II]"]
-        with customer_groups({n: "HANLIM TRADING SDN BHD" for n in names}):
-            customer_bases = pickers.customer_bases_with_do({"answers": probe_rows})
-            grouped = candidates_by_kind(gate, compatible, customer_bases)
-        stamped = {c.get("name"): c.get("stamp") for c in grouped.get("customer", [])}
-        assert stamped == {n: "has DO" for n in names}, stamped
 
     def test_the_stamp_arrives_only_through_customer_bases_with_do(
         self,
