@@ -1,7 +1,6 @@
 # Plan: NPA approval and purchasing through Form SLA config (NPA-FORM-SLA)
 
-Status: Build (behaviour card posted as crew-ask on PR #2261; building on the recommended answers
-until the owner says otherwise), 8 Nov 2026. Size M, full track (data-only migration, RBAC gate
+Status: Review (built; owner answered Q1-Q5 8 Nov 21:45 and the team-notice follow-up), 8 Nov 2026. Size M, full track (data-only migration, RBAC gate
 change on approve / reject / purchasing moves). Owner ask 8 Nov ("2233 sla a + same teams"): the
 New Product Application's approver / processor flow works like the Stock Inquiry's, through Form SLA
 config, same component and same engine.
@@ -48,54 +47,73 @@ Event names are the NPA's own move names (the ones `notify()` already receives),
 stage (`void_active_for_source`, as the SI revision and the price tag re-escalation do), they do
 not resolve it, so a withdrawn NPA never counts as handled in the KPIs.
 
-## Who gets what notice
+## Who gets what notice (owner 8 Nov: "like SI", Q2 b + team notice b)
 
-| Move                         | Today                                 | After                                                    |
+| Move                         | Before                                | After                                                    |
 |------------------------------|---------------------------------------|----------------------------------------------------------|
-| Submit / Resubmit            | every `.approve` holder               | the approval stage's assignee only (SI's SLA assignment notice, with due date) |
-| Approve                      | every `.open_code` holder             | the purchasing stage's assignee only                     |
-| Revise / withdraw            | every `.approve` holder               | the voided stage's assignee only                         |
+| Submit / Resubmit            | every `.approve` holder               | approval stage's assignee (SLA assignment notice) + the SI's team notice to the `lead_time_enquiries` / `project_sales` team |
+| Approve                      | every `.open_code` holder             | purchasing stage's assignee + the SI's team notice to the `purchasing` team |
+| Revise / withdraw            | every `.approve` holder               | whoever held the voided stage (assignee, lock holder)    |
 | Reject, purchasing Reject    | applicant                             | applicant (unchanged)                                    |
 | Complete                     | applicant                             | applicant (unchanged)                                    |
 | Overdue                      | nothing                               | escalation to the next tier team, as the SI              |
 
-Fallback (Q2): when no active NPA stage row exists (config deleted / switched off, a fresh tenant,
-CI), the move falls back to today's broadcast, so nobody goes unheard.
+Correction to the first card (Q2): the SI is not silent without a stage row. Apart from the
+engine it sends a fixed team notice (`procurement_service.py:5452` `_notify_team_stock_inquiry`,
+called at `api/v1/procurement/stock_inquiries.py:435-445` and `procurement_service.py:7249`).
+The NPA now sends that same notice through the same function, which takes the form type, company,
+link and button label (a stock inquiry passes none of them and is unchanged). With no NPA stage
+row, the team notice still goes and no stage notice goes, exactly as on the SI. The
+permission-holder broadcast is gone.
 
 ## Gating
 
-Permission check stays as it is (`.approve`, `.open_code`); every staff move that changes state
-(approve, reject, revise, purchasing response save / reply, new code link / close / undo, line
+Permission check stays as it is (`.approve`, `.open_code`, Q3 a); every approver / purchasing move
+(approve, reject, purchasing response save / reply, feedback, new code link / close / undo, line
 link / close / undo, purchasing reject) also calls `assert_can_act_on_form(..., source_entity_type=
 "new_product_application")`, exactly as the SI routes. The SLA tracker readers admit the NPA's own
 view-all slugs (`.view`, `.approve`, `.open_code`) for NPA trackers (`api/v1/sla/sla_tracking.py:67`).
+The applicant's own moves (submit, revise, cancel) are not stage work and are not gated. The lock
+itself stays off until an admin ticks New Product Application in System Settings > handling lock
+(Q4 a; the switch list gained the type).
 
 ## NPAs already open
 
-No backfill (Q1): an NPA submitted or approved before this ships has no tracker; it finishes under
+No backfill (owner Q1 a): an NPA submitted or approved before this ships has no tracker; it finishes under
 today's rules (no tracker = `assert_can_act_on_form` allows; notices fall back to the broadcast for
 that move only if no stage starts). The first NPA move after ship that starts a stage (a resubmit,
 an approve of an already-submitted one) starts it normally.
 
 ## Seed
 
-Data-only alembic migration `npasla_0001`: copies the two SI rows (by team set `project_sales` /
+Data-only alembic migration `npasla_0001_seed_configs` (owner Q5 a): copies the two SI rows (by team set `project_sales` /
 `purchasing`) into NPA rows with the NPA event names, `WHERE NOT EXISTS` an NPA row for that team
 set. Idempotent, a no-op where the SI rows do not exist (CI). Downgrade deletes only the rows it
 can recognise as its own (type NPA + those stage codes). Also posted as `crew-migration:` SQL for
 the shared dev DB.
 
+Dev (crew data 8 Nov): SI rows `project_sales` (policy Stock Inquiries) and `purchasing` (policy
+Normal Sorento Policy) exist on `lead_time_enquiries`; no NPA row or tracker yet; no NPA is
+submitted today (2 approved: NPA-000008, NPA-000005), so the hand test submits a fresh one. The
+SI's purchasing row also resolves on `purchasing_respond` (its response ends it); the NPA's
+resolves on completed / rejected, because a Save only response comes before the code is opened.
+
 ## FE
 
 - `FormSLAConfigDialog` type list + `FORM_SLA_EVENT_OPTIONS` / `FORM_SLA_TYPE_LABELS` gain
   `new_product_application`.
-- NPA detail: the SI's `FormDetailWithSLATabs` shell (Details / Stock inquiry / SLA Tracking) and the
-  SI's handling lock banner, same components, same path.
+- NPA detail: an SLA Tracking tab rendering the SI's `FormSLATrackingTab` (view-all holders only,
+  the same slugs the BE admits), the SI's `HandlingLockBanner` + release menu item, and the
+  approver / purchasing buttons disabled while another person holds an escalated stage. The page
+  keeps its own strip (Details / Stock inquiry) rather than the `FormDetailWithSLATabs` shell,
+  whose Details-tab structure it does not have.
+- System Settings handling-lock switch lists New Product Application.
 
 ## Tests (red first)
 
-BE: type lists agree; seed copies SI rows and is idempotent; submit starts approval tracker and
-notifies only its assignee; approve resolves it and starts purchasing; purchasing response stops
-the response clock; complete / purchasing reject resolve; revise / cancel void; no config falls
-back to broadcast; escalated + lock on: non-holder approve 403, holder 200; tracker reader admits
+BE (`tests/test_npa_form_sla.py`): type lists agree; seed copies SI rows and is idempotent;
+submit starts approval tracker and notifies only its assignee; approve resolves it and starts
+purchasing; purchasing response stops the response clock; complete / purchasing reject resolve;
+revise / cancel void; no stage row tells no permission holder; team notice per move with and
+without a stage row; escalated + lock on: non-holder approve 403, holder 200; tracker reader admits
 `.approve` holder for NPA trackers only. FE: dialog offers the type; NPA detail renders the SLA tab.
