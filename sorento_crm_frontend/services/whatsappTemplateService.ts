@@ -88,7 +88,8 @@ export type UseCase =
   | 'ideation_status_update'
   | 'supplier_request_chat'
   | 'stock_ask_salesman'
-  | 'wa_phone_share';
+  | 'wa_phone_share'
+  | 'new_product_application_update';
 
 export type ParamVariable =
   | 'contact_name'
@@ -126,7 +127,10 @@ export type ParamVariable =
   | 'customer_name'
   | 'product'
   | 'quantity'
-  | 'asked_at';
+  | 'asked_at'
+  | 'inquiry_number'
+  | 'new_product_code'
+  | 'lead_time';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -395,6 +399,12 @@ export const USE_CASES: {
     description:
       'Utility template with the Share Contact Info button, sent to a WhatsApp contact that chats by username only so they can share their phone number. No params.',
   },
+  {
+    key: 'new_product_application_update',
+    label: 'New Product Application',
+    description:
+      'Purchasing\'s Update & Reply on a new product application, sent to the salesperson through the stock inquiry\'s conversation. Map params to "Entity number" (the application number), "Stock inquiry number", "Customer", "Project", "Product code" (the current codes), "New product code", "Lead time" and "Update"; the View button to "Portal URL" (the application\'s portal page).',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -434,6 +444,9 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'product', label: 'Product', description: 'Stock ask: product code - name' },
   { key: 'quantity', label: 'Quantity', description: 'Stock ask: the quantity the dealer asked for' },
   { key: 'asked_at', label: 'Asked at', description: 'Stock ask: when the dealer asked (DD/MM/YYYY HH:MM, Malaysia time)' },
+  { key: 'inquiry_number', label: 'Stock inquiry number', description: 'New product application: the stock inquiry it was raised from' },
+  { key: 'new_product_code', label: 'New product code', description: 'New product application: the one new product code' },
+  { key: 'lead_time', label: 'Lead time', description: "New product application: purchasing's lead time" },
 ];
 
 

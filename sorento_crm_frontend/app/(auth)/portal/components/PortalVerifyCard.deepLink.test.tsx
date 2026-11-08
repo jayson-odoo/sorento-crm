@@ -153,3 +153,24 @@ describe('PortalVerifyCard - salesperson deep links land in the CRM shell', () =
     expect(assignMock.mock.calls[0][0]).toBe('/portal/c/SLUG123456/complaint/abc-123');
   });
 });
+
+
+describe('PortalVerifyCard - a New Product Application View link (NPA-FROM-SI crew pass)', () => {
+  it('a salesperson lands on the application itself, like the stock inquiry', async () => {
+    sessionWith('/my-requests');
+    setUrl('/portal/c/SLUG123456/verify?reason=expired&type=new_product_application&id=npa-77');
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await enterCode(true);
+    await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
+    expect(assignMock.mock.calls[0][0]).toBe('/procurement-management/new-product-applications/npa-77');
+  });
+
+  it('a contact without a CRM user lands on the application in the portal', async () => {
+    sessionWith(undefined);
+    setUrl('/portal/c/SLUG123456/verify?reason=expired&type=new_product_application&id=npa-77');
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await enterCode(true);
+    await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
+    expect(assignMock.mock.calls[0][0]).toBe('/portal/c/SLUG123456/new_product_application/npa-77');
+  });
+});
