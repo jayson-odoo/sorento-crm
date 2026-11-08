@@ -1,6 +1,6 @@
 # PLAN: every Respond.io call honours the configured base URL (RESPOND-BASE-URL-LEAK)
 
-Status: in progress. Small fix track (no migration, no auth/RBAC change, no new ingest surface).
+Status: built, in review (PR #2272). Small fix track (no migration, no auth/RBAC change, no new ingest surface).
 
 ## Problem
 
@@ -32,3 +32,11 @@ which builds each URL from `self.base_url`. The leak is the precedence that sets
    `integration_service.py`.
 4. Red-first test: SI submit with RESPOND_BASE_URL=https://api.respond.invalid and a workspace row on
    `https://api.respond.io` makes zero requests to api.respond.io (httpx transport mocked, no network).
+
+## Follow-on (review)
+
+- `scripts/inbox_queue_replay.py` reached its local lookup server through the workspace row, which
+  the env now beats: `check_env` accepts a loopback RESPOND_BASE_URL and preflight warns when the env
+  does not name the run's server.
+- Out of scope, own ticket: `chatbot_sender_url`, `chatbot_retry_ingress_url` and n8n webhook URLs are
+  not covered by RESPOND_BASE_URL on a prod-clone copy.
