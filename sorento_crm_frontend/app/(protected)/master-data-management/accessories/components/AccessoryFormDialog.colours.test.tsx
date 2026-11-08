@@ -86,6 +86,31 @@ describe('AccessoryFormDialog pictures and colours', () => {
     expect(within(dialog).getAllByLabelText(/^Colour name/)).toHaveLength(2);
   });
 
+  it('Escape in an open colour picker closes only the picker, not the dialog or its rows', async () => {
+    const onOpenChange = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AccessoryFormDialog open onOpenChange={onOpenChange} accessory={ACCESSORY as never} canEdit />
+      </QueryClientProvider>,
+    );
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getAllByTitle('#1f2937')[0]);
+    const hue = await screen.findByRole('slider', { name: 'Hue' });
+    // Focus is still on the swatch that opened it (the browser case), not inside the popover.
+    fireEvent.keyDown(within(dialog).getAllByTitle('#1f2937')[0], { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('slider', { name: 'Hue' })).toBeNull());
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('Colour name 1')).toHaveValue('Black');
+  });
+
+  it('a colour row wraps on narrow screens: the name input takes a full line', () => {
+    mount();
+    const name = screen.getByLabelText('Colour name 1');
+    expect(name.className).toMatch(/basis-full/);
+    expect(name.className).toMatch(/sm:basis-0|sm:flex-1/);
+  });
+
   it('a picture has no colour select', () => {
     mount();
     const dialog = screen.getByRole('dialog');
