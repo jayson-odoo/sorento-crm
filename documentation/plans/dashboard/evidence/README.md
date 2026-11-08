@@ -53,3 +53,19 @@ Defects:
 3. Opening the "products low" Sheet at 375 logs two React warnings: Missing `Description` or
    `aria-describedby={undefined}` for DialogContent.
 4. The Sheet close icon button is 16x16 px at 375.
+
+## Final pass (head 984cfe3009, same fictional snapshot: 8 lit shops, 60 stalls)
+
+The two screenshots above were replaced (same names, fictional data only).
+
+- Legend below the canvas, not on the island, at 1280 and 375: PASS (legend top is at or below the canvas bottom).
+- Panels: no console warnings or errors opening all five panels at 1280 and at 375: PASS.
+- Sheet close hit area on a coarse pointer (375, touch emulation): 44x44 px, PASS (the icon itself is 16 px;
+  at 1280 with a fine pointer the hit area is 16x16, as intended).
+- Draw calls 18 per frame (limit 100); 0 rendered frames and 0 draws in 4 s idle, at both sizes: PASS.
+- Island plus labels fill about 90 percent of the limiting dimension: FAIL. Measured on the canvas pixels
+  (non-background bounding box): 1280 canvas 582x505 css, 79 percent of the width and 79 percent of the height,
+  margins L 81 / R 43 / T 12 / B 94 css px (an empty band at the bottom, content a little left-heavy);
+  375 canvas 341x227, 79 percent of the width and 85 percent of the height, margins L 48 / R 25 / T 12 / B 22 css px.
+- No two of the five tags overlap: FAIL. "Iota Ceramics RM 1,000" is still hidden behind "Mu Flooring RM 1,333"
+  at 1280 and at 375 (only the tail "00" shows at the right).
