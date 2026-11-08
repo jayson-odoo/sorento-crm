@@ -227,10 +227,11 @@ def test_portal_customer_is_any_customer_of_the_company_like_the_stock_inquiry(p
     assert res.status_code == 422
 
 
-def test_a_two_company_contact_lists_and_saves_only_the_npa_company_customers(portal):
-    """Review round 5 blocker: the NPA customer search (the SI's /lookups/debtors, kind
-    new_product_application) lists the ONE company the NPA save resolves, so a listed customer
-    is never refused on save; the other company's customers never show."""
+def test_a_two_company_contact_gets_the_si_list_and_another_companys_pick_is_kept_as_text(portal):
+    """Owner 8 Nov 12:50, option (a): "just behave like how stock inquiry behaves now". The NPA
+    customer search is the SI's (/lookups/debtors, no kind: every company of the contact); a pick of
+    the application's own company links by id; a pick of the contact's OTHER company is kept as
+    text "<code> - <name>" with no id (the SI keeps every customer as text), never a 422."""
     from app.models.order import Customer
     from tests._portal_grant import link_contact_company
 
@@ -242,14 +243,31 @@ def test_a_two_company_contact_lists_and_saves_only_the_npa_company_customers(po
         p.db.add(here)
         p.db.flush()  # the company stamp reads the scope at flush time
     with company_scope(p.db, frozenset({p.other_company})):
-        there = Customer(id=uid(), customer_code=f"ZZT-T{tag}", customer_name=f"{MARKER} twoco {tag} there")
+        there = Customer(id=uid(), customer_code=f"300-{tag}", customer_name=f"{MARKER} twoco {tag} there")
         p.db.add(there)
         p.db.flush()
-    res = _as(p, p.granted).get(
-        f"{PORTAL}/lookups/debtors", params={"q": f"twoco {tag}", "kind": "new_product_application"}
-    )
+    res = _as(p, p.granted).get(f"{PORTAL}/lookups/debtors", params={"q": f"twoco {tag}"})
     assert res.status_code == 200, res.text
-    names = [r["debtor_name"] for r in res.json()]
-    assert names == [here.customer_name]
-    d = _create(p, customer_id=here.id, customer_name=here.customer_name)
-    assert d["customer_id"] == here.id
+    assert sorted(r["debtor_name"] for r in res.json()) == sorted([here.customer_name, there.customer_name])
+    linked = _create(p, customer_id=here.id, customer_name=here.customer_name)
+    assert (linked["customer_id"], linked["customer_name"]) == (here.id, here.customer_name)
+    kept = _create(p, customer_id=there.id, customer_name=there.customer_name)
+    assert kept["customer_id"] is None
+    assert kept["customer_name"] == f"300-{tag} - {MARKER} twoco {tag} there"
+
+
+def test_another_companys_pick_on_an_update_is_kept_as_text_too(portal):
+    from app.models.order import Customer
+    from tests._portal_grant import link_contact_company
+
+    p = portal
+    link_contact_company(p.db, p.granted, p.other_company)
+    with company_scope(p.db, frozenset({p.other_company})):
+        there = Customer(id=uid(), customer_code="300-1002", customer_name="1 LIVING DEPOT SDN BHD - [CERAMIC]")
+        p.db.add(there)
+        p.db.flush()
+    d = _create(p)
+    res = _as(p, p.granted).put(f"{BASE}/{d['id']}", json={"customer_id": there.id, "customer_name": there.customer_name})
+    assert res.status_code == 200, res.text
+    assert res.json()["customer_id"] is None
+    assert res.json()["customer_name"] == "300-1002 - 1 LIVING DEPOT SDN BHD - [CERAMIC]"
