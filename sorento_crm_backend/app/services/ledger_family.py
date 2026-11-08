@@ -1,11 +1,11 @@
 """The ledger family of a customer row: which which-one-list entry it belongs to.
 
 A shop is often several `customers` rows, one per ledger, that differ only by a bracketed
-marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)`. They are
-one customer only when the office put them in one customer group (owner ruling,
-CUSTOMER-GROUP-GATE 3 Nov 2026: explicit links only); every other ledger is its own entry.
-`ledger_family_key` is the comparison key the rows of one entry share; `ledger_family_label` is
-what the entry is called. `trading_name_key` is the name rule, kept for SEARCH only.
+marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)`. Ledgers of
+one trading name are one customer, and the office's customer groups join ledgers of different
+names and name the entry (owner ruling 9 Nov 2026: "answer by the group ... return all
+accounts"). `ledger_family_key` is the comparison key the rows of one entry share;
+`ledger_family_label` is what the entry is called; `trading_name_key` is the name rule.
 
 `group_names` / `family_words` name a list of customer rows by group only (DO-ASK-SIMPLIFY
 rule 1, owner rule 2 Oct 2026: no count, no "and N more"), for the chatbot's DO headers and
@@ -70,9 +70,21 @@ class _TurnGroups:
         #: normalised group names, so a picked line's label (the group's name) keys as the group
         #: (a KEY only; it never makes a ledger a member)
         self.own = {normalise_customer_name(v) for v in labels}
-        #: a group's comparison key -> its name, so an ungrouped ledger of the group's trading name
-        #: is answered with the group (owner Q1, 9 Nov 2026). Answer-time only: no data link.
-        self.keys = {group_key(v): v for v in labels if group_key(v)}
+        #: trading name -> the group an UNGROUPED ledger of that name is answered with (owner Q1,
+        #: 9 Nov 2026: "we should treat it as part of group also"). Answer-time only: no data link.
+        #: A group's own name first; then the names of the group's ledgers (a group named after
+        #: one shop can hold a sibling of another name), unless two groups claim that name. Two
+        #: groups of one trading name: the smallest name, so the label never depends on DB order.
+        self.joins: dict[str, str] = {}
+        for g in sorted(set(labels)):
+            self.joins.setdefault(trading_name_key(g), g)
+        by_member: dict[str, set[str]] = {}
+        for name, g in mapping.items():
+            by_member.setdefault(trading_name_key(name), set()).add(g)
+        for key, found in by_member.items():
+            if key and len(found) == 1:
+                self.joins.setdefault(key, next(iter(found)))
+        self.joins.pop("", None)
 
 
 _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", default=None)
@@ -155,35 +167,39 @@ def group_named(text: str) -> str | None:
     return None
 
 
+def entry_group(text: str, uuid: str | None = None) -> str | None:
+    """The customer group this row's entry is answered with, or None: its own group (by id, else
+    exact full name), else the group of its trading name (owner Q1, 9 Nov 2026)."""
+    group = customer_group_of(text, uuid)
+    if group is not None:
+        return group
+    groups = _GROUPS.get()
+    if groups is None:
+        return None
+    return groups.joins.get(trading_name_key(text))
+
+
 def ledger_family_key(text: str, uuid: str | None = None) -> str:
     """The key the rows of ONE customer entry share: one answer covers them all, never a
     "which account?" between them.
 
     Owner ruling, 9 Nov 2026 (re-land of CUSTOMER-GROUP-GATE): "it should just answer by the
     group, the user doesn't care about which account la, we should just return all accounts".
-    A row in a customer group the turn holds (by id, else by exact full name: #2144's lookup)
-    answers with its GROUP's key; every other row with its trading name, so the ledgers of one
-    name are one entry. An ungrouped ledger of a group's trading name is that group's entry
-    (`group_key`). Access scope is the caller's: only rows the asker may see ever reach here.
+    A row whose entry has a customer group (`entry_group`) answers with that GROUP's key; every
+    other row with its trading name, so the ledgers of one name are one entry. Access scope is
+    the caller's: only rows the asker may see ever reach here.
     """
-    group = customer_group_of(text, uuid)
+    own = trading_name_key(text)
+    group = entry_group(text, uuid)
     if group is not None:
-        return group_key(group)
-    return trading_name_key(text)
+        return group_key(group) or own
+    return own
 
 
 def ledger_family_label(text: str, uuid: str | None = None) -> str:
-    """What the entry is CALLED: its group's name (the row's own group, or the group of its
-    trading name), else the row's own name without its ledger marker."""
-    group = customer_group_of(text, uuid)
-    if group is not None:
-        return group
-    groups = _GROUPS.get()
-    if groups is not None:
-        joined = groups.keys.get(trading_name_key(text))
-        if joined is not None:
-            return joined
-    return without_ledger_marker(text)
+    """What the entry is CALLED: its group's name (`entry_group`), else the row's own name
+    without its ledger marker."""
+    return entry_group(text, uuid) or without_ledger_marker(text)
 
 
 def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:
@@ -194,7 +210,11 @@ def customer_header_words(entries: Iterable[tuple[str, str | None]]) -> str:
     entries) prints as that group (owner Q1, 9 Nov 2026). First-seen order, identical words once,
     no count, none dropped."""
     pairs = [(str(n or "").strip(), g) for n, g in entries]
-    groups = {group_key(g): g for n, g in pairs if n and g}
+    groups: dict[str, str] = {}
+    for n, g in pairs:
+        if n and g:
+            groups.setdefault(group_key(g), g)
+            groups.setdefault(trading_name_key(n), g)
     words: list[str] = []
     for name, group in pairs:
         if not name:

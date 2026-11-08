@@ -38,7 +38,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.turn_runtime import SPEC_TIER
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import entry_group, ledger_family_key
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
@@ -187,6 +187,10 @@ VALID_BRANDS = ("sorento", "cabana", "mocha")
 
 _ACCOUNT_SUFFIX_DASH = re.compile(r"\s*-\s*\[[^\]]*\]\s*\Z")
 _ACCOUNT_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*\Z")
+_BRACKET_ANY = re.compile(r"\[[^\]]*\]")
+_TRAILING_PAREN = re.compile(r"\s*-?\s*\([^)]*\)\s*\Z")
+_WS_RUN = re.compile(r"\s+")
+_TRAILING_WS_DASH = re.compile(r"[\s-]+\Z")
 _SYNTHETIC_CODE = re.compile(r"^(dbr-|[0-9a-f]{8}-[0-9a-f]{4}-)", re.IGNORECASE)
 _DC_NON_ALNUM = re.compile(r"[^a-z0-9]")
 _DF_SEPARATORS = re.compile(r"[^a-z0-9]+")
@@ -366,10 +370,10 @@ def _display_name(match: Any) -> str | None:
 def _cust_base(match: Any) -> str:
     """`_custBase` - the which-one-list GROUPING KEY, never customer copy.
 
-    `ledger_family_key` of the row's FULL name and id: the office's customer group when the row
-    sits in one, else the ledger alone (owner ruling, CUSTOMER-GROUP-GATE 3 Nov 2026: explicit
-    links only, no joining by trading name). The group is looked up by the unstripped name and
-    the id; the "[A/C ..]"-stripped name never matched a grouped ledger."""
+    `ledger_family_key` of the row's FULL name and id: the customer group of the row's entry,
+    else its trading name (owner ruling 9 Nov 2026: same-name ledgers are one customer, never
+    asked). The group is looked up by the unstripped name and the id; the "[A/C ..]"-stripped
+    name never matched a grouped ledger (#2144's fix)."""
     name = _display_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
     uid = jsc.js_string(jsc.get(match, "uuid") or "") or None
     return ledger_family_key(name, uid)
@@ -1217,18 +1221,29 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
             def _rep_label(m: Any) -> str:
                 # One ledger: its exact label (the marker IS its identity). Several: the
-                # customer group they sit in, by its own name (CUSTOMER-GROUP-GATE: only a
-                # group joins ledgers).
+                # customer group of the entry, by its own name; else the shared name minus
+                # the markers, trailing parentheses only (n8n's own rule, the captured line).
                 exact = _display_name(m) or _cust_name(m)
                 if not exact:
                     return jsc.js_string(jsc.get(m, "canonical_code") or "")
                 if _fam_size_of(m) <= 1:
                     return exact
-                return ledger_family_label(exact, jsc.js_string(jsc.get(m, "uuid") or "") or None)
+                group = entry_group(exact, jsc.js_string(jsc.get(m, "uuid") or "") or None)
+                if group is not None:
+                    return group
+                name = _cust_name(m) or exact
+                s = _BRACKET_ANY.sub(" ", name)
+                while True:
+                    prev = s
+                    s = _TRAILING_PAREN.sub("", s)
+                    if s == prev:
+                        break
+                s = _TRAILING_WS_DASH.sub("", _WS_RUN.sub(" ", s)).strip()
+                return s or name
 
             # ── the option line NAMES THE LEDGER(S) the family sits in ──────
             # Owner ruling, console pass 3 (6 Sep 2026): "N. <name> (<company code>)".
-            # A family is keyed by `_cust_base` (a customer group, or one identical full name), so one line can
+            # A family is keyed by `_cust_base` (a customer group, or one trading name), so one line can
             # stand for accounts in more than one ledger - captures rg-15114061 (JYL JUBIN
             # under Mocha and Sorento) and rg-15125764 (YI HONG TILING under both) are
             # exactly that, and live rendered each as ONE line whose pick carried both

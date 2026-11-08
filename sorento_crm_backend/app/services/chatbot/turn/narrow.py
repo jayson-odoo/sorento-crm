@@ -92,10 +92,10 @@ def _family_of(candidate: dict[str, Any], grouping: str | None, kind: str | None
         return None
     if kind == "supplier":
         # GATE-SUPPLIER-FAMILY (owner ruling "2120a", 7 Nov 2026): supplier records of one name
-        # are ONE supplier; CUSTOMER-GROUP-GATE's explicit-groups rule is for customer ledgers.
+        # are ONE supplier; customer groups never join or name a supplier.
         return supplier_family_key(str(name)) or None
-    # CUSTOMER-GROUP-GATE: by id as well, so the office's group (per company) decides and an
-    # ungrouped ledger stays its own line.
+    # By id as well, so the office's group is found for a suffixed ledger (#2144's fix); an
+    # ungrouped ledger joins by trading name (owner ruling 9 Nov 2026).
     key = ledger_family_key(str(name), _uuid_of(candidate))
     return key or None
 
@@ -175,9 +175,9 @@ def _options(
         # member, because `uuids` is the union.
         family = _family_of(c, grouping, kind)
         if family:
-            # Item 1, narrowed by CUSTOMER-GROUP-GATE (3 Nov 2026): one line per customer
-            # GROUP (the office's explicit link), else per ledger; the pick still reaches
-            # every ledger of the line because `uuids` is the union.
+            # Item 1: one line per customer entry (its group, else its trading name; owner
+            # ruling 9 Nov 2026); the pick still reaches every ledger of the line because
+            # `uuids` is the union.
             key = family
             if kind == "supplier":
                 label = supplier_family_label(str(name or label or ""))
@@ -251,7 +251,7 @@ def _options(
         for option in built:
             codes = companies_of[id(option)]
             tag = f" ({', '.join(codes)})"
-            # A group named in two companies already carries its company (`family_ids`).
+            # A label that already ends with its company tag is not tagged twice.
             if codes and not option["label"].endswith(tag):
                 option["label"] = f"{option['label']}{tag}"
     return built

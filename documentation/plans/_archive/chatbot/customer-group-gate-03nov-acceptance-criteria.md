@@ -1,5 +1,7 @@
 # UAC: CUSTOMER-GROUP-GATE (03 Nov 2026)
 
+SUPERSEDED (9 Nov 2026): rows 2-5 and 7 below were reversed by the owner's 9 Nov ruling. The current contract is `../../chatbot/gate-supplier-family-8nov-acceptance-criteria.md`.
+
 Plan: `PLAN-customer-group-gate-03nov.md`. Each row is pinned by `sorento_crm_backend/tests/chatbot/test_customer_group_gate.py` unless named otherwise.
 
 | # | Given | When | Then |

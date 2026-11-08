@@ -1,6 +1,6 @@
 # PLAN: chatbot which-one lists apply the office's explicit customer groups (CUSTOMER-GROUP-GATE)
 
-Status: in review (standard track: the 3 Nov ruling grew it past the small fix size; no migration, no auth/RBAC change, no new ingest surface; UAC: customer-group-gate-03nov-acceptance-criteria.md)
+Status: superseded by `documentation/plans/chatbot/PLAN-gate-supplier-family-8nov.md` (re-land of #2144 under the owner's 9 Nov 2026 ruling: same-name ledgers are one customer). The rules below are the 3 Nov reading, kept for history.
 
 ## Bug
 

@@ -180,9 +180,8 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
 
 def _customer_base(value: Any) -> str:
     """`base` - the key the customer lists group by (`ledger_family_key`): an order row's
-    ledger matches the line of the customer GROUP it sits in, else the line of that one
-    ledger. Never the trading-name rule (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026): an
-    ungrouped ledger with no DO must not read "has DO" because a sibling ledger has one.
+    ledger matches the line of its customer entry (its group, else its trading name; owner
+    ruling 9 Nov 2026), so the entry reads "has DO" when any of its ledgers has one.
     """
     return ledger_family_key(jsc.nullish_str(value).strip())
 

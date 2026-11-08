@@ -51,9 +51,9 @@ class OrderStatus(Base):
 class CustomerGroup(Base, CompanyScopedMixin):
     """One company's customer, made of several ledgers (`customers` rows).
 
-    The chatbot used to join ledgers by the name rule (`ledger_family_key`), which merges
-    different legal entities and cannot join one owner's two names. A group is the office's
-    own say-so; a ledger with no group is its own customer (CUSTOMER-GROUP-GATE, 3 Nov 2026).
+    The office's own say-so: it joins one owner's ledgers of different names and names the
+    customer. Ledgers of one trading name are one customer to the chatbot with or without a
+    group (owner ruling 9 Nov 2026, `app/services/ledger_family.py`).
     """
 
     __tablename__ = "customer_groups"

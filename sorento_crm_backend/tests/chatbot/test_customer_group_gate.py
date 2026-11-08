@@ -313,3 +313,60 @@ def test_an_entry_covers_only_the_ledgers_the_resolver_returned_for_this_asker(w
     assert out.get("require_specific") is not True, out.get("gate_reason")
     customers = {c["uuid"] for c in out["compatible_entities"] if c["entity_type"] == "customer"}
     assert customers == {world["rows"]["G1"]["uuid"], world["rows"]["U1"]["uuid"]}, out["compatible_entities"]
+
+
+# ============================================================ re-land review (9 Nov 2026)
+
+
+def _order_gate(rows: list[dict[str, Any]], token: str = "zzt") -> dict[str, Any]:
+    resolver = {"resolutions": [{"token": token, "matches": rows}], "unresolved_tokens": []}
+    parser = {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "entities": [{"raw": token, "hint": "customer", "current_message": True, "confident": True}],
+    }
+    return run_gate(dict(resolver), parser=parser, resolver=resolver)
+
+
+def _cust(uid: str, name: str) -> dict[str, Any]:
+    return {"entity_type": "customer", "uuid": uid, "company_code": "SRT", "display": {"customer_name": name}}
+
+
+def test_an_ungrouped_sibling_of_a_grouped_ledger_joins_the_group_even_when_the_group_has_another_name():
+    """Re-land review B1: "[A/C I]" sits in a group named after another shop, its "[A/C II]" sibling in none. Same
+    trading name, so one customer (owner 9 Nov, Q1): no question, one line by the group's name, both ledgers."""
+    from app.services.chatbot.turn.narrow import customer_options
+
+    grouped, stray = str(uuid.uuid4()), str(uuid.uuid4())
+    names = {grouped: "ZZT CHIN HOMEMART SDN BHD [A/C I]", stray: "ZZT CHIN HOMEMART SDN BHD [A/C II]"}
+    rows = [_cust(u, n) for u, n in names.items()]
+    with lf.customer_groups({names[grouped]: "ZZT CHIN HARDWARE SDN BHD"}, ids={grouped: "ZZT CHIN HARDWARE SDN BHD"}):
+        out = _order_gate(rows)
+        options = customer_options(
+            [{"raw": n, "name": n, "uuid": u, "canonical_code": u[:6]} for u, n in names.items()], cap=50
+        )
+    assert out.get("require_specific") is not True and not out.get("picker_families"), out.get("gate_reason")
+    assert len(options) == 1 and sorted(options[0]["uuids"]) == sorted([grouped, stray]), options
+    assert options[0]["label"] == "ZZT CHIN HARDWARE SDN BHD", options
+
+
+def test_a_group_whose_name_is_only_a_marker_still_keys_its_ledgers():
+    """Re-land review S3: a group named "(PROJECT)" has no trading name; its ledgers still key (by their own name)
+    and so still reach the list."""
+    uid = str(uuid.uuid4())
+    with lf.customer_groups({}, ids={uid: "(PROJECT)"}):
+        assert lf.ledger_family_key("ZZT PROJECT HOUSE SDN BHD [A/C I]", uid) == "ZZT PROJECT HOUSE"
+
+
+def test_the_picker_line_of_an_ungrouped_family_keeps_an_inner_parenthesis():
+    """Re-land review S1: with no group, a several-ledger line is named as n8n (and pre-#2144) named it: the markers
+    and the TRAILING parentheses go, an inner "(JB)" stays."""
+    a, b, other = (str(uuid.uuid4()) for _ in range(3))
+    rows = [
+        _cust(a, "ZZT HANLIM TRADING (JB) SDN BHD [A/C I]"),
+        _cust(b, "ZZT HANLIM TRADING (JB) SDN BHD [A/C II]"),
+        _cust(other, "ZZT HANLIM TILES SDN BHD"),
+    ]
+    out = _order_gate(rows)
+    titles = [c.get("title") for c in out["compatible_entities"] if c["entity_type"] == "customer"]
+    assert "ZZT HANLIM TRADING (JB) SDN BHD (SRT)" in titles, titles
