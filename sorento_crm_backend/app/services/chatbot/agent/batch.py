@@ -32,6 +32,7 @@ MIXED_CHOICE_TAIL = "Reply with your pick for each row under Needs your choice, 
 PICK_ARGS = ("customer_codes", "tags_add", "tags_remove", "customer_code", "agent")
 READY_NOW = " Or reply yes to confirm the ready rows now."
 NOTHING_TAIL = "Nothing can change yet; fix the rows above and send the table again."
+NOTHING_ONE_TAIL = "Nothing can change yet; fix what is above and ask again."  # a one-row request is no table
 MORE_NOTE = "more than 10 accounts match; give a longer name or the code"
 TAG_MORE_NOTE = "more than 10 tags match; give a longer name"
 AGENT_MORE_NOTE = "more than 10 agents match; give a longer name or the code"
@@ -81,10 +82,10 @@ def schema_for(db, ctx) -> dict | None:
                 "the same way: put the picked customer code in customer_code (keep customer_name as written) and the "
                 "picked agent code in agent. "
                 "Nothing changes until the user confirms. Call it again with "
-                "corrected rows to replace the proposal. Propose only the rows still open in the CURRENT request: "
-                "a row of a card the user already cancelled or confirmed (the history says 'Card cancelled' or "
-                "'Card confirmed') is closed; never send it again unless the user's latest message asks for that "
-                "row again. Such a row is not proposed and comes back as skipped."
+                "corrected rows to replace the proposal. Send EVERY row of the current request: ready, waiting and "
+                "not changed alike, so the user sees the whole table. Leave out only a row of an earlier card the "
+                "user already cancelled or confirmed (the history says 'Card cancelled' or 'Card confirmed'), "
+                "unless the user's latest message asks for that row again; such a row comes back as skipped."
             ),
             "parameters": {
                 "type": "object",
@@ -205,7 +206,7 @@ def propose_rows(
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
         if key is not None and key in keys:
-            skipped.append({"row": n, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
+            skipped.append({"row": n, "key": key, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
         if isinstance(args, dict):
             by_row = write if definition.pick_changes_key else None
@@ -213,7 +214,7 @@ def propose_rows(
                 write, args, key, closed or {}, user_text
             )
             if unlisted:
-                skipped.append({"row": n, "reason": unlisted, "cells": _cells(definition, args, None)})
+                skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
         out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
         if step is None:
@@ -226,7 +227,7 @@ def propose_rows(
                     keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
-            skipped.append({"row": n, "reason": reason, "cells": _cells(definition, args, None)})
+            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None)})
             continue
         if key is not None:
             keys[key] = n
@@ -235,12 +236,54 @@ def propose_rows(
     return steps, skipped, waiting
 
 
+def _sent_keys(definition: writes.WriteDef, rows: list) -> set:
+    """The batch keys (normalised phones) of the rows this call sent; rows without one are left out."""
+    if definition.batch_key is None:
+        return set()
+    out = set()
+    for r in rows:
+        if isinstance(r, dict):
+            key = definition.batch_key({k: v for k, v in r.items() if k != "row"})
+            if key is not None:
+                out.add(key)
+    return out
+
+
+def carried_skips(
+    write: str, sent_keys: set, steps: list[dict], skipped: list[dict], waiting: list[dict],
+    previous: dict | None,
+) -> list[dict]:
+    """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on that
+    table's pick follow-up: the same write, and at least one row of this call is a row that turn left waiting. The
+    current request is then still that table, so its not-changed rows stay listed with their earlier reason,
+    whatever rows the model chose to send. A new table, or another write, inherits none. A row this call sent
+    (same phone, or same row number when the row has no phone) is never carried: it was checked again."""
+    previous = previous or {}
+    earlier = previous.get("skipped") or []
+    if not earlier or previous.get("write") != write:
+        return []
+    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
+    if not (waiting_keys & sent_keys):
+        return []
+    sent_rows = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
+    out = []
+    for s in earlier:
+        if not isinstance(s, dict) or not s.get("reason"):
+            continue
+        key = s.get("key")
+        if (key in sent_keys) if key is not None else (s.get("row") in sent_rows):
+            continue
+        out.append({"row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {})})
+    return out
+
+
 def propose(
     db, ctx, args: Any, steps: list[dict], *, seen_ids: set[str], skipped_out: list[dict] | None = None,
     waiting_out: list[dict] | None = None,
     user_text: str = "",
     previous_waiting: list[dict] | None = None,
     closed: dict | None = None,
+    previous: dict | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -268,6 +311,9 @@ def propose(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed,
     )
+    # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting).
+    carried = carried_skips(write, _sent_keys(definition, rows), new_steps, skipped, waiting, previous)
+    skipped += carried
     steps[:] = new_steps
     if skipped_out is not None:
         skipped_out[:] = skipped
@@ -281,7 +327,7 @@ def propose(
             for w in waiting
         ],
         # The counts the reply may say, so the number check finds them in this result.
-        "rows_total": len(rows), "rows_proposed": len(new_steps), "rows_skipped": len(skipped),
+        "rows_total": len(rows) + len(carried), "rows_proposed": len(new_steps), "rows_skipped": len(skipped),
         "rows_waiting": len({w["row"] for w in waiting}),
     }
     if not new_steps:
@@ -374,5 +420,6 @@ def preview_block(steps: list[dict], skipped: list[dict], waiting: list[dict] | 
     if waiting:
         parts.append(tail + (READY_NOW if steps else ""))
     else:
-        parts.append(PREVIEW_TAIL if steps else NOTHING_TAIL)
+        one_row = len({s.get("row") for s in skipped}) <= 1
+        parts.append(PREVIEW_TAIL if steps else NOTHING_ONE_TAIL if one_row else NOTHING_TAIL)
     return "\n\n".join(parts)
