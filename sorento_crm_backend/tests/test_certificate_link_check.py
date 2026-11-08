@@ -493,3 +493,87 @@ def test_a_digit_led_code_is_found_when_the_full_product_code_is_printed_elsewhe
     text = printed_runs(text_pdf(["Model 75-RG", "Item M459A-75-RG towel bar"]))
     assert _verdict(text, "75-RG", "M459A-75-RG")[0] == "found"
     assert _verdict(text, "75-RG", "M460A-75-RG")[0] == "check"
+
+
+# ------------------------------------------------ crew rule B-cat (8 Nov): one family across the catalogue
+# A digit-led printed run that is not the full product code is Found only when every product in the
+# WHOLE active catalogue that contains the run on a valid boundary belongs to ONE family; 2+ families is
+# Check. Family = the normalised product code up to the start of the printed run.
+CATALOGUE = [
+    "M459A-75-RG", "M460A-75-RG", "M461A-75-RG",
+    "M32SS-DIY", "SRTKT32SS",
+    "CB61SS-BL", "SRTKT61SS",
+    "SRTWT906SS", "ORIWT906SS",
+    "SRTWT162-QT", "SRTWT162-QT",  # a company twin: same code, same family
+    "SRTWT165-QT",
+]
+CAT_ROWS = ["75-RG", "32SS", "61SS", "906SS", "162-QT", "165-QT"]
+
+
+@pytest.fixture(scope="module")
+def cat_text():
+    from app.services.certificate_pdf_service import printed_runs
+
+    return printed_runs(text_pdf([f"Model {code}" for code in CAT_ROWS]))
+
+
+@pytest.fixture(scope="module")
+def families():
+    from app.services.certificate_link_check import CatalogueFamilies
+
+    return CatalogueFamilies(CATALOGUE)
+
+
+def _cat(text, code, product_code, families):
+    from app.services.certificate_link_check import verdict
+
+    return verdict(text, model_code=code, model_code_source="ai", product_code=product_code, families=families)[0]
+
+
+def test_family_is_the_code_up_to_the_printed_run(families):
+    from app.services.certificate_pdf_service import normalise
+
+    assert families.families(normalise("75-RG")) == {"m459a", "m460a", "m461a"}
+    assert families.families(normalise("32SS")) == {"m", "srtkt"}
+    assert families.families(normalise("61SS")) == {"cb", "srtkt"}
+    assert families.families(normalise("906SS")) == {"srtwt", "oriwt"}
+    assert families.families(normalise("162-QT")) == {"srtwt"}
+
+
+@pytest.mark.parametrize(
+    "code,product_code,expect",
+    [
+        ("75-RG", "M459A-75-RG", "check"),  # many m4xx families
+        ("32SS", "M32SS-DIY", "check"),  # m + srtkt
+        ("61SS", "CB61SS-BL", "check"),  # cb + srtkt
+        ("61SS", "SRTKT61SS", "check"),
+        ("906SS", "SRTWT906SS", "check"),  # srtwt + oriwt
+        ("162-QT", "SRTWT162-QT", "found"),  # srtwt only
+        ("165-QT", "SRTWT165-QT", "found"),
+    ],
+)
+def test_b_cat_shapes(cat_text, families, code, product_code, expect):
+    assert _cat(cat_text, code, product_code, families) == expect
+
+
+def test_b_cat_no_code_branch(cat_text, families):
+    from app.services.certificate_link_check import verdict
+
+    def no_code(product):
+        return verdict(cat_text, model_code=None, model_code_source=None, product_code=product, families=families)[0]
+
+    assert no_code("SRTWT162-QT") == "found"
+    assert no_code("M459A-75-RG") == "check"
+
+
+def test_without_a_catalogue_a_digit_led_code_stays_check(cat_text):
+    assert _cat(cat_text, "162-QT", "SRTWT162-QT", None) == "check"
+
+
+def test_b_cat_never_overrides_the_short_rule(cat_text):
+    from app.services.certificate_link_check import CatalogueFamilies
+
+    one_family = CatalogueFamilies(["SV-14A-CP"])
+    from app.services.certificate_pdf_service import printed_runs
+
+    assert _cat(printed_runs(text_pdf(["Model 14A"])), "14A", "SV-14A-CP", one_family) == "check"

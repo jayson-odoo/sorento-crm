@@ -12,9 +12,10 @@ Every certificate that has a file in a folder, listing each Found reached throug
 with a digit (the crew's false-Found sweep):
     venv/bin/python scripts/cert_link_verdicts.py --pdf-dir state/files/quote-cert-8nov/prod-certs --digit-led-found
 
-A certificate's file is matched in the folder by the current revision attachment's id, stored filename,
-original filename or storage key basename, or else by a filename containing the normalised certificate
-number. Add `--only found,check` to list only some verdicts. Use SORENTO_ENV_FILE=<file> to point at a
+A certificate's file is matched in the folder by a filename containing its certificate id, current
+revision id or any revision's attachment id (how crew's prod-cert files are named), then by the current
+attachment's stored filename, original filename or storage key basename, and last by a filename
+containing the normalised certificate number (skipped, and named, when several files match). Add `--only found,check` to list only some verdicts. Use SORENTO_ENV_FILE=<file> to point at a
 database other than `.env`'s.
 """
 from __future__ import annotations
@@ -51,6 +52,17 @@ def _index_folder(folder: str) -> dict[str, str]:
 def _file_for(certificate, folder_index: dict[str, str]):
     revision = certificate.current_revision
     attachment = revision.attachment if revision is not None else None
+    # Crew's prod-cert files are named by certificate or attachment id: an id is unique, so a file
+    # whose name CONTAINS one (`<id>.pdf`, `<id>_scan.pdf`) is that certificate's.
+    ids = [str(certificate.id)]
+    if revision is not None:
+        ids.append(str(revision.id))
+    ids += [str(r.attachment_id) for r in (certificate.revisions or []) if r.attachment_id]
+    for raw_id in ids:
+        key = _key(raw_id)
+        hits = {path for name, path in folder_index.items() if key and key in name}
+        if len(hits) == 1:
+            return hits.pop()
     candidates = []
     if attachment is not None:
         candidates += [
@@ -75,7 +87,7 @@ def _file_for(certificate, folder_index: dict[str, str]):
     return None
 
 
-def _verdicts(db, certificate, data):
+def _verdicts(db, certificate, data, families):
     from app.models.certificate import CertificateProduct
     from app.models.product import Product
     from app.services import certificate_link_check as link_check
@@ -100,6 +112,7 @@ def _verdicts(db, certificate, data):
             product_code=code,
             set_codes=sets_of.get(str(cp.product_id), ()),
             source=cp.source,
+            families=families,
         )
         rows.append(
             (value, code, cp.model_code or "", used or "", cp.source, (name or "")[:40], sets_of.get(str(cp.product_id), set()))
@@ -159,13 +172,16 @@ def main() -> int:
                 print(f"No certificate numbered {args.certificate!r}.")
                 return 1
 
+        from app.services.certificate_link_report_service import catalogue_families
+
+        families = catalogue_families(db)  # rule B-cat, once for the whole run
         totals: Counter = Counter()
         digit_led_found = []
         manual_digit_led = 0
         for certificate, path in targets:
             with open(path, "rb") as handle:
                 data = handle.read()
-            rows = _verdicts(db, certificate, data)
+            rows = _verdicts(db, certificate, data, families)
             counts = Counter(row[0] for row in rows)
             totals.update(counts)
             label = f"{certificate.scheme} {certificate.certificate_number}"

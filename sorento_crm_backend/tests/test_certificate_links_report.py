@@ -398,3 +398,17 @@ def test_confirming_a_link_with_no_code_reads_found(env, files):
     assert env.client.post(f"{LINKS}/confirm", json={"ids": [str(link.id)]}).status_code == 200
     _run_check(env)
     assert _rows(env, certificate_ids=str(cert.id), source="manual")["data"][0]["verdict"] == "found"
+
+
+def test_the_check_job_applies_rule_b_cat_over_the_catalogue(env, files):
+    """A digit-led run in one catalogue family reads Found; in two families, Check."""
+    for code in ("M459A-75-RG", "M460A-75-RG", "SRTWT165-QT"):
+        env.product("C", code=code)
+    cert = _certificate(env, files, "RPT-24", ["Model 162-QT", "Model 75-RG"], ["162-QT", "75-RG"], ["SRTWT162-QT"])
+    links = {lk.product.product_code: lk for lk in env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id)}
+    assert set(links) == {"SRTWT162-QT", "M459A-75-RG", "M460A-75-RG"}
+    _run_check(env)
+    rows = _by_code(_rows(env, certificate_ids=str(cert.id), verdict="found,check,not_found"))
+    assert rows["SRTWT162-QT"]["verdict"] == "found"
+    assert rows["M459A-75-RG"]["verdict"] == "check"
+    assert rows["M460A-75-RG"]["verdict"] == "check"

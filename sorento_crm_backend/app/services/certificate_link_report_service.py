@@ -333,8 +333,17 @@ def _set_codes_by_product(db: Session, product_ids) -> dict[str, set[str]]:
     return out
 
 
-def check_certificate(db: Session, certificate) -> int:
+def catalogue_families(db: Session) -> link_check.CatalogueFamilies:
+    """Rule B-cat's catalogue: every ACTIVE product code in the session's scope (the worker runs with
+    the scope off, so the whole catalogue). Built once per check job, never once per link."""
+    codes = [row[0] for row in db.query(Product.product_code).filter(Product.is_active.is_(True)).distinct()]
+    return link_check.CatalogueFamilies(codes)
+
+
+def check_certificate(db: Session, certificate, families: Optional[link_check.CatalogueFamilies] = None) -> int:
     """Read the certificate's current PDF once and stamp every link. Returns links stamped."""
+    if families is None:
+        families = catalogue_families(db)
     rev_id = certificate.current_revision_id
     now = datetime.utcnow()
     links = (
@@ -354,6 +363,7 @@ def check_certificate(db: Session, certificate) -> int:
             product_code=product_code,
             set_codes=sets_of.get(str(cp.product_id), ()),
             source=cp.source,
+            families=families,
         )
         cp.check_verdict = value
         cp.check_code = (code or None) and str(code)[:60]
@@ -372,12 +382,13 @@ def check_certificates(db: Session, certificate_ids: Iterable[str]) -> dict:
     still = set(pending_certificate_ids(db)) if ids else set()
     ids = [x for x in ids if x in still]
     checked = links = 0
+    families = catalogue_families(db) if ids else None
     for certificate_id in ids:
         certificate = db.query(Certificate).filter(Certificate.id == certificate_id).first()
         if certificate is None:
             continue
         try:
-            links += check_certificate(db, certificate)
+            links += check_certificate(db, certificate, families)
             db.commit()
             checked += 1
         except Exception:  # noqa: BLE001 - one bad file must not stop the backfill

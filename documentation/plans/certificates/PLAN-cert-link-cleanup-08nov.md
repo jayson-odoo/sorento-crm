@@ -48,6 +48,15 @@ MGB5011C and GB3011C read Found.
 - Sweep over every certificate file crew holds (read-only):
   `venv/bin/python scripts/cert_link_verdicts.py --pdf-dir state/files/quote-cert-8nov/prod-certs --digit-led-found`
   lists every AI link still read Found through a digit-led code, plus a total.
+- Crew re-check on 7cb4e585 (all 126 prod certs): 0 false Found, but 107 right Founds became Check
+  (1327 and 1271 showed 0 Found). Crew simulated alternatives offline and chose **rule B-cat**, which
+  keeps 89 of the 107 with 0 false Found. A digit-led printed run that is not the full product code is
+  Found only when, across the WHOLE active catalogue, the products containing it on a valid boundary
+  belong to exactly ONE family; 2+ families is Check. Family = the normalised product code up to the
+  start of the run (M459A-75-RG -> m459a, SRTKT32SS -> srtkt, M32SS-DIY -> m, CB61SS-BL -> cb,
+  ORIWT906SS -> oriwt). So `75-RG`, `32SS`, `61SS` and `906SS` read Check, while `162-QT` and `165-QT`
+  (srtwt only) read Found. `CatalogueFamilies` is built once per check job and memoised per run.
+- The sweep script also matches files named by certificate, revision or attachment id.
 - A confirmed link (`source` manual) counts like a typed code; its code must still be printed. `source`
   is part of the check key, so a Confirm reads the link again (reviewer round 3).
 - Short codes (3 or fewer letters and digits after normalising: `14A`, `11C`, `13C`) are never
@@ -89,6 +98,12 @@ MGB5011C and GB3011C read Found.
   revision, Code on certificate and product code, not set membership. The verdict refreshes on the next
   revision or code change. Trigger to add membership to the key: a set edit leaves a wrong verdict that
   someone acts on.
+
+- Rule B-cat reads the catalogue at check time. A product added later can turn a one-family run into a
+  two-family run, but already-stamped verdicts are not re-read until their key changes (revision, code,
+  product code, source). To re-read everything after a catalogue change, run
+  `UPDATE certificate_products SET check_key = NULL;`. Trigger to automate this: a catalogue change leaves
+  a wrong Found that someone acts on.
 
 ## Deploy notes
 

@@ -12,8 +12,10 @@ Pure rules over `certificate_pdf_service.printed_runs` output (card
   digit (`CSK14` is not in `CSK140-BL`). A code a person typed (`model_code_source = manual`) or a link a
   person confirmed (`source = manual`) skips every product-side rule; the code must still be printed. The exact tiers the ingest keeps count too: the product's own code, a printed
   product-set code the product is a member of, and each part of an `A + B` code (reviewer round 1).
-- **check**: as found, but the code starts with a digit and is not the full product code (`75-RG` in
-  `M459A-75-RG`, `32SS`, `61SS`: the family prefix is not printed, crew re-check 8 Nov), or the code is SHORT (3 or fewer letters and digits: `14A`, `11C`; or printed only
+- **check**: as found, but the code starts with a digit, is not the full product code, and more than one
+  product family across the whole active catalogue contains it (rule B-cat, crew 8 Nov: `75-RG` is in
+  M459A, M460A, M461A; `32SS` in M and SRTKT; `906SS` in SRTWT and ORIWT; `162-QT` only in SRTWT, so it
+  stays Found; `CatalogueFamilies`), or the code is SHORT (3 or fewer letters and digits: `14A`, `11C`; or printed only
   as a run of such short tokens: `AB 12C`, crew offline check 8 Nov) or digits only (`120`). A row number
   printed next to a model (`3 | 13A`) is never joined into it (`certificate_pdf_service._index_cells`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
 - **not_found**: the PDF has text and the rule above fails.
@@ -78,10 +80,11 @@ def normalise_raw(value: Optional[str]) -> str:
 _SEPARATORS = set(" -.,;:()[]/")
 
 
-def on_boundary(norm: str, product_code: Optional[str]) -> bool:
-    """Is `norm` inside the product code at a place the crew boundary rule allows (see module doc)?"""
+def boundary_starts(norm: str, product_code: Optional[str]) -> list[int]:
+    """Every start index of `norm` in the normalised product code that the boundary rule allows."""
+    out: list[int] = []
     if not norm:
-        return False
+        return out
     product_norm, ends = _segments(product_code)
     start = product_norm.find(norm)
     while start != -1:
@@ -98,12 +101,44 @@ def on_boundary(norm: str, product_code: Optional[str]) -> bool:
             preceded = False
             followed = norm[-1].isdigit() and nxt.isdigit()
         if not preceded and not followed:
-            return True
+            out.append(start)
         start = product_norm.find(norm, start + 1)
-    return False
+    return out
 
 
-def _ambiguous(norm: str, product_norm: str, solid, sets) -> bool:
+def on_boundary(norm: str, product_code: Optional[str]) -> bool:
+    """Is `norm` inside the product code at a place the crew boundary rule allows (see module doc)?"""
+    return bool(boundary_starts(norm, product_code))
+
+
+class CatalogueFamilies:
+    """Crew rule B-cat (8 Nov): which product FAMILIES a printed run appears in, across the whole
+    active catalogue. Family = the normalised product code up to the start of the printed run
+    (`M459A-75-RG` -> `m459a`, `SRTKT32SS` -> `srtkt`, `CB61SS-BL` -> `cb`). Built once per check job
+    and memoised per run, so the catalogue is scanned once per distinct run, not once per link."""
+
+    def __init__(self, product_codes):
+        self._codes = sorted({str(c) for c in product_codes if c})
+        self._normalised = [(code, normalise(code)) for code in self._codes]
+        self._memo: dict[str, frozenset[str]] = {}
+
+    def families(self, norm: str) -> frozenset[str]:
+        if norm not in self._memo:
+            found: set[str] = set()
+            for code, code_norm in self._normalised:
+                if norm not in code_norm:
+                    continue
+                starts = boundary_starts(norm, code)
+                if starts:
+                    found.add(code_norm[: starts[0]])
+            self._memo[norm] = frozenset(found)
+        return self._memo[norm]
+
+    def unique(self, norm: str) -> bool:
+        return len(self.families(norm)) == 1
+
+
+def _ambiguous(norm: str, product_norm: str, solid, sets, families=None) -> bool:
     """A backed code that a person must decide (Check, never auto-Found): short, digits only, printed
     only as short tokens, or (crew re-check 8 Nov) digit-led and not the full product code: `75-RG`
     backs `M459A-75-RG` and `M460A-75-RG` alike because the family prefix is not printed. A printed
@@ -112,7 +147,13 @@ def _ambiguous(norm: str, product_norm: str, solid, sets) -> bool:
         is_short(norm)
         or norm.isdigit()
         or norm not in solid
-        or (norm[0].isdigit() and norm != product_norm and norm not in sets)
+        or (
+            norm[0].isdigit()
+            and norm != product_norm
+            and norm not in sets
+            # Rule B-cat: a digit-led run that only one catalogue family contains is not ambiguous.
+            and not (families is not None and families.unique(norm))
+        )
     )
 
 
@@ -168,6 +209,7 @@ def verdict(
     product_code: Optional[str],
     set_codes=(),
     source: Optional[str] = None,
+    families: Optional[CatalogueFamilies] = None,
 ) -> tuple[str, Optional[str]]:
     """`(verdict, code used)` of one link. `text` is `printed_runs(...)`, or None when no file.
     `set_codes`: normalised codes of the product sets this product belongs to (a printed set code
@@ -192,7 +234,7 @@ def verdict(
         solid = text.get("solid") or ()
         # Crew rule: "Check unless the FULL product code is printed", wherever it is on the PDF.
         full_printed = product_norm in runs and product_norm in solid
-        if not full_printed and all(_ambiguous(p, product_norm, solid, sets) for p in backing):
+        if not full_printed and all(_ambiguous(p, product_norm, solid, sets, families) for p in backing):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 
@@ -219,7 +261,7 @@ def verdict(
             piece = product_norm[start:end]
             if piece not in runs or not _containable(piece) or not on_boundary(piece, product_code):
                 continue
-            if _ambiguous(piece, product_norm, solid, ()):
+            if _ambiguous(piece, product_norm, solid, (), families):
                 if checked is None or len(piece) > len(checked):
                     checked = piece
             elif found is None or len(piece) > len(found):

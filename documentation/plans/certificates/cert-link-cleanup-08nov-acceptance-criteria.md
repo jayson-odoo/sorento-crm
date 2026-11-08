@@ -9,6 +9,7 @@ Plan: `PLAN-cert-link-cleanup-08nov.md`. Card: `CARD-cert-link-cleanup-08nov.md`
   `FUR-A11C` is Check; `SV-14AB` is Not found through `14A` (followed inside its segment); `CSK14A-BL` is Found through a printed `CSK14A`; none of the over-linked products is Found.
 - V1c Numbered table (`3 | 13A`): the row number is never joined into the code (`313A` is not a run), so `CB313A-NL` is not Found; a run of short tokens only (`AB 12C`) is Check.
 - V1d A printed code that starts with a digit is Check unless the full product code is printed: `75-RG` for M459A-75-RG / M460A-75-RG / M461A-75-RG / M459-75-RG, `32SS` for M32SS-*, `61SS` for CB61SS-* are Check; a printed `SRTKT61SS` is Found for SRTKT61SS. "Preceded by a digit" only counts inside the same dash/space segment.
+- V1f Rule B-cat: a digit-led run that only ONE catalogue family contains reads Found (`162-QT`, `165-QT` in SRTWT only); in 2+ families it reads Check (`75-RG` in M459A/M460A/M461A, `32SS` in M/SRTKT, `61SS` in CB/SRTKT, `906SS` in SRTWT/ORIWT). Short codes stay Check whatever the catalogue says.
 - V1e A confirmed link with no code on it reads Found when any run of its product code is printed (SRTWB241 with `WB 241`).
 - V2 `4A` inside the printed word `14A` is never a hit (whole token only); spaces, hyphens and case are ignored.
 - V3 A code under 3 characters or without a digit does not count as contained; a digits-only code, or any code of 3 or fewer characters, is Check, never Found.
