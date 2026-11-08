@@ -731,6 +731,13 @@ def _delete_certificate(db: Session, payload: dict):
     return CertificateService(db).delete_certificate(_entity_id(payload))
 
 
+def _remove_certificate_link(db: Session, payload: dict):
+    # CERT-LINK-CLEANUP R5: the report's Remove (one per selected link, behind one countdown).
+    from app.services import certificate_link_report_service as report
+
+    return report.remove_link(db, _entity_id(payload), payload.get("requested_by_id"))
+
+
 def _delete_lookup_option(db: Session, payload: dict):
     from app.services.lookup_option_service import LookupOptionService
 
@@ -829,6 +836,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.certificates.delete",
         label="Delete certificate",
+    )
+)
+
+register(
+    FormAction(
+        key="certificate_link.remove",
+        entity_types=("certificate_link",),
+        execute=_remove_certificate_link,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.certificates.edit",
+        label="Remove certificate link",
     )
 )
 
