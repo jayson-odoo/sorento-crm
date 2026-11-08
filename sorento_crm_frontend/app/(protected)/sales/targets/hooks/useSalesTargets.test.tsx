@@ -48,7 +48,7 @@ describe('useSalesTargets', () => {
       () => useSalesTargets({ on: '2026-10-15', subject: 'team' }),
       { wrapper },
     );
-    expect(service.getSalesTargets).toHaveBeenCalledWith({ on: '2026-10-15', subject: 'team' });
+    expect(service.getSalesTargets).toHaveBeenCalledWith({ on: '2026-10-15', subject: 'team' }, expect.any(AbortSignal));
     await waitFor(() => expect(result.current.data?.rows).toEqual([]));
   });
 

@@ -38,7 +38,8 @@ export function useSalesTargets(params: SalesTargetListParams, enabled = true) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [...SALES_TARGETS_KEY, params],
-    queryFn: () => getSalesTargets(params),
+    // The abort signal cancels a superseded search instead of letting it run on.
+    queryFn: ({ signal }) => getSalesTargets(params, signal),
     enabled,
   });
 }
