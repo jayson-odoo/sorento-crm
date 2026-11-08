@@ -555,3 +555,79 @@ def test_D2_an_unasked_whole_table_after_a_named_empty_query_is_not_shown():
     # A table that was asked for (a named query that found rows) still shows.
     ledger["q1"]["data"] = {"entity": ENTITY, "rows": [{"id": "1"}], "total": 1}
     assert "WHOLE TABLE" in shape_reply("Payout per dealer.", ledger)
+
+
+# ------------------------------------------------------------------ crew live round 4 on 73403177 (8 Nov)
+
+
+def test_G1_a_regroup_by_dealer_still_returns_the_per_row_table_with_tgt_and_account(dealers):
+    """O2 run 3: the model grouped by dealer name, 52 rows without TGT / account columns and no 'Top N of M'."""
+    db, _c, _t = dealers
+    for spec in ({"group_by": ["owner"], "aggregates": [{"fn": "sum", "field": "payout"}]},
+                 {"group_by": [{"field": "owner"}, "payout_account"]},
+                 {"aggregates": [{"fn": "sum", "field": "payout"}]}):
+        out = run(db, {"entity": ENTITY, **DEALERS_YEAR, **spec, "limit": 2})
+        assert "groups" not in out, spec
+        assert {"target_no", "payout_account", "payout"} <= {c["key"] for c in out["columns"]}
+        assert [r["payout"] for r in out["rows"]] == [5000.0, 4000.0]
+        assert out["totals"]["payout"] == 15550.0 and out["ranked_by"] == "Commission payout"
+    # A real grouping (per kind) is still a grouping.
+    kinds = run(db, {"entity": ENTITY, "period": "2026", "group_by": ["owner_kind"], "aggregates": [{"fn": "sum", "field": "payout"}]})
+    assert "groups" in kinds
+
+
+def test_G1b_a_two_row_payout_table_is_code_rendered_and_survives_the_models_own_table():
+    """Q2 run 1: the right call came back but the answer was the total only; the table must be passed through."""
+    from app.services.chatbot.agent.query_tools import as_card, shape_reply
+
+    data = {"entity": ENTITY, "columns": [{"key": "label", "label": "x"}, {"key": "target_no", "label": "Target"},
+                                          {"key": "payout_account", "label": "Payout account"},
+                                          {"key": "payout", "label": "Commission payout"}],
+            "rows": [{"id": "1", "label": "ZZT SK", "target_no": "TGT-000065", "payout_account": "A/C I", "payout": 170643.26},
+                     {"id": "2", "label": "ZZT SK", "target_no": "TGT-000064", "payout_account": "A/C I", "payout": 11769.92}],
+            "total": 2, "truncated": False, "totals": {"payout": 182413.18}}
+    card = as_card(data, panel=True)
+    assert card is not None and "TGT-000065" in card.display and "TGT-000064" in card.display
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY}, "data": card.data,
+                     "display": card.display}}
+    regrouped = "Total dealer payout is RM 182,413.18.\n\n| Dealer | Payout |\n|---|---|\n| ZZT SK | 182,413.18 |"
+    text = shape_reply(regrouped, ledger)
+    assert text.startswith("Total dealer payout is RM 182,413.18.")
+    assert "| ZZT SK | 182,413.18 |" not in text and "TGT-000064" in text and "182,413.18" in text
+
+
+def test_G2_the_asking_users_own_name_is_never_the_agent_unless_they_said_my():
+    """Q2 run 1: the first call filtered agent = the asking user's own name and found nothing."""
+    from app.services.chatbot.agent.query_tools import strip_self_agent
+
+    args = {"entity": ENTITY, "agent": "Jayson", "period": "2026"}
+    kept, note = strip_self_agent(args, "Jayson Teh", "commission payout per dealer this year")
+    assert "agent" not in kept and kept["period"] == "2026" and "your own name" in note
+    filt = {"entity": ENTITY, "filters": [{"field": "owner", "op": "eq", "value": "jayson teh"},
+                                          {"field": "owner_kind", "op": "eq", "value": "dealer"}]}
+    kept, note = strip_self_agent(filt, "Jayson Teh", "payout per dealer")
+    assert kept["filters"] == [{"field": "owner_kind", "op": "eq", "value": "dealer"}] and note
+    for said in ("what is my commission payout", "commission for Jayson this year"):
+        kept, note = strip_self_agent(args, "Jayson Teh", said)
+        assert kept == args and note is None
+    kept, note = strip_self_agent({"entity": ENTITY, "agent": "Agent B"}, "Jayson Teh", "payout to agent b")
+    assert kept["agent"] == "Agent B" and note is None
+
+
+def test_G3_q6_reply_tidy_range_not_year_one_period_note_no_unasked_notes():
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    year = "Period 01/01/2026 to 31/12/2026"
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "fullshun"},
+               "data": {"entity": ENTITY, "rows": [], "total": 0, "period_display": year,
+                        "scope_note": "No period named: this year, 01/01/2026 to 31/12/2026."}, "display": None},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY},
+               "data": {"entity": ENTITY, "rows": [{"id": "1", "label": "AA - Agent A"}], "total": 1, "period_display": year,
+                        "scope_note": "No period named: this year, 01/01/2026 to 31/12/2026. "
+                                      "No commission is set on the targets of AA - Agent A."}, "display": None},
+    }
+    text = shape_reply("No commission payout was found for fullshun for 2026.", ledger)
+    assert text.splitlines()[0] == "No commission payout was found for fullshun from 01/01/2026 to 31/12/2026."
+    assert text.count("No period named") == 1
+    assert "Agent A" not in text
