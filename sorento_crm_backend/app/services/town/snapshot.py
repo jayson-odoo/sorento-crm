@@ -1,0 +1,389 @@
+"""SORENTO-TOWN snapshot: the figures, the Redis store, and the scheduler tick.
+
+Plan: documentation/plans/dashboard/PLAN-sorento-town-08nov.md ("Phase 0 contract").
+The tick builds one FULL snapshot per active company every few minutes and stores it (and its
+amount-free twin) in Redis; the route serves those bytes and reads no business table. Sales
+figures come from `services/sales/invoiced_sales.py` only: the sign, the posted rule and the
+sales type are never re-derived here.
+"""
+from __future__ import annotations
+
+import copy
+import gzip
+import hashlib
+import json
+import logging
+import re
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any, Optional
+
+import sqlalchemy as sa
+from sqlalchemy.orm import Session, aliased
+
+from app.config import settings
+from app.models.base import set_company_scope
+from app.models.company import Company
+from app.models.finance import CREDIT_NOTE, BillingDocument
+from app.models.inventory import Stock, Warehouse
+from app.models.order import Customer
+from app.models.procurement import PurchaseRequestHeader
+from app.models.product import Product
+from app.models.projects import ProjectQuotationDocument
+from app.models.scm import ReorderLevel
+from app.models.status import Status
+from app.models.town import TownDay
+from app.scheduler.task_scheduler import scheduler_session
+from app.services.sales import invoiced_sales as inv
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 1
+MYT = timezone(timedelta(hours=8))
+TTL_SECONDS = 36 * 3600
+SHOP_LIMIT = 30
+WINDOW_DAYS = 90
+LOCK_KEY = "town:lock"
+LOCK_SECONDS = 240
+# After a finished run the lock shrinks, so the next 3 minute tick is not skipped by a lock
+# that only exists to stop two runs overlapping.
+LOCK_AFTER_RUN_SECONDS = 120
+STATEMENT_TIMEOUT_MS = 5000
+OPEN_MINUTE = 7 * 60
+NIGHT_MINUTE = 22 * 60
+CLOSE_MINUTE = 22 * 60 + 5
+
+_LABEL_RE = re.compile(r"\[(A/C[^\]]*)\]\s*$")
+_QUOTATION_PENDING_KEYS = ("pending_approval", "resubmitted")
+
+
+def _money(value: Any) -> str:
+    return str(Decimal(value or 0).quantize(Decimal("0.01")))
+
+
+# ------------------------------------------------------------------------------ the figures
+
+
+def _account_label(name: Optional[str]) -> Optional[str]:
+    match = _LABEL_RE.search(name or "")
+    return match.group(1).strip() if match else None
+
+
+def _today_figures(db: Session, company_id: str, day: date) -> dict:
+    row = db.execute(
+        sa.select(
+            sa.func.coalesce(sa.func.sum(inv.signed_amount()), 0),
+            sa.func.count().filter(BillingDocument.document_type != CREDIT_NOTE),
+            sa.func.count().filter(BillingDocument.document_type == CREDIT_NOTE),
+            sa.func.count(sa.distinct(BillingDocument.customer_id)),
+        ).where(inv.posted(), BillingDocument.company_id == company_id, BillingDocument.doc_date == day)
+    ).one()
+    return {
+        "amount": _money(row[0]),
+        "invoice_count": int(row[1]),
+        "credit_note_count": int(row[2]),
+        "customer_count": int(row[3]),
+    }
+
+
+def _shops(db: Session, company_id: str, day: date) -> list:
+    """Dealer-type customers over the 90 days ending `day`: the top 30 are shops, any other
+    one invoiced today is a stall. One query: the sales type is computed once per document
+    (`document_sales_type()`), then aggregated per customer (= one AutoCount account)."""
+    sales_type = inv.document_sales_type()
+    on_day = BillingDocument.doc_date == day
+    rows = db.execute(
+        sa.select(
+            Customer.id,
+            Customer.customer_code,
+            sa.func.coalesce(Customer.customer_name, sa.func.max(BillingDocument.customer_name)),
+            sa.func.sum(inv.signed_amount()),
+            sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(on_day), 0),
+            sa.func.count().filter(on_day),
+        )
+        .select_from(BillingDocument)
+        .join(Customer, Customer.id == BillingDocument.customer_id)
+        .join(sales_type, sa.true(), isouter=True)
+        .where(
+            inv.posted(),
+            BillingDocument.company_id == company_id,
+            BillingDocument.doc_date >= day - timedelta(days=WINDOW_DAYS - 1),
+            BillingDocument.doc_date <= day,
+            sales_type.c.value == inv.DEALER,
+        )
+        .group_by(Customer.id, Customer.customer_code, Customer.customer_name)
+    ).all()
+    ranked = sorted(rows, key=lambda r: (-Decimal(r[3] or 0), r[1] or ""))
+    out = []
+    for index, (key, code, name, ninety, today, docs) in enumerate(ranked):
+        shop = index < SHOP_LIMIT
+        if not shop and not docs:
+            continue
+        out.append({
+            "key": str(key),
+            "code": code,
+            "name": name,
+            "account_label": _account_label(name),
+            "kind": "shop" if shop else "stall",
+            "rank": index + 1 if shop else None,
+            "ninety_day_amount": _money(ninety),
+            "today_amount": _money(today),
+            "today_docs": int(docs),
+        })
+    return out
+
+
+def _warehouses(db: Session, company_id: str) -> list:
+    pool = aliased(Warehouse)
+    pool_id = sa.func.coalesce(Warehouse.pool_warehouse_id, Warehouse.id)
+    pool_code = sa.func.coalesce(sa.func.max(pool.warehouse_code), sa.func.max(Warehouse.warehouse_code))
+    rows = db.execute(
+        sa.select(
+            pool_code,
+            sa.func.coalesce(sa.func.sum(Stock.quantity_on_hand), 0),
+            sa.func.coalesce(sa.func.sum(Stock.quantity_available), 0),
+            sa.func.count(sa.distinct(Warehouse.id)),
+        )
+        .select_from(Warehouse)
+        .join(pool, pool.id == Warehouse.pool_warehouse_id, isouter=True)
+        .join(Stock, Stock.warehouse_id == Warehouse.id, isouter=True)
+        .where(Warehouse.company_id == company_id, Warehouse.is_active.is_(True))
+        .group_by(pool_id)
+    ).all()
+    return sorted(
+        ({"pool": code, "on_hand": int(on_hand), "available": int(avail), "locations": int(n)}
+         for code, on_hand, avail, n in rows),
+        key=lambda w: w["pool"] or "",
+    )
+
+
+def _reorder(db: Session, company_id: str) -> dict:
+    stock = aliased(Stock)
+    wh = aliased(Warehouse)
+    available = (
+        sa.select(sa.func.coalesce(sa.func.sum(stock.quantity_available), 0))
+        .select_from(stock)
+        .join(wh, wh.id == stock.warehouse_id)
+        .where(
+            stock.product_id == ReorderLevel.product_id,
+            wh.company_id == company_id,
+            wh.is_active.is_(True),
+            wh.counts_as_available.is_(True),
+        )
+        .correlate(ReorderLevel)
+        .scalar_subquery()
+    )
+    set_count, below = db.execute(
+        sa.select(sa.func.count(), sa.func.count().filter(available < ReorderLevel.level))
+        .select_from(ReorderLevel)
+        .join(Product, Product.id == ReorderLevel.product_id)
+        .where(
+            ReorderLevel.company_id == company_id,
+            ReorderLevel.warehouse_id.is_(None),
+            ReorderLevel.level > 0,
+            Product.is_active.is_(True),
+        )
+    ).one()
+    return {"below_count": int(below), "set_count": int(set_count)}
+
+
+def _approvals(db: Session, company_id: str) -> dict:
+    prs = db.execute(
+        sa.select(sa.func.count()).select_from(PurchaseRequestHeader).where(
+            PurchaseRequestHeader.approval_status == "pending", PurchaseRequestHeader.voided_at.is_(None)
+        )
+    ).scalar_one()
+    quotations = db.execute(
+        sa.select(sa.func.count())
+        .select_from(ProjectQuotationDocument)
+        .join(Status, Status.id == ProjectQuotationDocument.approval_status_id)
+        .where(ProjectQuotationDocument.company_id == company_id, Status.key.in_(_QUOTATION_PENDING_KEYS))
+    ).scalar_one()
+    return {"total": int(prs) + int(quotations), "purchase_requests": int(prs), "quotation_documents": int(quotations)}
+
+
+def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) -> dict:
+    """The FULL variant (schema 1) for one company and one MYT day."""
+    now_myt = now.astimezone(MYT)
+    data_as_of = db.execute(
+        sa.select(sa.func.max(BillingDocument.last_synced_at)).where(BillingDocument.company_id == company_id)
+    ).scalar_one()
+    return {
+        "schema": SCHEMA_VERSION,
+        "company_id": company_id,
+        "day": day.isoformat(),
+        "as_of": now_myt.isoformat(timespec="seconds"),
+        "data_as_of": data_as_of.isoformat() if data_as_of else None,
+        "phase": "night" if now_myt.hour * 60 + now_myt.minute >= NIGHT_MINUTE else "day",
+        "today": _today_figures(db, company_id, day),
+        "shops": _shops(db, company_id, day),
+        "warehouses": _warehouses(db, company_id),
+        "reorder": _reorder(db, company_id),
+        "approvals": _approvals(db, company_id),
+    }
+
+
+def day_events(db: Session, company_id: str, day: date, shop_keys: set) -> list:
+    """The day's posted documents in creation order, for the replay (phase 2)."""
+    rows = db.execute(
+        sa.select(
+            BillingDocument.created_at, BillingDocument.customer_id,
+            BillingDocument.document_type, inv.signed_amount(),
+        )
+        .where(inv.posted(), BillingDocument.company_id == company_id, BillingDocument.doc_date == day)
+        .order_by(BillingDocument.created_at, BillingDocument.id)
+    ).all()
+    events = []
+    for created_at, customer_id, document_type, amount in rows:
+        # `created_at` is a naive UTC timestamp.
+        at = created_at.replace(tzinfo=timezone.utc).astimezone(MYT).strftime("%H:%M")
+        key = str(customer_id) if customer_id else None
+        events.append({
+            "at": at,
+            "shop_key": key if key in shop_keys else None,
+            "kind": "credit_note" if document_type == CREDIT_NOTE else "invoice",
+            "amount": _money(amount),
+        })
+    return events
+
+
+# ---------------------------------------------------------------------- redaction and wallboard
+
+_AMOUNT_KEYS = ("today_amount", "ninety_day_amount")
+
+
+def redact(snapshot: dict) -> dict:
+    """A deep copy with every amount removed; counts stay."""
+    out = copy.deepcopy(snapshot)
+    out.get("today", {}).pop("amount", None)
+    for shop in out.get("shops", []):
+        for key in _AMOUNT_KEYS:
+            shop.pop(key, None)
+    return out
+
+
+def strip_names(snapshot: dict) -> dict:
+    """Wallboard: a deep copy without shop names and codes (rank, label, kind, counts stay)."""
+    out = copy.deepcopy(snapshot)
+    for shop in out.get("shops", []):
+        shop.pop("name", None)
+        shop.pop("code", None)
+    return out
+
+
+# ------------------------------------------------------------------------------ the Redis store
+
+
+def _key(company_id: str, day: date, suffix: str) -> str:
+    return f"town:{company_id}:{day.isoformat()}:{suffix}"
+
+
+def _gzip_json(value: dict) -> bytes:
+    return gzip.compress(json.dumps(value).encode(), mtime=0)
+
+
+def store(redis: Any, company_id: str, day: date, full: dict) -> str:
+    """Write both variants and the version (sha1 of the full JSON, sorted keys); returns the version."""
+    version = hashlib.sha1(json.dumps(full, sort_keys=True).encode()).hexdigest()
+    pipe = redis.pipeline()
+    pipe.set(_key(company_id, day, "full"), _gzip_json(full), ex=TTL_SECONDS)
+    pipe.set(_key(company_id, day, "redacted"), _gzip_json(redact(full)), ex=TTL_SECONDS)
+    pipe.set(_key(company_id, day, "version"), version, ex=TTL_SECONDS)
+    pipe.execute()
+    return version
+
+
+def load(redis: Any, company_id: str, day: date, variant: str) -> Optional[tuple]:
+    """`(gzip bytes, version)` for `variant` (`full` or `redacted`), or None when nothing is stored."""
+    pipe = redis.pipeline()
+    pipe.get(_key(company_id, day, variant))
+    pipe.get(_key(company_id, day, "version"))
+    body, version = pipe.execute()
+    if body is None or version is None:
+        return None
+    return body, version.decode() if isinstance(version, bytes) else version
+
+
+# --------------------------------------------------------------------------------- the tick
+
+_replica_engines: dict = {}
+
+
+def _replica_session() -> Session:
+    url = settings.town_replica_database_url
+    engine = _replica_engines.get(url)
+    if engine is None:
+        engine = _replica_engines[url] = sa.create_engine(url, pool_pre_ping=True)
+    db = Session(bind=engine, autoflush=False)
+    set_company_scope(db, None)  # explicit company filters in every query
+    return db
+
+
+class _build_session:
+    """The session a build runs on: the read replica when configured, else the primary. 5 s limit."""
+
+    def __enter__(self) -> Session:
+        if settings.town_replica_database_url:
+            self._db, self._ctx = _replica_session(), None
+        else:
+            self._ctx = scheduler_session("town_snapshot")
+            self._db = self._ctx.__enter__()
+        self._db.execute(sa.text(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
+        return self._db
+
+    def __exit__(self, *exc) -> None:
+        if self._ctx is not None:
+            self._ctx.__exit__(*exc)
+        else:
+            self._db.close()
+
+
+def _freeze_day(company_id: str, day: date, snapshot: dict, events: list) -> None:
+    with scheduler_session("town_day") as db:
+        row = db.query(TownDay).filter(TownDay.company_id == company_id, TownDay.day == day).first()
+        if row is None:
+            db.add(TownDay(company_id=company_id, day=day, snapshot=snapshot, events=events))
+        else:
+            row.snapshot = snapshot
+            row.events = events
+            row.updated_at = sa.func.now()
+        db.commit()
+
+
+def _run_company(redis: Any, company_id: str, day: date, now: datetime, night: bool) -> None:
+    with _build_session() as db:
+        full = build_snapshot(db, company_id, day, now=now)
+        events = None
+        if night:
+            keys = {s["key"] for s in full["shops"]}
+            events = day_events(db, company_id, day, keys)
+    store(redis, company_id, day, full)
+    if events is not None:
+        _freeze_day(company_id, day, full, events)
+
+
+def run_town_snapshot_tick(now: Optional[datetime] = None) -> None:
+    """Scheduler job: 07:00-22:05 MYT only; one run at a time (`town:lock`); a company that
+    fails is logged and the next one still runs. From 22:00 MYT the day is also frozen."""
+    from app.services.queue_service import redis_conn
+
+    now = (now or datetime.now(MYT)).astimezone(MYT)
+    minute = now.hour * 60 + now.minute
+    if not OPEN_MINUTE <= minute <= CLOSE_MINUTE:
+        return
+    token = uuid.uuid4().hex
+    if not redis_conn.set(LOCK_KEY, token, nx=True, ex=LOCK_SECONDS):
+        return
+    try:
+        with scheduler_session("town_companies") as db:
+            company_ids = [str(c) for (c,) in db.query(Company.id).filter(Company.is_active.is_(True)).all()]
+        for company_id in company_ids:
+            try:
+                _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE)
+            except Exception:  # noqa: BLE001 - one company must not stop the next
+                logger.error("town snapshot failed for company %s", company_id, exc_info=True)
+    finally:
+        held = redis_conn.get(LOCK_KEY)
+        if held is not None and held.decode() == token:
+            redis_conn.expire(LOCK_KEY, LOCK_AFTER_RUN_SECONDS)
