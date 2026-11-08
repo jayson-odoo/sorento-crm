@@ -511,3 +511,47 @@ def test_P2_view_own_never_sees_a_dealer_even_one_whose_accounts_it_owns(targets
     by_dealer = run(db, {"entity": ENTITY, "period": "2026", "filters": [
         {"field": "agent", "op": "eq", "value": "Agent A"}, {"field": "owner_kind", "op": "eq", "value": "dealer"}]})
     assert by_dealer["rows"] == [] and "not visible to you" in by_dealer["scope_note"]
+
+
+# ------------------------------------------------------------------ owner 8 Nov ~11:15 MYT
+
+
+def test_D1_same_name_dealer_rows_carry_the_payout_account_and_target_no_as_the_dealers_tab(targets):
+    """Owner (a): SK ONE STOP HOME CENTRE shown 3 times; each row says its payout account ('A/C I') and TGT number,
+    row for row with the Dealers tab, in the default columns."""
+    from app.services.sales import target_service
+    from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
+
+    db, client, t = targets
+    company_id = _dealer_account(db, t).company_id
+    pid = _product_id(db, company_id)
+    group = [_customer(db, company_id, "ZZT SAME NAME", level=level) for level in (1, 3)]
+    for c, sold in zip(group, (61000, 80000)):
+        _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
+        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+            {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
+    out = run(db, {"entity": ENTITY, "period": "2026", "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]})
+    assert {"target_no", "payout_account"} <= {c["key"] for c in out["columns"]}
+    tab = target_service.list_all_targets(db, subject="dealer")["rows"]
+    assert sorted((r["label"], r["payout_account"], r["target_no"]) for r in out["rows"]) == sorted(
+        (r["subject_label"], r["payout_label"], r["target_no"]) for r in tab
+    )
+    same = sorted((r["payout_account"], r["payout"]) for r in out["rows"] if r["label"] == "ZZT SAME NAME")
+    assert same == [("A/C I", 3050.0), ("A/C III", 4000.0)]
+
+
+def test_D2_an_unasked_whole_table_after_a_named_empty_query_is_not_shown():
+    """Live Q6 run: 'payout to fullshun' matched nothing, then the reply appended the whole summary table."""
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    ledger = {
+        "q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "fullshun"},
+               "data": {"entity": ENTITY, "rows": [], "total": 0}, "display": None},
+        "q2": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY},
+               "data": {"entity": ENTITY, "shown_to_user": True, "total": 40}, "display": "WHOLE TABLE"},
+    }
+    text = shape_reply("No commission payout for fullshun this year.", ledger)
+    assert "WHOLE TABLE" not in text and text.startswith("No commission payout for fullshun")
+    # A table that was asked for (a named query that found rows) still shows.
+    ledger["q1"]["data"] = {"entity": ENTITY, "rows": [{"id": "1"}], "total": 1}
+    assert "WHOLE TABLE" in shape_reply("Payout per dealer.", ledger)
