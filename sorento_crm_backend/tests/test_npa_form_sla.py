@@ -415,3 +415,96 @@ def test_the_seed_leaves_an_existing_npa_row_alone(world, sla):
         world.db.execute(text(statement))
     world.db.commit()
     assert len(_npa_rows(world.db)) == len(rows)
+
+
+# ------------------------------------------------------------------ the SI's team notice (owner Q2 b)
+
+
+def _si_agent_teams(w):
+    """The SI's own team notice targets: agent `lead_time_enquiries`, team sets project_sales and
+    purchasing, one member each (the same agent and team sets the seeded stage rows use)."""
+    from app.models.access import AccessAgent, AgentTeam, Team, TeamMember
+
+    from ._forms_chain_support import SORENTO, uid as _uid, user as _user
+
+    db = w.db
+    agent = db.query(AccessAgent).filter(AccessAgent.code == "lead_time_enquiries").first()
+    if agent is None:
+        agent = AccessAgent(id=_uid(), code="lead_time_enquiries", name="ZZT lead time enquiries")
+        db.add(agent)
+        db.flush()
+    members = {}
+    for code in ("project_sales", "purchasing"):
+        team_id = _uid()
+        db.add(Team(id=team_id, name=f"ZZT {code} {team_id[:6]}", company_id=SORENTO))
+        db.add(AgentTeam(id=_uid(), agent_id=agent.id, code=code, team_id=team_id, tier=2, company_id=SORENTO))
+        db.flush()
+        member = _user(db, f"{code} team member")
+        db.add(TeamMember(id=_uid(), team_id=team_id, user_id=member, sort_order=0))
+        members[code] = member
+    db.commit()
+    return SimpleNamespace(**members)
+
+
+def _team_notices(w, aid):
+    from app.models.notification import Notification
+
+    w.db.expire_all()
+    rows = (
+        w.db.query(Notification)
+        .filter(Notification.source_entity_type == KIND, Notification.source_entity_id == aid)
+        .all()
+    )
+    return {(r.user_id, r.event_type) for r in rows if r.type == "stock_inquiry_notification"}
+
+
+def test_submit_sends_the_si_team_notice_to_the_project_sales_team(world):
+    teams = _si_agent_teams(world)
+    d = _submitted(world)
+    assert _team_notices(world, d["id"]) == {(teams.project_sales, "new_product_application_submitted")}
+
+
+def test_resubmit_sends_the_appealed_team_notice(world):
+    teams = _si_agent_teams(world)
+    d = _submitted(world)
+    assert _act(world, d["id"], "reject", world.manager, reason="Add the finish").status_code == 200
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    assert (teams.project_sales, "new_product_application_resubmitted") in _team_notices(world, d["id"])
+
+
+def test_approve_sends_the_si_team_notice_to_the_purchasing_team(world):
+    teams = _si_agent_teams(world)
+    d = _approved(world)
+    notices = _team_notices(world, d["id"])
+    assert (teams.purchasing, "new_product_application_approved") in notices
+    assert (teams.project_sales, "new_product_application_approved") not in notices
+
+
+def test_the_team_notice_goes_with_a_stage_row_too_like_the_si(world, sla):
+    teams = _si_agent_teams(world)
+    d = _submitted(world)
+    assert (teams.project_sales, "new_product_application_submitted") in _team_notices(world, d["id"])
+    assert _form_sla_to(world, sla.approval.tier1)
+
+
+def test_the_team_notice_links_the_npa_not_a_stock_inquiry(world, monkeypatch):
+    from app.services.procurement_service import StockInquiryService
+
+    seen = []
+    monkeypatch.setattr(
+        StockInquiryService, "_notify_team_stock_inquiry", lambda self, **kw: seen.append(kw)
+    )
+    d = _submitted(world)
+    (kw,) = seen
+    assert kw["source_entity_type"] == KIND
+    assert kw["inquiry_id"] == d["id"]
+    assert kw["agent_code"] == "lead_time_enquiries" and kw["team_assignment_code"] == "project_sales"
+    assert kw["view_url"].endswith(f"/procurement-management/new-product-applications/{d['id']}")
+    assert kw["company_id"] == world.company_id
+    assert kw["button_label"] == "Open new product application"
+    assert d["application_no"] in kw["title"]
+
+
+def test_without_the_team_nobody_gets_a_team_notice(world):
+    d = _submitted(world)
+    assert _team_notices(world, d["id"]) == set()
