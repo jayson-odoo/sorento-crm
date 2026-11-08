@@ -528,6 +528,22 @@ describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
     expect(confirm).toBeEnabled();
   });
 
+  it('the reject confirm is destructive, like the stock inquiry one (browser pass 8 Nov)', async () => {
+    render(<Page />);
+    await screen.findByRole('button', { name: /^edit purchasing response$/i });
+    fireEvent.click(headerReject()!);
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: /^(confirm|reject)$/i });
+    expect(confirm.className).toMatch(/bg-destructive/);
+  });
+
+  it('an application with no product rows does not say "0 of 0 lines done"', async () => {
+    state.data = app({ lines: [], lines_total: 0, lines_done: 0 });
+    render(<Page />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText(/0 of 0/)).toBeNull();
+  });
+
   it('Confirm POSTs purchasing-reject with the reason, and the page then shows Rejected with it', async () => {
     state.onReject = (reason) =>
       app({ status: 'rejected', status_label: 'Rejected', reject_reason: reason, decided_by_name: 'Buyer' });

@@ -73,6 +73,7 @@ function ReasonDialog({
   label,
   description,
   confirmLabel,
+  destructive,
   required,
   busy,
   onCancel,
@@ -82,6 +83,8 @@ function ReasonDialog({
   label: string;
   description?: string;
   confirmLabel: string;
+  /** A destructive confirm (a reject), red like the stock inquiry's. */
+  destructive?: boolean;
   required: boolean;
   busy: boolean;
   onCancel: () => void;
@@ -112,6 +115,7 @@ function ReasonDialog({
             Back
           </Button>
           <Button
+            variant={destructive ? 'destructive' : undefined}
             disabled={!ready || busy}
             onClick={() => onConfirm(value.trim())}
           >
@@ -356,6 +360,7 @@ function StaffNewProductApplicationDetail({
             title="Reject new product application"
             label="Rejection reason"
             confirmLabel="Reject"
+            destructive
             required
           />
         );
@@ -388,9 +393,13 @@ function StaffNewProductApplicationDetail({
             >
               {r.status_label}
             </span>
-            {' · '}
-            {r.lines_done} of {r.lines_total}{' '}
-            {r.lines_total === 1 ? 'line' : 'lines'} done
+            {r.lines_total > 0 && (
+              <>
+                {' · '}
+                {r.lines_done} of {r.lines_total}{' '}
+                {r.lines_total === 1 ? 'line' : 'lines'} done
+              </>
+            )}
           </p>
         </div>
         <DetailActions
