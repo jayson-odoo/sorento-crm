@@ -418,6 +418,11 @@ def test_history_pages_on_the_server(api, db):
     assert [r["new_price"] for r in page1["data"]] == [112.0, 111.0, 110.0, 109.0, 108.0]
     assert [r["new_price"] for r in page3["data"]] == [102.0, 101.0]
 
+    # Past the last page the window count is gone; the total must still be the real one,
+    # or the pagination bar collapses with no way back (review S1).
+    past = _history(api, pid, page=99, limit=5).json()
+    assert past == {"data": [], "pagination": {"total": 12, "page": 99, "limit": 5}}
+
 
 @pytest.mark.parametrize(
     "sort,direction,expected_new",

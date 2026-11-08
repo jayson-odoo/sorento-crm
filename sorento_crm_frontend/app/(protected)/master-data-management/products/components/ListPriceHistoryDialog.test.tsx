@@ -154,6 +154,26 @@ describe('ListPriceHistoryDialog', () => {
     await waitFor(() => expect(lastCall()[1]).toMatchObject({ pageIndex: 1, pageSize: 10 }));
   });
 
+  it('a new sort goes back to page 1', async () => {
+    getPriceHistory.mockResolvedValue({ data: ROWS, pagination: { total: 25, page: 1, limit: 10 } });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(bodyRows(dialog).length).toBe(4));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByText('Go to next page').closest('button') as HTMLButtonElement);
+    });
+    await waitFor(() => expect(lastCall()[1]).toMatchObject({ pageIndex: 1 }));
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^% change/ }));
+    });
+    await waitFor(() => {
+      const params = lastCall()[1];
+      expect((params.sorting as { id: string }[])[0]?.id).toBe('change_pct');
+      expect(params.pageIndex).toBe(0);
+    });
+  });
+
   it('every column sorts on the server', async () => {
     renderDialog();
     const dialog = await screen.findByRole('dialog');

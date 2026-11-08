@@ -15,7 +15,7 @@ Data only, both halves idempotent:
   popover range is the one filter for this date.
 
 Revision ID: lpcui_0001_list_price_changed
-Revises: pfcn_0001_list_price_notify
+Revises: npasi_0001_lineage
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "lpcui_0001_list_price_changed"
-down_revision = "pfcn_0001_list_price_notify"
+down_revision = "npasi_0001_lineage"
 branch_labels = None
 depends_on = None
 

@@ -154,6 +154,8 @@ export function useUpdateProduct() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['product', variables.id] });
+      // A saved price edit is a new row in the List Price lightbox (review N4).
+      queryClient.invalidateQueries({ queryKey: ['product-price-history', variables.id] });
       toast.success('Product updated successfully', {
         position: 'top-center',
       });

@@ -667,13 +667,14 @@ const ProductsList = () => {
         ),
         cell: ({ row }) => {
           const product = row.original;
+          const price = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'MYR',
+          }).format(product.list_price);
           return (
             <div className="flex items-center gap-1 text-sm">
-              <span className="truncate">
-                {new Intl.NumberFormat('en-US', {
-                  style: 'currency',
-                  currency: 'MYR',
-                }).format(product.list_price)}
+              <span className="truncate" title={price}>
+                {price}
               </span>
               {product.list_price_changed_at && (
                 <Button
