@@ -20,6 +20,7 @@ from app.services.error_handler import (
 )
 from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
+from app.services.entity_attachment_service import exclude_private_types, is_private_to_others
 from app.utils.multi_value import multi_values
 
 
@@ -879,7 +880,7 @@ class AttachmentService:
         ):
             return None, entity_buckets
 
-        q = self.db.query(Attachment)
+        q = exclude_private_types(self.db.query(Attachment))
         if with_joinedload:
             q = q.options(joinedload(Attachment.attachment_type))
         if attachment_ids:
@@ -1459,19 +1460,20 @@ class AttachmentService:
             "recursive": recursive,
         }
 
-    def _get_attachment_any(self, attachment_id: str):
-        """Get attachment by ID (active or archived)."""
+    def _get_attachment_any(self, attachment_id: str, viewer_id: Optional[str] = None):
+        """Get attachment by ID (active or archived). A file of a private type (the AI panel's) is a 404 to
+        anyone but its uploader, and to a caller that names no viewer."""
         from sqlalchemy.orm import joinedload
         attachment = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         ).filter(Attachment.id == attachment_id).first()
-        if not attachment:
+        if not attachment or is_private_to_others(attachment, viewer_id):
             raise handle_not_found("Attachment", attachment_id)
         return attachment
 
-    def get_attachment(self, attachment_id: str):
+    def get_attachment(self, attachment_id: str, viewer_id: Optional[str] = None):
         """Get an attachment by ID (active or archived)."""
-        return self._get_attachment_any(attachment_id)
+        return self._get_attachment_any(attachment_id, viewer_id)
 
     def _active_scope_company_id(self) -> Optional[str]:
         """The caller's single active company, or None (multi/all-companies scope)."""
@@ -1758,7 +1760,7 @@ class AttachmentService:
         if not dir_ids:
             return []
         rows = (
-            self.db.query(Attachment.id)
+            exclude_private_types(self.db.query(Attachment.id))
             .filter(
                 Attachment.directory_id.in_(dir_ids),
                 Attachment.is_deleted == False,
@@ -1928,7 +1930,7 @@ class AttachmentService:
         # Row by row through the ORM read, never `query(...).update()`: the company scope
         # filter covers SELECTs only, so another company's file is not found and not counted.
         rows = (
-            self.db.query(Attachment)
+            exclude_private_types(self.db.query(Attachment))
             .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
             .all()
         )
@@ -1968,7 +1970,7 @@ class AttachmentService:
         # one, never a bulk `update()`: the company scope filter covers SELECTs only, and a
         # shared (company-less) file can be linked from every company's records.
         attachments = (
-            self.db.query(Attachment)
+            exclude_private_types(self.db.query(Attachment))
             .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
             .all()
         )
@@ -2233,7 +2235,7 @@ class AttachmentService:
         share the same denormalised path. Skips ids that no longer exist.
         """
         rows = (
-            self.db.query(Attachment)
+            exclude_private_types(self.db.query(Attachment))
             .filter(Attachment.id.in_(attachment_ids))
             .all()
         )
@@ -2279,7 +2281,7 @@ class AttachmentService:
     def reorder_attachments(self, attachment_ids: list[str], directory_id: Optional[str] = None):
         """Set sort_order to index for each attachment id (within the same directory)."""
         for index, attachment_id in enumerate(attachment_ids):
-            attachment = self.db.query(Attachment).filter(
+            attachment = exclude_private_types(self.db.query(Attachment)).filter(
                 Attachment.id == attachment_id,
                 Attachment.is_deleted == False,
             ).first()
@@ -2306,7 +2308,7 @@ class AttachmentService:
         from datetime import datetime
         count = 0
         for aid in attachment_ids:
-            attachment = self.db.query(Attachment).filter(
+            attachment = exclude_private_types(self.db.query(Attachment)).filter(
                 Attachment.id == aid,
                 Attachment.is_deleted == False,
             ).first()
@@ -2383,7 +2385,7 @@ class AttachmentService:
         items: list[tuple[str, str]] = []  # (provider, key)
         count = 0
         for aid in attachment_ids:
-            attachment = self.db.query(Attachment).filter(Attachment.id == aid).first()
+            attachment = exclude_private_types(self.db.query(Attachment)).filter(Attachment.id == aid).first()
             if attachment:
                 if attachment.file_path:
                     items.append(

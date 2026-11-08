@@ -481,7 +481,7 @@ def update_stock_inquiry(
     try:
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
-        inquiry = service.update_inquiry(inquiry_id, inquiry_data)
+        inquiry = service.update_inquiry(inquiry_id, inquiry_data, actor_user_id=current_user.get("id"))
         db.commit()
         return inquiry
     except HTTPException:

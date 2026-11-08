@@ -1071,6 +1071,9 @@ class StockInquiryUpdate(BaseModel):
     remark: Optional[str] = None
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
+    #: NPA-FROM-SI: purchasing asks the salesperson to create a New Product Application. A
+    #: response write (gated like ``purchasing_response``); who / when are stamped by the server.
+    npa_requested: Optional[bool] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
     # Declared, but NOT editable on ANY update path (the plain PUT and
@@ -1180,6 +1183,11 @@ class StockInquiryResponse(StockInquiryBase):
     # gating an affordance and the server enforcing the rule read ONE source instead
     # of two status lists that drift. Same response_model rule as above.
     response_write_allowed: Optional[bool] = None
+    # NPA-FROM-SI: purchasing's "salesperson must create an NPA" (declared: response_model drops
+    # what it does not name).
+    npa_requested: Optional[bool] = None
+    npa_requested_at: Optional[datetime] = None
+    npa_requested_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []

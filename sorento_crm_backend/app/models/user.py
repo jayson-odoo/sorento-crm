@@ -235,6 +235,16 @@ class UserRoleAssignment(Base):
     user = relationship("User", back_populates="role_assignments")
     role = relationship("UserRole", back_populates="user_assignments")
 
+    @classmethod
+    def primary_order(cls):
+        """ORDER BY for "the user's primary role": oldest assignment first, ties by id.
+
+        Rows written in one transaction share ``assigned_at`` (``now()`` is the transaction
+        start), so the id tie-break is what keeps the primary role from flipping between
+        reads. Every primary-role lookup uses this (USER-ROLES-STABLE).
+        """
+        return (cls.assigned_at.asc(), cls.id.asc())
+
     __table_args__ = (
         Index("ix_user_role_assignments_user_id", "user_id"),
         Index("ix_user_role_assignments_role_id", "role_id"),

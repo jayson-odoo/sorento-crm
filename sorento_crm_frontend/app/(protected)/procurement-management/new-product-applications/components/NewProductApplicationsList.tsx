@@ -176,7 +176,7 @@ function StaffNewProductApplicationsList() {
         size: 130,
         cell: ({ row }) => (
           <span
-            className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.status)}`}
+            className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.display_status ?? row.original.status)}`}
           >
             {row.original.status_label}
           </span>

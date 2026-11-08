@@ -4,7 +4,7 @@
  *  - limited /new: "Save as draft" -> POST /api/v1/my-requests/submissions/new_product_application; edit -> PUT .../{id};
  *    "Submit" saves, then POST .../{id}/submit; never the staff write routes under /api/v1/procurement/new-product-applications.
  *  - "start from": ?stock_inquiry_id= reads /api/v1/my-requests/new-product-application/prefill.
- *  - the Customer picker reads /api/v1/my-requests/new-product-application/customers (the agent's own customers).
+ *  - the Customer picker reads /api/v1/my-requests/lookups/debtors (the stock inquiry's customer dropdown).
  *  - the stock-inquiry picker reads /api/v1/my-requests/new-product-application/inquiries (own responded ones).
  *  - staff keeps POST /api/v1/procurement/new-product-applications and never touches my-requests.
  */
@@ -122,13 +122,13 @@ describe('New Product Application form, limited user', () => {
     expect(where((c) => c.url.startsWith(`${STAFF_BASE}/prefill`))).toHaveLength(0);
   });
 
-  it('the Customer picker is the agent\'s own customers (my-requests), never the staff customer lookup', async () => {
+  it('the Customer picker is the stock inquiry customer dropdown (my-requests debtors), never the staff customer lookup', async () => {
     mount(LIMITED);
     await screen.findByRole('button', { name: 'Save as draft' });
     const input = screen.getByLabelText('Customer');
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'Ko' } });
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/customers`)).length).toBeGreaterThan(0));
+    await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/debtors')).length).toBeGreaterThan(0));
     expect(where((c) => c.url.includes('/purchase-requests/') && c.url.includes('customer'))).toHaveLength(0);
   });
 

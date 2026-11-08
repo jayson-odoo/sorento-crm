@@ -27,6 +27,7 @@ import { CHAT_SEARCH_LABEL, chatSearchState } from '../../types/product.types';
 import { formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
+import ProductLineageTab from '../../components/ProductLineageTab';
 import ProductStockTab from './ProductStockTab';
 import ProductPurchaseHistoryTab from './ProductPurchaseHistoryTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
@@ -348,6 +349,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <ScrollText />
                 <span>Specifications</span>
               </TabsTrigger>
+              <TabsTrigger value="lineage">
+                <GitBranch />
+                <span>Lineage</span>
+              </TabsTrigger>
             </TabsList>
 
             {/* Tab: Overview - always show all fields from edit view regardless of value */}
@@ -652,6 +657,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Specifications - what spec-search derived from this product */}
             <TabsContent value="specifications">
               <ProductSpecificationsTab productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Lineage - codes created through a New Product Application */}
+            <TabsContent value="lineage">
+              <ProductLineageTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}
