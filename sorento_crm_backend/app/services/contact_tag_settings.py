@@ -595,6 +595,10 @@ def _m_min(vals):
     return min(vals), False
 
 
+def _m_max(vals):
+    return max(vals), False
+
+
 def _m_mode(vals):
     from app.services.stock_visibility import MODES
 
@@ -602,7 +606,90 @@ def _m_mode(vals):
     return max(vals, key=lambda v: r.get(v, 0)), False
 
 
+def _m_mode_loose(vals):
+    """TAG-UNION: the loosest stock mode any tag gives (MODES is loosest first)."""
+    from app.services.stock_visibility import MODES
+
+    r = _rank(MODES)
+    return min(vals, key=lambda v: r.get(v, 0)), False
+
+
+def _m_memory_max(vals):
+    r = _rank(MEMORY_LEVELS)
+    return max(vals, key=lambda v: r.get(v, 0)), False
+
+
+def _m_union_all(vals):
+    """TAG-UNION brands / item classes: any tag "all" gives all, otherwise the union."""
+    if any(v == ALL for v in vals):
+        return ALL, False
+    return _m_union(vals)
+
+
+def _m_intersect_sets(vals):
+    res = vals[0]
+    for s in vals[1:]:
+        res = res & s
+    return res, False
+
+
+#: Pivot lists (rows, empty = nothing granted): what a contact held before its tags is kept
+#: underneath them (the snapshot `base`), so tags only add to it (TAG-UNION).
+PIVOT_SECTIONS = ("access_types", "companies", "market_segments", "attachment_types")
+
+
+def snap_key(section: str, key: str) -> str:
+    return f"{section}|{key}"
+
+
+def to_json(value: Any) -> Any:
+    """A merge value as JSON for `respond_contacts.tag_settings_snapshot`."""
+    if isinstance(value, _AllSet):
+        return {"allset": True}
+    if isinstance(value, frozenset):
+        return {"set": sorted(str(v) for v in value)}
+    if isinstance(value, tuple):
+        return {"tuple": list(value)}
+    return value
+
+
+def from_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.get("allset"):
+            return ALL_SET
+        if "set" in value:
+            return frozenset(value["set"])
+        if "tuple" in value:
+            return tuple(value["tuple"])
+    return value
+
+
 def _merge_kind(section: str, key: str) -> str:
+    """TAG-UNION (owner 8 Nov): grants add up, restrictions need every tag that sets them."""
+    if section == "chatbot":
+        if key in CHATBOT_BOOLS:
+            return "or"  # every switch, AI replies included (owner Q2)
+        return {"tier": "tier", "memory_level": "memory_max", "llm": "eq"}[key]
+    if section in ("portal_forms", "field_reveals", "agents", "agent_fields", "outbound_enabled"):
+        return "or"
+    if section == "requires_registered_project":
+        return "and"  # a restriction
+    if section == "media":
+        field = key.split(".", 1)[1]
+        return {"is_allowed": "or", "monthly_limit": "max", "max_clip_seconds": "max", "languages": "union"}[field]
+    if section == "stock_visibility":
+        return {"mode": "mode_loose", "warehouse_ids": "union", "excluded_warehouse_ids": "intersect_sets",
+                "hide_zero_locations": "and"}[key]
+    if section == "spec_visibility":
+        return "union" if key == "spec_keys" else "intersect_sets"
+    if section in ("brands", "item_classes"):
+        return "union_all"
+    return "union"  # access_types, companies, market_segments, attachment_types, regions
+
+
+def legacy_merge_kind(section: str, key: str) -> str:
+    """The merge before TAG-UNION (most restrictive). Kept only to seed the snapshot of contacts
+    the old "apply" wrote (`contact_tag_union.ensure_seeded`); delete once prod has been recomputed."""
     if section == "chatbot":
         if key in CHATBOT_BOOLS:
             return CHATBOT_BOOLS[key][1]
@@ -622,13 +709,15 @@ def _merge_kind(section: str, key: str) -> str:
     if section == "spec_visibility":
         return "intersect" if key == "spec_keys" else "union"
     if section in ("brands", "item_classes"):
-        return "regions"  # an empty intersection has no value to write: a conflict, like regions
-    return "intersect"  # access_types, companies, market_segments, attachment_types
+        return "regions"
+    return "intersect"
 
 
 _MERGE = {
     "and": _m_and, "or": _m_or, "eq": _m_eq, "tier": _m_tier, "memory": _m_memory,
     "intersect": _m_intersect, "regions": _m_regions, "union": _m_union, "min": _m_min, "mode": _m_mode,
+    "max": _m_max, "mode_loose": _m_mode_loose, "memory_max": _m_memory_max, "union_all": _m_union_all,
+    "intersect_sets": _m_intersect_sets,
 }
 
 
@@ -823,6 +912,13 @@ class _Reader:
         return frozenset(p.excluded_spec_keys or ())
 
 
+#: (section, include key, exclude key): one contact row holds one of the two lists.
+INCLUDE_EXCLUDE: tuple[tuple[str, str, str], ...] = (
+    ("stock_visibility", "warehouse_ids", "excluded_warehouse_ids"),
+    ("spec_visibility", "spec_keys", "excluded_spec_keys"),
+)
+
+
 class _AllSet:
     """The "every location / every spec" current value: never equal to a concrete set."""
 
@@ -845,19 +941,25 @@ def _display(cat: Catalog, section: str, key: str, value: Any) -> Any:
 # ------------------------------------------------------------------ evaluate
 
 
-def tags_by_contact_with_settings(db: Session, contact_ids: list[str]) -> dict[str, list[TagRef]]:
-    """Every tag of each contact (settings included), in the S1 order."""
+def tags_by_contact_with_settings(
+    db: Session, contact_ids: list[str], include_inactive: bool = False
+) -> dict[str, list[TagRef]]:
+    """Every ACTIVE tag of each contact (settings included), in the S1 order. An inactive tag counts
+    for nothing (TAG-UNION); `include_inactive` is only for seeding from the old rule, which counted them."""
     from app.models.access import ContactTag, respond_contact_tags as pivot
 
     out: dict[str, list[TagRef]] = {}
     if not contact_ids:
         return out
-    rows = db.execute(
+    q = (
         select(pivot.c.contact_id, ContactTag.id, ContactTag.name, ContactTag.settings)
         .join(ContactTag, ContactTag.id == pivot.c.tag_id)
         .where(pivot.c.contact_id.in_(contact_ids))
         .order_by(ContactTag.sort_order, ContactTag.name)
-    ).all()
+    )
+    if not include_inactive:
+        q = q.where(ContactTag.is_active.is_(True))
+    rows = db.execute(q).all()
     for cid, tid, name, settings in rows:
         out.setdefault(str(cid), []).append(TagRef(str(tid), name, settings or {}))
     return out
@@ -911,34 +1013,34 @@ def evaluate(
         for tag in tags:
             for section, key, value in leaves(tag):
                 groups.setdefault((section, key), []).append((tag, value))
-        # One rule per contact row: an include list on one tag against an exclude list on another
-        # cannot be stored, so it is a conflict naming both tags (the exclude group folds into it).
-        forced: dict[tuple[str, str], list[tuple[TagRef, Any, str]]] = {}
-        for sec, inc, exc in (
-            ("stock_visibility", "warehouse_ids", "excluded_warehouse_ids"),
-            ("spec_visibility", "spec_keys", "excluded_spec_keys"),
-        ):
+        # TAG-UNION: an include list I on one tag and an exclude list E on another add up to
+        # "I, or everything outside E", which one contact row stores as the exclude list E minus I.
+        resolved: dict[tuple[str, str], Any] = {}
+        for sec, inc, exc in INCLUDE_EXCLUDE:
             if (sec, inc) in groups and (sec, exc) in groups:
-                forced[(sec, inc)] = [(t, v, inc) for t, v in groups[(sec, inc)]] + [
-                    (t, v, exc) for t, v in groups.pop((sec, exc))
-                ]
+                include, _ = _m_union([v for _, v in groups[(sec, inc)]])
+                exclude, _ = _m_intersect_sets([v for _, v in groups[(sec, exc)]])
+                resolved[(sec, exc)] = exclude - include
+                groups[(sec, exc)] = groups[(sec, exc)] + groups.pop((sec, inc))
+        snapshot = getattr(reader.contacts[cid], "tag_settings_snapshot", None) or {}
         items = []
         for (section, key), entries in sorted(
             groups.items(), key=lambda kv: (_SECTION_RANK[kv[0][0]], kv[0][1])
         ):
             if only_tags is not None and not any(t.id in only_tags for t, _ in entries):
                 continue
-            if (section, key) in forced:
-                expected, conflict = None, True
-                conflict_tags = [
-                    {"name": t.name, "value": _display(cat, section, k, v)} for t, v, k in forced[(section, key)]
-                ]
-                entries = [(t, v) for t, v, _k in forced[(section, key)]]
+            if (section, key) in resolved:
+                expected, conflict = resolved[(section, key)], False
+                conflict_tags = []
             else:
                 expected, conflict = _MERGE[_merge_kind(section, key)]([v for _, v in entries])
                 conflict_tags = [
                     {"name": t.name, "value": _display(cat, section, key, v)} for t, v in entries
                 ] if conflict else []
+            if section in PIVOT_SECTIONS and isinstance(expected, frozenset):
+                base = from_json((snapshot.get(snap_key(section, key)) or {}).get("base"))
+                if isinstance(base, frozenset):
+                    expected = expected | base  # held before the tags: kept underneath them
             if conflict:
                 decided = []
                 differs = True

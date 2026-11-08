@@ -241,7 +241,7 @@ def set_contact_tags(
 ):
     try:
         tags = ContactTagService(db).set_contact_tags(
-            contact_id, body.tag_ids, str(current_user.get("id") or "") or None
+            contact_id, body.tag_ids, str(current_user.get("id") or "") or None, _gates(db, current_user)
         )
         return {"tags": tags}
     except AppException:

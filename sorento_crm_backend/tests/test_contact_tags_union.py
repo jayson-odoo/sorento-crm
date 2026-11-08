@@ -366,9 +366,12 @@ def test_u11_value_differing_from_todays_tag_result_is_kept_as_own(client, db, s
     _link_raw(db, c, [a])
     db.add(RespondContactCompany(respond_contact_id=str(c.id), company_id=m.id))  # set by hand, never applied
     db.flush()
-    report = contact_tag_union.run(db, apply=True, expect=None, contact_ids=[str(c.id)])
+    dry = contact_tag_union.run(db, apply=False, expect=None, contact_ids=[str(c.id)])
+    report = contact_tag_union.run(db, apply=True, expect=dry["changed"], contact_ids=[str(c.id)])
     assert _companies(db, c) == {m.id}
-    assert report["own_changes"] >= 1
+    assert report["own_changes"] == 1
+    with pytest.raises(ValueError):
+        contact_tag_union.run(db, apply=True, expect=None, contact_ids=[str(c.id)])
 
 
 def test_u11_empty_companies_bug_is_repaired_by_the_recompute(client, db, su):
