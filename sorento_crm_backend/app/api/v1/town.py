@@ -73,8 +73,8 @@ def get_snapshot(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _staff_only(db, current_user)
     _rate_limit(str(current_user["id"]))
+    _staff_only(db, current_user)
     company_id = _company_id(request, db)
     variant = "full" if holds_permission(db, current_user, INVOICED_SLUG) else "redacted"
     wallboard = mode == "wallboard"

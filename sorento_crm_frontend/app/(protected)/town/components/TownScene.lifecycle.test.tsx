@@ -7,6 +7,7 @@ import { cleanup, render } from '@testing-library/react';
  * nothing is drawn while the tab is hidden, and unmounting disposes the renderer and removes the
  * window listeners.
  */
+const made = vi.hoisted(() => ({ instanced: [] as { count: number }[], sprites: 0 }));
 const renderer = vi.hoisted(() => ({
   render: vi.fn(),
   dispose: vi.fn(),
@@ -18,6 +19,18 @@ vi.mock('three', async (importOriginal) => {
   const actual = await importOriginal<typeof import('three')>();
   return {
     ...actual,
+    InstancedMesh: class extends actual.InstancedMesh {
+      constructor(...args: ConstructorParameters<typeof actual.InstancedMesh>) {
+        super(...args);
+        made.instanced.push(this);
+      }
+    },
+    Sprite: class extends actual.Sprite {
+      constructor(...args: ConstructorParameters<typeof actual.Sprite>) {
+        super(...args);
+        made.sprites += 1;
+      }
+    },
     WebGLRenderer: class {
       constructor() {
         return renderer as unknown as object;
@@ -48,6 +61,8 @@ function setHidden(hidden: boolean) {
 
 beforeEach(() => {
   queue = [];
+  made.instanced.length = 0;
+  made.sprites = 0;
   Object.values(renderer).forEach((fn) => typeof fn === 'function' && 'mockClear' in fn && (fn as ReturnType<typeof vi.fn>).mockClear());
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queue.push(cb));
   vi.stubGlobal('cancelAnimationFrame', () => undefined);
@@ -82,5 +97,27 @@ describe('TownScene lifecycle', () => {
     expect(names).toContain('pointermove');
     expect(names).toContain('pointerup');
     removed.mockRestore();
+  });
+});
+
+describe('TownScene applies the crowding caps', () => {
+  it('draws the 30 shops and 5 stalls at most, with at most 5 shop tags, on a day of 60 lit stalls', () => {
+    const shops = Array.from({ length: 30 }, (_, i) => ({
+      key: `shop${i}`, kind: 'shop', account_label: null, today_docs: 1 + (i % 3), rank: i + 1, name: `Shop ${i}`,
+    }));
+    const stalls = Array.from({ length: 60 }, (_, i) => ({
+      key: `stall${i}`, kind: 'stall', account_label: null, today_docs: 1 + (i % 7), rank: null, name: `Stall ${i}`,
+    }));
+    const crowded = {
+      ...SNAPSHOT,
+      today: { ...SNAPSHOT.today, dealer_customer_count: 90 },
+      shops: [...shops, ...stalls],
+    };
+    render(<TownScene snapshot={crowded as never} onSelect={() => undefined} />);
+    const shopMesh = made.instanced[0]; // the shops are the first instanced mesh the scene builds
+    expect(shopMesh.count).toBeLessThanOrEqual(35);
+    // fixed labels: low stock, to deliver, approvals, and "+N more dealers"
+    expect(made.sprites - 4).toBeLessThanOrEqual(5);
+    expect(made.sprites - 4).toBeGreaterThan(0);
   });
 });

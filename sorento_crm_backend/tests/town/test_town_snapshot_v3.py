@@ -77,10 +77,11 @@ def test_compare_stops_at_the_same_time_of_day_in_the_daytime_and_takes_the_whol
     c = cust(db)
     _at(doc(db, "invoice", "100.00", WEEK_AGO, customer=c), 1)  # 01:00 UTC = 09:00 MYT, before 15:42
     _at(doc(db, "invoice", "40.00", WEEK_AGO, customer=c), 12)  # 12:00 UTC = 20:00 MYT, after 15:42
+    _at(doc(db, "invoice", "30.00", WEEK_AGO, customer=c), 15, 30)  # 15:30 UTC = 23:30 MYT, after closing time
     day = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=NOW)["compare"]
     assert day["last_week_amount"] == "100.00" and day["last_week_invoice_count"] == 1
     night = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=myt(DAY, 22, 0))["compare"]
-    assert night["last_week_amount"] == "140.00" and night["last_week_invoice_count"] == 2
+    assert night["last_week_amount"] == "170.00" and night["last_week_invoice_count"] == 3
 
 
 def test_compare_for_a_quiet_week_ago_is_zero_not_missing(db):

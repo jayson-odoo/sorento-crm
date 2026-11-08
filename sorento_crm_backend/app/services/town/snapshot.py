@@ -370,7 +370,7 @@ def redact(snapshot: dict) -> dict:
     out.get("today", {}).pop("amount", None)
     out.get("compare", {}).pop("last_week_amount", None)
     # Not in revenue order: by kind, then today's documents, then a hash of the key. The hash is
-    # the same on every refresh, so the buildings stay put, and it is not the ranking.
+    # the same for the same counts, so the buildings are stable between refreshes, and it is not the ranking.
     out["shops"] = sorted(
         out.get("shops", []),
         key=lambda s: (s["kind"], -s["today_docs"], hashlib.sha1(str(s["key"]).encode()).hexdigest()),
