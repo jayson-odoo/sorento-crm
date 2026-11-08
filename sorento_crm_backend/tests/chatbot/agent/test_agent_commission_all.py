@@ -632,3 +632,27 @@ def test_G3_q6_reply_tidy_range_not_year_one_period_note_no_unasked_notes():
     assert text.splitlines()[0] == "No commission payout was found for fullshun from 01/01/2026 to 31/12/2026."
     assert text.count("No period named") == 1
     assert "Agent A" not in text
+
+
+# ------------------------------------------------------------------ crew live round 5 on 828c88de (8 Nov)
+
+
+def test_H1_tgt_and_payout_account_are_shown_whatever_columns_the_model_asks_for(targets):
+    """Q2 run 3: the model passed its own column list without TGT / account and SK ONE STOP's rows looked identical."""
+    from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
+
+    db, client, t = targets
+    company_id = _dealer_account(db, t).company_id
+    pid = _product_id(db, company_id)
+    for level, sold in ((1, 61000), (1, 80000)):
+        c = _customer(db, company_id, "ZZT TWIN", level=level)
+        _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
+        assert client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+            {"period_start": "2026-07-01", "threshold": 60000, "rate": 5}])).status_code == 201
+    for fields in (["payout"], ["owner_kind", "achieved_pct", "payout"],
+                   ["targets", "target_value", "achieved_value", "achieved_pct", "commission", "bonus", "payout", "kinds"]):
+        out = run(db, {"entity": ENTITY, "agent": "ZZT TWIN", "period": "2026", "fields": fields})
+        keys = [c["key"] for c in out["columns"]]
+        assert keys[:3] == ["label", "target_no", "payout_account"], fields
+        twins = [(r["target_no"], r["payout_account"]) for r in out["rows"]]
+        assert len(twins) == 2 and len(set(twins)) == 2 and {a for _n, a in twins} == {"A/C I"}
