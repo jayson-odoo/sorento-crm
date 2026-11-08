@@ -17,7 +17,7 @@ A3. Own scope, customer names: an exact name of exactly one own account resolves
     accounts carry the same name. Never linked on a name alone when more than one fits.
 A4. Word fallback (own scope only): a written name that none of the user's own accounts contains as a phrase offers,
     as a pick, the user's own active accounts of the row's company whose name contains the FIRST significant word of
-    the written name (3+ letters; company suffix words like sdn, bhd, berhad, enterprise, trading, co, company, plt
+    the written name as a whole word (3+ letters; company suffix words like sdn, bhd, berhad, enterprise, trading, co, company, plt
     ignored), ordered by the number of shared significant words then code, at most 10 (+ "more"). Never linked
     without the pick. With no such account: `No customer named "<name>" in your accounts.` Broad scope (`.edit`)
     keeps today's matching (a generic word such as "hardware" would otherwise offer hundreds of accounts).
@@ -37,12 +37,29 @@ A9. Staff phone refused (every scope): a phone that is any user's `respond_conta
 A10. Own scope, a phone already linked to an account that is not own: the row applies (add-only, link added, other
     link untouched), the preview carries the line `also has access through another account`, and no other account's
     code or name appears in the preview, the confirm result, the action record or the audit row.
+A12. Own scope: a row that resolves to none of the user's own accounts is refused: `Name one of your accounts for
+    this person (code or name).` (review round 1, H1: no grant without an own link).
+A13. Own scope, an existing contact linked to any account that is not own: only the additive facets apply (the own
+    link, the company, `end_user`, missing enquiry agents, the retail segment). Its switches (AI replies, stock
+    replies, ETA offset, hand-over, packing list), stock mode and locations, brands and image media are left exactly
+    as they are (another salesperson's or the office's settings are never rewritten).
+A14. Own scope, role owner for a contact linked to any account that is not own: refused with the C3 text, in the grant
+    and in the update tool (promotion is as restricted as demotion).
+A15. The owner tag counts only when its settings are exactly the template's owner types for its company
+    (`{"access_types": ["dealer", "cabana_dealer"]}` / `{"access_types": ["mocha_dealer"]}`, order aside); a tag of
+    that name with any other settings is treated as missing (A7 text), so a renamed or edited tag can never grant
+    more than the template.
+A16. Staff phones (A9) also cover a phone equal (by digits) to any user's `contact_number`, and are checked for new
+    phones as well as existing contacts.
 A11. One audit row per contact (event `contact.access_agent`, actor the confirming user); a created contact says so.
 
 ## B. Respond.io (V8)
 
 B1. Confirming a grant whose contact has no `respond_io_id` enqueues `ensure_respond_contact(contact_id)` on the
     `respond_io` queue, after the commit. A contact that has one enqueues nothing.
+B3. The job normalises the phone (`normalise_phone`, skips when it is None) and URL-quotes it in the path. A retry
+    for a contact that already has its `respond_io_id` still writes `backend_id` (only the lookup/create is skipped).
+    A stored action never carries another salesperson's account ids (own scope: own link ids plus a count of others).
 B2. The job: no Respond API key resolvable -> returns without any HTTP call. Found by phone -> stores `respond_io_id`.
     Not found (404) -> creates the contact in Respond.io (POST, phone + first name), stores the returned id. Then
     writes the `backend_id` custom field. It never calls a message-send endpoint. An HTTP error other than 404 raises
