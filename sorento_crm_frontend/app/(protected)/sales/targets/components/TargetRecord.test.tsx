@@ -1297,3 +1297,26 @@ describe('TargetRecord: the RM Additional per account (lane TARGET-PER-ACCOUNT-P
     expect(screen.getAllByText('+ A/C I RM 500.00').length).toBeGreaterThan(0);
   });
 });
+
+describe('TargetRecord: a combined target sets its RM Additional per account only (owner 8 Nov 23:59)', () => {
+  const kinds = (label: string) =>
+    Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.value).filter(Boolean);
+
+  it('hides the tier-level RM option on a target counting several accounts, keeps the %', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    expect(kinds('Tier 1 additional in')).toEqual(['pct']);
+    expect(screen.getAllByLabelText(/Tier 1 A\/C (I|III) additional \(RM\)/)).toHaveLength(2);
+  });
+
+  it('keeps the tier-level RM option on a single-account target, exactly as before', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    expect(kinds('Tier 1 additional in')).toEqual(['pct', 'amount']);
+    expect(screen.queryByLabelText(/additional \(RM\)/)).toBeNull();
+  });
+});

@@ -29,10 +29,14 @@ UAC: `target-per-account-payout-08nov-acceptance-criteria.md` (alongside).
   in proportion to their sales; each account pays its own rate for the tier (per-account rate, else
   the tier's rate; 0 if the tier names other accounts) on its part, its slices added then rounded.
   One bucket (agent, team): unchanged. Per-account rates on marginal are no longer refused.
-- RM Additional: `target_tier_rates.bonus_amount` per account when set (stored beside the rate);
-  otherwise the tier's `bonus_amount` is paid to each counted account (once on agent/team targets).
-  `_achieved_by_account` gives every counted account a key so an account with no sales still gets a
-  one-for-all RM Additional. A tier sets its Additional per account or for the tier, not both.
+- RM Additional: `target_tier_rates.bonus_amount` per account (stored beside the rate). Owner
+  8 Nov 23:59 (a): on a target counting several accounts it is set ONLY per account. The editor
+  hides the tier-level RM option there (the tier's % Additional is unchanged), the API refuses a
+  tier-level RM `bonus_amount` (422 INVALID_TIERS, also when an edit adds a second account while
+  one stands), the import refuses a bonus naming no single counted account (row reason names the
+  target and the tier) and lists any legacy tier-level amount on a matched target, and the engine
+  pays a tier-level amount once on one bucket (agent, team, single-account dealer) and nothing on
+  several accounts, never once per account. Single-account targets keep the tier-level RM box.
 - Points: `target_detail.period_out` divides the period's and each account's sales by the same
   `ratio_on(ratios, p.period_end)` the engine uses; null with no ratio.
 - Migration `sales_0008_no_replace_payee`: drops `targets.replaced_by_target_id` and

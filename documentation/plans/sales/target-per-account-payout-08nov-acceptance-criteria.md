@@ -14,9 +14,11 @@ Plan: `PLAN-target-per-account-payout-08nov.md`. Lane TARGET-PER-ACCOUNT-PAYOUT.
   period's commission + bonus.
 - PA-6 Marginal on a multi-account dealer target: each account pays its own rate on its part of each
   combined-total slice (crew-note example: A 12,000, B 14,000).
-- PA-7 RM Additional set per account is paid to that account only; one RM Additional for the tier
-  is paid to each counted account (sales or not); agent and team targets pay it once. A tier sets
-  it per account or for the tier, not both (422).
+- PA-7 RM Additional set per account is paid to that account only. On a target counting several
+  accounts it is set only per account (owner 8 Nov 23:59, a): no tier-level RM option in the
+  editor, 422 from the API, the import refuses a bonus naming no single counted account and lists
+  legacy ones, and a legacy tier-level amount there is never paid once per account. Agent, team and
+  single-account targets keep the tier-level RM Additional, paid once.
 - PA-8 Points target: Points column beside Sales (RM) per account and on the period total, at the
   ratio in force on the period's last day; "No ratio" without one.
 - PA-9 Import: no link, no window refusal, PAY TO warns and is not used, a bonus naming one counted

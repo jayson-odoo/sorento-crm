@@ -365,6 +365,13 @@ function tierProblem(draft: Draft): string {
     return draft.thresholdUnit === 'pct' ? 'Type a from % for every tier.' : `Type the threshold (${unit}) of every tier.`;
   }
   if (draft.tiers.some((t) => !t.additional && bad(t.addValue, false))) return 'An Additional is not a number.';
+  if (
+    dealer &&
+    draft.accountIds.length > 1 &&
+    draft.tiers.some((t) => !t.additional && t.addKind === 'amount' && t.addValue.trim() !== '')
+  ) {
+    return 'This target counts several accounts: set the RM Additional per account, not for the tier.';
+  }
   if (dealer) {
     if (draft.tiers.some((t) => Object.values(t.accountRates).some((v) => bad(v, false)))) return 'A rate is not a number.';
     if (draft.tiers.some((t) => Object.values(t.accountBonuses).some((v) => bad(v, false)))) {
@@ -2092,9 +2099,11 @@ function CommissionTiers({
   const ownBonus = dealer && accounts.length > 1;
   // Legacy "+ Additional" rows not yet folded onto their tier keep their Type column.
   const legacy = draft.tiers.some((t) => t.additional);
+  // A combined target takes its RM Additional per account only (owner 8 Nov 23:59): the tier's
+  // own Additional is a % there.
   const addKindOptions = [
     { value: 'pct', label: draft.metric === 'quantity' ? 'RM/unit' : '%' },
-    { value: 'amount', label: 'RM' },
+    ...(ownBonus ? [] : [{ value: 'amount', label: 'RM' }]),
   ];
   const periodOptions = periodStarts.map((p) => ({ value: p.start, label: periodLabel(p.start) }));
   return (
