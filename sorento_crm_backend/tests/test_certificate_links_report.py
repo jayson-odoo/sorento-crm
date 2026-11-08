@@ -128,7 +128,7 @@ def test_scanned_and_missing_files(env, files):
 
 def test_filters_by_verdict_certificate_and_source(env, files):
     a = _certificate(env, files, "RPT-5", ["Model 14A"], ["14A", "BRD7711CP"], ["SV-14A-CP", "BRD7711CP"])
-    b = _certificate(env, files, "RPT-6", ["Model 7788B"], ["7788B"], ["SV-7788B-CP"])
+    b = _certificate(env, files, "RPT-6", ["Model SV7788B"], ["SV7788B"], ["SV7788B-CP"])
     _run_check(env)
     body = _rows(env, verdict="not_found")
     assert [row["product_code"] for row in body["data"]] == ["BRD7711CP"]
@@ -386,3 +386,15 @@ def test_confirm_reads_found_after_the_recheck(env, files):
     _run_check(env)
     assert _rows(env, certificate_ids=str(cert.id), source="manual")["data"][0]["verdict"] == "found"
     assert report.pending_link_count(env.db) == 0
+
+
+def test_confirming_a_link_with_no_code_reads_found(env, files):
+    """Crew re-check: most links carry no model code; a Confirm must still come back Found."""
+    cert = _certificate(env, files, "RPT-23", ["Model WB 241"], ["SRTWB241"], ["SRTWB241"])
+    (link,) = env.db.query(CertificateProduct).filter(CertificateProduct.certificate_id == cert.id).all()
+    link.model_code, link.model_code_source = None, None
+    env.db.commit()
+    _run_check(env)
+    assert env.client.post(f"{LINKS}/confirm", json={"ids": [str(link.id)]}).status_code == 200
+    _run_check(env)
+    assert _rows(env, certificate_ids=str(cert.id), source="manual")["data"][0]["verdict"] == "found"

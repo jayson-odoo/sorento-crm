@@ -12,7 +12,8 @@ Pure rules over `certificate_pdf_service.printed_runs` output (card
   digit (`CSK14` is not in `CSK140-BL`). A code a person typed (`model_code_source = manual`) or a link a
   person confirmed (`source = manual`) skips every product-side rule; the code must still be printed. The exact tiers the ingest keeps count too: the product's own code, a printed
   product-set code the product is a member of, and each part of an `A + B` code (reviewer round 1).
-- **check**: as found, but the code is SHORT (3 or fewer letters and digits: `14A`, `11C`; or printed only
+- **check**: as found, but the code starts with a digit and is not the full product code (`75-RG` in
+  `M459A-75-RG`, `32SS`, `61SS`: the family prefix is not printed, crew re-check 8 Nov), or the code is SHORT (3 or fewer letters and digits: `14A`, `11C`; or printed only
   as a run of such short tokens: `AB 12C`, crew offline check 8 Nov) or digits only (`120`). A row number
   printed next to a model (`3 | 13A`) is never joined into it (`certificate_pdf_service._index_cells`). Never auto-Found: a person confirms it once (it becomes manual) or removes it.
 - **not_found**: the PDF has text and the rule above fails.
@@ -87,7 +88,9 @@ def on_boundary(norm: str, product_code: Optional[str]) -> bool:
         end = start + len(norm)
         nxt = product_norm[end] if end < len(product_norm) and end not in ends else ""
         if norm[0].isdigit():
-            preceded = start > 0 and product_norm[start - 1].isdigit()
+            # Only a digit in the SAME dash/space segment counts: `75-RG` in `M459-75-RG` starts a
+            # segment of its own (crew re-check: it read Not found only by accident before).
+            preceded = start > 0 and start not in ends and product_norm[start - 1].isdigit()
             followed = bool(nxt)
         else:
             # A code ending in a digit must not run on into another digit (`CSK14` is not in
@@ -98,6 +101,19 @@ def on_boundary(norm: str, product_code: Optional[str]) -> bool:
             return True
         start = product_norm.find(norm, start + 1)
     return False
+
+
+def _ambiguous(norm: str, product_norm: str, solid, sets) -> bool:
+    """A backed code that a person must decide (Check, never auto-Found): short, digits only, printed
+    only as short tokens, or (crew re-check 8 Nov) digit-led and not the full product code: `75-RG`
+    backs `M459A-75-RG` and `M460A-75-RG` alike because the family prefix is not printed. A printed
+    set code the product belongs to is explicit, so it is not digit-led ambiguous."""
+    return (
+        is_short(norm)
+        or norm.isdigit()
+        or norm not in solid
+        or (norm[0].isdigit() and norm != product_norm and norm not in sets)
+    )
 
 
 def is_short(norm: str) -> bool:
@@ -174,20 +190,34 @@ def verdict(
         if typed:
             return VERDICT_FOUND, model_code
         solid = text.get("solid") or ()
-        if all(is_short(p) or p.isdigit() or p not in solid for p in backing):
+        if all(_ambiguous(p, product_norm, solid, sets) for p in backing):
             return VERDICT_CHECK, model_code
         return VERDICT_FOUND, model_code
 
-    # No code on the link: the longest printed run inside the product code that passes the boundary
-    # rule. Only a long lettered run is Found; a short or digits-only one is Check at best.
+    # No code on the link. A link a person confirmed counts like a typed code (crew re-check: Confirm
+    # must read Found on every branch): any printed run of the product code backs it.
+    if source == "manual":
+        confirmed: Optional[str] = None
+        for start in range(len(product_norm)):
+            for end in range(start + MIN_CODE_LEN, len(product_norm) + 1):
+                piece = product_norm[start:end]
+                if piece in runs and _containable(piece) and (confirmed is None or len(piece) > len(confirmed)):
+                    confirmed = piece
+        if confirmed is not None:
+            return VERDICT_FOUND, runs[confirmed]
+        return VERDICT_NOT_FOUND, None
+
+    # Otherwise the longest printed run inside the product code that passes the boundary rule. Only
+    # an unambiguous run is Found; a short, digits-only or digit-led one is Check at best.
     found: Optional[str] = None
     checked: Optional[str] = None
+    solid = text.get("solid") or ()
     for start in range(len(product_norm)):
         for end in range(len(product_norm), start + MIN_CODE_LEN - 1, -1):
             piece = product_norm[start:end]
             if piece not in runs or not _containable(piece) or not on_boundary(piece, product_code):
                 continue
-            if is_short(piece) or piece.isdigit() or piece not in (text.get("solid") or ()):
+            if _ambiguous(piece, product_norm, solid, ()):
                 if checked is None or len(piece) > len(checked):
                     checked = piece
             elif found is None or len(piece) > len(found):

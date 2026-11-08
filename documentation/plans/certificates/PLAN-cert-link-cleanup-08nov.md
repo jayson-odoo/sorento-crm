@@ -37,6 +37,17 @@ MGB5011C and GB3011C read Found.
   joined into `313A`. Now a row-number cell (a digits-only word of up to 3 characters that starts its line,
   followed by a word a column gap away) is never joined into a run, and a run printed only as tokens of 3
   or fewer characters (`AB 12C`, `3 13A`) is short: Check, never Found.
+- Crew re-check on 2fa5b573 (real BPAI/1327-2024 and BPAI/1271-2024): digit-led printed codes collide
+  across families because the family prefix is not printed (`75-RG` backed M459A-75-RG, M460A-75-RG,
+  M461A-75-RG; `32SS` backed M32SS-*; `61SS` backed CB61SS-*). Crew rule: a printed code that starts with a
+  digit is Check, never auto-Found, unless the FULL product code is printed (22KT, 28KT, 31SS, 51SS, 53SS,
+  55SS, 62SS move to Check, accepted). The "preceded by a digit" check now only counts a digit in the same
+  dash/space segment (`75-RG` in `M459-75-RG` reads Check on the rule, not Not found by accident).
+- Confirm on a link with NO code (the common case: 5 of 10,178 dev links carry one) now reads Found: the
+  no-code branch counts a confirmed link like a typed code (any printed run of the product code backs it).
+- Sweep over every certificate file crew holds (read-only):
+  `venv/bin/python scripts/cert_link_verdicts.py --pdf-dir state/files/quote-cert-8nov/prod-certs --digit-led-found`
+  lists every AI link still read Found through a digit-led code, plus a total.
 - A confirmed link (`source` manual) counts like a typed code; its code must still be printed. `source`
   is part of the check key, so a Confirm reads the link again (reviewer round 3).
 - Short codes (3 or fewer letters and digits after normalising: `14A`, `11C`, `13C`) are never

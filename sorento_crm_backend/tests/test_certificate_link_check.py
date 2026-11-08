@@ -405,3 +405,82 @@ def test_a_number_inside_a_sentence_still_joins(numbered_text):
 
     text = printed_runs(text_pdf(["Model 3 13A wide"]))
     assert "313a" in text["runs"]
+
+
+# ------------------------------------------- crew re-check 8 Nov: digit-led codes collide across families
+# BPAI/1327-2024 p3 row 6 prints `75-RG` (stop valve); BPAI/1271-2024 rows 40-41 print `32SS`, `61SS` (sink
+# mixers). The product's family prefix is not printed, so a digit-led code backs unrelated families:
+# M459A-75-RG (towel bar), M32SS-*, CB61SS-*. Crew rule: a printed code that starts with a digit is Check,
+# never auto-Found, unless the FULL product code is printed.
+FAMILY_ROWS = ["75-RG", "32SS", "61SS", "WB 241", "SRTKT61SS"]
+
+
+@pytest.fixture(scope="module")
+def family_text():
+    from app.services.certificate_pdf_service import printed_runs
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for i, code in enumerate(FAMILY_ROWS):
+        y = 100 + 24 * i
+        page.draw_line((50, y), (545, y))
+        page.insert_text((110, y + 16), code, fontsize=10)
+        page.insert_text((250, y + 16), "STOP VALVE DN15", fontsize=10)
+    out = doc.tobytes()
+    doc.close()
+    return printed_runs(out)
+
+
+@pytest.mark.parametrize(
+    "code,product_code",
+    [
+        ("75-RG", "M459A-75-RG"),
+        ("75-RG", "M460A-75-RG"),
+        ("75-RG", "M461A-75-RG"),
+        ("75-RG", "M459-75-RG"),  # was Not found only by accident: the dash starts a new segment
+        ("32SS", "M32SS-CP"),
+        ("61SS", "CB61SS-CP"),
+    ],
+)
+def test_a_digit_led_code_is_check_unless_the_full_product_code_is_printed(family_text, code, product_code):
+    assert _verdict(family_text, code, product_code)[0] == "check"
+
+
+def test_a_digit_led_code_is_found_when_it_is_the_full_product_code(family_text):
+    assert _verdict(family_text, "75-RG", "75-RG")[0] == "found"
+
+
+def test_the_full_product_code_printed_is_found(family_text):
+    assert _verdict(family_text, "SRTKT61SS", "SRTKT61SS")[0] == "found"
+    assert _verdict(family_text, None, "SRTKT61SS")[0] == "found"
+
+
+def test_no_code_digit_led_piece_is_check(family_text):
+    assert _verdict(family_text, None, "M32SS-CP")[0] == "check"
+    assert _verdict(family_text, None, "M459A-75-RG")[0] == "check"
+
+
+@pytest.mark.parametrize(
+    "code,product_code,expect",
+    [
+        ("75rg", "M459-75-RG", True),  # preceded by a digit across a dash: a new segment, not "preceded"
+        ("11c", "BRD77-11C", True),
+        ("11c", "BRD7711CP", False),  # same segment: still preceded
+        ("14", "CSK14-0", True),  # followed across a dash: segment end
+    ],
+)
+def test_the_boundary_respects_dash_segments(code, product_code, expect):
+    from app.services.certificate_link_check import on_boundary
+
+    assert on_boundary(code, product_code) is expect
+
+
+def test_a_confirmed_link_with_no_code_reads_found(family_text):
+    """Crew re-check: SRTWB241 on PPS 04424FC prints `WB 241`; Confirm left it at Check because the
+    no-code branch ignored `source`."""
+    from app.services.certificate_link_check import verdict
+
+    assert verdict(family_text, model_code=None, model_code_source=None, product_code="SRTWB241", source="manual")[0] == "found"
+    assert verdict(family_text, model_code=None, model_code_source=None, product_code="M459A-75-RG", source="manual")[0] == "found"
+    # Still needs something of the product code printed.
+    assert verdict(family_text, model_code=None, model_code_source=None, product_code="BRD7711CP", source="manual")[0] == "not_found"
