@@ -74,6 +74,7 @@ import {
   cardElementsFor,
   cardElementsForDesign,
   cardIconLayout,
+  cardTextBox,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -441,6 +442,7 @@ function LayerContent({
           cardIcons={display?.cardIcons}
           iconUrls={display?.iconUrls}
           headerHidden={display?.accessoryHeaderHidden}
+          dropMarker={display?.accessoryDropMarker}
         />
       );
 
@@ -1188,6 +1190,7 @@ function AccessoriesContent({
   cardIcons,
   iconUrls,
   headerHidden,
+  dropMarker,
 }: {
   w: number;
   h: number;
@@ -1201,6 +1204,7 @@ function AccessoriesContent({
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
   headerHidden?: boolean;
+  dropMarker?: boolean;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1219,6 +1223,7 @@ function AccessoriesContent({
         cardIcons={cardIcons}
         iconUrls={iconUrls}
         headerHidden={headerHidden}
+        dropMarker={dropMarker}
       />
     );
   }
@@ -1369,6 +1374,7 @@ function DesignedAccessoriesContent({
   cardIcons,
   iconUrls,
   headerHidden,
+  dropMarker,
 }: {
   w: number;
   h: number;
@@ -1381,6 +1387,7 @@ function DesignedAccessoriesContent({
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
   headerHidden?: boolean;
+  dropMarker?: boolean;
 }) {
   // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
   const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
@@ -1407,7 +1414,7 @@ function DesignedAccessoriesContent({
   const headerNode = !headerHidden && box.header && (
     <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
   );
-  return (
+  const content = (
     <>
       {box.frame && (
         <Rect
@@ -1490,6 +1497,48 @@ function DesignedAccessoriesContent({
       )}
     </>
   );
+  return (
+    <>
+      {/* TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on print. */}
+      {box.clipped ? (
+        <Group clipX={0} clipY={0} clipWidth={w} clipHeight={h}>
+          {content}
+        </Group>
+      ) : (
+        content
+      )}
+      {/* Q2: editor only (never print): how many accessories the box has no room for. */}
+      {dropMarker && box.dropped > 0 && <DropMarker w={w} h={h} dropped={box.dropped} />}
+    </>
+  );
+}
+
+/** TAG-ACC-CARD-RESIZE Q2: the "+N" chip in the box's bottom-right corner, editor canvas only. */
+function DropMarker({ w, h, dropped }: { w: number; h: number; dropped: number }) {
+  const label = `+${dropped}`;
+  const fontSize = Math.max(8, Math.min(11, h / 4));
+  const chipW = fontSize * (0.65 * label.length + 0.9);
+  const chipH = fontSize * 1.5;
+  return (
+    <Group
+      x={Math.max(0, w - chipW - 2)}
+      y={Math.max(0, h - chipH - 2)}
+      listening={false}
+      name="accessory-drop-marker"
+    >
+      <Rect width={chipW} height={chipH} fill="#f59e0b" cornerRadius={chipH / 2} />
+      <Text
+        width={chipW}
+        height={chipH}
+        text={label}
+        align="center"
+        verticalAlign="middle"
+        fontStyle="bold"
+        fontSize={fontSize}
+        fill="#ffffff"
+      />
+    </Group>
+  );
 }
 
 /** One resolved card (or footer) element at `factor` (the card's shrink), `scale` px per mm. */
@@ -1509,8 +1558,6 @@ function CardElementNode({
   const px = (mm: number) => mm2px(mm * factor, scale);
   const x = px(element.x_mm);
   const y = px(element.y_mm);
-  const wMm = element.width_mm * factor;
-  const hMm = element.height_mm * factor;
   switch (element.kind) {
     case 'picture':
       if (element.placeholder) {
@@ -1539,19 +1586,33 @@ function CardElementNode({
           />
         </Group>
       );
-    case 'text':
+    case 'text': {
+      // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as print).
+      const boxed = cardTextBox(element, factor);
+      const mm = (value: number) => mm2px(value, scale);
       return (
         <Group x={x} y={y}>
-          <CardTextNode
-            element={element}
-            widthMm={wMm}
-            heightMm={hMm}
-            factor={factor}
-            scale={scale}
-            boxFont={boxFont}
-          />
+          {boxed.background && (
+            <Rect
+              width={mm(boxed.background.width_mm)}
+              height={mm(boxed.background.height_mm)}
+              fill={boxed.background.fill}
+              cornerRadius={mm(boxed.background.radius_mm)}
+            />
+          )}
+          <Group x={mm(boxed.text.x_mm)} y={mm(boxed.text.y_mm)}>
+            <CardTextNode
+              element={element}
+              widthMm={boxed.text.width_mm}
+              heightMm={boxed.text.height_mm}
+              factor={factor}
+              scale={scale}
+              boxFont={boxFont}
+            />
+          </Group>
         </Group>
       );
+    }
     case 'feature_icons': {
       // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
       const icons = element.icons ?? [];

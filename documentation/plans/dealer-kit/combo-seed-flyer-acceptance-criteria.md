@@ -67,8 +67,8 @@ the owner's answers.
   (`host discontinued`); its combo loads. Rule: owner, 7 Nov ~21:30-21:50 (price tag flow: discontinued items stay
   selectable with the Discontinued hint, a discontinued fixed part warns only, dealers still sell discontinued
   stock), relayed by crew 9 Nov; it supersedes `CARD-pricetag-combo-render-04nov.md:109-110` for combos.
-- AC-15c A free product that is already a part of the combo on file is left off the free list and named
-  (`already a part: <code>`); it never fails the host.
+- AC-15c A free product that is also a part of the combo loads as that product on the free list, and the
+  part stays a part (COMBO-FREE-PART, owner 9 Nov, `PLAN-combo-free-part-09nov.md`); it never fails the host.
 
 ## Description
 

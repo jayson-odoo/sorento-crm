@@ -32,7 +32,12 @@ Three things can move a line's quantity, date or product after CS has already pl
 All three build the exact same before-and-after comparison and raise the same kinds of change:
 qty up, qty down, date advanced (earlier), date delayed (later), line cancelled, line added, and
 product changed (one product swapped for another on the same line, shown as a single row -
-"Product changed, was &lt;old product&gt;" - never a cancelled-plus-added pair).
+"Product changed, was &lt;old product&gt;" - never a cancelled-plus-added pair), and location
+changed (AutoCount moved the line to another location).
+
+A line that sits at another location than the one it was last confirmed at carries that move with
+its next change, even when the move itself came earlier: a date change on it shows the
+**Location** Was / Now beside the **Date**.
 
 **A line nobody has decided on yet raises nothing.** If the line isn't held inside an active
 decision and has no Order Inquiry row against it, the order simply shows its new value with no
@@ -54,6 +59,8 @@ Open the **Changed** badge (or find the order on Fulfilment Planning). Each chan
   there's nothing left to deliver).
 * A product-changed line prints "Product changed, was &lt;old product&gt;" above its own
   suggestion.
+* A line whose location moved prints a **Location** row: Was is where it was last confirmed,
+  Now is where AutoCount has it.
 
 ## Confirm or Amend, nothing else
 
@@ -84,6 +91,9 @@ will say, line for line:
 * A line delivered in full that AutoCount still changed (for example a new date) shows the old
   date under **Delivery date** and the new one under **New date**, the same Was and Now the email
   prints.
+* A line whose location moved shows the old location under **Location** and the new one under
+  **New location**, as the email and its Excel print them; its remark ends "NEW LOCATION (was
+  &lt;old location&gt;)".
 * A line delivered in full still goes to purchasing on Confirm: the board plans it at its
   ordered quantity, so its row shows your saved decision's words like any other saved line.
   Only when the email holds nothing for it does the row say "Delivered in full: nothing goes to

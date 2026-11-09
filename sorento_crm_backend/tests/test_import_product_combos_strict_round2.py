@@ -78,7 +78,9 @@ def test_ac_15b_discontinued_host_still_creates_with_a_note(db, tmp_path):
     assert len(_combos(db, "ZZQH3", "Pack")) == 1
 
 
-def test_ac_15c_free_item_that_is_already_a_part_is_skipped_not_failed(db, tmp_path):
+def test_ac_15c_free_item_that_is_already_a_part_is_loaded_as_that_product(db, tmp_path):
+    """COMBO-FREE-PART (owner, 9 Nov): a part may also be the free item, so it is no longer
+    skipped with an "already a part" note."""
     _prod(db, "ZZQH4")
     p = _prod(db, "ZZQP4")
     with company_scope(db, None):
@@ -96,10 +98,15 @@ def test_ac_15c_free_item_that_is_already_a_part_is_skipped_not_failed(db, tmp_p
     ]
     _, out = _run(db, tmp_path, entries, apply=True)
     verdict, _h, _n, _p, details = _line(out, "Pack")
-    assert verdict == "UPDATE" and "already a part: ZZQP4" in details
+    assert verdict == "UPDATE" and "already a part" not in details
     with company_scope(db, None):
-        rows = db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).all()
-        assert [(r.item_product_id, r.accessory_id) for r in rows] == [(None, lib_id)]
+        rows = (
+            db.query(ProductComboAccessory)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+        assert [(r.item_product_id, r.accessory_id) for r in rows] == [(p.id, None), (None, lib_id)]
     assert len(_combos(db, "ZZQH4", "Second")) == 1
 
 

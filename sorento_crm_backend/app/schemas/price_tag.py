@@ -1387,6 +1387,11 @@ class TagAccessory(BaseModel):
     colours: list[TagAccessoryColour] = []
     code: Optional[str] = None
     list_price: Optional[float] = None
+    #: TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for the viewer (null = none), its
+    #: spec lines and its own price tag description, which a card's `{{product.*}}` fields read.
+    sell_price: Optional[float] = None
+    spec_lines: Optional[list[str]] = None
+    price_tag_description: Optional[str] = None
 
 
 class TagComboOption(BaseModel):

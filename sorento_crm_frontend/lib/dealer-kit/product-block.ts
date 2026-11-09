@@ -1351,6 +1351,8 @@ export interface TagLayerDisplay {
   iconUrls?: Record<string, string>;
   /** PRICETAG-HEADER-DRAG: the header is being dragged; the drag handle draws it, the box does not. */
   accessoryHeaderHidden?: boolean;
+  /** TAG-ACC-CARD-RESIZE Q2: the editor canvas draws a "+N" chip for the cards a box has no room for. */
+  accessoryDropMarker?: boolean;
 }
 
 /**
