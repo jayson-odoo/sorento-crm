@@ -36,13 +36,15 @@ S4. `POST /grant` `{company, account_ids[1..10], people[1..20]: {name, phone, ro
     `also has access through another account` when the plan said so.
 S5. `PUT /people/{contact_id}` `{company, role, account_ids}`: the contact must be one I may change
     (`writes.contact_in_scope`), else 404 (no oracle). `account_ids` must all be my own accounts of `company`
-    (else 422 `Pick one of your accounts.`). The change goes through the #2268 access update
-    (`writes._contact_execute`) with `link_customer_ids` = picked accounts not yet linked, `unlink_customer_ids` =
-    my own accounts of that company linked now but not picked, and `role` only when it differs from the row's
-    current access. Its refusals come back as 422 with the service's own text (C3/A14 `ask the office`, C4 AI
+    (else 422 `Pick one of your accounts.`). Picked accounts not yet linked are added through the #2268 GRANT
+    (`contact_grant._execute`, role `employee`, add-only: it never removes an owner tag, and on a shared contact
+    writes only the additive facets, A13), the only way an edit_own holder links in #2268. Then my own accounts of
+    that company linked now but not picked (`unlink_customer_ids`) and `role` (only when it differs from the row's
+    current access) go through the #2268 access update (`writes._contact_execute`). `writes.py` is not changed: no
+    flag lets the access update link for an edit_own holder. Its refusals come back as 422 with the service's own text (C3/A14 `ask the office`, C4 AI
     replies off when the last link goes). An empty `account_ids` is refused `Pick one of your accounts.` (unlink is
     the row action).
-S6. Unlink is the server-deferred record action `dealer_access.unlink` (entity type `dealer_access_link`, entity id =
+S6. Unlink is the server-deferred record action `dealer_access_link.unlink` (entity type `dealer_access_link`, entity id =
     the `respond_contact_customers` row id, window reversible), permission `user_management.contacts.edit_own`.
     At park time and at commit the link must be one of MY own accounts' links of a contact I may change, else 404.
     The commit runs the #2268 access update with `unlink_customer_ids=[customer_id]` as the requester (audit actor
