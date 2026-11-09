@@ -18,7 +18,8 @@ owner tag. A contact under another salesperson's dealer shows only under my acco
 
 ## Design (simplest thing that works)
 
-No migration, no new table, no second write path.
+No migration, no new table, no second write path. Review round: `writes._users_scope` reads every granted company
+(a #2268 fix, S8); the screen narrows a role change to the row's company (S5).
 
 Backend
 1. `app/services/dealer_access_screen.py`: `my_accounts`, `list_people` (reads only), `grant` (validates every row
@@ -27,7 +28,7 @@ Backend
    comes from `app.dependencies._load_user_dict_from_db`, under `company_scope_resolver.grants_scope`.
 2. Routes `app/api/v1/sales/dealer_access.py` (mounted in `app/api/v1/sales/__init__.py`), each
    `require_permission("user_management.contacts.edit_own")`.
-3. Record action `dealer_access.unlink` in `app/services/record_actions.py`, park-time visibility in
+3. Record action `dealer_access_link.unlink` in `app/services/record_actions.py`, park-time visibility in
    `app/api/v1/system/pending_actions.py` `_assert_entity_visible`.
 4. #2268 minor: `loop._previous_waiting` returns the immediately preceding turn's `batch_typed` even when that turn
    left no row waiting (M1).

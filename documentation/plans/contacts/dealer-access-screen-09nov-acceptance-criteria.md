@@ -41,7 +41,11 @@ S5. `PUT /people/{contact_id}` `{company, role, account_ids}`: the contact must 
     writes only the additive facets, A13), the only way an edit_own holder links in #2268. Then my own accounts of
     that company linked now but not picked (`unlink_customer_ids`) and `role` (only when it differs from the row's
     current access) go through the #2268 access update (`writes._contact_execute`). `writes.py` is not changed: no
-    flag lets the access update link for an edit_own holder. Its refusals come back as 422 with the service's own text (C3/A14 `ask the office`, C4 AI
+    flag lets the access update link for an edit_own holder. The level is per company: a role change on a row
+    adds or removes only THAT company's owner tag and owner types (security review, 9 Nov: the agent tool moves the
+    tags of every company the contact belongs to; the screen narrows it to the row's company, the agent is
+    unchanged). Known limit: the grant step commits before the access update runs; both are planned first, so only
+    a concurrent change between the two can leave the link added and the role unchanged. Its refusals come back as 422 with the service's own text (C3/A14 `ask the office`, C4 AI
     replies off when the last link goes). An empty `account_ids` is refused `Pick one of your accounts.` (unlink is
     the row action).
 S6. Unlink is the server-deferred record action `dealer_access_link.unlink` (entity type `dealer_access_link`, entity id =
@@ -49,6 +53,14 @@ S6. Unlink is the server-deferred record action `dealer_access_link.unlink` (ent
     At park time and at commit the link must be one of MY own accounts' links of a contact I may change, else 404.
     The commit runs the #2268 access update with `unlink_customer_ids=[customer_id]` as the requester (audit actor
     the requester), so C4 (last link turns AI replies off) applies. No confirm dialog.
+S8. Two-company salesperson (review blocker, 9 Nov): own accounts, scope and "another account" are read over ALL
+    the user's granted companies, never only the active one (`writes._users_scope`, the #2268 UAC's own definition).
+    With Sorento active, a person linked only to my Mocha account can be edited and unlinked; a person linked to my
+    Sorento and my Mocha accounts is not "another account" (promote allowed, `other_account` false), in the screen
+    and in the agent alike.
+S9. Known limit of S4: every row is planned before any is written, then each row commits on its own
+    (`contact_grant._execute`); only a concurrent change between plan and execute can leave earlier rows written.
+
 S7. One write path: the routes call only `contact_grant.plan` / `contact_grant._execute` and
     `writes._contact_plan` / `writes._contact_execute` for writes; no route writes a contact, link, tag or access
     type itself.
@@ -61,7 +73,7 @@ F2. Portal list layout per mock v3 state 1: PageHeader (title only), ListSearchI
     "Add people" on the right. DataGrid columns Person, Phone, Company, My accounts (PillOverflow), Access (owner tag
     pill, or "Employee"; "also another account" when `other_account`), row menu. Fixed layout, resizable,
     explicit sizes, truncate + title. At 375px the portal card list.
-F3. Row menu: Edit, then "Unlink from" one item per own account, red, last. Unlink parks `dealer_access.unlink`
+F3. Row menu: Edit, then "Unlink from" one item per own account, red, last. Unlink parks `dealer_access_link.unlink`
     with the deferred row countdown (no dialog, Cancel).
 F4. Add people modal (portal form look): Company (SearchableSelect, my companies, hidden when I have one), My
     accounts (SearchableMultiSelect of `GET /accounts`, clearable, nothing pre-ticked), People rows (name,
@@ -74,6 +86,7 @@ F7. No UUID shown anywhere.
 
 ## M. #2268 minor (agent)
 
-M1. A grant row READY on the immediately preceding (undecided) card, re-sent by the model on an `all` answer, keeps
+M1. A grant row READY on the immediately preceding card while it is still undecided (its action `proposed`; a
+    confirmed or cancelled card carries nothing), re-sent by the model on an `all` answer, keeps
     that card's verified company and typed name (A17/A18 hold for every row of the last table, waiting or not): no
     `Say which company...` when the customer is resolved and the company was typed one message earlier.
