@@ -166,3 +166,31 @@ export async function replaceOwnerAccessories(
   const body = (await res.json()) as { data?: AccessoryEntry[]; box_style_id?: string | null };
   return withBoxStyle(body.data ?? [], body.box_style_id);
 }
+
+/** What a copy did (or, with `dryRun`, would do): ACC-COPY-TO-PRODUCTS. */
+export interface AccessoryCopySummary {
+  targets: number;
+  targets_with_a_list: number;
+  entries_added: number;
+  entries_already_there: number;
+  box_style_set: number;
+}
+
+/**
+ * Add this product's entries to the picked products: each keeps its own list and gets the
+ * entries it is missing at the end; the box style goes to products with none. One transaction.
+ * `dryRun` answers the same summary and writes nothing (the confirm step).
+ */
+export async function copyProductAccessories(
+  sourceId: string,
+  targetIds: string[],
+  dryRun = false,
+): Promise<AccessoryCopySummary> {
+  const res = await apiFetch(`${ownerPath('product', sourceId)}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_product_ids: targetIds, dry_run: dryRun }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to copy the accessories'));
+  return (await res.json()) as AccessoryCopySummary;
+}
