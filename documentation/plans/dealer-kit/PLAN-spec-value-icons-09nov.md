@@ -1,7 +1,7 @@
 # PLAN: show each spec value's price-tag icons on the product Specifications tab (SPEC-VALUE-ICONS, 9 Nov)
 
-Status: card filed, waiting on owner answers. Track: small fix track (expected diff well under 300
-lines, no migration, no auth/RBAC change if Q3 is answered (a), no new ingest surface).
+Status: owner answered 9 Nov ~14:25; building (PR #2279). Track: small fix track (expected diff
+well under 300 lines, no migration, no auth/RBAC change, no new ingest surface).
 
 Owner, 9 Nov ~13:55 MYT, on product detail > Specifications: "think it will be good if I can view
 the icon here ... like for Mixer, there are icons tied to this spec value, if I can view here then
@@ -42,8 +42,10 @@ R3. A row whose value carries no icon shows nothing (no placeholder, no "No icon
 R4. Clicking an icon opens that spec key's record (Master Data > Product Specifications > key),
     where the icon is actually set, for a user holding `dealer_kit.library.manage`; others get the
     tooltip only.
-R5. While a value is being edited the icons stay those of the saved value; after save they follow
-    the new value.
+R5. While a row is in edit its icons are hidden (the editor needs the width); after save they
+    follow the new saved value.
+R6. Only a user holding `dealer_kit.tag_templates.view` sees icons; for anyone else the list is
+    never fetched and the table is exactly as before.
 
 ### Examples (illustrative: the dev DB is not reachable from this cloud sandbox)
 
@@ -69,7 +71,13 @@ R5. While a value is being edited the icons stay those of the saved value; after
 - Template without a feature_icons layer: the tab still shows the value's icons; whether a given
   template draws them is the template's choice.
 
-## Questions for the owner
+## Owner rulings (9 Nov ~14:25)
+
+1a inline after the value. 2a click opens the spec key's record, for `dealer_kit.library.manage`
+holders; others get the tooltip only. 3a only `dealer_kit.tag_templates.view` holders see icons (no
+RBAC change). 4a static warranty / anti-bac not shown. 5a nothing when a value has no icon.
+
+## Questions for the owner (answered above)
 
 1. Placement: inline after the value (rec) or a narrow Icons column? Rec: inline, keeps the table
    at 3 columns and fits 375px.
