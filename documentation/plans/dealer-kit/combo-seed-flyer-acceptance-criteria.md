@@ -94,3 +94,21 @@ the owner's answers.
 - AC-21 On a throwaway copy of the dev DB, after `--apply`, 3 combos per family (bathtub, water closet, urinal,
   bathroom furniture, kitchen sink) open in the product page's Combos card with the flyer's name, prices, bold
   description, parts (fixed / choice / upgrade) and free items.
+
+## Follow-up 2: remove the duplicates the first prod apply made (crew, 9 Nov ~22:55)
+
+The owner applied the seed WITHOUT aka, so on each paired host the flyer-named combo may now sit beside his own.
+Script `scripts/oneoff/remove_flyer_seed_duplicates.py` (`--file` a seed with aka, `--company` SRT, `--apply`).
+
+- AC-D1 Pairs come from the seed: every entry with `aka` gives (host, flyer combo name, aka names).
+- AC-D2 One line per pair: `VERDICT | host | flyer name | owner: <names on file> | details`, then counts. VERDICT is
+  DELETE (would delete / deleted), KEEP (a duplicate exists but is not provably the seed's, reason given), NO DUPLICATE,
+  or NO OWNER COMBO (the flyer combo is the only one: it is legitimate and stays).
+- AC-D3 A flyer-named combo is DELETE only when ALL hold: an owner combo with an aka name exists on the same host; the
+  flyer combo's `created_by` is NULL; it has an audit row of its creation by job `import_product_combos`; every audit
+  row on it is by that job (nobody touched it since); no price tag request line and no tag template link points at it.
+  Anything else is KEEP with the failed condition named. The owner's combos are never deleted or changed.
+- AC-D4 Without `--apply` nothing is written (the transaction is read only). `--apply` deletes through the combo
+  service (parts, free items cascade); existing audit rows stay and the delete itself is audited (job
+  `remove_flyer_seed_duplicates`). A second run reads NO DUPLICATE for every pair it deleted (idempotent).
+- AC-D5 Only the --company's hosts are read or touched.
