@@ -6,15 +6,21 @@
  * the box, with snapping guides; the text rides with the pointer (the box hides its own header for the
  * drag) and the drop is stored as `headerPos` in box millimetres, the spot every render (canvas,
  * preview, print) reads through `accessoryChrome`.
+ *
+ * Round 2 (owner 9 Nov ~17:00, "resize it like a normal design component"): a click selects the
+ * header, and a selected header gets the canvas's usual Transformer handles (no rotation: it turns
+ * with its box). A resize is stored as the band's position + size, in box millimetres.
  */
-import { useState } from 'react';
-import { Group, Line, Rect, Text } from 'react-konva';
+import { useEffect, useRef, useState } from 'react';
+import { Group, Line, Rect, Text, Transformer } from 'react-konva';
 import type Konva from 'konva';
 import { accessoryHeaderStyle, ptToMm, type AccessoryRect } from '@/lib/dealer-kit/accessory-box';
 import { snapHeader, type ElementGuide } from '@/lib/dealer-kit/accessory-card';
 import type { AccessoriesLayerProps, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
 const round = (mm: number) => Math.round(mm * 100) / 100;
+/** The smallest band a resize can leave (mm), so a header is never lost under a 0 mm box. */
+const MIN_MM = 2;
 
 /** Only the main button's press belongs to the header: a middle-button press still pans the canvas. */
 const mainButton = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) =>
@@ -28,6 +34,9 @@ export function HeaderDragOverlay({
   boxWidth_mm,
   boxHeight_mm,
   scale,
+  selected = false,
+  onSelect,
+  onResize,
   onDragState,
   onMove,
 }: {
@@ -41,12 +50,24 @@ export function HeaderDragOverlay({
   boxHeight_mm: number;
   /** Canvas pixels per millimetre. */
   scale: number;
+  /** The header itself is selected (not just its box): it shows resize handles. */
+  selected?: boolean;
+  onSelect?: () => void;
+  onResize?: (rect: { x_mm: number; y_mm: number; width_mm: number; height_mm: number }) => void;
   /** True while the header is being dragged (the box then hides its own header text). */
   onDragState?: (dragging: boolean) => void;
   onMove: (pos: { x_mm: number; y_mm: number }) => void;
 }) {
   const [guides, setGuides] = useState<ElementGuide[]>([]);
   const [dragging, setDragging] = useState(false);
+  const handleRef = useRef<Konva.Group>(null);
+  const trRef = useRef<Konva.Transformer>(null);
+  useEffect(() => {
+    const tr = trRef.current;
+    if (!tr || !handleRef.current) return;
+    tr.nodes([handleRef.current]);
+    tr.getLayer()?.batchDraw();
+  }, [selected, text.x_mm, text.y_mm, text.width_mm, text.height_mm]);
   const props = layer.props as AccessoriesLayerProps;
   const style = accessoryHeaderStyle(props);
   const area = { width_mm: boxWidth_mm, height_mm: boxHeight_mm };
@@ -63,6 +84,7 @@ export function HeaderDragOverlay({
   return (
     <Group x={layer.x_mm * scale} y={layer.y_mm * scale} rotation={layer.rotation_deg || 0}>
       <Group
+        ref={handleRef}
         name="accessory-header-handle"
         x={text.x_mm * scale}
         y={text.y_mm * scale}
@@ -83,13 +105,17 @@ export function HeaderDragOverlay({
           e.cancelBubble = true;
         }}
         onClick={(e) => {
-          if (mainButton(e)) e.cancelBubble = true;
+          if (!mainButton(e)) return;
+          e.cancelBubble = true;
+          onSelect?.();
         }}
         onTap={(e) => {
           e.cancelBubble = true;
+          onSelect?.();
         }}
         onDragStart={(e) => {
           e.cancelBubble = true;
+          onSelect?.();
           setDragging(true);
           onDragState?.(true);
         }}
@@ -102,6 +128,15 @@ export function HeaderDragOverlay({
         onDragEnd={(e) => {
           e.cancelBubble = true;
           drop(e.target.x(), e.target.y());
+        }}
+        onTransformEnd={(e) => {
+          e.cancelBubble = true;
+          const node = e.target;
+          const width_mm = Math.max(MIN_MM, round((text.width_mm * node.scaleX())));
+          const height_mm = Math.max(MIN_MM, round((text.height_mm * node.scaleY())));
+          node.scaleX(1);
+          node.scaleY(1);
+          onResize?.({ x_mm: round(node.x() / scale), y_mm: round(node.y() / scale), width_mm, height_mm });
         }}
       >
         <Rect
@@ -142,6 +177,17 @@ export function HeaderDragOverlay({
           listening={false}
         />
       ))}
+      {selected && (
+        <Transformer
+          ref={trRef}
+          rotateEnabled={false}
+          flipEnabled={false}
+          ignoreStroke
+          boundBoxFunc={(oldBox, newBox) =>
+            newBox.width < MIN_MM * scale || newBox.height < MIN_MM * scale ? oldBox : newBox
+          }
+        />
+      )}
     </Group>
   );
 }

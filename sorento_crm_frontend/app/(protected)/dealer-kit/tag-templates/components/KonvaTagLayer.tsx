@@ -1247,22 +1247,36 @@ function AccessoriesContent({
   const header = accessoryHeaderStyle(props);
   // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
   const headerNode = !headerHidden && box.header && (
-    <Text
-      x={px(box.header.x_mm)}
-      y={px(box.header.y_mm)}
-      width={px(box.header.width_mm)}
-      height={px(box.header.height_mm)}
-      text={props.headerText}
-      align={box.header.onBorder || box.header.moved ? 'center' : header.align}
-      verticalAlign="middle"
-      fontStyle={konvaFontStyle(header)}
-      textDecoration={konvaDecoration(header)}
-      fontFamily={header.fontFamily ?? undefined}
-      letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-      fontSize={px(ptToMm(box.header.fontSize_pt))}
-      fill={header.color}
-      wrap="none"
-    />
+    <>
+      {/* The band's background (round 2), or the legend break behind a header on the border. */}
+      {box.header.fill && (
+        <Rect
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          fill={box.header.fill}
+          cornerRadius={px(box.header.radius_mm)}
+        />
+      )}
+      <Text
+        x={px(box.header.x_mm + box.header.padding.left)}
+        y={px(box.header.y_mm + box.header.padding.top)}
+        width={px(Math.max(0, box.header.width_mm - box.header.padding.left - box.header.padding.right))}
+        height={px(Math.max(0, box.header.height_mm - box.header.padding.top - box.header.padding.bottom))}
+        text={props.headerText}
+        align={box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : header.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(header)}
+        textDecoration={konvaDecoration(header)}
+        fontFamily={header.fontFamily ?? undefined}
+        letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(box.header.fontSize_pt))}
+        fill={header.color}
+        wrap={box.header.wrap ? 'word' : 'none'}
+        lineHeight={box.header.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+      />
+    </>
   );
   return (
     <>
@@ -1275,16 +1289,6 @@ function AccessoriesContent({
           stroke={props.stroke}
           strokeWidth={px(props.strokeWidth_mm)}
           cornerRadius={px(props.cornerRadius_mm)}
-        />
-      )}
-      {!headerHidden && box.header?.onBorder && (
-        // Breaks the border behind a header that sits on it (legend style).
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
         />
       )}
       {!box.header?.moved && headerNode}
@@ -1416,22 +1420,36 @@ function DesignedAccessoriesContent({
   const shownItems = items.slice(0, box.shown);
   // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
   const headerNode = !headerHidden && box.header && (
-    <Text
-      x={px(box.header.x_mm)}
-      y={px(box.header.y_mm)}
-      width={px(box.header.width_mm)}
-      height={px(box.header.height_mm)}
-      text={props.headerText}
-      align={box.header.onBorder || box.header.moved ? 'center' : header.align}
-      verticalAlign="middle"
-      fontStyle={konvaFontStyle(header)}
-      textDecoration={konvaDecoration(header)}
-      fontFamily={header.fontFamily ?? undefined}
-      letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-      fontSize={px(ptToMm(box.header.fontSize_pt))}
-      fill={header.color}
-      wrap="none"
-    />
+    <>
+      {/* The band's background (round 2), or the legend break behind a header on the border. */}
+      {box.header.fill && (
+        <Rect
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          fill={box.header.fill}
+          cornerRadius={px(box.header.radius_mm)}
+        />
+      )}
+      <Text
+        x={px(box.header.x_mm + box.header.padding.left)}
+        y={px(box.header.y_mm + box.header.padding.top)}
+        width={px(Math.max(0, box.header.width_mm - box.header.padding.left - box.header.padding.right))}
+        height={px(Math.max(0, box.header.height_mm - box.header.padding.top - box.header.padding.bottom))}
+        text={props.headerText}
+        align={box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : header.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(header)}
+        textDecoration={konvaDecoration(header)}
+        fontFamily={header.fontFamily ?? undefined}
+        letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(box.header.fontSize_pt))}
+        fill={header.color}
+        wrap={box.header.wrap ? 'word' : 'none'}
+        lineHeight={box.header.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+      />
+    </>
   );
   return (
     <>
@@ -1444,15 +1462,6 @@ function DesignedAccessoriesContent({
           stroke={props.stroke}
           strokeWidth={px(props.strokeWidth_mm)}
           cornerRadius={px(props.cornerRadius_mm)}
-        />
-      )}
-      {!headerHidden && box.header?.onBorder && (
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
         />
       )}
       {!box.header?.moved && headerNode}

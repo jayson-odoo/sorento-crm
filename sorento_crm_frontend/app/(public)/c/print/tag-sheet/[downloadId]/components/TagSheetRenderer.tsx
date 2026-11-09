@@ -71,6 +71,7 @@ import {
   accessoryLineCount,
   accessoryLineStyle,
   fitLinePt,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
@@ -1348,6 +1349,35 @@ function renderFeatureIconsLayer(
 }
 
 /**
+ * PRICETAG-HEADER-DRAG round 2: the header band's box CSS, matching the canvas (`KonvaTagLayer`):
+ * corners, padding inside the band, and the text as one line (unresized: shrunk to fit by the
+ * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized). Nothing extra is
+ * set for a header with no stored style, so it prints as before.
+ */
+function headerBoxCss(
+  header: NonNullable<AccessoryBoxLayout['header']>,
+  lineHeight: number | undefined,
+): CSSProperties {
+  const { top, right, bottom, left } = header.padding;
+  const padded = top > 0 || right > 0 || bottom > 0 || left > 0;
+  const innerH = Math.max(0, header.height_mm - top - bottom);
+  return {
+    ...(header.radius_mm > 0 ? { borderRadius: `${header.radius_mm}mm` } : {}),
+    ...(padded ? { padding: `${top}mm ${right}mm ${bottom}mm ${left}mm`, boxSizing: 'border-box' as const } : {}),
+    ...(header.wrap
+      ? {
+          whiteSpace: 'normal' as const,
+          lineHeight: lineHeight ?? 1,
+          display: 'flex',
+          flexDirection: 'column' as const,
+          justifyContent: 'center',
+          overflow: 'hidden',
+        }
+      : { whiteSpace: 'nowrap' as const, lineHeight: `${innerH}mm` }),
+  };
+}
+
+/**
  * PRICETAG-ACCESSORIES: the "Accessories" box, laid out by `accessoryBoxLayout` - the SAME function
  * the editor canvas and the request preview draw with (card rule A10). No list, or nothing fits:
  * nothing at all prints, not even the frame (A7). Font sizes are points, positions millimetres.
@@ -1387,13 +1417,14 @@ function renderAccessoriesLayer(
         top: `${box.header.y_mm}mm`,
         width: `${box.header.width_mm}mm`,
         height: `${box.header.height_mm}mm`,
-        lineHeight: `${box.header.height_mm}mm`,
-        // On the border: the header background breaks the border behind the text (legend).
-        backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
-        ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
+        // The band's background (round 2), or the legend break behind a header on the border.
+        backgroundColor: box.header.fill ?? undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
         fontSize: `${box.header.fontSize_pt}pt`,
-        // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
-        whiteSpace: 'nowrap',
       }}
       data-testid="accessories-header"
     >
@@ -1545,11 +1576,13 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
         top: `${box.header.y_mm}mm`,
         width: `${box.header.width_mm}mm`,
         height: `${box.header.height_mm}mm`,
-        lineHeight: `${box.header.height_mm}mm`,
-        backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
-        ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
+        backgroundColor: box.header.fill ? safeColour(box.header.fill) : undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
         fontSize: `${box.header.fontSize_pt}pt`,
-        whiteSpace: 'nowrap',
       }}
       data-testid="accessories-header"
     >

@@ -20,8 +20,15 @@ import {
   accessoryLineStyle,
   itemLayoutOf,
   type AccessoryLineStyle,
+  type AccessoryRect,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardBoxLayout, cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
+import {
+  cardBoxLayout,
+  cardDropped,
+  cardFromLegacy,
+  colourDotLayout,
+  headerResetPatch,
+} from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -286,6 +293,9 @@ interface InspectorPanelProps {
   onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
   /** S6: "Box style from <product or combo>: <name>" while previewing an owner that overrides the box. */
   accessoryBoxStyleNote?: string | null;
+  /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
+   *  header inspector replaces the box one, as the element inspector does in card editing. */
+  accessoryHeaderSelected?: AccessoryRect | null;
 }
 
 export function InspectorPanel({
@@ -325,6 +335,7 @@ export function InspectorPanel({
   accessoryEdit,
   onUpdateAccessoryElement,
   accessoryBoxStyleNote,
+  accessoryHeaderSelected,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -415,7 +426,18 @@ export function InspectorPanel({
         </span>
       </div>
       <ScrollArea className="flex-1">
-        {layer.props.kind === 'accessories' &&
+        {layer.props.kind === 'accessories' && accessoryHeaderSelected ? (
+          <div className="flex flex-col gap-4 p-3">
+            <AccessoryHeaderInspector
+              props={layer.props}
+              rect={accessoryHeaderSelected}
+              usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+            />
+          </div>
+        ) : layer.props.kind === 'accessories' &&
         accessoryEdit &&
         accessoryEdit.layerId === layer.id &&
         accessoryEdit.elementId ? (
@@ -2320,10 +2342,11 @@ function AccessoriesInspector({
               variant="outline"
               size="sm"
               className="h-7 self-start text-xs"
-              // Removes the key: a reset box saves exactly like one never moved (same design key).
-              onClick={() => onChange({ headerPos: undefined })}
+              // Round 2: position, size and style back to the default look; the keys go (undefined),
+              // so a reset box saves exactly like one never touched (same design key).
+              onClick={() => onChange(headerResetPatch())}
             >
-              Reset header position
+              Reset header
             </Button>
           )}
           {showFrame && !props.headerPos && (
@@ -2387,6 +2410,146 @@ function AccessoriesInspector({
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Accessories box header, selected as an element (PRICETAG-HEADER-DRAG round 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The box's header as a normal design element (owner 9 Nov ~17:00): its text, the shared
+ * TypographyControls a text layer uses (font, size, B/I/U/S, weight, colour, alignment, line height,
+ * padding), a Background ColorPicker (its Transparent swatch is "none"), Corner Radius and X / Y / W /
+ * H, as the shape and Transform sections offer them. A size, position or padding typed on a header
+ * still at its computed spot pins it there first, so nothing jumps.
+ */
+function AccessoryHeaderInspector({
+  props,
+  rect,
+  usedColours,
+  fontOptions,
+  onUploadFont,
+  onChange,
+}: {
+  props: AccessoriesLayerProps;
+  rect: AccessoryRect;
+  usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
+  onChange: (changes: Partial<AccessoriesLayerProps>) => void;
+}) {
+  const headerId = useId();
+  const style = accessoryHeaderStyle(props);
+  const pinned = (changes: Partial<AccessoriesLayerProps>): Partial<AccessoriesLayerProps> => ({
+    headerPos: props.headerPos ?? { x_mm: rect.x_mm, y_mm: rect.y_mm },
+    headerSize: props.headerSize ?? { width_mm: rect.width_mm, height_mm: rect.height_mm },
+    ...changes,
+  });
+  const pos = { x_mm: rect.x_mm, y_mm: rect.y_mm };
+  const size = { width_mm: rect.width_mm, height_mm: rect.height_mm };
+  const background =
+    props.headerFill ?? (props.headerOnBorder && !props.headerPos ? props.headerBackground || '#ffffff' : 'transparent');
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Header</h4>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={headerId} className="text-xs text-muted-foreground">
+          Header text
+        </Label>
+        <Input
+          id={headerId}
+          className="h-7 px-2 text-xs"
+          value={props.headerText}
+          maxLength={60}
+          onChange={(e) => onChange({ headerText: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="X (mm)"
+          value={rect.x_mm}
+          onChange={(v) => onChange(pinned({ headerPos: { ...pos, x_mm: v } }))}
+          step={0.5}
+        />
+        <NumberInput
+          label="Y (mm)"
+          value={rect.y_mm}
+          onChange={(v) => onChange(pinned({ headerPos: { ...pos, y_mm: v } }))}
+          step={0.5}
+        />
+        <NumberInput
+          label="W (mm)"
+          value={rect.width_mm}
+          onChange={(v) => onChange(pinned({ headerSize: { ...size, width_mm: Math.max(2, v) } }))}
+          step={0.5}
+          min={2}
+        />
+        <NumberInput
+          label="H (mm)"
+          value={rect.height_mm}
+          onChange={(v) => onChange(pinned({ headerSize: { ...size, height_mm: Math.max(2, v) } }))}
+          step={0.5}
+          min={2}
+        />
+      </div>
+      <TypographyControls
+        values={{
+          fontFamily: style.fontFamily ?? '',
+          fontSize: props.headerFontSize,
+          fontWeight: style.fontWeight,
+          italic: style.italic,
+          underline: style.underline,
+          strikethrough: style.strikethrough,
+          align: style.align,
+          lineHeight: props.headerStyle?.lineHeight ?? 1,
+          letterSpacing: style.letterSpacing,
+          padding: props.headerPadding ?? ZERO_PADDING,
+        }}
+        onChange={(changes) => {
+          const { fontSize, padding, lineHeight, ...rest } = changes;
+          const styleChanges = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+          const next: Partial<AccessoriesLayerProps> = {};
+          if (Object.keys(styleChanges).length > 0 || lineHeight !== undefined) {
+            next.headerStyle = {
+              ...(props.headerStyle ?? {}),
+              ...styleChanges,
+              ...(lineHeight !== undefined ? { lineHeight } : {}),
+            };
+          }
+          if (fontSize !== undefined) next.headerFontSize = fontSize;
+          onChange(padding !== undefined ? pinned({ ...next, headerPadding: padding }) : next);
+        }}
+        colour={style.color}
+        onColourChange={(v) => onChange({ headerColor: v })}
+        usedColours={usedColours}
+        fontOptions={fontOptions}
+        onUploadFont={onUploadFont}
+      />
+      <ColorPicker
+        label="Background"
+        value={background}
+        onChange={(v) => onChange({ headerFill: v })}
+        usedColours={usedColours}
+      />
+      <NumberInput
+        label="Corner Radius"
+        value={props.headerRadius_mm ?? 0}
+        onChange={(v) => onChange({ headerRadius_mm: Math.max(0, v) })}
+        step={0.5}
+        min={0}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 self-start text-xs"
+        onClick={() => onChange(headerResetPatch())}
+      >
+        Reset header
+      </Button>
+    </section>
+  );
+}
+
 
 function FeatureIconsInspector({
   props,

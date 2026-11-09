@@ -37,6 +37,7 @@ import type {
   TagLayerProps,
   TextLayerProps,
 } from './tag-template-types';
+import { defaultAccessoriesProps } from './tag-template-types';
 
 const EPS = 1e-9;
 /** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
@@ -764,6 +765,27 @@ export function snapElement(
   if (sx) guides.push({ orientation: 'vertical', position_mm: sx.guide });
   if (sy) guides.push({ orientation: 'horizontal', position_mm: sy.guide });
   return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
+}
+
+/**
+ * PRICETAG-HEADER-DRAG round 2: "Reset header" puts the header back to the default look: today's
+ * spot and size, no background / corners / padding, and the default box's header style. The header
+ * text and whether it shows are the user's content, so they stay. Undefined keys drop on save.
+ */
+export function headerResetPatch(): Partial<AccessoriesLayerProps> {
+  const d = defaultAccessoriesProps();
+  return {
+    headerPos: undefined,
+    headerSize: undefined,
+    headerFill: undefined,
+    headerRadius_mm: undefined,
+    headerPadding: undefined,
+    headerStyle: d.headerStyle,
+    headerFontSize: d.headerFontSize,
+    headerColor: d.headerColor,
+    headerOnBorder: d.headerOnBorder,
+    headerBackground: d.headerBackground,
+  };
 }
 
 /**

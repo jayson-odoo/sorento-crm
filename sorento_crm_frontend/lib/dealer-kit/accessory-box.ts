@@ -161,6 +161,13 @@ export interface AccessoryBoxLayout {
         fontSize_pt: number;
         onBorder: boolean;
         moved: boolean;
+        /** Round 2: a resized header wraps its text inside the band (no shrink). */
+        wrap: boolean;
+        /** The band's background; null = none. */
+        fill: string | null;
+        radius_mm: number;
+        /** Inner margin between band and text. */
+        padding: { top: number; right: number; bottom: number; left: number };
         /** Where the text itself draws (as wide as the text): the band on the border or once moved;
          *  inside the frame the text's own span in the band, per the header's alignment. The header
          *  drag handle starts from this, so a first drag never jumps. */
@@ -187,6 +194,11 @@ export type LayoutProps = Pick<
   | 'showFrame'
   | 'headerOnBorder'
   | 'headerPos'
+  | 'headerSize'
+  | 'headerFill'
+  | 'headerRadius_mm'
+  | 'headerPadding'
+  | 'headerBackground'
   | 'headerStyle'
 >;
 
@@ -444,12 +456,49 @@ export function accessoryChrome(
             : headerInset + (room - tight) / 2,
         outW - tight,
       );
+  // Round 2: background, corners and padding, the same for every header; absent = today's look.
+  const placedOnBorder = onBorder && !pos;
+  const fill =
+    props.headerFill != null
+      ? props.headerFill === 'transparent'
+        ? null
+        : props.headerFill
+      : placedOnBorder
+        ? props.headerBackground || '#ffffff'
+        : null;
+  const style = {
+    fill,
+    radius_mm: Math.max(0, props.headerRadius_mm ?? 0),
+    padding: { top: 0, right: 0, bottom: 0, left: 0, ...(props.headerPadding ?? {}) },
+  };
+  // A resized header: its stored size (never past the box), its set font size, wrapping inside.
+  const size = pos && props.headerSize ? props.headerSize : null;
+  const sizedW = size ? Math.min(Math.max(0, size.width_mm), outW) : 0;
+  const sizedH = size ? Math.min(Math.max(0, size.height_mm), outH) : 0;
+  const sizedRect = size
+    ? {
+        x_mm: clamp(pos!.x_mm, outW - sizedW),
+        y_mm: clamp(pos!.y_mm, outH - sizedH),
+        width_mm: sizedW,
+        height_mm: sizedH,
+      }
+    : null;
   return {
     frame:
       props.showFrame === false
         ? null
         : { x_mm: 0, y_mm: frameTop, width_mm: outW, height_mm: outH - frameTop },
-    header: pos
+    header: sizedRect
+      ? {
+          ...sizedRect,
+          fontSize_pt: props.headerFontSize,
+          onBorder: false,
+          moved: true,
+          wrap: true,
+          ...style,
+          text: { ...sizedRect },
+        }
+      : pos
       ? {
           x_mm: clamp(pos.x_mm, outW - tight),
           y_mm: clamp(pos.y_mm, outH - headerH),
@@ -458,6 +507,8 @@ export function accessoryChrome(
           fontSize_pt: headerPt,
           onBorder: false,
           moved: true,
+          wrap: false,
+          ...style,
           text: {
             x_mm: clamp(pos.x_mm, outW - tight),
             y_mm: clamp(pos.y_mm, outH - headerH),
@@ -474,6 +525,8 @@ export function accessoryChrome(
             fontSize_pt: headerPt,
             onBorder,
             moved: false,
+            wrap: false,
+            ...style,
             text: { x_mm: textX, y_mm: onBorder ? 0 : pad * 0.5, width_mm: tight, height_mm: headerH },
           }
         : null,

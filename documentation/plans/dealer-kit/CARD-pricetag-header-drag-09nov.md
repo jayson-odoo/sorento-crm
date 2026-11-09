@@ -1,6 +1,6 @@
 # CARD: drag the accessories box header in the Tag Template designer (PRICETAG-HEADER-DRAG, 09/11/2026)
 
-Status: Hand test (built on PR #2278, reviewer READY, browser pass PASS; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
+Status: Build round 2 (owner hand test 9 Nov ~17:00; round 1 reviewer READY, browser pass PASS; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
 lines, frontend only, no migration, no RBAC change).
 
 ## Owner rulings (9 Nov ~14:25, verbatim: "1a, 2 it should be up to my arrangement, 3 i don't need
@@ -24,6 +24,32 @@ the setting la, 4 one per box, 5 ..."; Q5 (a) relayed by crew ~14:28). These win
 Owner 9 Nov ~13:55 MYT, on an accessory card ("FREE" header, dark green rounded border, picture,
 SRTW5000, name, "LP: RM 68"): "I am okay with editing the FREE but I want to drag and place it at
 other places".
+
+## Round 2 (owner hand test 9 Nov ~17:00, verbatim: "for header I mean I can drag, but I can't further
+style it like its background, resize it like a normal design component in the canvas?")
+
+R1. **Clicking the header selects the header** (not just its box). The box's Transformer hands over to
+    the header: the same Konva Transformer handles every canvas element gets, no rotation (the header
+    turns with its box). Escape goes back to the box; a click elsewhere on the box selects the box.
+    Delete / duplicate / cut do nothing (one header per box); arrows nudge the header.
+R2. **Resize** stores the band's position and size (`headerPos` + `headerSize`). A resized header keeps
+    its set font size and wraps its text inside the band (no shrink-to-fit), aligned per its alignment,
+    centred top to bottom. It stays inside the box (pulled in, never larger than the box).
+R3. **Inspector, header selected** (replaces the box inspector, as the card element inspector does in
+    card editing): Header text; X / Y / W / H (`NumberInput`, as the Transform section); the shared
+    `TypographyControls` a text layer uses (font, size, B/I/U/S, weight, colour, alignment, line height,
+    padding); `ColorPicker` "Background" (its Transparent swatch = none); "Corner Radius" `NumberInput`
+    (as the Shape section); Reset header. A size, position or padding typed on a header still at its
+    computed spot pins it there first, so nothing jumps.
+R4. **Background / corners** apply to any header, moved or not. With no stored background a header keeps
+    today's rule (the "behind the header" colour on the border, none elsewhere).
+R5. **Reset header** = position, size, background, corners, padding gone and the default box's header
+    style (size, colour, weight, on the border); the header text and Show header stay.
+R6. Linked saved accessories template: size and style are design keys, like the position (Q5).
+R7. The "Linked to X: changes here update N tag templates" strip also shows while a linked box's
+    header is selected or dragged.
+R8. Render parity: the one layout (`accessoryChrome`) gives every render the band, fill, radius,
+    padding and wrap; canvas, request preview and print draw from it. No stored key = today's look.
 
 ## What exists today (measured on origin/main 38c71a4d)
 

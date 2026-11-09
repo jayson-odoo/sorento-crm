@@ -145,7 +145,7 @@ describe('Inspector header controls (owner Q3)', () => {
   it('an unmoved header keeps "Header on the border" and shows no Reset', () => {
     render(<InspectorPanel layer={box({})} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />);
     expect(screen.getByLabelText('Header on the border')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reset header position' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reset header' })).toBeNull();
   });
 
   it('a moved header hides "on the border" and Reset clears the stored spot', () => {
@@ -155,7 +155,7 @@ describe('Inspector header controls (owner Q3)', () => {
     );
     expect(screen.queryByLabelText('Header on the border')).toBeNull();
     expect(screen.queryByText('Behind the header')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Reset header position' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset header' }));
     const sent = onUpdateProps.mock.calls.at(-1)![1] as Record<string, unknown>;
     // The key goes (undefined, dropped on save): a reset box saves like one never moved.
     expect('headerPos' in sent && sent.headerPos === undefined).toBe(true);
