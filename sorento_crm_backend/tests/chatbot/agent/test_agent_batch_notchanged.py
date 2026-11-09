@@ -147,7 +147,9 @@ def test_the_result_counts_include_the_carried_row(db):
     previous = stored(db, say(db, w, [tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1),
                                       tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 2),
                                       tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], "again"))
-    table = {"write": previous["batch_write"], "waiting": previous["batch_waiting"], "skipped": previous["batch_skipped"]}
+    # UAC A18: the stored table also carries what each row verified as typed (`batch_typed`), its company included.
+    table = {"write": previous["batch_write"], "waiting": previous["batch_waiting"], "skipped": previous["batch_skipped"],
+             "typed": previous["batch_typed"]}
     rows = [tag(row_(pf.phone_number, companies=["SRT"], codes=[f[0].customer_code]), 1)]
     out = batch.propose(db, ctx_of(db, w), {"write": GRANT, "rows": rows}, [], seen_ids=set(),
                         user_text=f"row 1: {f[0].customer_code}", previous_waiting=table["waiting"], previous=table)

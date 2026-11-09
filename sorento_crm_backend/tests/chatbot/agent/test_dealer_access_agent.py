@@ -1462,10 +1462,13 @@ NO_CHANGE = (
 )
 
 
-def _turn(db, w: W, script, text_: str):
+def _turn(db, w: W, script, text_: str, *, dealer_access: bool = False, provider: list | None = None):
     from tests.chatbot.agent.test_agent_writes import run_turn
 
-    return run_turn(db, w, script, text_=text_)[0]
+    result, used = run_turn(db, w, script, text_=text_, dealer_access=dealer_access)
+    if provider is not None:
+        provider.append(used)
+    return result
 
 
 def _batch_call(rows, cid="b1"):
@@ -1505,8 +1508,8 @@ def test_A17_a_single_row_grant_with_a_name_the_user_did_not_type_proposes_nothi
     phone, said = fake_phone(), w.cust_a.customer_name
     call = round_of(tc(GRANT, row_(phone, role="employee", names=[said]), "g1"))
 
-    refused = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} access to ZZT Somebody Else")
-    control = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} access to {said}")
+    refused = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} Sorento access to ZZT Somebody Else")
+    control = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} Sorento access to {said}")
 
     assert refused.pending_action is None
     assert control.pending_action is not None
@@ -1524,7 +1527,7 @@ def test_A17_a_name_typed_in_another_case_and_spacing_passes_and_the_typed_text_
 
     steps, skipped, waiting = batch.propose_rows(
         db, ctx_of(db, w), GRANT, [row_(fake_phone(), role="employee", names=[stem])], seen_ids=set(),
-        user_text=f"add them for {typed} please",
+        user_text=f"add them for {typed} please, sorento",
     )
 
     assert skipped == [] and steps == []
@@ -1542,7 +1545,7 @@ def test_A17_an_all_follow_up_re_sending_the_verified_name_passes_and_keeps_the_
     phone = fake_phone()
 
     first = _turn(db, w, [_batch_call([row_(phone, role="employee", names=[stem])]), answer_("Which account?")],
-                  f"grant {phone} employee at {typed}")
+                  f"grant {phone} employee at {typed}, sorento")
     second = _turn(db, w, [_batch_call([row_(phone, role="employee", names=[stem])], "b2"), answer_("Which account?")],
                    "all")
 
@@ -1651,3 +1654,204 @@ def test_C7_a_settings_change_combined_with_a_role_change_is_refused_whole(db):
     assert step is None and res.status == "invalid"
     assert res.message == "Hand-over is set by the office; ask the office."
     assert state(db, person.phone_number) == before and tags_of(db, person.id) == []
+
+
+# ------------------------------------------------------------------ crew live x3 round 2 (A17 every row, A18, F2, F3)
+
+WHICH_COMPANY = "Say which company this person is for: Sorento or Mocha."
+CHECK_FIRST = "I need to check that first."
+
+
+def _turn_record(db, turn_id: str) -> dict:
+    from app.models.chatbot_turn import ChatbotTurn
+
+    db.expire_all()
+    return db.get(ChatbotTurn, turn_id).response or {}
+
+
+def test_A17_every_row_of_the_last_table_keeps_its_typed_names_for_an_all_follow_up(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    stem = unique_code("ZZT Wait Shop", alpha=True)
+    add_customer(db, w, f"{stem} A/C I")
+    add_customer(db, w, f"{stem} A/C II")
+    big = add_customer(db, w, unique_code("ZZT Big Wall Hardware", alpha=True)).customer_name
+    pw, pr, pu = fake_phone(), fake_phone(), fake_phone()
+    rows = [
+        row_(pw, role="employee", names=[stem]),
+        row_(pr, role="employee", names=[w.cust_a.customer_name]),
+        {**row_(pu, names=[big]), "role": "unknown", "access_as_written": "?"},
+    ]
+    typed = f"Sorento\n{pw} {stem}\n{pr} {w.cust_a.customer_name}\n{pu} {big} ?"
+
+    _turn(db, w, [_batch_call(rows), answer_("ok")], typed)
+    second = _turn(db, w, [_batch_call(rows, "b2"), answer_("ok")], "all")
+
+    reasons = {s["row"]: s["reason"] for s in _turn_record(db, second.turn_id).get("batch_skipped") or []}
+    assert reasons.get(3) == "Unknown access: ?."
+    assert NOT_TYPED.format(name=big) not in second.reply_text
+
+
+def test_A18_a_company_the_user_did_not_type_is_refused(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    said = w.cust_a.customer_name
+
+    steps, skipped, _ = batch.propose_rows(
+        db, ctx_of(db, w), GRANT, [row_(fake_phone(), role="employee", companies=["SRT"], names=[said])],
+        seen_ids=set(), user_text=f"Mocha access for {said}",
+    )
+
+    assert steps == []
+    assert reason(skipped) == WHICH_COMPANY
+
+
+def test_A18_both_companies_typed_allow_both(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    rows = [row_(fake_phone(), role="employee", companies=["SRT", "MCH"],
+                 codes=[w.cust_a.customer_code, w.cust_b.customer_code])]
+
+    steps, skipped, _ = batch.propose_rows(
+        db, ctx_of(db, w), GRANT, rows, seen_ids=set(), user_text="Sorento and MOCHA, both accounts",
+    )
+
+    assert skipped == [] and len(steps) == 1
+
+
+def test_A18_an_all_follow_up_carries_the_earlier_typed_company(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    stem = unique_code("ZZT Mocha Pair", alpha=True)
+    add_customer(db, w, f"{stem} A/C I", company=w.mch)
+    add_customer(db, w, f"{stem} A/C II", company=w.mch)
+    phone = fake_phone()
+    row = row_(phone, role="employee", companies=["MCH"], names=[stem])
+
+    _turn(db, w, [_batch_call([row]), answer_("ok")], f"{phone} {stem} mocha employee")
+    second = _turn(db, w, [_batch_call([row], "b2"), answer_("ok")], "all")
+
+    assert WHICH_COMPANY not in second.reply_text
+    assert [x["written"] for x in _turn_record(db, second.turn_id).get("batch_waiting") or []] == [stem]
+
+
+def _dealer_rows(w: W):
+    phone = fake_phone()
+    return phone, [row_(phone, role="employee", names=[w.cust_a.customer_name])], (
+        f"Sorento, {phone} {w.cust_a.customer_name} employee"
+    )
+
+
+def test_F2_model_text_without_a_tool_call_is_not_shown_and_the_forced_rounds_result_is(db):
+    from app.services.llm_provider import ChatResult
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone, rows, typed = _dealer_rows(w)
+    made_up = ChatResult(content="| 1 | MADE UP TABLE | done |", prompt_tokens=10, completion_tokens=5,
+                         total_tokens=15, cached_tokens=0, tool_calls=[])
+
+    result = _turn(db, w, [made_up, _batch_call(rows), answer_("MODEL WORDS")], typed, dealer_access=True)
+
+    assert "MADE UP TABLE" not in result.reply_text and "MODEL WORDS" not in result.reply_text
+    assert result.reply_text.startswith("Rows from your table: 1 ready to confirm.")
+    assert result.pending_action is not None
+
+
+def test_F2_a_turn_the_side_call_does_not_recognise_keeps_todays_behaviour(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    used: list = []
+
+    result = _turn(db, w, [answer_("Hello there.")], "hi, how is stock today?", provider=used)
+
+    assert result.reply_text == "Hello there."
+    assert len(used[0].side) == 1 and used[0].side[0]["schema"]["required"] == ["dealer_access"]
+    assert used[0].seen[0]["tool_choice"] in (None, "auto")
+
+
+def test_F2_the_flow_offers_only_the_dealer_access_tools_with_tool_choice_required(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone, rows, typed = _dealer_rows(w)
+    used: list = []
+
+    _turn(db, w, [_batch_call(rows), answer_("ok")], typed, dealer_access=True, provider=used)
+
+    first = used[0].seen[0]
+    names = {t["function"]["name"] for t in first["tools"]}
+    assert first["tool_choice"] == "required"
+    assert names <= {BATCH, GRANT, "crm_contacts_find", UPDATE, "answer"}
+    assert {BATCH, GRANT} <= names
+    batch_tool = next(t for t in first["tools"] if t["function"]["name"] == BATCH)
+    assert batch_tool["function"]["parameters"]["properties"]["write"]["enum"] == [GRANT]
+
+
+def test_F2_a_flow_turn_with_no_dealer_access_tool_result_says_it_must_check_first(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+
+    result = _turn(db, w, [answer_("All done!"), answer_("Still done.")], "give him access", dealer_access=True)
+
+    assert result.reply_text == CHECK_FIRST
+    assert result.pending_action is None
+
+
+def test_F2_a_user_without_a_contact_slug_never_gets_the_side_call(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db, slugs=(NEITHER,), superadmin=False)
+    used: list = []
+
+    _turn(db, w, [answer_("Hello.")], "give him access", dealer_access=True, provider=used)
+
+    assert used[0].side == []
+
+
+def _pick_turn(db, w: W, phone: str):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    stem = unique_code("ZZT Pick Shop", alpha=True)
+    accounts = [add_customer(db, w, f"{stem} A/C I"), add_customer(db, w, f"{stem} A/C II")]
+    row = row_(phone, role="employee", names=[stem])
+    first = _turn(db, w, [_batch_call([row]), answer_("Which account?")], f"Sorento {phone} {stem}")
+    assert [x["written"] for x in _turn_record(db, first.turn_id).get("batch_waiting") or []] == [stem]
+    return stem, accounts
+
+
+def test_F3_a_pick_expires_once_a_newer_request_came_in_between(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone = fake_phone()
+    stem, accounts = _pick_turn(db, w, phone)
+    _turn(db, w, [answer_("It is 10 am.")], "what time is it")
+    picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
+
+    result = _turn(db, w, [_batch_call([picked], "b2"), answer_("Linked.")], "all")
+
+    assert result.pending_action is None
+    assert state(db, phone) is None
+
+
+def test_F3_the_card_after_a_valid_all_repeats_the_typed_name_and_the_picked_codes(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone = fake_phone()
+    stem, accounts = _pick_turn(db, w, phone)
+    picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
+
+    result = _turn(db, w, [_batch_call([picked], "b2"), answer_("ok")], "all")
+
+    assert result.pending_action is not None
+    card = " ".join(result.pending_action["lines"])
+    assert f'you wrote "{stem}"' in card
+    assert all(a.customer_code in card for a in accounts)

@@ -37,6 +37,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     propose_rows,
     row_,
     state,
+    typed_companies,
 )
 from tests.chatbot.agent.test_agent_writes import action_rows, answer_, round_of, run_turn, tc
 
@@ -490,12 +491,14 @@ def test_r6_a_table_with_no_ready_row_expires_the_previous_confirm_card(db):
     dealer_h(db, w.mch)
     ready, waits = dealer(db, w), dealer(db, w, companies=(w.mch,))
     first = [row_(ready.phone_number, codes=[w.cust_a.customer_code])]
-    run_turn(db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": first}, "b1")), answer_("Ready.")], text_="grant access")
+    run_turn(db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": first}, "b1")), answer_("Ready.")],
+             text_=typed_companies("grant access", first))
     assert [a.status for a in action_rows(db, w.respond_id)] == ["proposed"]
 
     second = [waiting_row(w, waits)]
     result, _ = run_turn(
-        db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": second}, "b2")), answer_("Pick one.")], text_="grant access"
+        db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": second}, "b2")), answer_("Pick one.")],
+        text_=pasted("grant access", second),
     )
 
     assert result.pending_action is None
@@ -571,13 +574,14 @@ def tag(row: dict, n: int) -> dict:
 # UAC A17: a first table turn's text is the paste, so it carries the dealer names the rows send.
 def pasted(text_: str, rows) -> str:
     """The user's message as a real paste carries it: the table's dealer names in the text (UAC A17)."""
-    return "\n".join([text_, *(n for r in rows for n in (r.get("customer_names") or []))])
+    return typed_companies("\n".join([text_, *(n for r in rows for n in (r.get("customer_names") or []))]), rows)
 
 
 def say(db, w, rows, text_, final="Done."):
-    """One scripted table turn: the model calls the batch tool with `rows`, then answers."""
+    """One scripted table turn: the model calls the batch tool with `rows`, then answers. The message names the rows'
+    companies, as a real one does (UAC A18)."""
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(final)]
-    return run_turn(db, w, script, text_=text_)[0]
+    return run_turn(db, w, script, text_=typed_companies(text_, rows))[0]
 
 
 def stored(db, result) -> dict:

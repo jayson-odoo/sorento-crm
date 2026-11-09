@@ -18,6 +18,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     make_world,
     row_,
     state,
+    typed_companies,
 )
 from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc
 
@@ -27,7 +28,8 @@ DONE_REASON = "earlier confirmed table"
 
 def _batch_turn(db, w, rows, text_):
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Here is the table.")]
-    return run_turn(db, w, script, text_=text_)
+    # UAC A18: the user's message names the rows' company, as a real one does.
+    return run_turn(db, w, script, text_=typed_companies(text_, rows))
 
 
 def _three(db, w):

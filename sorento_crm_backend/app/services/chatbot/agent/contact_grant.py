@@ -192,29 +192,49 @@ def _norm(text: Any) -> str:
     return " ".join(str(text or "").split()).casefold()
 
 
-def typed_names(args: dict, user_text: str, written_before: list[str] = ()) -> tuple[dict, str | None]:
+WHICH_COMPANY = "Say which company this person is for: Sorento or Mocha."
+
+
+def _typed_word(word: str, user_text: str) -> bool:
+    return re.search(rf"(?<![0-9a-z]){re.escape(word)}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE) is not None
+
+
+def typed_names(
+    args: dict, user_text: str, written_before: list[str] = (), companies_before: list[str] = (),
+) -> tuple[dict, str | None]:
     """UAC A17: every `customer_names` value is what the user typed this turn (case and spacing aside, a whole
-    phrase), or a name a waiting row of theirs already showed as "You wrote" (an "all" / pick follow-up re-sends it).
-    Returns (args with each name as the user typed it, None), or (args, the refusal) for a name the model made up or
-    re-searched."""
-    names = args.get("customer_names") if isinstance(args, dict) else None
-    if not isinstance(names, list) or not names:
+    phrase), or a name the row's earlier table already verified (its "You wrote", re-sent by an "all" / pick
+    follow-up). UAC A18: every company is named in this turn's text by the first word of its template name
+    ("Sorento", "Mocha"), or was verified for the row before. Returns (args with each name as the user typed it,
+    None), or (args, the refusal) for a name or company the model made up or re-searched."""
+    if not isinstance(args, dict):
         return args, None
-    before = {_norm(w): " ".join(str(w).split()) for w in written_before if w}
-    out = []
-    for name in names:
-        said = " ".join(str(name or "").split())
-        if not said:
-            continue
-        words = r"\s+".join(re.escape(w) for w in said.split())
-        found = re.search(rf"(?<![0-9a-z]){words}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE)
-        if found:
-            out.append(" ".join(found.group(0).split()))
-        elif _norm(said) in before:
-            out.append(before[_norm(said)])
-        else:
-            return args, f'"{said}" is not in your message; write the dealer name as you typed it.'
-    return {**args, "customer_names": out}, None
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    names = args.get("customer_names")
+    if isinstance(names, list) and names:
+        before = {_norm(w): " ".join(str(w).split()) for w in written_before if w}
+        out = []
+        for name in names:
+            said = " ".join(str(name or "").split())
+            if not said:
+                continue
+            words = r"\s+".join(re.escape(w) for w in said.split())
+            found = re.search(rf"(?<![0-9a-z]){words}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE)
+            if found:
+                out.append(" ".join(found.group(0).split()))
+            elif _norm(said) in before:
+                out.append(before[_norm(said)])
+            else:
+                return args, f'"{said}" is not in your message; write the dealer name as you typed it.'
+        args = {**args, "customer_names": out}
+    word_of = {code: name.split()[0] for name, code in TEMPLATE["companies"].items()}
+    earlier = {str(c).upper() for c in companies_before}
+    for code in args.get("companies") or []:
+        code = " ".join(str(code or "").split()).upper()
+        if code in word_of and code not in earlier and not _typed_word(word_of[code], user_text):
+            return args, WHICH_COMPANY
+    return args, None
 
 
 def _fits(choice: dict) -> str:

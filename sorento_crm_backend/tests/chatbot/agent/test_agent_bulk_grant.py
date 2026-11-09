@@ -113,6 +113,17 @@ def ensure_owner_tags(db) -> None:
     db.flush()
 
 
+def typed_companies(text_: str, rows) -> str:
+    """UAC A18: a real message names each row's company ("Sorento", "Mocha", the first word of the TEMPLATE name)."""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    word_of = {code: name.split()[0] for name, code in TEMPLATE["companies"].items()}
+    words = dict.fromkeys(
+        word_of[c] for r in rows if isinstance(r, dict) for c in (r.get("companies") or []) if c in word_of
+    )
+    return "\n".join([text_, *words]) if words else text_
+
+
 def ensure_template_world(db) -> tuple[str, str]:
     """What the 26 Oct template needs: SRT, MCH, their stock locations, the three enquiry agents, the retail
     segment, the access types and the owner tags. Returns (srt id, mch id)."""
@@ -638,7 +649,7 @@ def test_06_a_turn_with_a_pasted_table_shows_one_preview_table_and_writes_nothin
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Here is what I will change.")]
 
     # UAC A17: a pasted table carries its dealer names in the user's text.
-    result, provider = run_turn(db, w, script, text_="please grant access to these people\nZZT No Such Shop")
+    result, provider = run_turn(db, w, script, text_=typed_companies("please grant access to these people\nZZT No Such Shop", rows))
 
     assert BATCH in tool_names(provider)
     assert result.pending_action is not None
@@ -662,7 +673,7 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
         answer_("Corrected."),
     ]
 
-    result, _ = run_turn(db, w, script, text_="grant access")
+    result, _ = run_turn(db, w, script, text_=typed_companies("grant access", first + second))
 
     assert len(result.pending_action["lines"]) == 1
     assert b.phone_number in result.pending_action["lines"][0]
@@ -777,10 +788,11 @@ def test_08_a_single_change_after_a_batch_and_a_batch_after_a_single_change_are_
     batch_call = tc(BATCH, {"write": GRANT, "rows": [row_(a.phone_number, codes=[w.cust_a.customer_code])]}, "b1")
     single = tc(GRANT, row_(b.phone_number, codes=[w.cust_a.customer_code]), "s1")
 
-    result, _ = run_turn(db, w, [round_of(batch_call), round_of(single), answer_("ok")], text_="grant access")
+    said = typed_companies("grant access", [row_(a.phone_number)])  # UAC A18: the message names the company
+    result, _ = run_turn(db, w, [round_of(batch_call), round_of(single), answer_("ok")], text_=said)
     assert len(result.pending_action["lines"]) == 1 and a.phone_number in result.pending_action["lines"][0]
 
-    result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_="grant access")
+    result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_=said)
     assert len(result.pending_action["lines"]) == 1 and b.phone_number in result.pending_action["lines"][0]
 
 
@@ -811,7 +823,7 @@ def test_09_a_live_shaped_turn_lists_the_unknown_access_row_and_proposes_the_res
     ]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Row 1 will change; row 2 is skipped.")]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=typed_companies("grant access to these people", rows))
 
     assert len(result.pending_action["lines"]) == 1
     assert "Unknown access: Manager" in result.reply_text
@@ -827,7 +839,7 @@ def test_09_row_numbers_and_counts_the_batch_produced_are_not_flagged_as_unverif
     text_ = "I will change rows 1 and 2 (2 rows) and skip row 3 (1 row) because its customer was not found."
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(text_)]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=typed_companies("grant access to these people", rows))
 
     assert "not verified" not in result.reply_text
     assert result.reply_text.startswith("Rows from your table: 2 ready to confirm, 1 not changed.")

@@ -55,7 +55,13 @@ A17. Every scope: a customer name in a grant row (table or single row) must be w
     message (case and spacing aside, as a whole phrase), or the row's own "You wrote" from the waiting table an "all"
     or pick follow-up re-sends. Otherwise the row is skipped: `"<name>" is not in your message; write the dealer name
     as you typed it.` The waiting table's "You wrote" is the user's text (crew live x3, 9 Nov: a re-searched name was
-    shown as written).
+    shown as written). Every row of the last table counts, ready, not changed and waiting alike: a follow-up that
+    re-sends a row with the name it verified then is not refused for it (live x3 round 2: a not-changed row got this
+    text instead of its own reason).
+A18. Every scope: each company of a grant row must be named in this turn's message by the first word of its name
+    ("Sorento", "Mocha"; case aside, a whole word), or verified for that row by the last table. Otherwise the row is
+    skipped: `Say which company this person is for: Sorento or Mocha.` (live x3 round 2: a Mocha row re-sent as
+    Sorento).
 A11. One audit row per contact (event `contact.access_agent`, actor the confirming user); a created contact says so.
 
 ## B. Respond.io (V8)
@@ -116,9 +122,25 @@ E2. The admin access sheet upload (`contact_access_sheet_service`) is unchanged.
 ## F. Agent replies
 
 F1. No false completion: a final reply that says a change was made (has or have been granted, given, added, removed,
-    updated, changed, linked, unlinked, turned on or off, or set; I have or I've completed, granted, and so on; all or
+    linked, unlinked, or turned on or off; I have or I've completed, granted, and so on; all or
     your requested operations, changes or requests are or have been done or completed; access is or has been granted)
     on a turn that proposed no change and decided no waiting one is replaced by: `Nothing was changed: I did not
     propose any change in this turn. Tell me again what to change and I will show it for you to confirm.` A reply that
     asks, lists a proposal, or follows a real confirm or cancel is left as it is. A bare "Done." is not a claim (a read
-    turn closes with it too).
+    turn closes with it too), and neither is "has been updated / changed / set" (an answer about an ETA or an order
+    says that).
+F2. The dealer-access flow: when the acting user holds a contacts slug, one side call before the first model round
+    judges whether the message (with the previous reply, when that was a dealer access table) asks to give, change,
+    remove or pick dealer contact access; a judgement of the message, never a word list, and a plain yes or no to a
+    waiting change is not one. When it is: that turn's rounds are offered only the dealer-access tools (the batch
+    tool for the grant only, the grant, the phone lookup, the access change, and the answer tool to end), a tool call
+    required. Its reply is built from the turn's tool results only: the tables, each refusal in the tool's own
+    words, what the phone lookup could not use, the confirm card; never the model's own text (so nothing in it is
+    marked "not verified"). A turn with no dealer-access tool result is asked once more for the call and then
+    answers `I need to check that first.` A user without a contacts slug never gets the side call; a message it does
+    not recognise runs as before.
+F3. A pick answers only the table of the IMMEDIATELY preceding agent turn, and only when that turn ended with rows
+    waiting for a pick: any newer request in between expires it. A code listed only by an expired pick and not typed
+    now is refused: `"<code>" is from an earlier list that is closed now; write the dealer name again to see its
+    accounts.` The confirm card after a valid pick repeats, for each picked row, `you wrote "<name>"` beside the
+    accounts it links.

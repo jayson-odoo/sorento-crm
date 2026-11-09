@@ -181,14 +181,38 @@ def _closed_reason(write: str, args: dict, key: Any, closed: dict, user_text: st
     return CLOSED_CANCELLED if found["status"] == "cancelled" else CLOSED_DONE
 
 
+def _row_records(records: list[dict] | None, key: Any, n: int) -> list[dict]:
+    """The earlier table's records of this row: by its phone, else (no phone on either side) by its row number."""
+    records = records or []
+    mine = [r for r in records if key is not None and r.get("key") == key]
+    return mine or [r for r in records if key is None and r.get("key") is None and r.get("row") == n]
+
+
+def _expired_code(args: dict, key: Any, n: int, expired: list[dict] | None, user_text: str) -> str | None:
+    """UAC F3: a code listed only by an older pick, one a newer request has expired, is never linked unless the user
+    typed it now."""
+    listed = {
+        " ".join(str(c).split()).lower() for p in _row_records(expired, key, n) for c in (p.get("codes") or [])
+    }
+    for code in args.get("customer_codes") or []:
+        said = " ".join(str(code).split())
+        typed = re.search(rf"(?<![0-9a-z]){re.escape(said.lower())}(?![0-9a-z])", str(user_text or "").lower())
+        if said.lower() in listed and not typed:
+            return f'"{said}" is from an earlier list that is closed now; write the dealer name again to see its accounts.'
+    return None
+
+
 def propose_rows(
     db, ctx, write: str, rows: list, *, seen_ids: set[str], user_text: str | None = None,
     previous_waiting: list[dict] | None = None, closed: dict | None = None,
+    previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
     {"row", "cells", "written", "company", "candidates", "more"}. `user_text`: the user's message of this turn (None
-    for a caller outside a turn); a grant row's customer names must be in it (UAC A17)."""
+    for a caller outside a turn); a grant row's customer names and companies must be in it, or verified for that row
+    by the last table (`previous_waiting`, `previous_typed`: UAC A17, A18), and an older, expired pick's codes are
+    refused (`expired_waiting`, F3). Each entry of a checked grant row carries `typed`, what was verified."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -211,6 +235,8 @@ def propose_rows(
         if key is not None and key in keys:
             skipped.append({"row": n, "key": key, "reason": f"Same as row {keys[key]}.", "cells": _cells(definition, args, None)})
             continue
+        typed: dict | None = None
+        picked: list[dict] = []
         if isinstance(args, dict):
             by_row = write if definition.pick_changes_key else None
             unlisted = _not_listed(args, key, previous_waiting or [], user_text or "", n, by_row) or _closed_reason(
@@ -220,28 +246,42 @@ def propose_rows(
                 from app.services.chatbot.agent import contact_grant
 
                 if write == contact_grant.GRANT:
-                    # The row's own earlier "You wrote", re-sent by an "all" / pick follow-up, counts as typed.
-                    written = [p.get("written") for p in previous_waiting or [] if key is not None and p.get("key") == key]
-                    args, unlisted = contact_grant.typed_names(args, user_text, written)
+                    # What the last table verified for this row, ready, not changed or waiting, counts as typed.
+                    picked = _row_records(previous_waiting, key, n)
+                    earlier = _row_records(previous_typed, key, n)
+                    written = [p.get("written") for p in picked] + [m for r in earlier for m in r.get("names") or []]
+                    companies = [c for r in earlier for c in r.get("companies") or []]
+                    args, unlisted = contact_grant.typed_names(args, user_text, written, companies)
+                    unlisted = unlisted or _expired_code(args, key, n, expired_waiting, user_text)
+                    if not unlisted:
+                        typed = {"names": list(args.get("customer_names") or []), "companies": list(args.get("companies") or [])}
             if unlisted:
                 skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
+        mark = {"typed": typed} if typed is not None else {}
         out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
         if step is None:
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
                 waiting += [
-                    {"row": n, "key": key, "write": write, "cells": _cells(definition, args, None), **c} for c in choices
+                    {"row": n, "key": key, "write": write, "cells": _cells(definition, args, None), **c, **mark}
+                    for c in choices
                 ]
                 if key is not None:
                     keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
-            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None)})
+            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None), **mark})
             continue
         if key is not None:
             keys[key] = n
-        step.update(batch=True, row=n, cells=_cells(definition, args, step.get("shown") or {}, step["summary"]))
+        if picked and args.get("customer_codes"):
+            # A pick follow-up's card repeats what the user wrote beside the codes it links (UAC F3).
+            note = "; ".join(f'you wrote "{p["written"]}"' for p in picked if p.get("written"))
+            if note:
+                step["summary"] = f"{step['summary']}; {note}"
+                step["shown"] = {**(step.get("shown") or {}), "changes": [*(step.get("shown") or {}).get("changes", []), note]}
+        step.update(batch=True, row=n, cells=_cells(definition, args, step.get("shown") or {}, step["summary"]), **mark)
         steps.append(step)
     return steps, skipped, waiting
 
@@ -319,7 +359,7 @@ def propose(
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")
     new_steps, skipped, waiting = propose_rows(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
-        closed=closed,
+        closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
     )
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting).
     carried = carried_skips(write, _sent_keys(definition, rows), new_steps, skipped, waiting, previous)
