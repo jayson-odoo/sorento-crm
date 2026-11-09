@@ -77,7 +77,8 @@ export function SpecValueIcons({
           <span
             key={icon.id}
             data-spec-icon-reason={icon.id}
-            className="text-xs text-muted-foreground"
+            title={`shown because ${reasons[icon.id]}`}
+            className="min-w-0 max-w-40 truncate text-xs text-muted-foreground"
           >
             shown because {reasons[icon.id]}
           </span>

@@ -428,3 +428,32 @@ def test_B6_a_value_icons_only_patch_leaves_the_rules_as_before_with_empty_condi
         {"id": cold.id, "name": "ZZT cold", "spec_key": host, "values": ["mixer"], "conditions": []},
     ]
     assert _stored(db, host).value_icon_conditions in ({}, None)
+
+
+def test_B4_a_stale_stored_condition_does_not_block_the_next_save(reg):
+    """Round 1, finding 2: the partner's value was suppressed after the condition was saved."""
+    db, _as, client = reg
+    host, trap, _length, hot, cold = _world(db)
+    partner = _stored(db, trap)
+    partner.source = "seed"
+    partner.synonyms = {"s_trap": ["s trap"], "p_trap": ["p trap"]}
+    db.commit()
+    stale = _cond(trap, "s_trap")
+    res = _patch_both(
+        client, host, {"mixer": [hot.id, cold.id]}, {"mixer": {hot.id: [stale]}}
+    )
+    assert res.status_code == 200, res.text
+    gone = client.patch(f"{_BASE}/{trap}", json={"suppressed_values": ["s_trap"]})
+    assert gone.status_code == 200, gone.text
+
+    fresh = _cond(trap, "p_trap")
+    res = _patch_both(
+        client, host, {"mixer": [hot.id, cold.id]},
+        {"mixer": {hot.id: [stale], cold.id: [fresh]}},
+    )
+    assert res.status_code == 200, res.text
+    assert _stored(db, host).value_icon_conditions == {"mixer": {cold.id: [fresh]}}
+
+    # A NEW condition on a value the partner no longer offers is still refused.
+    res = _patch_both(client, host, {"mixer": [hot.id]}, {"mixer": {hot.id: [stale]}})
+    assert res.status_code == 422, res.text

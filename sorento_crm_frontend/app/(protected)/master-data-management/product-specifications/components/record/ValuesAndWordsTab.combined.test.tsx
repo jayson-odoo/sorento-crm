@@ -221,7 +221,7 @@ describe('F4 ValuesAndWordsTab only-with conditions', () => {
     fireEvent.click(within(screen.getByTestId('value-icons-mixer')).getByRole('button', { name: 'Remove Hot' }));
     const body = buildPatchBody(row, latest as SpecKeyDraft) as Record<string, unknown>;
     expect(body.value_icons).toEqual({ mixer: ['i-cold'] });
-    expect(body.value_icon_conditions ?? {}).toEqual({});
+    expect(body.value_icon_conditions).toEqual({});
   });
 
   it('F4 without the library permission there is no conditions button', async () => {

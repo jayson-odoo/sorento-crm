@@ -54,6 +54,7 @@ export function useSpecValueIcons() {
             row.value,
             icons,
             rows.filter((other) => !other.unknownKey),
+            row.dataType,
           ),
     [icons],
   );

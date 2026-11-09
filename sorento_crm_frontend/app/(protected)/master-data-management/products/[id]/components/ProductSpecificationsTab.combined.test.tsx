@@ -196,3 +196,13 @@ describe('F3 useSpecValueIcons.iconsFor(row, rows)', () => {
     expect(screen.queryByText('x')).toBeNull();
   });
 });
+
+describe('F3 round 1: a numeric host stored as text', () => {
+  it('F3 trap_length "150.0" with trap S still shows the S trap 150mm icon and the hint', async () => {
+    mountWith([TRAP, { ...specRow('trap_length', 'Trap length', '150.0'), dataType: 'numeric' }]);
+    await waitFor(() => expect(rowEl('trap_length').querySelector('[data-spec-icon="s150"]')).toBeTruthy());
+    expect(rowEl('trap_length').querySelector('[data-spec-icon-reason]')?.textContent).toBe(
+      'shown because Trap = S trap',
+    );
+  });
+});

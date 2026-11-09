@@ -801,22 +801,28 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
 
     icons = row.value_icons or {}
     partners = {r.spec_key: r for r in active_registry(db) if r.spec_key != row.spec_key}
+    stored = row.value_icon_conditions or {}
     sent: dict[str, dict[str, list[dict]]] = {}
     for value, by_icon in (conditions or {}).items():
         value = str(value).strip()
         for icon_id, listed in (by_icon or {}).items():
-            icon_id = str(icon_id).strip()
+            icon_id = _uuid_text(icon_id) or str(icon_id).strip()
             if icon_id not in (icons.get(value) or []):
                 raise _refuse_condition("A condition belongs to an icon set on that value.")
             if len(listed or []) > MAX_CONDITIONS_PER_ICON:
                 raise _refuse_condition(f"At most {MAX_CONDITIONS_PER_ICON} conditions per icon.")
             seen: set[str] = set()
             cleaned: list[dict] = []
+            already = {
+                (c.get("spec_key"), c.get("value")) for c in (stored.get(value) or {}).get(icon_id) or []
+            }
             for item in listed or []:
                 key = str(item.get("spec_key") or "").strip()
                 raw = str(item.get("value") if item.get("value") is not None else "").strip()
                 partner = partners.get(key)
                 if partner is None:
+                    if (key, raw) in already:
+                        continue  # a partner taken away since: the stored condition just goes
                     raise _refuse_condition(f'"{key}" is not another active spec.')
                 if key in seen:
                     raise _refuse_condition(f"{partner.label} is used twice on one icon.")
@@ -827,13 +833,14 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
                         raise _refuse_condition(f"{partner.label} needs a number.")
                     raw = normal
                 elif raw not in spec_value_keys(partner):
+                    if (key, raw) in already:
+                        continue  # a choice taken away since
                     raise _refuse_condition(f'"{raw}" is not one of {partner.label}\'s values.')
                 cleaned.append({"spec_key": key, "value": raw})
             if cleaned:
                 sent.setdefault(value, {})[icon_id] = cleaned
 
     _visible, hidden = _icon_status(db, {i for ids in icons.values() for i in ids})
-    stored = row.value_icon_conditions or {}
     out: dict = {}
     for value, ids in icons.items():
         for icon_id in ids:
