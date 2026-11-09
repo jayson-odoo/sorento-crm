@@ -276,7 +276,7 @@ class Seeder:
         contact = self.db.query(RespondContact).filter(RespondContact.name == "Hand Test Dealer").first()
         if contact is None:
             contact = RespondContact(
-                id=str(uuid.uuid4()), phone_number="+60123450001", name="Hand Test Dealer", workspace_id=workspace.id,
+                id=str(uuid.uuid4()), phone_number="+60100000001", name="Hand Test Dealer", workspace_id=workspace.id,
             )
             self.db.add(contact)
             self.db.flush()
