@@ -667,6 +667,68 @@ def own_asset_ids(db: Session, ids: set[str]) -> Optional[set[str]]:
     return {str(r.id) for r in rows if r.company_id is not None and str(r.company_id) in allowed}
 
 
+# SPEC-REGISTRY-ICON-LEAK: the spec registry is shared by every company, its Dealer Kit icons
+# are not, so its audit rows carry no company and their icon columns name every company's ids.
+# `value_icons` is {value: [icon id, ...]}, `value_icon_conditions` (SPEC-ICON-COMBINED) is
+# {value: {icon id: [condition, ...]}}; a new icon column of either shape belongs here.
+SPEC_REGISTRY_ICON_COLUMNS = ("value_icons", "value_icon_conditions")
+
+
+def _icon_ids_in(entry) -> set[str]:
+    if isinstance(entry, dict):
+        return {i for i in (_uuid_text(k) for k in entry) if i}
+    if isinstance(entry, list):
+        return {i for i in (_uuid_text(x) for x in entry) if i}
+    return set()
+
+
+def _keep_icons(entry, own: set[str]):
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if _uuid_text(k) in own}
+    if isinstance(entry, list):
+        return [i for i in entry if _uuid_text(i) in own]
+    return entry
+
+
+def redact_foreign_icon_ids(db: Session, rows) -> None:
+    """Leave only the caller's own company's icon ids in each spec-registry audit row's icon
+    columns. Used by every read of audit values (History, activity feed), admins included.
+
+    The rows are expunged before their values are replaced, so the redacted copy is never
+    flushed over the stored audit trail (the next query would autoflush it otherwise). A value
+    left with no icon is dropped, as the registry stores it.
+    """
+    rows = [r for r in rows if r.entity_type == "product_spec_registry"]
+    mappings = [
+        values[col]
+        for r in rows
+        for values in (r.old_values or {}, r.new_values or {})
+        if isinstance(values, dict)
+        for col in SPEC_REGISTRY_ICON_COLUMNS
+        if isinstance(values.get(col), dict)
+    ]
+    ids = {i for mapping in mappings for entry in mapping.values() for i in _icon_ids_in(entry)}
+    if not ids:
+        return
+    own = own_asset_ids(db, ids)
+    if own is None:
+        return
+    for r in rows:
+        if r in db:
+            db.expunge(r)
+        for attr in ("old_values", "new_values"):
+            values = getattr(r, attr)
+            if not isinstance(values, dict):
+                continue
+            redacted = dict(values)
+            for col in SPEC_REGISTRY_ICON_COLUMNS:
+                mapping = values.get(col)
+                if isinstance(mapping, dict):
+                    kept = {value: _keep_icons(entry, own) for value, entry in mapping.items()}
+                    redacted[col] = {value: entry for value, entry in kept.items() if entry}
+            setattr(r, attr, redacted)
+
+
 def visible_value_icons(db: Session, row) -> dict[str, list[str]]:
     """The key's ``value_icons`` as the caller may see them: only live icons of its own company.
 

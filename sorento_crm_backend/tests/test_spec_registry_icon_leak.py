@@ -115,12 +115,81 @@ def test_history_of_other_entities_is_untouched(two_companies):  # noqa: F811
     from app.models.audit import AuditLog
 
     db, _client, _other, _as_company, _row, _a, _a2, b_icon = _setup(two_companies)
-    from app.api.v1.audit.audit_logs import _redact_foreign_icon_ids
+    from app.services.dealer_kit.asset_service import redact_foreign_icon_ids
 
     it = AuditLog(entity_type="product", entity_id="x", action="UPDATE",
                   old_values=None, new_values={"value_icons": {"a": [b_icon.id]}})
-    _redact_foreign_icon_ids(db, [it])
+    redact_foreign_icon_ids(db, [it])
     assert it.new_values == {"value_icons": {"a": [b_icon.id]}}
+
+
+def test_own_asset_ids_by_scope_state(two_companies):  # noqa: F811
+    from app.models.base import UNSET, company_scope
+    from app.services.dealer_kit.asset_service import own_asset_ids
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    db, _client, other, _as_company, _row, a_icon, _a2, b_icon = _setup(two_companies)
+    ids = {a_icon.id, b_icon.id, str(uuid.uuid4())}
+    with company_scope(db, frozenset({SORENTO})):
+        # Upper-case ids are the same icons.
+        assert own_asset_ids(db, ids | {a_icon.id.upper()}) == {a_icon.id}
+    with company_scope(db, frozenset({other})):
+        assert own_asset_ids(db, ids) == {b_icon.id}
+    # Fail-closed: no scope resolved, or an empty one, owns nothing.
+    with company_scope(db, UNSET):
+        assert own_asset_ids(db, ids) == set()
+    with company_scope(db, frozenset()):
+        assert own_asset_ids(db, ids) == set()
+    # The all-companies principal (an X-API-Key) is not redacted.
+    with company_scope(db, None):
+        assert own_asset_ids(db, ids) is None
+
+
+def _audit_admin(db) -> str:
+    from app.models.user import User, UserRole, UserRoleAssignment
+
+    role = UserRole(id=str(uuid.uuid4()), slug="admin", name="admin", description="",
+                    is_protected=False, is_default=False)
+    user = User(id=str(uuid.uuid4()), email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
+                name="Admin", status="ACTIVE")
+    db.add_all([role, user])
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user.id, role_id=role.id))
+    db.commit()
+    return user.id
+
+
+def test_an_admin_of_another_company_does_not_see_my_ids_in_history(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    _as = two_companies[1]
+    _history_row(db, row.id, old={}, new={"value_icons": {"a": [a_icon.id, b_icon.id]}})
+    _as(_audit_admin(db))
+    as_company(other)
+
+    res = client.get(_HISTORY.format(row.id))
+    assert res.status_code == 200, res.text
+    assert a_icon.id not in res.text
+    [entry] = _updates(res)
+    assert entry["new_values"] == {"value_icons": {"a": [b_icon.id]}}
+
+
+def test_the_activity_feed_hides_another_companys_icon_ids(two_companies):  # noqa: F811
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    _as = two_companies[1]
+    _history_row(db, row.id, old={"value_icons": {"a": [b_icon.id]}},
+                 new={"value_icons": {"a": [a_icon.id, b_icon.id]}})
+    _as(_audit_admin(db))
+
+    res = client.get(f"/api/v1/audit/activity?q={row.id}&limit=50")
+    assert res.status_code == 200, res.text
+    assert [i for i in res.json()["items"] if i["entity_id"] == row.id], res.text
+    assert b_icon.id not in res.text
+    assert a_icon.id in res.text
+
+    as_company(other)
+    res = client.get(f"/api/v1/audit/activity?q={row.id}&limit=50")
+    assert res.status_code == 200, res.text
+    assert a_icon.id not in res.text
 
 
 # ---------------------------------------------------------------------------
