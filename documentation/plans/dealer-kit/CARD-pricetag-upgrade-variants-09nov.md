@@ -31,6 +31,13 @@ Two sample tags.
    8" S-trap 200mm, 10" S-trap 250mm, P-trap 180mm, UF seat cover. Codes behind it:
    SRTWC8354-SH-150, -SH-200, -SH (= 250), -SH-P.
 
+## Dev copy counts (sorento_prod_1104, 9 Nov, crew)
+
+Active products 15,136; `variant_of_id` linked 2; `family_code` set 13,774 (91%); 9,190 distinct families. Family
+SRTWC8354 = SRTWC8354-SH, -SH-150, -SH-200, -SH-P, -SH-UF, -SH-UF-150, -SH-UF-200, -SH-UF-P (8, none
+discontinued; there is no -SH-UF-300 on dev). Open: owner ruling on "All variants" reading variant links (a),
+Family (b, recommended) or both (c).
+
 ## What exists today (measured)
 
 ### Upgrades are already modelled on the combo (this is NOT a new concept)
