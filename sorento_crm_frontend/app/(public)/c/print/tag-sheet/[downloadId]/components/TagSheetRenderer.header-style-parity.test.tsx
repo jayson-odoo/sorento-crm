@@ -41,8 +41,6 @@ vi.mock('react-konva', () => {
 });
 
 import { KonvaTagLayer } from '@/app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer';
-import { accessoryBoxLayout, accessoryLineCount } from '@/lib/dealer-kit/accessory-box';
-import { cardBoxLayout } from '@/lib/dealer-kit/accessory-card';
 import {
   defaultAccessoriesProps,
   type AccessoriesLayerProps,
@@ -152,7 +150,7 @@ async function canvas(layer: TagLayer) {
   await act(async () => {
     await Promise.resolve();
   });
-  const text = [...container.querySelectorAll('[data-konva="text"]')].find((t) => t.getAttribute('data-text') === 'FREE')!;
+  const text = [...container.querySelectorAll('[data-konva="text"]')].find((t) => t.getAttribute('data-text') === (layer.props as AccessoriesLayerProps).headerText)!;
   const fill = [...container.querySelectorAll('[data-konva="rect"]')].find((r) => r.getAttribute('data-fill') === '#1f4d36')!;
   const n = (el: Element, k: string) => Number(el.getAttribute(`data-${k}`));
   const out = {
@@ -190,6 +188,24 @@ describe('a resized, filled header prints where and how the designer draws it', 
       expect(header.style.color).toBe('rgb(255, 255, 255)');
     });
   }
+
+  it('text too tall for a narrowed band spills like the canvas (centred, never clipped)', async () => {
+    // Narrowed to 14 mm at today's 4.81 mm height: "ACCESSORIES INCLUDED" wraps to two 9 pt lines.
+    const layer = boxLayer({
+      headerText: 'ACCESSORIES INCLUDED',
+      headerPos: { x_mm: 2, y_mm: 2 },
+      headerSize: { width_mm: 14, height_mm: 4.81 },
+    });
+    const c = await canvas(layer);
+    // Konva keeps the band as the text box and wraps inside it (it does not drop wrapped lines).
+    expect(c.text.h).toBeCloseTo(4.81 * SCALE, 6);
+    expect(c.text.wrap).toBe('word');
+    render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ [TAG_ID]: row() }} assets={{}} />);
+    const header = screen.getByTestId('accessories-header');
+    expect(header.style.whiteSpace).toBe('normal');
+    expect(header.style.justifyContent).toBe('center');
+    expect(header.style.overflow).toBe('');
+  });
 
   it('no stored style: the print header keeps today\'s single-line, unpadded, square look', () => {
     const layer = boxLayer({ headerPos: undefined });

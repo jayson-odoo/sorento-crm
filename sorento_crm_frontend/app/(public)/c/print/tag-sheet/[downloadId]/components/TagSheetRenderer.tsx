@@ -1351,7 +1351,7 @@ function renderFeatureIconsLayer(
 /**
  * PRICETAG-HEADER-DRAG round 2: the header band's box CSS, matching the canvas (`KonvaTagLayer`):
  * corners, padding inside the band, and the text as one line (unresized: shrunk to fit by the
- * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized). Nothing extra is
+ * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized), never clipped. Nothing extra is
  * set for a header with no stored style, so it prints as before.
  */
 function headerBoxCss(
@@ -1371,7 +1371,9 @@ function headerBoxCss(
           display: 'flex',
           flexDirection: 'column' as const,
           justifyContent: 'center',
-          overflow: 'hidden',
+          // No clipping: Konva (10.x) keeps every wrapped line of a paragraph and centres the block,
+          // so text too tall for its band spills evenly above and below it on the canvas; print
+          // spills the same way (a centred flex column), never cut.
         }
       : { whiteSpace: 'nowrap' as const, lineHeight: `${innerH}mm` }),
   };

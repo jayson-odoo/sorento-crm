@@ -615,6 +615,15 @@ interface DragSession {
 }
 
 /**
+ * The selected layers the canvas's ONE Transformer takes: unlocked and visible, and never the
+ * accessories box whose header is selected (PRICETAG-HEADER-DRAG round 2: its header has the
+ * handles then, so box and header never show handles at the same time).
+ */
+export function transformerTargets(layers: readonly TagLayer[], headerSelectedBoxId: string | null): TagLayer[] {
+  return layers.filter((layer) => !layer.locked && layer.visible && layer.id !== headerSelectedBoxId);
+}
+
+/**
  * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
  * page data exists. Three, the most the owner's sample prints on one page.
  */
@@ -1925,12 +1934,19 @@ export function TagCanvasEditor({
       : accessoryBoxLayout(items.length, box.props, box.width_mm, box.height_mm, accessoryLineCount(items));
     return layout.header ? layout : null;
   };
+  /** The header selection in effect: only while that box still has a header to handle (a cleared
+   *  text, hidden header, locked or hidden box, or card editing ends it, and the box gets its own
+   *  handles and keys back at once). */
+  const activeHeaderSel =
+    headerSelId && headerLayoutFor(layers.find((l) => l.id === headerSelId)) ? headerSelId : null;
   /** Arrow keys with the header selected: move it from where it draws now (read each render). */
   const nudgeHeaderRef = useRef<(dx: number, dy: number) => void>(() => {});
   nudgeHeaderRef.current = (dx, dy) => {
-    const rect = headerLayoutFor(layers.find((l) => l.id === headerSelId))?.header;
-    if (!headerSelId || !rect) return;
-    updateLayerPropsLinked(headerSelId, {
+    // From where the TEXT draws (inside the frame the band spans the row; the text is narrower), the
+    // same spot the drag handle starts from, so the first press never jumps.
+    const rect = headerLayoutFor(layers.find((l) => l.id === activeHeaderSel))?.header?.text;
+    if (!activeHeaderSel || !rect) return;
+    updateLayerPropsLinked(activeHeaderSel, {
       headerPos: { x_mm: rect.x_mm + dx, y_mm: rect.y_mm + dy },
     } as Partial<TagLayerProps>);
   };
@@ -2625,16 +2641,15 @@ export function TagCanvasEditor({
     if (!transformer || !stage) return;
     const nodes = Array.from(selectedIds)
       .map((id) => layers.find((layer) => layer.id === id))
-      .filter((layer): layer is TagLayer => Boolean(layer) && !layer!.locked && layer!.visible)
-      // The box whose header is selected hands the handles to its header (round 2).
-      .filter((layer) => layer.id !== headerSelId)
+      .filter((layer): layer is TagLayer => Boolean(layer))
+      .filter((layer) => transformerTargets([layer], activeHeaderSel).length > 0)
       .map((layer) => stage.findOne(`#${layer.id}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
     // `dataOf`: an accessories box closes up around whatever the preview lists, so its selection
     // frame is measured again whenever the preview data changes (not only when the layers do).
-  }, [selectedIds, layers, scale, view, dataOf, headerSelId]);
+  }, [selectedIds, layers, scale, view, dataOf, activeHeaderSel]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).
@@ -3593,7 +3608,7 @@ export function TagCanvasEditor({
       }
       // Round 2: with the header selected, box-level keys never reach the box. Escape goes back to the
       // box; Delete, duplicate and cut do nothing (one header per box); arrows nudge the header.
-      if (headerSelId && !accessoryEdit) {
+      if (activeHeaderSel && !accessoryEdit) {
         if (e.key === 'Escape') {
           e.preventDefault();
           setHeaderSelId(null);
@@ -3829,7 +3844,7 @@ export function TagCanvasEditor({
     enterAccessoryEdit,
     specSheet,
     layers,
-    headerSelId,
+    activeHeaderSel,
   ]);
 
   // -- System clipboard (DESIGNER-PASTE) -------------------------------------
@@ -4658,12 +4673,12 @@ export function TagCanvasEditor({
                           <HeaderDragOverlay
                             layer={box}
                             text={layout.header.text}
-                            fontSize_pt={layout.header.fontSize_pt}
+                            header={layout.header}
                             frame={layout.frame}
                             boxWidth_mm={layout.boxWidth_mm}
                             boxHeight_mm={layout.boxHeight_mm}
                             scale={scale}
-                            selected={headerSelId === box.id}
+                            selected={activeHeaderSel === box.id}
                             onSelect={() => setHeaderSelId(box.id)}
                             onDragState={(dragging) => setHeaderDragId(dragging ? box.id : null)}
                             onMove={(headerPos) =>
@@ -5380,10 +5395,10 @@ export function TagCanvasEditor({
 
       {/* Editing a linked box edits the saved template for every tag template using it. */}
       {/* Also while a linked box's header is selected or dragged (round 2): those edits are design too. */}
-      {(accessoryEdit || headerSelId || headerDragId) && linkedAccessoryBoxes === 'live' &&
+      {(accessoryEdit || activeHeaderSel || headerDragId) && linkedAccessoryBoxes === 'live' &&
         (() => {
           const editedLayer = layers.find(
-            (l) => l.id === (accessoryEdit?.layerId ?? headerSelId ?? headerDragId),
+            (l) => l.id === (accessoryEdit?.layerId ?? activeHeaderSel ?? headerDragId),
           );
           const linked = accessoryTemplateOf(editedLayer);
           if (!editedLayer || !linked) return null;
@@ -5650,8 +5665,8 @@ export function TagCanvasEditor({
               onUpdateAccessoryElement={updateAccessoryElement}
               accessoryBoxStyleNote={boxStyleNoteOf(selectedLayer)}
               accessoryHeaderSelected={
-                selectedLayer && headerSelId === selectedLayer.id
-                  ? (headerLayoutFor(selectedLayer)?.header ?? null)
+                selectedLayer && activeHeaderSel === selectedLayer.id
+                  ? (headerLayoutFor(selectedLayer)?.header?.text ?? null)
                   : null
               }
             />

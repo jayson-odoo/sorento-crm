@@ -2336,7 +2336,11 @@ function AccessoriesInspector({
           </div>
           {/* PRICETAG-HEADER-DRAG (owner Q3): a dragged header is plain text, so "on the border" only
               applies to an unmoved one; Reset puts it back on today's spot (and the setting back). */}
-          {props.headerPos && (
+          {(props.headerPos ||
+            props.headerSize ||
+            props.headerFill != null ||
+            props.headerRadius_mm ||
+            props.headerPadding) && (
             <Button
               type="button"
               variant="outline"

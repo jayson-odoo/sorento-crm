@@ -24,6 +24,7 @@ vi.mock('react-konva', () => {
           data-kind={kind}
           data-name={props.name as string}
           data-rotate={String(props.rotateEnabled ?? '')}
+          data-ratio={String(props.keepRatio ?? '')}
           onClick={call('onClick')}
           onMouseUp={call('onTransformEnd')}
         >
@@ -49,7 +50,7 @@ function mount(selected: boolean, onResize = vi.fn(), onSelect = vi.fn()) {
     <HeaderDragOverlay
       layer={layer}
       text={{ x_mm: 5, y_mm: 2, width_mm: 10, height_mm: 4 }}
-      fontSize_pt={9}
+      header={{ x_mm: 0, y_mm: 0, width_mm: 10, height_mm: 4, fontSize_pt: 9, onBorder: false, moved: true, wrap: false, fill: null, radius_mm: 0, padding: { top: 0, right: 0, bottom: 0, left: 0 }, text: { x_mm: 0, y_mm: 0, width_mm: 10, height_mm: 4 } }}
       frame={null}
       boxWidth_mm={50}
       boxHeight_mm={40}
@@ -69,6 +70,8 @@ describe('header resize handles', () => {
     const t = mount(true).querySelector('[data-kind="transformer"]');
     expect(t).not.toBeNull();
     expect(t!.getAttribute('data-rotate')).toBe('false');
+    // Width and height resize independently, like a text element (Konva's default keeps the ratio).
+    expect(t!.getAttribute('data-ratio')).toBe('false');
   });
 
   it('a click on the header selects it', () => {

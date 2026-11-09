@@ -1,6 +1,6 @@
 # CARD: drag the accessories box header in the Tag Template designer (PRICETAG-HEADER-DRAG, 09/11/2026)
 
-Status: Build round 2 (owner hand test 9 Nov ~17:00; round 1 reviewer READY, browser pass PASS; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
+Status: Hand test round 2 (owner hand test 9 Nov ~17:00 built; round 1 and round 2 reviewed, browser pass PASS; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
 lines, frontend only, no migration, no RBAC change).
 
 ## Owner rulings (9 Nov ~14:25, verbatim: "1a, 2 it should be up to my arrangement, 3 i don't need
@@ -145,5 +145,5 @@ Q5. Saved accessories template (live link, V4): is the header position shared?
 
 ## Mock
 
-None: the answers add only drag + one "Reset header position" link to the existing inspector.
+None: the answers add only drag + one "Reset header" link to the existing inspector.
 A mock follows only if an answer adds new controls (e.g. Q1 (c) spot picker, Q4 (b)).

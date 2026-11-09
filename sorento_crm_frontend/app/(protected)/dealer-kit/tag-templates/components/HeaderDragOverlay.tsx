@@ -12,9 +12,10 @@
  * with its box). A resize is stored as the band's position + size, in box millimetres.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Group, Line, Rect, Text, Transformer } from 'react-konva';
+import { Group, Line, Rect, Transformer } from 'react-konva';
 import type Konva from 'konva';
-import { accessoryHeaderStyle, ptToMm, type AccessoryRect } from '@/lib/dealer-kit/accessory-box';
+import type { AccessoryBoxLayout, AccessoryRect } from '@/lib/dealer-kit/accessory-box';
+import { AccessoryHeaderNodes } from './KonvaTagLayer';
 import { snapHeader, type ElementGuide } from '@/lib/dealer-kit/accessory-card';
 import type { AccessoriesLayerProps, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
@@ -29,7 +30,7 @@ const mainButton = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) =>
 export function HeaderDragOverlay({
   layer,
   text,
-  fontSize_pt,
+  header,
   frame,
   boxWidth_mm,
   boxHeight_mm,
@@ -43,7 +44,8 @@ export function HeaderDragOverlay({
   layer: TagLayer;
   /** Where the header text draws now (the layout's `header.text`). */
   text: AccessoryRect;
-  fontSize_pt: number;
+  /** The layout's header band (style, fill, wrap), drawn in the handle while dragged. */
+  header?: NonNullable<AccessoryBoxLayout['header']>;
   frame: AccessoryRect | null;
   /** The box as drawn (closed up around its cards). */
   boxWidth_mm: number;
@@ -69,7 +71,6 @@ export function HeaderDragOverlay({
     tr.getLayer()?.batchDraw();
   }, [selected, text.x_mm, text.y_mm, text.width_mm, text.height_mm]);
   const props = layer.props as AccessoriesLayerProps;
-  const style = accessoryHeaderStyle(props);
   const area = { width_mm: boxWidth_mm, height_mm: boxHeight_mm };
   const land = (x: number, y: number) =>
     snapHeader({ ...text, x_mm: x / scale, y_mm: y / scale }, frame, area);
@@ -147,21 +148,9 @@ export function HeaderDragOverlay({
           strokeWidth={1}
           dash={[3, 3]}
         />
-        {dragging && (
-          <Text
-            width={text.width_mm * scale}
-            height={text.height_mm * scale}
-            text={props.headerText}
-            align="center"
-            verticalAlign="middle"
-            fontStyle={style.fontWeight >= 600 ? 'bold' : 'normal'}
-            fontFamily={style.fontFamily ?? undefined}
-            fontSize={ptToMm(fontSize_pt) * scale}
-            fill={style.color}
-            wrap="none"
-            listening={false}
-          />
-        )}
+        {/* While dragged, the header rides in the handle exactly as the box draws it (fill, padding,
+            wrap, style); the box hides its own copy meanwhile. */}
+        {dragging && header && <AccessoryHeaderNodes header={header} props={props} scale={scale} origin="band" />}
       </Group>
       {guides.map((g, i) => (
         <Line
@@ -182,6 +171,8 @@ export function HeaderDragOverlay({
           ref={trRef}
           rotateEnabled={false}
           flipEnabled={false}
+          // Width and height independently, as a text element resizes (Konva's default keeps the ratio).
+          keepRatio={false}
           ignoreStroke
           boundBoxFunc={(oldBox, newBox) =>
             newBox.width < MIN_MM * scale || newBox.height < MIN_MM * scale ? oldBox : newBox

@@ -46,6 +46,8 @@ vi.mock('react-konva', () => {
           onDragEnd={call('onDragEnd')}
           onDragStart={call('onDragStart')}
           data-text={String(props.text ?? '')}
+          data-fill={String(props.fill ?? '')}
+          data-wrap={String(props.wrap ?? '')}
         >
           {props.children}
         </div>
@@ -76,7 +78,7 @@ function handle(onMove = vi.fn(), onDragState = vi.fn()) {
     <HeaderDragOverlay
       layer={layer}
       text={text}
-      fontSize_pt={9}
+      header={{ x_mm: 0, y_mm: 0, width_mm: 10, height_mm: 4, fontSize_pt: 9, onBorder: false, moved: true, wrap: false, fill: null, radius_mm: 0, padding: { top: 0, right: 0, bottom: 0, left: 0 }, text: { x_mm: 0, y_mm: 0, width_mm: 10, height_mm: 4 } }}
       onDragState={onDragState}
       frame={frame}
       boxWidth_mm={50}
@@ -117,6 +119,30 @@ describe('HeaderDragOverlay', () => {
     fireEvent.dragEnd(el);
     expect(onDragState).toHaveBeenLastCalledWith(false);
     expect(el.querySelector('[data-kind="text"]')).toBeNull();
+  });
+
+  it('a styled, resized header rides the drag with its fill and wrap, as the box draws it', () => {
+    const styled = {
+      x_mm: 2, y_mm: 3, width_mm: 20, height_mm: 8, fontSize_pt: 9, onBorder: false, moved: true,
+      wrap: true, fill: '#1f4d36', radius_mm: 2, padding: { top: 1, right: 1, bottom: 1, left: 1 },
+      text: { x_mm: 2, y_mm: 3, width_mm: 20, height_mm: 8 },
+    };
+    const { container } = render(
+      <HeaderDragOverlay
+        layer={layer}
+        text={styled.text}
+        header={styled}
+        frame={frame}
+        boxWidth_mm={50}
+        boxHeight_mm={40}
+        scale={SCALE}
+        onMove={vi.fn()}
+      />,
+    );
+    const el = container.querySelector('[data-name="accessory-header-handle"]') as HTMLElement;
+    fireEvent.dragStart(el);
+    expect(el.querySelector('[data-kind="rect"][data-fill="#1f4d36"]')).not.toBeNull();
+    expect(el.querySelector('[data-kind="text"]')?.getAttribute('data-wrap')).toBe('word');
   });
 
   it('a middle-button press is not taken (it still pans the canvas)', () => {

@@ -63,6 +63,7 @@ import {
   fitLinePt,
   ptToMm,
   sampleAccessories,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
@@ -1244,39 +1245,9 @@ function AccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
   // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
   const headerNode = !headerHidden && box.header && (
-    <>
-      {/* The band's background (round 2), or the legend break behind a header on the border. */}
-      {box.header.fill && (
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={box.header.fill}
-          cornerRadius={px(box.header.radius_mm)}
-        />
-      )}
-      <Text
-        x={px(box.header.x_mm + box.header.padding.left)}
-        y={px(box.header.y_mm + box.header.padding.top)}
-        width={px(Math.max(0, box.header.width_mm - box.header.padding.left - box.header.padding.right))}
-        height={px(Math.max(0, box.header.height_mm - box.header.padding.top - box.header.padding.bottom))}
-        text={props.headerText}
-        align={box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : header.align}
-        verticalAlign="middle"
-        fontStyle={konvaFontStyle(header)}
-        textDecoration={konvaDecoration(header)}
-        fontFamily={header.fontFamily ?? undefined}
-        letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-        fontSize={px(ptToMm(box.header.fontSize_pt))}
-        fill={header.color}
-        wrap={box.header.wrap ? 'word' : 'none'}
-        lineHeight={box.header.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
-      />
-    </>
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
   );
   return (
     <>
@@ -1416,40 +1387,10 @@ function DesignedAccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
   const shownItems = items.slice(0, box.shown);
   // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
   const headerNode = !headerHidden && box.header && (
-    <>
-      {/* The band's background (round 2), or the legend break behind a header on the border. */}
-      {box.header.fill && (
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={box.header.fill}
-          cornerRadius={px(box.header.radius_mm)}
-        />
-      )}
-      <Text
-        x={px(box.header.x_mm + box.header.padding.left)}
-        y={px(box.header.y_mm + box.header.padding.top)}
-        width={px(Math.max(0, box.header.width_mm - box.header.padding.left - box.header.padding.right))}
-        height={px(Math.max(0, box.header.height_mm - box.header.padding.top - box.header.padding.bottom))}
-        text={props.headerText}
-        align={box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : header.align}
-        verticalAlign="middle"
-        fontStyle={konvaFontStyle(header)}
-        textDecoration={konvaDecoration(header)}
-        fontFamily={header.fontFamily ?? undefined}
-        letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-        fontSize={px(ptToMm(box.header.fontSize_pt))}
-        fill={header.color}
-        wrap={box.header.wrap ? 'word' : 'none'}
-        lineHeight={box.header.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
-      />
-    </>
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
   );
   return (
     <>
@@ -1700,6 +1641,63 @@ function CardTextNode({
   }
   return (
     <TextContent props={props} w={w} h={h} widthMm={widthMm} heightMm={heightMm} scale={scale} text={text} />
+  );
+}
+
+
+/**
+ * PRICETAG-HEADER-DRAG: the accessories box header as the canvas draws it, from the shared layout's
+ * `header`: the band's background (or the legend break on the border) and its text, padded, one
+ * line or wrapping. Exported so the header drag handle draws the very same nodes while dragged.
+ * `origin`: draw relative to the band's own corner (the drag handle) instead of the box's.
+ */
+export function AccessoryHeaderNodes({
+  header: band,
+  props,
+  scale,
+  origin = 'box',
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  props: AccessoriesLayerProps;
+  scale: number;
+  origin?: 'box' | 'band';
+}) {
+  const px = (mm: number) => mm2px(mm, scale);
+  const style = accessoryHeaderStyle(props);
+  const x = origin === 'band' ? 0 : band.x_mm;
+  const y = origin === 'band' ? 0 : band.y_mm;
+  return (
+    <>
+      {band.fill && (
+        <Rect
+          x={px(x)}
+          y={px(y)}
+          width={px(band.width_mm)}
+          height={px(band.height_mm)}
+          fill={band.fill}
+          cornerRadius={px(band.radius_mm)}
+          listening={origin === 'box' ? undefined : false}
+        />
+      )}
+      <Text
+        x={px(x + band.padding.left)}
+        y={px(y + band.padding.top)}
+        width={px(Math.max(0, band.width_mm - band.padding.left - band.padding.right))}
+        height={px(Math.max(0, band.height_mm - band.padding.top - band.padding.bottom))}
+        text={props.headerText}
+        align={band.onBorder || (band.moved && !band.wrap) ? 'center' : style.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(style)}
+        textDecoration={konvaDecoration(style)}
+        fontFamily={style.fontFamily ?? undefined}
+        letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(band.fontSize_pt))}
+        fill={style.color}
+        wrap={band.wrap ? 'word' : 'none'}
+        lineHeight={band.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+        listening={origin === 'box' ? undefined : false}
+      />
+    </>
   );
 }
 
