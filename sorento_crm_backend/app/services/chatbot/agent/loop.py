@@ -744,6 +744,38 @@ def final_reply(
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
 
+NO_CHANGE_REPLY = (
+    "Nothing was changed: I did not propose any change in this turn. Tell me again what to change and I will show it "
+    "for you to confirm."
+)
+#: Passive verbs a read answer does not use ("the ETA has been updated" is data, not a claim).
+_CHANGED = r"(?:granted|given|added|removed|linked|unlinked|turned\s+(?:on|off))"
+#: A reply that says a change happened (crew live x3, 9 Nov: "I have completed all your requested operations." with
+#: no tool call). "completed" / "done" only in the first-person and "your changes" forms, so an answer about an
+#: order that "has been completed" is not taken for one; a bare "Done." closes read turns too, so it is not one.
+_CLAIMS = re.compile(
+    "|".join((
+        rf"\b(?:has|have)\s+been\s+{_CHANGED}\b",
+        r"\bI(?:\s+have|'ve|’ve)\s+(?:completed|granted|given|added|removed|updated|changed|linked|unlinked|"
+        r"turned|set|done)\b",
+        r"\b(?:all|your)\s+(?:requested\s+)?(?:operations|changes|requests)\s+(?:are|have\s+been)\s+(?:done|completed)\b",
+        r"\baccess\s+(?:is|has\s+been)\s+granted\b",
+    )),
+    re.IGNORECASE,
+)
+
+
+def claims_change(text: str) -> bool:
+    """Does the reply say a change was made (UAC F1)?"""
+    return bool(_CLAIMS.search(str(text or "").strip()))
+
+
+def no_false_completion(text: str, *, proposed: bool, decided: bool) -> str:
+    """UAC F1: a reply claiming a change on a turn that proposed none and decided none is replaced by the fixed
+    reply; a reply that asks, lists a proposal, or follows a real confirm is left as it is."""
+    return NO_CHANGE_REPLY if not proposed and not decided and claims_change(text) else text
+
+
 def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_text: bool) -> str:
     parts = []
     if empty_text:
@@ -833,6 +865,13 @@ def _propose(
         return ToolResult("invalid", message="A table of changes is already proposed this turn; propose this after it is decided.")
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
+    from app.services.chatbot.agent import contact_grant
+
+    if name == contact_grant.GRANT and isinstance(args, dict):
+        # The dealer name is the user's own words, never the model's re-search (UAC A17), as in a table row.
+        args, problem = contact_grant.typed_names(args, user_text)
+        if problem:
+            return ToolResult("invalid", message=problem)
     # An idea create carries what only the loop knows: the user's own message of this turn (I7: the transcript,
     # as a write tool sees only its arguments) and whether the turn is a test turn (a console turn makes a test
     # idea, a live one a real idea). Set here, never from the model's arguments.
@@ -1941,6 +1980,12 @@ def _run(
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
                 db.rollback()
+        decided = any(
+            e.get("name") in (CONFIRM_ACTION, CANCEL_ACTION) and e.get("status") == "ok" for e in ledger.values()
+        )
+        reply = no_false_completion(
+            reply, proposed=bool(steps or batch_skipped or batch_waiting), decided=decided or bool(confirm_notes)
+        )
     if confirm_notes:
         # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
         # Whatever the status: a confirm that ran made the idea even if the model then failed.

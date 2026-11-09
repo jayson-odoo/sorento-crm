@@ -1133,12 +1133,33 @@ def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
     return out
 
 
+#: Settings a user may ask for that this tool never changes (UAC C7): refused by code, so the model cannot answer
+#: "done" for them (crew live x3, 9 Nov: "stock replies off").
+_OFFICE_SETTINGS = (
+    ("chatbot_stock_allowed", "Stock replies"), ("escalation_allowed", "Hand-over"),
+    ("packing_list_allowed", "Packing list"), ("notify_salesman", "Notify salesman"),
+)
+
+
 def _contact_plan(db, user: dict, args: dict) -> dict:
     """What the call would change, after every scope check. Raises the route-shaped error otherwise."""
     from app.models.access import RespondContact
     from app.services.contact_access_sheet_service import TEMPLATE
     from app.services.error_handler import AppException, handle_not_found
 
+    other = _line(args.get("other_setting"))[:80]
+    what = next((label for key, label in _OFFICE_SETTINGS if args.get(key) is not None), None) or (
+        f'"{other}"' if other else None
+    )
+    if what:
+        # One change at a time: the whole call is refused, whatever else it asks for.
+        raise AppException(
+            status_code=422, code="VALIDATION_ERROR",
+            message=(
+                f"{what} is changed on the contact's Access tab, not here." if _permitted(db, str(user["id"]), CONTACT_EDIT)
+                else f"{what} is set by the office; ask the office."
+            ),
+        )
     contact = db.get(RespondContact, str(args["contact_id"]))
     if contact is None:
         raise handle_not_found("Contact", args["contact_id"])
@@ -1448,8 +1469,10 @@ WRITES[UPDATE_CONTACT] = WriteDef(
             "description": (
                 "Propose a change to one dealer contact's access: role (owner = Business owner, employee), "
                 "chatbot_allowed (AI replies), and customer links. To resign a contact, set chatbot_allowed "
-                "false and unlink its accounts. Nothing changes until the user confirms. contact_id and "
-                "customer ids must come from crm_contacts_find. Call once per contact."
+                "false and unlink its accounts. Route EVERY change the user asks for on a dealer contact through "
+                "this tool, including the settings below it cannot make: it answers what to do instead. Nothing "
+                "changes until the user confirms. contact_id and customer ids must come from crm_contacts_find. "
+                "Call once per contact."
             ),
             "parameters": {
                 "type": "object",
@@ -1459,6 +1482,17 @@ WRITES[UPDATE_CONTACT] = WriteDef(
                     "chatbot_allowed": {"type": "boolean"},
                     "link_customer_ids": {"type": "array", "items": {"type": "string"}},
                     "unlink_customer_ids": {"type": "array", "items": {"type": "string"}},
+                    "chatbot_stock_allowed": {"type": "boolean", "description": "Stock replies on or off."},
+                    "escalation_allowed": {"type": "boolean", "description": "Hand-over to a person on or off."},
+                    "packing_list_allowed": {"type": "boolean", "description": "Packing list replies on or off."},
+                    "notify_salesman": {"type": "boolean", "description": "Notify the salesman on or off."},
+                    "other_setting": {
+                        "type": "string",
+                        "description": (
+                            "Any other change the user asked for on this person, in their words, e.g. enquiry "
+                            "agents, stock locations, brands, prices."
+                        ),
+                    },
                 },
                 "required": ["contact_id"],
             },

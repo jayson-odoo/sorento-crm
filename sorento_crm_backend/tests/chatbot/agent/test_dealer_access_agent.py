@@ -1451,3 +1451,203 @@ def test_contract_the_grant_takes_the_dealer_name_as_typed_and_refusals_come_fro
     desc = re.sub(r'"\s*\n\s*(?:f)?"', "", inspect.getsource(batch.batch_tool_schema))
     assert "Never word a refusal or a skipped reason yourself" in desc
     assert "never show a table of rows that this tool did not return" in desc
+
+
+# ------------------------------------------------------------------ crew live x3 round (UAC A17, C7, F1)
+
+NOT_TYPED = '"{name}" is not in your message; write the dealer name as you typed it.'
+NO_CHANGE = (
+    "Nothing was changed: I did not propose any change in this turn. Tell me again what to change and I will show it "
+    "for you to confirm."
+)
+
+
+def _turn(db, w: W, script, text_: str):
+    from tests.chatbot.agent.test_agent_writes import run_turn
+
+    return run_turn(db, w, script, text_=text_)[0]
+
+
+def _batch_call(rows, cid="b1"):
+    from tests.chatbot.agent.test_agent_writes import round_of, tc
+
+    return round_of(tc(BATCH, {"write": GRANT, "rows": rows}, cid))
+
+
+def _turn_waiting(db, turn_id: str) -> list[dict]:
+    from app.models.chatbot_turn import ChatbotTurn
+
+    db.expire_all()
+    return (db.get(ChatbotTurn, turn_id).response or {}).get("batch_waiting") or []
+
+
+def test_A17_a_customer_name_the_user_did_not_type_is_skipped_and_nothing_is_proposed(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    phone = fake_phone()
+    said = w.cust_a.customer_name
+
+    steps, skipped, waiting = batch.propose_rows(
+        db, ctx_of(db, w), GRANT, [row_(phone, role="employee", names=[said])], seen_ids=set(),
+        user_text=f"please give {phone} access for ZZT Somebody Else",
+    )
+
+    assert steps == [] and waiting == []
+    assert reason(skipped) == NOT_TYPED.format(name=said)
+    assert state(db, phone) is None
+
+
+def test_A17_a_single_row_grant_with_a_name_the_user_did_not_type_proposes_nothing(db):
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    phone, said = fake_phone(), w.cust_a.customer_name
+    call = round_of(tc(GRANT, row_(phone, role="employee", names=[said]), "g1"))
+
+    refused = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} access to ZZT Somebody Else")
+    control = _turn(db, w, [call, answer_("Here is the change.")], f"give {phone} access to {said}")
+
+    assert refused.pending_action is None
+    assert control.pending_action is not None
+    assert state(db, phone) is None
+
+
+def test_A17_a_name_typed_in_another_case_and_spacing_passes_and_the_typed_text_is_kept(db):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    stem = unique_code("ZZT Yoo Living", alpha=True)
+    add_customer(db, w, f"{stem} A/C I")
+    add_customer(db, w, f"{stem} A/C III")
+    typed = "  ".join(stem.lower().split())
+
+    steps, skipped, waiting = batch.propose_rows(
+        db, ctx_of(db, w), GRANT, [row_(fake_phone(), role="employee", names=[stem])], seen_ids=set(),
+        user_text=f"add them for {typed} please",
+    )
+
+    assert skipped == [] and steps == []
+    assert [x["written"] for x in waiting] == [" ".join(typed.split())]  # the user's casing, spaces collapsed
+
+
+def test_A17_an_all_follow_up_re_sending_the_verified_name_passes_and_keeps_the_typed_text(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    stem = unique_code("ZZT Kbox Shop", alpha=True)
+    add_customer(db, w, f"{stem} A/C I")
+    add_customer(db, w, f"{stem} A/C II")
+    typed = stem.lower()
+    phone = fake_phone()
+
+    first = _turn(db, w, [_batch_call([row_(phone, role="employee", names=[stem])]), answer_("Which account?")],
+                  f"grant {phone} employee at {typed}")
+    second = _turn(db, w, [_batch_call([row_(phone, role="employee", names=[stem])], "b2"), answer_("Which account?")],
+                   "all")
+
+    assert [x["written"] for x in _turn_waiting(db, first.turn_id)] == [typed]
+    assert NOT_TYPED.format(name=stem) not in second.reply_text
+    assert [x["written"] for x in _turn_waiting(db, second.turn_id)] == [typed]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I have completed all your requested operations.",
+        "Access has been granted to the three people.",
+        "Stock replies have been turned off for him.",
+        "I've updated the contact.",
+        "All requested changes have been done.",
+        "Your changes are completed!",
+        "The link has been removed.",
+    ],
+)
+def test_F1_a_reply_claiming_a_change_is_detected(text):
+    from app.services.chatbot.agent import loop
+
+    assert loop.claims_change(text) is True
+    assert loop.no_false_completion(text, proposed=False, decided=False) == NO_CHANGE
+    assert loop.no_false_completion(text, proposed=True, decided=False) == text
+    assert loop.no_false_completion(text, proposed=False, decided=True) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Which account do you mean for row 2?",
+        "Here is what I will change; reply yes to go ahead.",
+        "Nothing was changed.",
+        "I could not find that phone. Is it the right number?",
+        "Stock replies are set by the office; ask the office.",
+        "The contact has access through two accounts.",
+        "Done.",  # a read turn's own closing word (test_agent_round6), not a claim
+        "the ETA has been updated",
+        "the order has been changed",
+    ],
+)
+def test_F1_a_reply_that_claims_nothing_is_left_as_it_is(text):
+    from app.services.chatbot.agent import loop
+
+    assert loop.claims_change(text) is False
+    assert loop.no_false_completion(text, proposed=False, decided=False) == text
+
+
+def test_F1_a_turn_claiming_completion_without_any_proposal_gets_the_fixed_reply(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+
+    result = _turn(db, w, [answer_("I have completed all your requested operations.")], "stock replies off for him")
+
+    assert result.pending_action is None
+    assert result.reply_text == NO_CHANGE
+
+
+def _setting_args(person, **extra):
+    return {"contact_id": person.id, **extra}
+
+
+SETTINGS = [
+    ({"chatbot_stock_allowed": False}, "Stock replies"),
+    ({"escalation_allowed": True}, "Hand-over"),
+    ({"packing_list_allowed": True}, "Packing list"),
+    ({"notify_salesman": True}, "Notify salesman"),
+    ({"other_setting": "brands"}, '"brands"'),
+]
+
+
+@pytest.mark.parametrize("args,what", SETTINGS, ids=[w for _, w in SETTINGS])
+def test_C7_an_own_scope_settings_change_is_refused_as_set_by_the_office(db, args, what):
+    w = own_world(db).w
+    person = dealer(db, w, customers=(w.cust_a,))
+    before = state(db, person.phone_number)
+
+    res, step = update_step(db, w, _setting_args(person, **args), seen={person.id})
+
+    assert step is None and res.status == "invalid"
+    assert res.message == f"{what} is set by the office; ask the office."
+    assert state(db, person.phone_number) == before
+
+
+@pytest.mark.parametrize("args,what", SETTINGS, ids=[w for _, w in SETTINGS])
+def test_C7_an_edit_holders_settings_change_points_to_the_access_tab(db, args, what):
+    w = make_world(db)
+    person = dealer(db, w, customers=(w.cust_a,))
+
+    res, step = update_step(db, w, _setting_args(person, **args), seen={person.id})
+
+    assert step is None and res.status == "invalid"
+    assert res.message == f"{what} is changed on the contact's Access tab, not here."
+
+
+def test_C7_a_settings_change_combined_with_a_role_change_is_refused_whole(db):
+    w = own_world(db).w
+    person = dealer(db, w, customers=(w.cust_a,))
+    before = state(db, person.phone_number)
+
+    res, step = update_step(db, w, _setting_args(person, role="owner", escalation_allowed=True), seen={person.id})
+
+    assert step is None and res.status == "invalid"
+    assert res.message == "Hand-over is set by the office; ask the office."
+    assert state(db, person.phone_number) == before and tags_of(db, person.id) == []

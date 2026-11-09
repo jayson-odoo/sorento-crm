@@ -182,12 +182,13 @@ def _closed_reason(write: str, args: dict, key: Any, closed: dict, user_text: st
 
 
 def propose_rows(
-    db, ctx, write: str, rows: list, *, seen_ids: set[str], user_text: str = "",
+    db, ctx, write: str, rows: list, *, seen_ids: set[str], user_text: str | None = None,
     previous_waiting: list[dict] | None = None, closed: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
-    {"row", "cells", "written", "company", "candidates", "more"}."""
+    {"row", "cells", "written", "company", "candidates", "more"}. `user_text`: the user's message of this turn (None
+    for a caller outside a turn); a grant row's customer names must be in it (UAC A17)."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -212,9 +213,16 @@ def propose_rows(
             continue
         if isinstance(args, dict):
             by_row = write if definition.pick_changes_key else None
-            unlisted = _not_listed(args, key, previous_waiting or [], user_text, n, by_row) or _closed_reason(
-                write, args, key, closed or {}, user_text
+            unlisted = _not_listed(args, key, previous_waiting or [], user_text or "", n, by_row) or _closed_reason(
+                write, args, key, closed or {}, user_text or ""
             )
+            if unlisted is None and user_text is not None:
+                from app.services.chatbot.agent import contact_grant
+
+                if write == contact_grant.GRANT:
+                    # The row's own earlier "You wrote", re-sent by an "all" / pick follow-up, counts as typed.
+                    written = [p.get("written") for p in previous_waiting or [] if key is not None and p.get("key") == key]
+                    args, unlisted = contact_grant.typed_names(args, user_text, written)
             if unlisted:
                 skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
@@ -282,7 +290,7 @@ def carried_skips(
 def propose(
     db, ctx, args: Any, steps: list[dict], *, seen_ids: set[str], skipped_out: list[dict] | None = None,
     waiting_out: list[dict] | None = None,
-    user_text: str = "",
+    user_text: str | None = None,
     previous_waiting: list[dict] | None = None,
     closed: dict | None = None,
     previous: dict | None = None,

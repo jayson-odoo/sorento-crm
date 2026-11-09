@@ -188,6 +188,35 @@ def _customers(
     return list(out.values()), problems, choices
 
 
+def _norm(text: Any) -> str:
+    return " ".join(str(text or "").split()).casefold()
+
+
+def typed_names(args: dict, user_text: str, written_before: list[str] = ()) -> tuple[dict, str | None]:
+    """UAC A17: every `customer_names` value is what the user typed this turn (case and spacing aside, a whole
+    phrase), or a name a waiting row of theirs already showed as "You wrote" (an "all" / pick follow-up re-sends it).
+    Returns (args with each name as the user typed it, None), or (args, the refusal) for a name the model made up or
+    re-searched."""
+    names = args.get("customer_names") if isinstance(args, dict) else None
+    if not isinstance(names, list) or not names:
+        return args, None
+    before = {_norm(w): " ".join(str(w).split()) for w in written_before if w}
+    out = []
+    for name in names:
+        said = " ".join(str(name or "").split())
+        if not said:
+            continue
+        words = r"\s+".join(re.escape(w) for w in said.split())
+        found = re.search(rf"(?<![0-9a-z]){words}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE)
+        if found:
+            out.append(" ".join(found.group(0).split()))
+        elif _norm(said) in before:
+            out.append(before[_norm(said)])
+        else:
+            return args, f'"{said}" is not in your message; write the dealer name as you typed it.'
+    return {**args, "customer_names": out}, None
+
+
 def _fits(choice: dict) -> str:
     n, noun = len(choice["candidates"]), choice.get("noun") or "account"
     count = f"more than 10 {noun}s" if choice.get("more") else f"{n} {noun}{'' if n == 1 else 's'}"

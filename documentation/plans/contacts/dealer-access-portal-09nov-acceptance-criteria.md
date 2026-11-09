@@ -51,6 +51,11 @@ A15. The owner tag counts only when its settings are exactly the template's owne
     more than the template.
 A16. Staff phones (A9) also cover a phone equal (by digits) to any user's `contact_number`, and are checked for new
     phones as well as existing contacts.
+A17. Every scope: a customer name in a grant row (table or single row) must be what the user typed in this turn's
+    message (case and spacing aside, as a whole phrase), or the row's own "You wrote" from the waiting table an "all"
+    or pick follow-up re-sends. Otherwise the row is skipped: `"<name>" is not in your message; write the dealer name
+    as you typed it.` The waiting table's "You wrote" is the user's text (crew live x3, 9 Nov: a re-searched name was
+    shown as written).
 A11. One audit row per contact (event `contact.access_agent`, actor the confirming user); a created contact says so.
 
 ## B. Respond.io (V8)
@@ -86,6 +91,11 @@ C6. Own scope, a contact another account also reaches: every settings change in 
     ask the office to change their settings.` The salesperson can still unlink their OWN accounts from that person.
     Tool contract: the dealer name is passed exactly as the user typed it (the pick table echoes it), every row goes
     through the tool (staff phones included), and refusals and skipped reasons are the tool's own words.
+C7. Settings the update tool does not change (stock replies, hand-over, packing list, notify salesman, or any other
+    setting the user names) are arguments of the tool and are refused by code, the whole call with them, nothing
+    changed: `<what> is set by the office; ask the office.` (edit_own) / `<what> is changed on the contact's Access
+    tab, not here.` (`.edit`), `<what>` being "Stock replies", "Hand-over", "Packing list", "Notify salesman" or the
+    user's own words in quotes. This refusal comes before every other check.
 
 ## D. Permission
 
@@ -102,3 +112,13 @@ D2. No migration or seed grants the AI assistant or agent to salespeople (owner 
 E1. `.edit` holders: grant, find and update behave as before except A5 (no facet is skipped any more), A6/C1/C2 (the
     owner level is the tag) and A9.
 E2. The admin access sheet upload (`contact_access_sheet_service`) is unchanged.
+
+## F. Agent replies
+
+F1. No false completion: a final reply that says a change was made (has or have been granted, given, added, removed,
+    updated, changed, linked, unlinked, turned on or off, or set; I have or I've completed, granted, and so on; all or
+    your requested operations, changes or requests are or have been done or completed; access is or has been granted)
+    on a turn that proposed no change and decided no waiting one is replaced by: `Nothing was changed: I did not
+    propose any change in this turn. Tell me again what to change and I will show it for you to confirm.` A reply that
+    asks, lists a proposal, or follows a real confirm or cancel is left as it is. A bare "Done." is not a claim (a read
+    turn closes with it too).
