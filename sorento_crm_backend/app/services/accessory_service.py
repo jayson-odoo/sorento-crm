@@ -835,11 +835,10 @@ class AccessoryService:
         combo = self._combo_or_404(combo_id)
         style_id = self._resolve_box_style(box_style, self._product_or_404(combo.host_product_id).company_id)
         host = self._product_or_404(combo.host_product_id)
-        # One list of free products, never two: a product already IN the combo (a part) is not
-        # also its free item, and the host is the combo itself.
+        # The host is the combo itself, so it is never its own free item. A part may be
+        # (COMBO-FREE-PART, owner 9 Nov: the flyer lists the basin tap as a part AND prints it
+        # in the FREE box); it stays a part, and the combo's prices do not change.
         refused = {host.id: "The combo's own product cannot be its free item"}
-        for part in combo.parts or []:
-            refused.setdefault(part.part_product_id, "This product is already a part of this combo")
         resolved = self._resolve_items(items, host.company_id, refused=refused)
         self.db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo_id).delete(
             synchronize_session=False
