@@ -388,6 +388,8 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
 
 class TestConsoleTurnUnknownContact:
     def test_unknown_contact_is_a_404(self, client, stub_console_seams, monkeypatch):
+        """No turn AND no `respond_contacts` row: still a 404. A contact with a row and no
+        real turn gets a synthetic envelope instead (CONSOLE-SYNTH-ENVELOPE)."""
         monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: NOT_SUPPORTED_OUTPUT)
         resp = client.post(
             CONSOLE_TURN_URL,
