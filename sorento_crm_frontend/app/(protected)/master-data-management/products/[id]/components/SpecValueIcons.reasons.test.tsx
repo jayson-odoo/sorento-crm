@@ -33,6 +33,9 @@ describe('FU F1 SpecValueIcons hints', () => {
     for (const hint of hints) {
       expect(hint.className).not.toMatch(/truncate|max-w-/);
       expect(hint.className).toContain('text-muted-foreground');
+      // The Value cell is `truncate` (nowrap, inherited) in a resizable grid: the hint must undo it.
+      expect(hint.className).toContain('whitespace-normal');
+      expect(hint.className).toContain('break-words');
     }
   });
 
