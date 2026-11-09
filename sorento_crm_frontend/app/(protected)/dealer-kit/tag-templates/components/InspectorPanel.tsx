@@ -2424,7 +2424,7 @@ function AccessoriesInspector({
  */
 function AccessoryHeaderInspector({
   props,
-  rect,
+  rect: drawn,
   usedColours,
   fontOptions,
   onUploadFont,
@@ -2439,6 +2439,9 @@ function AccessoryHeaderInspector({
 }) {
   const headerId = useId();
   const style = accessoryHeaderStyle(props);
+  // The layout's millimetres, to 0.01 mm: what the fields show and what a first edit pins.
+  const mm = (v: number) => Math.round(v * 100) / 100;
+  const rect = { x_mm: mm(drawn.x_mm), y_mm: mm(drawn.y_mm), width_mm: mm(drawn.width_mm), height_mm: mm(drawn.height_mm) };
   const pinned = (changes: Partial<AccessoriesLayerProps>): Partial<AccessoriesLayerProps> => ({
     headerPos: props.headerPos ?? { x_mm: rect.x_mm, y_mm: rect.y_mm },
     headerSize: props.headerSize ?? { width_mm: rect.width_mm, height_mm: rect.height_mm },
