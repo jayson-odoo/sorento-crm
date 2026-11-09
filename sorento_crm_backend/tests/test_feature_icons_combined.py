@@ -24,6 +24,7 @@ from tests.test_feature_icons_spec_value import (  # noqa: F401  (fixture)
     reg,
 )
 from tests.test_feature_icons_spec_value_fixround import two_companies  # noqa: F401  (fixture)
+from tests.test_product_tag_templates import env  # noqa: F401  (fixture)
 from tests.test_spec_registry_pr2_routes import (
     _ADMIN_ROLE,
     _BASE,
@@ -489,3 +490,39 @@ def test_B4_a_condition_on_a_deactivated_partner_key_is_kept(reg):
         {"mixer": {hot.id: [stale], cold.id: [stale]}},
     )
     assert res.status_code == 422, res.text
+
+
+# ---------------------------------------------------------------------------
+# FU F4: the staff tag preview forwards the feature icon rules (with conditions)
+# ---------------------------------------------------------------------------
+
+
+def test_FU_F4_the_staff_tag_preview_answers_the_feature_icon_rules_with_conditions(env, monkeypatch):
+    from app.models.dealer_kit import TagTemplate, TagTemplateVersion
+    from app.services.dealer_kit import asset_service
+    from tests import test_product_tag_templates as ptt
+    from tests.test_feature_icons import _ruled_icon
+    from tests.test_feature_icons_fixround1 import _fake_urls, _icons_layer
+
+    db, c, _as = env
+    monkeypatch.setattr(asset_service, "urls_for", _fake_urls)
+    host, trap = _spec_key(), _spec_key()
+    _key(db, trap, data_type="enum", allowed_values=["s_trap"])
+    _key(db, host, data_type="enum", allowed_values=["a"])
+    icon = _ruled_icon(db, "ZZT staff", host, ["a"])
+    row = _stored(db, host)
+    row.value_icon_conditions = {"a": {icon.id: [_cond(trap, "s_trap")]}}
+    template_id = ptt._template(db, "Icons")
+    version = db.get(TagTemplateVersion, db.get(TagTemplate, template_id).published_version_id)
+    version.doc = {**version.doc, "layers": [*version.doc["layers"], _icons_layer()]}
+    product = ptt._product(db, ptt._reference(db))
+    ptt._link(db, product, template_id)
+    db.flush()
+
+    res = c.post(
+        f"{ptt.DK}/tag-preview",
+        json={"lines": [{"key": "k1", "line_type": "product", "product_id": product}]},
+    )
+    assert res.status_code == 200, res.text
+    mine = [r for r in res.json()["feature_icons"] if r["id"] == icon.id]
+    assert [r["conditions"] for r in mine] == [[_cond(trap, "s_trap")]]
