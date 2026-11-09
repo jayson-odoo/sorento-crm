@@ -41,7 +41,12 @@ from sqlalchemy.orm import Query, Session
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
 from app.models.product import Product
 from app.models.product_combo import ProductCombo
-from app.services.dealer_kit.template_needs import combo_shape, fit_reason, template_needs
+from app.services.dealer_kit.template_needs import (
+    combo_shape,
+    doc_reads_variants,
+    fit_reason,
+    template_needs,
+)
 from app.services.company_scope import build_company_predicate, get_company_scope
 from app.services.error_handler import AppException
 
@@ -839,6 +844,8 @@ def template_item(
         "default_selling": default_selling,
         "is_default": default_list or default_selling,
         "needs": template_needs(version.doc) if version is not None else None,
+        # PRICETAG-UPGRADE-VARIANTS: the line shows "Variants on this tag" only for such a template.
+        "reads_variants": doc_reads_variants(version.doc) if version is not None else False,
     }
 
 

@@ -33,6 +33,9 @@ const line = {
   manual_sell_price: null, pricing: null, own_list_price: 1750,
   variant_members: CODES.map((code) => ({ product_id: `id-${code}`, code, name: code, list_price: 1750, is_discontinued: false })),
   excluded_variant_ids: ['id-SRTWC8354-SH-UF-300'],
+  // The row shows only for a chosen template that reads "All variants" (crew re-pass 1).
+  tag_template_id: 't-family',
+  tag_templates: [{ id: 't-family', name: 'WC FAMILY TEST', reads_variants: true }],
 } as unknown as DraftLine;
 
 describe('Variants on this tag trigger', () => {

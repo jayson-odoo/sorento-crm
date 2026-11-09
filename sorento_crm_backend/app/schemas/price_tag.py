@@ -1891,6 +1891,8 @@ class ProductTagTemplateItem(BaseModel):
     default_list: bool = False
     default_selling: bool = False
     needs: Optional[TemplateNeeds] = None
+    #: PRICETAG-UPGRADE-VARIANTS: the published doc has a layer on "All variants".
+    reads_variants: bool = False
 
 
 class ProductTagTemplatesUpdate(BaseModel):

@@ -236,6 +236,9 @@ export interface ProductTagTemplateOption {
   default_selling?: boolean;
   /** What the template reads from a combo (from its published layers). */
   needs?: TemplateNeeds;
+  /** PRICETAG-UPGRADE-VARIANTS: the template has a layer on "All variants" (the line then offers
+   *  "Variants on this tag"). Absent on an older server = no. */
+  reads_variants?: boolean;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */

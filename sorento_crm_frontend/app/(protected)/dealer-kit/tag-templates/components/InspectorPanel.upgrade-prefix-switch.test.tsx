@@ -141,3 +141,13 @@ describe('Card element: Shows switches the default prefix', () => {
     expect(patch.prefix ?? 'ADD ').toBe('ADD ');
   });
 });
+
+describe('Upgrade top-up layer: the fit hint (crew re-pass 3)', () => {
+  it('says reading a position also needs every fixed part printed', () => {
+    const layer = textLayer('upgrade_topup', { prefix: 'TOPUP ', subjectSlot: { kind: 'upgrade', index: 0 } });
+    render(<InspectorPanel layer={layer} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />);
+    const hint = screen.getByText(/makes this template need 1 upgrade/);
+    expect(hint.textContent).toMatch(/every fixed part/);
+    expect(hint.textContent).toMatch(/Fixed part/);
+  });
+});

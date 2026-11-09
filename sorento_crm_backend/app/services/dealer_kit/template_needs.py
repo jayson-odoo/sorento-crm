@@ -88,6 +88,18 @@ def template_needs(doc) -> dict:
     return {"fixed": fixed, "groups": groups, "upgrades": upgrades}
 
 
+def doc_reads_variants(doc) -> bool:
+    """PRICETAG-UPGRADE-VARIANTS: whether a document has a layer on "All variants" (subjectSlot
+    ``{"kind": "variants"}``). The request line offers "Variants on this tag" only then."""
+    layers = doc.get("layers") if isinstance(doc, dict) else None
+    for layer in layers if isinstance(layers, list) else []:
+        props = layer.get("props") if isinstance(layer, dict) else None
+        slot = props.get("subjectSlot") if isinstance(props, dict) else None
+        if isinstance(slot, dict) and slot.get("kind") == "variants":
+            return True
+    return False
+
+
 def combo_shape(combo) -> dict:
     """A combo's fixed-part count, choice groups (name, option count) in part order, upgrade count."""
     fixed = 0

@@ -839,7 +839,11 @@ function LineRow({
           </td>
         </tr>
       )}
-      {!isSet && line.product_id && (line.variant_members?.length ?? 0) > 0 && (
+      {!isSet &&
+        line.product_id &&
+        (line.variant_members?.length ?? 0) > 0 &&
+        // Only a template that reads "All variants" prints the members (crew re-pass 1).
+        line.tag_templates?.some((template) => template.id === line.tag_template_id && template.reads_variants) && (
         <VariantsRow line={line} colSpan={subRowSpan} onUpdate={onUpdate} />
       )}
       {showPackage && (

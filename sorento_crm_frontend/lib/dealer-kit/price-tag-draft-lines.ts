@@ -377,17 +377,32 @@ function foldPicks(parts: DraftPart[]): DraftPart[] {
 }
 
 /**
- * A reopened multi-pick row has no candidates (the server stores the picks only). Once the combos
- * lookup answers, give it back its group's options, the same source `partsFromCombo` uses, so it
- * renders as the multi-select it was.
+ * A reopened multi-pick row, or the reopened Upgrade row, has no candidates (the server stores the
+ * picks only). Once the combos lookup answers, give it back its options, the same source
+ * `partsFromCombo` uses, so it renders as the picker it was with its pick kept (the Upgrade row even
+ * with one pick: PRICETAG-UPGRADE-VARIANTS crew re-pass). Fixed parts, a lone resolved group pick and
+ * rows that already have candidates are left alone.
  */
 export function restoreGroupCandidates(parts: DraftPart[], combo: ProductComboOption | undefined): DraftPart[] {
   if (!combo) return parts;
   return parts.map((part) => {
-    if (!part.role || part.candidates.length > 0 || (part.product_ids?.length ?? 0) < 2) return part;
-    const candidates = combo.parts
-      .filter((p) => !p.is_upgrade && p.choice_group === part.role)
-      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, is_discontinued: p.is_discontinued ?? false }));
+    if (!part.role || part.candidates.length > 0) return part;
+    // A lone resolved group pick stays a resolved part (reopen test); the Upgrade row is an offer,
+    // so even one pick reopens as its picker and can be changed or cleared.
+    if (part.role !== 'Upgrade' && (part.product_ids?.length ?? 0) < 2) return part;
+    const candidates =
+      part.role === 'Upgrade'
+        ? combo.parts
+            .filter((p) => p.is_upgrade)
+            .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, topup_amount: p.topup_amount ?? null }))
+        : combo.parts
+            .filter((p) => !p.is_upgrade && p.choice_group === part.role)
+            .map((p) => ({
+              product_id: p.product_id,
+              code: p.code,
+              name: p.name,
+              is_discontinued: p.is_discontinued ?? false,
+            }));
     return candidates.length > 0 ? { ...part, candidates } : part;
   });
 }

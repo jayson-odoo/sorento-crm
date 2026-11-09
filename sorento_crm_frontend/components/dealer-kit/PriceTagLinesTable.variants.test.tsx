@@ -75,6 +75,9 @@ function line(extra: Record<string, unknown> = {}): DraftLine {
     combos_loaded: true, host_guarded: false, parts: [], promotion_id: null, promotion_locked: false,
     manual_sell_price: null, pricing: null,
     variant_members: MEMBERS, own_list_price: 1750, excluded_variant_ids: [],
+    // Crew re-pass (1): the row shows only when the chosen template reads "All variants".
+    tag_template_id: 't-family', tag_templates_for: 'p1',
+    tag_templates: [{ id: 't-family', name: 'WC FAMILY TEST', reads_variants: true }],
     ...extra,
   } as unknown as DraftLine;
 }
@@ -156,6 +159,17 @@ describe('Variants on this tag', () => {
   it('is not shown for a product with no members', () => {
     renderTable(line({ variant_members: [] }));
     expect(captured.multi).toHaveLength(0);
+    expect(screen.queryByText('Variants on this tag')).toBeNull();
+  });
+
+  it('is not shown when the chosen template has no All variants layer', () => {
+    renderTable(line({ tag_templates: [{ id: 't-family', name: 'UPGRADE TEST', reads_variants: false }] }));
+    expect(screen.queryByText('Variants on this tag')).toBeNull();
+    expect(screen.queryByText(/Variants price differently/)).toBeNull();
+  });
+
+  it('is not shown before a template is chosen', () => {
+    renderTable(line({ tag_template_id: null }));
     expect(screen.queryByText('Variants on this tag')).toBeNull();
   });
 

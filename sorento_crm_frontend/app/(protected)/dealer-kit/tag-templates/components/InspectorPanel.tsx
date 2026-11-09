@@ -941,8 +941,8 @@ function UpgradeFigureControls({
         <Alert variant="warning" size="sm" role="status">
           <AlertDescription>
             {slot.index === 0
-              ? 'A layer on "Upgrade 1" makes this template need 1 upgrade: it is not offered for a combo with none. Keep the top-up inside the Upgrades box for a template that fits every combo.'
-              : `A layer on "Upgrade ${slot.index + 1}" makes this template need ${slot.index + 1} upgrades: it is not offered for a combo with fewer. Keep the top-up inside the Upgrades box for a template that fits every combo.`}
+              ? 'A layer on "Upgrade 1" makes this template need 1 upgrade: it is not offered for a combo with none. A template that reads a combo position must also print every fixed part, so add a layer on each "Fixed part" too. Keep the top-up inside the Upgrades box for a template that fits every combo.'
+              : `A layer on "Upgrade ${slot.index + 1}" makes this template need ${slot.index + 1} upgrades: it is not offered for a combo with fewer. A template that reads a combo position must also print every fixed part, so add a layer on each "Fixed part" too. Keep the top-up inside the Upgrades box for a template that fits every combo.`}
           </AlertDescription>
         </Alert>
       )}
