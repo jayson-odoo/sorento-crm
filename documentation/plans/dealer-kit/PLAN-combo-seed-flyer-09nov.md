@@ -145,3 +145,18 @@ Kitchen sinks SRTKS8835-BL / SRTKS1235-BL / SRTKS8835 / SRTKS1035: their own-cod
 match of the flyer's p56 entries (dev 4 Nov: same SRTKT71SS tap); no aka, so the p55 SRTKT74SS packages still create.
 An aka match keeps the owner's name and fills only what is empty. No release is needed: `--file` takes a patched copy
 (`crew/state/files/COMBO-SEED-FLYER/prod-aka2.sh`).
+
+## Follow-up 2: the first prod apply ran WITHOUT aka (crew, 9 Nov ~22:55)
+
+The owner applied the original seed; the aka dry run then read CREATE 1 / SKIP 211 / UNMATCHED 31 because each
+flyer entry now exact-matches the flyer-named combo the first apply created next to the owner's own (the exact name wins
+over an aka, `import_product_combos.py:638-641`); the CREATE is "SRTBF11834 + SRTMR502-BL (p20)". Reproduced on a
+slim dev copy (owner combos made by a user first, then main's seed applied): same three numbers, 20 hosts with BOTH.
+`scripts/oneoff/remove_flyer_seed_duplicates.py` (UAC AC-D1..D5) deletes only a flyer-named combo that the importer
+created (created_by NULL, creation audit row by job `import_product_combos`), that nobody touched since (no other audit
+row as entity or root, `app/models/audit.py:42,84-85`), with no tag template link or price tag request line, and only
+when the owner's paired combo exists. Dev proof: dry run 0 writes; apply deleted the 20 (combos 304 -> 284, owner combos
+20 kept, audit 941 -> 999, existing rows kept); re-run NO DUPLICATE 21; then the aka seed: UPDATE 20 (owner combos
+filled: prices, parts, free items; names and text kept), CREATE 1 "(p20)"; re-run SKIP 212 + UNMATCHED 31.
+Prod order (owner): `crew/state/files/COMBO-SEED-FLYER/prod-pairs-report.sh` (read only) -> `prod-dups.sh` dry run ->
+owner go -> `--apply` -> aka seed dry run (`prod-aka.sh`) -> owner go -> its `--apply`.
