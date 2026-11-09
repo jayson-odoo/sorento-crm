@@ -87,3 +87,42 @@ describe('the Confirm preview prints LOCATION / NEW LOCATION as the email does',
     expect(screen.getByTestId('location-48').className).not.toContain('max-md:hidden');
   });
 });
+
+describe('the moved-line sheet stays close to its width before the New location column (crew ruling (a), every value readable)', () => {
+  const widthOf = (table: HTMLElement, label: string) => {
+    const th = within(table)
+      .getAllByRole('columnheader')
+      .find((cell) => cell.textContent === label) as HTMLElement;
+    return parseFloat(th.style.width);
+  };
+
+  it('with a moved line: the pair at 70px, Breakdown date 212px, both date columns 80px', () => {
+    // Measured in Chromium, Inter 12px (9 Nov): BRW-WW 55.6px of text, so 70px with the cell's
+    // padding and border; DD/MM/YYYY input + calendar button + ADVANCE pill = 211px; a date 63px.
+    const moved = { ...unswapped, line_no: 48, line_id: 'pl-48', location: 'BRW', was_location: 'BRW-IB' };
+    const table = renderPreview([moved]);
+    expect(widthOf(table, 'Location')).toBe(70);
+    expect(widthOf(table, 'New location')).toBe(70);
+    expect(widthOf(table, 'Breakdown date')).toBe(212);
+    expect(widthOf(table, 'Delivery date')).toBe(80);
+    expect(widthOf(table, 'New date')).toBe(80);
+  });
+
+  it('with no moved line: the widths are as before (Location 64px, Breakdown date 236px)', () => {
+    const table = renderPreview([{ ...unswapped, location: 'BRW-BB', was_location: null }]);
+    expect(widthOf(table, 'Location')).toBe(64);
+    expect(widthOf(table, 'Breakdown date')).toBe(236);
+    expect(widthOf(table, 'Delivery date')).toBe(96);
+  });
+
+  it('a long location code truncates with the full code as its tooltip', () => {
+    const moved = {
+      ...unswapped, line_no: 48, line_id: 'pl-48', location: 'BRW-PROJECTX', was_location: 'BRW-IB',
+    };
+    renderPreview([moved]);
+    const cell = screen.getByTestId('new-location-48');
+    expect(cell.className).toContain('truncate');
+    expect(cell).toHaveAttribute('title', 'BRW-PROJECTX');
+    expect(screen.getByTestId('location-48')).toHaveAttribute('title', 'BRW-IB');
+  });
+});

@@ -182,12 +182,27 @@ const withNewItemCode = (columns: typeof COLUMNS) =>
  * AutoCount moved, LOCATION the old location and NEW LOCATION the new one beside it, the column
  * there only when a line on the sheet moved.
  */
+/**
+ * Crew ruling (a), 9 Nov 2026: the moved-line sheet stays close to its width before this column
+ * with every value readable. Widths from Chromium, Inter 12px: the longest common code (BRW-WW)
+ * is 55.6px of text, so 70px with the cell's padding and border (a longer code truncates, full
+ * code in its tooltip); DD/MM/YYYY + calendar button + the ADVANCE pill need 211px; a
+ * DD/MM/YYYY date 63px, so the two date columns give back 16px each. Net +20px (~1196 at 1280).
+ */
+const MOVED_LINE_WIDTHS: Record<string, number> = {
+  location: 70,
+  changeDate: 212,
+  date: 80,
+  newDate: 80,
+};
 const withNewLocation = (columns: typeof COLUMNS) =>
-  columns.flatMap((column) =>
-    column.key === 'location'
-      ? [column, { key: 'newLocation', label: 'New location', width: 72 }]
-      : [column],
-  );
+  columns.flatMap((column) => {
+    const width = MOVED_LINE_WIDTHS[column.key];
+    const sized = width === undefined ? column : { ...column, width };
+    return column.key === 'location'
+      ? [sized, { key: 'newLocation', label: 'New location', width: 70 }]
+      : [sized];
+  });
 const COLUMNS_NEW_ITEM = withNewItemCode(COLUMNS);
 const READ_ONLY_COLUMNS_NEW_ITEM = withNewItemCode(READ_ONLY_COLUMNS);
 const NO_DRAG_COLUMNS_NEW_ITEM = withNewItemCode(NO_DRAG_COLUMNS);
@@ -603,11 +618,21 @@ const LineBlock = React.memo(function LineBlock({
           {line.wasItemCode ? line.itemCode : ''}
         </TableCell>
       ) : null}
-      <TableCell rowSpan={span} data-testid={`location-${no}`} className={baseCell}>
+      <TableCell
+        rowSpan={span}
+        data-testid={`location-${no}`}
+        title={line.wasLocation || line.location}
+        className={cn(baseCell, 'truncate')}
+      >
         {line.wasLocation || line.location}
       </TableCell>
       {newLocationColumn ? (
-        <TableCell rowSpan={span} data-testid={`new-location-${no}`} className={baseCell}>
+        <TableCell
+          rowSpan={span}
+          data-testid={`new-location-${no}`}
+          title={line.wasLocation ? line.location : undefined}
+          className={cn(baseCell, 'truncate')}
+        >
           {line.wasLocation ? line.location : ''}
         </TableCell>
       ) : null}
