@@ -2,7 +2,9 @@
 
 Status: Review (built 75bbcf27; taken over locally as lane COMBO-COPY-LOCAL 9 Nov 18:02; origin/main
 with #2280, #2281 and #2282 merged in at 98b45464). Track: small fix track (no migration, existing
-permissions) plus security review because it is a bulk write. Guide:
+permissions) was the first call, but the diff is about 2,000 changed lines (about 1,300 without tests),
+so the lane runs the full track: UAC in `combo-copy-to-products-acceptance-criteria.md`, tester-first
+tests, reviewer, security review (bulk write), browser pass at 375 and 1280 on the crew copy. Guide:
 `documentation/user-guides/marketing/price-tag-packages.md` "Copy a combo to other products".
 
 ## Journey
