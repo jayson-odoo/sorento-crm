@@ -66,7 +66,7 @@ export interface BoardChangeSide {
  * "changed" cannot come to mean two things on one screen.
  */
 export interface BoardChangeField {
-  key: 'product' | 'qty' | 'date' | 'decision';
+  key: 'product' | 'location' | 'qty' | 'date' | 'decision';
   label: string;
   /** Both empty on a field that is a STATEMENT rather than a move: a cancelled line. */
   from: string;
@@ -108,6 +108,13 @@ export interface BoardChangeAnnotation {
   shortfallQty: string | null;
   /** The product this line used to be, on a `product_changed` row only (S7, AC-C5). */
   productChangedFrom: string | null;
+  /**
+   * The location AutoCount moved the line from / to (SPLIT-SHEET-LOCATION), on any kind.
+   * Optional on the TYPE for the callers that hand-build an annotation; `annotationOf` fills
+   * both, `null` when the line did not move.
+   */
+  locationChangedFrom?: string | null;
+  locationChangedTo?: string | null;
   /** `10 moved BRW -> BRW-IB, line cancelled` (AC-P3-9), or null. */
   movedTransfer: string | null;
   /**
@@ -152,7 +159,13 @@ export function shortDay(value: string | null | undefined): string {
 export function changedFieldsOf(
   annotation: Pick<
     BoardChangeAnnotation,
-    'was' | 'now' | 'closed' | 'itemCode' | 'productChangedFrom'
+    | 'was'
+    | 'now'
+    | 'closed'
+    | 'itemCode'
+    | 'productChangedFrom'
+    | 'locationChangedFrom'
+    | 'locationChangedTo'
   >,
 ): BoardChangeField[] {
   const { was, now, closed } = annotation;
@@ -180,6 +193,10 @@ export function changedFieldsOf(
   // email's ITEM CODE / NEW ITEM CODE print it.
   const productFrom = annotation.productChangedFrom ?? '';
   push('product', 'Product', productFrom, productFrom ? annotation.itemCode : '');
+  // SPLIT-SHEET-LOCATION: the move reads only when both ends are known.
+  if (annotation.locationChangedFrom && annotation.locationChangedTo) {
+    push('location', 'Location', annotation.locationChangedFrom, annotation.locationChangedTo);
+  }
   push('qty', 'Qty', was.qty ?? '', now.qty ?? '');
   push('date', 'Date', shortDay(was.date), shortDay(now.date));
   push('decision', 'Decision', was.decision ?? '', now.decision ?? '');
@@ -411,6 +428,8 @@ export function annotationOf(
     // built from the after side), so the product that CHANGED is the one on the from side.
     productChangedFrom:
       row.kind === 'product_changed' ? (row.from?.item_code ?? null) : null,
+    locationChangedFrom: row.from?.location ?? null,
+    locationChangedTo: row.to?.location ?? null,
     movedTransfer: row.moved_transfer ?? null,
     whereItWent: whereItWentFrom(row.result),
     projectLineId: lineId,
