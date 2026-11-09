@@ -17,6 +17,10 @@ change if the owner answers otherwise.
   touch has the same row count and the same values after the run).
 - AC-2 The dry run prints one line per combo, in seed order: `CREATE`, `UPDATE (<fields>)`, `SKIP` or
   `UNMATCHED (<codes or names>)`, with host code, combo name and flyer page; then a count per verdict.
+  Line shape (tests parse it by splitting on ` | `): `<VERDICT> | <host code> | <combo name> | p<page> | <details>`;
+  VERDICT is one of CREATE, UPDATE, SKIP, UNMATCHED, FAILED; details: UPDATE `fills: <field>, <field>` (field
+  names: description, list price, selling price, free items, parts <codes>), UNMATCHED `missing: <code or name>,
+  ...`, CREATE `host also has: "<name>", "<name>"` or empty, FAILED the error. Counts: `<VERDICT>: <n>`.
 - AC-3 `--apply` writes. All writes for one host product are one transaction: when anything for that host
   fails, nothing for that host is kept, the host's combos print `FAILED (<reason>)`, and the other hosts load.
 - AC-4 Re-running `--apply` with the same seed right after an apply writes nothing and prints `SKIP` for every
