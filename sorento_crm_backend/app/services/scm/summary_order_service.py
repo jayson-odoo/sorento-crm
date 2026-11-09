@@ -273,10 +273,15 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # S15 (ruling 1): the sheet's Supplier column is the LAST-PO supplier, never the
     # `product_suppliers` link - see `_last_po_supplier_map`'s own docstring for why.
     last_po_supplier = _last_po_supplier_map(db, product_ids)
-    po_open = open_po_by_product(db, product_ids)
-    incoming_spo = open_spo_by_product(db, product_ids)
-    last_receipt = _last_receipt_map(db, product_ids)
-    pool_on_hand = _pool_on_hand_map(db, product_ids)
+    # LOWSTOCK-LASTIN-LOCATION (owner ruling 9 Nov 2026): every per-location column - BRW
+    # on hand, BRW PO qty, BRW incoming qty, Last in qty/date - reads the run's OWN
+    # locations, through ONE shared set, so a BRW report never prints another location's
+    # figure (a receipt split BRW 121 / BRW-BB 99 printed the 99).
+    report_wids = report_warehouse_ids(db, run)
+    po_open = open_po_by_product(db, product_ids, report_wids)
+    incoming_spo = open_spo_by_product(db, product_ids, report_wids)
+    last_receipt = _last_receipt_map(db, product_ids, report_wids)
+    pool_on_hand = _pool_on_hand_map(db, product_ids, report_wids)
     existing = {
         str(r.product_id): r
         for r in db.query(OrderSummaryRow)
@@ -885,7 +890,37 @@ def _customers_list(bucket: dict[str, float]) -> list[dict[str, Any]]:
     )
 
 
-def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
+def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
+    """The ONE location set every per-location column of a run's report reads
+    (LOWSTOCK-LASTIN-LOCATION, owner ruling 9 Nov 2026: "when I run BRW stock report it
+    should take BRW only"; the same for Reorder Planning's low stock report and the daily
+    low stock job, whose run is created from its own `warehouse_codes`).
+
+    The run's own `warehouse_ids` (what the planner, or the daily job's config, selected),
+    kept to the ACTIVE SITE-POOL ones (`pool_predicate.active_site_pool_sql`) - the rule
+    the "BRW ..." columns already applied network-wide, so a project bin (BRW-BB) never
+    answers a BRW column even on a run that also planned it.
+
+    None when the run stored no scope at all (NULL: `create_run` always stamps a list, so
+    only a run older than scopes, or a hand-built one): each reader then keeps its own
+    pre-lane reading unchanged rather than this guessing a scope nobody chose. An empty
+    stored scope is `[]`, which matches nothing.
+
+    ORM, so the session's company filter scopes `Warehouse`.
+    """
+    if run.warehouse_ids is None:
+        return None
+    wids = [str(w) for w in run.warehouse_ids]
+    if not wids:
+        return []
+    q = db.query(Warehouse.id).filter(
+        Warehouse.id.in_(wids), text(active_site_pool_sql("warehouses")),
+    )
+    return sorted(str(wid) for (wid,) in q.all())
+
+
+def _pool_on_hand_map(db: Session, product_ids: list[str],
+                      warehouse_ids: Optional[list[str]] = None) -> dict[str, float]:
     """``{product_id: qty}`` of `stock.quantity_on_hand` at SITE POOL warehouses only - the
     sheet's "BRW on hand" (S14, AC-S14.1), the same `pool_predicate` rule the PO and SPO
     columns already read - PLUS `counts_as_available` (captain's ruling, fix round 10 Sep):
@@ -898,10 +933,13 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
     ORM, not raw SQL: `Stock` is company-scoped and this query carries no manual predicate,
     so it relies on the ORM's own `do_orm_execute` isolation filter, same as
     `site_pool_supply.open_spo_by_product` beside it.
+
+    `warehouse_ids` narrows it to a run's own `report_warehouse_ids`; None keeps the
+    network-wide site-pool reading (`stock_debt_service`).
     """
-    if not product_ids:
+    if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
-    rows = (
+    query = (
         db.query(Stock.product_id, func.sum(Stock.quantity_on_hand))
         .join(Warehouse, Warehouse.id == Stock.warehouse_id)
         .filter(
@@ -909,9 +947,10 @@ def _pool_on_hand_map(db: Session, product_ids: list[str]) -> dict[str, float]:
             Warehouse.counts_as_available.is_(True),
             text(active_site_pool_sql("warehouses")),
         )
-        .group_by(Stock.product_id)
-        .all()
     )
+    if warehouse_ids is not None:
+        query = query.filter(Stock.warehouse_id.in_([str(w) for w in warehouse_ids]))
+    rows = query.group_by(Stock.product_id).all()
     return {str(pid): float(total or 0.0) for pid, total in rows}
 
 
@@ -1044,9 +1083,12 @@ def _last_cost_map(db: Session, product_codes: list[str]) -> dict[str, str]:
     return out
 
 
-def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+def _last_receipt_map(db: Session, product_ids: list[str],
+                      warehouse_ids: Optional[list[str]] = None) -> dict[str, dict]:
     """``{product_id: {date, qty, spo_number, container}}`` of the newest VISIBLE
-    `spo_allocations` line per product, network-wide, received or not - the sheet's "Last
+    `spo_allocations` line per product AT `warehouse_ids` (the run's own
+    `report_warehouse_ids`, LOWSTOCK-LASTIN-LOCATION; None is network-wide), received or
+    not - the sheet's "Last
     in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling second round, 15 Sep:
     "for last in, please refer to our MCP service, i think even haven't GR we also show as
     last in").
@@ -1058,7 +1100,7 @@ def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     `last_receipt_rows(top_n=1)` makes for a product - `qty` is the SPO's own
     `allocated_quantity`, never `quantity_received`.
     """
-    receipts = last_in_map(db, product_ids)
+    receipts = last_in_map(db, product_ids, warehouse_ids)
     return {
         pid: {
             "date": r["date"],
