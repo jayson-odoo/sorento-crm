@@ -4030,10 +4030,13 @@ HANDOVER_HEADINGS = (
     "DELIVERY DATE CHANGE TO",
     "PROJECT/CUSTOMER",
     "LOCATION",
+    "NEW LOCATION",
     "REMARK",
 )
 _HANDOVER_CHANGE_KEYS = {
     "NEW ITEM CODE": "item_code",
+    # SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): a line AutoCount moved, as the email prints it.
+    "NEW LOCATION": "location",
     "QTY CHANGE TO": "qty",
     "DELIVERY DATE CHANGE TO": "delivery_date",
 }
@@ -4087,13 +4090,14 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
             else None,
             "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
             or "",
-            "LOCATION": line.get("location") or "",
+            "LOCATION": was(line, "location") or line.get("location") or "",
+            "NEW LOCATION": line.get("location") if was(line, "location") else None,
             "REMARK": line.get("remark") or "",
         }
         if line.get("continued"):
             # A split line's later rows, as the email prints them (`oihr_0009`, AC-G6):
             # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
-            for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
+            for heading in ("LOCATION", "NEW LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
                 values[heading] = None
             values[order_inquiry_export.CONTINUED] = True
         records.append(values)
@@ -4116,6 +4120,7 @@ _EXPORT_WIDTHS = {
     "SUPPLIER": 24,
     "PO NO ": 16,
     "LOCATION": 14,
+    "NEW LOCATION": 14,
     "ACKNOWLEDGED": 16,
     "TAKEN": 10,
     "REMAINING": 12,

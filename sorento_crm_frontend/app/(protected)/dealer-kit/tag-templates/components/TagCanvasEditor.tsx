@@ -257,6 +257,7 @@ import {
   ACCESSORY_DEFAULT_BOX_MM,
   accessoryBoxLayout,
   accessoryLineCount,
+  sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
 import {
   accessoryDesign,
@@ -268,12 +269,14 @@ import {
   type AccessoryDesign,
   type LayerPropsPatch,
   applyAccessoryDesign,
+  cardBoxLayout,
   cardDropped,
   cardFromLegacy,
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
 import { AccessoryEditOverlay } from './AccessoryEditOverlay';
+import { HeaderDragOverlay } from './HeaderDragOverlay';
 import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
 import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateService';
 import { QueryClientContext } from '@tanstack/react-query';
@@ -609,6 +612,15 @@ interface DragSession {
   start: Map<string, { x: number; y: number }>;
   dx: number;
   dy: number;
+}
+
+/**
+ * The selected layers the canvas's ONE Transformer takes: unlocked and visible, and never the
+ * accessories box whose header is selected (PRICETAG-HEADER-DRAG round 2: its header has the
+ * handles then, so box and header never show handles at the same time).
+ */
+export function transformerTargets(layers: readonly TagLayer[], headerSelectedBoxId: string | null): TagLayer[] {
+  return layers.filter((layer) => !layer.locked && layer.visible && layer.id !== headerSelectedBoxId);
 }
 
 /**
@@ -1554,6 +1566,8 @@ export function TagCanvasEditor({
     (rawId: string, additive: boolean) => {
       const id = resolveTarget(rawId);
       setSelectedGuideId(null);
+      // A press on the box (not on its header handle, which stops the event) selects the box again.
+      setHeaderSelId(null);
       setSelectedIds((prev) => {
         if (additive) {
           const next = new Set(prev);
@@ -1604,6 +1618,16 @@ export function TagCanvasEditor({
     target: CardEditTarget;
     elementId: string | null;
   } | null>(null);
+  /** PRICETAG-HEADER-DRAG: the box whose header is being dragged (it hides its own header text), and
+   *  whether a box drag / transform is under way (the header handle is hidden then, it would lag). */
+  const [headerDragId, setHeaderDragId] = useState<string | null>(null);
+  /** Round 2: the box whose HEADER is selected (an element of its own: resize handles, the header
+   *  inspector, keys reach the header not the box). Cleared whenever the selection moves off it. */
+  const [headerSelId, setHeaderSelId] = useState<string | null>(null);
+  useEffect(() => {
+    if (headerSelId && !(selectedIds.size === 1 && selectedIds.has(headerSelId))) setHeaderSelId(null);
+  }, [headerSelId, selectedIds]);
+  const [boxGesture, setBoxGesture] = useState(false);
   const applyExternalLayerPropsRef = useRef<(patches: LayerPropsPatch[]) => void>(() => {});
   /** Line counts of the previewed lists, set once `accessoryFits` is computed below. */
   const accessoryLinesRef = useRef(new Map<string, number>());
@@ -1886,6 +1910,7 @@ export function TagCanvasEditor({
    *  none), card 1 as the editable frame. */
   const displayFor = (layer: TagLayer) => {
     const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    if (headerDragId === layer.id) return { ...display, accessoryHeaderHidden: true };
     if (accessoryEdit?.layerId !== layer.id) return display;
     // Under edit the box's OWN design is what is edited, never a previewed owner's override.
     return {
@@ -1897,6 +1922,36 @@ export function TagCanvasEditor({
       accessoryEditing: true,
       accessoryBoxStyle: null,
     };
+  };
+  /** PRICETAG-HEADER-DRAG: the layout of a box whose header can be handled on the canvas (the one
+   *  KonvaTagLayer draws), else null: not a box, locked, hidden, under card edit, or drawn in a
+   *  previewed owner's box style (that style is what shows, so a drag here would not be what is seen). */
+  const headerLayoutFor = (box: TagLayer | undefined) => {
+    if (!box || box.props.kind !== 'accessories' || box.locked || box.visible === false) return null;
+    if (accessoryEdit?.layerId === box.id) return null;
+    const display = displayFor(box);
+    if (display?.accessoryBoxStyle) return null;
+    const items = display?.accessories ?? sampleAccessories();
+    const layout = box.props.card
+      ? cardBoxLayout(items.length, box.props, box.width_mm, box.height_mm)
+      : accessoryBoxLayout(items.length, box.props, box.width_mm, box.height_mm, accessoryLineCount(items));
+    return layout.header ? layout : null;
+  };
+  /** The header selection in effect: only while that box still has a header to handle (a cleared
+   *  text, hidden header, locked or hidden box, or card editing ends it, and the box gets its own
+   *  handles and keys back at once). */
+  const activeHeaderSel =
+    headerSelId && headerLayoutFor(layers.find((l) => l.id === headerSelId)) ? headerSelId : null;
+  /** Arrow keys with the header selected: move it from where it draws now (read each render). */
+  const nudgeHeaderRef = useRef<(dx: number, dy: number) => void>(() => {});
+  nudgeHeaderRef.current = (dx, dy) => {
+    // From where the TEXT draws (inside the frame the band spans the row; the text is narrower), the
+    // same spot the drag handle starts from, so the first press never jumps.
+    const rect = headerLayoutFor(layers.find((l) => l.id === activeHeaderSel))?.header?.text;
+    if (!activeHeaderSel || !rect) return;
+    updateLayerPropsLinked(activeHeaderSel, {
+      headerPos: { x_mm: rect.x_mm + dx, y_mm: rect.y_mm + dy },
+    } as Partial<TagLayerProps>);
   };
   /** "Box style from <combo or product>: <name>" while the previewed owner overrides this box. */
   const boxStyleNoteOf = (layer: TagLayer | null | undefined): string | null => {
@@ -2494,6 +2549,7 @@ export function TagCanvasEditor({
       for (const layer of layers) {
         if (moving.has(layer.id)) start.set(layer.id, { x: layer.x_mm, y: layer.y_mm });
       }
+      setBoxGesture(true);
       dragRef.current = {
         anchorId: id,
         roots: [...roots],
@@ -2565,6 +2621,7 @@ export function TagCanvasEditor({
   const handleDragEnd = useCallback(
     (id: string) => {
       clearGuides();
+      setBoxGesture(false);
       const drag = dragRef.current;
       dragRef.current = null;
       if (!drag || drag.anchorId !== id) return;
@@ -2587,14 +2644,15 @@ export function TagCanvasEditor({
     if (!transformer || !stage) return;
     const nodes = Array.from(selectedIds)
       .map((id) => layers.find((layer) => layer.id === id))
-      .filter((layer): layer is TagLayer => Boolean(layer) && !layer!.locked && layer!.visible)
+      .filter((layer): layer is TagLayer => Boolean(layer))
+      .filter((layer) => transformerTargets([layer], activeHeaderSel).length > 0)
       .map((layer) => stage.findOne(`#${layer.id}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
     // `dataOf`: an accessories box closes up around whatever the preview lists, so its selection
     // frame is measured again whenever the preview data changes (not only when the layers do).
-  }, [selectedIds, layers, scale, view, dataOf]);
+  }, [selectedIds, layers, scale, view, dataOf, activeHeaderSel]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).
@@ -2702,6 +2760,7 @@ export function TagCanvasEditor({
 
   const handleTransformEnd = useCallback(() => {
     setRotationLabel(null);
+    setBoxGesture(false);
     const transformer = transformerRef.current;
     if (!transformer) return;
 
@@ -3550,6 +3609,32 @@ export function TagCanvasEditor({
         setAccessoryEdit(null);
         return;
       }
+      // Round 2: with the header selected, box-level keys never reach the box. Escape goes back to the
+      // box; Delete, duplicate and cut do nothing (one header per box); arrows nudge the header.
+      if (activeHeaderSel && !accessoryEdit) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setHeaderSelId(null);
+          return;
+        }
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          return;
+        }
+        if (modifier && (e.key === 'd' || e.key === 'D' || e.key === 'x' || e.key === 'X')) {
+          e.preventDefault();
+          return;
+        }
+        const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+          e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+        ];
+        if (arrow) {
+          e.preventDefault();
+          const step = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
+          nudgeHeaderRef.current(arrow[0] * step, arrow[1] * step);
+          return;
+        }
+      }
       // While a card is edited, box-level keys never reach the box: Delete removes the selected
       // element (or nothing), arrows nudge it, duplicate and cut do nothing.
       if (accessoryEdit) {
@@ -3762,6 +3847,7 @@ export function TagCanvasEditor({
     enterAccessoryEdit,
     specSheet,
     layers,
+    activeHeaderSel,
   ]);
 
   // -- System clipboard (DESIGNER-PASTE) -------------------------------------
@@ -4344,12 +4430,44 @@ export function TagCanvasEditor({
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
 
+  // Editing a linked box edits the saved template for every tag template using it: card editing, and
+  // (round 2) a linked box's header selected or dragged. It FLOATS over the canvas (bottom centre)
+  // rather than taking a row above it: a row that appears mid-gesture would push the stage down under
+  // the pointer (crew re-pass: a header drag 30 mm down landed 1.2 mm up).
+  const linkedStripLayer =
+    (accessoryEdit || activeHeaderSel || headerDragId) && linkedAccessoryBoxes === 'live'
+      ? layers.find((l) => l.id === (accessoryEdit?.layerId ?? activeHeaderSel ?? headerDragId))
+      : undefined;
+  const linkedStripTemplate = accessoryTemplateOf(linkedStripLayer);
+  const linkedStrip =
+    linkedStripLayer && linkedStripTemplate ? (
+      <div
+        data-linked-strip
+        className="absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-md border bg-background/95 px-3 py-1 text-xs shadow-sm"
+      >
+        <span className="min-w-0 truncate">
+          Linked to {linkedStripTemplate.name}: changes here update {linkedStripTemplate.usedIn} tag template
+          {linkedStripTemplate.usedIn === 1 ? '' : 's'}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6 shrink-0 px-2 text-xs"
+          onClick={() => updateLayerProps(linkedStripLayer.id, { presetId: null } as Partial<TagLayerProps>)}
+        >
+          Detach
+        </Button>
+      </div>
+    ) : null;
+
   const canvasArea = (
     <>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
               ref={containerRef}
+              data-canvas-area
               className={cn(
                 'relative flex-1 overflow-hidden bg-muted/50',
                 handMode && 'cursor-grab active:cursor-grabbing',
@@ -4357,6 +4475,7 @@ export function TagCanvasEditor({
               )}
               onContextMenu={handleStageContextMenu}
             >
+              {linkedStrip}
               {!embedded && (
               <CanvasRulers
                 widthMm={doc.width_mm}
@@ -4577,6 +4696,40 @@ export function TagCanvasEditor({
                       ),
                     )}
 
+                    {/* PRICETAG-HEADER-DRAG: the selected box's header as its own element (drag; once selected,
+                        resize handles). Not while the box itself is dragged or transformed. */}
+                    {!handMode &&
+                      !boxGesture &&
+                      selectedIds.size === 1 &&
+                      (() => {
+                        const box = layers.find((l) => selectedIds.has(l.id));
+                        const layout = headerLayoutFor(box);
+                        if (!box || !layout?.header) return null;
+                        return (
+                          <HeaderDragOverlay
+                            layer={box}
+                            text={layout.header.text}
+                            header={layout.header}
+                            frame={layout.frame}
+                            boxWidth_mm={layout.boxWidth_mm}
+                            boxHeight_mm={layout.boxHeight_mm}
+                            scale={scale}
+                            selected={activeHeaderSel === box.id}
+                            onSelect={() => setHeaderSelId(box.id)}
+                            onDragState={(dragging) => setHeaderDragId(dragging ? box.id : null)}
+                            onMove={(headerPos) =>
+                              updateLayerPropsLinked(box.id, { headerPos } as Partial<TagLayerProps>)
+                            }
+                            onResize={({ x_mm, y_mm, width_mm, height_mm }) =>
+                              updateLayerPropsLinked(box.id, {
+                                headerPos: { x_mm, y_mm },
+                                headerSize: { width_mm, height_mm },
+                              } as Partial<TagLayerProps>)
+                            }
+                          />
+                        );
+                      })()}
+
                     {/* Card / footer editing: the elements of card 1 as handles (PRICETAG-ACCESSORY-DESIGNER). */}
                     {accessoryEdit &&
                       (() => {
@@ -4614,6 +4767,7 @@ export function TagCanvasEditor({
                       rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
                       listening={!handMode}
                       onTransform={handleTransform}
+                      onTransformStart={() => setBoxGesture(true)}
                       onTransformEnd={handleTransformEnd}
                       // A polygon/boxed badge in EDIT-POINTS mode (S5) shows
                       // no resize anchors at all: a resize anchor sits
@@ -5275,31 +5429,6 @@ export function TagCanvasEditor({
         </Suspense>
       )}
 
-      {/* Editing a linked box edits the saved template for every tag template using it. */}
-      {accessoryEdit && linkedAccessoryBoxes === 'live' &&
-        (() => {
-          const editedLayer = layers.find((l) => l.id === accessoryEdit.layerId);
-          const linked = accessoryTemplateOf(editedLayer);
-          if (!editedLayer || !linked) return null;
-          return (
-            <div className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-3 py-1 text-xs">
-              <span className="min-w-0 truncate">
-                Linked to {linked.name}: changes here update {linked.usedIn} tag template
-                {linked.usedIn === 1 ? '' : 's'}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-6 shrink-0 px-2 text-xs"
-                onClick={() => updateLayerProps(editedLayer.id, { presetId: null } as Partial<TagLayerProps>)}
-              >
-                Detach
-              </Button>
-            </div>
-          );
-        })()}
-
       {/* Preview combo (AC-5.1): template editor only - the request designer already
           has its line's combo on the canvas. */}
       {!boundData && (
@@ -5543,6 +5672,11 @@ export function TagCanvasEditor({
               accessoryEdit={accessoryEdit}
               onUpdateAccessoryElement={updateAccessoryElement}
               accessoryBoxStyleNote={boxStyleNoteOf(selectedLayer)}
+              accessoryHeaderSelected={
+                selectedLayer && activeHeaderSel === selectedLayer.id
+                  ? (headerLayoutFor(selectedLayer)?.header?.text ?? null)
+                  : null
+              }
             />
           </ResizablePanel>
         </ResizablePanelGroup>

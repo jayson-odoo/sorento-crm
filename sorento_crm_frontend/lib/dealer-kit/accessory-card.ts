@@ -38,6 +38,7 @@ import type {
   TagLayerProps,
   TextLayerProps,
 } from './tag-template-types';
+import { defaultAccessoriesProps } from './tag-template-types';
 
 const EPS = 1e-9;
 /** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
@@ -167,7 +168,8 @@ export function cardBoxLayout(
   const mainAt = cardMain * scale;
   if (cardCross * scale > availCross + EPS || !(mainAt > 0)) return empty(total);
   const shown = Math.min(total, Math.max(0, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
-  if (shown === 0) return empty(total);
+  // NaN-safe: a design missing a number (e.g. no gap) lays out nothing rather than throwing.
+  if (!(shown > 0)) return empty(total);
 
   const w = card.width_mm * scale;
   const h = card.height_mm * scale;
@@ -894,6 +896,46 @@ export function snapElement(
   if (sx) guides.push({ orientation: 'vertical', position_mm: sx.guide });
   if (sy) guides.push({ orientation: 'horizontal', position_mm: sy.guide });
   return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
+}
+
+/**
+ * PRICETAG-HEADER-DRAG round 2: "Reset header" puts the header back to the default look: today's
+ * spot and size, no background / corners / padding, and the default box's header style. The header
+ * text and whether it shows are the user's content, so they stay. Undefined keys drop on save.
+ */
+export function headerResetPatch(): Partial<AccessoriesLayerProps> {
+  const d = defaultAccessoriesProps();
+  return {
+    headerPos: undefined,
+    headerSize: undefined,
+    headerFill: undefined,
+    headerRadius_mm: undefined,
+    headerPadding: undefined,
+    headerStyle: d.headerStyle,
+    headerFontSize: d.headerFontSize,
+    headerColor: d.headerColor,
+    headerOnBorder: d.headerOnBorder,
+    headerBackground: d.headerBackground,
+  };
+}
+
+/**
+ * PRICETAG-HEADER-DRAG: where a dragged box header lands, in mm from the box's top-left. It snaps
+ * (left / centre / right, top / middle / bottom) onto the box's edges and centre lines and onto the
+ * frame's edges (so its middle can sit on the top border), then is kept inside the box.
+ */
+export function snapHeader(
+  header: Box,
+  frame: Box | null,
+  box: { width_mm: number; height_mm: number },
+): { x_mm: number; y_mm: number; guides: ElementGuide[] } {
+  const snapped = snapElement(header, frame ? [frame] : [], box);
+  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
+  return {
+    x_mm: clamp(snapped.x_mm, box.width_mm - header.width_mm),
+    y_mm: clamp(snapped.y_mm, box.height_mm - header.height_mm),
+    guides: snapped.guides,
+  };
 }
 
 // ---------------------------------------------------------------------------

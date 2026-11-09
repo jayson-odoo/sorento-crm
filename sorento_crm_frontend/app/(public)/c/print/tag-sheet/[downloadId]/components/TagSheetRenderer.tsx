@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type {
   ImpositionConfig,
@@ -71,6 +71,8 @@ import {
   accessoryLineCount,
   accessoryLineStyle,
   fitLinePt,
+  headerLineCap,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
@@ -1349,6 +1351,63 @@ function renderFeatureIconsLayer(
   );
 }
 
+/** A resized header's text, cut to the lines the canvas keeps (`headerLineCap`), never with "...". */
+function HeaderLines({
+  header,
+  lineHeight,
+  children,
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  lineHeight: number | undefined;
+  children: ReactNode;
+}) {
+  const cap = headerLineCap(header, lineHeight);
+  return (
+    <div
+      style={{
+        maxHeight: `${cap.lines * cap.lineHeight_mm}mm`,
+        overflow: 'hidden',
+        flexShrink: 0,
+        // A single word wider than the band breaks inside the word, as Konva's word wrap does.
+        overflowWrap: 'anywhere',
+      }}
+      data-testid="accessories-header-lines"
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * PRICETAG-HEADER-DRAG round 2: the header band's box CSS, matching the canvas (`KonvaTagLayer`):
+ * corners, padding inside the band, and the text as one line (unresized: shrunk to fit by the
+ * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized). Nothing extra is
+ * set for a header with no stored style, so it prints as before.
+ */
+function headerBoxCss(
+  header: NonNullable<AccessoryBoxLayout['header']>,
+  lineHeight: number | undefined,
+): CSSProperties {
+  const { top, right, bottom, left } = header.padding;
+  const padded = top > 0 || right > 0 || bottom > 0 || left > 0;
+  const innerH = Math.max(0, header.height_mm - top - bottom);
+  return {
+    ...(header.radius_mm > 0 ? { borderRadius: `${header.radius_mm}mm` } : {}),
+    ...(padded ? { padding: `${top}mm ${right}mm ${bottom}mm ${left}mm`, boxSizing: 'border-box' as const } : {}),
+    ...(header.wrap
+      ? {
+          whiteSpace: 'normal' as const,
+          lineHeight: lineHeight ?? 1,
+          display: 'flex',
+          flexDirection: 'column' as const,
+          justifyContent: 'center',
+          // The kept lines (`headerLineCap`, the canvas's rule) are centred; a single line taller than
+          // the band spills evenly above and below it, as on the canvas, never cut.
+        }
+      : { whiteSpace: 'nowrap' as const, lineHeight: `${innerH}mm` }),
+  };
+}
+
 /**
  * PRICETAG-ACCESSORIES: the "Accessories" box, laid out by `accessoryBoxLayout` - the SAME function
  * the editor canvas and the request preview draw with (card rule A10). No list, or nothing fits:
@@ -1380,6 +1439,35 @@ function renderAccessoriesLayer(
     : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        // The band's background (round 2), or the legend break behind a header on the border.
+        backgroundColor: box.header.fill ?? undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
+        fontSize: `${box.header.fontSize_pt}pt`,
+      }}
+      data-testid="accessories-header"
+    >
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1415,27 +1503,7 @@ function renderAccessoriesLayer(
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            // On the border: the header background breaks the border behind the text (legend).
-            backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const url = item.image
@@ -1498,6 +1566,7 @@ function renderAccessoriesLayer(
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <div
           style={{
@@ -1536,6 +1605,34 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
   const font = props.fontFamily ? `'${props.fontFamily}', sans-serif` : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        backgroundColor: box.header.fill ? safeColour(box.header.fill) : undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
+        fontSize: `${box.header.fontSize_pt}pt`,
+      }}
+      data-testid="accessories-header"
+    >
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1566,25 +1663,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1619,6 +1698,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <div
           style={{

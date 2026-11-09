@@ -1349,6 +1349,8 @@ export interface TagLayerDisplay {
    *  signed url, `drawableFeatureIcons`) and the urls, by asset id. */
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
+  /** PRICETAG-HEADER-DRAG: the header is being dragged; the drag handle draws it, the box does not. */
+  accessoryHeaderHidden?: boolean;
 }
 
 /**

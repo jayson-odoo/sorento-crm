@@ -63,6 +63,7 @@ import {
   fitLinePt,
   ptToMm,
   sampleAccessories,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
@@ -439,6 +440,7 @@ function LayerContent({
           boxStyle={display?.accessoryBoxStyle}
           cardIcons={display?.cardIcons}
           iconUrls={display?.iconUrls}
+          headerHidden={display?.accessoryHeaderHidden}
         />
       );
 
@@ -1185,6 +1187,7 @@ function AccessoriesContent({
   boxStyle,
   cardIcons,
   iconUrls,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1197,6 +1200,7 @@ function AccessoriesContent({
   boxStyle?: TagAccessoryBoxStyle | null;
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1214,6 +1218,7 @@ function AccessoriesContent({
         editing={editing}
         cardIcons={cardIcons}
         iconUrls={iconUrls}
+        headerHidden={headerHidden}
       />
     );
   }
@@ -1250,7 +1255,10 @@ function AccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
   return (
     <>
       {box.frame && (
@@ -1264,34 +1272,7 @@ function AccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
-        // Breaks the border behind a header that sits on it (legend style).
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
-        />
-      )}
-      {box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
@@ -1342,6 +1323,7 @@ function AccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
           <>
@@ -1386,6 +1368,7 @@ function DesignedAccessoriesContent({
   editing,
   cardIcons,
   iconUrls,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1397,6 +1380,7 @@ function DesignedAccessoriesContent({
   editing?: boolean;
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
 }) {
   // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
   const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
@@ -1418,8 +1402,11 @@ function DesignedAccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
   const shownItems = items.slice(0, box.shown);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
   return (
     <>
       {box.frame && (
@@ -1433,33 +1420,7 @@ function DesignedAccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
-        />
-      )}
-      {box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1492,6 +1453,7 @@ function DesignedAccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <Group x={px(box.footer.x_mm)} y={px(box.footer.y_mm)}>
           {footerElementsFor(boxColours(shownItems), props.footer).map((element) => (
@@ -1732,6 +1694,63 @@ function CardTextNode({
   }
   return (
     <TextContent props={props} w={w} h={h} widthMm={widthMm} heightMm={heightMm} scale={scale} text={text} />
+  );
+}
+
+
+/**
+ * PRICETAG-HEADER-DRAG: the accessories box header as the canvas draws it, from the shared layout's
+ * `header`: the band's background (or the legend break on the border) and its text, padded, one
+ * line or wrapping. Exported so the header drag handle draws the very same nodes while dragged.
+ * `origin`: draw relative to the band's own corner (the drag handle) instead of the box's.
+ */
+export function AccessoryHeaderNodes({
+  header: band,
+  props,
+  scale,
+  origin = 'box',
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  props: AccessoriesLayerProps;
+  scale: number;
+  origin?: 'box' | 'band';
+}) {
+  const px = (mm: number) => mm2px(mm, scale);
+  const style = accessoryHeaderStyle(props);
+  const x = origin === 'band' ? 0 : band.x_mm;
+  const y = origin === 'band' ? 0 : band.y_mm;
+  return (
+    <>
+      {band.fill && (
+        <Rect
+          x={px(x)}
+          y={px(y)}
+          width={px(band.width_mm)}
+          height={px(band.height_mm)}
+          fill={band.fill}
+          cornerRadius={px(band.radius_mm)}
+          listening={origin === 'box' ? undefined : false}
+        />
+      )}
+      <Text
+        x={px(x + band.padding.left)}
+        y={px(y + band.padding.top)}
+        width={px(Math.max(0, band.width_mm - band.padding.left - band.padding.right))}
+        height={px(Math.max(0, band.height_mm - band.padding.top - band.padding.bottom))}
+        text={props.headerText}
+        align={band.onBorder || (band.moved && !band.wrap) ? 'center' : style.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(style)}
+        textDecoration={konvaDecoration(style)}
+        fontFamily={style.fontFamily ?? undefined}
+        letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(band.fontSize_pt))}
+        fill={style.color}
+        wrap={band.wrap ? 'word' : 'none'}
+        lineHeight={band.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+        listening={origin === 'box' ? undefined : false}
+      />
+    </>
   );
 }
 
