@@ -74,6 +74,7 @@ import {
   cardElementsFor,
   cardElementsForDesign,
   cardIconLayout,
+  cardTextBox,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -1587,19 +1588,33 @@ function CardElementNode({
           />
         </Group>
       );
-    case 'text':
+    case 'text': {
+      // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as print).
+      const boxed = cardTextBox(element, factor);
+      const mm = (value: number) => mm2px(value, scale);
       return (
         <Group x={x} y={y}>
-          <CardTextNode
-            element={element}
-            widthMm={wMm}
-            heightMm={hMm}
-            factor={factor}
-            scale={scale}
-            boxFont={boxFont}
-          />
+          {boxed.background && (
+            <Rect
+              width={mm(boxed.background.width_mm)}
+              height={mm(boxed.background.height_mm)}
+              fill={boxed.background.fill}
+              cornerRadius={mm(boxed.background.radius_mm)}
+            />
+          )}
+          <Group x={mm(boxed.text.x_mm)} y={mm(boxed.text.y_mm)}>
+            <CardTextNode
+              element={element}
+              widthMm={boxed.text.width_mm}
+              heightMm={boxed.text.height_mm}
+              factor={factor}
+              scale={scale}
+              boxFont={boxFont}
+            />
+          </Group>
         </Group>
       );
+    }
     case 'feature_icons': {
       // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
       const icons = element.icons ?? [];

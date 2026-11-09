@@ -506,6 +506,9 @@ export interface CardElement {
   cornerRadius_mm?: number;
   /** text with a field: printed before the value when there is one ("TOPUP "). */
   prefix?: string;
+  /** text (owner 9 Nov ~22:30): space around the text inside its element, like the box header's.
+   *  A text element's `fill` is its background and `cornerRadius_mm` that background's corners. */
+  padding?: LayerPadding;
   /** feature_icons: the icon size and the space between icons (defaults 4.6 / 0.8). */
   iconSize_mm?: number;
   gap_mm?: number;

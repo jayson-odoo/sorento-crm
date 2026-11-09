@@ -410,7 +410,8 @@ export function accessoryBinding(item: TagAccessory): TagBindingData {
       offer_price: item.sell_price ?? null,
       promotion_id: null,
       barcode: null,
-      price_tag_description: item.kind === 'product' ? (item.price_tag_description ?? spec) : spec,
+      // A catalogue product's and an upgrade's own copy; a library accessory's (or an older pin's) spec.
+      price_tag_description: item.price_tag_description ?? spec,
     },
   };
 }
@@ -423,8 +424,15 @@ const escapeHtml = (value: string) =>
 function cardFixedText(item: TagAccessory, text: string): string {
   if (!hasMergeField(text)) return text;
   const binding = accessoryBinding(item);
+  const rich = (value: string) =>
+    value.replace(TOKEN, (token) => escapeHtml(renderMergeFields(token, binding, 'print')));
+  // The description alone keeps its formatting, as a normal text layer draws it (`layerRichBlocks`).
+  const description = binding.kind === 'product' ? binding.product.price_tag_description : null;
+  if (/^\s*\{\{\s*product\.price_tag_description\s*\}\}\s*$/.test(text) && description && isRich(description)) {
+    return rich(description);
+  }
   // Rich: each field's value goes in escaped, so a value never becomes markup.
-  if (isRich(text)) return text.replace(TOKEN, (token) => escapeHtml(renderMergeFields(token, binding, 'print')));
+  if (isRich(text)) return rich(text);
   // Plain: a line whose fields all came back empty is dropped with no gap (the description rule).
   return renderPriceTagDescription(text, binding, 'print');
 }
@@ -612,6 +620,38 @@ export function drawableFeatureIcons(
 
 /** A card text element as the text-layer props the text layout and both renderers already use,
  *  with the font drawn at `scale`. `boxFont` is the box's own family, used when the element has none. */
+/**
+ * Owner 9 Nov ~22:30: a card Text element styles like the box header: a background (`fill`, the
+ * Transparent swatch = none) with `cornerRadius_mm` behind the whole element, and `padding` around
+ * the text. All in card millimetres at the card's shrink `scale`. Canvas and print both call it; with
+ * none of the three stored the text box is the element itself, exactly as before.
+ */
+export function cardTextBox(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'fill' | 'cornerRadius_mm' | 'padding'>,
+  scale = 1,
+): {
+  background: { fill: string; radius_mm: number; width_mm: number; height_mm: number } | null;
+  text: AccessoryRect;
+} {
+  const w = element.width_mm * scale;
+  const h = element.height_mm * scale;
+  const fill = element.fill && element.fill !== 'transparent' ? element.fill : null;
+  const pad = element.padding;
+  const top = (pad?.top ?? 0) * scale;
+  const right = (pad?.right ?? 0) * scale;
+  const bottom = (pad?.bottom ?? 0) * scale;
+  const left = (pad?.left ?? 0) * scale;
+  return {
+    background: fill ? { fill, radius_mm: (element.cornerRadius_mm ?? 0) * scale, width_mm: w, height_mm: h } : null,
+    text: {
+      x_mm: left,
+      y_mm: top,
+      width_mm: Math.max(0, w - left - right),
+      height_mm: Math.max(0, h - top - bottom),
+    },
+  };
+}
+
 export function cardTextProps(element: CardElement, scale = 1, boxFont?: string): TextLayerProps {
   return {
     kind: 'text',

@@ -82,6 +82,7 @@ import {
   cardBoxLayout,
   cardElementsFor,
   cardIconLayout,
+  cardTextBox,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -1884,8 +1885,10 @@ function CardTextBlock({
 }) {
   const epoch = useFontsEpoch();
   const text = element.text ?? '';
-  const widthMm = element.width_mm * factor;
-  const heightMm = element.height_mm * factor;
+  // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as the canvas).
+  const boxed = cardTextBox(element, factor);
+  const widthMm = boxed.text.width_mm;
+  const heightMm = boxed.text.height_mm;
   const props = useMemo(() => {
     void epoch; // re-measure once a face has loaded
     return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
@@ -1914,6 +1917,19 @@ function CardTextBlock({
         lineHeight: props.lineHeight,
         boxSizing: 'border-box',
         whiteSpace: 'pre',
+        ...(boxed.background
+          ? {
+              backgroundColor: safeColour(boxed.background.fill),
+              borderRadius: `${boxed.background.radius_mm}mm`,
+            }
+          : {}),
+        ...(element.padding
+          ? {
+              padding: `${boxed.text.y_mm}mm ${element.width_mm * factor - boxed.text.x_mm - widthMm}mm ${
+                element.height_mm * factor - boxed.text.y_mm - heightMm
+              }mm ${boxed.text.x_mm}mm`,
+            }
+          : {}),
       }}
       data-testid="accessories-element-text"
     >

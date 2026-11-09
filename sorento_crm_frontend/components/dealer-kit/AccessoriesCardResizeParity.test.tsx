@@ -1,0 +1,209 @@
+/**
+ * TAG-ACC-CARD-RESIZE: the template canvas (`KonvaTagLayer`) and the print page (`TagSheetRenderer`)
+ * draw the same designed accessories box when (1) the box is too small for one card at 70% - both
+ * draw the shrunk cards, never the "Accessories" placeholder / nothing - and (2) a card Text element
+ * carries the owner's header-like style (background, padding, corner radius) and `{{product.*}}`
+ * fields, on a Free items box and on an Upgrades box.
+ */
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
+vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ensureFontsLoaded: vi.fn(async () => ({ failed: [] })),
+  ensureSeedFontsLoaded: vi.fn(async () => undefined),
+}));
+vi.mock('react-konva', () => {
+  const passthrough = (name: string) =>
+    function KonvaStandIn(props: Record<string, unknown> & { children?: React.ReactNode }) {
+      return (
+        <div
+          data-konva={name}
+          data-w={String(props.width ?? '')}
+          data-h={String(props.height ?? '')}
+          data-text={String(props.text ?? '')}
+          data-size={String(props.fontSize ?? '')}
+          data-y={String(props.y ?? 0)}
+          data-align={String(props.align ?? '')}
+          data-style={String(props.fontStyle ?? '')}
+          data-family={String(props.fontFamily ?? '')}
+          data-fill={String(props.fill ?? '')}
+          data-dash={props.dash ? 'dashed' : ''}
+        >
+          {props.children}
+        </div>
+      );
+    };
+  return {
+    Group: passthrough('group'),
+    Rect: passthrough('rect'),
+    Text: passthrough('text'),
+    Path: passthrough('path'),
+    Image: passthrough('image'),
+    Ellipse: passthrough('ellipse'),
+    Line: passthrough('line'),
+  };
+});
+
+import TagSheetRenderer, {
+  type ResolvedLineData,
+} from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
+import { KonvaTagLayer } from '@/app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer';
+import { layerDisplay } from '@/lib/dealer-kit/product-block';
+import {
+  defaultAccessoriesProps,
+  type LineTagData,
+  type TagAccessory,
+  type TagLayer,
+  type TagSheetDoc,
+} from '@/lib/dealer-kit/tag-template-types';
+
+class StubImage {
+  width = 100;
+  height = 100;
+  onload: (() => void) | null = null;
+  set src(_v: string) {
+    Promise.resolve().then(() => this.onload?.());
+  }
+}
+beforeEach(() => vi.stubGlobal('Image', StubImage));
+afterEach(() => cleanup());
+
+const SCALE = 4;
+const CARD_FILL = '#fefefe';
+const LIST: TagAccessory[] = [
+  {
+    kind: 'product', id: 'p1', name: 'Popup Waste 80mm', spec: 'Brass', image: null,
+    code: 'SRTW5000', list_price: 68, price_tag_description: 'Waste copy',
+  },
+  { kind: 'accessory', id: 'a1', name: 'DRAINER', spec: '390x300x140', image: null },
+];
+
+function row(accessories: TagAccessory[]): ResolvedLineData {
+  return {
+    tag_id: 't1', tag_label: 't1', line_id: 'line-t1', code: 'HOST', name: 'HOST',
+    dimensions: '', spec_lines: '', set_members: '', list_price: 100, sell_price: null,
+    show_promo_price: false, included_accessories: '', quantity: 1, parts: [], open_groups: [],
+    specs: [], images: [], accessories,
+  } as unknown as ResolvedLineData;
+}
+
+function boxLayer(width_mm: number, height_mm: number, text: Record<string, unknown> = {}): TagLayer {
+  return {
+    id: 'acc', type: 'accessories', x_mm: 3, y_mm: 4, width_mm, height_mm, rotation_deg: 0,
+    z_index: 1, locked: false, visible: true, slot_binding: null, text_override: null,
+    props: {
+      ...defaultAccessoriesProps(),
+      showHeader: false,
+      showBadge: false,
+      cardFill: CARD_FILL,
+      card: {
+        width_mm: 40,
+        height_mm: 30,
+        elements: [
+          { id: 't', kind: 'text', field: null, text: '{{product.code}}', x_mm: 1, y_mm: 1, width_mm: 30, height_mm: 8, ...text },
+        ],
+      },
+    },
+  } as unknown as TagLayer;
+}
+
+function doc(layer: TagLayer): TagSheetDoc {
+  return {
+    kind: 'tag_sheet',
+    imposition: { preset: 'a4_3up', page_width_mm: 210, page_height_mm: 297, bleed_mm: 0, gap_mm: 2 },
+    sheets: [{ id: 's1', tags: [{ id: 't-t1', template_id: 'tpl', request_tag_id: 't1', x_mm: 5, y_mm: 5, width_mm: 148, height_mm: 105, layers: [layer] }] }],
+  } as TagSheetDoc;
+}
+
+function printCards(layer: TagLayer, data: ResolvedLineData) {
+  const { container } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+  const cards = [...container.querySelectorAll<HTMLElement>('[data-testid="accessories-card"]')].map((card) => ({
+    width: parseFloat(card.style.width),
+    texts: [...card.querySelectorAll<HTMLElement>('[data-testid="accessories-element-text"]')].map((t) => ({
+      text: t.textContent ?? '',
+      background: t.style.backgroundColor,
+      width: parseFloat(t.style.width),
+      padding: t.style.padding,
+    })),
+  }));
+  cleanup();
+  return cards;
+}
+
+async function canvas(layer: TagLayer, data: ResolvedLineData) {
+  const display = layerDisplay(layer, { kind: 'line', line: data as unknown as LineTagData }, {});
+  const result = render(<KonvaTagLayer layer={layer} scale={SCALE} display={display} />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return result.container;
+}
+
+const rects = (c: HTMLElement, fill: string) =>
+  [...c.querySelectorAll('[data-konva="rect"]')].filter((r) => r.getAttribute('data-fill') === fill);
+const texts = (c: HTMLElement) => [...c.querySelectorAll('[data-konva="text"]')].map((t) => t.getAttribute('data-text'));
+
+describe('a box too small for one card at 70% (Q1)', () => {
+  it('print draws the shrunk card(s) and the canvas the same, never the placeholder', async () => {
+    const layer = boxLayer(20, 14);
+    const data = row(LIST);
+    const print = printCards(layer, data);
+    expect(print.length).toBeGreaterThan(0);
+    const c = await canvas(layer, data);
+    expect(texts(c)).not.toContain('Accessories');
+    const cards = rects(c, CARD_FILL);
+    expect(cards).toHaveLength(print.length);
+    cards.forEach((card, i) => expect(Number(card.getAttribute('data-w')) / SCALE).toBeCloseTo(print[i].width, 6));
+    expect(texts(c)).toContain('SRTW5000');
+    expect(print[0].texts[0].text).toBe('SRTW5000');
+  });
+});
+
+describe('card Text style and fields (owner 22:30 / 22:35)', () => {
+  const style = { fill: '#dc2626', cornerRadius_mm: 1, padding: { top: 1, right: 2, bottom: 1, left: 2 } };
+
+  it('Free items: background behind the element, text inset by the padding, on both surfaces', async () => {
+    const layer = boxLayer(60, 80, style);
+    const data = row(LIST);
+    const print = printCards(layer, data);
+    expect(print[0].texts[0]).toMatchObject({ text: 'SRTW5000', background: 'rgb(220, 38, 38)', width: 30 });
+    expect(print[0].texts[0].padding).toBe('1mm 2mm');
+    const c = await canvas(layer, data);
+    const [bg] = rects(c, '#dc2626');
+    expect(Number(bg.getAttribute('data-w')) / SCALE).toBeCloseTo(30, 6);
+    expect(texts(c)).toContain('SRTW5000');
+    // The library accessory has no code: its text prints nothing on either surface.
+    expect(print[1]?.texts ?? []).toHaveLength(0);
+  });
+
+  it('no stored style: no background on either surface (existing cards unchanged)', async () => {
+    const layer = boxLayer(60, 80);
+    const data = row(LIST);
+    const print = printCards(layer, data);
+    expect(print[0].texts[0]).toMatchObject({ background: '', padding: '' });
+    const c = await canvas(layer, data);
+    expect(rects(c, '#dc2626')).toHaveLength(0);
+  });
+
+  it('Upgrades box: the price tag description resolves per upgrade item on both surfaces', async () => {
+    const layer = boxLayer(60, 80, { text: '{{product.price_tag_description}}' });
+    (layer.props as { list?: string }).list = 'upgrades';
+    const data = {
+      ...row([]),
+      combo: {
+        id: 'c', name: 'C', description: null, free_items: null, choices: [],
+        upgrades: [{ product_id: 'u1', code: 'SRTKT71SS', description: 'Tap', topup_amount: 150, picked: false }],
+      },
+      slots: {
+        fixed: [], groups: [],
+        upgrades: [{ product_id: 'u1', code: 'SRTKT71SS', name: 'Tap', dimensions: '', list_price: 440, price_tag_description: 'Tap copy' }],
+      },
+    } as unknown as ResolvedLineData;
+    const print = printCards(layer, data);
+    expect(print.map((card) => card.texts[0]?.text)).toEqual(['Tap copy']);
+    const c = await canvas(layer, data);
+    expect(texts(c)).toContain('Tap copy');
+  });
+});

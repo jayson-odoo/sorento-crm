@@ -97,3 +97,100 @@ describe('card fixed text with fields (TAG-ACC-CARD-RESIZE Q4)', () => {
     expect(design(LIBRARY, '{{product.code}}')).toBe('{{product.code}}');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Owner 22:30: a card Text element styles like the box header (background, padding, corner radius)
+// ---------------------------------------------------------------------------
+
+import { cardTextBox } from './accessory-card';
+
+describe('cardTextBox (card Text background / padding / radius)', () => {
+  const base = { id: 't', kind: 'text', x_mm: 2, y_mm: 3, width_mm: 20, height_mm: 6 } as const;
+
+  it('no stored style: no background and the text box is the element itself (unchanged)', () => {
+    const out = cardTextBox({ ...base }, 0.8);
+    expect(out.background).toBeNull();
+    expect(out.text).toMatchObject({ x_mm: 0, y_mm: 0, width_mm: 16 });
+    expect(out.text.height_mm).toBeCloseTo(4.8);
+  });
+
+  it('a fill draws behind the whole element with its corner radius, both at the card scale', () => {
+    const out = cardTextBox({ ...base, fill: '#dc2626', cornerRadius_mm: 1 }, 0.5);
+    expect(out.background).toEqual({ fill: '#dc2626', radius_mm: 0.5, width_mm: 10, height_mm: 3 });
+  });
+
+  it('transparent fill draws no background', () => {
+    expect(cardTextBox({ ...base, fill: 'transparent' }, 1).background).toBeNull();
+  });
+
+  it('padding insets the text box, at the card scale, never below zero', () => {
+    const out = cardTextBox({ ...base, padding: { top: 1, right: 2, bottom: 1, left: 2 } }, 0.5);
+    expect(out.text).toEqual({ x_mm: 1, y_mm: 0.5, width_mm: 8, height_mm: 2 });
+    const tight = cardTextBox({ ...base, padding: { top: 9, right: 0, bottom: 9, left: 0 } }, 1);
+    expect(tight.text.height_mm).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Owner 22:35: Upgrades cards read the price tag description too, rich formatting kept
+// ---------------------------------------------------------------------------
+
+import { upgradesOf } from './upgrade-items';
+
+const UPGRADE = {
+  kind: 'upgrade',
+  id: 'u1',
+  code: 'SRTKT71SS',
+  name: 'Kitchen tap stainless',
+  spec: null,
+  image: null,
+  list_price: 440,
+  topup_amount: 150,
+  price_with_upgrade: 1099,
+  price_tag_description: '<p><strong>Pull-out</strong> spray {{product.code}}</p>',
+  spec_lines: ['Stainless steel'],
+} as unknown as TagAccessory;
+
+describe('Upgrades card fields (owner 22:35)', () => {
+  it('the price tag description of an upgrade item, rich formatting kept and its own fields resolved', () => {
+    expect(textOf(UPGRADE, '{{product.price_tag_description}}')).toBe(
+      '<p><strong>Pull-out</strong> spray SRTKT71SS</p>',
+    );
+  });
+
+  it('mixed text reads the description as plain text, like a normal text layer', () => {
+    expect(textOf(UPGRADE, 'Desc: {{product.price_tag_description}}')).toBe('Desc: Pull-out spray SRTKT71SS');
+  });
+
+  it('code and list price on an upgrade card; the fixed Top-up choice still works', () => {
+    expect(textOf(UPGRADE, '{{product.code}}')).toBe('SRTKT71SS');
+    const card = {
+      width_mm: 40,
+      height_mm: 20,
+      elements: [{ id: 'top', kind: 'text', field: 'topup', prefix: 'TOPUP ', x_mm: 0, y_mm: 0, width_mm: 20, height_mm: 5 }],
+    } as CardLayout;
+    expect(cardElementsFor(UPGRADE, card)[0].text).toMatch(/^TOPUP .*150/);
+  });
+
+  it('upgradesOf carries the slot row price tag description, sell price and spec lines', () => {
+    const data = {
+      kind: 'product',
+      product: {
+        combo: {
+          id: 'c', name: 'C', description: null, free_items: null, choices: [],
+          upgrades: [{ product_id: 'u1', code: 'SRTKT71SS', description: 'Tap', topup_amount: 150, picked: false }],
+        },
+        slots: {
+          fixed: [], groups: [],
+          upgrades: [{ product_id: 'u1', code: 'SRTKT71SS', name: 'Tap', dimensions: '', list_price: 440, sell_price: 400,
+            spec_lines: ['Stainless steel'], price_tag_description: 'Tap copy' }],
+        },
+      },
+    } as unknown as Parameters<typeof upgradesOf>[0];
+    const [item] = upgradesOf(data);
+    expect(item.price_tag_description).toBe('Tap copy');
+    expect(item.sell_price).toBe(400);
+    expect(item.spec_lines).toEqual(['Stainless steel']);
+    expect(item.spec).toBeNull();
+  });
+});

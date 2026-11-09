@@ -2990,41 +2990,59 @@ function AccessoryElementInspector({
       )}
 
       {element.kind === 'text' && (
-        <TypographyControls
-          singleLine
-          values={{
-            fontFamily: element.fontFamily ?? '',
-            fontSize: element.fontSize ?? 6,
-            fontWeight: element.fontWeight ?? 400,
-            italic: element.italic ?? false,
-            underline: element.underline ?? false,
-            strikethrough: false,
-            align: element.align ?? 'left',
-            lineHeight: null,
-            letterSpacing: 0,
-            padding: ZERO_PADDING,
-          }}
-          onChange={(changes) => {
-            const { fontFamily, fontSize, fontWeight, italic, underline, align } = changes;
-            patch(
-              Object.fromEntries(
-                Object.entries({
-                  fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
-                  fontSize,
-                  fontWeight,
-                  italic,
-                  underline,
-                  align,
-                }).filter(([, value]) => value !== undefined),
-              ) as Partial<CardElement>,
-            );
-          }}
-          colour={element.color ?? '#111827'}
-          onColourChange={(value) => patch({ color: value })}
-          usedColours={usedColours}
-          fontOptions={fontOptions}
-          onUploadFont={onUploadFont}
-        />
+        // Owner 22:30: the header's controls (AccessoryHeaderInspector): typography with line height
+        // and padding, then Background and Corner Radius. Nothing stored = drawn as before.
+        <>
+          <TypographyControls
+            values={{
+              fontFamily: element.fontFamily ?? '',
+              fontSize: element.fontSize ?? 6,
+              fontWeight: element.fontWeight ?? 400,
+              italic: element.italic ?? false,
+              underline: element.underline ?? false,
+              strikethrough: false,
+              align: element.align ?? 'left',
+              lineHeight: element.lineHeight ?? 1.1,
+              letterSpacing: 0,
+              padding: element.padding ?? ZERO_PADDING,
+            }}
+            onChange={(changes) => {
+              const { fontFamily, fontSize, fontWeight, italic, underline, align, lineHeight, padding } = changes;
+              patch(
+                Object.fromEntries(
+                  Object.entries({
+                    fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
+                    fontSize,
+                    fontWeight,
+                    italic,
+                    underline,
+                    align,
+                    lineHeight: lineHeight ?? undefined,
+                    padding,
+                  }).filter(([, value]) => value !== undefined),
+                ) as Partial<CardElement>,
+              );
+            }}
+            colour={element.color ?? '#111827'}
+            onColourChange={(value) => patch({ color: value })}
+            usedColours={usedColours}
+            fontOptions={fontOptions}
+            onUploadFont={onUploadFont}
+          />
+          <ColorPicker
+            label="Background"
+            value={element.fill || 'transparent'}
+            onChange={(value) => patch({ fill: value })}
+            usedColours={usedColours}
+          />
+          <AccessoryNumberField
+            label="Corner Radius"
+            value={element.cornerRadius_mm ?? 0}
+            onChange={(value) => patch({ cornerRadius_mm: Math.max(0, value) })}
+            step={0.25}
+            min={0}
+          />
+        </>
       )}
 
       {element.kind === 'picture' && (
