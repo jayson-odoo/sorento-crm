@@ -130,3 +130,15 @@ def test_ac_18b_exit_code_is_nonzero_when_a_host_fails(db, tmp_path, monkeypatch
     code, out = _run(db, tmp_path, [_entry("ZZQH6", "Boom", 2)], apply=True)
     assert _line(out, "Boom")[0].startswith("FAILED")
     assert code != 0
+
+
+def test_ac_7_exact_name_beats_aka(db, tmp_path):
+    _prod(db, "ZZQH8")
+    _existing(db, "ZZQH8", "Zeta Pack")
+    _existing(db, "ZZQH8", "Alpha Pack")
+    entries = [_entry("ZZQH8", "Zeta Pack", 1, aka=["Alpha Pack"], combo_description="<p>d</p>")]
+    _run(db, tmp_path, entries, apply=True)
+    combos = {c.name: c for c in _combos(db, "ZZQH8")}
+    assert set(combos) == {"Zeta Pack", "Alpha Pack"}
+    assert combos["Zeta Pack"].description == "<p>d</p>"
+    assert not combos["Alpha Pack"].description
