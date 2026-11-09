@@ -19,7 +19,7 @@ tie-break), BRW on hand, BRW PO qty, BRW incoming qty.
 
 | Place | Column | Decision |
 |---|---|---|
-| `summary_order_service.report_warehouse_ids` (`summary_order_service.py:917`) | the ONE shared set every column reads | Drop the site-pool predicate: the run's `warehouse_ids` as-is (the ORM query stays, so the company scope still applies). |
+| `summary_order_service.report_warehouse_ids` (`summary_order_service.py:917`) | the ONE shared set every column reads | Ticked locations: the run's `warehouse_ids` as-is (the ORM query stays, so the company scope still applies). Nothing ticked: the active site pool, as before (decision (b) below). |
 | `summary_order_service._pool_on_hand_map` (`:948`) | BRW on hand | Site-pool predicate only when no run scope is given (None, `stock_debt_service`'s network-wide reading). With a scope, the scope decides. `counts_as_available` stays (an availability rule, not a location rule). |
 | `site_pool_supply.open_po_by_product` (`site_pool_supply.py`, `AND {ACTIVE_SITE_POOL_SQL}`) | BRW PO qty | Same: site-pool predicate only when `warehouse_ids is None`. |
 | `site_pool_supply.open_spo_by_product` (`active_site_pool_sql("warehouses")`) | BRW incoming qty | Same. |
@@ -34,13 +34,20 @@ One shared location filter stays: `report_warehouse_ids(run)`.
   project bins, so its scope is unchanged.
 - Every network-wide caller (warehouse_ids None) keeps the site-pool rule.
 
-## Risk: a run with no location ticked
+## Decision (b): a run with nothing ticked stays site pool only
 
 `reorder_run_service._resolve_warehouse_ids` (`reorder_run_service.py:286-293`) stamps EVERY
 active warehouse, project bins included, when no codes are given: a Start Plan with nothing
-ticked, or a scheduled low stock job with empty `warehouse_codes` (`task_scheduler.py:538`,
-"empty = all active"). Under the literal rule those bins are now selected, so they count.
-Raised to the owner as a crew-ask; the daily job is unchanged only if its config lists codes.
+ticked, or a scheduled low stock job with empty `warehouse_codes` (`task_scheduler.py:538`).
+Crew decision 10 Nov 2026 (owner asleep, may override): option (b). Such a run reads the
+active site pool only, as before #2293; project bins count ONLY when ticked by name. Reasons:
+the owner ruled on TICKED bins; his original complaint was project stock leaking into BRW
+numbers; and (b) can never silently change the daily job, whose prod codes crew cannot see.
+
+"Nothing ticked" is detected without a migration: the stored scope covers every active
+warehouse the run could see, the same `resolve_run_scope(...)["is_all_warehouses"]` test the
+plans list labels "All" with. A planner who ticks literally every location gets the same
+reading as ticking none.
 
 ## Tests (red first, `tests/scm/test_lowstock_run_locations.py`)
 
@@ -51,3 +58,5 @@ Raised to the owner as a crew-ask; the daily job is unchanged only if its config
 4. The daily job's run: unchanged (project bin outside its codes never counts).
 5. The #2293 test that pinned "a project bin never answers Last in even when ticked" flips:
    the ticked BRW-BB lines now sum into the receipt.
+6. A run with nothing ticked (`create_run(db, None)`): BRW-BB / BRW-IB never count.
+7. A run ticking BRW-IB by name: BRW-IB counts in every column.
