@@ -251,6 +251,8 @@ export interface TagPreviewLineInput {
   tag_template_id: string | null;
   /** PRICETAG-LPSP: null = the request's mode. */
   price_type?: PriceMode | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the members unticked on the line. */
+  excluded_variant_ids?: string[];
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */

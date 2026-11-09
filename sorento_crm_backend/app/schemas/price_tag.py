@@ -1932,6 +1932,8 @@ class TagPreviewLineIn(BaseModel):
     manual_sell_price: Optional[ManualSellPrice] = None
     tag_template_id: Optional[str] = None
     price_type: Optional[Literal["list", "selling"]] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the members unticked on the line (only ever narrows the list).
+    excluded_variant_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class TagPreviewIn(BaseModel):

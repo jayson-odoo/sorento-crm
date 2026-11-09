@@ -1017,6 +1017,8 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
             manual_sell_price=manual,
             sort_order=idx,
             tag_template_id=_uuid_or_none(raw.get("tag_template_id")),
+            # Only narrows the member list, so an id outside the tree simply matches nothing.
+            excluded_variant_ids=[str(i) for i in raw.get("excluded_variant_ids") or []],
         )
         line.id = key
         line.parts = parts
