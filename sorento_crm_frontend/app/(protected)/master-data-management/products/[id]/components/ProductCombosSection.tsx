@@ -229,7 +229,7 @@ function ComboNameField({
 
   if (!editing) {
     return (
-      <div className="flex min-w-0 items-center gap-1">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         <p className="min-w-0 truncate font-medium" title={name}>
           {name}
         </p>
@@ -254,7 +254,8 @@ function ComboNameField({
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label="Combo name"
-          className="min-w-0 flex-1 sm:max-w-md"
+          // Its own full row on a phone, so the name is readable while it is typed (375px).
+          className="min-w-0 basis-full sm:max-w-md sm:flex-1 sm:basis-auto"
           value={draft}
           maxLength={COMBO_NAME_MAX}
           autoFocus
@@ -641,14 +642,14 @@ function ComboBlock({
 
   return (
     <div className="rounded-lg border" data-combo-id={combo.id} data-testid="combo-block">
-      <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start justify-between gap-2 border-b p-3">
         <ComboNameField name={combo.name} canEdit={canEdit} onRename={onRename} />
         {canEdit ? (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="shrink-0 justify-self-start"
+            className="shrink-0"
             onClick={onDelete}
             disabled={isDeleting}
             aria-label={`Delete combo ${combo.name}`}
