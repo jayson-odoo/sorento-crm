@@ -272,7 +272,7 @@ def test_06_a_turn_with_ready_and_waiting_rows_stores_only_the_ready_rows_and_li
     rows = [row_(ready.phone_number, codes=[w.cust_a.customer_code]), waiting_row(w, waits)]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("One row is ready; one needs a choice.")]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     assert len(result.pending_action["lines"]) == 1
     stored = action_rows(db, w.respond_id)
@@ -292,7 +292,7 @@ def test_07_a_turn_with_no_ready_row_stores_no_action_and_still_shows_the_table(
     rows = [waiting_row(w, waits), row_(bad.phone_number, names=["ZZT Nowhere Stores"])]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Nothing can change yet.")]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     assert result.pending_action is None
     assert action_rows(db, w.respond_id) == []
@@ -568,6 +568,12 @@ def tag(row: dict, n: int) -> dict:
     return {**row, "row": n}
 
 
+# UAC A17: a first table turn's text is the paste, so it carries the dealer names the rows send.
+def pasted(text_: str, rows) -> str:
+    """The user's message as a real paste carries it: the table's dealer names in the text (UAC A17)."""
+    return "\n".join([text_, *(n for r in rows for n in (r.get("customer_names") or []))])
+
+
 def say(db, w, rows, text_, final="Done."):
     """One scripted table turn: the model calls the batch tool with `rows`, then answers."""
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(final)]
@@ -601,7 +607,7 @@ def test_10_picking_a_code_per_row_replaces_the_card_with_one_holding_all_three_
     from app.services.chatbot.agent import actions
 
     w, f, h, (pf, ph, pr), first = picker_world(db)
-    r1 = say(db, w, first, "grant access to these people")
+    r1 = say(db, w, first, pasted("grant access to these people", first))
     assert len(r1.pending_action["lines"]) == 1
 
     second = [
@@ -692,7 +698,7 @@ def unlisted_world(db):
     other = account(db, "ZZT UNRELATED SHOP", "ZU-01", w.srt)
     person = dealer(db, w)
     first = [tag(row_(person.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1)]
-    say(db, w, first, "grant access to this person")
+    say(db, w, first, pasted("grant access to this person", first))
     return w, other, person
 
 
@@ -721,7 +727,7 @@ def test_11_a_code_typed_in_this_turns_message_is_accepted(db):
 def test_12_a_table_turn_keeps_its_waiting_rows_on_the_turn_with_or_without_ready_rows(db):
     w, f, h, (pf, ph, pr), first = picker_world(db)
 
-    mixed = stored(db, say(db, w, first, "grant access to these people"))
+    mixed = stored(db, say(db, w, first, pasted("grant access to these people", first)))
     only = stored(db, say(db, w, first[:2], "grant access again"))
 
     for response, count in ((mixed, 2), (only, 2)):
@@ -764,7 +770,8 @@ def test_11_a_typed_code_counts_only_as_a_whole_token_not_as_a_prefix_of_another
     account(db, "ZZT DEALER C CERAMIC (A/C II)", "ZC11", w.srt)
     account(db, "ZZT UNRELATED SHOP", "ZC1", w.srt)  # a real account, not in the list, "zc1" starts "zc10"
     person = dealer(db, w)
-    say(db, w, [tag(row_(person.phone_number, companies=["SRT"], names=["ZZT Dealer C"]), 1)], "grant access")
+    first = [tag(row_(person.phone_number, companies=["SRT"], names=["ZZT Dealer C"]), 1)]
+    say(db, w, first, pasted("grant access", first))
 
     result = say(db, w, [tag(row_(person.phone_number, companies=["SRT"], codes=["ZC1"]), 1)], "row 1: ZC10")
 
@@ -780,10 +787,11 @@ def test_11_a_code_not_listed_for_row_two_is_refused_though_it_is_inside_the_use
     account(db, "ZZT UNRELATED SHOP", "ZC1", w.srt)
     family(db, "D", w.srt, 2, "ZD")
     p1, p2 = dealer(db, w), dealer(db, w)
-    say(db, w, [
+    first = [
         tag(row_(p1.phone_number, companies=["SRT"], names=["ZZT Dealer C"]), 1),
         tag(row_(p2.phone_number, companies=["SRT"], names=["ZZT Dealer D"]), 2),
-    ], "grant access")
+    ]
+    say(db, w, first, pasted("grant access", first))
 
     result = say(db, w, [
         tag(row_(p1.phone_number, companies=["SRT"], codes=["ZC10"]), 1),
@@ -874,7 +882,7 @@ def test_13_the_reply_is_the_summary_line_then_the_tables_and_never_the_models_o
     model_text = "Here you go: | 1 | MODELCOPY ROW | please pick 300-ZZ1 or 300-ZZ2 for row two."
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     reply = result.reply_text
     assert reply.startswith("Rows from your table: 1 ready to confirm, 1 need your choice, 1 not changed.\n\n")
@@ -986,7 +994,7 @@ def test_13_guard_a_turn_with_no_ready_row_shows_only_the_code_built_tables(db):
     model_text = f"{SENTINEL}: | 1 | MODELCOPY | pick 300-ZZ1 please."
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     reply = result.reply_text
     assert result.pending_action is None
@@ -1007,7 +1015,7 @@ def test_13_when_the_proposal_cannot_be_stored_the_reply_is_the_summary_and_the_
     model_text = f"{SENTINEL}: | 1 | MODELCOPY | pick 300-ZZ1 please."
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(model_text)]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     assert result.reply_text == (
         "Rows from your table: 1 ready to confirm, 1 need your choice, 1 not changed.\n\n"

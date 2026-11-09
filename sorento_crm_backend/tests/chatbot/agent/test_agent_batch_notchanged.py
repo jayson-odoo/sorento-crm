@@ -17,7 +17,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     row_,
     state,
 )
-from tests.chatbot.agent.test_agent_bulk_v2 import WRITTEN, picker_world, say, stored, tag
+from tests.chatbot.agent.test_agent_bulk_v2 import WRITTEN, pasted, picker_world, say, stored, tag
 from tests.chatbot.agent.test_agent_writes import action_rows
 
 NO_SUCH = "ZZT No Such Shop Sdn Bhd"
@@ -31,7 +31,8 @@ def _first_table(db):
         tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 2),
         tag(row_(pr.phone_number, names=[NO_SUCH]), 3),
     ]
-    r1 = say(db, w, first, "grant access to these ppl")
+    # UAC A17: the first turn is the paste, so the dealer names are in the user's text.
+    r1 = say(db, w, first, pasted("grant access to these ppl", first))
     assert r1.pending_action is None
     assert "Not changed:" in r1.reply_text and NO_SUCH in r1.reply_text
     return w, f, h, (pf, ph, pr)
@@ -126,7 +127,7 @@ def test_a_renumbered_follow_up_still_keeps_the_not_changed_row(db):
         tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 2),
         tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 3),
     ]
-    say(db, w, first, "grant access to these ppl")
+    say(db, w, first, pasted("grant access to these ppl", first))
 
     picked = [
         row_(pf.phone_number, companies=["SRT"], codes=[f[0].customer_code]),

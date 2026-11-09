@@ -637,7 +637,8 @@ def test_06_a_turn_with_a_pasted_table_shows_one_preview_table_and_writes_nothin
     ]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Here is what I will change.")]
 
-    result, provider = run_turn(db, w, script, text_="please grant access to these people")
+    # UAC A17: a pasted table carries its dealer names in the user's text.
+    result, provider = run_turn(db, w, script, text_="please grant access to these people\nZZT No Such Shop")
 
     assert BATCH in tool_names(provider)
     assert result.pending_action is not None
