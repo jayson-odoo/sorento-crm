@@ -646,6 +646,27 @@ def _icon_status(db: Session, ids: set[str]) -> tuple[set[str], set[str]]:
     return visible, everyone - visible
 
 
+def own_asset_ids(db: Session, ids: set[str]) -> Optional[set[str]]:
+    """The ids among ``ids`` whose asset belongs to a company in the caller's scope, deleted
+    or not; ``None`` for the all-companies principal (scope ``None``), meaning "all of them".
+
+    Fail-closed: an unset or empty scope owns nothing, and an id with no asset row is never
+    the caller's.
+    """
+    from app.models.base import company_scope, get_company_scope
+
+    scope = get_company_scope(db)
+    if scope is None:
+        return None
+    wanted = {i for i in (_uuid_text(x) for x in ids) if i}
+    if not wanted or not isinstance(scope, frozenset) or not scope:
+        return set()
+    allowed = {str(c) for c in scope}
+    with company_scope(db, None):
+        rows = db.query(Asset.id, Asset.company_id).filter(Asset.id.in_(wanted)).all()
+    return {str(r.id) for r in rows if r.company_id is not None and str(r.company_id) in allowed}
+
+
 def visible_value_icons(db: Session, row) -> dict[str, list[str]]:
     """The key's ``value_icons`` as the caller may see them: only live icons of its own company.
 
@@ -673,7 +694,9 @@ def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
     * an id the caller can see must be a live icon; a NEW one that is not is refused, a stored one
       that has since been deleted is dropped;
     * another company's live icon (the registry is shared, assets are not) is carried forward in
-      its stored position whether or not the payload named it.
+      its stored position whether or not the payload named it; a payload naming one the key
+      does not already hold is refused like a missing icon (SPEC-REGISTRY-ICON-LEAK), and one
+      it names on a different value is ignored.
 
     Ids are de-duplicated in order, an empty list drops the value's entry, and a value holds at
     most ``MAX_ICONS_PER_VALUE``.
@@ -721,10 +744,14 @@ def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
     )
     for ident in sent_ids:
         canonical = _uuid_text(ident)
-        if canonical in visible or canonical in hidden:
+        if canonical in visible:
             continue
         if canonical in stored_ids:
-            continue  # stored before, gone since: dropped below
+            # Stored before and gone since (dropped below), or another company's (kept below
+            # in its stored place only, never moved by this payload).
+            continue
+        # SPEC-REGISTRY-ICON-LEAK: another company's icon the key does not already hold reads
+        # exactly like a missing one, so the caller cannot hang it on a value.
         raise AppException(
             status_code=422,
             message="Choose Dealer Kit icons only. One of the chosen pictures is not an icon "
@@ -734,11 +761,9 @@ def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
 
     cleaned: dict[str, list[str]] = {}
     for value in live_values:
-        mine = [
-            i
-            for i in (_uuid_text(x) for x in sent.get(value, []))
-            if i in visible or i in hidden
-        ]
+        # Only the caller's own icons come from the payload; another company's come back from
+        # what was stored on this value, below.
+        mine = [i for i in (_uuid_text(x) for x in sent.get(value, [])) if i in visible]
         mine = list(dict.fromkeys(mine))
         # Another company's icons keep their stored places.
         for index, ident in enumerate(stored.get(value, [])):

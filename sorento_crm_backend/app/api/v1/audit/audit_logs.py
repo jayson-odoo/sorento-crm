@@ -118,6 +118,67 @@ def _authorize_po_history(db: Session, current_user: dict, po_id: Optional[str])
         raise _forbidden()
 
 
+# SPEC-REGISTRY-ICON-LEAK: the spec registry is shared by every company, its Dealer Kit icons
+# are not, so its audit rows carry no company and their icon columns name every company's ids.
+# `value_icons` is {value: [icon id, ...]}, `value_icon_conditions` (SPEC-ICON-COMBINED) is
+# {value: {icon id: [condition, ...]}}; a new icon column of either shape belongs here.
+_SPEC_REGISTRY_ICON_COLUMNS = ("value_icons", "value_icon_conditions")
+
+
+def _icon_ids_in(entry) -> set[str]:
+    if isinstance(entry, dict):
+        return {str(k) for k in entry}
+    if isinstance(entry, list):
+        return {str(i) for i in entry}
+    return set()
+
+
+def _keep_icons(entry, own: set[str]):
+    if isinstance(entry, dict):
+        return {k: v for k, v in entry.items() if str(k) in own}
+    if isinstance(entry, list):
+        return [i for i in entry if str(i) in own]
+    return entry
+
+
+def _redact_foreign_icon_ids(db: Session, items) -> None:
+    """Leave only the caller's own company's icon ids in each spec-registry row's icon columns
+    (on the loaded rows, never written back). A value left with no icon is dropped, as the
+    registry stores it."""
+    rows = [it for it in items if it.entity_type == "product_spec_registry"]
+    columns = [
+        values[col]
+        for it in rows
+        for values in (it.old_values or {}, it.new_values or {})
+        for col in _SPEC_REGISTRY_ICON_COLUMNS
+        if isinstance(values.get(col), dict)
+    ]
+    ids = {i for mapping in columns for entry in mapping.values() for i in _icon_ids_in(entry)}
+    if not ids:
+        return
+    from app.services.dealer_kit.asset_service import own_asset_ids
+
+    own = own_asset_ids(db, ids)
+    if own is None:
+        return
+    for it in rows:
+        # Expunged first: these are attribute writes on the session's rows, and the redacted
+        # copy must never be flushed over the stored audit trail.
+        if it in db:
+            db.expunge(it)
+        for attr in ("old_values", "new_values"):
+            values = getattr(it, attr)
+            if not isinstance(values, dict):
+                continue
+            redacted = dict(values)
+            for col in _SPEC_REGISTRY_ICON_COLUMNS:
+                mapping = values.get(col)
+                if isinstance(mapping, dict):
+                    kept = {value: _keep_icons(entry, own) for value, entry in mapping.items()}
+                    redacted[col] = {value: entry for value, entry in kept.items() if entry}
+            setattr(it, attr, redacted)
+
+
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
     """Return map of user_id -> name (or email fallback) for given ids."""
     ids = [uid for uid in user_ids if uid]
@@ -326,6 +387,8 @@ def get_audit_logs(
         limit=limit,
         include_children=include_children,
     )
+    # Admins too: the registry is shared, the icons are per company (SPEC-REGISTRY-ICON-LEAK).
+    _redact_foreign_icon_ids(db, items)
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
         | {str(it.real_user_id) for it in items if getattr(it, "real_user_id", None) is not None}
