@@ -1790,6 +1790,8 @@ function slotValue(slot: SubjectSlot): string {
       return `slot:pick:${slot.group}:${slot.index}`;
     case 'upgrade':
       return `slot:upgrade:${slot.index}`;
+    case 'variants':
+      return 'slot:variants';
   }
 }
 
@@ -1800,6 +1802,7 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
   if (kind === 'fixed') return { kind: 'fixed', index: Number(a) };
   if (kind === 'pick') return { kind: 'pick', group: Number(a), index: Number(b) };
   if (kind === 'upgrade') return { kind: 'upgrade', index: Number(a) };
+  if (kind === 'variants') return { kind: 'variants' };
   return undefined;
 }
 

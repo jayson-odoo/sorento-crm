@@ -46,9 +46,10 @@ import {
   imageSourceOf,
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
-import { featureIconsFor, type FeatureIcon } from './feature-icons';
-import { accessoriesOf } from './accessory-box';
-import { accessoryBoxStyleOf } from './accessory-card';
+import { featureIconsFor, variantFeatureIcons, type FeatureIcon } from './feature-icons';
+import { accessoriesOf, partAtSlot } from './accessory-box';
+import { accessoryBoxStyleOf, drawableFeatureIcons } from './accessory-card';
+import { priceWithUpgrade } from './upgrade-items';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
@@ -116,6 +117,13 @@ function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
   }
 }
 
+/** The position a layer READS for its product data: "All variants" reads the main product for
+ *  everything but its icons (AC-F6). */
+function readSlotOf(props: TagLayerProps): SubjectSlot | undefined {
+  const slot = subjectSlotOf(props);
+  return slot?.kind === 'variants' ? { kind: 'main' } : slot;
+}
+
 /** The product at a position, `EMPTY_PART_PRODUCT` for one the line has not filled (AC-A3). */
 function productAtSlot(slot: SubjectSlot, slots: TagSlots): ProductTagData {
   const part =
@@ -140,6 +148,8 @@ export function slotLabel(slot: SubjectSlot, slots: TagSlots | null | undefined)
       return `Upgrade ${slot.index + 1}`;
     case 'pick':
       return `${slots?.groups[slot.group]?.role ?? `Choice group ${slot.group + 1}`}, pick ${slot.index + 1}`;
+    case 'variants':
+      return 'All variants';
   }
 }
 
@@ -270,7 +280,7 @@ export function subjectOf(
   // K3: a position wins over `subjectPart`. A binding whose payload predates `slots` (undefined)
   // ignores it; `slots: null` means the line has no parts or combo, so every position but the
   // main product is empty (AC-A3) and never the line itself.
-  const slot = layer?.props ? subjectSlotOf(layer.props) : undefined;
+  const slot = layer?.props ? readSlotOf(layer.props) : undefined;
   if (slot && (data?.kind === 'line' || data?.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
     if (slots !== undefined) {
@@ -419,6 +429,28 @@ function priceText(layer: { props?: TagLayerProps }, amount: number | null): str
 }
 
 /**
+ * PRICETAG-UPGRADE-VARIANTS S2: `upgrade_topup` / `sell_price_with_upgrade` on an "Upgrade N"
+ * position: the layer's prefix and the figure, with the same formatter the card's Top-up uses.
+ * Empty when the layer is not on an upgrade, the upgrade is picked (it is in SP already), or there
+ * is no figure. Undefined for any other slot.
+ */
+function upgradeSlotText(
+  layer: { slot_binding: SlotBinding; props?: TagLayerProps },
+  data: TagBindingData | null | undefined,
+): string | undefined {
+  if (layer.slot_binding !== 'upgrade_topup' && layer.slot_binding !== 'sell_price_with_upgrade') return undefined;
+  const slot = layer.props ? subjectSlotOf(layer.props) : undefined;
+  if (slot?.kind !== 'upgrade') return '';
+  const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : null;
+  const row = partAtSlot(slots, slot);
+  if (!row || row.chosen || row.topup_amount == null) return '';
+  const amount = layer.slot_binding === 'upgrade_topup' ? row.topup_amount : priceWithUpgrade(data, row.topup_amount);
+  if (amount == null) return '';
+  const props = layer.props?.kind === 'text' ? layer.props : undefined;
+  return `${props?.prefix ?? ''}${formatTagPrice(amount, props?.showCurrency !== false)}`;
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -436,6 +468,8 @@ export function resolveSlotText(
   // product row), never off a part subject.
   const comboText = comboSlotText(layer.slot_binding, data);
   if (comboText !== undefined) return comboText;
+  const upgradeText = upgradeSlotText(layer, data);
+  if (upgradeText !== undefined) return upgradeText;
 
   // A price on a TEXT layer, which is not the same thing as a price badge and
   // does not replace it. The flyer prints `LP: RM 1,550` as an ordinary line
@@ -1311,6 +1345,10 @@ export interface TagLayerDisplay {
   accessoryEditing?: boolean;
   /** S6: the box style the previewed product / combo names; the box draws it instead of its own design. */
   accessoryBoxStyle?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-UPGRADE-VARIANTS S1: the rules a card's feature_icons element may draw (those with a
+   *  signed url, `drawableFeatureIcons`) and the urls, by asset id. */
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
 }
 
 /**
@@ -1432,11 +1470,14 @@ export function layerDisplay(
     case 'feature_icons':
       return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
 
-    case 'accessories':
+    case 'accessories': {
+      // A card's feature_icons element draws from the same rules and urls as the layer.
+      const icons = { cardIcons: drawableFeatureIcons(featureIcons, assetUrls), iconUrls: assetUrls };
       // No data bound (the template editor with nothing previewed): absent, so samples draw.
       return data
-        ? { accessories: accessoriesOf(data, layer), accessoryBoxStyle: accessoryBoxStyleOf(data, layer) }
-        : {};
+        ? { accessories: accessoriesOf(data, layer), accessoryBoxStyle: accessoryBoxStyleOf(data, layer), ...icons }
+        : icons;
+    }
 
     default:
       return undefined;
@@ -1454,6 +1495,29 @@ export function subjectSpecs(
   return [];
 }
 
+/** The live, ticked variant members a binding carries; absent (an older pin) = none. */
+function variantsOf(data: TagBindingData | null | undefined) {
+  if (data?.kind === 'line') return data.line.variants ?? [];
+  if (data?.kind === 'product') return data.product.variants ?? [];
+  return [];
+}
+
+/**
+ * The icons a feature_icons layer shows, the ONE rule the canvas, the request preview and print
+ * call: its subject's icons, or on "All variants" the union over the subject and every variant
+ * the payload carries (`variantFeatureIcons`).
+ */
+export function layerFeatureIcons(
+  data: TagBindingData | null | undefined,
+  layer: { props?: TagLayerProps },
+  featureIcons: readonly FeatureIcon[] | null | undefined,
+): FeatureIcon[] {
+  const own = subjectSpecs(data, layer);
+  const slot = layer.props ? subjectSlotOf(layer.props) : undefined;
+  if (slot?.kind !== 'variants') return featureIconsFor(own, featureIcons ?? []);
+  return variantFeatureIcons([own, ...variantsOf(data).map((variant) => variant.specs)], featureIcons);
+}
+
 /** Feature icons for the canvas: matched icons with a signed URL; one without is skipped. */
 function featureIconsDisplay(
   props: FeatureIconsLayerProps,
@@ -1461,7 +1525,7 @@ function featureIconsDisplay(
   assetUrls: Record<string, string>,
   featureIcons: readonly FeatureIcon[] | undefined,
 ): { id: string; url: string }[] {
-  const matched = featureIconsFor(subjectSpecs(data, { props }), featureIcons ?? []);
+  const matched = layerFeatureIcons(data, { props }, featureIcons);
   const out: { id: string; url: string }[] = [];
   for (const icon of matched) {
     const url = assetUrls[icon.id];

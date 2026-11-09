@@ -9,6 +9,7 @@
  */
 import { formatTagPrice } from './price-badge';
 import { richOneLine } from './rich-text';
+import { upgradesOf } from './upgrade-items';
 import type {
   AccessoriesLayerProps,
   AccessoryTextStyle,
@@ -84,6 +85,8 @@ export function partAtSlot(
       return slots.groups[slot.group]?.picks[slot.index] ?? null;
     case 'upgrade':
       return slots.upgrades[slot.index] ?? null;
+    case 'variants':
+      return slots.main ?? null;
   }
 }
 
@@ -102,6 +105,9 @@ export function accessoriesOf(
 ): TagAccessory[] {
   if (!data) return [];
   const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
+  // PRICETAG-UPGRADE-VARIANTS S1: an Upgrades box lists the combo's upgrades on offer, whatever
+  // position it names.
+  if (props?.list === 'upgrades') return upgradesOf(data);
   const slot = props?.subjectSlot;
   if (slot && (data.kind === 'line' || data.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;

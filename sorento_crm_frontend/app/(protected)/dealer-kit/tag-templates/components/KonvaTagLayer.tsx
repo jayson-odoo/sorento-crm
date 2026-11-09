@@ -52,7 +52,7 @@ import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-tex
 import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
-import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
+import { featureIconRow, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoryBoxLayout,
   accessoryCardInner,
@@ -66,11 +66,13 @@ import {
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
+  accessoryDesignSamples,
   boxColours,
   effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardElementsForDesign,
+  cardIconLayout,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -435,6 +437,8 @@ function LayerContent({
           accessories={display?.accessories}
           editing={display?.accessoryEditing}
           boxStyle={display?.accessoryBoxStyle}
+          cardIcons={display?.cardIcons}
+          iconUrls={display?.iconUrls}
         />
       );
 
@@ -1179,6 +1183,8 @@ function AccessoriesContent({
   accessories,
   editing,
   boxStyle,
+  cardIcons,
+  iconUrls,
 }: {
   w: number;
   h: number;
@@ -1189,6 +1195,8 @@ function AccessoriesContent({
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
   boxStyle?: TagAccessoryBoxStyle | null;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1204,6 +1212,8 @@ function AccessoriesContent({
         props={props}
         accessories={accessories}
         editing={editing}
+        cardIcons={cardIcons}
+        iconUrls={iconUrls}
       />
     );
   }
@@ -1374,6 +1384,8 @@ function DesignedAccessoriesContent({
   props,
   accessories,
   editing,
+  cardIcons,
+  iconUrls,
 }: {
   w: number;
   h: number;
@@ -1383,8 +1395,11 @@ function DesignedAccessoriesContent({
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
 }) {
-  const items = accessories ?? sampleAccessories();
+  // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
+  const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
   if (box.shown === 0) {
     return (
@@ -1462,8 +1477,8 @@ function DesignedAccessoriesContent({
               cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
             />
             {(editing && i === 0
-              ? cardElementsForDesign(item, props.card!)
-              : cardElementsFor(item, props.card!)
+              ? cardElementsForDesign(item, props.card!, cardIcons)
+              : cardElementsFor(item, props.card!, cardIcons)
             ).map((element) => (
               <CardElementNode
                 key={element.id}
@@ -1471,6 +1486,7 @@ function DesignedAccessoriesContent({
                 factor={box.scale}
                 scale={scale}
                 boxFont={props.fontFamily}
+                iconUrls={iconUrls}
               />
             ))}
           </Group>
@@ -1520,11 +1536,13 @@ function CardElementNode({
   factor,
   scale,
   boxFont,
+  iconUrls,
 }: {
   element: ResolvedCardElement;
   factor: number;
   scale: number;
   boxFont?: string;
+  iconUrls?: Record<string, string>;
 }) {
   const px = (mm: number) => mm2px(mm * factor, scale);
   const x = px(element.x_mm);
@@ -1572,6 +1590,41 @@ function CardElementNode({
           />
         </Group>
       );
+    case 'feature_icons': {
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
+      const icons = element.icons ?? [];
+      const row = cardIconLayout(element, icons.length, factor);
+      if (row.length === 0) {
+        // Designer only (no icon to sample): where the icons go.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            stroke="#3b82f6"
+            strokeWidth={1}
+            dash={[3, 3]}
+            listening={false}
+          />
+        );
+      }
+      return (
+        <Group x={x} y={y}>
+          {row.map((cell, i) => (
+            <Group key={`${icons[i].id}-${i}`} x={mm2px(cell.x_mm, scale)} y={mm2px(cell.y_mm, scale)}>
+              <ImageContent
+                w={mm2px(cell.size_mm, scale)}
+                h={mm2px(cell.size_mm, scale)}
+                url={iconUrls?.[icons[i].id] ?? null}
+                fit="contain"
+                maskShape="none"
+              />
+            </Group>
+          ))}
+        </Group>
+      );
+    }
     case 'colour_dots': {
       const colours = element.colours ?? [];
       const dots = colourDotLayout(element, colours.length, factor);

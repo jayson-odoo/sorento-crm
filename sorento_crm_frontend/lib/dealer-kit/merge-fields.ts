@@ -154,6 +154,9 @@ export function slotTokenPath(slot: SubjectSlot, field: string): string {
       return `slot.pick.${slot.group + 1}.${slot.index + 1}.${field}`;
     case 'upgrade':
       return `slot.upgrade.${slot.index + 1}.${field}`;
+    case 'variants':
+      // "All variants" reads the main product for any field (only its icons differ).
+      return `slot.main.${field}`;
   }
 }
 

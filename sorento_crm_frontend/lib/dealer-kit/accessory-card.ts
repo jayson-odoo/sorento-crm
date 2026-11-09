@@ -22,6 +22,7 @@ import {
   type AccessoryRect,
   type LayoutProps,
 } from './accessory-box';
+import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
 import { formatTagPrice } from './price-badge';
 import { isRich, parseRichText, richPlainText } from './rich-text';
 import { textLayerLines } from './text-layout';
@@ -229,6 +230,11 @@ export function cardFieldValue(item: TagAccessory, field: CardField): string | s
       return (item.colours ?? []).map((colour) => colour.hex);
     case 'picture':
       return item.image?.url ?? item.images?.[0]?.url ?? null;
+    // PRICETAG-UPGRADE-VARIANTS S1: the same formatter the `upgrade_topup` text slot prints with.
+    case 'topup':
+      return item.topup_amount != null ? formatTagPrice(item.topup_amount) : null;
+    case 'price_with_upgrade':
+      return item.price_with_upgrade != null ? formatTagPrice(item.price_with_upgrade) : null;
   }
 }
 
@@ -255,6 +261,8 @@ export function boxColours(items: readonly TagAccessory[]): string[] {
  *  `src` the picture URL. The rect is final, in card (or footer) millimetres, unscaled. */
 export type ResolvedCardElement = CardElement & {
   src?: string | null;
+  /** feature_icons: the item's matched icons, in the library's one order. */
+  icons?: FeatureIcon[];
   /** Designer only: a picture element drawn as a neutral placeholder (never printed). */
   placeholder?: boolean;
 };
@@ -315,11 +323,22 @@ function textOf(value: string | string[] | null): string | null {
   return typeof value === 'string' && !isBlank(value) ? value : null;
 }
 
+/** A field's value with the element's own text before it ("TOPUP RM 150"); null stays null. */
+function withPrefix(element: CardElement, value: string | null): string | null {
+  return value && element.prefix ? `${element.prefix}${value}` : value;
+}
+
 /**
  * The elements one accessory prints: the visible ones, an element whose field is empty for this
  * accessory dropped and the elements under it moved up into its space. The card keeps its size.
+ * A feature_icons element shows the icons the item's own specs carry (`featureIcons` = the library
+ * rules the caller can draw); none matched, it is dropped like an empty field.
  */
-export function cardElementsFor(item: TagAccessory, card: CardLayout): ResolvedCardElement[] {
+export function cardElementsFor(
+  item: TagAccessory,
+  card: CardLayout,
+  featureIcons?: readonly FeatureIcon[],
+): ResolvedCardElement[] {
   return resolveElements(card.elements ?? [], (element) => {
     switch (element.kind) {
       case 'shape':
@@ -334,8 +353,14 @@ export function cardElementsFor(item: TagAccessory, card: CardLayout): ResolvedC
         return colours.length > 0 ? { ...element, colours } : null;
       }
       case 'text': {
-        const text = element.field ? textOf(cardFieldValue(item, element.field)) : textOf(element.text ?? null);
+        const text = element.field
+          ? withPrefix(element, textOf(cardFieldValue(item, element.field)))
+          : textOf(element.text ?? null);
         return text ? { ...element, text } : null;
+      }
+      case 'feature_icons': {
+        const icons = featureIconsFor(item.specs, featureIcons);
+        return icons.length > 0 ? { ...element, icons } : null;
       }
     }
   });
@@ -346,9 +371,14 @@ export function cardElementsFor(item: TagAccessory, card: CardLayout): ResolvedC
  * field and none moved up, so what is drawn sits exactly where its frame is. A picture is a
  * placeholder. The faded cards keep the real rule (`cardElementsFor`).
  */
-export function cardElementsForDesign(item: TagAccessory, card: CardLayout): ResolvedCardElement[] {
+export function cardElementsForDesign(
+  item: TagAccessory,
+  card: CardLayout,
+  featureIcons?: readonly FeatureIcon[],
+): ResolvedCardElement[] {
   // A field this accessory has nothing for is drawn from the sample, so the element stays visible to place.
   const [sample] = accessoryDesignSamples();
+  const [upgradeSample] = accessoryDesignSamples('upgrades');
   return (card.elements ?? [])
     .filter((element) => !element.hidden)
     .map((element): ResolvedCardElement => {
@@ -364,8 +394,13 @@ export function cardElementsForDesign(item: TagAccessory, card: CardLayout): Res
         case 'text': {
           if (!element.field) return { ...element, text: element.text ?? '' };
           const own = textOf(cardFieldValue(item, element.field));
-          const value = own ?? cardFieldValue(sample, element.field);
-          return { ...element, text: typeof value === 'string' ? value : '' };
+          const value = own ?? textOf(cardFieldValue(sample, element.field)) ?? cardFieldValue(upgradeSample, element.field);
+          return { ...element, text: withPrefix(element, typeof value === 'string' ? value : '') ?? '' };
+        }
+        case 'feature_icons': {
+          // The item's own icons, else the first few of the library as a sample; never dropped.
+          const own = featureIconsFor(item.specs, featureIcons);
+          return { ...element, icons: own.length > 0 ? own : (featureIcons ?? []).slice(0, 3) };
         }
         default:
           return { ...element };
@@ -395,6 +430,8 @@ export function footerElementsFor(colours: readonly string[], footer: FooterLayo
         const text = textOf(element.text ?? null);
         return text ? { ...element, text } : null;
       }
+      case 'feature_icons':
+        return null;
     }
   });
 }
@@ -431,6 +468,32 @@ export function colourDotLayout(
       ? { x_mm: i * (d + gap), y_mm: (h - d) / 2, d_mm: d }
       : { x_mm: (w - d) / 2, y_mm: i * (d + gap), d_mm: d },
   );
+}
+
+export const DEFAULT_CARD_ICON_SIZE_MM = 4.6;
+export const DEFAULT_CARD_ICON_GAP_MM = 0.8;
+
+/** The icons of a feature_icons element: each one's top-left and size, in the element's own
+ *  millimetres at `factor`, packed by the same `featureIconRow` the feature icons layer uses. */
+export function cardIconLayout(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'iconSize_mm' | 'gap_mm' | 'align'>,
+  count: number,
+  factor = 1,
+): { x_mm: number; y_mm: number; size_mm: number }[] {
+  const size = (element.iconSize_mm ?? DEFAULT_CARD_ICON_SIZE_MM) * factor;
+  const gap = (element.gap_mm ?? DEFAULT_CARD_ICON_GAP_MM) * factor;
+  const xs = featureIconRow(count, { iconSize_mm: size, gap_mm: gap, align: element.align ?? 'left' }, element.width_mm * factor);
+  const y = (element.height_mm * factor - size) / 2;
+  return xs.map((x) => ({ x_mm: x, y_mm: y, size_mm: size }));
+}
+
+/** The library rules a renderer can draw: those with a signed url, in their order. Canvas and
+ *  print both filter through this before `cardElementsFor`, so both drop the same elements. */
+export function drawableFeatureIcons(
+  featureIcons: readonly FeatureIcon[] | null | undefined,
+  urls: Record<string, string> | null | undefined,
+): FeatureIcon[] {
+  return (featureIcons ?? []).filter((icon) => Boolean(urls?.[icon.id]));
 }
 
 /** A card text element as the text-layer props the text layout and both renderers already use,
@@ -573,7 +636,7 @@ export function cardFromLegacy(
 }
 
 /** The per-box keys: they live on the box in a tag template, never in a shared design. */
-const PER_BOX_KEYS = ['kind', 'subjectSlot', 'subjectPart', 'presetId'] as const;
+const PER_BOX_KEYS = ['kind', 'subjectSlot', 'subjectPart', 'presetId', 'list'] as const;
 
 export type AccessoryDesign = Omit<AccessoriesLayerProps, (typeof PER_BOX_KEYS)[number]>;
 
@@ -594,13 +657,30 @@ export function applyAccessoryDesign(
   const next: Record<string, unknown> = { ...accessoryDesign(design as AccessoriesLayerProps), kind: 'accessories' };
   if (props.subjectSlot !== undefined) next.subjectSlot = props.subjectSlot;
   if (props.subjectPart !== undefined) next.subjectPart = props.subjectPart;
+  // What the box lists is its own, like where it reads from: a style never turns it into the other list.
+  if (props.list !== undefined) next.list = props.list;
   if (presetId) next.presetId = presetId;
   return next as unknown as AccessoriesLayerProps;
 }
 
 /** Two full sample accessories (every field filled) for styling a card in the designer, so every
- *  element shows whatever the preview data holds. */
-export function accessoryDesignSamples(): TagAccessory[] {
+ *  element shows whatever the preview data holds. An Upgrades box gets two upgrade samples. */
+export function accessoryDesignSamples(list?: AccessoriesLayerProps['list']): TagAccessory[] {
+  if (list === 'upgrades') {
+    return [1, 2].map((n) => ({
+      kind: 'upgrade' as const,
+      id: `design-upgrade-${n}`,
+      name: 'Upgrade name',
+      spec: null,
+      code: 'CODE',
+      list_price: 440,
+      topup_amount: 150,
+      price_with_upgrade: 1099,
+      image: null,
+      images: [],
+      specs: [],
+    }));
+  }
   const colours = [
     { name: 'Black', hex: '#1f2937' },
     { name: 'Grey', hex: '#9ca3af' },
@@ -623,8 +703,55 @@ export function accessoryDesignSamples(): TagAccessory[] {
  * What a box under card editing draws: the previewed list, so the faded cards show what will really
  * print (CARD V1); the two samples only when there is no list to show (A7).
  */
-export function accessoryEditItems(previewed: TagAccessory[] | null | undefined): TagAccessory[] {
-  return previewed && previewed.length > 0 ? previewed : accessoryDesignSamples();
+export function accessoryEditItems(
+  previewed: TagAccessory[] | null | undefined,
+  list?: AccessoriesLayerProps['list'],
+): TagAccessory[] {
+  return previewed && previewed.length > 0 ? previewed : accessoryDesignSamples(list);
+}
+
+/**
+ * PRICETAG-UPGRADE-VARIANTS S1: the card an Upgrades box starts with (owner sample 1): picture at
+ * the left, then the red bold top-up, code, name, LP and the upgrade's own feature icons. "SP with
+ * upgrade" is a field the designer may place, off by default (Q2 a).
+ */
+export function defaultUpgradeCard(): CardLayout {
+  const text = (id: string, field: CardField, y_mm: number, extra: Partial<CardElement> = {}): CardElement => ({
+    id,
+    kind: 'text',
+    field,
+    x_mm: 17,
+    y_mm,
+    width_mm: 53,
+    height_mm: 3.4,
+    fontSize: 7,
+    fontWeight: 400,
+    align: 'left',
+    lineHeight: 1.1,
+    ...extra,
+  });
+  return {
+    width_mm: 71,
+    height_mm: 21.5,
+    elements: [
+      { id: 'picture', kind: 'picture', field: 'picture', x_mm: 1, y_mm: 1.5, width_mm: 14, height_mm: 19, fit: 'contain' },
+      text('topup', 'topup', 1, { prefix: 'TOPUP ', fontSize: 10.8, fontWeight: 700, color: '#B91C1C', height_mm: 4.6 }),
+      text('code', 'code', 5.6, { fontWeight: 700, fontSize: 8 }),
+      text('name', 'name', 9.2),
+      text('price', 'price', 12.2),
+      {
+        id: 'icons',
+        kind: 'feature_icons',
+        x_mm: 17,
+        y_mm: 15.2,
+        width_mm: 50,
+        height_mm: 5,
+        iconSize_mm: DEFAULT_CARD_ICON_SIZE_MM,
+        gap_mm: DEFAULT_CARD_ICON_GAP_MM,
+        align: 'left',
+      },
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +776,8 @@ export function newCardElement(
         return { w: 12, h: 3 };
       case 'shape':
         return { w: 10, h: 4 };
+      case 'feature_icons':
+        return { w: 20, h: 5 };
       default:
         return { w: 20, h: 4 };
     }
@@ -670,6 +799,8 @@ export function newCardElement(
       return { ...base, field: 'colours', dotDirection: 'row' };
     case 'shape':
       return { ...base, shape: 'rounded_rect', fill: '#e5e7eb', stroke: '', cornerRadius_mm: 1 };
+    case 'feature_icons':
+      return { ...base, iconSize_mm: DEFAULT_CARD_ICON_SIZE_MM, gap_mm: DEFAULT_CARD_ICON_GAP_MM, align: 'left' };
     default:
       return target === 'footer'
         ? { ...base, field: null, text: 'Note', fontSize: 5, fontWeight: 400, align: 'left' }
@@ -917,6 +1048,8 @@ export function accessoryBoxStyleOf(
 ): TagAccessoryBoxStyle | null {
   if (!data) return null;
   const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
+  // An owner's box style styles its free items; an Upgrades box keeps its own design.
+  if (props?.list === 'upgrades') return null;
   const slot = props?.subjectSlot;
   if (slot && (data.kind === 'line' || data.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
