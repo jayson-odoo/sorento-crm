@@ -160,3 +160,10 @@ when the owner's paired combo exists. Dev proof: dry run 0 writes; apply deleted
 filled: prices, parts, free items; names and text kept), CREATE 1 "(p20)"; re-run SKIP 212 + UNMATCHED 31.
 Prod order (owner): `crew/state/files/COMBO-SEED-FLYER/prod-pairs-report.sh` (read only) -> `prod-dups.sh` dry run ->
 owner go -> `--apply` -> aka seed dry run (`prod-aka.sh`) -> owner go -> its `--apply`.
+Prod read-only report (owner, 9 Nov ~23:10): all 21 pairs BOTH; every flyer-named combo by system 09/11 13:51,
+untouched; owner combos by user 09/11 05:46-06:30. SRTBF11834's owner side is the 2 Nov importer combo (8 parts, edited
+once by a person); its "(p21)" duplicate is by system, untouched. Review round (AC-D2b/D3b): DELETE also needs the
+owner combo made or edited by a person, the duplicate without a picture, the row locked; the line shows when the
+importer created it; tests pin the SRTBF11834 shape. Dev copy mirrored to prod's shape: cleanup DELETE 21 / KEEP 0, apply
+-21, re-run NO DUPLICATE 21; aka seed CREATE 1 "(p20)" + UPDATE 20, re-run SKIP 212 + UNMATCHED 31. Owner ruling 9 Nov:
+"(p20)" is created even though SRTBF11834 is discontinued (discontinued hosts load, AC-15b).
