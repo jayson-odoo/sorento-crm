@@ -1,6 +1,6 @@
 # PLAN: a combo part can also be its free item (COMBO-FREE-PART)
 
-Status: Build done (red tests then fix), review next; behaviour card answers pending (built on the recommendations). Small fix track (no migration, no auth change).
+Status: Built, reviewer READY, cloud browser pass done; owner hand test next (behaviour card answers pending, built on the recommendations). Small fix track (no migration, no auth change).
 
 ## Journey
 
