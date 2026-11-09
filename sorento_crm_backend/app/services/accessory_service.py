@@ -50,6 +50,8 @@ MAX_IMAGES = 12
 MAX_COLOURS = 12
 MAX_SPEC_CHARS = 4000
 MAX_REMARK_CHARS = 1000
+#: One list (product or combo) holds at most this many entries (the PUT body cap, schemas/accessory.py).
+MAX_LIST_ENTRIES = 100
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 STORAGE_PREFIX = "accessory_image"
 #: How long a list read waits for a picture's thumb to be made; one not ready by then shows the
@@ -726,6 +728,96 @@ class AccessoryService:
             product.accessory_box_preset_id = style_id
         self.db.commit()
         return self.product_list(product_id)
+
+    def copy_product_list(
+        self, source_id: str, target_ids: List[str], *, dry_run: bool = False
+    ) -> Dict[str, int]:
+        """ACC-COPY-TO-PRODUCTS: add the source's entries each target is missing, at the end, in the
+        source's order, with the source row's overrides; the source's box style goes to targets that
+        have none. All or nothing: a target outside the source's company reads as missing (404), a
+        list that would pass `MAX_LIST_ENTRIES` refuses the call naming it."""
+        source = self._product_or_404(source_id)
+        links = _product_links(self.db, source.id)
+        if not links:
+            raise AppException(status_code=422, message="This product has no accessories to copy")
+
+        wanted = list(dict.fromkeys(str(value) for value in target_ids if str(value) != source.id))
+        # Locked so a second copy (or a list save) on the same product waits rather than racing
+        # into the unique constraint.
+        rows = (
+            self.db.query(Product)
+            .filter(Product.id.in_(wanted))
+            .order_by(Product.id)
+            .with_for_update(of=Product)
+            .all()
+            if wanted
+            else []
+        )
+        targets = {row.id: row for row in rows}
+        for value in wanted:
+            row = targets.get(value)
+            if row is None or (source.company_id is not None and row.company_id != source.company_id):
+                raise handle_not_found("Product", value)
+
+        existing: Dict[str, List[ProductAccessory]] = {value: [] for value in wanted}
+        if wanted:
+            for row in self.db.query(ProductAccessory).filter(ProductAccessory.product_id.in_(wanted)).all():
+                existing[row.product_id].append(row)
+
+        summary = {
+            "targets": len(wanted),
+            "targets_with_a_list": 0,
+            "entries_added": 0,
+            "entries_already_there": 0,
+            "box_style_set": 0,
+        }
+        additions: List[ProductAccessory] = []
+        for value in wanted:
+            target = targets[value]
+            have = existing[value]
+            if have:
+                summary["targets_with_a_list"] += 1
+            keys = {(row.accessory_id, row.item_product_id) for row in have}
+            next_order = max((row.sort_order for row in have), default=-1) + 1
+            added = 0
+            for link in links:
+                if link.item_product_id == value:
+                    continue  # a product cannot list itself
+                if (link.accessory_id, link.item_product_id) in keys:
+                    summary["entries_already_there"] += 1
+                    continue
+                additions.append(
+                    ProductAccessory(
+                        product_id=value,
+                        accessory_id=link.accessory_id,
+                        item_product_id=link.item_product_id,
+                        sort_order=next_order + added,
+                        image_id=link.image_id,
+                        name_override=link.name_override,
+                        spec_override=link.spec_override,
+                        remark_override=link.remark_override,
+                    )
+                )
+                added += 1
+            if len(have) + added > MAX_LIST_ENTRIES:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        f"{target.product_code} would list {len(have) + added} accessories; "
+                        f"a list holds at most {MAX_LIST_ENTRIES}"
+                    ),
+                )
+            summary["entries_added"] += added
+            if source.accessory_box_preset_id and not target.accessory_box_preset_id:
+                summary["box_style_set"] += 1
+                if not dry_run:
+                    target.accessory_box_preset_id = source.accessory_box_preset_id
+
+        if dry_run:
+            return summary  # nothing was changed: the box style is set only when not dry_run
+        self.db.add_all(additions)
+        self.db.commit()
+        return summary
 
     def combo_list(self, combo_id: str) -> List[Dict[str, Any]]:
         self._combo_or_404(combo_id)

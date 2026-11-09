@@ -1,6 +1,6 @@
 # PLAN: Copy a product's accessories list to other products (ACC-COPY-TO-PRODUCTS)
 
-Status: Plan - behaviour card asked of the owner (crew-ask on the PR), no code yet. Track: small fix track expected (no migration, existing permission).
+Status: Build - owner answered the card 9 Nov 14:20, red tests in, implementation in progress. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
 
 ## Journey
 
@@ -19,7 +19,7 @@ other products" button on a product's Accessories included list, and they pick t
 
 Behaviour card: see the `crew-ask` comment on the PR; answers are recorded here once given.
 
-## Behaviour card (asked 9 Nov, answers pending)
+## Behaviour card (asked 9 Nov; owner answered 9 Nov ~14:20, all (a))
 
 1. **Button.** "Copy to other products" in the header of the product's "Accessories included" card
    (ProductAccessoriesSection.tsx). Shown only to `master_data.products.edit` holders and only when
@@ -40,3 +40,21 @@ Behaviour card: see the `crew-ask` comment on the PR; answers are recorded here 
    that would pass 100 entries refuses the call naming it. The source itself is ignored if picked.
    Audit: the existing row listeners on `product_accessories` (`__audit_parent__ = product_id`)
    write one trail per target product.
+
+## Owner answers (9 Nov ~14:20)
+
+Verbatim: "for the picker, it should be a product list multi select, yeah we can add the missing one, we
+should copy the whole set, box style also copy, product as target only".
+
+- Q1 (a): product list grid dialog, multi-select (search, Category/Brand multi-select filters,
+  shift/drag, Select all N).
+- Q2 (a): add mode. The target keeps its list; only the missing entries are added at the end, in the
+  source's order. An entry the target already lists keeps the target's version.
+- Q3 (a): each copied entry carries the source row's name/spec/remark overrides and picture pick.
+- Q4 (a): the source's box style goes only to targets with none set; a target's own style is kept.
+- Q5 (a): products only as targets.
+
+## Tests
+
+- Backend: `sorento_crm_backend/tests/test_accessory_copy_to_products.py`.
+- Frontend: the copy dialog's vitest beside it.

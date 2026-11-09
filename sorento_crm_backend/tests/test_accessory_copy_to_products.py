@@ -404,7 +404,9 @@ def test_an_api_key_cannot_copy():
 
 def test_each_target_gets_its_own_audit_trail(db, monkeypatch):
     from app.models.audit import AuditLog
+    from app.services.audit_service import register_audit_listeners
 
+    register_audit_listeners()  # the app's startup does this; a bare TestClient never starts up
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     source = _product(db, "ZZSRC")
     _link(db, source, accessories=[_accessory(db, _name("PUMP"))])
@@ -416,9 +418,9 @@ def test_each_target_gets_its_own_audit_trail(db, monkeypatch):
             db.query(AuditLog)
             .filter(
                 AuditLog.entity_type == "product_accessories",
-                AuditLog.action == "INSERT",
+                AuditLog.action == "CREATE",
                 AuditLog.root_entity_id == target.id,
             )
             .all()
         )
-        assert len(rows) == 1, f"one INSERT on {target.product_code}'s trail"
+        assert len(rows) == 1, f"one CREATE on {target.product_code}'s trail"
