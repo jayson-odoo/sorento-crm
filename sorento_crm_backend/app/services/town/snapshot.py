@@ -438,11 +438,31 @@ def _replica_session() -> Session:
     return db
 
 
+def _replica_reachable() -> bool:
+    """One cheap check per tick: a configured replica that cannot answer means this tick builds on
+    the primary (one warning), instead of every company failing on the replica."""
+    db = None
+    try:
+        db = _replica_session()
+        db.execute(sa.text("SELECT 1"))
+        return True
+    except Exception:  # noqa: BLE001 - any failure to reach the replica means fall back
+        logger.warning("town replica unreachable; building this tick on the primary", exc_info=True)
+        return False
+    finally:
+        if db is not None:
+            db.close()
+
+
 class _build_session:
-    """The session a build runs on: the read replica when configured, else the primary. 5 s limit."""
+    """The session a build runs on: the read replica when configured (and `use_replica`), else the
+    primary. 5 s limit."""
+
+    def __init__(self, use_replica: bool = True) -> None:
+        self._use_replica = use_replica
 
     def __enter__(self) -> Session:
-        if settings.town_replica_database_url:
+        if self._use_replica and settings.town_replica_database_url:
             self._db, self._ctx = _replica_session(), None
         else:
             self._ctx = scheduler_session("town_snapshot")
@@ -469,8 +489,10 @@ def _freeze_day(company_id: str, day: date, snapshot: dict, events: list) -> Non
         db.commit()
 
 
-def _run_company(redis: Any, company_id: str, day: date, now: datetime, night: bool) -> None:
-    with _build_session() as db:
+def _run_company(
+    redis: Any, company_id: str, day: date, now: datetime, night: bool, use_replica: bool = True
+) -> None:
+    with _build_session(use_replica) as db:
         full = build_snapshot(db, company_id, day, now=now)
         events = None
         if night:
@@ -507,9 +529,10 @@ def run_town_snapshot_tick(now: Optional[datetime] = None) -> dict[str, Any]:
                 (str(c), name)
                 for (c, name) in db.query(Company.id, Company.name).filter(Company.is_active.is_(True)).all()
             ]
+        use_replica = bool(settings.town_replica_database_url) and _replica_reachable()
         for company_id, name in companies:
             try:
-                _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE)
+                _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE, use_replica)
             except Exception as exc:  # noqa: BLE001 - one company must not stop the next
                 logger.error("town snapshot failed for company %s", company_id, exc_info=True)
                 failures.append(f"{name or 'Unnamed company'}: {exc}")
