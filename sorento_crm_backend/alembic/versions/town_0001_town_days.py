@@ -5,14 +5,14 @@ Additive only, idempotent (`IF NOT EXISTS`) so the shared dev DB, which converge
 Plan: documentation/plans/dashboard/PLAN-sorento-town-08nov.md.
 
 Revision ID: town_0001_town_days
-Revises: lpcui_0001_list_price_changed
+Revises: npasla_0003_npa_responded
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "town_0001_town_days"
-down_revision = "lpcui_0001_list_price_changed"
+down_revision = "npasla_0003_npa_responded"
 branch_labels = None
 depends_on = None
 
