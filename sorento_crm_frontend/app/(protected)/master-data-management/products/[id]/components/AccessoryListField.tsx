@@ -23,6 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { AttachmentImage } from '@/components/common/AttachmentImage';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -42,23 +43,26 @@ import {
 import {
   entryKey,
   hasOverrides,
+  rowPicture,
   type AccessoryEntry,
   type AccessoryOwnerKind,
 } from '../../../accessories/types/accessory.types';
 import { AccessoryEntryDialog } from './AccessoryEntryDialog';
 
 function AccessoryThumb({ accessory }: { accessory: AccessoryEntry }) {
-  return accessory.image ? (
-    // A signed CDN URL, not an asset next/image can optimise.
-    <img
-      src={accessory.image.url}
-      alt=""
+  // The row's own pick (`entry.image_id`), so a Save shows it at once through the optimistic write.
+  const picture = rowPicture(accessory);
+  return (
+    <AttachmentImage
+      thumbUrl={picture?.thumb_url}
+      url={picture?.url}
       className="size-10 shrink-0 rounded-md border object-cover"
+      fallback={
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
+          No picture
+        </span>
+      }
     />
-  ) : (
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
-      No picture
-    </span>
   );
 }
 

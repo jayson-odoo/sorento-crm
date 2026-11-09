@@ -12,14 +12,20 @@ class AccessoryPictureOut(BaseModel):
 
     attachment_id: str
     url: str
+    #: The 320 px rendition (rendition service); None while not ready.
+    thumb_url: Optional[str] = None
 
 
 class AccessoryImageOut(BaseModel):
     """One of an accessory's ordered pictures, with its optional colour."""
 
-    id: str
+    #: The accessory picture row's id. Null on a catalogue product entry: its picture is the
+    #: product's own photo, not an accessory picture (HOTFIX-COMBO-IMAGE-ID, prod 9 Nov).
+    id: Optional[str] = None
     attachment_id: str
     url: str
+    #: The 320 px rendition (rendition service); None while not ready, then show `url`.
+    thumb_url: Optional[str] = None
     colour_name: Optional[str] = None
     colour_hex: Optional[str] = None
 

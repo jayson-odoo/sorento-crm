@@ -166,7 +166,9 @@ def test_apply_gives_colander_its_spec_and_a_picture(db, monkeypatch):
     colander = db.query(Accessory).filter(Accessory.name == "COLANDER").one()
     assert colander.spec == "390x300x140, Depth: 160mm"
     assert colander.image_attachment_id is not None
-    assert len(fake.objects) == 1
+    # One picture: its original plus the thumb and medium made at upload (PRICETAG-ACC-PICTURE-PICKER).
+    originals = [key for key in fake.objects if not key.endswith((".thumb.jpg", ".medium.jpg"))]
+    assert len(originals) == 1 and len(fake.objects) == 3
 
 
 def test_a_picture_that_cannot_be_stored_is_reported_and_the_rest_stands(db, monkeypatch):

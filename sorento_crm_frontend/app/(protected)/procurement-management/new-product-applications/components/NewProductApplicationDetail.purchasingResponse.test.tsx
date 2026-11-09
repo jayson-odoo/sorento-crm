@@ -134,9 +134,6 @@ const app = (over: Record<string, unknown> = {}) => ({
   customer_code: null,
   customer_name: 'EXAMPLE DEVELOPER SDN BHD',
   project_name: 'EXAMPLE RESIDENCE, TOWER B',
-  first_line: null,
-  lines_total: 0,
-  lines_done: 0,
   opened_codes: [],
   needed_by: null,
   submitted_at: null,
@@ -239,7 +236,8 @@ describe('the Edit purchasing response button', () => {
 });
 
 describe('crew pass 8 Nov', () => {
-  it("(d) the dialog carries the stock inquiry's description line", async () => {
+  it("(d) the dialog carries the stock inquiry's description line when it can reply", async () => {
+    state.data = app({ can_reply: true });
     render(<Page />);
     const dialog = await openDialog();
     expect(
@@ -247,6 +245,30 @@ describe('crew pass 8 Nov', () => {
         'Save updates the record only. Update & Reply saves your text and sends it to the contact.',
       ),
     ).toBeVisible();
+  });
+
+  it('(d) owner re-test 9 Nov: with no reply, the line says why and names no missing button', async () => {
+    state.data = app({ can_reply: false });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(
+      within(dialog).getByText(
+        'Save updates the record only. No reply: this application was not raised from a stock inquiry conversation or in the portal.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Update & Reply/)).toBeNull();
+  });
+
+  it('(d) owner 9 Nov ~02:30: a portal-raised NPA replies through the portal, and says so', async () => {
+    state.data = app({ can_reply: true, reply_channel: 'portal' });
+    render(<Page />);
+    const dialog = await openDialog();
+    expect(
+      within(dialog).getByText(
+        'Save updates the record only. Update & Reply saves your text and notifies the applicant in the portal.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /update & reply/i })).toBeInTheDocument();
   });
 
   it('(c) a long PROJECT clamps, with the full text in its title and behind the eye button', async () => {
@@ -305,7 +327,6 @@ describe('the dialog', () => {
   it('with lines, asks one cost per line and no single cost', async () => {
     state.data = app({
       lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
-      lines_total: 2,
     });
     render(<Page />);
     const dialog = await openDialog();
@@ -392,7 +413,6 @@ describe('Save calls PUT purchasing-response once', () => {
   it('with lines, sends one cost per line id', async () => {
     state.data = app({
       lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
-      lines_total: 2,
     });
     render(<Page />);
     const dialog = await openDialog();
@@ -473,26 +493,16 @@ describe('product table on the staff detail', () => {
     expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 
-  it('an older SI application with lines shows them read-only', async () => {
-    state.data = app({ lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })], lines_total: 2 });
-    render(<Page />);
-    await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(2);
-    expect(screen.queryByLabelText('Product type')).toBeNull();
-    expect(screen.queryByRole('button', { name: /add (row|product)/i })).toBeNull();
-  });
-
-  it('a standalone application keeps its table', async () => {
+  it('an older application with lines, SI or standalone, draws no table (owner hand test 9 Nov)', async () => {
     state.data = app({
       stock_inquiry_id: null,
       stock_inquiry_number: null,
-      lines: [line()],
-      lines_total: 1,
+      lines: [line(), line({ id: 'l-2', line_no: 2, proposed_code: 'XY-1234-BG' })],
     });
     render(<Page />);
     await screen.findByText('NEW PRODUCT APPLICATION');
-    expect(screen.getByRole('columnheader', { name: /product code/i })).toBeInTheDocument();
-    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
   });
 });
 
@@ -593,7 +603,7 @@ describe('purchasing Reject replaces Not opening (owner 8 Nov 09:30)', () => {
   });
 
   it('an application with no product rows does not say "0 of 0 lines done"', async () => {
-    state.data = app({ lines: [], lines_total: 0, lines_done: 0 });
+    state.data = app({ lines: [] });
     render(<Page />);
     await screen.findByText('NEW PRODUCT APPLICATION');
     expect(screen.queryByText(/0 of 0/)).toBeNull();
@@ -631,10 +641,11 @@ describe('no lock banner while Submitted or Resubmitted (owner 8 Nov 09:30)', ()
     expect(screen.queryByText(/Locked: Revise to change it/)).toBeNull();
   });
 
-  it('Approved keeps "Approved by X on D."', async () => {
+  it('Approved shows no "Approved by X on D." banner (owner hand test 9 Nov: the pill says it)', async () => {
     state.data = app({ decided_by_name: 'Approver One', decided_at: '2026-11-02T01:00:00' });
     render(<Page />);
-    expect(await screen.findByText(/Approved by Approver One on /)).toBeInTheDocument();
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByText(/Approved by Approver One on /)).toBeNull();
   });
 });
 

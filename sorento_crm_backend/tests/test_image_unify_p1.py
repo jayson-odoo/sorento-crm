@@ -376,6 +376,7 @@ def test_every_upload_path_writes_both_renditions():
         "app/services/product_image_service.py",
         "app/services/scm/shipment_line_photos.py",
         "app/services/so_line_attachments.py",
+        "app/services/accessory_service.py",
     ]
     for rel in sites:
         text = (root / rel).read_text(encoding="utf-8")

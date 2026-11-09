@@ -984,6 +984,11 @@ function StaffStockInquiryDetail({
         response={editPurchasingResponseValue}
         onResponseChange={setEditPurchasingResponseValue}
         canReply={Boolean(inquiry.respond_inbox_url && responseWritable)}
+        noReplyReason={
+          inquiry.respond_inbox_url
+            ? undefined
+            : 'No WhatsApp reply: this inquiry has no WhatsApp conversation.'
+        }
         saving={
           updateInquiryMutation.isPending ||
           uploadResponseAttachmentsMutation.isPending

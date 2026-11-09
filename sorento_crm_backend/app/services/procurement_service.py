@@ -5461,14 +5461,22 @@ class StockInquiryService:
         event_type: str,
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
+        source_entity_type: str = "stock_inquiry",
+        company_id: Optional[str] = None,
+        view_url: Optional[str] = None,
+        button_label: str = "Open stock inquiry",
     ) -> None:
-        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue."""
+        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue.
+
+        The New Product Application sends the SAME team notice (NPA-FORM-SLA, owner 8 Nov "like
+        SI"): it names its own ``source_entity_type``, ``company_id``, ``view_url`` and button,
+        and ``inquiry_id`` is then that record's id. A stock inquiry passes none of them."""
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        company_id = self._company_for_stock_inquiry(inquiry_id)
+        company_id = company_id or self._company_for_stock_inquiry(inquiry_id)
 
         if team_assignment_code:
             if team_assignment_code == "project_sales":
@@ -5497,13 +5505,15 @@ class StockInquiryService:
 
         # Staff team notification → in-system detail link (login-required), not the
         # public /view token page. Recipients are internal team members.
-        view_url = self._build_stock_inquiry_internal_url(inquiry_id, base_url_override=base_url_override)
+        view_url = view_url or self._build_stock_inquiry_internal_url(
+            inquiry_id, base_url_override=base_url_override
+        )
 
         from app.services.email_template_service import EmailTemplateService
 
         rendered = EmailTemplateService(self.db).render_code(
             "stock_inquiry_created",
-            {"heading": title, "intro": intro_plain, "view_url": view_url},
+            {"heading": title, "intro": intro_plain, "view_url": view_url, "button_label": button_label},
         )
         title = rendered["subject"]
         body_plain = rendered["body_text"]
@@ -5537,7 +5547,7 @@ class StockInquiryService:
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == first_uid,
-                    Notification.source_entity_type == "stock_inquiry",
+                    Notification.source_entity_type == source_entity_type,
                     Notification.source_entity_id == inquiry_id,
                     Notification.event_type == event_type,
                 )
@@ -5567,7 +5577,7 @@ class StockInquiryService:
                     title=title,
                     body=body_plain,
                     data=email_data,
-                    source_entity_type="stock_inquiry",
+                    source_entity_type=source_entity_type,
                     source_entity_id=inquiry_id,
                     event_type=event_type,
                 )
@@ -5594,7 +5604,7 @@ class StockInquiryService:
                     self.db.query(Notification)
                     .filter(
                         Notification.user_id == uid,
-                        Notification.source_entity_type == "stock_inquiry",
+                        Notification.source_entity_type == source_entity_type,
                         Notification.source_entity_id == inquiry_id,
                         Notification.event_type == event_type,
                     )
@@ -5611,7 +5621,7 @@ class StockInquiryService:
                         type="stock_inquiry_notification",
                         title=title,
                         body=body_plain,
-                        source_entity_type="stock_inquiry",
+                        source_entity_type=source_entity_type,
                         source_entity_id=inquiry_id,
                         event_type=event_type,
                     )
@@ -5748,22 +5758,26 @@ class StockInquiryService:
         }
 
     @staticmethod
-    def _sla_person_name_sort(user_column: str):
+    def _sla_person_name_sort(user_column: str, source_entity_type: str = "stock_inquiry", entity=None):
         """Name (or email) of the user in ``user_column`` on the inquiry's latest open
-        form-SLA tracker: the value ``_attach_sla_handlers`` shows, as a sort key."""
+        form-SLA tracker: the value ``_attach_sla_handlers`` shows, as a sort key.
+
+        The New Product Application's list shows the same columns (NPA-FORM-SLA, owner 9 Nov) and
+        passes its own type and model; a stock inquiry passes neither."""
         from app.models.sla import ConversationSLATracking
         from app.services.sla_scope import open_tracker_scope
 
+        entity = entity if entity is not None else StockInquiry
         latest = (
             select(getattr(ConversationSLATracking, user_column))
             .where(
-                ConversationSLATracking.source_entity_type == "stock_inquiry",
-                ConversationSLATracking.source_entity_id == StockInquiry.id,
+                ConversationSLATracking.source_entity_type == source_entity_type,
+                ConversationSLATracking.source_entity_id == entity.id,
                 *open_tracker_scope(),
             )
             .order_by(ConversationSLATracking.initiated_at.desc())
             .limit(1)
-            .correlate(StockInquiry)
+            .correlate(entity)
             .scalar_subquery()
         )
         return (
@@ -5773,25 +5787,28 @@ class StockInquiryService:
         )
 
     @staticmethod
-    def _print_count_sort(viewer_user_id: Optional[str]):
+    def _print_count_sort(viewer_user_id: Optional[str], source_entity_type: str = "stock_inquiry", entity=None):
         """How many PDFs the viewer took of the inquiry (``_attach_print_counts``); 0 for
-        everyone when there is no viewer."""
+        everyone when there is no viewer. The NPA passes its own type and model."""
         if not viewer_user_id:
             return literal(0)
         from app.models.download import UserDownload
 
+        entity = entity if entity is not None else StockInquiry
         return (
             select(func.count(UserDownload.id))
             .where(
                 UserDownload.user_id == str(viewer_user_id),
-                UserDownload.source_entity_type == "stock_inquiry",
-                UserDownload.source_entity_id == StockInquiry.id,
+                UserDownload.source_entity_type == source_entity_type,
+                UserDownload.source_entity_id == entity.id,
             )
-            .correlate(StockInquiry)
+            .correlate(entity)
             .scalar_subquery()
         )
 
-    def _attach_print_counts(self, items, viewer_user_id: Optional[str]) -> None:
+    def _attach_print_counts(
+        self, items, viewer_user_id: Optional[str], source_entity_type: str = "stock_inquiry"
+    ) -> None:
         """Set `print_count` on each inquiry: how many PDF exports the viewing user
         has taken of that record. One grouped query for the page. With no viewer
         (e.g. an API-key principal) every row reads 0 rather than another user's count.
@@ -5803,13 +5820,13 @@ class StockInquiryService:
             from app.services.download_service import DownloadService
             counts = DownloadService(self.db).count_map_for_user(
                 str(viewer_user_id),
-                "stock_inquiry",
+                source_entity_type,
                 [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)],
             )
         for it in items:
             setattr(it, "print_count", int(counts.get(str(it.id), 0)))
 
-    def _attach_sla_handlers(self, items) -> None:
+    def _attach_sla_handlers(self, items, source_entity_type: str = "stock_inquiry") -> None:
         """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee - who the
         tracker is currently escalated/assigned to) and `handled_by_name` (the
         form-handling-lock holder, set only when someone clicks Claim) on each inquiry
@@ -5827,7 +5844,7 @@ class StockInquiryService:
         rows = (
             self.db.query(ConversationSLATracking)
             .filter(
-                ConversationSLATracking.source_entity_type == "stock_inquiry",
+                ConversationSLATracking.source_entity_type == source_entity_type,
                 ConversationSLATracking.source_entity_id.in_(ids),
                 *open_tracker_scope(),
             )

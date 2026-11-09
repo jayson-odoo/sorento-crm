@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -114,11 +114,15 @@ describe('portal NPA customer = the stock inquiry customer dropdown', () => {
     expect(body.customer_name).toBe('ZZT Debtor');
   });
 
-  it('free text is still allowed: no id, the typed name, and the No debtor code badge', async () => {
+  it('free text is still allowed: no id, the typed name, and no badge (owner hand test 9 Nov)', async () => {
     mount();
     const box = await typeInCustomer('Walk-in Co');
     fireEvent.blur(box);
-    expect(await screen.findByText('No debtor code')).toBeInTheDocument();
+    // The combobox commits typed text after its blur settles; the badge used to be the wait.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(screen.queryByText('No debtor code')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
     await waitFor(() => expect(createNewProductApplication).toHaveBeenCalledTimes(1));
     const body = asMock(createNewProductApplication).mock.calls[0][0];
