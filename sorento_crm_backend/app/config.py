@@ -223,6 +223,8 @@ class Settings(BaseSettings):
     connector_ss_callback_url: str | None = None  # CONNECTOR_SS_CALLBACK_URL (exact match)
     # The read-only role's DSN for the chat datasets. Unset = main engine.
     analytics_ro_database_url: str | None = None  # ANALYTICS_RO_DATABASE_URL
+    # SORENTO-TOWN: the read replica the snapshot tick builds on. Unset = the primary.
+    town_replica_database_url: str | None = None  # TOWN_REPLICA_DATABASE_URL
 
     # AutoCount pull + review: the FoundryX gateway base URL and key are NOT env vars
     # (PLAN-foundryx-pull-connection-ui.md retires the two settings this comment used to

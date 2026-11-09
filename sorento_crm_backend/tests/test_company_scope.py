@@ -646,7 +646,8 @@ def test_every_company_id_table_is_registered():
     # + 1 (QUOTE-CERT-TAB, #2245): `projects.quotation_document_certificates`, one company's own
     #   changes to the certificate list of its quotation document (removed, hand-added, re-boxed,
     #   send flag); the certification routes and the export read it by document = 181.
-    expected_owned = 181
+    # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log = 182.
+    expected_owned = 182
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
