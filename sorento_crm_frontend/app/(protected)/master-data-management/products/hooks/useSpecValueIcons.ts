@@ -46,8 +46,15 @@ export function useSpecValueIcons() {
   const icons = canView ? data : undefined;
 
   const iconsFor = useCallback(
-    (row: SpecTableRow): FeatureIconWithUrl[] =>
-      row.unknownKey ? NONE : iconsForSpecValue(row.specKey, row.value, icons),
+    (row: SpecTableRow, rows: readonly SpecTableRow[] = []): FeatureIconWithUrl[] =>
+      row.unknownKey
+        ? NONE
+        : iconsForSpecValue(
+            row.specKey,
+            row.value,
+            icons,
+            rows.filter((other) => !other.unknownKey),
+          ),
     [icons],
   );
 
