@@ -134,3 +134,11 @@ describe('Q5 (a): the header spot is part of the linked design', () => {
     expect(accessoryDesignChanged(base(), { headerPos: { x_mm: 1, y_mm: 2 } })).toBe(true);
   });
 });
+
+describe('cardBoxLayout with a design missing a number', () => {
+  it('lays out nothing instead of throwing (a saved design with no gap)', () => {
+    const props = { ...base({ card: CARD }), gap_mm: undefined } as unknown as AccessoriesLayerProps;
+    expect(() => cardBoxLayout(2, props, 50, 80)).not.toThrow();
+    expect(cardBoxLayout(2, props, 50, 80).header).toBeNull();
+  });
+});

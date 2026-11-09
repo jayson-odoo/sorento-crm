@@ -166,7 +166,8 @@ export function cardBoxLayout(
   const mainAt = cardMain * scale;
   if (cardCross * scale > availCross + EPS || !(mainAt > 0)) return empty(total);
   const shown = Math.min(total, Math.max(0, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
-  if (shown === 0) return empty(total);
+  // NaN-safe: a design missing a number (e.g. no gap) lays out nothing rather than throwing.
+  if (!(shown > 0)) return empty(total);
 
   const w = card.width_mm * scale;
   const h = card.height_mm * scale;

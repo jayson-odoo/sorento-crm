@@ -257,6 +257,7 @@ import {
   ACCESSORY_DEFAULT_BOX_MM,
   accessoryBoxLayout,
   accessoryLineCount,
+  sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
 import {
   accessoryDesign,
@@ -268,12 +269,14 @@ import {
   type AccessoryDesign,
   type LayerPropsPatch,
   applyAccessoryDesign,
+  cardBoxLayout,
   cardDropped,
   cardFromLegacy,
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
 import { AccessoryEditOverlay } from './AccessoryEditOverlay';
+import { HeaderDragOverlay } from './HeaderDragOverlay';
 import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
 import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateService';
 import { QueryClientContext } from '@tanstack/react-query';
@@ -4573,6 +4576,37 @@ export function TagCanvasEditor({
                         />
                       ),
                     )}
+
+                    {/* PRICETAG-HEADER-DRAG: the selected box's header as its own drag handle. Not while the
+                        box is edited, locked, or drawn in a previewed owner's box style (that style's
+                        design is what shows, so a drag here would not be what is seen). */}
+                    {!handMode &&
+                      selectedIds.size === 1 &&
+                      (() => {
+                        const box = layers.find((l) => selectedIds.has(l.id));
+                        if (!box || box.props.kind !== 'accessories' || box.locked || box.visible === false) return null;
+                        if (accessoryEdit?.layerId === box.id) return null;
+                        const display = displayFor(box);
+                        if (display?.accessoryBoxStyle) return null;
+                        const items = display?.accessories ?? sampleAccessories();
+                        const layout = box.props.card
+                          ? cardBoxLayout(items.length, box.props, box.width_mm, box.height_mm)
+                          : accessoryBoxLayout(items.length, box.props, box.width_mm, box.height_mm, accessoryLineCount(items));
+                        if (!layout.header) return null;
+                        return (
+                          <HeaderDragOverlay
+                            layer={box}
+                            header={layout.header}
+                            frame={layout.frame}
+                            boxWidth_mm={layout.boxWidth_mm}
+                            boxHeight_mm={layout.boxHeight_mm}
+                            scale={scale}
+                            onMove={(headerPos) =>
+                              updateLayerPropsLinked(box.id, { headerPos } as Partial<TagLayerProps>)
+                            }
+                          />
+                        );
+                      })()}
 
                     {/* Card / footer editing: the elements of card 1 as handles (PRICETAG-ACCESSORY-DESIGNER). */}
                     {accessoryEdit &&

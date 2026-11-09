@@ -2312,7 +2312,20 @@ function AccessoriesInspector({
               onChange={(e) => onChange({ headerText: e.target.value })}
             />
           </div>
-          {showFrame && (
+          {/* PRICETAG-HEADER-DRAG (owner Q3): a dragged header is plain text, so "on the border" only
+              applies to an unmoved one; Reset puts it back on today's spot (and the setting back). */}
+          {props.headerPos && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 self-start text-xs"
+              onClick={() => onChange({ headerPos: null })}
+            >
+              Reset header position
+            </Button>
+          )}
+          {showFrame && !props.headerPos && (
             <label className="flex items-center gap-1.5 text-xs">
               <Checkbox
                 checked={Boolean(props.headerOnBorder)}
@@ -2322,7 +2335,7 @@ function AccessoriesInspector({
               Header on the border
             </label>
           )}
-          {showFrame && props.headerOnBorder && (
+          {showFrame && props.headerOnBorder && !props.headerPos && (
             <ColorPicker
               label="Behind the header"
               value={props.headerBackground || '#ffffff'}
