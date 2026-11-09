@@ -1,7 +1,7 @@
 # PLAN: Seed every combo from the 2026 dealer A3 flyer with one idempotent script
 
-Status: Plan. Track: full (prod data bulk write, size L). Lane: COMBO-SEED-FLYER. Waiting on the flyer PDF bytes
-(crew is fetching a fresh link from the owner; bolding is TODO until it lands).
+Status: Build (script green, seed v1 applied on a throwaway dev copy; review + browser pass next). Track: full (prod
+data bulk write, size L). Lane: COMBO-SEED-FLYER. PR #2282.
 
 ## Journey
 
@@ -82,8 +82,13 @@ What changes (one new flag, `--strict`, so legacy behaviour and its tests stay a
 Data: `scripts/data/combo_seed_flyer_2026.json` built from the flyer by the lead (PyMuPDF spans for exact text
 and bold, page images for tile grouping, cross-checked against `flyer_reading` 7dc0db32 LP/SP per code).
 
-## Open questions for the owner (filed with the review page)
+## Owner answers (review page `combo-seed-flyer-review.html`, 9 Nov 15:12 MYT: "Ok all rec")
 
-(a) Existing combo with the same host + name: skip / fill empty fields only / overwrite. Recommendation: fill
-only empty fields.
-(b) UNMATCHED codes: leave out and list, or create a placeholder. Recommendation: leave out and list.
+(a) Existing combo with the same host + name: fill only empty fields; add the flyer bold only where the stored
+plain text has the flyer's exact words; never overwrite; a renamed combo is matched through `aka`.
+(b) UNMATCHED codes / names (14 in 31 combos): hold the whole combo; crew-done lists them with catalogue hints so
+the owner can name the right codes later (then the seed gets exactly those codes and is re-run).
+(c) WC / urinal combos (separate LPs per item, one SP): combo list price blank.
+(d) Bathtub combos: SRTWT51012 a free item; the 4 colour mixers RM 150 upgrades.
+(e) Load every family: bathtub, WC, urinal, bathroom furniture, basin, shower fitting package (host = the
+concealed mixer valve), kitchen sink. SRTSCBD291 (p12) left out: one product with its fittings.
