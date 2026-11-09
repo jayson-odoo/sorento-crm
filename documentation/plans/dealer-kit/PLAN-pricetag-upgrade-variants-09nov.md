@@ -1,6 +1,6 @@
 # PLAN: price tag upgrade items on combos + one tag per product family with variant icons
 
-Status: Plan, Waiting on owner (behaviour card posted 09/11/2026, Q1-Q5 open). Track: decided after answers
+Status: Plan, Waiting on owner (card fully answered 09/11/2026 ~12:00; mock v1 `pricetag-upgrade-variants-mock.html` filed for approval). Track: decided after answers
 (expected full: a spec-registry change for numeric value icons, payload + designer changes; no migration
 expected under the recommended answers).
 

@@ -1,6 +1,19 @@
 # CARD: upgrade items on combo tags + one tag per product family with variant icons (PRICETAG-UPGRADE-VARIANTS, 9 Nov)
 
-Behaviour card, design first. No code before the owner answers Q1-Q5. Plan:
+Behaviour card, design first.
+
+## Owner rulings (9 Nov ~11:45)
+
+- Q1 (a): upgrades stay the combo's existing upgrade parts; the Accessories box gains "Lists: Upgrades".
+- Q2 (a): "SP with upgrade" is a placeable card field, off on the default card.
+- Q4 (a): trap icons sit on `trap_length` values 150 / 200 / 250 and `trap_type` p_trap (spec=value rule).
+- Q3 (~12:00, "all should be pulled and I can choose"): the WHOLE variant tree under the line's product, with a
+  per-line chooser on the request line ("Variants on this tag", all ticked by default, the line's own product always
+  on). The template only says "Product: All variants". The line stores the unticked members, so a variant added later
+  joins ticked; a pinned tag freezes the members it printed. Supersedes F1 / F4 "direct variants" below.
+- Q5 (a) (~12:00): the tag prints the line product's own hand-picked LP / SP; when ticked members' list prices differ
+  the request line warns "Variants price differently: RM x to RM y" (warning only, never blocks).
+- Mock: `pricetag-upgrade-variants-mock.html` (v1). No code beyond the mock until the mock is approved. Plan:
 `PLAN-pricetag-upgrade-variants-09nov.md` (same folder). Paths: BE = `sorento_crm_backend/`,
 FE = `sorento_crm_frontend/`.
 

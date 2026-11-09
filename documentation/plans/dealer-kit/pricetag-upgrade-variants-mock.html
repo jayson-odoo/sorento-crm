@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upgrades and family icons</title>
+<!--
+  PRICETAG-UPGRADE-VARIANTS mock v1 (09/11/2026). Card: CARD-pricetag-upgrade-variants-09nov.md (U1-U9, F1-F8).
+  Owner rulings: 9 Nov ~11:45 Q1 (a), Q2 (a), Q4 (a); ~12:00 Q3 = the whole variant tree, with a per-line chooser on the
+  request line to untick members (all ticked by default); Q5 (a) the line product's own hand-picked LP / SP plus a warning
+  when ticked members price differently. Static, no data fetch. Tags drawn at 3 px per mm. Codes and prices are the owner's two sample tags;
+  member specs of the SRTWC8354-SH family are to be confirmed on the dev DB. Pictures and icons are line drawings.
+  Element -> existing component: see section 4 at the bottom of the page.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eef4ff;
+          --warn:#b45309; --warnbg:#fffbeb; --ok:#047857; --okbg:#ecfdf5; --canvas:#e9ecf1; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --okbg:#0f2a20; --canvas:#0b0d11; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --okbg:#0f2a20; --canvas:#0b0d11; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:32px 0 8px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1220px; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; white-space:nowrap; cursor:pointer; }
+  .btn.sm { padding:3px 8px; font-size:12px; }
+  .btn.on { background:var(--sel); border-color:var(--primary); color:var(--primary); }
+  .input { border:1px solid var(--line); border-radius:8px; padding:5px 9px; background:var(--card); color:var(--fg); font-size:12px; min-height:30px; display:flex; align-items:center; gap:6px; }
+  .lbl { display:block; font-size:12px; font-weight:500; margin:10px 0 4px; }
+  .sec { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:14px 0 4px; font-weight:600; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .tabs .btn { white-space:normal; text-align:left; max-width:100%; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; background:var(--sel); color:var(--primary); white-space:nowrap; }
+  .pill.grey { background:var(--line); color:var(--muted); }
+  .pill.warn { background:var(--warnbg); color:var(--warn); }
+  .note { border-radius:8px; padding:8px 10px; font-size:12px; margin-top:8px; }
+  .note.warn { background:var(--warnbg); color:var(--warn); }
+  .note.info { background:var(--sel); color:var(--primary); }
+  .note.ok { background:var(--okbg); color:var(--ok); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:3px 9px; font-size:12px; }
+  .seg span.on { background:var(--sel); color:var(--primary); font-weight:600; }
+  .shell { display:grid; grid-template-columns: 180px minmax(0,1fr) 290px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--card); }
+  @media (max-width: 960px) { .shell { grid-template-columns: minmax(0,1fr); } .shell .side { border:0 !important; border-top:1px solid var(--line) !important; } }
+  .shell > * { min-width:0; }
+  .toolbar { grid-column:1/-1; display:flex; gap:6px; flex-wrap:wrap; padding:8px; border-bottom:1px solid var(--line); align-items:center; position:relative; }
+  .side { padding:10px; border-right:1px solid var(--line); font-size:12px; }
+  .side.right { border-right:0; border-left:1px solid var(--line); }
+  .stage { background:var(--canvas); padding:20px; overflow:auto; display:flex; justify-content:safe center; align-items:flex-start; min-height:380px; }
+  .layer { padding:3px 6px; border-radius:6px; }
+  .layer.sel { background:var(--sel); color:var(--primary); }
+  .layer.child { margin-left:14px; }
+  .menu { position:absolute; top:42px; z-index:5; width:250px; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.15); padding:6px; font-size:12px; }
+  .menu .grp { font-size:11px; color:var(--muted); padding:6px 8px 2px; text-transform:uppercase; letter-spacing:.04em; }
+  .menu .it { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; }
+  .menu .it.hl { background:var(--sel); }
+  .menu .it .x { margin-left:auto; color:var(--muted); font-size:11px; }
+  /* tag paper: always light, it is print */
+  .tag { position:relative; background:#fff; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.2); flex:none; font-family:"DM Sans", system-ui, sans-serif; overflow:hidden; }
+  .tag .t { position:absolute; white-space:nowrap; }
+  .frame { position:absolute; border:1.2px solid #b91c1c; border-radius:9px; background:#fff7f5; }
+  .frame.free { border-color:#1f4d36; background:#f3f7f4; }
+  .legend { position:absolute; left:50%; transform:translateX(-50%); background:#fff; font-weight:800; padding:0 6px; white-space:nowrap; font-size:9px; }
+  .ucard { position:absolute; background:#fff; border-radius:5px; }
+  .ucard > * { position:absolute; white-space:nowrap; }
+  .icons { position:absolute; display:flex; gap:4px; }
+  .ico { border-radius:50%; border:1.2px solid #111; display:flex; align-items:center; justify-content:center; text-align:center; font-weight:800; line-height:1.05; flex:none; background:#fff; }
+  .ico.trap { border-radius:4px; border-color:#0f4c81; color:#0f4c81; }
+  .sp { position:absolute; background:#b91c1c; color:#fff; border-radius:6px; text-align:center; font-weight:800; }
+  .boxsel { outline:1.5px solid var(--primary); outline-offset:2px; }
+  .elsel { outline:1.5px dashed var(--primary); outline-offset:1px; }
+  .editing { outline:2px solid var(--primary); outline-offset:1px; }
+  .faded { opacity:.4; }
+  .warnbadge { position:absolute; background:#b45309; color:#fff; font-size:10px; border-radius:6px; padding:1px 6px; white-space:nowrap; }
+  table.map { border-collapse:collapse; width:100%; font-size:12px; table-layout:fixed; }
+  table.map td, table.map th { border-top:1px solid var(--line); padding:6px; text-align:left; vertical-align:top; word-break:break-word; }
+  table.map th { color:var(--muted); font-weight:500; border-top:0; }
+  .scroll { overflow-x:auto; }
+  .strike { text-decoration:line-through; color:var(--muted); }
+  .chip { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:11px; margin:1px 2px 1px 0; white-space:nowrap; }
+</style>
+</head>
+<body>
+<h1>Upgrades on combo tags, and one tag per product family</h1>
+<div class="muted">Mock v1, 09/11/2026. Card U1-U9 and F1-F8. Owner rulings: Q1 (a), Q2 (a), Q4 (a) (~11:45); Q3 whole tree + per-line chooser, Q5 (a) (~12:00). Everything below happens inside the Tag Template designer and the existing Product Specifications screen; there is no new screen.</div>
+
+<!-- ============================ 1. UPGRADES ============================ -->
+<h2>1. Tag Template designer: combo SRTKS2432 + SRTKT1862SS, upgrade SRTKT71SS (148 x 105 mm)</h2>
+<div class="card">
+  <div class="tabs" id="uTabs">
+    <button class="btn on" data-s="box">A. Upgrades box selected</button>
+    <button class="btn" data-s="card">B. Inside the upgrade card</button>
+    <button class="btn" data-s="field">C. Card "Field" menu (SP with upgrade)</button>
+    <button class="btn" data-s="picked">D. Request preview: upgrade picked</button>
+    <button class="btn" data-s="none">E. Combo with no upgrade</button>
+    <button class="btn" data-s="many">F. 3 upgrades, box sized for 1</button>
+  </div>
+  <div class="shell">
+    <div class="toolbar" id="uToolbar"></div>
+    <div class="side" id="uLayers"></div>
+    <div class="stage"><div id="uTag"></div></div>
+    <div class="side right" id="uInspector"></div>
+  </div>
+  <div id="uNote"></div>
+</div>
+
+<!-- ============================ 2. FAMILY ============================ -->
+<h2>2. Tag Template designer: WC family SRTWC8354-SH, one tag (148 x 105 mm)</h2>
+<div class="card">
+  <div class="tabs" id="fTabs">
+    <button class="btn on" data-s="all">A. Feature icons on "All variants"</button>
+    <button class="btn" data-s="menu">B. Product select open</button>
+    <button class="btn" data-s="req">C. Request line: untick SRTWC8354-SH-UF-300</button>
+    <button class="btn" data-s="disc">D. SRTWC8354-SH-200 discontinued</button>
+    <button class="btn" data-s="leaf">E. Line names SRTWC8354-SH-150</button>
+  </div>
+  <div class="shell">
+    <div class="toolbar"><button class="btn sm">Text</button><button class="btn sm">Image</button><button class="btn sm">Shape</button><button class="btn sm">Field</button><button class="btn sm on">Feature icons</button><button class="btn sm">Accessories &#9662;</button><span class="muted" style="margin-left:auto">Preview product: <b>SRTWC8354-SH</b> &#9662;</span></div>
+    <div class="side">
+      <div style="font-weight:600;margin-bottom:6px">Layers</div>
+      <div class="layer">Photo (main)</div>
+      <div class="layer">Code</div>
+      <div class="layer">Name</div>
+      <div class="layer">List price</div>
+      <div class="layer">Price badge (SP)</div>
+      <div class="layer sel">Feature icons (All variants)</div>
+      <div class="layer">Feature icons (main)</div>
+    </div>
+    <div class="stage"><div id="fTag"></div></div>
+    <div class="side right" id="fInspector"></div>
+  </div>
+  <div id="fNote"></div>
+  <div id="fReq"></div>
+</div>
+
+<!-- ============================ 3. SPEC ICONS ============================ -->
+<h2>3. Master Data &gt; Product Specifications: where each value gets its icon (once, for every WC)</h2>
+<div class="card">
+  <div class="tabs" id="sTabs">
+    <button class="btn on" data-s="len">Trap outlet length (numeric, NEW: values from products)</button>
+    <button class="btn" data-s="type">Trap (enum, as today)</button>
+    <button class="btn" data-s="seat">Seat cover material (enum, as today)</button>
+  </div>
+  <div id="sBody"></div>
+</div>
+
+<!-- ============================ 4. MAP ============================ -->
+<h2>4. Element -> existing component (repo paths; NEW only where named)</h2>
+<div class="card scroll">
+<table class="map">
+  <tr><th style="width:28%">Element</th><th>Reuses</th></tr>
+  <tr><td>Designer shell, toolbar, layers, inspector</td><td>FE app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx, CanvasToolbar.tsx, LayersPanel.tsx, InspectorPanel.tsx</td></tr>
+  <tr><td>Upgrades box (frame, header on border, badge, direction, columns, shrink, whole cards only)</td><td>The existing Accessories layer: AccessoriesInspector (InspectorPanel.tsx:1998), cardBoxLayout (lib/dealer-kit/accessory-card.ts:70). NEW prop <code>list: 'free' | 'upgrades'</code> (absent = free, so every saved box prints the same)</td></tr>
+  <tr><td>Upgrade card items</td><td>NEW <code>upgradesOf(data, layer)</code> beside accessoriesOf (lib/dealer-kit/accessory-box.ts:99), from <code>combo.upgrades</code> (BE tag_data_service.py:1207) not picked, each with the upgrade's product row (slots.upgrades, :1093) for picture, LP and specs</td></tr>
+  <tr><td>Card fields Top-up, SP with upgrade</td><td>cardFieldValue (accessory-card.ts:216) gains <code>topup</code> and <code>price_with_upgrade</code>; the price formatter formatTagPrice already used by the LP field. The payload gains <code>topup_amount</code> on upgrade slot rows</td></tr>
+  <tr><td>Card Feature icons element</td><td>NEW card element kind <code>feature_icons</code> drawn with featureIconsFor + featureIconRow (lib/dealer-kit/feature-icons.ts:34, :62), the same rule the layer uses</td></tr>
+  <tr><td>Fit: an Upgrades box needs nothing</td><td>template_needs (BE app/services/dealer_kit/template_needs.py:62) and comboShape / fitReason (lib/dealer-kit/combo-slots.ts:24, :41) skip accessories layers as today</td></tr>
+  <tr><td>Drop warning</td><td>Existing accessories drop warning (InspectorPanel), canvas warning, sheet toast lib/dealer-kit/accessory-drops.ts</td></tr>
+  <tr><td>Feature icons "Product: All variants"</td><td>SubjectInspector (InspectorPanel.tsx:1682) gains one option; SubjectSlot (tag-template-types.ts:153) gains <code>{kind:'variants'}</code>. Payload: NEW <code>variants: [{product_id, code, specs}]</code> on the line/product data, live members only</td></tr>
+  <tr><td>Members read-out under the select</td><td>Plain list in the inspector section (no new component)</td></tr>
+  <tr><td>Numeric spec values with icons</td><td>ValuesAndWordsTab.tsx (product-specifications/components/record/) icons column, as for enum choices; BE spec_value_keys (asset_service.py:455) offers distinct values on products for a numeric key</td></tr>
+  <tr><td>Print + request preview</td><td>KonvaTagLayer.tsx and TagSheetRenderer.tsx through the same layout functions, so canvas, preview and print agree</td></tr>
+</table>
+</div>
+
+<h2>5. Rules the mock follows (new since the card)</h2>
+<div class="card">
+  <div><b>Q3</b>: the template only says "Product: All variants". The request line decides which members: every product under the line's product (whole tree), all ticked by default, untick in the line's "Variants on this tag" select (SearchableMultiSelect). The line stores the UNTICKED members, so a variant added later joins ticked; a pinned tag freezes the members it printed.</div>
+  <div style="margin-top:6px"><b>Q5</b>: the tag prints the line product's own LP / SP (hand-picked LP / SP / "LP &amp; SP" as today). When the ticked members' list prices differ, the line shows "Variants price differently: RM x to RM y" under its price. Warning only; it never blocks Save or Approve.</div>
+  <div style="margin-top:6px" class="muted">Member specs, trap lengths and member prices are sample values (the owner's tag gives only SRTWC8354-SH: LP RM 1,750, SP RM 799); crew confirms them on the dev DB with the SQL in the card.</div>
+</div>
+
+<script>
+const S = 3; // px per mm
+const px = (mm) => (mm * S) + 'px';
+function ico(label, size, cls) {
+  return `<div class="ico ${cls||''}" style="width:${px(size)};height:${px(size)};font-size:${Math.max(5, size*0.9)}px">${label}</div>`;
+}
+const ICON = {
+  sus: ['SUS<br>304',''], nano: ['NANO',''], war: ['25Y<br>WTY',''], bac: ['ANTI<br>BAC',''],
+  pull: ['PULL<br>OUT',''], spray: ['2<br>MODE',''],
+  s150: ['6"<br>S 150','trap'], s200: ['8"<br>S 200','trap'], s250: ['10"<br>S 250','trap'], p180: ['P<br>180','trap'],
+  s300: ['12"<br>S 300','trap'], uf: ['UF<br>SEAT',''],
+};
+function iconRow(keys, x, y, size, gap, cls) {
+  return `<div class="icons ${cls||''}" style="left:${px(x)};top:${px(y)};gap:${px(gap)}">${keys.map(k => ico(ICON[k][0], size, ICON[k][1])).join('')}</div>`;
+}
+const sinkSvg = `<svg viewBox="0 0 60 40" width="100%" height="100%"><rect x="3" y="6" width="54" height="28" rx="4" fill="#e5e7eb" stroke="#555"/><rect x="8" y="10" width="20" height="20" rx="3" fill="#fff" stroke="#777"/><rect x="32" y="10" width="20" height="20" rx="3" fill="#fff" stroke="#777"/><circle cx="18" cy="20" r="2" fill="#777"/><circle cx="42" cy="20" r="2" fill="#777"/></svg>`;
+const tapSvg = (c) => `<svg viewBox="0 0 30 40" width="100%" height="100%"><rect x="11" y="18" width="8" height="20" rx="2" fill="${c}" stroke="#444"/><path d="M15 18 V6 H26 V11" fill="none" stroke="#444" stroke-width="3"/><rect x="5" y="36" width="20" height="3" fill="#888"/></svg>`;
+const wcSvg = `<svg viewBox="0 0 40 50" width="100%" height="100%"><rect x="6" y="2" width="28" height="14" rx="3" fill="#f3f4f6" stroke="#555"/><path d="M4 18 H36 Q36 38 22 40 L22 48 H14 L14 40 Q4 38 4 18 Z" fill="#fff" stroke="#555"/></svg>`;
+
+/* ---------- section 1 ---------- */
+function upgradeCard(x, y, w, h, state, opts) {
+  const o = opts || {};
+  const sel = (el) => state === 'card' && el === 'topup' ? 'elsel' : '';
+  return `<div class="ucard ${state==='card'?'editing':''} ${o.faded?'faded':''}" style="left:${px(x)};top:${px(y)};width:${px(w)};height:${px(h)}">
+    <div style="left:${px(1)};top:${px(1.5)};width:${px(14)};height:${px(19)}">${tapSvg(o.colour||'#cbd5e1')}</div>
+    <div class="${sel('topup')}" style="left:${px(17)};top:${px(1)};font-size:${px(3.6)};font-weight:900;color:#b91c1c">TOPUP ${o.topup||'RM 150'}</div>
+    <div style="left:${px(17)};top:${px(5.6)};font-size:${px(3)};font-weight:800">${o.code||'SRTKT71SS'}</div>
+    <div style="left:${px(17)};top:${px(9.2)};font-size:${px(2.3)};color:#333">${o.desc||'Pull-out shower mixer tap'}</div>
+    <div style="left:${px(17)};top:${px(12.2)};font-size:${px(2.5)}">LP: ${o.lp||'RM 440'}</div>
+    ${o.withSp ? `<div class="elsel" style="left:${px(17)};top:${px(15)};font-size:${px(2.5)};font-weight:800">SP with upgrade RM 1,099</div>` : ''}
+    ${iconRow(o.icons||['sus','pull','spray'], 17 + (o.withSp?28:0), o.withSp?14.6:15.2, 4.6, 0.8)}
+  </div>`;
+}
+function comboTag(state) {
+  const showUpgrade = !['picked','none'].includes(state);
+  const sp = state === 'picked' ? 'RM 1,099' : 'RM 949';
+  const many = state === 'many';
+  const boxSel = state === 'box' || state === 'many' ? 'boxsel' : '';
+  return `<div class="tag" style="width:${px(148)};height:${px(105)}">
+    <div class="t" style="left:${px(4)};top:${px(3)};width:${px(56)};height:${px(36)}">${sinkSvg}</div>
+    <div class="t" style="left:${px(62)};top:${px(4)};font-size:${px(5.2)};font-weight:900">SRTKS2432</div>
+    <div class="t" style="left:${px(62)};top:${px(11)};font-size:${px(2.8)}">Stainless steel double bowl sink &nbsp; LP: RM 1,150</div>
+    <div class="t" style="left:${px(62)};top:${px(16)};font-size:${px(3.4)};font-weight:800">+ SRTKT1862SS <span style="font-weight:400;font-size:${px(2.8)}">Kitchen tap &nbsp; LP: RM 285</span></div>
+    ${state === 'none' ? `<div class="t" style="left:${px(62)};top:${px(16)};width:${px(70)};height:${px(5)};background:#fff"></div><div class="t" style="left:${px(62)};top:${px(16)};font-size:${px(3.4)};font-weight:800">+ SRTKT1862SS <span style="font-weight:400;font-size:${px(2.8)}">Kitchen tap &nbsp; LP: RM 285</span></div>` : ''}
+    ${state === 'picked' ? `<div class="t" style="left:${px(62)};top:${px(21)};font-size:${px(3.4)};font-weight:800;color:#b91c1c">UPGRADE: SRTKT71SS <span style="font-weight:400;font-size:${px(2.8)};color:#111">Pull-out shower mixer tap &nbsp; +RM 150</span></div>` : ''}
+    <!-- FREE box (existing accessories box, Lists: Free items) -->
+    <div class="frame free" style="left:${px(110)};top:${px(28)};width:${px(34)};height:${px(25)}"></div>
+    <div class="legend" style="left:${px(127)};top:${px(26.5)};color:#1f4d36">FREE</div>
+    <div class="t" style="left:${px(113)};top:${px(32)};font-size:${px(2.8)};font-weight:800">DRAINER</div>
+    <div class="t" style="left:${px(113)};top:${px(41)};font-size:${px(2.8)};font-weight:800">CHOPPING BOARD</div>
+    <!-- UPGRADE box (Accessories layer, Lists: Upgrades) -->
+    ${showUpgrade ? `
+      <div class="frame ${boxSel}" style="left:${px(4)};top:${px(46)};width:${px(76)};height:${px(28)}"></div>
+      <div class="legend" style="left:${px(42)};top:${px(44.5)};color:#b91c1c">UPGRADE</div>
+      ${upgradeCard(6.5, 50, 71, 21.5, state, { withSp: state === 'field' })}
+      ${many ? `<div class="warnbadge" style="left:${px(40)};top:${px(75)}">2 of 3 upgrades do not fit this box</div>` : ''}
+    ` : (state === 'none' || state === 'picked' ? `<div class="t" style="left:${px(4)};top:${px(46)};width:${px(76)};height:${px(28)};border:1px dashed #cbd5e1;border-radius:9px;display:${state==='none'?'block':'none'}"></div>` : '')}
+    <!-- main feature icons -->
+    ${iconRow(['sus','nano','war','bac'], 4, 88, 11, 2)}
+    <!-- price badge -->
+    <div class="sp" style="left:${px(96)};top:${px(66)};width:${px(48)};height:${px(34)}">
+      <div style="font-size:${px(3)};margin-top:${px(3)}">SP</div>
+      <div style="font-size:${px(8.6)};line-height:1">${sp}</div>
+      <div style="font-size:${px(3.4)};margin-top:${px(1.5)}">NETT</div>
+    </div>
+  </div>`;
+}
+const U = {
+  box: {
+    tools: `<button class="btn sm">Text</button><button class="btn sm">Image</button><button class="btn sm">Shape</button><button class="btn sm">Field</button><button class="btn sm">Feature icons</button><button class="btn sm on">Accessories &#9662;</button>`,
+    layers: ['Photo (main)','Code','Description + LP','Fixed part 1 line','Free items box', '*Upgrades box','Feature icons (main)','Price badge (SP)'],
+    insp: `<div style="font-weight:600">Accessories box</div>
+      <div class="sec">List</div>
+      <div class="seg"><span>Free items</span><span class="on">Upgrades</span></div>
+      <div class="muted" style="margin-top:4px">Upgrades = the combo's upgrade parts on offer, in combo order. A picked upgrade leaves the box.</div>
+      <div class="sec">Product</div>
+      <div class="input">Combo: this tag's upgrades &#9662;</div>
+      <div class="sec">Header</div>
+      <div class="input">UPGRADE</div>
+      <div class="lbl">"+" badge</div><div class="seg"><span>On</span><span class="on">Off</span></div>
+      <div class="sec">Layout</div>
+      <div class="seg"><span class="on">Vertical</span><span>Horizontal</span></div>
+      <div class="lbl">Columns</div><div class="input">Auto &#9662;</div>
+      <div class="lbl">Frame / border / radius</div><div class="input"><span style="width:14px;height:14px;border-radius:3px;background:#b91c1c;display:inline-block"></span> #B91C1C &nbsp; 0.4 mm &nbsp; 3 mm</div>
+      <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap"><button class="btn sm">Edit card</button><button class="btn sm">Save as accessories template</button></div>
+      <div class="note ok">Fits every combo: a list box needs no upgrade (a combo with none prints no box).</div>`,
+    note: `<div class="note info">A. The existing Accessories box with its List switched to <b>Upgrades</b>. Everything else in this inspector is today's box (frame, header on the border, badge, direction, columns, Edit card, templates).</div>`,
+  },
+  card: {
+    tools: `<span class="muted">Editing card:</span><button class="btn sm">Picture</button><button class="btn sm">Text</button><button class="btn sm">Field &#9662;</button><button class="btn sm on">Feature icons</button><button class="btn sm">Colour dots</button><button class="btn sm">Shape</button><button class="btn sm">Done (Esc)</button>`,
+    layers: ['Upgrades box','  Card: Picture','  *Card: Top-up','  Card: Code','  Card: Name','  Card: List price','  Card: Feature icons'],
+    insp: `<div style="font-weight:600">Card element: Text</div>
+      <div class="sec">Shows</div>
+      <div class="input">Top-up &#9662;</div>
+      <div class="lbl">Text before the figure</div><div class="input">TOPUP&nbsp;</div>
+      <div class="muted" style="margin-top:4px">Prints "TOPUP RM 150". Hides when the upgrade has no top-up set.</div>
+      <div class="sec">Typography</div>
+      <div class="input">DM Sans &#9662; &nbsp; 10.8 pt &nbsp; Black</div>
+      <div class="input" style="margin-top:6px"><span style="width:14px;height:14px;border-radius:3px;background:#b91c1c;display:inline-block"></span> #B91C1C &nbsp; Left</div>
+      <div class="sec">Card element: Feature icons</div>
+      <div class="muted">Shows the upgrade's own icons (SRTKT71SS specs) by the same spec=value rule as the layer. Size 4.6 mm, gap 0.8 mm. A missing icon takes no space.</div>`,
+    note: `<div class="note info">B. Double-click the box (or Edit card) to step inside, as for free items. New for upgrades: the <b>Top-up</b> field and the <b>Feature icons</b> card element. Picture, code, name and LP are the fields free items already have, read live from SRTKT71SS.</div>`,
+  },
+  field: {
+    tools: `<span class="muted">Editing card:</span><button class="btn sm">Picture</button><button class="btn sm">Text</button><button class="btn sm on" id="fieldBtn">Field &#9662;</button><button class="btn sm">Feature icons</button><button class="btn sm">Colour dots</button><button class="btn sm">Shape</button><button class="btn sm">Done (Esc)</button>
+      <div class="menu" style="left:180px"><div class="grp">Add a field to the card</div>
+        <div class="it">Code <span class="x">on card</span></div><div class="it">Name <span class="x">on card</span></div><div class="it">Spec</div>
+        <div class="it">List price <span class="x">on card</span></div><div class="it">Top-up <span class="x">on card</span></div>
+        <div class="it hl"><b>SP with upgrade</b> <span class="x">not on card</span></div><div class="it">Remark</div></div>`,
+    layers: ['Upgrades box','  Card: Picture','  Card: Top-up','  Card: Code','  Card: Name','  Card: List price','  *Card: SP with upgrade','  Card: Feature icons'],
+    insp: `<div style="font-weight:600">Card element: Text</div>
+      <div class="sec">Shows</div><div class="input">SP with upgrade &#9662;</div>
+      <div class="lbl">Text before the figure</div><div class="input">SP with upgrade&nbsp;</div>
+      <div class="muted" style="margin-top:4px">= this tag's SP (RM 949) + the top-up (RM 150). Hides when the combo has no SP or the upgrade no top-up.</div>`,
+    note: `<div class="note info">C. Q2 (a): "SP with upgrade" is in the Field menu, not on the default card. Placed here by hand it prints "SP with upgrade RM 1,099"; the Feature icons element under it moved right to make room (designer's choice, not automatic).</div>`,
+  },
+  picked: {
+    tools: `<span class="muted">Request preview, line 1: SRTKS2432 combo, Upgrade: <b>SRTKT71SS</b> picked</span>`,
+    layers: ['Photo (main)','Code','Description + LP','Fixed part 1 line','Free items box','Upgrades box (empty)','Feature icons (main)','Price badge (SP)'],
+    insp: `<div style="font-weight:600">Request line 1</div>
+      <div class="lbl">Upgrade</div><div class="input">SRTKT71SS &nbsp;+RM 150 &#9662;</div>
+      <div class="lbl">Price</div><div class="input">SP RM 1,099 (combo RM 949 + top-up RM 150)</div>
+      <div class="note info">The picked upgrade is now part of the package, so it leaves the Upgrades box; the box has nothing left and prints nothing (no frame, no header).</div>`,
+    note: `<div class="note info">D. Same template, upgrade picked: SP RM 1,099 (today's rule, pricing.py:713-714). The dashed outline is not drawn on a printed tag; here it only marks where the box was.</div>`,
+  },
+  none: {
+    tools: `<span class="muted">Preview product: a SRTKS2432 combo with no upgrade parts</span>`,
+    layers: ['Photo (main)','Code','Description + LP','Fixed part 1 line','Free items box','Upgrades box (empty)','Feature icons (main)','Price badge (SP)'],
+    insp: `<div style="font-weight:600">Template fit</div><div class="note ok">Fits this combo. The Upgrades box needs no upgrade; with none on offer it prints nothing.</div>
+      <div class="muted" style="margin-top:8px">A layer placed by hand on "Upgrade 1" still needs 1 upgrade, as today ("Needs 1 upgrade; this combo has 0").</div>`,
+    note: `<div class="note info">E. U4 + U6: no upgrades, no box, and the template is still offered for this combo (plain-template rule kept).</div>`,
+  },
+  many: {
+    tools: `<span class="muted">Preview product: a combo with 3 upgrades (2 of them sample, for the drop warning)</span>`,
+    layers: ['Photo (main)','Code','Description + LP','Fixed part 1 line','Free items box','*Upgrades box','Feature icons (main)','Price badge (SP)'],
+    insp: `<div style="font-weight:600">Accessories box</div>
+      <div class="sec">List</div><div class="seg"><span>Free items</span><span class="on">Upgrades</span></div>
+      <div class="note warn">2 of 3 upgrades do not fit this box. Make the box bigger or the cards smaller.</div>
+      <div class="muted" style="margin-top:8px">Cards shrink together to 70%, then only whole cards print, in combo order. The sheet shows the same toast per tag as free items.</div>`,
+    note: `<div class="note info">F. Same drop rule and wording as the free-items box. The second and third upgrades are samples; only SRTKT71SS is real.</div>`,
+  },
+};
+function renderU(s) {
+  const st = U[s];
+  document.getElementById('uToolbar').innerHTML = st.tools;
+  document.getElementById('uLayers').innerHTML = '<div style="font-weight:600;margin-bottom:6px">Layers</div>' + st.layers.map(l => {
+    const selected = l.includes('*'); const child = l.startsWith('  ');
+    return `<div class="layer ${selected?'sel':''} ${child?'child':''}">${l.replace('*','').trim()}</div>`;
+  }).join('');
+  document.getElementById('uTag').innerHTML = comboTag(s);
+  document.getElementById('uInspector').innerHTML = st.insp;
+  document.getElementById('uNote').innerHTML = st.note;
+}
+
+/* ---------- section 2 ---------- */
+// Members of SRTWC8354-SH (variant graph). Specs per the owner's sample + archived flyer plan; to confirm on dev DB.
+const MEMBERS = [
+  { code: 'SRTWC8354-SH', note: 'line product (250 mm)', icons: ['s250','uf'], depth: 0 },
+  { code: 'SRTWC8354-SH-150', icons: ['s150','uf'], depth: 1 },
+  { code: 'SRTWC8354-SH-200', icons: ['s200','uf'], depth: 1 },
+  { code: 'SRTWC8354-SH-P', icons: ['p180','uf'], depth: 1 },
+  { code: 'SRTWC8354-SH-UF', icons: ['s250','uf'], depth: 1 },
+  { code: 'SRTWC8354-SH-UF-150', icons: ['s150','uf'], depth: 2 },
+  { code: 'SRTWC8354-SH-UF-200', icons: ['s200','uf'], depth: 2 },
+  { code: 'SRTWC8354-SH-UF-300', icons: ['s300','uf'], depth: 2 },
+];
+const ORDER = ['s150','s200','s250','s300','p180','uf']; // registry icon order: Trap outlet length, Trap, Seat cover material
+// Q3 ruling: the whole tree under the line's product, all ticked by default; the request line can untick.
+function membersFor(s) {
+  if (s === 'leaf') return MEMBERS.filter(m => m.code === 'SRTWC8354-SH-150').map(m => ({...m, live:true, ticked:true}));
+  return MEMBERS.map(m => ({...m,
+    live: !(s === 'disc' && m.code === 'SRTWC8354-SH-200'),
+    ticked: !((s === 'req' || s === 'disc') && m.code === 'SRTWC8354-SH-UF-300')}));
+}
+function unionIcons(members) {
+  const have = new Set(members.filter(m => m.live && m.ticked).flatMap(m => m.icons));
+  return ORDER.filter(k => have.has(k));
+}
+function familyTag(s) {
+  const members = membersFor(s);
+  const icons = unionIcons(members);
+  const code = s === 'leaf' ? 'SRTWC8354-SH-150' : 'SRTWC8354-SH';
+  const size = 13, gap = 2;
+  const over = icons.length * size + (icons.length - 1) * gap > 92;
+  return `<div class="tag" style="width:${px(148)};height:${px(105)}">
+    <div class="t" style="left:${px(4)};top:${px(4)};width:${px(42)};height:${px(52)}">${wcSvg}</div>
+    <div class="t" style="left:${px(50)};top:${px(5)};font-size:${px(5.6)};font-weight:900">${code}</div>
+    <div class="t" style="left:${px(50)};top:${px(13)};font-size:${px(3)}">One piece washdown toilet</div>
+    <div class="t" style="left:${px(50)};top:${px(19)};font-size:${px(3.4)}">LP: <span style="text-decoration:line-through">RM 1,750</span></div>
+    <div class="t boxsel" style="left:${px(4)};top:${px(62)};width:${px(92)};height:${px(size + 2)}"></div>
+    ${iconRow(icons.slice(0, Math.floor((92 + gap) / (size + gap))), 5, 63, size, gap)}
+    ${over ? `<div class="warnbadge" style="left:${px(30)};top:${px(79)}">1 of 6 icons does not fit this box</div>` : ''}
+    ${iconRow(['war'], 4, 88, 11, 2)}
+    <div class="sp" style="left:${px(98)};top:${px(60)};width:${px(46)};height:${px(40)}">
+      <div style="font-size:${px(3.2)};margin-top:${px(4)}">SP</div>
+      <div style="font-size:${px(9.4)};line-height:1">RM 799</div>
+      <div style="font-size:${px(3.4)};margin-top:${px(1.5)}">NETT</div>
+    </div>
+  </div>`;
+}
+const ICON_NAME = { s150:'6" S-trap 150mm', s200:'8" S-trap 200mm', s250:'10" S-trap 250mm', s300:'12" S-trap 300mm', p180:'P-trap 180mm', uf:'UF seat cover' };
+function familyInspector(s) {
+  const members = membersFor(s);
+  const icons = unionIcons(members);
+  const rows = members.map(m => `<div style="display:flex;gap:6px;align-items:flex-start;padding:3px 0;border-top:1px solid var(--line)">
+      <div style="flex:1;min-width:0;${m.live&&m.ticked?'':'color:var(--muted)'}">${m.code}${m.live?'':' <span class="pill grey">Discontinued</span>'}${m.live&&!m.ticked?' <span class="pill grey">Unticked on line</span>':''}</div>
+      <div style="text-align:right">${m.live&&m.ticked ? m.icons.map(k => `<span class="chip">${ICON_NAME[k].split(' ')[0]}</span>`).join('') : '<span class="muted">adds nothing</span>'}</div></div>`).join('');
+  const select = s === 'menu' ? `<div class="menu" style="position:relative;top:4px;width:100%">
+      <div class="it">SRTWC8354-SH (main)</div>
+      <div class="it hl"><b>All variants</b> <span class="x">${membersFor('all').length} products</span></div></div>` : '';
+  return `<div style="font-weight:600">Feature icons</div>
+    <div class="sec">Product</div>
+    <div class="input">${s==='menu'?'SRTWC8354-SH (main)':'All variants'} &#9662;</div>${select}
+    <div class="muted" style="margin-top:4px">The line's product and every product under it, minus any the request line unticks. Each icon once, in the registry's icon order. Discontinued or inactive members add nothing; stock does not matter.</div>
+    <div class="sec">Members on the preview line (${members.filter(m=>m.live&&m.ticked).length} of ${members.length})</div>${rows}
+    <div class="sec">Prints</div><div>${icons.map(k => `<span class="chip">${ICON_NAME[k]}</span>`).join('')}</div>
+    <div class="sec">Size</div><div class="input">Icon 13 mm &nbsp; Spacing 2 mm &nbsp; Align left</div>`;
+}
+const FNOTE = {
+  all: 'A. The ordinary Feature icons layer, Product = <b>All variants</b>: the whole tree, all ticked. 6" / 8" / 10" S-trap from trap_length 150 / 200 / 250, P-trap 180mm from trap = p_trap, UF seat cover from the shared seat spec (shown once), and, with SRTWC8354-SH-UF-300 in the tree, a 12" S-trap 300mm icon. Code, name, photo and prices read the line\'s own product.',
+  req: 'C. Q3 chooser: on the request line, untick SRTWC8354-SH-UF-300 in "Variants on this tag"; the 12" icon leaves and the tag shows the owner\'s five icons. The template is unchanged; the choice belongs to this line (see the line below).',
+  menu: 'B. One new option in the existing Product select (SubjectInspector). "All variants" sits under the main product; combo positions keep their place on a combo tag.',
+  disc: 'D. SRTWC8354-SH-200 discontinued: the 8" icon leaves the tag (no other live member is 200 mm). The other icons do not move to fill a hole; the row is simply packed with what is left.',
+  leaf: 'E. A line naming a leaf variant: "All variants" is just that product, so only its own icons print (6" S-trap and UF seat cover). Pick the base code for the family tag.',
+};
+function renderF(s) {
+  document.getElementById('fTag').innerHTML = familyTag(s);
+  document.getElementById('fInspector').innerHTML = familyInspector(s);
+  document.getElementById('fNote').innerHTML = `<div class="note info">${FNOTE[s]}</div>`;
+  document.getElementById('fReq').innerHTML = requestLine(s);
+}
+// The request line where the dealer / staff configure the tag (PriceTagLinesTable row). Q3 chooser + Q5 warning.
+function requestLine(s) {
+  const members = membersFor(s);
+  const ticked = members.filter(m => m.ticked);
+  const open = s === 'req';
+  const opts = members.map(m => `<div class="it ${m.ticked?'':''}"><span style="width:14px;height:14px;border:1.5px solid ${m.ticked?'var(--primary)':'var(--line)'};border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;background:${m.ticked?'var(--primary)':'transparent'}">${m.ticked?'&#10003;':''}</span>
+      <span style="${m.live?'':'color:var(--muted)'}">${m.code}</span>${m.depth===0?' <span class="pill grey">this line, always on</span>':''}${m.live?'':' <span class="pill grey">Discontinued</span>'}<span class="x">${m.icons.map(k => ICON_NAME[k].split(' ')[0]).join(' ')}</span></div>`).join('');
+  return `<h3 style="margin-top:18px">Price tag request, line 1 (where the tag is configured)</h3>
+  <div class="scroll"><table class="map" style="min-width:760px">
+    <tr><th style="width:4%">#</th><th style="width:20%">Product</th><th style="width:16%">Template</th><th style="width:30%">Variants on this tag</th><th style="width:16%">Price</th><th>Qty</th></tr>
+    <tr><td>1</td><td><b>${s==='leaf'?'SRTWC8354-SH-150':'SRTWC8354-SH'}</b><div class="muted">One piece washdown toilet</div></td><td>WC family 148x105</td>
+      <td>${s==='leaf' ? '<span class="muted">No variants under this product</span>' : `<div class="input">${ticked.length} of ${members.length} ticked &#9662;</div>
+        ${open ? `<div class="menu" style="position:relative;top:4px;width:100%;max-width:340px"><div class="input" style="margin:2px 2px 6px"><span class="muted">Search variants</span></div>
+          <div class="it"><b>All</b><span class="x">Select all / clear</span></div>${opts}</div>` : ''}`}</td>
+      <td><div class="seg"><span>LP</span><span class="on">SP</span><span>LP &amp; SP</span></div><div style="margin-top:4px">SP RM 799 <span class="strike">LP RM 1,750</span></div>
+        ${s==='leaf' ? '' : '<div class="note warn" style="margin-top:6px">Variants price differently: RM 1,750 to RM 1,890</div>'}</td>
+      <td>1</td></tr>
+  </table></div>
+  <div class="muted" style="margin-top:6px">Q5 (a): the tag prints this line's own hand-picked price. The warning lists the ticked members' list prices (figures here are samples); it never blocks Save or Approve. The line's own product is always on; unticking every other member makes the tag show only that product's icons.</div>`;
+}
+
+/* ---------- section 3 ---------- */
+function specTable(title, sub, rows, extra) {
+  return `<div style="font-weight:600">${title}</div><div class="muted">${sub}</div>
+    <div class="tabs" style="margin-top:10px"><span class="pill grey">Overview</span><span class="pill">Values and words</span><span class="pill grey">Rules</span></div>
+    <div class="scroll"><table class="map"><tr><th style="width:22%">Value</th><th style="width:22%">Products with it</th><th>Icons (in order)</th></tr>
+    ${rows.map(r => `<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2] ? `<span style="display:inline-flex;vertical-align:middle;margin-right:6px">${ico(ICON[r[2]][0], 7, ICON[r[2]][1])}</span>${ICON_NAME[r[2]]} <button class="btn sm" style="margin-left:6px">Change</button>` : '<button class="btn sm">Add icon</button>'}</td></tr>`).join('')}
+    </table></div>${extra||''}`;
+}
+const SPEC = {
+  len: () => specTable('Trap outlet length (trap_length)', 'Numeric, mm. NEW: a numeric key lists the values products actually have, so each can carry icons (Q4 (a)).',
+    [['150 mm','n products (dev DB)','s150'],['180 mm','n products','' ],['200 mm','n products','s200'],['250 mm','n products','s250'],['300 mm','n products','']],
+    `<div class="note info">Set once; every WC family with these lengths gets the icons. 150, 150.0 and "150" are the same value. A new length shows up here as soon as a product has it. 180 mm carries no icon on purpose: the P-trap icon comes from Trap = P trap (next tab), so a P-trap is never also shown as an S-trap length.</div>`),
+  type: () => specTable('Trap (trap_type)', 'Enum, as today.', [['S trap','n products',''],['P trap','n products','p180']]),
+  seat: () => specTable('Seat cover material (seat_material)', 'Enum, as today.', [['UF','n products','uf'],['PP','n products','']]),
+};
+function renderS(s) { document.getElementById('sBody').innerHTML = SPEC[s](); }
+
+function wire(id, fn) {
+  document.querySelectorAll(`#${id} .btn`).forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll(`#${id} .btn`).forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); fn(b.dataset.s);
+  }));
+}
+wire('uTabs', renderU); wire('fTabs', renderF); wire('sTabs', renderS);
+renderU('box'); renderF('all'); renderS('len');
+</script>
+</body>
+</html>

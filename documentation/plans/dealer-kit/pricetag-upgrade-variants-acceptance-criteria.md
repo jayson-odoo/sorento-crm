@@ -1,6 +1,6 @@
 # UAC: price tag upgrade items + family tag with variant icons (PRICETAG-UPGRADE-VARIANTS)
 
-Status: DRAFT on the recommended answers (Q1-Q5 all (a)); rewritten once the owner answers.
+Status: DRAFT; card fully answered 09/11/2026 (Q1 a, Q2 a, Q3 whole tree + per-line chooser, Q4 a, Q5 a). Final after the mock is approved.
 Card: `CARD-pricetag-upgrade-variants-09nov.md`. Plan: `PLAN-pricetag-upgrade-variants-09nov.md`.
 
 ## Upgrades box
@@ -25,13 +25,18 @@ Card: `CARD-pricetag-upgrade-variants-09nov.md`. Plan: `PLAN-pricetag-upgrade-va
 ## Family tag
 
 - AC-F1. A feature icons layer offers "Reads from: All variants".
-- AC-F2. On a line for SRTWC8354-SH, that layer shows 6" S-trap, 8" S-trap, 10" S-trap, P-trap 180mm and UF
-  seat cover, once each, in registry icon order, once the admin has mapped those values.
+- AC-F2. On a line for SRTWC8354-SH, "All variants" = SRTWC8354-SH and every product under it in the variant graph
+  (whole tree), all ticked by default; the layer shows the union of their icons, each once, in registry icon order.
+- AC-F2b. The request line has "Variants on this tag" (SearchableMultiSelect) listing every member; the line's own
+  product is always on. Unticking SRTWC8354-SH-UF-300 removes the 12" S-trap 300mm icon and leaves 6" / 8" / 10"
+  S-trap, P-trap 180mm and UF seat cover. The template is not changed by it.
+- AC-F2c. The line stores the unticked members: a variant created later appears ticked; a pinned tag keeps the
+  members it printed until re-pinned.
 - AC-F3. On Master Data > Product Specifications, `trap_length` offers the values products have (150, 200, 250,
   ...) and each can carry icons; raw 150 / 150.0 / "150" all match the value "150".
 - AC-F4. A discontinued or inactive variant adds no icon; a variant with no stock still does.
 - AC-F5. A line naming a leaf variant (SRTWC8354-SH-150) shows only that product's icons on "All variants".
 - AC-F6. Code, name, photo and price layers on the family tag keep reading the line's own product.
-- AC-F7. Members with different list prices: the request line shows "Variants price differently: RM x to RM y";
+- AC-F7. Ticked members with different list prices: the request line shows "Variants price differently: RM x to RM y";
   the tag prints the line product's own price.
 - AC-F8. Existing templates (no layer on "All variants") print unchanged.
