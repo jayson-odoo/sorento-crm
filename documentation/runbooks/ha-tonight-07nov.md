@@ -74,7 +74,8 @@ then recreate the wrong one with it:
 | 9 Nov ~11:45 | S5.8 first try | backend_green waited on `pgbouncer:5432`: S5.3 had not run. S5.3 then DONE (`--auto`, HA_*_2 for the frontend block) |
 | 9 Nov ~11:52 | S5.8 | DONE: green on the release SHA, health 200, role standby 503, no workers, no db |
 | 9 Nov ~12:10 | MCP URL | `AI_ASSISTANT_MCP_URL` named A's public address: B-only override entry `http://<B_PUBLIC_IP>:8765/mcp` (4 services), hairpin check 401. The manual `up` that applied it had no `IMAGE_TAG` and started `backend-1.0.1`; repaired with the release tag. New rule: "Manual docker compose up" section |
-| next | Post-S5 continuation P1-P6 (no downtime), then S4 (announced window), then S7 | pending |
+| 9 Nov ~12:45 | Post-S5 P1-P5 | DONE. P1: `_old`/`_s23` removed, streaming. P2: A `sorento-edge` drops 5432 on the public interface, replication from 10.77.0.2 lag 0, health 200. P3: A's pg_hba row for B's public address removed and reloaded; B's `.pgpass` holds only 10.77.0.1 (the reconnect proof via `pg_terminate_backend` is refused by PG17: replaced by a replica restart, still to run once). P4: Hostinger 5432 and 27017 rules deleted. P5: B `sorento-edge` applied; n8n healthz ok, 0 connection errors, wg handshake fresh, `streaming\|10.77.0.1`, health 200, MCP 401 |
+| next | P3 reconnect proof (replica restart, no users), P6 drill when the owner asks, S4 tonight (announced), S7 last | pending |
 
 ## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
 
@@ -252,9 +253,11 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select 
 ```bash
 # B. THIS CHANGES PROD (node B). Prints host names only.
 docker exec -u postgres sorento_crm_replica sh -c 'f=/var/lib/postgresql/data/.pgpass; cp -p $f $f.bak-09nov && grep -v "^<A_PUBLIC_IP>:" $f.bak-09nov > $f; cut -d: -f1 $f; stat -c %a $f'   # 10.77.0.1, then 600
-# One forced reconnect proves the tunnel path end to end (walreceiver restarts by itself in ~5 s):
-docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_terminate_backend(pid) from pg_stat_activity where backend_type = 'walreceiver'"   # t
-sleep 15; docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select status, sender_host from pg_stat_wal_receiver"   # streaming|10.77.0.1
+# One forced reconnect proves the tunnel path end to end. NOT pg_terminate_backend: the walreceiver
+# is an auxiliary process and PG17 refuses it ("PID n is not a PostgreSQL backend process", 9 Nov).
+# Restart the replica instead (~10-20 s; B's standby app gets read errors meanwhile, B has no users):
+docker restart -t 60 sorento_crm_replica
+sleep 20; docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select status, sender_host from pg_stat_wal_receiver"   # streaming|10.77.0.1
 ```
 
 Rollback: A `cp -p "$PGDATA/pg_hba.conf.bak-09nov" "$PGDATA/pg_hba.conf"` (inside `db`, as above) +
