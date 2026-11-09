@@ -1177,10 +1177,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         and uid == str(user.get("linked_user_id", uid))
         and all(_relinkable(db, uid, contact.id, c) for c in link_ids)
     )
-    # The Dealer access screen (DEALER-ACCESS-SCREEN S5) sets `dealer_access_screen` on the user dict itself, never
-    # from a model's args: its picked accounts are checked as the user's own just below (`_own_customer_codes`).
-    screen = bool(user.get("dealer_access_screen"))
-    if link_ids and not undo and not screen and not _permitted(db, uid, CONTACT_EDIT):
+    if link_ids and not undo and not _permitted(db, uid, CONTACT_EDIT):
         raise AppException(status_code=403, message="You can only restore a link you removed.", code="FORBIDDEN")
     if not in_scope and not (undo and not unlink_ids and role is None and ai in (None, True)):
         raise refused

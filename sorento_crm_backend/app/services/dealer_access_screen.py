@@ -251,15 +251,19 @@ def _editable(db: Session, user_id: str, contact_id: str) -> None:
 
 def update(db: Session, user_id: str, contact_id: str, company: str, role: str, account_ids: list[str]) -> dict:
     """S5: set which of my accounts of this company the person holds, and their level there."""
-    from app.models.access import RespondContactCustomer
+    from app.models.access import RespondContact, RespondContactCustomer
+    from app.services.company_scope_resolver import grants_scope
     from app.services.contact_tag_service import owner_tag, tags_by_contact
 
     _editable(db, user_id, contact_id)
-    picked = [str(c.id) for c in _picked(db, user_id, company, account_ids)]
+    picked = _picked(db, user_id, company, account_ids)
     code = str(company).strip().upper()
     row = _company_row(db, user_id, company)
     mine = {str(c.id) for c in _own_customers(db, user_id, {str(row.id)})}
     with company_scope(db, None):
+        contact = db.query(RespondContact.id, RespondContact.name, RespondContact.phone_number).filter(
+            RespondContact.id == str(contact_id)
+        ).one()
         held = {
             str(c) for (c,) in db.query(RespondContactCustomer.customer_id)
             .filter(RespondContactCustomer.contact_id == str(contact_id))
@@ -267,17 +271,30 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
         tag = owner_tag(db, code)
         tags = tags_by_contact(db, [str(contact_id)]).get(str(contact_id), [])
     current = "owner" if tag is not None and any(t["id"] == str(tag.id) for t in tags) else "employee"
-    args: dict = {
-        "contact_id": str(contact_id),
-        "link_customer_ids": [i for i in picked if i not in held],
-        "unlink_customer_ids": sorted((held & mine) - set(picked)),
-    }
+    add = [c for c in picked if str(c.id) not in held]
+    picked_ids = {str(c.id) for c in picked}
+    change: dict = {"contact_id": str(contact_id), "unlink_customer_ids": sorted((held & mine) - picked_ids)}
     if role != current:
-        args["role"] = role
-    if not (args["link_customer_ids"] or args["unlink_customer_ids"] or "role" in args):
-        return {"id": str(contact_id)}
-    user = {**_user(db, user_id), "dealer_access_screen": True}
-    return writes._contact_execute(db, user, args)
+        change["role"] = role
+    user = _user(db, user_id)
+    # An edit_own holder links only through the grant (A13/A14 and the template apply), role `employee`: add-only.
+    grant_args = {
+        "phone": contact.phone_number, "name": contact.name or "", "role": "employee", "companies": [code],
+        "customer_codes": [c.customer_code for c in add],
+    }
+    has_change = bool(change["unlink_customer_ids"] or "role" in change)
+    # Both steps are planned (neither plan writes) before either is executed: a refusal writes nothing.
+    with grants_scope(db, user_id):
+        if add:
+            contact_grant.plan(db, user, grant_args)
+        if has_change:
+            writes._contact_plan(db, user, change)
+    result: dict = {"id": str(contact_id)}
+    if add:
+        contact_grant._execute(db, user, grant_args)
+    if has_change:
+        result = writes._contact_execute(db, user, change)
+    return result
 
 
 # ------------------------------------------------------------------ S6 unlink

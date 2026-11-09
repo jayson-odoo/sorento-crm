@@ -7,7 +7,7 @@
  *   POST /api/v1/sales/dealer-access/grant   { company, account_ids, people: [{ name, phone, role }] }
  *        422 carries `details.rows: [{ index, error }]`, one reason per refused person.
  *   PUT  /api/v1/sales/dealer-access/people/{contact_id}  { company, role, account_ids }
- * Unlink is the deferred action `dealer_access.unlink` on entity type `dealer_access_link`.
+ * Unlink is the deferred action `dealer_access_link.unlink` on entity type `dealer_access_link`.
  */
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';

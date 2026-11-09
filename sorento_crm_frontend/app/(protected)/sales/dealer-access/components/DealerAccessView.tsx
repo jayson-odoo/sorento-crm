@@ -100,7 +100,7 @@ export default function DealerAccessView() {
   const total = data?.pagination.total ?? 0;
 
   const unlink = useDeferredRowAction({
-    actionKey: 'dealer_access.unlink',
+    actionKey: 'dealer_access_link.unlink',
     entityType: 'dealer_access_link',
     verb: 'Unlinking',
     successMessage: 'Access removed.',

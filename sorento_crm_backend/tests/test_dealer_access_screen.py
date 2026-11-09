@@ -2,7 +2,7 @@
 
 Red tests, written before the implementation. Each test name carries its UAC id. Backend of the salesperson
 "Dealer access" screen: `app/services/dealer_access_screen.py` (`my_accounts`, `list_people`, `grant`, `update`),
-the routes under `/api/v1/sales/dealer-access`, and the record action `dealer_access.unlink`.
+the routes under `/api/v1/sales/dealer-access`, and the record action `dealer_access_link.unlink`.
 
 World: salesperson 1 (the user of `own_world`, holds `user_management.contacts.edit_own` only) owns `cust_a`, `twin1`,
 `twin2` (Sorento) and `cust_b` (Mocha); salesperson 2 (a user as well, built here) owns `theirs` (Sorento) and
@@ -287,7 +287,7 @@ def test_S1_parking_the_unlink_action_without_edit_own_is_403(db, api):
 
     resp = api.as_user(none.user_id).post(
         "/api/v1/pending-actions",
-        json={"action_key": "dealer_access.unlink", "entity_type": "dealer_access_link", "entity_id": link.id, "payload": {}},
+        json={"action_key": "dealer_access_link.unlink", "entity_type": "dealer_access_link", "entity_id": link.id, "payload": {}},
     )
 
     assert resp.status_code == 403, resp.text
@@ -942,7 +942,7 @@ def test_S5_http_put_applies_the_diff_and_a_foreign_contact_is_404(db, api):
 # ================================================================== S6 deferred unlink
 
 
-def park(client, link_id, key="dealer_access.unlink"):
+def park(client, link_id, key="dealer_access_link.unlink"):
     return client.post(
         "/api/v1/pending-actions",
         json={"action_key": key, "entity_type": "dealer_access_link", "entity_id": str(link_id), "payload": {}},
@@ -968,9 +968,9 @@ def test_S6_the_unlink_action_is_registered_reversible_and_gated():
     from app.services.form_action_grace import WINDOW_REVERSIBLE
     from app.services.form_action_registry import get_action
 
-    action = get_action("dealer_access.unlink")
+    action = get_action("dealer_access_link.unlink")
 
-    assert action is not None, "dealer_access.unlink is not registered"
+    assert action is not None, "dealer_access_link.unlink is not registered"
     assert action.permission == EDIT_OWN
     assert tuple(action.entity_types) == ("dealer_access_link",)
     assert action.window == WINDOW_REVERSIBLE

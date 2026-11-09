@@ -1560,7 +1560,7 @@ def _unlink_dealer_access(db: Session, payload: dict):
     # their own accounts' links (it fails, and stays, when it is not).
     requester = str(payload.get("requested_by_id") or "")
     if not requester:
-        raise ValueError("dealer_access.unlink has no requester")
+        raise ValueError("dealer_access_link.unlink has no requester")
     with actor_scope(
         AuditActor(actor_type="user", user_id=requester, real_user_id=requester), db=db
     ):
@@ -1569,7 +1569,7 @@ def _unlink_dealer_access(db: Session, payload: dict):
 
 register(
     FormAction(
-        key="dealer_access.unlink",
+        key="dealer_access_link.unlink",
         # Parked on the LINK row (`respond_contact_customers`), one of the requester's own accounts'.
         entity_types=("dealer_access_link",),
         execute=_unlink_dealer_access,

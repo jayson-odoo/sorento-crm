@@ -1,7 +1,7 @@
 """Sales > Dealer access: a salesperson's own accounts and the people who hold access to them
 (DEALER-ACCESS-SCREEN S1-S5). Plain `def` handlers; every rule and every write lives in
 `app.services.dealer_access_screen`, which goes through the agent's access service. Unlink is the deferred record
-action `dealer_access.unlink` (`app/services/record_actions.py`)."""
+action `dealer_access_link.unlink` (`app/services/record_actions.py`)."""
 from __future__ import annotations
 
 from typing import Literal, Optional
