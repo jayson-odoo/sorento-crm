@@ -52,3 +52,26 @@ def test_a_reachable_replica_is_still_where_the_builds_run(env):
     env.patch.setattr(env.town, "build_snapshot", probe)
     _tick(env, myt(DAY, 10, 0))
     assert seen and all(seen)
+
+
+def test_a_build_on_the_replica_runs_with_jit_off_and_the_five_second_timeout(env):
+    """TOWN-PROD-TIMEOUT: the replica branch gets the same session settings as the primary."""
+    import sqlalchemy as sa
+
+    env.db.execute(sa.text("SET LOCAL jit = on"))
+    replica = _KeepOpen(env.db)
+    env.patch.setattr(settings, "town_replica_database_url", DOWN_REPLICA)
+    env.patch.setattr(env.town, "_replica_session", lambda: replica)
+
+    seen = []
+
+    def probe(session, company_id, day, *, now):
+        seen.append((
+            session.execute(sa.text("show jit")).scalar_one(),
+            session.execute(sa.text("show statement_timeout")).scalar_one(),
+        ))
+        return fake_full(day, company_id)
+
+    env.patch.setattr(env.town, "build_snapshot", probe)
+    _tick(env, myt(DAY, 10, 0))
+    assert seen and all(jit == "off" and timeout in ("5s", "5000ms") for jit, timeout in seen), seen
