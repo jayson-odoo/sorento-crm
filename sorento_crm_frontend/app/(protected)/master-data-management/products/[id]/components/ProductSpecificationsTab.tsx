@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +21,8 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 import { DETAIL_KEY, useProductSpecTable } from '../../hooks/useProductSpecTable';
 import { useProduct, useUpdateProduct } from '../../hooks/useProducts';
+import { useSpecValueIcons } from '../../hooks/useSpecValueIcons';
+import { SpecValueIcons } from './SpecValueIcons';
 import { useSpecSearchPreviewQuery } from '../../../product-specifications/hooks/useSpecSearchPreviewQuery';
 import { WORKLIST_KEY } from '../../../spec-verification/hooks/useSpecVerification';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
@@ -450,6 +452,19 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   // gets no affordance that would 403 at submit.
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
+  // The price-tag icons each saved value carries, by the tag's own rule (SPEC-VALUE-ICONS).
+  const { iconsFor, canManage: canManageIcons } = useSpecValueIcons();
+  const valueAdornment = useCallback(
+    (row: SpecTableRow) => (
+      <SpecValueIcons
+        specKey={row.specKey}
+        label={row.label}
+        icons={iconsFor(row)}
+        canManage={canManageIcons}
+      />
+    ),
+    [iconsFor, canManageIcons],
+  );
 
   if (isLoading) {
     return (
@@ -501,6 +516,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             canEdit={canEdit}
             openEditorFor={pendingKey}
             onEditorOpened={() => setPendingKey(null)}
+            valueAdornment={valueAdornment}
             callbacks={{
               onSetValue: spec.setValue,
               onTombstone: spec.tombstone,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -47,6 +47,7 @@ export function SpecTable({
   openEditorFor = null,
   onEditorOpened,
   listingKey = 'master_data.products.view::product-specifications',
+  valueAdornment,
 }: {
   rows: SpecTableRow[];
   /** The registry, for the synonym lookup behind "add this word to the key". */
@@ -73,6 +74,12 @@ export function SpecTable({
   /** Called once the editor has been opened, so the caller can clear its request. */
   onEditorOpened?: () => void;
   listingKey?: string;
+  /**
+   * Drawn after a row's read-only value, never while it is in edit (SPEC-VALUE-ICONS: the
+   * price-tag icons the value carries). A render prop so this folder stays free of Dealer Kit
+   * types; the supplier portal omits it.
+   */
+  valueAdornment?: (row: SpecTableRow) => ReactNode;
 }) {
   /** Which row is in edit, by key. One at a time: two open editors on one product
       invite a person to change two things and save one. */
@@ -203,6 +210,7 @@ export function SpecTable({
             onDraftChange={setEditDraft}
             busy={busyKey === row.original.specKey}
             synonyms={synonymsByKey.get(row.original.specKey)}
+            trailing={valueAdornment?.(row.original)}
             onStartEdit={() => canEdit && startEdit(row.original)}
             onCancel={() => {
               setEditingKey(null);
@@ -297,7 +305,7 @@ export function SpecTable({
         },
       },
     ],
-    [canEdit, editingKey, editDraft, busyKey, callbacks, synonymsByKey, draftKey, startEdit],
+    [canEdit, editingKey, editDraft, busyKey, callbacks, synonymsByKey, draftKey, startEdit, valueAdornment],
   );
 
   const table = useReactTable({
