@@ -253,7 +253,7 @@ def _readable(entity: EntityDef, slugs: set[str]) -> str | None:
     return None
 
 
-def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef, bool]:
+def _entity_for(db, user_id: str, key: Any, slugs: set[str], panel: bool) -> tuple[EntityDef, bool]:
     """The entity and whether only the user's own rows are readable, after every entity-level refusal."""
     entity = ENTITIES.get(key) if isinstance(key, str) else None
     if entity is None or entity.view_permission is None:
@@ -266,6 +266,8 @@ def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef,
         raise QueryRefused(
             "own_only_unsupported", f"This user may see only their own {entity.label.lower()}, which this tool cannot narrow to."
         )
+    if entity.panel_only and not panel:
+        raise QueryRefused("restricted", entity.panel_only)
     if _module_blocked(db, user_id, entity.module):
         raise QueryRefused("module_disabled", f"The {entity.label} module is not enabled.")
     if entity.brand_blind and _brand_scoped(db):
@@ -321,10 +323,11 @@ class _Paths:
     """Turns dotted field paths into columns, joining each declared relation once (outer join, on a plain
     table alias carrying the company predicate in its ON clause)."""
 
-    def __init__(self, db, user_id: str, entity: EntityDef, slugs: set[str]) -> None:
+    def __init__(self, db, user_id: str, entity: EntityDef, slugs: set[str], panel: bool = False) -> None:
         from app.models.base import get_brand_scope
 
         self.db = db
+        self.panel = panel
         self.user_id = user_id
         self.entity = entity
         self.slugs = slugs
@@ -352,6 +355,9 @@ class _Paths:
                 )
             target_key, fk = entity.relations[name]
             target = ENTITIES[target_key]
+            if target.panel_only and not self.panel:
+                # Through a relation as on its own (security review, wave 3): never a side door off the panel.
+                raise QueryRefused("restricted", target.panel_only)
             prefix = f"{prefix}.{name}" if prefix else name
             if prefix not in self._aliases:
                 if _module_blocked(self.db, self.user_id, target.module):
@@ -379,6 +385,8 @@ class _Paths:
             )
         if field.permission and field.permission not in self.slugs:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
+        if field.module and _module_blocked(self.db, self.user_id, field.module):
+            raise QueryRefused("restricted", f"`{path}` is restricted: the {field.module} module is not enabled.")
         if self.lookup_only and name not in entity.name_by:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
         if field.whole_document and self.brand_scoped:
@@ -606,7 +614,7 @@ def _base(db, user_id: str, entity: EntityDef, own_only: bool, stmt, paths: _Pat
     if brands is not None:
         stmt = stmt.where(brands)
     if entity.scope is not None:
-        for clause in entity.scope(db):
+        for clause in entity.scope(db, user_id):
             stmt = stmt.where(clause)
     if own_only:
         from app.services.own_scope import me
@@ -629,22 +637,22 @@ def _brand_clause(db, root):
     return brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id)
 
 
-def run_query(db, user_id: str, spec: Any) -> dict:
+def run_query(db, user_id: str, spec: Any, *, panel: bool = False) -> dict:
     """Rows or groups of one registered entity, as `user_id` may see them. The session's company scope must
-    already be the user's (`run_as_user`)."""
+    already be the user's (`run_as_user`). `panel`: a staff panel turn (`EntityDef.panel_only`); fails closed."""
     if not isinstance(spec, dict):
         raise QueryRefused("invalid", "The query must be an object.")
     unknown = sorted(str(k) for k in spec if k not in SPEC_KEYS)
     if unknown:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
-    entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs, panel)
     spec = shorthands(entity, spec)
     if entity.compute is not None:
         from app.services.assistant_registry.computed import run_computed
 
         return run_computed(db, user_id, entity, own_only, slugs, spec)
-    paths = _Paths(db, user_id, entity, slugs)
+    paths = _Paths(db, user_id, entity, slugs, panel)
     today = local_today()
     asked = [_named_dates(paths, f, today) for f in _list(spec, "filters", MAX_FILTERS)]
     filters = [_filter(paths, f) for f in asked]
@@ -671,6 +679,8 @@ def run_query(db, user_id: str, spec: Any) -> dict:
     # result leaves out. `loop.final_reply` puts the scope note in the reply when the model does not.
     if (group_by or aggregates) and entity.aggregate_note:
         notes.insert(0, entity.aggregate_note)
+    if entity.always_note:
+        notes.append(entity.always_note)
     notes = [*paths.notes, *notes]
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
@@ -912,7 +922,7 @@ def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates,
 # ------------------------------------------------------------------ describe
 
 
-def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[dict]:
+def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool, blocked=lambda module: False) -> list[dict]:
     columns = sa_inspect(entity.model).columns
     out = []
     for key, field in entity.fields.items():
@@ -925,13 +935,17 @@ def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[
         row = {"field": key, "label": field.label, "type": kind}
         if field.note:
             row["note"] = field.note
-        if (field.permission and field.permission not in slugs) or (field.whole_document and brand_scoped):
+        if (
+            (field.permission and field.permission not in slugs)
+            or (field.whole_document and brand_scoped)
+            or (field.module and blocked(field.module))
+        ):
             row["restricted"] = True
         out.append(row)
     return out
 
 
-def describe(db, user_id: str, entity: Any = None) -> dict:
+def describe(db, user_id: str, entity: Any = None, *, panel: bool = False) -> dict:
     """With no entity: the entities this user may query. With one: its fields, relations, ops and limits."""
     slugs = _slugs(db, user_id)
     if entity is None:
@@ -941,30 +955,34 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
             if _readable(e, slugs) == "all" or (_readable(e, slugs) == "own" and e.own_clause is not None)
             if not _module_blocked(db, user_id, e.module)
             if not (e.brand_blind and _brand_scoped(db))
+            if panel or not e.panel_only
         ]
         return {"entities": listed}
     from app.models.base import get_brand_scope
 
-    found, own_only = _entity_for(db, user_id, entity, slugs)
+    found, own_only = _entity_for(db, user_id, entity, slugs, panel)
+
+    def blocked(module: str) -> bool:
+        return _module_blocked(db, user_id, module)
     brand_scoped = bool(get_brand_scope(db))
     relations = {}
     for name, (target_key, _fk) in found.relations.items():
         target = ENTITIES[target_key]
-        if _module_blocked(db, user_id, target.module):
+        if _module_blocked(db, user_id, target.module) or (target.panel_only and not panel):
             continue
         if target.view_permission is not None and _readable(target, slugs) is None:
             # A lookup to this user: the fields it is named by, nothing past it (`_Paths._target`).
-            fields = [r for r in _field_rows(target, slugs, brand_scoped) if r["field"] in target.name_by]
+            fields = [r for r in _field_rows(target, slugs, brand_scoped, blocked) if r["field"] in target.name_by]
             relations[name] = {"label": target.label, "fields": fields, "relations": []}
             continue
         relations[name] = {
-            "label": target.label, "fields": _field_rows(target, slugs, brand_scoped), "relations": list(target.relations),
+            "label": target.label, "fields": _field_rows(target, slugs, brand_scoped, blocked), "relations": list(target.relations),
         }
     out = {
         "entity": found.key,
         "label": found.label,
         "only_own_rows": own_only,
-        "fields": _field_rows(found, slugs, brand_scoped),
+        "fields": _field_rows(found, slugs, brand_scoped, blocked),
         "relations": relations,
         "ops": list(OPS),
         "buckets": list(BUCKETS),

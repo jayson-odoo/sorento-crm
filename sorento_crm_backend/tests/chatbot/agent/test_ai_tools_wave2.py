@@ -340,7 +340,8 @@ def test_C1_customers_list_per_agent_without_contact_fields(api, grant):
     assert out["groups"] == [{"agent": f"{a.sales_agent} - Cust Agent", "count": 2}]
     from app.services.assistant_registry import ENTITIES
 
-    assert not {"email", "phone_number", "mobile_number", "billing_address", "ar_outstanding"} & set(ENTITIES["customer"].fields)
+    # Amounts owed joined in wave 3, behind the billing documents screen (test_ai_tools_wave3 AR1); contact fields never.
+    assert not {"email", "phone_number", "mobile_number", "billing_address"} & set(ENTITIES["customer"].fields)
     assert refused(db, {"entity": "customer", "fields": ["email"]}).code == "unknown_field"
 
 

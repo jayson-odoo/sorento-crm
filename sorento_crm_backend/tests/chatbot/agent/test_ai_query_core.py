@@ -459,7 +459,8 @@ def test_Q10_a_contact_principal_is_offered_neither_tool_and_cannot_run_them(db)
 def test_Q10_a_user_who_may_read_no_registered_entity_is_not_offered_the_tools(db):
     """Holding a slug of no registered entity, the tools would answer nothing: they are not offered, and the
     console operator case (another person acting) is not offered either (linked-only)."""
-    nobody = mk_user(db, "inventory.stock.view")
+    # A slug of no registered entity (stock joined the registry in wave 3).
+    nobody = mk_user(db, "procurement.grn.view")
     names = {r.name for r in writes.permitted_user_reads(db, make_ctx(nobody))}
     assert not names & {"crm_query", "crm_describe"}
     assert tool(db, make_ctx(nobody), {"entity": "order"}).status == "denied"

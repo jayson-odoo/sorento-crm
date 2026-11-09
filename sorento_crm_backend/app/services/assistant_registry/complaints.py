@@ -18,7 +18,7 @@ def _own(me):
     return request_clause(Complaint, me)
 
 
-def _brand_scope(db) -> list:
+def _brand_scope(db, user_id: str | None = None) -> list:
     from app.services.contact_brand_scope import complaint_in_scope_clauses
 
     return list(complaint_in_scope_clauses(db))

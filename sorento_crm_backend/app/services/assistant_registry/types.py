@@ -34,6 +34,9 @@ class FieldDef:
     #: or `starts_with` on it names agents (`query.match_agents`, exact first) and matches by that link, as the
     #: agent's own Customers tab does. On a computed entity, True: the "CODE - Name" value is matched exact first.
     agent_id: Callable[[], Any] | bool | None = None
+    #: A module whose switch also gates this field, when the screen showing it belongs to another module than the
+    #: entity (a customer's amount owed is on the finance screen): off = restricted (review, wave 3).
+    module: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,8 +70,9 @@ class EntityDef:
     pages: tuple[str, ...] = ()
     #: The list routes this entity answers for ("GET /api/v1/scm/purchase-orders"), read by the CI gate.
     routes: tuple[str, ...] = ()
-    #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
-    scope: Callable[[Any], list] | None = None
+    #: (db, user_id) -> extra always-on clauses the screen's own list applies (not deleted, brand scope, a draft
+    #: only to its owner).
+    scope: Callable[[Any, str], list] | None = None
     #: A computed entity (figures no table holds: a target's achievement and commission). (db, user_id, own_only,
     #: date_from, date_to) -> rows as dicts keyed by field, built by the module's own service; filters, groups
     #: and aggregates then run over them in code (`assistant_registry.computed`). The row's "id" and every
@@ -101,3 +105,7 @@ class EntityDef:
     in_index: bool = True
     #: Said with every result of the entity (`scope_note`): a definition the answer must carry.
     always_note: str | None = None
+    #: Read on a staff panel turn only. Off the panel (a linked user's WhatsApp turn) the entity refuses with
+    #: this message: stock answered there goes through the stock tool, which carries the contact's stock-visibility
+    #: policy and stock switch (AI-TOOLS-WAVE3). None = every surface.
+    panel_only: str | None = None

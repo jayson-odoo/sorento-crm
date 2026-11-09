@@ -45,6 +45,25 @@ def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optiona
 
 
 
+def stock_status_expr():
+    """`Stock.status` (the property the stock grid prints) as one SQL CASE over a `Stock` row, for the assistant
+    registry's filters and groups. Same reading, edge for edge: a product with no reorder level (null or 0) is
+    "normal" whenever anything is available, never low or overstock. Kept equal to the property by
+    `tests/chatbot/agent/test_ai_tools_wave3.py` ST2. (`_stock_status_clause` below reads that case differently.)"""
+    from sqlalchemy import case
+
+    reorder = func.coalesce(
+        select(Product.reorder_level).where(Product.id == Stock.product_id).correlate(Stock).scalar_subquery(), 0
+    )
+    available = func.coalesce(Stock.quantity_available, 0)
+    return case(
+        (available <= 0, "critical"),
+        ((reorder != 0) & (available < reorder), "low"),
+        ((reorder != 0) & (available > reorder * 2), "overstock"),
+        else_="normal",
+    )
+
+
 def _stock_status_clause(status):
     """The stock balance status filter as one clause: the OR of the picked buckets (they
     overlap: normal also holds overstock), so each row matches once. None for no known bucket."""

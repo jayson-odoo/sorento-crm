@@ -69,7 +69,7 @@ def _as_user(db, ctx, name: str, fn) -> ToolResult:
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
-    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args))
+    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args, panel=staff_principal.current() is not None))
     if out.status == "ok" and isinstance(out.data, dict):
         return as_card(out.data, panel=staff_principal.current() is not None) or out
     return out
@@ -171,7 +171,7 @@ def _describe(db, ctx, args: dict) -> ToolResult:
     if unknown:
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(unknown)}.")
     entity: Any = args.get("entity") or None
-    return _as_user(db, ctx, DESCRIBE, lambda user_id: describe(db, user_id, entity))
+    return _as_user(db, ctx, DESCRIBE, lambda user_id: describe(db, user_id, entity, panel=staff_principal.current() is not None))
 
 
 # Every array names its items and every object its properties: Gemini refuses a schema that does not (400),
