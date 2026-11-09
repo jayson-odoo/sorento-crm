@@ -41,9 +41,12 @@ function codes(rows: { code: string }[]): string {
 export function comboCopySummaryLines(
   name: string,
   summary: ComboCopySummary,
+  cappedFrom: number | null = null,
 ): string[] {
   const lines = [
-    `Copy combo "${name}" to ${plural(summary.targets, 'product')}.`,
+    cappedFrom !== null
+      ? `Copy combo "${name}" to the first ${summary.targets.toLocaleString('en-US')} of ${cappedFrom.toLocaleString('en-US')} products.`
+      : `Copy combo "${name}" to ${plural(summary.targets, 'product')}.`,
   ];
   if (summary.created > 0) {
     lines.push(
@@ -78,7 +81,7 @@ export function CopyComboDialog({
   comboName: string;
 }) {
   const { preview, copy } = useCopyProductCombo(comboId);
-  const { picked, overCap, grid } = useProductTargetPicker(sourceProductId);
+  const { picked, overCap, cappedFrom, grid } = useProductTargetPicker(sourceProductId);
   const [summary, setSummary] = useState<ComboCopySummary | null>(null);
   // The conflicts picked to overwrite; every other conflict is skipped (owner default).
   const [overwrite, setOverwrite] = useState<Set<string>>(new Set());
@@ -129,15 +132,20 @@ export function CopyComboDialog({
         <DialogHeader>
           {/* pe-8: clear of the close X at 375px. */}
           <DialogTitle className="pe-8 break-words">
-            {summary
-              ? `Copy combo "${comboName}"`
-              : `Copy combo "${comboName}" to other products`}
+            Copy combo &quot;
+            <span
+              className="inline-block max-w-full truncate align-bottom"
+              title={comboName}
+            >
+              {comboName}
+            </span>
+            &quot;{summary ? '' : ' to other products'}
           </DialogTitle>
         </DialogHeader>
         <DialogBody className="min-h-0 flex-1 overflow-y-auto">
           {summary ? (
             <div className="space-y-3 text-sm" data-testid="copy-combo-summary">
-              {comboCopySummaryLines(comboName, summary).map((line) => (
+              {comboCopySummaryLines(comboName, summary, cappedFrom).map((line) => (
                 <p key={line}>{line}</p>
               ))}
               {conflicts.length > 0 ? (

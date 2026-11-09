@@ -81,6 +81,7 @@ export function useProductTargetPicker(sourceProductId: string): {
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [matchingActive, setMatchingActive] = useState(false);
+  const [matchingTotal, setMatchingTotal] = useState<number | null>(null);
   const [matchingPending, setMatchingPending] = useState(false);
   // Bumped whenever the result set changes, so a "Select all" fetch that lands late is dropped.
   const matchingSeq = useRef(0);
@@ -248,10 +249,13 @@ export function useProductTargetPicker(sourceProductId: string): {
         pageSize: MAX_COPY_TARGETS + 1,
       });
       if (matchingSeq.current !== mine) return;
-      const ids = res.data
+      const eligible = res.data
         .map((p) => p.id)
-        .filter((id) => id !== sourceProductId)
-        .slice(0, MAX_COPY_TARGETS);
+        .filter((id) => id !== sourceProductId);
+      const ids = eligible.slice(0, MAX_COPY_TARGETS);
+      setMatchingTotal(
+        eligible.length > MAX_COPY_TARGETS ? res.pagination.total : null,
+      );
       setRowSelection(Object.fromEntries(ids.map((id) => [id, true])));
       setMatchingActive(true);
     } catch (err) {
@@ -367,7 +371,9 @@ export function useProductTargetPicker(sourceProductId: string): {
     </DataGrid>
   );
 
-  return { picked, overCap, grid };
+  // The matching total of a Select all that was cut to the cap; null once the set is hand-edited.
+  const cappedFrom = matchingActive ? matchingTotal : null;
+  return { picked, overCap, cappedFrom, grid };
 }
 
 /** The picker step's footer count. */

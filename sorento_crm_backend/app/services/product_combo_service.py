@@ -302,8 +302,13 @@ class ProductComboService:
         products do not, and a request line pointing at it has its `combo_id`
         cleared by the FK's own SET NULL rather than being deleted (AC-S1-5)."""
         combo = self._combo_or_404(combo_id)
+        attachment_id = combo.image_attachment_id
         self.db.delete(combo)
+        self.db.flush()
+        sweep = self._unlink_combo_image(combo, attachment_id) if attachment_id else None
         self.db.commit()
+        if sweep:
+            delete_object_best_effort(*sweep)
 
     # ------------------------------------------------------------------- copy
 
