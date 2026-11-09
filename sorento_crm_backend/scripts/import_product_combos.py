@@ -59,7 +59,7 @@ STRICT FLYER SEED
 `--strict` loads a flyer seed under stricter rules and prints one line per entry in seed order,
 `<VERDICT> | <host> | <combo> | p<page> | <details>`, then a count per verdict:
 * An entry whose host, part code or free item is not in the catalogue is not written at all
-  (UNMATCHED, `missing: ...`). A discontinued part is not loaded and is named in the details.
+  (UNMATCHED, `missing: ...`). A discontinued part loads like any part and is named in the details.
 * A seed entry's `aka` lists earlier names of the same combo on that host; the exact name wins,
   then an aka, and the name on file is kept.
 * A free item carries `kind`: "product" is the catalogue product with that code, "accessory" is the
@@ -613,7 +613,6 @@ def process_entry_strict(
     if host is None:
         missing.append((entry.get("host_code") or "").strip() or "no host code")
     keep: list[dict] = []
-    held_back: set = set()
     notes: list[str] = []
     discontinued_codes: list[str] = []
     if host is not None and host.is_discontinued:
@@ -624,15 +623,13 @@ def process_entry_strict(
             missing.append(f"no code ({part['role'] or 'part'})")
         elif product is None:
             missing.append(part["code"])
-        elif product.is_discontinued:
-            held_back.add(product.id)
-            if product.product_code not in discontinued_codes:
-                discontinued_codes.append(product.product_code)
         elif (host is None or product.id != host.id) and not any(k["product"].id == product.id for k in keep):
             keep.append({**part, "product": product})
+            if product.is_discontinued and product.product_code not in discontinued_codes:
+                discontinued_codes.append(product.product_code)
     if discontinued_codes:
-        notes.append(f"not loaded (discontinued): {', '.join(discontinued_codes)}")
-    part_ids = {k["product"].id for k in keep} | held_back
+        notes.append(f"loaded (discontinued): {', '.join(discontinued_codes)}")
+    part_ids = {k["product"].id for k in keep}
     names = {name.lower(), *((a or "").strip().lower() for a in entry.get("aka") or [])} - {""}
     host_combos = (
         db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).order_by(ProductCombo.name).all()
@@ -714,7 +711,7 @@ def process_entry_strict(
             seed_set = {k["product"].id: (k["group"], k["upgrade"]) for k in keep}
             file_set = {
                 pid: ((part.choice_group or None), bool(part.is_upgrade))
-                for pid, part in have.items() if pid not in held_back
+                for pid, part in have.items()
             }
             if seed_set != file_set:
                 def listing(groups: dict) -> str:
