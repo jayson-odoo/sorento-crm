@@ -541,12 +541,14 @@ export function InspectorPanel({
             <SearchableSelect
               value={layer.slot_binding ?? '__none__'}
               onChange={(v: string) => {
-                update({ slot_binding: (v === '__none__' ? null : v) as SlotBinding });
-                // The upgrade figures start with the words the card prints before them.
+                // The upgrade figures start with the words the card prints before them: binding and
+                // prefix go in ONE update, so one undo takes both back.
                 const prefix = UPGRADE_SLOT_PREFIX[v];
-                if (prefix && layer.props.kind === 'text' && layer.props.prefix === undefined) {
-                  updateProps({ ...layer.props, prefix });
-                }
+                const seedPrefix = prefix && layer.props.kind === 'text' && layer.props.prefix === undefined;
+                update({
+                  slot_binding: (v === '__none__' ? null : v) as SlotBinding,
+                  ...(seedPrefix ? { props: { ...layer.props, prefix } as TagLayerProps } : {}),
+                });
               }}
               options={SLOT_BINDING_OPTIONS}
             />
@@ -885,20 +887,6 @@ function TextInspector({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Typography controls, shared by the text and price badge sections (S6b)
-// ---------------------------------------------------------------------------
-
-/** Every side at 0mm - an absent `padding` reads as this (S3). */
-const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
-
-/**
- * Top/Right/Bottom/Left, one `NumberInput` each (S3, S3b).
- *
- * Shared by the Padding row every layer that has one shows, and the Margin
- * row a price badge shows above it (S3b, AC-6) - the same four fields either
- * way, only which `LayerPadding` they read and write differs.
- */
 /** The upgrade figures' own controls: the words before the figure, the currency (on unless turned
  *  off, like the card's Top-up), and what a layer on "Upgrade N" asks of a combo (mock state H). */
 function UpgradeFigureControls({
@@ -943,6 +931,20 @@ function UpgradeFigureControls({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Typography controls, shared by the text and price badge sections (S6b)
+// ---------------------------------------------------------------------------
+
+/** Every side at 0mm - an absent `padding` reads as this (S3). */
+const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
+
+/**
+ * Top/Right/Bottom/Left, one `NumberInput` each (S3, S3b).
+ *
+ * Shared by the Padding row every layer that has one shows, and the Margin
+ * row a price badge shows above it (S3b, AC-6) - the same four fields either
+ * way, only which `LayerPadding` they read and write differs.
+ */
 function SidesInput({
   value,
   onChange,
