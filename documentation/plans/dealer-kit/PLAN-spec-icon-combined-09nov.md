@@ -1,6 +1,6 @@
 # PLAN: price tag icon linked to a combination of spec values (SPEC-ICON-COMBINED, 9 Nov)
 
-Status: Build (all 5 answered, card closed 9 Nov). Red-first tests next. Track: standard lane, size M (one additive migration, so not the small fix track).
+Status: built and reviewed (reviewer READY, cloud browser pass PASS incl. designer preview and rendered tag PDF); owner hand test next (PR #2291). Track: standard lane, size M (one additive migration, so not the small fix track).
 
 Owner, 9 Nov: an icon "S trap 150mm" means trap type = S AND outlet length = 150 mm. Today an icon
 hangs on ONE spec value (ruling 5 Nov). Owner OK'd a proper rule: an icon can be linked to a
