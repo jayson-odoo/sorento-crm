@@ -524,8 +524,9 @@ writes.WRITES[GRANT] = writes.WriteDef(
                 "contact. For a table, use crm_batch_propose with this write and one row per person. A message "
                 "that names people, their phones, Owner or Employee and the dealer is such a table too: one row "
                 "per person, and the dealer's name goes in customer_names unless customer codes are given. Use the "
-                "table's values as written: never invent a phone, code or name. Nothing changes until the user "
-                "confirms."
+                "table's values as written: never invent a phone, code or name. Every row goes through this tool, "
+                "even for a phone you think is staff or not allowed: the tool decides and words every refusal. "
+                "Nothing changes until the user confirms."
             ),
             "parameters": {
                 "type": "object",
@@ -550,7 +551,11 @@ writes.WRITES[GRANT] = writes.WriteDef(
                     "customer_codes": {**_TEXT_LIST, "description": "Customer codes as written in the table."},
                     "customer_names": {
                         **_TEXT_LIST,
-                        "description": "Customer names as written, when the table gives no code.",
+                        "description": (
+                            "The dealer or customer name exactly as the user typed it (copy their words), when the "
+                            "table gives no code; never a name you searched, found or corrected: the user's own "
+                            "words are what the pick table shows back."
+                        ),
                     },
                 },
                 "required": ["phone", "role", "companies"],

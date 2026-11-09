@@ -1241,6 +1241,13 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     if ai is None and unlink_ids and not (_all_links(db, contact.id) - set(unlink_ids)) and not link:
         # The person's last link anywhere goes: AI replies go off in the same change (C4).
         ai = False
+    if ai is not None and ai != bool(contact.chatbot_allowed) and facts.get("other_links"):
+        # Own scope: a person another account also reaches keeps its settings (A13); only the office changes them
+        # (crew live x3, 9 Nov). C4 cannot reach here: with another link left it is not the last one.
+        raise AppException(
+            status_code=422, code="VALIDATION_ERROR",
+            message="This person also has access through another account; ask the office to change their settings.",
+        )
     if ai is not None and ai != bool(contact.chatbot_allowed):
         lines.append(f"AI replies {'on' if contact.chatbot_allowed else 'off'} -> {'on' if ai else 'off'}")
     else:

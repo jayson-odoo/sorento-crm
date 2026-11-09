@@ -968,7 +968,8 @@ def _leak_check(blobs: dict, hidden: tuple) -> None:
             assert secret not in blob, f"the other account's {secret!r} leaked into the {label}"
 
 
-@pytest.mark.parametrize("change", ["unlink own", "ai off"])
+# "ai off" on a shared contact is refused since crew live x3 (C6); C6 checks that refusal names nothing.
+@pytest.mark.parametrize("change", ["unlink own"])
 def test_C5_own_scope_update_never_names_another_salespersons_account(db, change):
     from app.models.chatbot_agent import AgentAction
     from app.services.chatbot.agent import batch
@@ -1278,7 +1279,8 @@ def test_B3_an_own_scope_stored_action_carries_own_link_ids_and_a_count_of_the_o
 # ------------------------------------------------------------------ review round 2 (B3 update tool, security L1/L2)
 
 
-@pytest.mark.parametrize("change", ["unlink own", "ai off"])
+# "ai off" on a shared contact is refused since crew live x3 (C6); C6 checks that refusal names nothing.
+@pytest.mark.parametrize("change", ["unlink own"])
 def test_B3_own_scope_update_never_stores_the_id_of_another_salespersons_account(db, change):
     from app.models.chatbot_agent import AgentAction
 
@@ -1388,3 +1390,64 @@ def test_D2_an_edit_own_salesperson_without_agent_access_gets_the_normal_refusal
     with pytest.raises(AgentRefused) as exc:
         build_context(db, w.respond_id)
     assert exc.value.reason == "switch_off"
+
+
+# ------------------------------------------------------------------ C6 crew live x3 9 Nov: every setting is guarded
+
+SETTINGS_REFUSED = "This person also has access through another account; ask the office to change their settings."
+
+
+@pytest.mark.parametrize("ai", [True, False])
+def test_C6_own_scope_ai_replies_change_on_a_contact_another_account_reaches_is_refused(db, ai):
+    """Crew live x3 (9 Nov, run 2 step 10): the agent proposed "AI replies off -> on" for a contact another dealer's
+    account also reaches. A13 keeps such a contact's settings as they are: the update tool refuses the change."""
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, customers=(w.cust_a, o.theirs))
+    with company_scope(db, None):
+        row = db.get(RespondContact, person.id)
+        row.chatbot_allowed = not ai
+    db.flush()
+
+    res, step = update_step(db, w, {"contact_id": person.id, "chatbot_allowed": ai}, seen={person.id})
+
+    assert step is None and res.status in ("invalid", "denied")
+    assert SETTINGS_REFUSED in (res.message or "")
+    for hidden in (o.theirs.customer_code, o.theirs.customer_name, str(o.theirs.id)):
+        assert hidden not in (res.message or "")
+    assert state(db, person.phone_number)["chatbot_allowed"] is (not ai)
+
+
+def test_C6_own_scope_unlinking_an_own_account_of_a_shared_contact_still_applies(db):
+    """The guard is on settings, not on the salesperson's own links: they can still take their account away."""
+    o = own_world(db)
+    w = o.w
+    person = ai_on(db, dealer(db, w, customers=(w.cust_a, o.theirs)))
+
+    step, _ = update_and_confirm(
+        db, w, {"contact_id": person.id, "unlink_customer_ids": [str(w.cust_a.id)]}, seen={person.id, w.cust_a.id}
+    )
+
+    assert "AI replies" not in step["summary"]
+    after = state(db, person.phone_number)
+    assert str(w.cust_a.id) not in after["links"] and after["chatbot_allowed"] is True
+
+
+# ------------------------------------------------------------------ crew live x3 9 Nov: the tool contract
+
+
+def test_contract_the_grant_takes_the_dealer_name_as_typed_and_refusals_come_from_the_tool():
+    from app.services.chatbot.agent import batch, writes
+
+    grant = writes.WRITES[GRANT].schema["function"]
+    names = grant["parameters"]["properties"]["customer_names"]["description"]
+    assert "exactly as the user typed it" in names and "never a name you searched" in names
+    assert "even for a phone you think is staff" in grant["description"]
+    import inspect
+
+    import re
+
+    # The batch description needs a db and a ctx to build: read it from the source, adjacent literals joined.
+    desc = re.sub(r'"\s*\n\s*(?:f)?"', "", inspect.getsource(batch.batch_tool_schema))
+    assert "Never word a refusal or a skipped reason yourself" in desc
+    assert "never show a table of rows that this tool did not return" in desc

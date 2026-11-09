@@ -81,6 +81,12 @@ C5. Own scope, no leak in the update tool either: the preview, the stored action
     other field), the confirm result and the audit row never carry the code or name of an account that is not own;
     such a link reads `another account`.
 
+C6. Own scope, a contact another account also reaches: every settings change in the update tool is refused, not only
+    the level (crew live x3, 9 Nov): an AI replies change gets `This person also has access through another account;
+    ask the office to change their settings.` The salesperson can still unlink their OWN accounts from that person.
+    Tool contract: the dealer name is passed exactly as the user typed it (the pick table echoes it), every row goes
+    through the tool (staff phones included), and refusals and skipped reasons are the tool's own words.
+
 ## D. Permission
 
 D1. Migration grants `user_management.contacts.edit_own` to role `salesperson` (idempotent) and seeds the two owner

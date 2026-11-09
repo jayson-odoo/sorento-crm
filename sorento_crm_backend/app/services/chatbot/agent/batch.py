@@ -85,7 +85,9 @@ def batch_tool_schema(db, ctx) -> dict | None:
                 "corrected rows to replace the proposal. Send EVERY row of the current request: ready, waiting and "
                 "not changed alike, so the user sees the whole table. Leave out only a row of an earlier card the "
                 "user already cancelled or confirmed (the history says 'Card cancelled' or 'Card confirmed'), "
-                "unless the user's latest message asks for that row again; such a row comes back as skipped."
+                "unless the user's latest message asks for that row again; such a row comes back as skipped. "
+                "Never word a refusal or a skipped reason yourself: call this tool and show its result; and never "
+                "show a table of rows that this tool did not return."
             ),
             "parameters": {
                 "type": "object",
