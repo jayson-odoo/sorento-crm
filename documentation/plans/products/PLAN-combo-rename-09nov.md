@@ -42,3 +42,11 @@ crew-lane: COMBO-RENAME. Base: main 609b53bb.
 ## UAC
 
 See `combo-rename-acceptance-criteria.md`.
+
+## Assistant coverage (DoD 6 to 8)
+
+- 6: n/a, no new list screen.
+- 7: no `ActionDef`. No combo write has one today (`app/services/assistant_registry/` has no combo entries: prices,
+  description, parts and delete are all UI-only), and rename is one more field on the same PATCH. Trigger: when combo
+  editing gets assistant actions, rename joins them.
+- 8: n/a for the same reason (no combo assistant feature to evaluate).
