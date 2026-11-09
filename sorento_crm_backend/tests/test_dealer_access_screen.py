@@ -1125,21 +1125,22 @@ def test_S7_a_refused_form_runs_the_plan_for_the_rows_and_executes_nothing(db, m
     assert executed == []
 
 
-def test_S7_update_goes_through_the_agents_contact_execute(db, monkeypatch):
-    from app.services.chatbot.agent import writes
+def test_S7_update_links_through_the_grant_and_calls_the_access_update_only_for_unlinks_or_a_role(db, monkeypatch):
+    from app.services.chatbot.agent import contact_grant, writes
 
     o = two_sales(db)
     w = o.w
     person = dealer(db, w, customers=(w.cust_a,), name="ZZT Seven Update")
-    executed = spy(monkeypatch, writes, "_contact_execute")
+    granted = spy(monkeypatch, contact_grant, "_execute")
+    changed = spy(monkeypatch, writes, "_contact_execute")
 
     service().update(db, o.s1, str(person.id), "SRT", "employee", ids_of(w.cust_a, w.twin1))
 
-    assert len(executed) == 1
-    args = executed[0][2]
-    assert str(args["contact_id"]) == str(person.id)
-    assert args["link_customer_ids"] == [str(w.twin1.id)] and not args.get("unlink_customer_ids")
-    assert "role" not in args or args["role"] is None  # the role did not differ
+    assert len(granted) == 1
+    args = granted[0][2]
+    assert args["role"] == "employee" and args["companies"] == ["SRT"]
+    assert args["customer_codes"] == [w.twin1.customer_code]
+    assert changed == []  # nothing to unlink and the role did not differ
 
 
 def test_S7_update_sends_the_role_only_when_it_differs_and_unlinks_my_unpicked_accounts(db, monkeypatch):
