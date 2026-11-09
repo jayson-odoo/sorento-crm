@@ -822,7 +822,11 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
                 partner = partners.get(key)
                 if partner is None:
                     if (key, raw) in already:
-                        continue  # a partner taken away since: the stored condition just goes
+                        # A partner taken away since: the stored condition STAYS (dropping it
+                        # would widen the icon to every product holding the host value).
+                        seen.add(key)
+                        cleaned.append({"spec_key": key, "value": raw})
+                        continue
                     raise _refuse_condition(f'"{key}" is not another active spec.')
                 if key in seen:
                     raise _refuse_condition(f"{partner.label} is used twice on one icon.")
@@ -834,7 +838,8 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
                     raw = normal
                 elif raw not in spec_value_keys(partner):
                     if (key, raw) in already:
-                        continue  # a choice taken away since
+                        cleaned.append({"spec_key": key, "value": raw})  # kept, see above
+                        continue
                     raise _refuse_condition(f'"{raw}" is not one of {partner.label}\'s values.')
                 cleaned.append({"spec_key": key, "value": raw})
             if cleaned:

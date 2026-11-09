@@ -452,8 +452,13 @@ def test_B4_a_stale_stored_condition_does_not_block_the_next_save(reg):
         {"mixer": {hot.id: [stale], cold.id: [fresh]}},
     )
     assert res.status_code == 200, res.text
-    assert _stored(db, host).value_icon_conditions == {"mixer": {cold.id: [fresh]}}
+    # The stale condition stays: dropping it would widen the icon to every product on this value.
+    assert _stored(db, host).value_icon_conditions == {"mixer": {hot.id: [stale], cold.id: [fresh]}}
+    assert [r["conditions"] for r in _rules_for(db, host) if r["id"] == hot.id] == [[stale]]
 
     # A NEW condition on a value the partner no longer offers is still refused.
-    res = _patch_both(client, host, {"mixer": [hot.id]}, {"mixer": {hot.id: [stale]}})
+    res = _patch_both(
+        client, host, {"mixer": [hot.id, cold.id]},
+        {"mixer": {hot.id: [stale], cold.id: [stale]}},
+    )
     assert res.status_code == 422, res.text
