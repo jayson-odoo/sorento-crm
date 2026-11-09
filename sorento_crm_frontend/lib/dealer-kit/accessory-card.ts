@@ -23,6 +23,7 @@ import {
   type LayoutProps,
 } from './accessory-box';
 import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
+import { hasMergeField, renderMergeFields, renderPriceTagDescription } from './merge-fields';
 import { formatTagPrice } from './price-badge';
 import { isRich, parseRichText, richPlainText } from './rich-text';
 import { textLayerLines } from './text-layout';
@@ -43,6 +44,12 @@ import { defaultAccessoriesProps } from './tag-template-types';
 const EPS = 1e-9;
 /** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
 export const CARD_SHRINK_MIN = 0.7;
+/**
+ * TAG-ACC-CARD-RESIZE Q1: a box too small for one card at `shrinkMin` keeps shrinking that card
+ * down to this readable floor instead of drawing nothing; below the floor the card is drawn at the
+ * floor, clipped to the box (`clipped`).
+ */
+export const CARD_SHRINK_FLOOR = 0.35;
 
 export type CardBoxProps = LayoutProps &
   Pick<AccessoriesLayerProps, 'card' | 'footer' | 'shrinkMin' | 'columns'>;
@@ -54,6 +61,8 @@ export interface CardBoxLayout extends AccessoryBoxLayout {
   footer: AccessoryRect | null;
   /** Columns actually drawn (a grid may draw fewer than asked when the card is too wide). 0 = nothing drawn. */
   columns: number;
+  /** True when even the floor-sized card overflows the box: renderers clip the cards to the box. */
+  clipped: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +97,7 @@ export function cardBoxLayout(
     scale: 1,
     footer: null,
     columns: 0,
+    clipped: false,
   });
   if (total === 0) return empty(0);
   const card = props.card;
@@ -102,9 +112,60 @@ export function cardBoxLayout(
   const min = Math.min(1, Math.max(0.1, props.shrinkMin ?? CARD_SHRINK_MIN));
 
   const innerW = boxWidth_mm - 2 * pad;
+  const availH = boxHeight_mm - top - pad - footerH;
+
+  /**
+   * TAG-ACC-CARD-RESIZE Q1: not even one card fits at `min`. One column (or one row), every card at
+   * the largest factor at which one whole card fits, never above `min` nor below the floor; under
+   * the floor one card is drawn at the floor and clipped to the box. Only boxes that drew NOTHING
+   * before reach this, so every layout that already printed is unchanged.
+   */
+  const tooSmall = (): CardBoxLayout => {
+    // A saved design missing a number (e.g. no gap) lays out nothing rather than throwing.
+    if (!Number.isFinite(gap) || !Number.isFinite(innerW) || !Number.isFinite(availH)) return empty(total);
+    const vertical = props.columns !== undefined && props.columns !== null ? true : props.direction !== 'horizontal';
+    const floor = Math.min(CARD_SHRINK_FLOOR, min);
+    const oneFits = Math.min(innerW / card.width_mm, availH / card.height_mm);
+    const clipped = !(oneFits >= floor - EPS);
+    const scale = clipped ? floor : Math.min(min, oneFits);
+    const w = card.width_mm * scale;
+    const h = card.height_mm * scale;
+    const availMain = vertical ? availH : innerW;
+    const mainAt = vertical ? h : w;
+    const shown = clipped
+      ? 1
+      : Math.min(total, Math.max(1, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
+    const cards: AccessoryRect[] = [];
+    for (let i = 0; i < shown; i += 1) {
+      cards.push(
+        vertical
+          ? { x_mm: pad, y_mm: top + i * (h + gap), width_mm: w, height_mm: h }
+          : { x_mm: pad + i * (w + gap), y_mm: top, width_mm: w, height_mm: h },
+      );
+    }
+    const last = cards[shown - 1];
+    const cardsBottom = last.y_mm + last.height_mm;
+    const outW = clipped || vertical ? boxWidth_mm : last.x_mm + last.width_mm + pad;
+    const outH = clipped ? boxHeight_mm : vertical ? cardsBottom + footerH + pad : boxHeight_mm;
+    return {
+      cards,
+      shown,
+      dropped: total - shown,
+      boxWidth_mm: outW,
+      boxHeight_mm: outH,
+      ...accessoryChrome(props, outW, outH),
+      scale,
+      columns: vertical ? 1 : shown,
+      footer:
+        footerH > 0
+          ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }
+          : null,
+      clipped,
+    };
+  };
+
   if (props.columns !== undefined && props.columns !== null) {
     // S6 grid: cards fill left to right, wrap to the next row, every card the same size.
-    const availH = boxHeight_mm - top - pad - footerH;
     const wanted =
       props.columns === 'auto'
         ? Math.floor((innerW + gap + EPS) / (card.width_mm + gap))
@@ -125,10 +186,11 @@ export function cardBoxLayout(
     }
     const cw = card.width_mm * scale;
     const ch = card.height_mm * scale;
-    if (cw > innerW + EPS || !(ch > 0)) return empty(total);
+    if (!(ch > 0)) return empty(total);
+    if (cw > innerW + EPS) return tooSmall();
     const maxRows = Math.floor((availH + gap + EPS) / (ch + gap));
     const gridShown = Math.min(total, Math.max(0, maxRows) * cols);
-    if (gridShown === 0) return empty(total);
+    if (gridShown === 0) return tooSmall();
     const gridCards: AccessoryRect[] = [];
     for (let i = 0; i < gridShown; i += 1) {
       gridCards.push({
@@ -149,6 +211,7 @@ export function cardBoxLayout(
       ...accessoryChrome(props, boxWidth_mm, gridOutH),
       scale,
       columns: cols,
+      clipped: false,
       footer:
         footerH > 0
           ? { x_mm: pad, y_mm: gridBottom, width_mm: Math.max(0, boxWidth_mm - 2 * pad), height_mm: footerH }
@@ -157,8 +220,8 @@ export function cardBoxLayout(
   }
 
   const vertical = props.direction !== 'horizontal';
-  const availMain = vertical ? boxHeight_mm - top - pad - footerH : innerW;
-  const availCross = vertical ? innerW : boxHeight_mm - top - pad - footerH;
+  const availMain = vertical ? availH : innerW;
+  const availCross = vertical ? innerW : availH;
   const cardMain = vertical ? card.height_mm : card.width_mm;
   const cardCross = vertical ? card.width_mm : card.height_mm;
 
@@ -166,10 +229,12 @@ export function cardBoxLayout(
   const scale = fit >= min ? fit : min;
 
   const mainAt = cardMain * scale;
-  if (cardCross * scale > availCross + EPS || !(mainAt > 0)) return empty(total);
+  if (!(mainAt > 0)) return empty(total);
+  if (cardCross * scale > availCross + EPS) return tooSmall();
   const shown = Math.min(total, Math.max(0, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
   // NaN-safe: a design missing a number (e.g. no gap) lays out nothing rather than throwing.
-  if (!(shown > 0)) return empty(total);
+  if (Number.isNaN(shown)) return empty(total);
+  if (!(shown > 0)) return tooSmall();
 
   const w = card.width_mm * scale;
   const h = card.height_mm * scale;
@@ -194,6 +259,7 @@ export function cardBoxLayout(
     ...accessoryChrome(props, outW, outH),
     scale,
     columns: vertical ? 1 : shown,
+    clipped: false,
     footer:
       footerH > 0
         ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }
@@ -321,6 +387,58 @@ function resolveElements(elements: readonly CardElement[], resolve: Resolver): R
   return out;
 }
 
+/**
+ * TAG-ACC-CARD-RESIZE Q4: one accessory as the bound product, so a card's fixed text resolves
+ * `{{product.*}}` through the ONE merge-field resolver a normal text layer uses (no second
+ * resolver). A catalogue product carries its code, name, prices, spec lines and price tag
+ * description; a library accessory has a name and a spec (read as both its description and its
+ * spec lines), and every other field resolves to nothing.
+ */
+export function accessoryBinding(item: TagAccessory): TagBindingData {
+  const spec = item.spec ?? null;
+  const specPlain = spec ? (isRich(spec) ? richPlainText(spec) : spec) : '';
+  const ownLines = specPlain.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    kind: 'product',
+    product: {
+      id: item.id,
+      code: item.code ?? '',
+      name: item.name ?? '',
+      dimensions: '',
+      spec_lines: item.spec_lines ?? ownLines,
+      specs: item.specs ?? [],
+      images: [],
+      list_price: item.list_price ?? null,
+      offer_price: item.sell_price ?? null,
+      promotion_id: null,
+      barcode: null,
+      // A catalogue product's and an upgrade's own copy; a library accessory's (or an older pin's) spec.
+      price_tag_description: item.price_tag_description ?? spec,
+    },
+  };
+}
+
+const TOKEN = /\{\{\s*[A-Za-z0-9_.]+\s*\}\}/g;
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** A card's fixed text with its fields resolved for `item`; text with no field is returned as is. */
+function cardFixedText(item: TagAccessory, text: string): string {
+  if (!hasMergeField(text)) return text;
+  const binding = accessoryBinding(item);
+  const rich = (value: string) =>
+    value.replace(TOKEN, (token) => escapeHtml(renderMergeFields(token, binding, 'print')));
+  // The description alone keeps its formatting, as a normal text layer draws it (`layerRichBlocks`).
+  const description = binding.kind === 'product' ? binding.product.price_tag_description : null;
+  if (/^\s*\{\{\s*product\.price_tag_description\s*\}\}\s*$/.test(text) && description && isRich(description)) {
+    return rich(description);
+  }
+  // Rich: each field's value goes in escaped, so a value never becomes markup.
+  if (isRich(text)) return rich(text);
+  // Plain: a line whose fields all came back empty is dropped with no gap (the description rule).
+  return renderPriceTagDescription(text, binding, 'print');
+}
+
 function textOf(value: string | string[] | null): string | null {
   return typeof value === 'string' && !isBlank(value) ? value : null;
 }
@@ -357,7 +475,7 @@ export function cardElementsFor(
       case 'text': {
         const text = element.field
           ? withPrefix(element, textOf(cardFieldValue(item, element.field)))
-          : textOf(element.text ?? null);
+          : textOf(element.text != null ? cardFixedText(item, element.text) : null);
         return text ? { ...element, text } : null;
       }
       case 'feature_icons': {
@@ -394,7 +512,11 @@ export function cardElementsForDesign(
           return { ...element, colours };
         }
         case 'text': {
-          if (!element.field) return { ...element, text: element.text ?? '' };
+          if (!element.field) {
+            // Fields resolve against this item; nothing to show, the typed text stays so it can be placed.
+            const typed = element.text ?? '';
+            return { ...element, text: textOf(cardFixedText(item, typed)) ?? typed };
+          }
           const own = textOf(cardFieldValue(item, element.field));
           const value = own ?? textOf(cardFieldValue(sample, element.field)) ?? cardFieldValue(upgradeSample, element.field);
           return { ...element, text: withPrefix(element, typeof value === 'string' ? value : '') ?? '' };
@@ -500,6 +622,38 @@ export function drawableFeatureIcons(
 
 /** A card text element as the text-layer props the text layout and both renderers already use,
  *  with the font drawn at `scale`. `boxFont` is the box's own family, used when the element has none. */
+/**
+ * Owner 9 Nov ~22:30: a card Text element styles like the box header: a background (`fill`, the
+ * Transparent swatch = none) with `cornerRadius_mm` behind the whole element, and `padding` around
+ * the text. All in card millimetres at the card's shrink `scale`. Canvas and print both call it; with
+ * none of the three stored the text box is the element itself, exactly as before.
+ */
+export function cardTextBox(
+  element: Pick<CardElement, 'width_mm' | 'height_mm' | 'fill' | 'cornerRadius_mm' | 'padding'>,
+  scale = 1,
+): {
+  background: { fill: string; radius_mm: number; width_mm: number; height_mm: number } | null;
+  text: AccessoryRect;
+} {
+  const w = element.width_mm * scale;
+  const h = element.height_mm * scale;
+  const fill = element.fill && element.fill !== 'transparent' ? element.fill : null;
+  const pad = element.padding;
+  const top = (pad?.top ?? 0) * scale;
+  const right = (pad?.right ?? 0) * scale;
+  const bottom = (pad?.bottom ?? 0) * scale;
+  const left = (pad?.left ?? 0) * scale;
+  return {
+    background: fill ? { fill, radius_mm: (element.cornerRadius_mm ?? 0) * scale, width_mm: w, height_mm: h } : null,
+    text: {
+      x_mm: left,
+      y_mm: top,
+      width_mm: Math.max(0, w - left - right),
+      height_mm: Math.max(0, h - top - bottom),
+    },
+  };
+}
+
 export function cardTextProps(element: CardElement, scale = 1, boxFont?: string): TextLayerProps {
   return {
     kind: 'text',
@@ -695,6 +849,7 @@ export function accessoryDesignSamples(list?: AccessoriesLayerProps['list']): Ta
     remark: 'Remark',
     code: 'CODE',
     list_price: 68,
+    sell_price: 59,
     image: null,
     images: [],
     colours,

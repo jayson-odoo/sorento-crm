@@ -1739,6 +1739,15 @@ export function TagCanvasEditor({
     [accessoryEdit, patchAccessoryProps],
   );
 
+  /** TAG-ACC-CARD-RESIZE Q3: the card frame's handles set the design size of every card in the box. */
+  const resizeAccessoryCard = useCallback(
+    (size: { width_mm: number; height_mm: number }) => {
+      if (!accessoryEdit || accessoryEdit.target !== 'card') return;
+      patchAccessoryProps(accessoryEdit.layerId, (p) => (p.card ? { ...p, card: { ...p.card, ...size } } : p));
+    },
+    [accessoryEdit, patchAccessoryProps],
+  );
+
   /** Arrow keys while a card is edited move the selected element, in card millimetres. */
   const nudgeAccessoryElement = useCallback(
     (dx: number, dy: number) => {
@@ -1909,7 +1918,9 @@ export function TagCanvasEditor({
   /** What the canvas draws for a layer: the box under edit shows its previewed list (samples when it has
    *  none), card 1 as the editable frame. */
   const displayFor = (layer: TagLayer) => {
-    const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    const shown = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    // TAG-ACC-CARD-RESIZE Q2: the editor (never print) marks the cards a box has no room for.
+    const display = layer.props.kind === 'accessories' ? { ...shown, accessoryDropMarker: true } : shown;
     if (headerDragId === layer.id) return { ...display, accessoryHeaderHidden: true };
     if (accessoryEdit?.layerId !== layer.id) return display;
     // Under edit the box's OWN design is what is edited, never a previewed owner's override.
@@ -4745,6 +4756,7 @@ export function TagCanvasEditor({
                               setAccessoryEdit((prev) => (prev ? { ...prev, elementId } : prev))
                             }
                             onUpdateElement={updateAccessoryElement}
+                            onResizeCard={resizeAccessoryCard}
                           />
                         ) : null;
                       })()}

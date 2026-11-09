@@ -258,9 +258,9 @@ def test_mixer_maps_to_hot_and_cold_in_the_admins_order(reg):
     )
 
     assert _rules_for(db, key) == [
-        {"id": cold.id, "name": "ZZT cold", "spec_key": key, "values": ["cold_only"]},
-        {"id": hot.id, "name": "ZZT hot", "spec_key": key, "values": ["mixer"]},
-        {"id": cold.id, "name": "ZZT cold", "spec_key": key, "values": ["mixer"]},
+        {"id": cold.id, "name": "ZZT cold", "spec_key": key, "values": ["cold_only"], "conditions": []},
+        {"id": hot.id, "name": "ZZT hot", "spec_key": key, "values": ["mixer"], "conditions": []},
+        {"id": cold.id, "name": "ZZT cold", "spec_key": key, "values": ["mixer"], "conditions": []},
     ]
 
 
@@ -359,7 +359,7 @@ def test_the_dealer_kit_feature_icons_route_lists_rules_with_urls(reg, monkeypat
     assert res.status_code == 200, res.text
     mine = [r for r in res.json() if r["spec_key"] == key]
     assert mine == [
-        {"id": icon.id, "name": "ZZT route", "spec_key": key, "values": ["a"],
+        {"id": icon.id, "name": "ZZT route", "spec_key": key, "values": ["a"], "conditions": [],
          "url": f"https://s.test/{icon.id}"},
     ]
 

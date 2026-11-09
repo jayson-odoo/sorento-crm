@@ -465,6 +465,7 @@ def _layer_has_feature_icons(layer: dict) -> bool:
 
 #: The most icons one spec value may carry.
 MAX_ICONS_PER_VALUE = 10
+MAX_CONDITIONS_PER_ICON = 5
 BOOLEAN_VALUES = ("true", "false")
 
 
@@ -593,6 +594,7 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
     out: list[dict] = []
     for row in rows:
         mapping = row.value_icons or {}
+        conditions = row.value_icon_conditions or {}
         ordered = spec_value_keys(row, numeric.get(row.spec_key, []))
         # A value the key no longer lists keeps its icons (a product may still hold it).
         ordered += sorted(value for value in mapping if value not in ordered)
@@ -605,6 +607,10 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
                             "name": names[asset_id],
                             "spec_key": row.spec_key,
                             "values": [value],
+                            "conditions": [
+                                {"spec_key": c["spec_key"], "value": c["value"]}
+                                for c in (conditions.get(value) or {}).get(asset_id) or []
+                            ],
                         }
                     )
     return out
@@ -849,6 +855,96 @@ def prune_value_icons(row) -> None:
     kept = {value: ids for value, ids in current.items() if value in live}
     if kept != current:
         row.value_icons = kept
+    drop_orphan_icon_conditions(row)
+
+
+def drop_orphan_icon_conditions(row) -> None:
+    """Conditions live and die with their (value, icon) pair: drop any whose pair is gone."""
+    current = row.value_icon_conditions or {}
+    icons = row.value_icons or {}
+    kept = {}
+    for value, by_icon in current.items():
+        survivors = {i: c for i, c in (by_icon or {}).items() if i in (icons.get(value) or [])}
+        if survivors:
+            kept[value] = survivors
+    if kept != current:
+        row.value_icon_conditions = kept
+
+
+def _refuse_condition(message: str) -> AppException:
+    return AppException(status_code=422, message=message, code="spec_registry_icon_condition")
+
+
+def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) -> dict:
+    """A ``value_icon_conditions`` save, validated, against ``row.value_icons`` (already cleaned).
+
+    The payload replaces the conditions of icons the caller can see; another company's hidden icon
+    keeps its stored conditions. Refused (422): a pair not in ``value_icons``, a partner that is
+    not an active registry key other than this one, a repeated partner, a value outside the
+    partner's vocabulary (a number for a numeric partner, stored normalised), more than
+    ``MAX_CONDITIONS_PER_ICON``.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    icons = row.value_icons or {}
+    partners = {r.spec_key: r for r in active_registry(db) if r.spec_key != row.spec_key}
+    stored = row.value_icon_conditions or {}
+    sent: dict[str, dict[str, list[dict]]] = {}
+    for value, by_icon in (conditions or {}).items():
+        value = str(value).strip()
+        for icon_id, listed in (by_icon or {}).items():
+            icon_id = _uuid_text(icon_id) or str(icon_id).strip()
+            if icon_id not in (icons.get(value) or []):
+                raise _refuse_condition("A condition belongs to an icon set on that value.")
+            if len(listed or []) > MAX_CONDITIONS_PER_ICON:
+                raise _refuse_condition(f"At most {MAX_CONDITIONS_PER_ICON} conditions per icon.")
+            seen: set[str] = set()
+            cleaned: list[dict] = []
+            already = {
+                (c.get("spec_key"), c.get("value")) for c in (stored.get(value) or {}).get(icon_id) or []
+            }
+            for item in listed or []:
+                key = str(item.get("spec_key") or "").strip()
+                raw = str(item.get("value") if item.get("value") is not None else "").strip()
+                partner = partners.get(key)
+                if partner is None:
+                    if (key, raw) in already:
+                        # A partner taken away since: the stored condition STAYS (dropping it
+                        # would widen the icon to every product holding the host value).
+                        if key in seen:
+                            raise _refuse_condition(f"{key} is used twice on one icon.")
+                        seen.add(key)
+                        cleaned.append({"spec_key": key, "value": raw})
+                        continue
+                    raise _refuse_condition(f'"{key}" is not another active spec.')
+                if key in seen:
+                    raise _refuse_condition(f"{partner.label} is used twice on one icon.")
+                seen.add(key)
+                if partner.data_type == "numeric":
+                    normal = _numeric_text(raw)
+                    if normal is None:
+                        raise _refuse_condition(f"{partner.label} needs a number.")
+                    raw = normal
+                elif raw not in spec_value_keys(partner):
+                    if (key, raw) in already:
+                        cleaned.append({"spec_key": key, "value": raw})  # kept, see above
+                        continue
+                    raise _refuse_condition(f'"{raw}" is not one of {partner.label}\'s values.')
+                cleaned.append({"spec_key": key, "value": raw})
+            if cleaned:
+                sent.setdefault(value, {})[icon_id] = cleaned
+
+    _visible, hidden = _icon_status(db, {i for ids in icons.values() for i in ids})
+    out: dict = {}
+    for value, ids in icons.items():
+        for icon_id in ids:
+            if icon_id in hidden:
+                picked = (stored.get(value) or {}).get(icon_id)
+            else:
+                picked = (sent.get(value) or {}).get(icon_id)
+            if picked:
+                out.setdefault(value, {})[icon_id] = picked
+    return out
 
 
 def background_asset_ids(doc: Optional[dict]) -> set[str]:

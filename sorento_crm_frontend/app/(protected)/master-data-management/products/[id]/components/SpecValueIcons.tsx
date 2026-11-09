@@ -22,11 +22,13 @@ export function SpecValueIcons({
   specKey,
   label,
   icons,
+  reasons = {},
   canManage,
 }: {
   specKey: string;
   label: string;
   icons: SpecValueIcon[];
+  reasons?: Record<string, string>;
   canManage: boolean;
 }) {
   if (icons.length === 0) return null;
@@ -70,6 +72,18 @@ export function SpecValueIcons({
           </span>
         );
       })}
+      {icons.map((icon) =>
+        reasons[icon.id] ? (
+          <span
+            key={icon.id}
+            data-spec-icon-reason={icon.id}
+            title={`shown because ${reasons[icon.id]}`}
+            className="min-w-0 max-w-40 truncate text-xs text-muted-foreground"
+          >
+            shown because {reasons[icon.id]}
+          </span>
+        ) : null,
+      )}
     </span>
   );
 }

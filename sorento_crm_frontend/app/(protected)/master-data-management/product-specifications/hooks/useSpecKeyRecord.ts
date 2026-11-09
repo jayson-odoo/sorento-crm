@@ -15,7 +15,7 @@ import { useSpecRegistryMutations } from './useSpecRegistryMutations';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
 import { SPEC_COVERAGE_QUERY_KEY } from './useSpecCoverageQuery';
 import { specKeyProductsKey } from './useSpecKeyProductsQuery';
-import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
+import type { IconCondition, SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
 
 export const dedupe = (list: string[]) => Array.from(new Set(list));
 
@@ -51,6 +51,8 @@ export interface SpecKeyDraft {
   valueLabels: Record<string, string>;
   /** value -> Dealer Kit icon ids, in display order (feature icons). */
   valueIcons: Record<string, string[]>;
+  /** value -> icon id -> the other spec values the icon needs (SPEC-ICON-COMBINED). */
+  valueIconConditions: Record<string, Record<string, IconCondition[]>>;
   /** Input string for the spec's Icon order; '' clears it. */
   iconOrder: string;
   /** Set by a refused Save; follows the field from then on. */
@@ -130,6 +132,7 @@ export function projectSpecKeyDraft(row: SpecRegistryKey): SpecKeyDraft {
     valueIcons: Object.fromEntries(
       Object.entries(row.value_icons ?? {}).map(([value, ids]) => [value, [...ids]]),
     ),
+    valueIconConditions: JSON.parse(JSON.stringify(row.value_icon_conditions ?? {})),
     // Given an identity on the way in so dragging (RulesTab) moves a RULE, not a
     // position, and Try it/preview keep reading the same row across an edit.
     rules: (row.effective_rules ?? row.derivation_rules ?? []).map((rule, index) => ({
@@ -166,6 +169,24 @@ function changedValueIcons(
   return same ? null : next;
 }
 
+/** Conditions with empty entries dropped; null when they say what the row already holds. */
+function changedIconConditions(
+  row: SpecRegistryKey,
+  conditions: Record<string, Record<string, IconCondition[]>>,
+): Record<string, Record<string, IconCondition[]>> | null {
+  const clean = (map: Record<string, Record<string, IconCondition[]>>) => {
+    const out: Record<string, Record<string, IconCondition[]>> = {};
+    for (const [value, byIcon] of Object.entries(map)) {
+      for (const [icon, list] of Object.entries(byIcon ?? {})) {
+        if (list.length > 0) (out[value] ??= {})[icon] = list;
+      }
+    }
+    return out;
+  };
+  const next = clean(conditions);
+  return JSON.stringify(next) === JSON.stringify(clean(row.value_icon_conditions ?? {})) ? null : next;
+}
+
 /** Icon order: a whole number 1..999, or blank (last). */
 export const ICON_ORDER_RULES = { min: 1, max: 999, integer: true, optional: true } as const;
 
@@ -180,6 +201,7 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     draft.droppedValues,
   );
   const valueIcons = changedValueIcons(row, draft.valueIcons ?? {});
+  const valueIconConditions = changedIconConditions(row, draft.valueIconConditions ?? {});
   const maxValueTrimmed = draft.maxValue.trim();
   const maxValueNumber = maxValueTrimmed === '' ? null : Number(maxValueTrimmed);
   const maxValuePayload =
@@ -201,6 +223,7 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     suppressed_values,
     value_labels: trimmedValueLabels(draft.valueLabels),
     ...(valueIcons ? { value_icons: valueIcons } : {}),
+    ...(valueIconConditions ? { value_icon_conditions: valueIconConditions } : {}),
     icon_order: draft.iconOrder.trim() === '' ? null : Number(draft.iconOrder.trim()),
     derivation_rules: draft.rules,
   };
@@ -292,7 +315,7 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
       // never a bare "Saved." that leaves the reader guessing whether it re-read.
       // The price tag designer caches the spec-value icon list in its own client: a save that
       // changed icons or their order must reach it (review S1).
-      if ('value_icons' in body || 'icon_order' in body) {
+      if ('value_icons' in body || 'value_icon_conditions' in body || 'icon_order' in body) {
         void kitLibraryClient.invalidateQueries({ queryKey: FEATURE_ICONS_KEY });
       }
       toast.success(

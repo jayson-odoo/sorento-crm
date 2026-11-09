@@ -1058,6 +1058,13 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconCondition(BaseModel):
+    """One more spec value the product must hold for the icon to print (SPEC-ICON-COMBINED)."""
+
+    spec_key: str
+    value: str
+
+
 class FeatureIconOut(BaseModel):
     """One library icon and its "show when" rule (feature icons, contract B5)."""
 
@@ -1065,6 +1072,7 @@ class FeatureIconOut(BaseModel):
     name: str
     spec_key: str
     values: list[str]
+    conditions: list[FeatureIconCondition] = []
 
 
 class FeatureIconItem(FeatureIconOut):
@@ -1387,6 +1395,11 @@ class TagAccessory(BaseModel):
     colours: list[TagAccessoryColour] = []
     code: Optional[str] = None
     list_price: Optional[float] = None
+    #: TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for the viewer (null = none), its
+    #: spec lines and its own price tag description, which a card's `{{product.*}}` fields read.
+    sell_price: Optional[float] = None
+    spec_lines: Optional[list[str]] = None
+    price_tag_description: Optional[str] = None
 
 
 class TagComboOption(BaseModel):
