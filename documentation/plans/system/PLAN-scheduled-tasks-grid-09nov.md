@@ -1,6 +1,6 @@
 # PLAN: Scheduled Tasks grid + Town job on the registry (SCHEDULED-TASKS-GRID)
 
-Status: Build (full track: seed-only migration town_0002_scheduled_task). Owner answered the behaviour card 9 Nov ~16:45.
+Status: Review done, awaiting owner hand test (full track: seed-only migration town_0002_scheduled_task). Owner answered the behaviour card 9 Nov ~16:45.
 
 ## Journey
 
@@ -50,3 +50,12 @@ enabled toggle and Run now. Each grid row sits on ONE line.
 ## UAC
 
 See `scheduled-tasks-grid-acceptance-criteria.md` (written after the behaviour card).
+
+## Review (Phase 3)
+
+Reviewer verdict NOT READY on B1 (a run owed in the last seconds before 22:05 read overdue all
+night), fixed: `_clamp_to_window` judges by `now`. S1 (run-path next run untested) got its test.
+N1, N2, N3, N5, N6 fixed. Left for a follow-up: S2 (a run row left `started` when the process
+dies mid-run: a sweep marking stale `started` rows interrupted), S3 (Run now during a scheduled
+build records Success with a "still going" summary, as AC-3 allows), N4 (malformed-window
+warning every heartbeat).
