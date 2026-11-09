@@ -245,8 +245,9 @@ def propose_rows(
     for a caller outside a turn); a grant row's customer names and companies must be in it, or verified for that row
     by the last table (`previous_waiting`, `previous_typed`: UAC A17, A18), and an older, expired pick's codes are
     refused (`expired_waiting`, F3). Each entry of a checked grant row carries `typed`, what was verified. UAC F4: a
-    grant row whose phone is not in this message is left out (`left_out`, never shown), unless this call answers the
-    last table's pick, when every row of that table may come back."""
+    grant row this message does not name (its phone in any format, or its person's name, as `_asked_again` reads it)
+    is left out (`left_out`, never shown), unless this call answers the last table's pick, when every row of that
+    table may come back."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -281,8 +282,18 @@ def propose_rows(
             if use_given and valid(given):
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
-        if this_message and key is not None and key not in table_keys and not _said(key, user_text):
-            # UAC F4: a person of an earlier request, re-sent by the model, is not part of this card.
+        if (
+            this_message and key is not None and key not in table_keys
+            and not (_said(key, user_text) or _asked_again(args, key, user_text))
+            # A row of the last pick re-sent with codes answers that pick; `_not_listed` judges its codes. Codes of an
+            # expired pick get their own refusal below, so the user is told why (review round B1).
+            and not (args.get("customer_codes") and (
+                _row_records(previous_waiting, key, n) or _row_records(expired_waiting, key, n)
+            ))
+            and not _closed_reason(write, args, key, closed or {}, user_text)
+        ):
+            # UAC F4: a person of an earlier request, re-sent by the model, is not part of this card. A row of a decided
+            # card keeps its own skipped reason below.
             if left_out is not None:
                 left_out.append({"row": n, "phone": key, "reason": LEFT_OUT_REASON})
             continue

@@ -859,19 +859,31 @@ def proposal_block(lines: list[str]) -> str:
 
 def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
-    is_test: bool = True,
+    is_test: bool = True, previous: dict | None = None, single_waiting: list[dict] | None = None,
 ) -> ToolResult:
+    # `loop`: the loop's own refusal, never shown to the user as the tool's words (UAC F2, review round S6).
     if any(s.get("batch") for s in steps):
-        return ToolResult("invalid", message="A table of changes is already proposed this turn; propose this after it is decided.")
+        return ToolResult(
+            "invalid", data={"loop": True},
+            message="A table of changes is already proposed this turn; propose this after it is decided.",
+        )
     if len(steps) >= actions.MAX_STEPS:
-        return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
+        return ToolResult("invalid", data={"loop": True}, message=f"At most {actions.MAX_STEPS} changes per confirmation.")
     from app.services.chatbot.agent import contact_grant
 
+    typed = None
     if name == contact_grant.GRANT and isinstance(args, dict):
-        # The dealer name is the user's own words, never the model's re-search (UAC A17), as in a table row.
-        args, problem = contact_grant.typed_names(args, user_text)
+        # The dealer name and company are the user's own words, never the model's re-search (UAC A17, A18), as in a
+        # table row: what the immediately preceding pick verified for this person counts (review round S7).
+        key = contact_grant._batch_key(args)
+        earlier = [r for r in [*(previous or {}).get("waiting", []), *(previous or {}).get("typed", [])]
+                   if key is not None and r.get("key") == key]
+        written = [r.get("written") for r in earlier] + [n for r in earlier for n in r.get("names") or []]
+        companies = [c for r in earlier for c in r.get("companies") or []]
+        args, problem = contact_grant.typed_names(args, user_text, written, companies)
         if problem:
             return ToolResult("invalid", message=problem)
+        typed = {"key": key, "names": list(args.get("customer_names") or []), "companies": list(args.get("companies") or [])}
     # An idea create carries what only the loop knows: the user's own message of this turn (I7: the transcript,
     # as a write tool sees only its arguments) and whether the turn is a test turn (a console turn makes a test
     # idea, a live one a real idea). Set here, never from the model's arguments.
@@ -881,6 +893,14 @@ def _propose(
         loop_args = {"_is_test": is_test}
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
+        choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
+        if typed is not None and choices and single_waiting is not None:
+            # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
+            single_waiting += [
+                {"row": 1, "key": typed["key"], "written": c.get("written"), "codes": [x["code"] for x in c["candidates"]],
+                 "kept": [], "write": name, "noun": None, "typed": typed}
+                for c in choices
+            ]
         return out
     steps.append(step)
     data = {"action_id": action_id, "step": len(steps), "summary": step["summary"]}
@@ -1379,6 +1399,12 @@ DEALER_ACCESS_SCHEMA = {
     "additionalProperties": False,
 }
 CHECK_FIRST_REPLY = "I need to check that first."
+TELL_ME_REPLY = (
+    "Tell me the person's phone, Business Owner or Employee, the company (Sorento or Mocha) and the dealer, and I will "
+    "show the change for you to confirm."
+)
+#: How many older table turns `_previous_waiting` reads for their expired picks (UAC F3).
+MAX_EXPIRED_TABLES = 20
 DEALER_NUDGE = (
     "Call a tool now: crm_batch_propose (write crm_contact_grant) for people to give access, one row per person, or "
     "crm_contacts_find then crm_contact_access_update for a change to someone who has access. Your own text is not "
@@ -1414,10 +1440,11 @@ def dealer_access_prompt(text: str, earlier_table: str, waiting: bool) -> str:
 
 
 def dealer_schemas(schemas: list[dict]) -> list[dict]:
-    """Only the dealer-access tools, the batch tool for the grant only, and the answer tool so the loop can end."""
+    """Only the dealer-access tools, the batch tool for the grant only, the confirm / cancel of a waiting card (when the
+    turn offers them at all) and the answer tool so the loop can end."""
     from app.services.chatbot.agent.contact_grant import GRANT
 
-    keep = set(_dealer_tools()) | {ANSWER}
+    keep = set(_dealer_tools()) | {ANSWER, CONFIRM_ACTION, CANCEL_ACTION}
     out = []
     for schema in schemas:
         name = schema.get("function", {}).get("name")
@@ -1431,29 +1458,39 @@ def dealer_schemas(schemas: list[dict]) -> list[dict]:
 
 
 def dealer_reply(ledger: dict[str, dict]) -> str:
-    """The flow's reply from this turn's tool results only: each refusal in the tool's own words, and what a phone
-    lookup found for a phone it could not use. The tables and the confirm card are added by the caller. Never the
-    model's text (so nothing in it is ever marked not verified)."""
+    """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant,
+    the access change or the batch tool, in the tool's own words (never the loop's own messages, flagged `loop`), or
+    "" when there is none. A proposal's card or table is shown instead by the caller (review round S6). Never the
+    model's text, so nothing in it is ever marked not verified."""
     from app.services.chatbot.agent.contact_grant import GRANT
 
-    lines: list[str] = []
+    last = ""
     for entry in ledger.values():
-        name, status = entry.get("name"), entry.get("status")
-        if name in (GRANT, writes.UPDATE_CONTACT) and status in ("invalid", "denied") and entry.get("message"):
-            lines.append(str(entry["message"]))
-        elif name == writes.FIND_CONTACTS and status == "ok" and isinstance(entry.get("data"), list):
-            lines += [
-                f"{d.get('phone')}: {_FIND_WORDS[d['status']]}." for d in entry["data"]
-                if isinstance(d, dict) and d.get("status") in _FIND_WORDS
-            ]
-    return "\n".join(dict.fromkeys(lines))
+        data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+        if (
+            entry.get("name") in (GRANT, writes.UPDATE_CONTACT, batch.BATCH)
+            and entry.get("status") in ("invalid", "denied") and entry.get("message") and not data.get("loop")
+        ):
+            last = str(entry["message"])
+    return last
 
 
-def _previous_waiting(db, conv, turn_id: str) -> dict:
-    """The table a pick may answer, as {"write", "waiting", "skipped", "typed", "reply", "expired"}: only the
-    IMMEDIATELY preceding agent turn of this conversation, and only when it ended with rows waiting for a pick (UAC
-    F3: any newer request expires an older pick). `typed`: what that table verified as typed for each of its rows
-    (A17, A18). `expired`: the waiting rows of the newest older table, whose codes are no longer a pick."""
+def _decided_reply(ledger: dict[str, dict]) -> str:
+    """What a confirm or cancel of a waiting card said, when one ran this turn ("" otherwise)."""
+    for entry in ledger.values():
+        if entry.get("name") in (CONFIRM_ACTION, CANCEL_ACTION) and entry.get("status") == "ok":
+            return str((entry.get("data") or {}).get("reply_text") or "")
+    return ""
+
+
+def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict:
+    """The table a pick may answer, as {"write", "waiting", "skipped", "typed", "reply", "expired"}.
+
+    `immediate` (the grant, UAC F3): only the IMMEDIATELY preceding agent turn of this conversation that did not fail
+    (a retried message after a provider failure still answers the pick), and only when it ended with rows waiting
+    for a pick; any newer request expires an older pick. `typed`: what that table verified as typed for each of its
+    rows (A17, A18). `expired`: the waiting rows of every older table. Not `immediate` (the other batch writes): the
+    newest earlier table turn, a plain turn in between not hiding it, as before."""
     base = (
         db.query(ChatbotTurn)
         .filter(
@@ -1461,23 +1498,32 @@ def _previous_waiting(db, conv, turn_id: str) -> dict:
             ChatbotTurn.ingress == "agent",
             ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
             ChatbotTurn.id != turn_id,
+            ChatbotTurn.status != "failed",
         )
         # `started_at` breaks a tie on `created_at` (one transaction's `now()` is the same for every row).
         .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.started_at.desc().nullslast(), ChatbotTurn.id.desc())
     )
-    last = base.first()
-    got = (last.response or {}) if last is not None else {}
-    if got.get("batch_waiting"):
+    tables = base.filter(ChatbotTurn.response.has_key("batch_waiting"))
+
+    def record(turn) -> dict:
+        got = turn.response or {}
         return {
             "write": got.get("batch_write"), "waiting": got.get("batch_waiting") or [],
             "skipped": got.get("batch_skipped") or [], "typed": got.get("batch_typed") or [],
             "reply": got.get("reply_text") or "", "expired": [],
         }
-    older = base.filter(ChatbotTurn.response.has_key("batch_waiting")).first()
-    return {
-        "write": None, "waiting": [], "skipped": [], "typed": [], "reply": "",
-        "expired": ((older.response or {}).get("batch_waiting") or []) if older is not None else [],
-    }
+
+    empty = {"write": None, "waiting": [], "skipped": [], "typed": [], "reply": "", "expired": []}
+    if not immediate:
+        newest = tables.first()
+        return record(newest) if newest is not None else empty
+    last = base.first()
+    current = record(last) if last is not None and (last.response or {}).get("batch_waiting") else None
+    older = [
+        w for t in tables.limit(MAX_EXPIRED_TABLES).all()
+        if current is None or str(t.id) != str(last.id) for w in (t.response or {}).get("batch_waiting") or []
+    ]
+    return {**(current or empty), "expired": older}
 
 
 def _run(
@@ -1524,6 +1570,7 @@ def _run(
     # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
     batch_skipped: list[dict] = []
     batch_waiting: list[dict] = []
+    single_waiting: list[dict] = []  # a single grant row's pick (UAC F3, review round S7)
     batch_called = False
     previous_waiting: list[dict] | None = None
     previous_table: dict | None = None  # the earlier table turn, for its not-changed rows (AGENT-BATCH-NOTCHANGED)
@@ -1884,23 +1931,36 @@ def _run(
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name == batch.BATCH:
+                    from app.services.chatbot.agent.contact_grant import GRANT
+
                     batch_called = True
                     if previous_waiting is None:
                         previous_table = _previous_waiting(db, conv, turn_id)
                         previous_waiting = previous_table["waiting"]
+                    # UAC F3 binds only the grant's pick to the immediately preceding turn; the other batch writes
+                    # (tags, customer agents) keep the newest earlier table (review round S2).
+                    table = previous_table if isinstance(args, dict) and args.get("write") == GRANT else (
+                        _previous_waiting(db, conv, turn_id, immediate=False)
+                    )
                     if closed_rows is None:
                         closed_rows = actions.closed_rows(db, contact_respond_id, conversation_id)
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
-                        waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,
-                        closed=closed_rows, previous=previous_table,
+                        waiting_out=batch_waiting, user_text=text, previous_waiting=table["waiting"],
+                        closed=closed_rows, previous=table,
                     )
                     if isinstance(args, dict) and isinstance(args.get("write"), str):
                         batch_write = args["write"]
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
-                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
+                    if previous_table is None:
+                        previous_table = _previous_waiting(db, conv, turn_id)
+                        previous_waiting = previous_table["waiting"]
+                    out = _propose(
+                        db, ctx, name, args, steps, seen_ids, action_id, text, is_test,
+                        previous=previous_table, single_waiting=single_waiting,
+                    )
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
@@ -1976,7 +2036,9 @@ def _run(
                 args = scrub(args if isinstance(args, dict) else {})
                 bad_numbers, bad_nf = ([], []) if batch_shown() or dealer_flow else verify_answer(args, ledger, text)
                 empty_text = not _answer_parts(args)[0] and not batch_shown() and not dealer_flow
-                dealer_ran = any(e.get("name") in _dealer_tools() for e in ledger.values())
+                dealer_ran = any(
+                    e.get("name") in (*_dealer_tools(), CONFIRM_ACTION, CANCEL_ACTION) for e in ledger.values()
+                )
                 trace.add(
                     "agent_answer",
                     {"unbacked_numbers": bad_numbers, "unbacked_not_found": bad_nf, "repaired": repaired},
@@ -2021,8 +2083,15 @@ def _run(
             bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(final_args, ledger, text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger, user_text=text)
         if dealer_flow:
-            # Never the model's text; the tables and the confirm card are added below from the stored steps.
-            reply = dealer_reply(ledger) or CHECK_FIRST_REPLY
+            # Never the model's text; the tables and the confirm card replace this below, from the stored steps.
+            if _decided_reply(ledger):
+                reply = _decided_reply(ledger)
+            elif any(e.get("name") in _dealer_tools() for e in ledger.values()):
+                reply = dealer_reply(ledger) or TELL_ME_REPLY  # review round S4
+            else:
+                # No dealer tool ran: a claim of a change gets the fixed line (UAC F1, dealer turns only).
+                said = _answer_parts(final_args if final_args is not None else (forced_args or {}))[0]
+                reply = NO_CHANGE_REPLY if claims_change(said) else CHECK_FIRST_REPLY
         gaps = no_tool_items(final_args if final_args is not None else forced_args)
         if gaps:
             # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
@@ -2104,12 +2173,6 @@ def _run(
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
                 db.rollback()
-        decided = any(
-            e.get("name") in (CONFIRM_ACTION, CANCEL_ACTION) and e.get("status") == "ok" for e in ledger.values()
-        )
-        reply = no_false_completion(
-            reply, proposed=bool(steps or batch_skipped or batch_waiting), decided=decided or bool(confirm_notes)
-        )
     if confirm_notes:
         # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
@@ -2135,8 +2198,8 @@ def _run(
             pending = actions.pending_dict(stored)
             if all(s.get("batch") for s in stored.steps or []):
                 reply = _batch_reply(stored.steps, batch_skipped, batch_waiting, confirm_notes)
-            elif dealer_flow and reply == CHECK_FIRST_REPLY:
-                reply = proposal_block(lines)
+            elif dealer_flow:
+                reply = proposal_block(lines)  # the card alone (review round S6)
             else:
                 reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
@@ -2179,6 +2242,12 @@ def _run(
             {"row": e.get("row"), "key": e.get("key"), **e["typed"]}
             for e in [*steps, *batch_skipped, *batch_waiting] if isinstance(e.get("typed"), dict)
         ]
+    elif single_waiting:
+        # A single row that waits for a pick is the table the next turn may answer (UAC F3, review round S7).
+        turn.response["batch_waiting"] = [{k: v for k, v in w.items() if k != "typed"} for w in single_waiting]
+        turn.response["batch_skipped"] = []
+        turn.response["batch_write"] = single_waiting[0]["write"]
+        turn.response["batch_typed"] = [{"row": 1, **single_waiting[0]["typed"]}]
     # Only a real final answer can ask back; a forced final at a limit never does.
     if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
         turn.response["asked_back"] = True

@@ -200,6 +200,38 @@ def _norm(text: Any) -> str:
 WHICH_COMPANY = "Say which company this person is for: Sorento or Mocha."
 
 
+_QUOTES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\u201c": '"', "\u201d": '"'})
+_TOKEN = re.compile(r"[0-9A-Za-z]+(?:'[0-9A-Za-z]+)*")
+
+
+def _tokens(text: str) -> list[tuple[str, int, int]]:
+    """(word, start, end) of each word: curly quotes folded to straight (one character for one, so the positions
+    are the text's own), apostrophes and other punctuation dropped, lower case."""
+    return [(m.group(0).replace("'", "").lower(), m.start(), m.end()) for m in _TOKEN.finditer(text.translate(_QUOTES))]
+
+
+def _typed_span(name: str, user_text: str) -> str | None:
+    """The user's own words for this name in their message, or None. Words are compared after `_tokens`, company
+    suffix words (sdn, bhd, berhad...) ignored on both sides, as a run of whole words."""
+    from app.services.contact_setup_engine import _NAME_SUFFIXES
+
+    text = str(user_text or "")
+    said = [t[0] for t in _tokens(name)]
+    core = [w for w in said if w not in _NAME_SUFFIXES] or said
+    words = [t for t in _tokens(text) if t[0] not in _NAME_SUFFIXES]
+    if not core:
+        return None
+    for i in range(len(words) - len(core) + 1):
+        if [t[0] for t in words[i:i + len(core)]] == core:
+            start, end = words[i][1], words[i + len(core) - 1][2]
+            for t in _tokens(text[end:]):  # the user's own suffix words right after it stay in their span
+                if t[0] not in _NAME_SUFFIXES or text[end:end + t[1]].strip():
+                    break
+                end += t[2]
+            return " ".join(text[start:end].split())
+    return None
+
+
 def _typed_word(word: str, user_text: str) -> bool:
     return re.search(rf"(?<![0-9a-z]){re.escape(word)}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE) is not None
 
@@ -226,8 +258,9 @@ def typed_names(
                 continue
             words = r"\s+".join(re.escape(w) for w in said.split())
             found = re.search(rf"(?<![0-9a-z]){words}(?![0-9a-z])", str(user_text or ""), re.IGNORECASE)
-            if found:
-                out.append(" ".join(found.group(0).split()))
+            span = " ".join(found.group(0).split()) if found else _typed_span(said, user_text)
+            if span:
+                out.append(span)
             elif _norm(said) in before:
                 out.append(before[_norm(said)])
             else:

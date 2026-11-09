@@ -83,10 +83,10 @@ def test_a_row_the_model_does_send_again_is_rechecked_not_duplicated(db):
 
 def test_a_new_table_with_nothing_waiting_before_it_inherits_no_rows(db):
     w, f, h, (pf, ph, pr), _ = picker_world(db)
-    say(db, w, [tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], "grant this one")
+    say(db, w, [tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], f"grant this one {pr.phone_number} {NO_SUCH}")
 
     other = dealer(db, w)
-    r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], "now grant this one")
+    r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], f"now grant this one {other.phone_number}")
 
     assert r2.reply_text.startswith("Rows from your table: 1 ready to confirm.")
     assert NO_SUCH not in r2.reply_text
@@ -97,7 +97,7 @@ def test_an_unrelated_table_after_waiting_rows_inherits_no_rows(db):
     w, f, h, (pf, ph, pr) = _first_table(db)
 
     other = dealer(db, w)
-    r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], "actually just this one")
+    r2 = say(db, w, [tag(row_(other.phone_number, codes=[w.cust_a.customer_code]), 1)], f"actually just this one {other.phone_number}")
 
     assert r2.reply_text.startswith("Rows from your table: 1 ready to confirm.")
     assert NO_SUCH not in r2.reply_text
@@ -146,7 +146,8 @@ def test_the_result_counts_include_the_carried_row(db):
     w, f, h, (pf, ph, pr) = _first_table(db)
     previous = stored(db, say(db, w, [tag(row_(pf.phone_number, companies=["SRT"], names=["ZZT Dealer F"]), 1),
                                       tag(row_(ph.phone_number, companies=["MCH"], names=[WRITTEN]), 2),
-                                      tag(row_(pr.phone_number, names=[NO_SUCH]), 3)], "again"))
+                                      tag(row_(pr.phone_number, names=[NO_SUCH]), 3)],
+                                  f"again {pf.phone_number} {ph.phone_number} {pr.phone_number}"))
     # UAC A18: the stored table also carries what each row verified as typed (`batch_typed`), its company included.
     table = {"write": previous["batch_write"], "waiting": previous["batch_waiting"], "skipped": previous["batch_skipped"],
              "typed": previous["batch_typed"]}

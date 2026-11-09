@@ -38,6 +38,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     row_,
     state,
     typed_companies,
+    typed_phones,
 )
 from tests.chatbot.agent.test_agent_writes import action_rows, answer_, round_of, run_turn, tc
 
@@ -309,7 +310,7 @@ def test_07_a_turn_where_every_row_is_skipped_still_ends_with_the_not_changed_ta
     rows = [row_(bad.phone_number, names=["ZZT Nowhere Stores"])]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Nothing can change.")]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     assert result.pending_action is None and action_rows(db, w.respond_id) == []
     assert NOT_CHANGED in result.reply_text and "| # |" in result.reply_text
@@ -375,7 +376,7 @@ def test_09_a_not_found_reply_after_a_skipped_batch_row_is_accepted_without_a_re
     # A spare answer keeps a repair round from dying on an empty script: the assertion below is the round count.
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), round_of(final), round_of(final)]
 
-    result, provider = run_turn(db, w, script, text_="grant access to this person")
+    result, provider = run_turn(db, w, script, text_=pasted("grant access to this person", rows))
 
     assert len(provider.seen) == 2, "the not-found claim needed a repair round"
     assert result.rounds == 2
@@ -492,7 +493,7 @@ def test_r6_a_table_with_no_ready_row_expires_the_previous_confirm_card(db):
     ready, waits = dealer(db, w), dealer(db, w, companies=(w.mch,))
     first = [row_(ready.phone_number, codes=[w.cust_a.customer_code])]
     run_turn(db, w, [round_of(tc(BATCH, {"write": GRANT, "rows": first}, "b1")), answer_("Ready.")],
-             text_=typed_companies("grant access", first))
+             text_=typed_phones(typed_companies("grant access", first), first))
     assert [a.status for a in action_rows(db, w.respond_id)] == ["proposed"]
 
     second = [waiting_row(w, waits)]
@@ -574,7 +575,8 @@ def tag(row: dict, n: int) -> dict:
 # UAC A17: a first table turn's text is the paste, so it carries the dealer names the rows send.
 def pasted(text_: str, rows) -> str:
     """The user's message as a real paste carries it: the table's dealer names in the text (UAC A17)."""
-    return typed_companies("\n".join([text_, *(n for r in rows for n in (r.get("customer_names") or []))]), rows)
+    names = "\n".join([text_, *(n for r in rows for n in (r.get("customer_names") or []))])
+    return typed_companies(typed_phones(names, rows), rows)
 
 
 def say(db, w, rows, text_, final="Done."):
@@ -642,7 +644,7 @@ def test_10_row_all_links_every_listed_account_though_the_codes_were_not_typed(d
     from app.services.chatbot.agent import actions
 
     w, f, h, (pf, ph, pr), first = picker_world(db)
-    say(db, w, first, "grant access to these people")
+    say(db, w, first, pasted("grant access to these people", first))
 
     codes = [a.customer_code for a in h]
     second = [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)]
@@ -687,7 +689,7 @@ def test_11_a_skipped_first_row_leaves_the_others_numbered_two_and_three_at_turn
         tag(row_(b.phone_number, codes=[w.cust_a.customer_code]), 3),
     ]
 
-    result = say(db, w, rows, "row 1 skip")
+    result = say(db, w, rows, typed_phones("row 1 skip", rows))
 
     assert [s["row"] for s in action_rows(db, w.respond_id)[0].steps] == [2, 3]
     assert len(result.pending_action["lines"]) == 2
@@ -732,7 +734,7 @@ def test_12_a_table_turn_keeps_its_waiting_rows_on_the_turn_with_or_without_read
     w, f, h, (pf, ph, pr), first = picker_world(db)
 
     mixed = stored(db, say(db, w, first, pasted("grant access to these people", first)))
-    only = stored(db, say(db, w, first[:2], "grant access again"))
+    only = stored(db, say(db, w, first[:2], pasted("grant access again", first[:2])))
 
     for response, count in ((mixed, 2), (only, 2)):
         items = response["batch_waiting"]
@@ -746,7 +748,7 @@ def test_12_a_table_turn_with_nothing_waiting_stores_an_empty_list_and_a_plain_t
     w = make_world(db)
     a = dealer(db, w)
 
-    table = stored(db, say(db, w, [row_(a.phone_number, codes=[w.cust_a.customer_code])], "grant access"))
+    table = stored(db, say(db, w, [row_(a.phone_number, codes=[w.cust_a.customer_code])], f"grant access {a.phone_number}"))
     plain, _ = run_turn(db, w, [answer_("Hello.")], text_="hello")
 
     assert table["batch_waiting"] == []
@@ -755,7 +757,7 @@ def test_12_a_table_turn_with_nothing_waiting_stores_an_empty_list_and_a_plain_t
 
 def test_12_a_plain_turn_between_two_table_turns_does_not_hide_the_earlier_waiting_rows(db):
     w, f, h, (pf, ph, pr), first = picker_world(db)
-    say(db, w, first[:2], "grant access to these people")
+    say(db, w, first[:2], pasted("grant access to these people", first[:2]))
     run_turn(db, w, [answer_("Hello.")], text_="thanks")
 
     codes = [a.customer_code for a in h]
@@ -842,7 +844,7 @@ def test_12_the_previous_waiting_rows_are_read_without_loading_every_turn(db, mo
 
     monkeypatch.setattr(memory, "conversation_turns", guarded)
     w, f, h, (pf, ph, pr), first = picker_world(db)
-    say(db, w, first[:2], "grant access to these people")
+    say(db, w, first[:2], pasted("grant access to these people", first[:2]))
 
     codes = [a.customer_code for a in h]
     result = say(db, w, [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)], "row 2 all")
@@ -904,7 +906,7 @@ def test_13_a_batch_turns_answer_is_not_checked_so_no_repair_round_is_spent(db):
     }, "ans-1")
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), round_of(final), round_of(final)]
 
-    result, provider = run_turn(db, w, script, text_="grant access to these people")
+    result, provider = run_turn(db, w, script, text_=pasted("grant access to these people", rows))
 
     assert len(provider.seen) == 2, "the answer check spent a repair round on a batch turn"
     assert "not verified" not in result.reply_text and "98765" not in result.reply_text

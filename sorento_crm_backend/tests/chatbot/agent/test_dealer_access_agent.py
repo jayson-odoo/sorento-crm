@@ -1605,7 +1605,10 @@ def test_F1_a_turn_claiming_completion_without_any_proposal_gets_the_fixed_reply
 
     w = make_world(db)
 
-    result = _turn(db, w, [answer_("I have completed all your requested operations.")], "stock replies off for him")
+    result = _turn(
+        db, w, [answer_("I have completed all your requested operations."), answer_("I have completed them.")],
+        "stock replies off for him", dealer_access=True,
+    )
 
     assert result.pending_action is None
     assert result.reply_text == NO_CHANGE
@@ -1842,12 +1845,14 @@ def test_F3_a_pick_expires_once_a_newer_request_came_in_between(db):
     w = make_world(db)
     phone = fake_phone()
     stem, accounts = _pick_turn(db, w, phone)
-    _turn(db, w, [answer_("It is 10 am.")], "what time is it")
+    _turn(db, w, [answer_("It is morning here.")], "what time is it")
     picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
 
-    result = _turn(db, w, [_batch_call([picked], "b2"), answer_("Linked.")], "all")
+    # Review round B1: the company is typed, so A18 cannot be what stops this row.
+    result = _turn(db, w, [_batch_call([picked], "b2"), answer_("Linked.")], "Sorento all")
 
     assert result.pending_action is None
+    assert "is from an earlier list that is closed now" in result.reply_text
     assert state(db, phone) is None
 
 
@@ -1985,3 +1990,174 @@ def test_F4_the_normal_pick_answer_re_sends_the_whole_last_table(db):
     assert len(lines) == 2 and any(pw in line for line in lines) and any(pr in line for line in lines)
     reasons = {s["row"]: s["reason"] for s in _turn_record(db, second.turn_id).get("batch_skipped") or []}
     assert reasons.get(3) == "Unknown access: ?."
+
+
+# ------------------------------------------------------------------ review round on the structural round
+
+TELL_ME = (
+    "Tell me the person's phone, Business Owner or Employee, the company (Sorento or Mocha) and the dealer, and I will "
+    "show the change for you to confirm."
+)
+EXPIRED = "is from an earlier list that is closed now"
+
+
+def test_B2_a_read_answer_saying_have_been_added_is_never_rewritten_outside_the_dealer_flow(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    said = "Three new customers have been added this week. Ali has been granted access to ABC since 3 Nov."
+
+    result = _turn(db, w, [answer_(said)], "who has access and what is new?")
+
+    assert result.reply_text == said
+
+
+def test_S1_a_pick_followed_by_a_ready_table_for_someone_else_is_expired(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    chin, accounts = _shop(db, w, "ZZT Chin Choy")
+    ali, firdaus = fake_phone(), fake_phone()
+    _turn(db, w, [_batch_call([row_(ali, name="ZZT Ali", role="employee", names=[chin])]), answer_("Which?")],
+          f"Sorento: ZZT Ali {ali} employee at {chin}")
+    ready = row_(firdaus, name="ZZT Firdaus", role="employee", names=[w.cust_a.customer_name])
+    second = _turn(db, w, [_batch_call([ready], "b2"), answer_("ok")],
+                   f"Sorento: ZZT Firdaus {firdaus} employee at {w.cust_a.customer_name}")
+    assert second.pending_action is not None
+
+    third = _turn(
+        db, w, [_batch_call([row_(ali, name="ZZT Ali", role="employee", codes=[accounts[1].customer_code])], "b3"),
+                answer_("ok")],
+        "ZZT Ali, the second one, Sorento",
+    )
+
+    assert EXPIRED in third.reply_text
+    assert state(db, ali) is None
+
+
+def test_S1_a_failed_turn_between_the_pick_and_its_answer_does_not_expire_the_pick(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    chin, accounts = _shop(db, w, "ZZT Chin Choy")
+    ali = fake_phone()
+    _turn(db, w, [_batch_call([row_(ali, name="ZZT Ali", role="employee", names=[chin])]), answer_("Which?")],
+          f"Sorento: ZZT Ali {ali} employee at {chin}")
+
+    def boom(_messages):
+        raise RuntimeError("zzt provider down")
+
+    failed = _turn(db, w, [boom], "1")
+    assert failed.status == "failed"
+
+    result = _turn(
+        db, w, [_batch_call([row_(ali, name="ZZT Ali", role="employee", codes=[accounts[0].customer_code])], "b2"),
+                answer_("ok")],
+        "1",
+    )
+
+    assert result.pending_action is not None, result.reply_text
+    assert accounts[0].customer_code in " ".join(result.pending_action["lines"])
+
+
+def test_S2_a_tag_pick_follow_up_after_an_unrelated_turn_still_checks_the_codes_against_the_list(db):
+    from tests.chatbot.agent import test_agent_bulk_w2_tags as w2
+    from tests.chatbot.agent.test_agent_writes import answer_, run_turn
+
+    w = make_world(db)
+    s = w2.stem()
+    w2.tag_(db, f"{s} Retail Salesperson")
+    w2.tag_(db, f"{s} Project Salesperson")
+    other = w2.tag_(db, f"{s} Admin")
+    person = dealer(db, w)
+
+    w2.say(db, w, [w2.numbered(w2.row_(person.phone_number, add=["salesperson"]), 1)], "tag this person")
+    run_turn(db, w, [answer_("Hello.")], text_="thanks")
+    result = w2.say(db, w, [w2.numbered(w2.row_(person.phone_number, add=[other.name]), 1)], "ok go ahead")
+
+    assert result.pending_action is None
+    assert f'"{other.name}" was not in the list' in result.reply_text
+
+
+def test_S4_a_dealer_turn_whose_lookup_ran_but_proposed_nothing_asks_for_the_details(db):
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    person = dealer(db, w, customers=(w.cust_a,))
+
+    result = _turn(db, w, [round_of(tc("crm_contacts_find", {"phones": [person.phone_number]}, "f1")), answer_("x")],
+                   f"what about {person.phone_number}?", dealer_access=True)
+
+    assert result.reply_text == TELL_ME
+
+
+def test_S5_a_dealer_flow_turn_answering_a_waiting_card_with_yes_can_still_confirm(db):
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    phone, rows, typed = _dealer_rows(w)
+    first = _turn(db, w, [_batch_call(rows), answer_("ok")], typed)
+    action_id = first.pending_action["id"]
+
+    result = _turn(db, w, [round_of(tc("confirm_action", {"action_id": action_id}, "c1")), answer_("Done.")], "yes",
+                   dealer_access=True)
+
+    assert state(db, phone) is not None and state(db, phone)["links"] == [str(w.cust_a.id)]
+    assert result.reply_text.startswith("Done. I made these changes")
+
+
+def test_S6_a_refused_guess_then_a_proposal_shows_only_the_card(db):
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    person = ai_on(db, dealer(db, w, customers=(w.cust_a,)))
+    script = [
+        round_of(tc(UPDATE, {"contact_id": str(uuid.uuid4()), "chatbot_allowed": False}, "u1")),
+        round_of(tc("crm_contacts_find", {"phones": [person.phone_number]}, "f1")),
+        round_of(tc(UPDATE, {"contact_id": person.id, "chatbot_allowed": False}, "u2")),
+        answer_("ok"),
+    ]
+
+    result = _turn(db, w, script, f"turn off AI replies for {person.phone_number}", dealer_access=True)
+
+    assert result.pending_action is not None
+    assert result.reply_text.startswith("I will make these changes when you confirm"), result.reply_text
+
+
+def test_S7_a_single_row_pick_answered_with_the_typed_name_and_company_is_proposed(db):
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    stem, accounts = _shop(db, w, "ZZT Single Pick")
+    phone = fake_phone()
+    row = row_(phone, role="employee", names=[stem])
+    first = _turn(db, w, [round_of(tc(GRANT, row, "g1")), answer_("Which account?")], f"Sorento {phone} {stem}")
+    assert first.pending_action is None
+
+    result = _turn(db, w, [round_of(tc(GRANT, {**row, "customer_codes": [accounts[1].customer_code]}, "g2")),
+                           answer_("ok")], "2")
+
+    assert result.pending_action is not None, result.reply_text
+    assert accounts[1].customer_code in " ".join(result.pending_action["lines"])
+
+
+@pytest.mark.parametrize(
+    "typed,sent",
+    [("{b} Motor", "{b} Motor Sdn Bhd"), ("{b} Motor Sdn Bhd", "{b} Motor"), ("{b} S’pore", "{b} S'pore")],
+    ids=["suffix sent", "suffix typed", "curly apostrophe"],
+)
+def test_A17_suffix_words_and_curly_quotes_do_not_make_a_typed_name_untyped(db, typed, sent):
+    from app.services.chatbot.agent import batch
+
+    w = make_world(db)
+    base = unique_code("ZZT Ah Huat", alpha=True)
+    typed, sent = typed.format(b=base), sent.format(b=base)
+    phone = fake_phone()
+
+    steps, skipped, waiting = batch.propose_rows(
+        db, ctx_of(db, w), GRANT, [row_(phone, role="employee", names=[sent])], seen_ids=set(),
+        user_text=f"Sorento {phone} employee at {typed}",
+    )
+
+    assert all("is not in your message" not in s["reason"] for s in skipped), skipped
+    assert all(x["written"] == typed for x in waiting)

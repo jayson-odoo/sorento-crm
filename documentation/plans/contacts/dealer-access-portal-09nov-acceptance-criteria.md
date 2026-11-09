@@ -57,11 +57,17 @@ A17. Every scope: a customer name in a grant row (table or single row) must be w
     as you typed it.` The waiting table's "You wrote" is the user's text (crew live x3, 9 Nov: a re-searched name was
     shown as written). Every row of the last table counts, ready, not changed and waiting alike: a follow-up that
     re-sends a row with the name it verified then is not refused for it (live x3 round 2: a not-changed row got this
-    text instead of its own reason).
+    text instead of its own reason). Names are compared word for word with curly quotes folded to straight,
+    punctuation dropped and company suffix words (sdn, bhd, berhad, enterprise, trading, co, company, plt...) ignored
+    on both sides ("Ah Huat Motor" typed, "Ah Huat Motor Sdn Bhd" sent; "S’pore" and "S'pore"); the kept "You wrote"
+    is the user's own span.
 A18. Every scope: each company of a grant row must be named in this turn's message by the first word of its name
     ("Sorento", "Mocha"; case aside, a whole word), or verified for that row by the last table. Otherwise the row is
     skipped: `Say which company this person is for: Sorento or Mocha.` (live x3 round 2: a Mocha row re-sent as
     Sorento).
+A19. A row whose customer codes all resolve to the user's accounts in the row's companies is decided by those codes;
+    a customer name beside them is only the row's typed label and is not searched again (live x3 structural round: a
+    pick answer that re-sent the codes and the typed name raised the pick again).
 A11. One audit row per contact (event `contact.access_agent`, actor the confirming user); a created contact says so.
 
 ## B. Respond.io (V8)
@@ -121,14 +127,20 @@ E2. The admin access sheet upload (`contact_access_sheet_service`) is unchanged.
 
 ## F. Agent replies
 
-F1. No false completion: a final reply that says a change was made (has or have been granted, given, added, removed,
+F1. No false completion, on dealer-access turns only (F2; a read answer elsewhere is never rewritten): a final reply
+    that says a change was made (has or have been granted, given, added, removed,
     linked, unlinked, or turned on or off; I have or I've completed, granted, and so on; all or
     your requested operations, changes or requests are or have been done or completed; access is or has been granted)
     on a turn that proposed no change and decided no waiting one is replaced by: `Nothing was changed: I did not
     propose any change in this turn. Tell me again what to change and I will show it for you to confirm.` A reply that
     asks, lists a proposal, or follows a real confirm or cancel is left as it is. A bare "Done." is not a claim (a read
     turn closes with it too), and neither is "has been updated / changed / set" (an answer about an ETA or an order
-    says that).
+    says that). In the F2 flow the model's text is never shown: with no dealer-access tool run, a claim gets the
+    fixed reply above and anything else `I need to check that first.`; a tool that ran but proposed and refused
+    nothing gets `Tell me the person's phone, Business Owner or Employee, the company (Sorento or Mocha) and the
+    dealer, and I will show the change for you to confirm.`; a proposal shows only its card or table; otherwise the
+    last refusal of the grant, access change or batch tool, in its own words. A yes or no to a waiting card can still
+    confirm or cancel it in the flow.
 F2. The dealer-access flow: when the acting user holds a contacts slug, one side call before the first model round
     judges whether the message (with the previous reply, when that was a dealer access table) asks to give, change,
     remove or pick dealer contact access; a judgement of the message, never a word list, and a plain yes or no to a
@@ -143,4 +155,14 @@ F3. A pick answers only the table of the IMMEDIATELY preceding agent turn, and o
     waiting for a pick: any newer request in between expires it. A code listed only by an expired pick and not typed
     now is refused: `"<code>" is from an earlier list that is closed now; write the dealer name again to see its
     accounts.` The confirm card after a valid pick repeats, for each picked row, `you wrote "<name>"` beside the
-    accounts it links.
+    accounts it links. A failed turn in between does not expire the pick (a retried answer still answers it); every
+    older table with waiting rows is expired, and a table with no waiting rows is never the pick. A single grant row
+    that waits for a pick is a pick too. This immediacy is the grant's only: the tag and customer-agent tables keep
+    answering the newest earlier table.
+F4. Rows of this message only (grant): a row may be in the card only when this turn's message names the person (the
+    phone in any format, 012-345 6789, +60 12..., 6012..., or the person's name), or when the turn answers the last
+    table's pick (a row with codes that table listed for it, or the user typed), and then every row of that last table
+    may come back. A row of a decided card keeps its own reason, and codes of an expired pick get the F3 refusal. Any
+    other row the model re-sends is left out of the card, the preview and the not-changed list, and returned to the
+    model as `left_out` with `Not in this message; ask again with this person's phone to include them.` (live x3: an
+    earlier waiting person re-sent into a new request was linked to the older pick).
