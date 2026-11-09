@@ -51,6 +51,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
+  Store,
   TrendingUp,
   UserCheck,
   UserCircle,
@@ -110,6 +111,12 @@ const STAFF_SIDEBAR: MenuConfig = [
     icon: LayoutGrid,
     path: '/',
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
+  },
+  {
+    // SORENTO-TOWN: open to every signed-in staff user; the amounts are redacted server-side.
+    title: 'Town',
+    icon: Store,
+    path: '/town',
   },
   {
     title: 'Ideas',

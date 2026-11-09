@@ -645,14 +645,25 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
+def _town_snapshot_tick():
+    """APScheduler tick: rebuild every active company's town snapshot (SORENTO-TOWN).
+    Does nothing outside 07:00-22:05 Malaysia time; best-effort and never raises."""
+    try:
+        from app.services.town.snapshot import run_town_snapshot_tick
+
+        run_town_snapshot_tick()
+    except Exception as e:
+        logger.error("Town snapshot tick failed: %s", e, exc_info=True)
+
+
 def _panel_draft_purge_tick():
     """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
     Owns its own DB session; best-effort and never raises."""
     try:
-        from app.services.chatbot.panel_files import purge_drafts
+        from app.tasks.chat_turns import purge_panel_drafts
 
         with scheduler_session("panel_draft_purge") as db:
-            purge_drafts(db)
+            purge_panel_drafts(db)
     except Exception as e:
         logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
 
@@ -919,6 +930,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=24),
         id="ai_trace_sweep",
         name="AI assistant trace retention sweep",
+        replace_existing=True,
+    )
+
+    # SORENTO-TOWN: rebuild the town snapshots every 3 minutes (the job itself keeps to 07:00-22:05 MYT).
+    scheduler.add_job(
+        _town_snapshot_tick,
+        trigger=IntervalTrigger(minutes=3),
+        id="town_snapshot",
+        name="Sorento town snapshot",
         replace_existing=True,
     )
 

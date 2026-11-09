@@ -1,0 +1,41 @@
+# PLAN: Chatbot Console simulates any contact (synthetic envelope)
+
+Status: built, awaiting owner hand test (small fix track: under ~300 lines, no migration, no auth/RBAC change, no new ingest surface)
+Lane: CONSOLE-SYNTH-ENVELOPE
+
+## Journey
+
+Owner, 9 Nov: picks a contact in the Chatbot Console that has never sent a real WhatsApp
+message and types a question. Today the console answers 404 `CHATBOT_CONSOLE_NO_ENVELOPE`
+("Send one real WhatsApp message from this contact first"). They just want to simulate.
+
+## Fix
+
+- `console_service._borrow_envelope`: when no real (`ingress='webhook'`, `is_test=false`)
+  row exists but a `respond_contacts` row does, return a fresh synthetic base envelope in the
+  media-path shape (contact id, phone, firstName, `custom_fields` is_human_intervened=false),
+  with NO `message.channel` and `synthetic_envelope=true`. The WhatsApp phone link gate
+  cannot fire: it acts only on a contact with no `respond_contacts` row.
+- 404 stays only when there is no `respond_contacts` row at all.
+- Never borrow a console/test row (S6 rule); synthetic base is built fresh every turn.
+- The base still goes through `_build_envelope`, so `is_test` / `test_run_id` keep the
+  turn a dry run. Nothing is sent.
+- Phone lookup prefers the default workspace's row, then a NULL-workspace row, then any
+  other by id (duplicate `respond_io_id` rows across workspaces made `.scalar()` pick an
+  arbitrary one).
+- The marker surfaces in the trace summary and the console response
+  (`synthetic_envelope`), and the console shows a small badge
+  "simulated contact, no real WhatsApp history".
+
+## Crew pass fixes (9 Nov)
+
+- Real history includes the CRM's own respond.io webhook turns (`ingress='respond_webhook'`,
+  `DIRECT_INGRESS`), not only n8n's `webhook`; a direct-ingress contact borrows its turn and
+  gets no badge.
+- A turn stopped by the contact's AI replies switch (`ai_not_allowed`) shows
+  "AI replies are OFF for this contact; live, the bot would not answer." instead of
+  "(no reply)". Owner ruling: no bypass, no "simulate as if AI on" option.
+
+## Tests (see acceptance criteria)
+
+`console-synth-envelope-acceptance-criteria.md`.

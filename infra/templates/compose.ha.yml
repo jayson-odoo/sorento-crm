@@ -1,44 +1,76 @@
 # HA override for BOTH CRM nodes (A = CRM box, B = KVM 8):
 #   docker compose -f docker-compose.yml -f compose.ha.yml up -d
-# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md sections 2 and 8b.
+# Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md sections 2 and 3.
 #
-# - Patroni replaces the plain `db` service (same service name, so pgbouncer and the deploy
-#   script's DB_SERVICE keep working). Which node leads is Patroni's call, never this file's.
+# - `db` is plain Postgres 17 (+ pgvector + WAL-G, templates/postgres/Dockerfile), same service
+#   name so pgbouncer and the deploy script's DB_SERVICE keep working. Which node is primary is the
+#   failover controller's call (infra/scripts/cf_failover.py), never this file's: `restart: "no"`
+#   so a reboot leaves it STOPPED and the controller starts it as a standby (rule D1), and no
+#   autoheal label (autoheal must never restart a fenced database).
 # - Workers and the scheduler sit behind profile `promoted`; infra/scripts/role-watcher.sh
-#   starts them only while the local Postgres leads and stops them otherwise.
-# - Migrations: SKIP_MIGRATIONS defaults to 0 (today's behaviour on the leader). A node that is
-#   NOT leading must start its backend with SKIP_MIGRATIONS=1, or start.sh runs
-#   `alembic upgrade head` against the read-only replica and the start fails; the release
-#   follow-up (plan section 11) sets it per node from the role endpoint.
-# - autoheal restarts any container whose healthcheck turns unhealthy.
+#   starts them only while the local Postgres is primary and stops them otherwise.
+# - Migrations: SKIP_MIGRATIONS defaults to 0 (today's behaviour on the primary). The release on
+#   the standby sets SKIP_MIGRATIONS=1 (scripts/blue_green_deploy.sh standby mode), or start.sh
+#   would run `alembic upgrade head` against the read-only replica and the start would fail.
+# - autoheal restarts any app container whose healthcheck turns unhealthy (owner Q3: the 15 min
+#   before an app-sick failover are autoheal's).
 services:
   db:
-    image: <REGISTRY>/sorento-patroni-pg17:<PIN>    # built from templates/patroni/Dockerfile
-    env_file: [/etc/sorento-ha/ha-members.env, patroni.env, walg.env]
+    image: <REGISTRY>/sorento-pg17:<PIN>          # built from templates/postgres/Dockerfile
+    restart: "no"
+    # pg_hba.conf names the compose network as <COMPOSE_SUBNET>: pin that subnet on the default
+    # network in docker-compose.yml (networks.default.ipam.config[0].subnet), or it can change.
+    env_file: [walg.env]
+    environment:
+      # A subdirectory of the volume, so a re-seed can move the old data aside (plan 3c).
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - wal_log_hints=on                # pg_rewind
+      - -c
+      - hot_standby=on
+      - -c
+      - max_wal_senders=5
+      - -c
+      - max_replication_slots=5
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - wal_keep_size=1GB
+      - -c
+      - max_slot_wal_keep_size=20GB     # a dead standby can never fill the primary's disk
+      - -c
+      - max_standby_streaming_delay=30s
+      - -c
+      - wal_sender_timeout=10s          # a cut link is noticed in 10 s (sync standby drop, P4)
+      - -c
+      - wal_receiver_timeout=10s
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=wal-g wal-push %p
+      - -c
+      - archive_timeout=60              # PITR RPO bound about 60 s
+      - -c
+      - shared_preload_libraries=<PROD_SHARED_PRELOAD_LIBRARIES>   # copy prod's SHOW value; never drop one
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf   # outside PGDATA: a rewind / re-seed never copies the peer's
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./patroni.yml:/etc/patroni/patroni.yml:ro
-      # Patroni's client cert ONLY: the peer/server keys would let this container join raft.
-      - /etc/etcd/pki/ca.crt:/etc/etcd/pki/ca.crt:ro
-      - /etc/etcd/pki/patroni.crt:/etc/etcd/pki/patroni.crt:ro
-      - /etc/etcd/pki/patroni.key:/etc/etcd/pki/patroni.key:ro
-    devices:
-      # Host prep first (templates/host/): without softdog loaded this device does not exist
-      # and the container will not start at all.
-      - /dev/watchdog:/dev/watchdog
+      # replication password for pg_rewind / pg_basebackup run in this image (mode 600, uid 999)
+      - /etc/sorento-ha/pgpass.container:/var/lib/postgresql/.pgpass:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro      # templates/postgres/pg_hba.conf
     ports:
       - "127.0.0.1:5432:5432"
       - "<THIS_WG_IP>:5432:5432"
-      - "127.0.0.1:8008:8008"
-      - "<THIS_WG_IP>:8008:8008"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/liveness || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
-    labels:
-      autoheal: "true"
-    restart: unless-stopped
 
   backend_blue:
     environment:
@@ -62,18 +94,6 @@ services:
       SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL:?set a direct Postgres URL (not pgbouncer)}
   worker_fast:
     profiles: ["promoted"]
-
-  etcd:
-    image: <ETCD_IMAGE>:<PIN>
-    env_file: [/etc/sorento-ha/ha-members.env, etcd.env]   # etcd.env from templates/etcd/etcd.env.template
-    network_mode: host                               # binds the tunnel address + 127.0.0.1 only
-    volumes:
-      - etcd_data:/etcd-data
-      # etcd's own files only (ca.crt, peer.*, server.*, healthcheck.*), never in git. The CA's
-      # private key (ca.key) lives on NO box: certs are minted offline and copied in, because
-      # with client-cert auth a cert's CN is its etcd user and ca.key could mint CN=root.
-      - /etc/etcd/pki:/etc/etcd/pki:ro
-    restart: unless-stopped
 
   # The Docker socket is root on the host (security review S4): autoheal never gets it directly.
   # A socket proxy allows only container list / inspect / restart; both images pinned by digest.
@@ -103,9 +123,6 @@ services:
     networks: [autoheal_net]
     depends_on: [docker_socket_proxy]
     restart: unless-stopped
-
-volumes:
-  etcd_data:
 
 networks:
   # Internal only: no ports, nothing else attached.

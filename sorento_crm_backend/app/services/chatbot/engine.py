@@ -73,7 +73,7 @@ from app.services.chatbot.contracts import (
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.chatbot.turn.reconcile import narrowed_miss_lines
 from app.services.chatbot.turn.state import is_staff_profile
-from app.services.customer_group_service import family_maps
+from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
@@ -5865,8 +5865,8 @@ def _run_stages(envelope: Envelope, *, session_factory: SessionFactory, **kwargs
     the turn's scoped session, before any stage runs. Read fresh each turn: a rename or a
     regroup shows on the next message (CUSTOMER-GROUP AC-15)."""
     with _session(session_factory) as db:
-        groups, ids = family_maps(db)
-    with customer_groups(groups, ids=ids):
+        groups = family_overrides(db)
+    with customer_groups(groups):
         return _run_stages_body(envelope, session_factory=session_factory, **kwargs)
 
 

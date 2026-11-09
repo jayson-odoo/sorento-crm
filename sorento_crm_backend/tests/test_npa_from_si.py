@@ -515,11 +515,12 @@ def test_an_application_from_a_stock_inquiry_submits_without_product_rows(world)
     assert _act(world, d["id"], "submit", world.sales).status_code == 200
 
 
-def test_a_standalone_application_still_needs_a_product_row(world):
+def test_a_standalone_application_needs_its_remark(world):
+    # Owner hand test 9 Nov: product rows are gone; REMARK says what new product is wanted.
     d = world.api.as_(world.sales).post(NPA, json={"current_product_ids": [world.product.id]}).json()
     res = _act(world, d["id"], "submit", world.sales)
     assert res.status_code == 422
-    assert "Add at least one product" in res.text
+    assert "REMARK" in res.text
 
 
 def test_purchasing_links_an_existing_code_with_lead_time_and_cost_in_one_save(world):
@@ -838,6 +839,23 @@ def test_update_and_reply_sends_the_npa_use_case_with_the_npa_link(world, reply_
     assert f"{d['application_no']}: Code opened." in text
     assert "New product code: ZZT-RPL-1" in text and "Lead time: 8 weeks" in text
     assert text.rstrip().endswith(npa_url)
+
+
+def test_a_text_only_si_chat_reply_moves_the_npa_to_responded_like_the_si(world, reply_spy, monkeypatch):
+    """Owner re-test 9 Nov ~12:35: the SI goes Responded on Update & Reply
+    (procurement_service.update_inquiry_and_reply); the NPA does the same, and says so in the reply."""
+    _fake_portal_links(monkeypatch)
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    d = _si_approved(world)
+    _raised_in_portal(world, d["id"])
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Supplier quotes 6 weeks."}
+    )
+    assert res.status_code == 200, res.text
+    assert (res.json()["status"], res.json()["status_label"]) == ("responded", "Responded")
+    [(_fn, args, _kw)] = reply_spy
+    assert args[6]["status"] == "Responded"
 
 
 def test_a_staff_raised_npa_gets_no_link_and_no_si_fallback(world, reply_spy, monkeypatch):
