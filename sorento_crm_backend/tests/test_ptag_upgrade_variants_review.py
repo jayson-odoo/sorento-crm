@@ -216,3 +216,87 @@ def test_8_an_overlong_id_in_a_revise_is_a_422():
     with pytest.raises(AppException) as caught:
         _convert_ptag_revise_line({"product_id": "p", "quantity": 1, "excluded_variant_ids": ["x" * 37]}, 0)
     assert caught.value.status_code == 422
+
+
+# --------------------------------------------------------------------------- 10
+
+
+def _strip_lane_keys(pinned: dict) -> dict:
+    """A pin as a tag pinned BEFORE this lane holds it: no `variants`, no upgrade `topup_amount`."""
+    import copy
+
+    old = copy.deepcopy(pinned)
+    old.pop("variants", None)
+    for up in (old.get("slots") or {}).get("upgrades") or []:
+        up.pop("topup_amount", None)
+    return old
+
+
+def _changes_after_repin(db, request, mutate):
+    from app.services.dealer_kit import tag_data_service
+
+    tag_data_service.resolve_request_line_data(db, request)  # pins on first read
+    tag = request.lines[0].tags[0]
+    assert tag.pinned_tag_data, "the first read pins"
+    tag.pinned_tag_data = mutate(tag.pinned_tag_data)
+    db.flush()
+    (row,) = tag_data_service.resolve_request_line_data(db, request)
+    return row["data_changes"]
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["pinned-after-lane", "pinned-before-lane"])
+def test_10_an_unchanged_family_tag_reads_no_data_change(db, legacy):
+    fam = vseed.family(db)
+    request = seed.submit_one(db, fam["SRTWC8354-SH"], excluded_variant_ids=[fam["SRTWC8354-SH-P"].id])
+    db.flush()
+    changes = _changes_after_repin(db, request, _strip_lane_keys if legacy else (lambda pin: pin))
+    assert changes == []
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["pinned-after-lane", "pinned-before-lane"])
+def test_10_an_unchanged_combo_tag_with_an_upgrade_reads_no_data_change(db, legacy):
+    s = vseed.sink_combo(db)
+    request = seed.submit_one(db, s["host"], s["combo"], [{"product_id": s["fixed"].id}])
+    db.flush()
+    changes = _changes_after_repin(db, request, _strip_lane_keys if legacy else (lambda pin: pin))
+    assert changes == []
+
+
+def test_10_a_real_topup_edit_does_read_as_a_change(db):
+    from app.services.dealer_kit import tag_data_service
+
+    s = vseed.sink_combo(db)
+    request = seed.submit_one(db, s["host"], s["combo"], [{"product_id": s["fixed"].id}])
+    db.flush()
+    tag_data_service.resolve_request_line_data(db, request)
+    for part in s["combo"].parts:
+        if part.is_upgrade:
+            part.topup_amount = Decimal("175.00")
+    db.flush()
+    (row,) = tag_data_service.resolve_request_line_data(db, request)
+    assert [c["field"] for c in row["data_changes"]] == ["combo:options"]
+
+
+# --------------------------------------------------------------------------- 12
+
+
+def test_12_the_seed_writes_the_production_shape_and_every_reader_follows_it(db):
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.asset_service import spec_value_keys
+    from tests.test_ptag_numeric_spec_icons import _client_as
+    from tests.test_spec_registry_pr2_routes import _BASE, _MERCHANDISER, _seed
+
+    _seed(db)
+    fam = vseed.family(db)
+    row = vseed.set_specs(db, fam["SRTWC8354-SH-150"], trap_length=150, trap_type="s_trap")
+    assert row.values["trap_length"] == {"value": 150, "unit": "mm"}
+    assert spec_value_keys(vseed.registry(db)["trap_length"]) == ["150", "180", "200", "250", "300"]
+    raws = {s["key"]: s["raw"] for s in tag_data_service.product_specs(db, fam["SRTWC8354-SH-150"])}
+    assert raws == {"trap_length": "150", "trap_type": "s_trap"}
+    db.commit()
+    try:
+        res = _client_as(db, _MERCHANDISER).get(f"{_BASE}/trap_length/products")
+    finally:
+        app.dependency_overrides.clear()
+    assert res.status_code == 200, res.text
+    assert {p["value"] for p in res.json()["products"]} >= {150, 300}

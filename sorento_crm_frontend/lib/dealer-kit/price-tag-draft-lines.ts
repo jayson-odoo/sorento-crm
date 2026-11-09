@@ -621,15 +621,21 @@ export function draftLinesPayload(
 export function withVariantMembers(
   line: DraftLine,
   productId: string,
-  answer: { members: VariantMemberOption[]; own_list_price: number | null },
+  answer: { members?: VariantMemberOption[] | null; own_list_price?: number | null } | null | undefined,
 ): DraftLine {
-  const current = new Set(answer.members.map((m) => m.product_id));
+  // An answer without a list (an older server, a stand-in) reads as no members, and says nothing
+  // about the saved unticked ids, so they are left as they were.
+  const known = Array.isArray(answer?.members);
+  const members = known ? (answer?.members as VariantMemberOption[]) : [];
+  const current = new Set(members.map((m) => m.product_id));
   return {
     ...line,
-    variant_members: answer.members,
+    variant_members: members,
     variant_members_for: productId,
-    own_list_price: answer.own_list_price,
-    excluded_variant_ids: (line.excluded_variant_ids ?? []).filter((id) => current.has(id)),
+    own_list_price: answer?.own_list_price ?? null,
+    excluded_variant_ids: known
+      ? (line.excluded_variant_ids ?? []).filter((id) => current.has(id))
+      : (line.excluded_variant_ids ?? []),
   };
 }
 

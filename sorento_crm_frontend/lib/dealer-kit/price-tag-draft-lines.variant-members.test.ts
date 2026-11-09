@@ -52,3 +52,12 @@ describe('withVariantMembers', () => {
     expect(out.excluded_variant_ids).toEqual([]);
   });
 });
+
+describe('withVariantMembers on a malformed answer', () => {
+  it('reads an answer with no members list as none and leaves the saved unticked ids alone', () => {
+    const out = withVariantMembers(line(['a']), 'p1', {} as never);
+    expect(out.variant_members).toEqual([]);
+    expect(out.own_list_price).toBeNull();
+    expect(out.excluded_variant_ids).toEqual(['a']);
+  });
+});

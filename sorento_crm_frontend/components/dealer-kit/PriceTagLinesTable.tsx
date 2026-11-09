@@ -207,19 +207,19 @@ function VariantsRow({
       badgeText: m.is_discontinued ? 'Discontinued' : undefined,
     })),
   ];
-  const codes = new Map(options.map((option) => [option.value, option.label]));
+  const count = `${tickedLive + 1} of ${live.length + 1} ticked`;
+  const tickedCodes = options.filter((option) => value.includes(option.value)).map((option) => option.label);
   const warning = variantPriceWarning(line);
   const id = `variants-${line.key}`;
   return (
     <tr className="align-top">
       <td colSpan={colSpan} className="px-2 pb-2 pl-9">
         <div className="sticky left-0 max-w-[calc(100vw-9rem)] space-y-1 border-l-2 border-border pl-3 sm:max-w-md">
-          <div className="flex items-baseline justify-between gap-2">
-            <Label htmlFor={id} className="text-xs font-medium">
-              Variants on this tag
-            </Label>
-            <span className="text-xs text-muted-foreground">{`${tickedLive + 1} of ${live.length + 1} ticked`}</span>
-          </div>
+          <Label htmlFor={id} className="text-xs font-medium">
+            Variants on this tag
+            {/* Read out with the label; the trigger shows the same count. */}
+            <span className="sr-only">{count}</span>
+          </Label>
           <SearchableMultiSelect
             id={id}
             value={value}
@@ -230,8 +230,11 @@ function VariantsRow({
               });
             }}
             options={options}
-            renderTriggerLabel={(selected) => (
-              <span className="truncate">{selected.map((option) => codes.get(option.value) ?? option.label).join(', ')}</span>
+            // The count, never the joined codes: eight codes overflow the box (browser pass, 1280px).
+            renderTriggerLabel={() => (
+              <span className="truncate" title={tickedCodes.join(', ')}>
+                {count}
+              </span>
             )}
             emptyMessage="No variants."
             size="sm"

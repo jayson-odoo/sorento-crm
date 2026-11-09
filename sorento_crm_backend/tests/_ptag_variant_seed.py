@@ -1,7 +1,8 @@
 """Shared seed for the PRICETAG-UPGRADE-VARIANTS suites (not a test module).
 
 Builds the SRTWC8354-SH family and the SRTKS2432 sink combo inside the caller's rolled-back
-blank schema, each with its own FK chain (CI's database is empty). Specs follow the plan:
+blank schema, each with its own FK chain (CI's database is empty), spec rows in the production
+shape (`{key: {"value": ...}}`). Specs follow the plan:
 trap_length 250/150/200/180/250/150/200/300, trap_type s_trap except -P p_trap, seat_material uf
 on the -UF branch.
 """
@@ -54,14 +55,30 @@ def registry(db):
     return out
 
 
+#: The unit the production writer stores beside a measured value.
+UNITS = {"trap_length": "mm"}
+
+
 def set_specs(db, product, **values):
-    """Write a product's reviewed spec row (bare values, the shape the catalogue holds)."""
+    """Write a product's reviewed spec row in the shape production stores
+    (`{key: {"value": ..., "unit": ...}}`, `product_spec_write`); a value passed as a dict is
+    taken as already shaped."""
+    shaped = {
+        key: value
+        if isinstance(value, dict)
+        else {"value": value, **({"unit": UNITS[key]} if key in UNITS else {})}
+        for key, value in values.items()
+    }
+    provenance = {key: {"source": "user"} for key in shaped}
     row = db.query(ProductSpecifications).filter_by(product_id=product.id).first()
     if row is None:
-        row = ProductSpecifications(id=str(uuid.uuid4()), product_id=product.id, values=dict(values))
+        row = ProductSpecifications(
+            id=str(uuid.uuid4()), product_id=product.id, values=shaped, provenance=provenance
+        )
         db.add(row)
     else:
-        row.values = dict(values)
+        row.values = shaped
+        row.provenance = provenance
     db.flush()
     return row
 
