@@ -14,7 +14,10 @@ Behaviour card, design first.
 - Q5 (a) (~12:00): the tag prints the line product's own hand-picked LP / SP; when ticked members' list prices differ
   the request line warns "Variants price differently: RM x to RM y" (warning only, never blocks).
 - Mock: `pricetag-upgrade-variants-mock.html` (v2: owner asked "are we reusing our upgrade field?"; yes, the box
-  names its source, the combo's existing upgrade parts, product page > Combos). No code until the mock is approved. Plan:
+  names its source, the combo's existing upgrade parts, product page > Combos; v3: owner asked "can I place the topup
+  text where I want it?": yes, the Top-up is its own movable card element (state G) and a free "Upgrade top-up" text
+  layer on "Upgrade 1" anywhere on the tag (state H, U7; that layer makes the template need 1 upgrade, as today).
+  No code until the mock is approved. Plan:
 `PLAN-pricetag-upgrade-variants-09nov.md` (same folder). Paths: BE = `sorento_crm_backend/`,
 FE = `sorento_crm_frontend/`.
 

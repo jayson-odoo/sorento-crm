@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Upgrades and family icons</title>
 <!--
-  PRICETAG-UPGRADE-VARIANTS mock v2 (09/11/2026; v2 = owner note on v1: show that upgrades reuse the existing upgrade fields). Card: CARD-pricetag-upgrade-variants-09nov.md (U1-U9, F1-F8).
+  PRICETAG-UPGRADE-VARIANTS mock v3 (09/11/2026; v2 = upgrades reuse the existing upgrade fields; v3 = the top-up text goes where the designer wants it: states G and H). Card: CARD-pricetag-upgrade-variants-09nov.md (U1-U9, F1-F8).
   Owner rulings: 9 Nov ~11:45 Q1 (a), Q2 (a), Q4 (a); ~12:00 Q3 = the whole variant tree, with a per-line chooser on the
   request line to untick members (all ticked by default); Q5 (a) the line product's own hand-picked LP / SP plus a warning
   when ticked members price differently. Static, no data fetch. Tags drawn at 3 px per mm. Codes and prices are the owner's two sample tags;
@@ -84,7 +84,7 @@
 </head>
 <body>
 <h1>Upgrades on combo tags, and one tag per product family</h1>
-<div class="muted">Mock v2, 09/11/2026 (v2: the Upgrades box names its source, the combo's existing upgrade parts). Card U1-U9 and F1-F8. Owner rulings: Q1 (a), Q2 (a), Q4 (a) (~11:45); Q3 whole tree + per-line chooser, Q5 (a) (~12:00). Everything below happens inside the Tag Template designer and the existing Product Specifications screen; there is no new screen.</div>
+<div class="muted">Mock v3, 09/11/2026 (v2: the Upgrades box names its source; v3: states G and H, the top-up text placed anywhere, inside the card or as a free layer on the tag). Card U1-U9 and F1-F8. Owner rulings: Q1 (a), Q2 (a), Q4 (a) (~11:45); Q3 whole tree + per-line chooser, Q5 (a) (~12:00). Everything below happens inside the Tag Template designer and the existing Product Specifications screen; there is no new screen.</div>
 
 <!-- ============================ 1. UPGRADES ============================ -->
 <h2>1. Tag Template designer: combo SRTKS2432 + SRTKT1862SS, upgrade SRTKT71SS (148 x 105 mm)</h2>
@@ -96,6 +96,8 @@
     <button class="btn" data-s="picked">D. Request preview: upgrade picked</button>
     <button class="btn" data-s="none">E. Combo with no upgrade</button>
     <button class="btn" data-s="many">F. 3 upgrades, box sized for 1</button>
+    <button class="btn" data-s="move">G. Top-up moved inside the card</button>
+    <button class="btn" data-s="free">H. Free "Upgrade 1 top-up" layer beside SP</button>
   </div>
   <div class="shell">
     <div class="toolbar" id="uToolbar"></div>
@@ -202,15 +204,22 @@ const wcSvg = `<svg viewBox="0 0 40 50" width="100%" height="100%"><rect x="6" y
 /* ---------- section 1 ---------- */
 function upgradeCard(x, y, w, h, state, opts) {
   const o = opts || {};
-  const sel = (el) => state === 'card' && el === 'topup' ? 'elsel' : '';
-  return `<div class="ucard ${state==='card'?'editing':''} ${o.faded?'faded':''}" style="left:${px(x)};top:${px(y)};width:${px(w)};height:${px(h)}">
+  const sel = (el) => (state === 'card' || state === 'move') && el === 'topup' ? 'elsel' : '';
+  const editing = state === 'card' || state === 'move';
+  // Top-up position inside the card (card mm). Default top; G moves it to the bottom right; H removes it from the card.
+  const moved = state === 'move';
+  const noTopup = state === 'free';
+  const top0 = moved || noTopup ? -4.6 : 0; // in G and H the designer dragged the other elements up by hand
+  const handles = (l, t, w2, h2) => [[l,t],[l+w2,t],[l,t+h2],[l+w2,t+h2]].map(([a,b]) => `<span style="position:absolute;left:${px(a)};top:${px(b)};width:6px;height:6px;margin:-3px 0 0 -3px;background:#fff;border:1px solid #1b84ff"></span>`).join('');
+  return `<div class="ucard ${editing?'editing':''} ${o.faded?'faded':''}" style="left:${px(x)};top:${px(y)};width:${px(w)};height:${px(h)}">
     <div style="left:${px(1)};top:${px(1.5)};width:${px(14)};height:${px(19)}">${tapSvg(o.colour||'#cbd5e1')}</div>
-    <div class="${sel('topup')}" style="left:${px(17)};top:${px(1)};font-size:${px(3.6)};font-weight:900;color:#b91c1c">TOPUP ${o.topup||'RM 150'}</div>
-    <div style="left:${px(17)};top:${px(5.6)};font-size:${px(3)};font-weight:800">${o.code||'SRTKT71SS'}</div>
-    <div style="left:${px(17)};top:${px(9.2)};font-size:${px(2.3)};color:#333">${o.desc||'Pull-out shower mixer tap'}</div>
-    <div style="left:${px(17)};top:${px(12.2)};font-size:${px(2.5)}">LP: ${o.lp||'RM 440'}</div>
+    ${noTopup ? '' : `<div class="${sel('topup')}" style="left:${px(moved?45:17)};top:${px(moved?15.6:1)};font-size:${px(3.6)};font-weight:900;color:#b91c1c">TOPUP ${o.topup||'RM 150'}</div>`}
+    ${moved ? handles(44.5, 15.2, 25.5, 5) : ''}
+    <div style="left:${px(17)};top:${px(5.6+top0)};font-size:${px(3)};font-weight:800">${o.code||'SRTKT71SS'}</div>
+    <div style="left:${px(17)};top:${px(9.2+top0)};font-size:${px(2.3)};color:#333">${o.desc||'Pull-out shower mixer tap'}</div>
+    <div style="left:${px(17)};top:${px(12.2+top0)};font-size:${px(2.5)}">LP: ${o.lp||'RM 440'}</div>
     ${o.withSp ? `<div class="elsel" style="left:${px(17)};top:${px(15)};font-size:${px(2.5)};font-weight:800">SP with upgrade RM 1,099</div>` : ''}
-    ${iconRow(o.icons||['sus','pull','spray'], 17 + (o.withSp?28:0), o.withSp?14.6:15.2, 4.6, 0.8)}
+    ${iconRow(o.icons||['sus','pull','spray'], 17 + (o.withSp?28:0), o.withSp?14.6:15.2+top0, 4.6, 0.8)}
   </div>`;
 }
 function comboTag(state) {
@@ -240,6 +249,8 @@ function comboTag(state) {
     ` : (state === 'none' || state === 'picked' ? `<div class="t" style="left:${px(4)};top:${px(46)};width:${px(76)};height:${px(28)};border:1px dashed #cbd5e1;border-radius:9px;display:${state==='none'?'block':'none'}"></div>` : '')}
     <!-- main feature icons -->
     ${iconRow(['sus','nano','war','bac'], 4, 88, 11, 2)}
+    ${state === 'free' ? `<div class="t elsel" style="left:${px(96)};top:${px(56.5)};width:${px(48)};height:${px(7.5)};display:flex;align-items:center;justify-content:center;font-size:${px(5)};font-weight:900;color:#b91c1c">TOPUP RM 150</div>
+      ${[[96,56.5],[144,56.5],[96,64],[144,64]].map(([a,b]) => `<span style="position:absolute;left:${px(a)};top:${px(b)};width:6px;height:6px;margin:-3px 0 0 -3px;background:#fff;border:1px solid #1b84ff"></span>`).join('')}` : ''}
     <!-- price badge -->
     <div class="sp" style="left:${px(96)};top:${px(66)};width:${px(48)};height:${px(34)}">
       <div style="font-size:${px(3)};margin-top:${px(3)}">SP</div>
@@ -314,6 +325,34 @@ const U = {
     insp: `<div style="font-weight:600">Template fit</div><div class="note ok">Fits this combo. The Upgrades box needs no upgrade; with none on offer it prints nothing.</div>
       <div class="muted" style="margin-top:8px">A layer placed by hand on "Upgrade 1" still needs 1 upgrade, as today ("Needs 1 upgrade; this combo has 0").</div>`,
     note: `<div class="note info">E. U4 + U6: no upgrades, no box, and the template is still offered for this combo (plain-template rule kept).</div>`,
+  },
+  move: {
+    tools: `<span class="muted">Editing card:</span><button class="btn sm">Picture</button><button class="btn sm">Text</button><button class="btn sm">Field &#9662;</button><button class="btn sm">Feature icons</button><button class="btn sm">Colour dots</button><button class="btn sm">Shape</button><button class="btn sm">Done (Esc)</button>`,
+    layers: ['Upgrades box','  Card: Picture','  Card: Code','  Card: Name','  Card: List price','  Card: Feature icons','  *Card: Top-up'],
+    insp: `<div style="font-weight:600">Card element: Text</div>
+      <div class="sec">Shows</div><div class="input">Top-up &#9662;</div>
+      <div class="lbl">Text before the figure</div><div class="input">TOPUP&nbsp;</div>
+      <div class="sec">Position in the card (mm)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div class="input">X 45</div><div class="input">Y 15.6</div><div class="input">W 25.5</div><div class="input">H 5</div></div>
+      <div class="sec">Typography</div>
+      <div class="input">DM Sans &#9662; &nbsp; 10.8 pt &nbsp; Black</div>
+      <div class="input" style="margin-top:6px"><span style="width:14px;height:14px;border-radius:3px;background:#b91c1c;display:inline-block"></span> #B91C1C &nbsp; Right</div>
+      <div class="note info"><b>Source:</b> the combo's Top-up field on this upgrade part (product page &gt; Combos).</div>`,
+    note: `<div class="note info">G. Inside the card the Top-up is its own element: drag it, resize it, or type X / Y, like the picture, code, name and LP. Here it was dragged from the top to the bottom right, and the designer then dragged the code, name, LP and icons up into the space it left (moving one element never moves the others; only an EMPTY field closes up on its own). Every upgrade card in the box uses this one card layout.</div>`,
+  },
+  free: {
+    tools: `<button class="btn sm">Text</button><button class="btn sm">Image</button><button class="btn sm">Shape</button><button class="btn sm on">Field</button><button class="btn sm">Feature icons</button><button class="btn sm">Accessories &#9662;</button>`,
+    layers: ['Photo (main)','Code','Description + LP','Fixed part 1 line','Free items box','Upgrades box (card has no Top-up)','*Text: Upgrade top-up (Upgrade 1)','Feature icons (main)','Price badge (SP)'],
+    insp: `<div style="font-weight:600">Text layer</div>
+      <div class="sec">Field</div><div class="input">Upgrade top-up &#9662;</div>
+      <div class="sec">Product</div><div class="input">Upgrade 1: SRTKT71SS &#9662;</div>
+      <div class="lbl">Text before the figure</div><div class="input">TOPUP&nbsp;</div>
+      <div class="sec">Typography</div>
+      <div class="input">DM Sans &#9662; &nbsp; 15 pt &nbsp; Black &nbsp; Centre</div>
+      <div class="note info"><b>Source:</b> the same Top-up field (product page &gt; Combos), so it prints the same words as the card element.</div>
+      <div class="note warn">A layer on "Upgrade 1" makes this template need 1 upgrade, as any Upgrade 1 layer does today: it is not offered for a combo with none. Keep the top-up inside the box (state G) for a template that fits every combo.</div>
+      <div class="muted" style="margin-top:8px">Prints nothing once the upgrade is picked (it is then inside the SP).</div>`,
+    note: `<div class="note info">H. The top-up as an ordinary text layer anywhere on the tag: Field "Upgrade top-up", Product "Upgrade 1". Here it sits on top of the SP box. The card's own Top-up element was deleted (Delete key inside the card) so it does not print twice, and the other card elements were dragged up.</div>`,
   },
   many: {
     tools: `<span class="muted">Preview product: a combo with 3 upgrades (2 of them sample, for the drop warning)</span>`,
