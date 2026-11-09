@@ -429,16 +429,21 @@ export function accessoryChrome(
   // Dragged (PRICETAG-HEADER-DRAG): plain text, as wide as its text, at its stored spot, pulled back
   // inside a box that closed up. The frame, cards and footer stay where they are (owner Q2).
   const pos = headerH > 0 ? props.headerPos : null;
+  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
   // The header style's alignment (`accessoryHeaderStyle`: centred unless the box sets otherwise).
   const align = props.headerStyle?.align ?? 'center';
+  // The text-wide band is the text plus a pad of air either side, so left / right aligned text
+  // starts / ends a pad outside it: the letters stay where they are drawn now (no first-drop shift).
   const textX = onBorder
     ? (outW - bandW) / 2
-    : align === 'left'
-      ? headerInset
-      : align === 'right'
-        ? headerInset + room - tight
-        : headerInset + (room - tight) / 2;
-  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
+    : clamp(
+        align === 'left'
+          ? headerInset - pad
+          : align === 'right'
+            ? headerInset + room - tight + pad
+            : headerInset + (room - tight) / 2,
+        outW - tight,
+      );
   return {
     frame:
       props.showFrame === false

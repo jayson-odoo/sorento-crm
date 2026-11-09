@@ -1378,6 +1378,28 @@ function renderAccessoriesLayer(
     : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        lineHeight: `${box.header.height_mm}mm`,
+        // On the border: the header background breaks the border behind the text (legend).
+        backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+        ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
+        fontSize: `${box.header.fontSize_pt}pt`,
+        // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
+        whiteSpace: 'nowrap',
+      }}
+      data-testid="accessories-header"
+    >
+      {props.headerText}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1413,27 +1435,7 @@ function renderAccessoriesLayer(
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            // On the border: the header background breaks the border behind the text (legend).
-            backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const url = item.image
@@ -1496,6 +1498,7 @@ function renderAccessoriesLayer(
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <div
           style={{
@@ -1533,6 +1536,26 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
   const font = props.fontFamily ? `'${props.fontFamily}', sans-serif` : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        lineHeight: `${box.header.height_mm}mm`,
+        backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
+        ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
+        fontSize: `${box.header.fontSize_pt}pt`,
+        whiteSpace: 'nowrap',
+      }}
+      data-testid="accessories-header"
+    >
+      {props.headerText}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1563,25 +1586,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1615,6 +1620,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <div
           style={{

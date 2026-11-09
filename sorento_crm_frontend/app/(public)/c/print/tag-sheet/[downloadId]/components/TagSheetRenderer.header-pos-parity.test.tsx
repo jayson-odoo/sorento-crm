@@ -132,26 +132,42 @@ function doc(layer: TagLayer): TagSheetDoc {
   } as TagSheetDoc;
 }
 
-async function canvasHeader(layer: TagLayer) {
+async function canvasHeader(layer: TagLayer, hidden = false) {
   const { container, unmount } = render(
-    <KonvaTagLayer layer={layer} scale={SCALE} display={{ accessories: LIST }} />,
+    <KonvaTagLayer layer={layer} scale={SCALE} display={{ accessories: LIST, accessoryHeaderHidden: hidden }} />,
   );
   await act(async () => {
     await Promise.resolve();
   });
-  const text = [...container.querySelectorAll('[data-konva="text"]')].find(
-    (t) => t.getAttribute('data-text') === 'FREE',
-  )!;
+  const texts = [...container.querySelectorAll('[data-konva="text"]')];
+  const text = texts.find((t) => t.getAttribute('data-text') === 'FREE');
+  if (!text) {
+    unmount();
+    return null;
+  }
+  // Draw order: Konva paints later nodes on top, so a dragged header must come after every card text.
+  const cardTexts = texts.filter((t) => /Popup|SRTW5000|LP:/.test(t.getAttribute('data-text') ?? ''));
+  const overCards = cardTexts.length > 0 && cardTexts.every((t) => texts.indexOf(t) < texts.indexOf(text));
   const out = {
     x: Number(text.getAttribute('data-x')),
     y: Number(text.getAttribute('data-y')),
     align: text.getAttribute('data-align'),
+    overCards,
   };
   const backgrounds = [...container.querySelectorAll('[data-konva="rect"]')].filter(
     (r) => r.getAttribute('data-fill') === '#ffffff' && Number(r.getAttribute('data-x')) === out.x,
   );
   unmount();
   return { ...out, backgrounds: backgrounds.length };
+}
+
+/** Print: the moved header node comes after the card nodes (DOM order paints it on top). */
+function printHeaderOverCards() {
+  const box = screen.getByTestId('accessories-box');
+  const header = screen.getByTestId('accessories-header');
+  const nodes = [...box.querySelectorAll('*')];
+  const card = nodes.find((n) => /(Popup|SRTW5000)/.test(n.textContent ?? '') && n !== box && !n.contains(header));
+  return Boolean(card) && nodes.indexOf(header) > nodes.indexOf(card!);
 }
 
 describe('a moved header prints where the designer draws it', () => {
@@ -162,10 +178,10 @@ describe('a moved header prints where the designer draws it', () => {
     expect(box.header!.y_mm).toBe(POS.y_mm);
 
     const canvas = await canvasHeader(layer);
-    expect(canvas.x).toBeCloseTo(POS.x_mm * SCALE, 6);
-    expect(canvas.y).toBeCloseTo(POS.y_mm * SCALE, 6);
-    expect(canvas.backgrounds).toBe(0);
-    expect(canvas.align).toBe('center');
+    expect(canvas!.x).toBeCloseTo(POS.x_mm * SCALE, 6);
+    expect(canvas!.y).toBeCloseTo(POS.y_mm * SCALE, 6);
+    expect(canvas!.backgrounds).toBe(0);
+    expect(canvas!.align).toBe('center');
 
     render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ [TAG_ID]: row() }} assets={{}} />);
     const header = screen.getByTestId('accessories-header');
@@ -174,6 +190,8 @@ describe('a moved header prints where the designer draws it', () => {
     expect(header.style.top).toBe(`${POS.y_mm}mm`);
     expect(header.style.backgroundColor).toBe('');
     expect(header.style.width).toBe(`${box.header!.width_mm}mm`);
+    expect(canvas!.overCards).toBe(true);
+    expect(printHeaderOverCards()).toBe(true);
   });
 
   it('designed-card box: canvas and print place the header at the stored mm, plain text', async () => {
@@ -182,10 +200,10 @@ describe('a moved header prints where the designer draws it', () => {
     expect(box.header!.x_mm).toBe(POS.x_mm);
 
     const canvas = await canvasHeader(layer);
-    expect(canvas.x).toBeCloseTo(POS.x_mm * SCALE, 6);
-    expect(canvas.y).toBeCloseTo(POS.y_mm * SCALE, 6);
-    expect(canvas.backgrounds).toBe(0);
-    expect(canvas.align).toBe('center');
+    expect(canvas!.x).toBeCloseTo(POS.x_mm * SCALE, 6);
+    expect(canvas!.y).toBeCloseTo(POS.y_mm * SCALE, 6);
+    expect(canvas!.backgrounds).toBe(0);
+    expect(canvas!.align).toBe('center');
 
     render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ [TAG_ID]: row() }} assets={{}} />);
     const header = screen.getByTestId('accessories-header');
@@ -193,5 +211,13 @@ describe('a moved header prints where the designer draws it', () => {
     expect(header.style.left).toBe(`${POS.x_mm}mm`);
     expect(header.style.top).toBe(`${POS.y_mm}mm`);
     expect(header.style.backgroundColor).toBe('');
+    expect(canvas!.overCards).toBe(true);
+    expect(printHeaderOverCards()).toBe(true);
+  });
+
+  it('while the header is dragged the box draws no header of its own (no double FREE)', async () => {
+    expect(await canvasHeader(boxLayer({}), true)).toBeNull();
+    expect(await canvasHeader(boxLayer({ card: CARD }), true)).toBeNull();
+    expect(await canvasHeader(boxLayer({ card: CARD }), false)).not.toBeNull();
   });
 });

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { accessoryBoxLayout, accessoryChrome } from './accessory-box';
+import { ACCESSORY_BOX_PAD_MM, accessoryBoxLayout, accessoryChrome } from './accessory-box';
 import {
   accessoryDesign,
   accessoryDesignChanged,
@@ -41,7 +41,15 @@ describe('accessoryChrome with a stored header position', () => {
     // Centred by default: the text's centre is the band's centre.
     expect(h.text.x_mm + h.text.width_mm / 2).toBeCloseTo(h.x_mm + h.width_mm / 2, 6);
     const left = accessoryChrome(base({ headerOnBorder: false, headerStyle: { align: 'left' } as never }), 60, 40).header!;
-    expect(left.text.x_mm).toBeCloseTo(left.x_mm, 6);
+    // Left aligned, the letters start at the band's left edge; a moved header centres its letters in
+    // the text-wide band (text + a pad each side), so that band starts a pad further left.
+    expect(left.text.x_mm).toBeCloseTo(left.x_mm - ACCESSORY_BOX_PAD_MM, 6);
+    const moved = accessoryChrome(
+      base({ headerOnBorder: false, headerStyle: { align: 'left' } as never, headerPos: { x_mm: left.text.x_mm, y_mm: 10 } }),
+      60,
+      40,
+    ).header!;
+    expect(moved.x_mm + ACCESSORY_BOX_PAD_MM).toBeCloseTo(left.x_mm, 6);
   });
 
   it('first drag of an inside-frame header: dropped straight down, the text stays at the same x', () => {

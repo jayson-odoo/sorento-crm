@@ -1245,6 +1245,25 @@ function AccessoriesContent({
   }
   const px = (mm: number) => mm2px(mm, scale);
   const header = accessoryHeaderStyle(props);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <Text
+      x={px(box.header.x_mm)}
+      y={px(box.header.y_mm)}
+      width={px(box.header.width_mm)}
+      height={px(box.header.height_mm)}
+      text={props.headerText}
+      align={box.header.onBorder || box.header.moved ? 'center' : header.align}
+      verticalAlign="middle"
+      fontStyle={konvaFontStyle(header)}
+      textDecoration={konvaDecoration(header)}
+      fontFamily={header.fontFamily ?? undefined}
+      letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+      fontSize={px(ptToMm(box.header.fontSize_pt))}
+      fill={header.color}
+      wrap="none"
+    />
+  );
   return (
     <>
       {box.frame && (
@@ -1268,24 +1287,7 @@ function AccessoriesContent({
           fill={props.headerBackground || '#ffffff'}
         />
       )}
-      {!headerHidden && box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder || box.header.moved ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
@@ -1336,6 +1338,7 @@ function AccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
           <>
@@ -1411,6 +1414,25 @@ function DesignedAccessoriesContent({
   const px = (mm: number) => mm2px(mm, scale);
   const header = accessoryHeaderStyle(props);
   const shownItems = items.slice(0, box.shown);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <Text
+      x={px(box.header.x_mm)}
+      y={px(box.header.y_mm)}
+      width={px(box.header.width_mm)}
+      height={px(box.header.height_mm)}
+      text={props.headerText}
+      align={box.header.onBorder || box.header.moved ? 'center' : header.align}
+      verticalAlign="middle"
+      fontStyle={konvaFontStyle(header)}
+      textDecoration={konvaDecoration(header)}
+      fontFamily={header.fontFamily ?? undefined}
+      letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+      fontSize={px(ptToMm(box.header.fontSize_pt))}
+      fill={header.color}
+      wrap="none"
+    />
+  );
   return (
     <>
       {box.frame && (
@@ -1433,24 +1455,7 @@ function DesignedAccessoriesContent({
           fill={props.headerBackground || '#ffffff'}
         />
       )}
-      {!headerHidden && box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder || box.header.moved ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1482,6 +1487,7 @@ function DesignedAccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <Group x={px(box.footer.x_mm)} y={px(box.footer.y_mm)}>
           {footerElementsFor(boxColours(shownItems), props.footer).map((element) => (

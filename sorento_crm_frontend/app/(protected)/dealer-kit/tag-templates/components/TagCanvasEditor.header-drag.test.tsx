@@ -34,16 +34,22 @@ vi.mock('./KonvaTagLayer', () => ({
     layer,
     display,
     onSelect,
+    onDragStart,
+    onDragEnd,
     onDoubleClick,
   }: {
     layer: TagLayer;
     display?: { accessoryHeaderHidden?: boolean };
     onSelect?: (id: string, additive: boolean) => void;
+    onDragStart?: (id: string) => void;
+    onDragEnd?: (id: string) => void;
     onDoubleClick?: (id: string) => void;
   }) => (
     <div
       data-testid={`layer-${layer.id}`}
       data-header-hidden={display?.accessoryHeaderHidden ? 'yes' : ''}
+      onMouseDown={() => onDragStart?.(layer.id)}
+      onMouseUp={() => onDragEnd?.(layer.id)}
       onClick={() => onSelect?.(layer.id, false)}
       onDoubleClick={() => onDoubleClick?.(layer.id)}
     />
@@ -181,6 +187,16 @@ describe('header drag in the Tag Template designer', () => {
     expect(screen.getByTestId('layer-acc1').getAttribute('data-header-hidden')).toBe('yes');
     fireEvent.click(screen.getByTestId('header-release'));
     expect(screen.getByTestId('layer-acc1').getAttribute('data-header-hidden')).toBe('');
+  });
+
+  it('the handle hides while the box itself is dragged, and comes back after', () => {
+    mount(accessoriesLayer('acc1'));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    expect(screen.getByTestId('header-handle')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByTestId('layer-acc1'));
+    expect(screen.queryByTestId('header-handle')).toBeNull();
+    fireEvent.mouseUp(screen.getByTestId('layer-acc1'));
+    expect(screen.getByTestId('header-handle')).toBeInTheDocument();
   });
 
   it('a locked box has no handle', () => {
