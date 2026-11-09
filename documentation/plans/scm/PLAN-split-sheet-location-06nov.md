@@ -1,6 +1,6 @@
 # PLAN: Detect an SO line location change (SPLIT-SHEET-LOCATION)
 
-Status: built, review round 1 fixed (PR #2221). UAC: `split-sheet-location-acceptance-criteria.md`. Size M, one lane, no migration (owner Q5, 7 Nov).
+Status: built, owner change request of 9 Nov (LOCATION / NEW LOCATION) in review (PR #2221). UAC: `split-sheet-location-acceptance-criteria.md`. Size M, one lane. One data migration: `oihr_0012_new_location` (the handover email template), added for the 9 Nov ruling; no schema change.
 
 ## Journey
 
@@ -45,12 +45,25 @@ same way it detects a qty, delivery date or item code change. Do not just switch
 3. Board: the change lightbox prints a Location Was/Now row; the history sheet labels the kind
    "Location changed". The row un-decides the line like any other kind, so CS re-confirms.
 4. Purchasing: only via the board Confirm. A saved line whose snapshot location moved is told
-   once at its new location with REMARK "NEW LOCATION (was <old>)" (alone, or after the qty /
-   date words), headline verb NEW LOCATION. A line with acting splits says it once, on its
+   once with REMARK "NEW LOCATION (was <old>)" (alone, or after the qty /
+   date words); LOCATION / NEW LOCATION print old / new (9 Nov ruling below). A line with acting splits says it once, on its
    first plan row (`_queue_plan_rows`). Lines purchasing holds nothing for (Use own
    location, Use BRW, incoming) stay out, as today (OI-EMAIL-PURCHASING-FOCUS).
 5. Review split: LOCATION is the core warehouse (what the board reads), `stock_location` only as
    the fallback. The sits-on "same item and location" check compares that location.
+
+## Owner change request (9 Nov 2026, ~16:40)
+
+"When I confirm, is it supposed to show the Location and New Location column also in preview, email and
+attachment?" Ruling, mirroring QTY | NEW QTY and DELIVERY | NEW DATE: in the Confirm Review split, the purchasing
+email table and its Excel attachment, LOCATION prints the line's previous location and NEW LOCATION, right after it,
+the new one, filled only on a moved line (blank otherwise), the column present only when some line moved. The
+REMARK `NEW LOCATION (was X)` stays. At 375px both columns show (LOCATION used to be desktop-only).
+
+As built: a moved email line carries `was.location` (as a cut carries `was.qty`); the stored email template gains
+the column through `oihr_0012_new_location` (in-place edit guarded on `oihr_0011`'s document, with a downgrade);
+`handover_xlsx` prints LOCATION / NEW LOCATION; the split read returns `was_location` off the same change NEW QTY
+reads (pending, else last applied); `LineSplitSheet` adds the New location column and shows Location on a phone.
 
 ## Tests
 
