@@ -13,7 +13,7 @@ row an admin edited is left alone with a logged warning. Idempotent. Downgrade r
 `oihr_0011`'s document, read from that migration's own frozen constants.
 
 Revision ID: oihr_0012_new_location
-Revises: town_0001_town_days
+Revises: sales_0008_no_replace_payee
 Create Date: 2026-11-09
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from alembic import op
 
 
 revision = "oihr_0012_new_location"
-down_revision = "town_0001_town_days"
+down_revision = "sales_0008_no_replace_payee"
 branch_labels = None
 depends_on = None
 
