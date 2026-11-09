@@ -876,6 +876,56 @@ def _carry_location(
     )
 
 
+def confirmed_locations(decision: Any) -> Dict[str, Optional[str]]:
+    """SO-LOCATION-GAP: `project line id -> location` a supply decision confirmed each line at
+    (`ProjectSupplyService._snapshot` freezes the line's core warehouse code as `location`)."""
+    if decision is None:
+        return {}
+    return {
+        str(snapshot.get("project_line_id")): (snapshot.get("location") or None)
+        for snapshot in (decision.line_snapshots or [])
+        if snapshot.get("project_line_id")
+    }
+
+
+def carry_planned_location(
+    db: Session,
+    from_json: dict,
+    to_json: dict,
+    *,
+    kind: str,
+    project_line_id: Optional[str],
+    confirmed: Dict[str, Optional[str]],
+    now_location: Optional[str],
+) -> Tuple[dict, dict]:
+    """SO-LOCATION-GAP (owner, 9 Nov 2026, prod SO429664): a change on a line that sits at
+    another location than the one it was planned at carries that move, whichever AutoCount
+    push made it. `_from_to` compares the two sides of ONE push only, so a move an earlier push
+    made (one before #2221 detected moves) never reached the row, while the purchasing email
+    (and the Review split's REMARK, its dry run) said it.
+
+    Planned is the purchasing email's own reference: the location the active decision
+    confirmed the line at (`confirmed`, `_location_moved_from`), else, for a line no decision
+    covers, the one location its live ORDER rows sit at (`held_order_locations`,
+    `_held_location_moved_from`). A row that already carries a location (the push moved it,
+    or the row it replaces did), an `added` or `cancelled` row, or a line where it was planned
+    is returned as is. Returns `(from_json, to_json)`."""
+    if kind in ("added", "cancelled") or not project_line_id or not now_location:
+        return from_json, to_json
+    if (from_json or {}).get("location") or (to_json or {}).get("location"):
+        return from_json, to_json
+    if project_line_id in confirmed:
+        planned = confirmed[project_line_id]
+    else:
+        from app.services.project_order_inquiry_service import held_order_locations
+
+        held = held_order_locations(db, [project_line_id]).get(project_line_id)
+        planned = held[0] if held else None
+    if not planned or planned == now_location:
+        return from_json, to_json
+    return {**(from_json or {}), "location": planned}, {**(to_json or {}), "location": now_location}
+
+
 def _nets_to_nothing(row: PlanningChangeRow) -> bool:
     """A `location_changed` replacement whose line is back where it was planned, with nothing
     else moved: there is no change left for CS to decide (review S2)."""
@@ -1157,6 +1207,7 @@ def build_batch(
             else (latest_decision.revision_no if latest_decision else 0)
         )
         frozen = supply.frozen_lines_of(active_decision)
+        confirmed = confirmed_locations(active_decision)
         so_number = _so_number(order)
         # Only asked when the group actually carries an `added` change - the order-level
         # half of the gate a new line needs (rule 5: "an ADDED change... is raised when the
@@ -1210,6 +1261,7 @@ def build_batch(
                 order_has_held_or_inquiry,
                 batch_line_ids,
                 replaces_added=replaces_added,
+                confirmed=confirmed,
             )
             if row is None:
                 # AC-G1/AC-G4: the line is neither held nor inquired, so it stays off the
@@ -2285,6 +2337,7 @@ def _build_row(
     order_has_held_or_inquiry: bool = False,
     batch_line_ids: Sequence[str] = (),
     replaces_added: bool = False,
+    confirmed: Optional[Dict[str, Optional[str]]] = None,
 ) -> Optional[PlanningChangeRow]:
     c = entry["change"]
     project_line: Optional[ProjectSalesOrderLine] = entry["project_line"]
@@ -2323,6 +2376,15 @@ def _build_row(
             old_date = None
         elif not (c.kind == ADDED and order_has_held_or_inquiry):
             return None
+
+    # SO-LOCATION-GAP: a move an earlier push made rides on this change, as the email says it.
+    from_json, to_json = carry_planned_location(
+        db, from_json, to_json,
+        kind=kind,
+        project_line_id=project_line_id,
+        confirmed=confirmed or {},
+        now_location=c.after.location if c.after is not None else None,
+    )
 
     dealer_hot_selling = bool(product_id and product_id in dealer_where)
     placed = _placed_links(db, project_line_id)
