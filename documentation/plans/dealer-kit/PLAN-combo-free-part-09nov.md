@@ -36,6 +36,12 @@ The host product still cannot be its own free item.
 - Copy-to-products and the tag render needed no change; tests pin both.
 - UI: no change. The picker (`AccessoryListField.tsx:223`) already offers parts and hides the host.
 
+## Existing data
+
+A reseed never overwrites a free list that exists (`_has_free_list`). A combo seeded before this
+lane keeps what it got: a library card named by the code (loose) or no tap at all (strict). Fix
+such a combo by hand in its Combos card (e.g. the SRTBF11829 flyer combo, if it was already seeded).
+
 ## Tests
 
 - `tests/test_combo_free_part.py`: API accepts a part, refuses the host; the tag shows the part in
