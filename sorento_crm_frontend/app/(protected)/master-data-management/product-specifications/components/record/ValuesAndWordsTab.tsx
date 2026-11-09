@@ -109,6 +109,7 @@ export function ValuesAndWordsTab({
   // Until both are known the cell cannot tell "no icons" from "not loaded yet" (crew pass).
   const iconsLoading = permissionsLoading || (canManageIcons && iconLibraryLoading);
   const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
+  const [conditionsOpen, setConditionsOpen] = useState<string | null>(null);
   const queryClient = useQueryClient();
   // An icon uploaded inside the picker is not in the list the cell names icons from until it
   // is read again (review S2).
@@ -463,6 +464,8 @@ export function ValuesAndWordsTab({
                       registry={registry}
                       conditions={conditionsOf(value, id)}
                       onChange={(list) => setConditions(value, id, list)}
+                      open={conditionsOpen === `${value}\u0000${id}`}
+                      onOpenChange={(next) => setConditionsOpen(next ? `${value}\u0000${id}` : null)}
                     />
                   )}
                   {editIcons && index > 0 && (
@@ -585,6 +588,7 @@ export function ValuesAndWordsTab({
     countByValue,
     valueIcons,
     draft?.valueIconConditions,
+    conditionsOpen,
     row.value_icon_conditions,
     registry,
     iconAssets,

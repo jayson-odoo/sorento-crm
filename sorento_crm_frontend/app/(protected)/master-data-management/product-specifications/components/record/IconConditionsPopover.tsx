@@ -3,20 +3,30 @@
 import { useMemo, useState } from 'react';
 import { ListFilter, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { readableValue } from '@/lib/spec-readable';
-import type { IconCondition, SpecRegistryKey } from '../../types/productSpec.types';
+import type {
+  IconCondition,
+  SpecRegistryKey,
+} from '../../types/productSpec.types';
 
 /** The values another spec offers a condition: its vocabulary, yes/no, or the numbers products hold. */
-function valueOptions(key: SpecRegistryKey): { value: string; label: string }[] {
+function valueOptions(
+  key: SpecRegistryKey,
+): { value: string; label: string }[] {
   const labels = key.value_labels ?? {};
   const values =
     key.data_type === 'boolean'
       ? ['true', 'false']
       : key.data_type === 'numeric'
-        ? key.numeric_values ?? []
-        : key.allowed_values ?? [];
+        ? (key.numeric_values ?? [])
+        : (key.allowed_values ?? []);
   return values.map((value) => ({
     value,
     label:
@@ -38,12 +48,17 @@ export function IconConditionsPopover({
   registry,
   conditions,
   onChange,
+  open,
+  onOpenChange,
 }: {
   iconName: string;
   hostKey: string;
   registry: readonly SpecRegistryKey[];
   conditions: IconCondition[];
   onChange: (next: IconCondition[]) => void;
+  /** Owned by the grid: a save of the draft rebuilds the cell, which would close a local one. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [specKey, setSpecKey] = useState('');
   const [value, setValue] = useState('');
@@ -66,7 +81,7 @@ export function IconConditionsPopover({
   };
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button
           type="button"
@@ -74,62 +89,78 @@ export function IconConditionsPopover({
           variant={conditions.length > 0 ? 'secondary' : 'ghost'}
           className="size-7"
           aria-label={`Only with conditions for ${iconName}`}
-          title={conditions.length > 0 ? conditions.map(labelOf).join(', ') : undefined}
+          title={
+            conditions.length > 0
+              ? conditions.map(labelOf).join(', ')
+              : undefined
+          }
         >
           <ListFilter className="size-3.5" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="flex w-72 flex-col gap-2 p-3">
-        <span className="text-sm font-medium">Only with</span>
-        {conditions.map((c) => (
-          <div key={c.spec_key} className="flex items-center justify-between gap-2 text-sm">
-            <span className="min-w-0 truncate" title={labelOf(c)}>
-              {labelOf(c)}
-            </span>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="size-7 shrink-0"
-              aria-label={`Remove condition ${labelOf(c)}`}
-              onClick={() => onChange(conditions.filter((other) => other.spec_key !== c.spec_key))}
+      <PopoverPortal>
+        <PopoverContent className="flex w-72 flex-col gap-2 p-3">
+          <span className="text-sm font-medium">Only with</span>
+          {conditions.map((c) => (
+            <div
+              key={c.spec_key}
+              className="flex items-center justify-between gap-2 text-sm"
             >
-              <X className="size-3.5" />
-            </Button>
-          </div>
-        ))}
-        <SearchableSelect
-          value={specKey}
-          onChange={(next) => {
-            setSpecKey(next);
-            setValue('');
-          }}
-          options={partners.map((key) => ({ value: key.spec_key, label: key.label }))}
-          placeholder="Specification"
-          clearable
-        />
-        {partner && (
+              <span className="min-w-0 truncate" title={labelOf(c)}>
+                {labelOf(c)}
+              </span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-7 shrink-0"
+                aria-label={`Remove condition ${labelOf(c)}`}
+                onClick={() =>
+                  onChange(
+                    conditions.filter((other) => other.spec_key !== c.spec_key),
+                  )
+                }
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
           <SearchableSelect
-            value={value}
-            onChange={setValue}
-            options={valueOptions(partner)}
-            placeholder="Value"
+            value={specKey}
+            onChange={(next) => {
+              setSpecKey(next);
+              setValue('');
+            }}
+            options={partners.map((key) => ({
+              value: key.spec_key,
+              label: key.label,
+            }))}
+            placeholder="Specification"
             clearable
           />
-        )}
-        <Button
-          type="button"
-          size="sm"
-          disabled={!specKey || !value}
-          onClick={() => {
-            onChange([...conditions, { spec_key: specKey, value }]);
-            setSpecKey('');
-            setValue('');
-          }}
-        >
-          Add condition
-        </Button>
-      </PopoverContent>
+          {partner && (
+            <SearchableSelect
+              value={value}
+              onChange={setValue}
+              options={valueOptions(partner)}
+              placeholder="Value"
+              clearable
+            />
+          )}
+          <Button
+            type="button"
+            size="sm"
+            disabled={!specKey || !value}
+            onClick={() => {
+              onChange([...conditions, { spec_key: specKey, value }]);
+              setSpecKey('');
+              setValue('');
+            }}
+          >
+            Add condition
+          </Button>
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
