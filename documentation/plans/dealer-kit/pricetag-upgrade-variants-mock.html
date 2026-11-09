@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Upgrades and family icons</title>
 <!--
-  PRICETAG-UPGRADE-VARIANTS mock v1 (09/11/2026). Card: CARD-pricetag-upgrade-variants-09nov.md (U1-U9, F1-F8).
+  PRICETAG-UPGRADE-VARIANTS mock v2 (09/11/2026; v2 = owner note on v1: show that upgrades reuse the existing upgrade fields). Card: CARD-pricetag-upgrade-variants-09nov.md (U1-U9, F1-F8).
   Owner rulings: 9 Nov ~11:45 Q1 (a), Q2 (a), Q4 (a); ~12:00 Q3 = the whole variant tree, with a per-line chooser on the
   request line to untick members (all ticked by default); Q5 (a) the line product's own hand-picked LP / SP plus a warning
   when ticked members price differently. Static, no data fetch. Tags drawn at 3 px per mm. Codes and prices are the owner's two sample tags;
@@ -84,7 +84,7 @@
 </head>
 <body>
 <h1>Upgrades on combo tags, and one tag per product family</h1>
-<div class="muted">Mock v1, 09/11/2026. Card U1-U9 and F1-F8. Owner rulings: Q1 (a), Q2 (a), Q4 (a) (~11:45); Q3 whole tree + per-line chooser, Q5 (a) (~12:00). Everything below happens inside the Tag Template designer and the existing Product Specifications screen; there is no new screen.</div>
+<div class="muted">Mock v2, 09/11/2026 (v2: the Upgrades box names its source, the combo's existing upgrade parts). Card U1-U9 and F1-F8. Owner rulings: Q1 (a), Q2 (a), Q4 (a) (~11:45); Q3 whole tree + per-line chooser, Q5 (a) (~12:00). Everything below happens inside the Tag Template designer and the existing Product Specifications screen; there is no new screen.</div>
 
 <!-- ============================ 1. UPGRADES ============================ -->
 <h2>1. Tag Template designer: combo SRTKS2432 + SRTKT1862SS, upgrade SRTKT71SS (148 x 105 mm)</h2>
@@ -104,6 +104,14 @@
     <div class="side right" id="uInspector"></div>
   </div>
   <div id="uNote"></div>
+  <h3 style="margin-top:18px">Where the upgrade comes from: product page &gt; Combos (existing, unchanged)</h3>
+  <div class="muted">Master Data &gt; Products &gt; SRTKS2432 &gt; Combos, the combo block as it is today (ProductCombosSection.tsx:275-303). The Upgrades box reads exactly these rows; nothing new is added here.</div>
+  <div class="scroll" style="margin-top:8px"><table class="map" style="min-width:640px">
+    <tr><th style="width:26%">Part</th><th style="width:18%">Choice group</th><th style="width:16%">Upgrade</th><th style="width:16%">Top-up</th><th>On the tag</th></tr>
+    <tr><td><b>SRTKT1862SS</b><div class="muted">Kitchen tap</div></td><td><span class="muted">Fixed</span></td><td><input type="checkbox" disabled> </td><td><span class="muted">-</span></td><td>Fixed part line</td></tr>
+    <tr><td><b>SRTKT71SS</b><div class="muted">Pull-out shower mixer tap</div></td><td><span class="muted">-</span></td><td><input type="checkbox" checked disabled> Upgrade</td><td>RM 150</td><td><span class="pill">Upgrades box card</span></td></tr>
+  </table></div>
+  <div class="muted" style="margin-top:6px">Free items (drainer, chopping board) stay in the combo's own "Free items" list, as today.</div>
 </div>
 
 <!-- ============================ 2. FAMILY ============================ -->
@@ -227,6 +235,7 @@ function comboTag(state) {
       <div class="frame ${boxSel}" style="left:${px(4)};top:${px(46)};width:${px(76)};height:${px(28)}"></div>
       <div class="legend" style="left:${px(42)};top:${px(44.5)};color:#b91c1c">UPGRADE</div>
       ${upgradeCard(6.5, 50, 71, 21.5, state, { withSp: state === 'field' })}
+      ${state==='box' ? `<div class="t" style="left:${px(4)};top:${px(75.5)};font-size:9px;color:#1b84ff;font-family:system-ui">Source: this combo's upgrade parts (product page &gt; Combos)</div>` : ''}
       ${many ? `<div class="warnbadge" style="left:${px(40)};top:${px(75)}">2 of 3 upgrades do not fit this box</div>` : ''}
     ` : (state === 'none' || state === 'picked' ? `<div class="t" style="left:${px(4)};top:${px(46)};width:${px(76)};height:${px(28)};border:1px dashed #cbd5e1;border-radius:9px;display:${state==='none'?'block':'none'}"></div>` : '')}
     <!-- main feature icons -->
@@ -247,6 +256,7 @@ const U = {
       <div class="sec">List</div>
       <div class="seg"><span>Free items</span><span class="on">Upgrades</span></div>
       <div class="muted" style="margin-top:4px">Upgrades = the combo's upgrade parts on offer, in combo order. A picked upgrade leaves the box.</div>
+      <div class="note info" style="margin-top:6px"><b>Source:</b> this combo's upgrade parts (product page &gt; Combos). Nothing new to enter: the code, picture, LP and icons come from the upgrade product, the top-up from the combo's Top-up field.</div>
       <div class="sec">Product</div>
       <div class="input">Combo: this tag's upgrades &#9662;</div>
       <div class="sec">Header</div>
@@ -268,6 +278,7 @@ const U = {
       <div class="input">Top-up &#9662;</div>
       <div class="lbl">Text before the figure</div><div class="input">TOPUP&nbsp;</div>
       <div class="muted" style="margin-top:4px">Prints "TOPUP RM 150". Hides when the upgrade has no top-up set.</div>
+      <div class="note info" style="margin-top:6px"><b>Source:</b> the combo's Top-up field on this upgrade part (product page &gt; Combos).</div>
       <div class="sec">Typography</div>
       <div class="input">DM Sans &#9662; &nbsp; 10.8 pt &nbsp; Black</div>
       <div class="input" style="margin-top:6px"><span style="width:14px;height:14px;border-radius:3px;background:#b91c1c;display:inline-block"></span> #B91C1C &nbsp; Left</div>

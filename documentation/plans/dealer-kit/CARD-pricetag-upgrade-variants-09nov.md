@@ -13,7 +13,8 @@ Behaviour card, design first.
   joins ticked; a pinned tag freezes the members it printed. Supersedes F1 / F4 "direct variants" below.
 - Q5 (a) (~12:00): the tag prints the line product's own hand-picked LP / SP; when ticked members' list prices differ
   the request line warns "Variants price differently: RM x to RM y" (warning only, never blocks).
-- Mock: `pricetag-upgrade-variants-mock.html` (v1). No code beyond the mock until the mock is approved. Plan:
+- Mock: `pricetag-upgrade-variants-mock.html` (v2: owner asked "are we reusing our upgrade field?"; yes, the box
+  names its source, the combo's existing upgrade parts, product page > Combos). No code until the mock is approved. Plan:
 `PLAN-pricetag-upgrade-variants-09nov.md` (same folder). Paths: BE = `sorento_crm_backend/`,
 FE = `sorento_crm_frontend/`.
 
