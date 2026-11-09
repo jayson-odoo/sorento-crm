@@ -21,8 +21,9 @@ import type {
   ProductComboRow,
 } from '../../types/productCombo.types';
 
+const perms = vi.hoisted(() => ({ canEdit: true }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: () => perms.canEdit,
 }));
 
 // PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
@@ -50,6 +51,15 @@ vi.mock('./AccessoryListField', () => ({
   AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
     <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
       {props.label}
+    </div>
+  ),
+}));
+
+// COMBO-COPY-TO-PRODUCTS: the copy dialog has its own suite; here it stands in as a marker.
+vi.mock('./CopyComboDialog', () => ({
+  CopyComboDialog: (props: { comboId: string; comboName: string }) => (
+    <div data-testid="copy-combo-dialog" data-combo={props.comboId}>
+      {props.comboName}
     </div>
   ),
 }));
@@ -172,6 +182,7 @@ const COMBO_4_IN_1: ProductComboRow = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  perms.canEdit = true;
   combosQuery.value = { data: [], isLoading: false, isError: false };
 });
 
@@ -433,5 +444,31 @@ describe('ProductCombosSection', () => {
       }
     }
     expect(row).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COMBO-COPY-TO-PRODUCTS - the copy button on each combo
+// ---------------------------------------------------------------------------
+
+describe('ProductCombosSection copy to other products', () => {
+  it('each combo has its own copy button, which opens the dialog for that combo only', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1, COMBO_4_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    const blocks = screen.getAllByTestId('combo-block');
+    expect(blocks).toHaveLength(2);
+    expect(screen.queryByTestId('copy-combo-dialog')).toBeNull();
+
+    fireEvent.click(within(blocks[1]).getByRole('button', { name: 'Copy to other products' }));
+    const dialog = screen.getByTestId('copy-combo-dialog');
+    expect(dialog.getAttribute('data-combo')).toBe('combo-4');
+    expect(dialog.textContent).toBe('4 in 1');
+  });
+
+  it('is hidden from someone who cannot edit products', () => {
+    perms.canEdit = false;
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    expect(screen.queryByRole('button', { name: 'Copy to other products' })).toBeNull();
   });
 });
