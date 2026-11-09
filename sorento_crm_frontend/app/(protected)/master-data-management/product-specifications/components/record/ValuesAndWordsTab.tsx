@@ -22,9 +22,10 @@ import { AssetPickerDialog } from '@/app/(protected)/dealer-kit/tag-templates/co
 import { ICON_LIBRARY_QUERY_KEY, useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
-import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
+import { IconConditionsPopover } from './IconConditionsPopover';
+import { SPEC_REGISTRY_QUERY_KEY, useSpecRegistryQuery } from '../../hooks/useSpecRegistryQuery';
 import { dedupe, seedValuesFor, seedWordsFor, type SpecKeyDraft, type WordError } from '../../hooks/useSpecKeyRecord';
-import type { SpecRegistryKey } from '../../types/productSpec.types';
+import type { IconCondition, SpecRegistryKey } from '../../types/productSpec.types';
 
 /** `_self` names the specification itself, never a choice (D7); this tab never
  *  renders it - its words live on Details as "Other names for this specification". */
@@ -46,6 +47,8 @@ const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_LABELS: Record<string, string> = {};
 const EMPTY_ICONS: Record<string, string[]> = {};
 const NO_ICON_IDS: string[] = [];
+const NO_CONDITIONS: IconCondition[] = [];
+const NO_REGISTRY: SpecRegistryKey[] = [];
 
 export interface ValuesAndWordsTabProps {
   row: SpecRegistryKey;
@@ -149,6 +152,8 @@ export function ValuesAndWordsTab({
       delete nextValueLabels[value];
       const nextValueIcons = { ...d.valueIcons };
       delete nextValueIcons[value];
+      const nextConditions = { ...d.valueIconConditions };
+      delete nextConditions[value];
       const builtIn = seedValuesFor(row).includes(value);
       return {
         ...d,
@@ -160,6 +165,7 @@ export function ValuesAndWordsTab({
         droppedWords: nextDroppedWords,
         valueLabels: nextValueLabels,
         valueIcons: nextValueIcons,
+        valueIconConditions: nextConditions,
       };
     });
 
@@ -203,10 +209,32 @@ export function ValuesAndWordsTab({
   const valueLabels = draft ? draft.valueLabels : row.value_labels ?? EMPTY_LABELS;
   const valueIcons = draft ? draft.valueIcons : row.value_icons ?? EMPTY_ICONS;
   const editIcons = mode === 'edit' && canManageIcons;
+  const { data: registry = NO_REGISTRY } = useSpecRegistryQuery();
+  const conditionsOf = (value: string, iconId: string): IconCondition[] =>
+    (draft ? draft.valueIconConditions : row.value_icon_conditions)?.[value]?.[iconId] ?? NO_CONDITIONS;
 
   /** Rewrite one choice's icon list in the open draft (reassigned, never mutated). */
   const setIcons = (value: string, next: (ids: string[]) => string[]) =>
-    setDraft((d) => ({ ...d, valueIcons: { ...d.valueIcons, [value]: next(d.valueIcons[value] ?? []) } }));
+    setDraft((d) => {
+      const ids = next(d.valueIcons[value] ?? []);
+      // An icon taken off the value takes its conditions with it.
+      const kept = Object.fromEntries(
+        Object.entries(d.valueIconConditions?.[value] ?? {}).filter(([id]) => ids.includes(id)),
+      );
+      return {
+        ...d,
+        valueIcons: { ...d.valueIcons, [value]: ids },
+        valueIconConditions: { ...d.valueIconConditions, [value]: kept },
+      };
+    });
+  const setConditions = (value: string, iconId: string, list: IconCondition[]) =>
+    setDraft((d) => ({
+      ...d,
+      valueIconConditions: {
+        ...d.valueIconConditions,
+        [value]: { ...d.valueIconConditions?.[value], [iconId]: list },
+      },
+    }));
   const moveIcon = (value: string, index: number, delta: number) =>
     setIcons(value, (ids) => {
       const out = [...ids];
@@ -428,6 +456,15 @@ export function ValuesAndWordsTab({
                       <span className="max-w-24 truncate text-xs">{name}</span>
                     )}
                   </span>
+                  {editIcons && (
+                    <IconConditionsPopover
+                      iconName={name}
+                      hostKey={row.spec_key}
+                      registry={registry}
+                      conditions={conditionsOf(value, id)}
+                      onChange={(list) => setConditions(value, id, list)}
+                    />
+                  )}
                   {editIcons && index > 0 && (
                     <Button
                       type="button"
@@ -547,6 +584,9 @@ export function ValuesAndWordsTab({
     valueLabels,
     countByValue,
     valueIcons,
+    draft?.valueIconConditions,
+    row.value_icon_conditions,
+    registry,
     iconAssets,
     editIcons,
     iconsLoading,
