@@ -52,11 +52,13 @@ import {
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
-const STATUS_OPTIONS: { value: string; label: string }[] = [
+export const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'approved', label: 'Approved' },
+  // The stock inquiry's Responded (owner re-test 9 Nov): Update & Reply moves it here.
+  { value: 'responded', label: 'Responded' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },

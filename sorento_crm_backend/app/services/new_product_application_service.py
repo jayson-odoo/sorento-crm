@@ -56,6 +56,9 @@ DRAFT = "draft"
 SUBMITTED = submission_status.SUBMITTED
 RESUBMITTED = submission_status.RESUBMITTED
 APPROVED = "approved"
+#: Owner re-test 9 Nov ~12:35 ("make it same with stock inquiry"): Update & Reply moves an
+#: Approved application to Responded, exactly as the SI's (procurement_service.update_inquiry_and_reply).
+RESPONDED = "responded"
 REJECTED = "rejected"
 COMPLETED = "completed"
 CANCELLED = "cancelled"
@@ -65,6 +68,7 @@ STATUS_LABELS = {
     SUBMITTED: "Submitted",
     RESUBMITTED: submission_status.APPEALED_LABEL,
     APPROVED: "Approved",
+    RESPONDED: "Responded",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
     CANCELLED: "Cancelled",
@@ -74,7 +78,9 @@ STATUS_LABELS = {
 #: (422), the terminal ones are closed (409).
 EDITABLE = (DRAFT, REJECTED)
 AWAITING_REVIEW = submission_status.AWAITING_REVIEW
-LOCKED = (*AWAITING_REVIEW, APPROVED)
+#: Purchasing works an application while it is Approved, and after replying, Responded (as the SI).
+WITH_PURCHASING = (APPROVED, RESPONDED)
+LOCKED = (*AWAITING_REVIEW, *WITH_PURCHASING)
 
 HEADER_TEXT = ("customer_name", "project_name", "remark")
 #: The v4 paper form's product block (AC-NPA-70): nothing else is written by the applicant.
@@ -445,6 +451,22 @@ def _require(app: NewProductApplication, status: str, verb: str) -> None:
         )
 
 
+def _require_with_purchasing(app: NewProductApplication, verb: str) -> None:
+    """Approved, or Responded after purchasing replied (the SI's purchasing stage)."""
+    if app.status not in WITH_PURCHASING:
+        raise _conflict(
+            f"Only an approved or responded application can be {verb}.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+
+
+def mark_responded(app: NewProductApplication) -> None:
+    """Update & Reply (either channel): Approved -> Responded, as the SI's Update & Reply. A reply
+    that also completed it stays Completed; Save only never calls this (the SI's plain save)."""
+    if app.status == APPROVED:
+        app.status = RESPONDED
+
+
 def _require_awaiting_review(app: NewProductApplication, verb: str) -> None:
     """Approve / reject: Submitted, or Resubmitted after a rejection (RESUBMITTED-STATUS)."""
     if not submission_status.is_awaiting_review(app.status):
@@ -487,7 +509,7 @@ def purchasing_reject(db: Session, app: NewProductApplication, *, actor: Actor, 
     applicant hears it (the "rejected" notice) and can fix and submit it again, as on an SI."""
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can reject this application.")
-    _require(app, APPROVED, "rejected by purchasing")
+    _require_with_purchasing(app, "rejected by purchasing")
     reason = _clean(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")
@@ -552,7 +574,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
 def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> None:
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can cancel this application.")
-    if app.status not in (DRAFT, *AWAITING_REVIEW, APPROVED, REJECTED):
+    if app.status not in (DRAFT, *AWAITING_REVIEW, *WITH_PURCHASING, REJECTED):
         raise _conflict(
             f"A {STATUS_LABELS[app.status].lower()} application cannot be cancelled.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -579,7 +601,7 @@ def _open_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewPro
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can open codes for new product applications.")
     line = _line(app, line_id)
-    _require(app, APPROVED, "worked by purchasing")
+    _require_with_purchasing(app, "worked by purchasing")
     if _resolved(line):
         raise _conflict("This line is already done. Undo it first.", "NEW_PRODUCT_APPLICATION_LINE_DONE")
     return line
@@ -635,7 +657,7 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can undo a line.")
     line = _line(app, line_id)
-    if app.status not in (APPROVED, COMPLETED) or not _resolved(line):
+    if app.status not in (*WITH_PURCHASING, COMPLETED) or not _resolved(line):
         raise _conflict("There is nothing to undo on this line.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
     line.opened_product_id = None
     line.closed_reason = None
@@ -651,7 +673,7 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
 def _open_new_code(app: NewProductApplication, actor: Actor) -> None:
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can open codes for new product applications.")
-    _require(app, APPROVED, "worked by purchasing")
+    _require_with_purchasing(app, "worked by purchasing")
     if _new_code_resolved(app):
         raise _conflict("The new product code is already done. Undo it first.", "NEW_PRODUCT_APPLICATION_LINE_DONE")
 
@@ -696,7 +718,7 @@ def close_new_code(
 def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> None:
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can undo the new product code.")
-    if app.status not in (APPROVED, COMPLETED) or not _new_code_resolved(app):
+    if app.status not in (*WITH_PURCHASING, COMPLETED) or not _new_code_resolved(app):
         raise _conflict("There is nothing to undo.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
     app.new_product_id = None
     app.new_code_text = None
@@ -735,7 +757,7 @@ def save_purchasing_response(
     sent as null clears it (back to Approved). A key left out is not changed."""
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can answer new product applications.")
-    if app.status not in (APPROVED, COMPLETED):
+    if app.status not in (*WITH_PURCHASING, COMPLETED):
         raise _conflict(
             "Purchasing answers once the application is approved.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -776,7 +798,7 @@ def save_purchasing_response(
         else:
             app.new_code_by = actor.user_id
             app.new_code_at = datetime.utcnow()
-            if app.status == APPROVED:
+            if app.status in WITH_PURCHASING:
                 event = _maybe_complete(app)
     if "purchasing_response" in data:
         app.purchasing_response = _clean(data["purchasing_response"])
@@ -801,7 +823,7 @@ def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data
     untouched. A key left out of ``data`` is not changed; a null clears."""
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can save feedback on new product applications.")
-    if app.status not in (APPROVED, COMPLETED):
+    if app.status not in (*WITH_PURCHASING, COMPLETED):
         raise _conflict(
             "Feedback can be saved once the application is approved.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -1307,7 +1329,7 @@ def reply_message(db: Session, app: NewProductApplication) -> str:
 #: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
 NPA_NEXT_STEP = "Next step: please create a New Product Application for this inquiry."
 #: An application that still answers the inquiry's ask (a rejected or cancelled one does not).
-_LIVE = (DRAFT, *AWAITING_REVIEW, APPROVED, COMPLETED)
+_LIVE = (DRAFT, *AWAITING_REVIEW, *WITH_PURCHASING, COMPLETED)
 
 
 def has_live_application(db: Session, stock_inquiry_id: Any) -> bool:
@@ -1743,7 +1765,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
             not portal
             and (
                 (inquiry_inbox and is_response_status_allowed("stock_inquiry", inquiry[2]))
-                or (not inquiry_inbox and raised_in_portal(app) and app.status in (APPROVED, COMPLETED))
+                or (not inquiry_inbox and raised_in_portal(app) and app.status in (*WITH_PURCHASING, COMPLETED))
             )
         ),
         "reply_channel": (

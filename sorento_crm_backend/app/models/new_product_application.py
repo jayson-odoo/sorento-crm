@@ -44,7 +44,7 @@ def _uuid_str() -> str:
     return str(uuid.uuid4())
 
 
-STATUSES = ("draft", "submitted", "resubmitted", "approved", "rejected", "completed", "cancelled")
+STATUSES = ("draft", "submitted", "resubmitted", "approved", "responded", "rejected", "completed", "cancelled")
 SOURCES = ("staff", "portal")
 
 
@@ -134,7 +134,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("company_id", "application_no", name="uq_new_product_application_no"),
         CheckConstraint(
-            "status IN ('draft','submitted','resubmitted','approved','rejected','completed','cancelled')",
+            "status IN ('draft','submitted','resubmitted','approved','responded','rejected','completed','cancelled')",
             name="ck_new_product_applications_status",
         ),
         CheckConstraint("source IN ('staff','portal')", name="ck_new_product_applications_source"),

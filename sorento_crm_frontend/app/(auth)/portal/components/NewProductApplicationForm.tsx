@@ -222,7 +222,7 @@ export default function NewProductApplicationForm({
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
   const readOnly = !editable;
-  const locked = isAwaitingReview(status) || status === 'approved';
+  const locked = isAwaitingReview(status) || status === 'approved' || status === 'responded';
   const anyResolved = Boolean(
     application?.new_product_id ||
       application?.new_code_closed_reason ||

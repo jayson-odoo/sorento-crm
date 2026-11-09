@@ -112,3 +112,12 @@ describe('the NPA list carries the stock inquiry list columns', () => {
     expect(screen.queryByText(/^Rev \d/)).toBeNull();
   });
 });
+
+
+describe('the Status filter offers Responded, like the stock inquiry list', () => {
+  it('lists Responded among the statuses', async () => {
+    const { STATUS_OPTIONS } = await import('./NewProductApplicationsList');
+    expect(STATUS_OPTIONS.map((o) => o.value)).toContain('responded');
+    expect(STATUS_OPTIONS.find((o) => o.value === 'responded')?.label).toBe('Responded');
+  });
+});

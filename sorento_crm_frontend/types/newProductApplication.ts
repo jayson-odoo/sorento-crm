@@ -9,6 +9,7 @@ export type NewProductApplicationStatus =
   | 'submitted'
   | 'resubmitted'
   | 'approved'
+  | 'responded'
   | 'rejected'
   | 'completed'
   | 'cancelled';

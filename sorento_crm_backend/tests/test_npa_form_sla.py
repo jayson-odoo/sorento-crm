@@ -1262,3 +1262,75 @@ def test_owner_config_save_only_moves_nothing_like_the_si_save(world, monkeypatc
     assert res.status_code == 200, res.text
     tracker = _purchasing_tracker(world, d["id"], stage)
     assert not tracker.is_responded and not tracker.is_resolved
+
+
+# ------------------------------------------------------------------ owner re-test 9 Nov ~12:35: Responded, like the SI
+
+
+def _replied(w, monkeypatch, text="Supplier quotes 6 weeks."):
+    _capture(monkeypatch)
+    d = _portal_approved(w)
+    res = w.api.as_(w.buyer).post(f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": text})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_update_and_reply_moves_the_npa_to_responded(world, monkeypatch):
+    body = _replied(world, monkeypatch)
+    assert (body["status"], body["status_label"]) == ("responded", "Responded")
+
+
+def test_save_only_keeps_it_approved_like_the_si_save(world, monkeypatch):
+    _capture(monkeypatch)
+    d = _portal_approved(world)
+    res = world.api.as_(world.buyer).put(f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Note"})
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "approved"
+
+
+def test_a_responded_npa_still_takes_a_second_reply_and_the_new_code(world, monkeypatch):
+    d = _replied(world, monkeypatch)
+    again = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Update: 5 weeks."}
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["status"] == "responded"
+    done = world.api.as_(world.buyer).put(
+        f"{NPA}/{d['id']}/purchasing-response",
+        json={"outcome": "link", "product_id": world.product.id, "purchasing_response": "Opened"},
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "completed"
+
+
+def test_purchasing_can_reject_a_responded_npa(world, monkeypatch):
+    d = _replied(world, monkeypatch)
+    res = _act(world, d["id"], "purchasing-reject", world.buyer, reason="Supplier cannot make it")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "rejected"
+
+
+def test_revise_and_cancel_from_responded(world, monkeypatch):
+    d = _replied(world, monkeypatch)
+    res = _act(world, d["id"], "revise", world.sales, reason="Customer changed the size")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "draft" and res.json()["revision_no"] == 1
+    other = _replied(world, monkeypatch)
+    res = _act(world, other["id"], "cancel", world.sales, reason="Dropped")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+
+
+def test_the_list_filters_by_responded(world, monkeypatch):
+    d = _replied(world, monkeypatch)
+    res = world.api.as_(world.admin).get(NPA, params={"status": "responded", "limit": 100})
+    assert res.status_code == 200, res.text
+    assert d["id"] in {r["id"] for r in res.json()["items"]}
+
+
+def test_owner_config_still_resolves_on_a_reply_that_makes_it_responded(world, monkeypatch):
+    stage = _owner_stages(world.db)
+    body = _replied(world, monkeypatch)
+    assert body["status"] == "responded"
+    tracker = _purchasing_tracker(world, body["id"], stage)
+    assert tracker.is_responded and tracker.is_resolved

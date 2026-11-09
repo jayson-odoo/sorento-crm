@@ -307,7 +307,9 @@ function StaffNewProductApplicationDetail({
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
-  const locked = isAwaitingReview(r.status) || r.status === 'approved';
+  // Purchasing works it while Approved, and after Update & Reply, Responded (as the SI).
+  const withPurchasing = r.status === 'approved' || r.status === 'responded';
+  const locked = isAwaitingReview(r.status) || withPurchasing;
   const anyResolved =
     Boolean(r.new_product_id || r.new_code_closed_reason) ||
     r.lines.some(isResolved);
@@ -318,7 +320,7 @@ function StaffNewProductApplicationDetail({
   const pillStatus = r.display_status ?? r.status;
   const stamp = r.submitted_at ?? r.created_at;
   const canAnswer =
-    canOpen && (r.status === 'approved' || r.status === 'completed');
+    canOpen && (withPurchasing || r.status === 'completed');
   const sheetState = savedState;
 
   // Through My Downloads, the stock inquiry PDF's way (owner 9 Nov): the list's Print Count counts it.
@@ -524,7 +526,7 @@ function StaffNewProductApplicationDetail({
                   Edit purchasing response
                 </Button>
               )}
-              {canAnswer && r.status === 'approved' && (
+              {canAnswer && withPurchasing && (
                 <RejectOutlineButton
                   disabled={workBusy}
                   title={lockedTitle}

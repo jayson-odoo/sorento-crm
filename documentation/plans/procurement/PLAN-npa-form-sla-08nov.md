@@ -184,3 +184,20 @@ Owner: remove the product table (create and detail), the wrong "No debtor code" 
     (`POST /{id}/export/xlsx` -> `user_downloads` row -> RQ `generate_new_product_application_xlsx`),
     so the viewer's own downloads are counted and re-downloadable from the count button. The
     portal's own direct download is unchanged (a portal contact has no My Downloads).
+
+## Owner re-tests 9 Nov (Update & Reply, SLA, tab, Responded)
+
+- **Portal NPA reply (~02:30)**: a portal-raised NPA with no SI chat has Update & Reply; it saves and
+  notifies the applicant in-app + email with the text and the link to the NPA in their portal. No
+  WhatsApp. The dialog subtitle names Update & Reply only when it is there, and where it goes.
+- **SLA events (~03:05)**: as the SI, Save only emits no Form SLA event; both Update & Reply paths
+  emit `purchasing_respond`. Every NPA move re-reads the SLA tab and the handling lock.
+- **SLA tab click froze the page (crew pass)**: tab bodies now live in their TabsContent inside the
+  Tabs (the SI's structure); verified in a real browser.
+- **Responded (~12:35, "just make it same with stock inquiry")**: Update & Reply (either channel)
+  moves an Approved NPA to Responded, exactly the SI's trigger (`update_inquiry_and_reply`; the SI's
+  plain save never changes the status). Same badge colour and wording. Responded allows everything
+  Approved allows (Save only, another Update & Reply, link the new code -> Completed, purchasing
+  Reject as the SI's from Responded, Revise, Cancel), is in the list's Status filter and counts as a
+  live NPA on the SI. The status CHECK is widened (`npasla_0003_npa_responded`); its downgrade maps
+  Responded back to Approved. Undo after Completed still returns to Approved (the SI has no undo).

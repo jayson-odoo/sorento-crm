@@ -930,3 +930,27 @@ describe('NPA-FORM-SLA: the SI\'s SLA tab and handling lock', () => {
     expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeDisabled();
   });
 });
+
+
+describe('Responded, like the stock inquiry (owner re-test 9 Nov ~12:35)', () => {
+  const responded = () =>
+    detail({ status: 'responded', status_label: 'Responded', submitted_at: '2026-11-08T01:00:00' });
+
+  it('shows the Responded pill and keeps purchasing on it: Edit purchasing response and Reject', () => {
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getAllByText('Responded').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument();
+  });
+
+  it('is locked for the applicant, who can still Revise', () => {
+    state.userId = 'u-owner';
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Revise' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
+  });
+});

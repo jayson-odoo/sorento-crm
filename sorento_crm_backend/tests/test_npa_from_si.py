@@ -841,6 +841,23 @@ def test_update_and_reply_sends_the_npa_use_case_with_the_npa_link(world, reply_
     assert text.rstrip().endswith(npa_url)
 
 
+def test_a_text_only_si_chat_reply_moves_the_npa_to_responded_like_the_si(world, reply_spy, monkeypatch):
+    """Owner re-test 9 Nov ~12:35: the SI goes Responded on Update & Reply
+    (procurement_service.update_inquiry_and_reply); the NPA does the same, and says so in the reply."""
+    _fake_portal_links(monkeypatch)
+    world.inquiry.respond_inbox_url = "https://app.respond.io/space/1/inbox/901234"
+    world.db.flush()
+    d = _si_approved(world)
+    _raised_in_portal(world, d["id"])
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Supplier quotes 6 weeks."}
+    )
+    assert res.status_code == 200, res.text
+    assert (res.json()["status"], res.json()["status_label"]) == ("responded", "Responded")
+    [(_fn, args, _kw)] = reply_spy
+    assert args[6]["status"] == "Responded"
+
+
 def test_a_staff_raised_npa_gets_no_link_and_no_si_fallback(world, reply_spy, monkeypatch):
     """Owner 8 Nov 17:50: staff do not raise NPAs; no contact copy, no SI fallback."""
     links = _fake_portal_links(monkeypatch)

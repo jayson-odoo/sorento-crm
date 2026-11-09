@@ -472,6 +472,7 @@ def save_purchasing_response_and_reply(
             event = svc.save_purchasing_response(
                 db, app, actor=actor, data=payload.model_dump(exclude_unset=True)
             )
+            svc.mark_responded(app)
             detail = _done(db, app, event, actor.user_id)
             # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
             svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
@@ -491,6 +492,7 @@ def save_purchasing_response_and_reply(
         identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
         if not identifier:
             raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
+        svc.mark_responded(app)
         respond_user_id = _respond_user_id_from_current_user(user)
         message_body = svc.reply_message(db, app)
         update_text = app.purchasing_response or ""
