@@ -193,8 +193,10 @@ Always-on legend, a "Tap any building" hint on first open, and the 2D cards besi
 ### Phase 0 extension (snapshot schema 1 gains two keys)
 
 - `compare`: `{"label": "Tue 27 Oct", "last_week_amount": "...", "last_week_invoice_count": n}` for
-  `day - 7` up to the same time of day (documents with `created_at <= as_of - 7 days`; the whole day once
-  the phase is night, from 22:00 MYT; owner answer (a), 8 Nov; `created_at` is when the CRM ingested the document, so a document ingested late drops out of
+  the WHOLE `day - 7` by document date (the sales definition). Owner answer (a), same time of day, was
+  built first and dropped on crew's busy-day pass (9 Nov): AutoCount sends no document time and
+  `created_at` is CRM arrival (only 17% of October documents arrived by 22:00 on their own date), so the
+  cutoff read RM 0.00 on most days. The UI says "vs all of Tue 27 Oct"), 8 Nov; `created_at` is when the CRM ingested the document, so a document ingested late drops out of
   the daytime figure), same `invoiced_sales` expressions as `today` (posted, signed amount, company). Amount
   removed by `redact()` and kept by the wallboard only for a full viewer (as `today.amount`).
 - `today.dealer_customer_count`: distinct `customer_id` of today's Dealer-type documents (feeds the
