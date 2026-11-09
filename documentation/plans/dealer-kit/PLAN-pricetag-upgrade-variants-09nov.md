@@ -1,6 +1,6 @@
 # PLAN: price tag upgrade items on combos + one tag per product family with variant icons
 
-Status: PR+CI (built; reviewer fix round 1 done, security READY, cloud browser pass a-f PASS, print not reachable in the sandbox; owner hand test pending). Track: full (migration + payload + designer + request line).
+Status: PR+CI (built; Family ruling applied 09/11/2026 ~16:05; crew re-runs its browser pass, then the owner hand test). Track: full (migration + payload + designer + request line).
 
 Lane: PRICETAG-UPGRADE-VARIANTS. Behaviour card: `CARD-pricetag-upgrade-variants-09nov.md` (U1-U9, F1-F8 + owner rulings
 at the top win). UAC: `pricetag-upgrade-variants-acceptance-criteria.md`. Mock: `pricetag-upgrade-variants-mock.html` (v3).
@@ -76,6 +76,14 @@ BE:
   `TextLayerProps.prefix?: string` (used only by these two slots), set to "TOPUP " / "SP with upgrade " when the slot is
   chosen in the inspector. Same `formatTagPrice` as the card, so both print the same words.
 - A layer on Upgrade N keeps today's fit rule (needs N upgrades); the inspector shows the warning from mock state H.
+
+## Owner ruling 9 Nov ~16:05: "All variants" reads the Family (option b)
+
+Members = every other product with the same `products.family_code` in the same company (`variant_service._member_products`),
+capped at 200; the `variant_of_id` tree walk is dropped. A leaf variant line (SRTWC8354-SH-150) also shows its family
+siblings. The per-line "Variants on this tag" chooser (all ticked by default) removes extras. Dev copy: 13,774 of 15,136
+active products have a family (2 have a variant link); family SRTWC8354 = the 8 -SH codes. The "variant tree" wording in S3
+below is superseded by this.
 
 ## S3 Family tag
 

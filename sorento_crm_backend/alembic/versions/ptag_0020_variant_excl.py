@@ -5,14 +5,14 @@ PRICETAG-UPGRADE-VARIANTS S3 (plan documentation/plans/dealer-kit/PLAN-pricetag-
 members, so a variant created later joins the tag ticked. Idempotent (`IF NOT EXISTS`), additive only.
 
 Revision ID: ptag_0020_variant_excl
-Revises: npasla_0003_npa_responded
+Revises: town_0001_town_days
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "ptag_0020_variant_excl"
-down_revision = "npasla_0003_npa_responded"
+down_revision = "town_0001_town_days"
 branch_labels = None
 depends_on = None
 

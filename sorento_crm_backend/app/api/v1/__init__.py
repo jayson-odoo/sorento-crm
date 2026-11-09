@@ -37,6 +37,7 @@ from app.api.v1 import (
     connector,
     form_comments,
     my_requests,
+    town,
 )
 from app.api.v1.system import (
     modules_runtime,
@@ -281,6 +282,9 @@ api_router.include_router(
     tags=["list-query"],
 )
 api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
+# SORENTO-TOWN: a signed-in staff session is the only gate (no module guard, no new slug); the
+# amounts are redacted server-side for anyone without `sales.reports.view`.
+api_router.include_router(town.router, prefix="/town", tags=["town"])
 
 # Form comments span five kinds in three modules (complaints, procurement, projects), so the module guard is
 # "either enabled" and the kind's own view permission is the real gate (see form_comments.py).

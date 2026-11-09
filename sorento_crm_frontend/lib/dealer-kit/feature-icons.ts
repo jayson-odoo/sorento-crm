@@ -73,6 +73,22 @@ export function variantFeatureIcons(
 }
 
 /**
+ * The icons ONE stored spec value carries (SPEC-VALUE-ICONS): `featureIconsFor` over a single
+ * spec, so the product's Specifications tab answers "what does this value print" with the tag's
+ * own rule. The stored value is read as the tag payload reads it (`_spec_raw_text`,
+ * `tag_data_service.py`): a bool is `true` / `false`, anything else its text.
+ */
+export function iconsForSpecValue<T extends FeatureIcon>(
+  specKey: string,
+  value: string | number | boolean | null | undefined,
+  icons: readonly T[] | null | undefined,
+): T[] {
+  if (value === null || value === undefined) return [];
+  const raw = typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value);
+  return featureIconsFor([{ key: specKey, raw }], icons) as T[];
+}
+
+/**
  * The left edge (mm, inside the layer box) of each icon in a packed row.
  *
  * Icons are `iconSize_mm` wide and `gap_mm` apart with no holes for missing facts. As many as

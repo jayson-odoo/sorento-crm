@@ -93,7 +93,9 @@ describe('menu.config - permission gates (MENU-PERM-GATE)', () => {
           !item.permissionsAny?.length &&
           !item.superadminOnly &&
           // MY REQUESTS items are gated by the server's per-contact kind list.
-          !(item.portalKind && item.audience === 'salesperson')
+          !(item.portalKind && item.audience === 'salesperson') &&
+          // SORENTO-TOWN: open to every signed-in staff user on purpose; its amounts are redacted server-side.
+          item.path !== '/town'
         ) {
           ungated.push(item.path);
         }
