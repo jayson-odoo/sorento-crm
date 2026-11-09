@@ -84,7 +84,8 @@ def set_specs(db, product, **values):
 
 
 def family(db, *, company_id=SORENTO):
-    """`{code: product}` for the whole SRTWC8354-SH tree, linked through variant_of_id."""
+    """`{code: product}` for the SRTWC8354 family (owner ruling 9 Nov ~16:05: "All variants" reads
+    `family_code`, derived from the code on write). No variant links are set, as on the dev copy."""
     registry(db)
     products: dict[str, object] = {}
     for code, (parent, length, trap, seat, price) in FAMILY.items():
@@ -92,7 +93,6 @@ def family(db, *, company_id=SORENTO):
         products[code] = item
     for code, (parent, length, trap, seat, price) in FAMILY.items():
         item = products[code]
-        item.variant_of_id = products[parent].id if parent else None
         values = {"trap_length": length, "trap_type": trap}
         if seat:
             values["seat_material"] = seat

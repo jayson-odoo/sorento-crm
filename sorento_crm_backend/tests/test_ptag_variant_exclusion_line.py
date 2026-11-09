@@ -98,12 +98,20 @@ def test_be5_a_product_outside_the_tree_is_refused_with_not_a_variant(db):
     assert caught.value.code == "NOT_A_VARIANT"
 
 
-def test_be5_a_sibling_branch_member_of_another_line_product_is_refused(db):
+def test_be5_a_product_of_another_family_is_refused_even_when_variant_linked(db):
     fam = vseed.family(db)
-    # -SH-150 is a member of -SH, not of -SH-UF.
+    other = vseed.shapes.prod(db, "SRTBA9999-LINKED", list_price="10.00")
+    other.variant_of_id = fam["SRTWC8354-SH"].id  # a variant link is not a family
+    db.flush()
     with pytest.raises(AppException) as caught:
-        _submit(db, fam["SRTWC8354-SH-UF"], [fam["SRTWC8354-SH-150"].id])
+        _submit(db, fam["SRTWC8354-SH"], [other.id])
     assert caught.value.code == "NOT_A_VARIANT"
+
+
+def test_be5_a_leaf_line_may_untick_a_family_sibling(db):
+    fam = vseed.family(db)
+    request = _submit(db, fam["SRTWC8354-SH-150"], [fam["SRTWC8354-SH"].id])
+    assert request.lines[0].excluded_variant_ids == [fam["SRTWC8354-SH"].id]
 
 
 def test_be5_the_line_product_itself_is_refused(db):
@@ -161,11 +169,23 @@ def test_be6_staff_chooser_lists_members_with_prices_and_discontinued_flags(api)
     assert len(by_code) == 6
 
 
-def test_be6_staff_chooser_for_a_leaf_is_empty(api):
+def test_be6_staff_chooser_for_a_leaf_lists_its_siblings(api):
     client, db, _as = api
     fam = vseed.family(db)
     db.commit()
     res = client.get(CHOOSER.format(id=fam["SRTWC8354-SH-150"].id))
+    assert res.status_code == 200, res.text
+    codes = [m["code"] for m in res.json()["members"]]
+    assert "SRTWC8354-SH" in codes and "SRTWC8354-SH-150" not in codes
+    assert len(codes) == 7
+
+
+def test_be6_staff_chooser_for_a_product_with_no_family_is_empty(api):
+    client, db, _as = api
+    vseed.family(db)
+    lone = vseed.shapes.prod(db, "NOFAMILY-X", list_price="10.00")
+    db.commit()
+    res = client.get(CHOOSER.format(id=lone.id))
     assert res.status_code == 200, res.text
     assert res.json()["members"] == []
 

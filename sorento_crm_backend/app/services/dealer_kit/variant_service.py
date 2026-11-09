@@ -1,8 +1,10 @@
 """PRICETAG-UPGRADE-VARIANTS S3: a product's variant family for a "family tag".
 
-The family is the `products.variant_of_id` tree under a product (any depth), never
-`family_code` (that groups every model sharing the code stem). Company scope applies through
-the session's ORM filter, like every other product read.
+Owner ruling (9 Nov ~16:05, option b): the family is `products.family_code` (the Family on the
+product page's Variants tab, derived from the code and hand-overridable): every other product of
+the same family in the same company. Variant links (`variant_of_id`) are not read: on the dev copy
+2 of 15,136 active products have one, against 13,774 with a family. Company scope also applies
+through the session's ORM filter, like every other product read.
 """
 from __future__ import annotations
 
@@ -12,44 +14,33 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 
-#: The most members a family lists (security review S2): a tree is walked no further than this, so
-#: a hand-curated graph cannot make one tag read the catalogue.
+#: The most members a family lists (security review S2), so one tag never reads the catalogue.
 MAX_MEMBERS = 200
 
 
 def _member_products(db: Session, product_id: Optional[str]) -> list[Product]:
-    """Every product under ``product_id`` in the variant tree, ordered by code, itself left out.
-
-    Walked one level at a time; a product already seen is never walked again, so a hand-made
-    cycle (a base linked under its own descendant) cannot loop. Stops at ``MAX_MEMBERS``.
-    """
+    """Every other product of ``product_id``'s family in its company, ordered by code; none when
+    the product has no family. At most ``MAX_MEMBERS``."""
     if not product_id:
         return []
-    seen: set[str] = {str(product_id)}
-    found: list[Product] = []
-    frontier = [str(product_id)]
-    while frontier and len(found) < MAX_MEMBERS:
-        children = (
-            db.query(Product)
-            .filter(Product.variant_of_id.in_(frontier))
-            .order_by(Product.product_code, Product.id)
-            .all()
+    own = db.query(Product).filter(Product.id == product_id).first()
+    if own is None or not own.family_code:
+        return []
+    return (
+        db.query(Product)
+        .filter(
+            Product.family_code == own.family_code,
+            Product.company_id == own.company_id,
+            Product.id != own.id,
         )
-        frontier = []
-        for child in children:
-            if child.id in seen:
-                continue
-            if len(found) >= MAX_MEMBERS:
-                break
-            seen.add(child.id)
-            found.append(child)
-            frontier.append(child.id)
-    found.sort(key=lambda p: (p.product_code or "", p.id))
-    return found
+        .order_by(Product.product_code, Product.id)
+        .limit(MAX_MEMBERS)
+        .all()
+    )
 
 
 def variant_members(db: Session, product_id: Optional[str]) -> list[dict]:
-    """`[{product_id, code, name, list_price, is_discontinued, is_active}]` for the tree."""
+    """`[{product_id, code, name, list_price, is_discontinued, is_active}]` for the family."""
     return [
         {
             "product_id": p.id,

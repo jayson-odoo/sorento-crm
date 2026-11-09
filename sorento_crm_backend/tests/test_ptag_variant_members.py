@@ -46,7 +46,7 @@ def _members(db, product):
 # --------------------------------------------------------------------------- BE 3
 
 
-def test_be3_the_whole_tree_comes_back_ordered_by_code(db):
+def test_be3_the_whole_family_comes_back_ordered_by_code(db):
     fam = vseed.family(db)
     got = _members(db, fam["SRTWC8354-SH"])
     assert [m["code"] for m in got] == vseed.MEMBER_CODES
@@ -67,36 +67,49 @@ def test_be3_each_member_carries_the_contract_fields(db):
     assert by_code["SRTWC8354-SH-200"]["is_active"] is False
 
 
-def test_be3_the_product_itself_is_excluded_and_a_subtree_starts_below_it(db):
+def test_be3_a_variant_line_lists_its_whole_family_but_itself(db):
     fam = vseed.family(db)
-    got = _members(db, fam["SRTWC8354-SH-UF"])
-    assert [m["code"] for m in got] == [
-        "SRTWC8354-SH-UF-150", "SRTWC8354-SH-UF-200", "SRTWC8354-SH-UF-300",
-    ]
+    got = [m["code"] for m in _members(db, fam["SRTWC8354-SH-UF"])]
+    assert got == sorted(code for code in vseed.FAMILY if code != "SRTWC8354-SH-UF")
 
 
-def test_be3_a_leaf_has_no_members(db):
+def test_be3_a_leaf_variant_lists_its_family_siblings(db):
     fam = vseed.family(db)
-    assert _members(db, fam["SRTWC8354-SH-150"]) == []
+    got = [m["code"] for m in _members(db, fam["SRTWC8354-SH-150"])]
+    assert "SRTWC8354-SH" in got and "SRTWC8354-SH-150" not in got
+    assert len(got) == 7
 
 
-def test_be3_a_cycle_does_not_loop(db):
-    fam = vseed.family(db)
-    fam["SRTWC8354-SH"].variant_of_id = fam["SRTWC8354-SH-UF-300"].id  # base under its own descendant
+def test_be3_a_product_with_no_family_has_no_members(db):
+    vseed.family(db)
+    lone = vseed.shapes.prod(db, "NOFAMILY-X", list_price="10.00")  # no digit before the dash: no family
     db.flush()
-    got = _members(db, fam["SRTWC8354-SH"])
-    codes = [m["code"] for m in got]
-    assert len(codes) == len(set(codes)), "a member is listed twice"
-    assert "SRTWC8354-SH" not in codes, "the product itself must stay out"
-    assert "SRTWC8354-SH-UF-300" in codes
+    assert lone.family_code is None
+    assert _members(db, lone) == []
+
+
+def test_be3_a_variant_link_outside_the_family_is_not_a_member(db):
+    fam = vseed.family(db)
+    linked = vseed.shapes.prod(db, "SRTBA9999-LINKED", list_price="10.00")
+    linked.variant_of_id = fam["SRTWC8354-SH"].id
+    db.flush()
+    assert "SRTBA9999-LINKED" not in [m["code"] for m in _members(db, fam["SRTWC8354-SH"])]
+
+
+def test_be3_a_hand_set_family_groups_too(db):
+    fam = vseed.family(db)
+    odd = vseed.shapes.prod(db, "SRTWC9999-ODD", list_price="10.00")
+    odd.family_code = "SRTWC8354"
+    odd.family_code_manual = True
+    db.flush()
+    assert "SRTWC9999-ODD" in [m["code"] for m in _members(db, fam["SRTWC8354-SH"])]
 
 
 def test_be3_another_companys_product_never_appears(db):
     db.add(Company(id=MOCHA, name="ZZT Mocha", code=unique_code("MCH")[:20], is_active=True))
     db.flush()
     fam = vseed.family(db)
-    theirs = vseed.shapes.prod(db, "SRTWC8354-SH-THEIRS", list_price="10.00", company_id=MOCHA)
-    theirs.variant_of_id = fam["SRTWC8354-SH"].id
+    vseed.shapes.prod(db, "SRTWC8354-SH-THEIRS", list_price="10.00", company_id=MOCHA)
     db.flush()
     set_company_scope(db, frozenset({vseed.SORENTO}))
     codes = [m["code"] for m in _members(db, fam["SRTWC8354-SH"])]
@@ -149,9 +162,10 @@ def test_be4_excluded_variant_ids_are_left_out_on_a_line(db):
     assert len(codes) == 6
 
 
-def test_be4_a_leaf_line_has_no_variants(db):
+def test_be4_a_leaf_line_carries_its_family_siblings(db):
     fam = vseed.family(db)
-    assert _line_row(db, fam["SRTWC8354-SH-150"])["variants"] == []
+    codes = sorted(v["code"] for v in _line_row(db, fam["SRTWC8354-SH-150"])["variants"])
+    assert codes == sorted(code for code in vseed.FAMILY if code != "SRTWC8354-SH-150")
 
 
 def test_be4_the_designer_preview_data_carries_variants_without_any_exclusion(db):

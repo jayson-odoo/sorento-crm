@@ -20,15 +20,26 @@ from tests.test_portal_price_tag_revise import _seed_product, _seed_token, _setu
 from tests.test_portal_price_tag_revise import no_queue, no_respond  # noqa: F401  (autouse fixtures)
 
 
+FAMILY = "ZZFAM1"
+
+
 def _family(db, base_id: str, count: int = 2) -> list[str]:
-    """`count` variants directly under the line's product."""
+    """`count` products sharing the line product's Family (set by hand, like the Variants tab)."""
+    base = db.get(Product, base_id)
+    base.family_code, base.family_code_manual = FAMILY, True
     ids = []
     for _ in range(count):
         child_id = _seed_product(db)
-        db.get(Product, child_id).variant_of_id = base_id
+        child = db.get(Product, child_id)
+        child.family_code, child.family_code_manual = FAMILY, True
         ids.append(child_id)
     db.flush()
     return ids
+
+
+def _leave_family(db, product_id: str) -> None:
+    item = db.get(Product, product_id)
+    item.family_code, item.family_code_manual = "ZZOTHER1", True
 
 
 def _line(db, row) -> PriceTagRequestLine:
@@ -84,7 +95,7 @@ def test_a_carried_id_that_left_the_family_is_dropped_not_refused():
         contact, product_id, row = _setup(db)
         a, b = _family(db, product_id)
         _line(db, row).excluded_variant_ids = [a, b]
-        db.get(Product, a).variant_of_id = None  # re-parented out of the family since
+        _leave_family(db, a)  # moved to another family since
         db.commit()
 
         _revise(db, contact, row, product_id)
@@ -96,7 +107,7 @@ def test_a_sent_id_outside_the_family_is_still_refused():
     with blank_session() as db:
         contact, product_id, row = _setup(db)
         a, _b = _family(db, product_id)
-        db.get(Product, a).variant_of_id = None
+        _leave_family(db, a)
         db.commit()
 
         with pytest.raises(Exception) as caught:
