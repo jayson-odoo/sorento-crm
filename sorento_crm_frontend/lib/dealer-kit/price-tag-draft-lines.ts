@@ -613,6 +613,26 @@ export function draftLinesPayload(
   }));
 }
 
+/**
+ * PRICETAG-UPGRADE-VARIANTS: the line once the members lookup answered for `productId`. An unticked
+ * id that is no longer a member (re-parented or re-coded since it was unticked) is dropped, so it
+ * can never block a save with NOT_A_VARIANT; the chooser could not show it to clear it.
+ */
+export function withVariantMembers(
+  line: DraftLine,
+  productId: string,
+  answer: { members: VariantMemberOption[]; own_list_price: number | null },
+): DraftLine {
+  const current = new Set(answer.members.map((m) => m.product_id));
+  return {
+    ...line,
+    variant_members: answer.members,
+    variant_members_for: productId,
+    own_list_price: answer.own_list_price,
+    excluded_variant_ids: (line.excluded_variant_ids ?? []).filter((id) => current.has(id)),
+  };
+}
+
 /** PRICETAG-UPGRADE-VARIANTS Q5: "Variants price differently: RM x to RM y" over the line product
  *  and its ticked live members, or null when they all list the same (or nothing is known). */
 export function variantPriceWarning(

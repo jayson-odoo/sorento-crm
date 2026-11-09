@@ -35,6 +35,7 @@ import {
   pickedProductIds,
   restoreGroupCandidates,
   trimPicksToTemplate,
+  withVariantMembers,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 
@@ -340,24 +341,26 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       const productId = line.product_id as string;
       const asked = `${line.key}:${productId}`;
       variantsAskedRef.current.add(asked);
-      const apply = (answer: VariantMembersLookup) => {
-        variantsAskedRef.current.delete(asked);
-        setLines((prev) =>
-          prev.map((l) =>
-            l.key === line.key && l.product_id === productId
-              ? {
-                  ...l,
-                  variant_members: answer.members,
-                  variant_members_for: productId,
-                  own_list_price: answer.own_list_price,
-                }
-              : l,
-          ),
-        );
-      };
       lookup(productId)
-        .then(apply)
-        .catch(() => apply({ members: [], own_list_price: null }));
+        .then((answer: VariantMembersLookup) => {
+          variantsAskedRef.current.delete(asked);
+          setLines((prev) =>
+            prev.map((l) =>
+              l.key === line.key && l.product_id === productId ? withVariantMembers(l, productId, answer) : l,
+            ),
+          );
+        })
+        .catch(() => {
+          // No chooser; the saved unticked list is left exactly as it was (nothing to check it against).
+          variantsAskedRef.current.delete(asked);
+          setLines((prev) =>
+            prev.map((l) =>
+              l.key === line.key && l.product_id === productId
+                ? { ...l, variant_members: [], variant_members_for: productId }
+                : l,
+            ),
+          );
+        });
     }
   }, [lines, lookups, setLines]);
 

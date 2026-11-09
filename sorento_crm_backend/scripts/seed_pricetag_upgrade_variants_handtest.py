@@ -15,6 +15,8 @@ Under one company (default SRT) it makes, matched on code or name so a re-run ch
   into the company, so the portal's lines table can be walked (CRM > Contacts > Impersonate).
 * Two published templates: "Combo + Upgrade" (free items box, Upgrades box, main feature icons) and
   "WC family" (feature icons on All variants), linked to the combo and to SRTWC8354-SH.
+* One submitted request with a family line (SRTWC8354-SH-UF-300 unticked) and a combo line with the
+  upgrade picked at SP, so the staff designer and the PDF export have something to open.
 
 Icon and photo bytes: the sandbox has no object storage, so the PNGs are drawn into --asset-dir and
 the attachment rows point at --asset-base-url with provider --storage-provider. Serve the folder
@@ -189,11 +191,13 @@ class Seeder:
     def specs(self, product, **values) -> None:
         from app.models.product_spec import ProductSpecifications
 
+        # The catalogue's own shape: {key: {"value": ...}} (the spec pages read `["value"]`).
+        entries = {key: {"value": value} for key, value in values.items()}
         row = self.db.query(ProductSpecifications).filter_by(product_id=product.id).first()
         if row is None:
-            self.db.add(ProductSpecifications(id=str(uuid.uuid4()), product_id=product.id, values=dict(values)))
+            self.db.add(ProductSpecifications(id=str(uuid.uuid4()), product_id=product.id, values=entries))
         else:
-            row.values = dict(values)
+            row.values = entries
         self.db.flush()
 
     # ------------------------------------------------------------- registry
@@ -280,6 +284,35 @@ class Seeder:
             self.db.add(RespondContactCompany(respond_contact_id=contact.id, company_id=self.company_id))
             self.db.flush()
             self.say("portal contact Hand Test Dealer")
+
+    def request(self, combo, members: dict, upgrade) -> None:
+        """One submitted request the staff side can open: the family line with SRTWC8354-SH-UF-300
+        unticked (LP) and the combo line with its upgrade picked (SP). Marked by its debtor name."""
+        from datetime import date, timedelta
+
+        from app.models.access import RespondContact
+        from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        debtor = "Hand Test Dealer (upgrade + variants)"
+        if self.db.query(PriceTagRequest).filter(PriceTagRequest.debtor_name == debtor).first() is not None:
+            return
+        contact = self.db.query(RespondContact).filter(RespondContact.name == "Hand Test Dealer").one()
+        base = members[BASE]
+        PriceTagRequestService.submit_request(
+            self.db, contact_id=contact.id, company_id=self.company_id,
+            data={
+                "debtor_name": debtor, "price_mode": "list",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {"line_type": "product", "product_id": base.id, "quantity": 1, "parts": [],
+                     "excluded_variant_ids": [members["SRTWC8354-SH-UF-300"].id]},
+                    {"line_type": "product", "product_id": combo.host_product_id, "combo_id": combo.id, "quantity": 1,
+                     "price_type": "selling", "parts": [{"product_id": upgrade.id, "role": "Upgrade"}]},
+                ],
+            },
+        )
+        self.say("request " + debtor)
 
     # ------------------------------------------------------------ templates
     @staticmethod
@@ -441,6 +474,8 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
                 db.commit()
                 seeder.templates(combo, members[BASE])
                 seeder.portal_contact()
+                db.commit()
+                seeder.request(combo, members, upgrade)
                 db.commit()
         finally:
             clear_actor(db)

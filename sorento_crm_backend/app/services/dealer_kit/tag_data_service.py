@@ -263,7 +263,7 @@ def _spec_display_value(raw, value_labels: Optional[dict] = None) -> str:
     return display_spec_value(raw, value_labels, title_case=True)
 
 
-def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
+def product_specs(db: Session, product: Product, spec_row=None, registry=None) -> list[dict]:
     """The product's reviewed specs, key by key, for `{{spec.<key>}}` (D58).
 
     `spec_lines` has always carried the rendered spec SENTENCE, which is one
@@ -286,7 +286,8 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
         return []
 
     specs: list[dict] = []
-    for key in active_registry(db):
+    # `registry`: the active keys, read once by a caller building many products' specs.
+    for key in registry if registry is not None else active_registry(db):
         if key.spec_key not in values:
             continue
         stored = values[key.spec_key]
@@ -301,20 +302,31 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
                 "label": key.label,
                 "value": _spec_display_value(raw, key.value_labels),
                 "unit": key.unit,
-                # Feature icons match on the STORED value, never the label (contract B4).
-                "raw": _spec_raw_text(raw),
+                # Feature icons match on the STORED value, never the label (contract B4). A
+                # numeric key reads through the same normaliser its icon values are keyed on, so a
+                # legacy "150.0" string still matches "150".
+                "raw": _numeric_raw(raw) if key.data_type == "numeric" else _spec_raw_text(raw),
             }
         )
     return specs
 
 
+def _numeric_raw(raw) -> str:
+    """A numeric key's raw text: normalised when it reads as a number, else as stored."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(raw) or _spec_raw_text(raw)
+
+
 def _spec_raw_text(raw) -> str:
     """A stored spec value as text: a bool reads `true` / `false`, a whole number with no ".0"
     (150.0 -> "150", so it matches the value an icon is set on), anything else `str()`."""
+    from app.services.product_spec_registry import numeric_value_text
+
     if isinstance(raw, bool):
         return "true" if raw else "false"
-    if isinstance(raw, float) and raw.is_integer():
-        return str(int(raw))
+    if isinstance(raw, (int, float)):
+        return numeric_value_text(raw) or str(raw)
     return str(raw)
 
 

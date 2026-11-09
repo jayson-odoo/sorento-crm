@@ -34,7 +34,7 @@ from app.dependencies import (
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
-from app.services.dealer_kit.asset_service import numeric_spec_values, numeric_spec_values_by_key
+from app.services.dealer_kit.asset_service import numeric_spec_values_by_key, numeric_value_keys
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_spec_rules import (
     BRAND_IS_NOT_A_SPEC,
@@ -210,7 +210,7 @@ def _serialise(
         "icon_order": row.icon_order,
         # PRICETAG-UPGRADE-VARIANTS S4: a numeric key's values that products hold, so each can
         # carry icons on the Values and words tab. Empty on every other key.
-        "numeric_values": (numeric.get(row.spec_key, []) if numeric is not None else numeric_spec_values(row))
+        "numeric_values": numeric_value_keys(row, numeric.get(row.spec_key, []) if numeric is not None else None)
         if row.data_type == "numeric"
         else [],
         "parser_hint": row.parser_hint,

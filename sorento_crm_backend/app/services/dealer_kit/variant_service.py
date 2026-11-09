@@ -12,24 +12,35 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 
+#: The most members a family lists (security review S2): a tree is walked no further than this, so
+#: a hand-curated graph cannot make one tag read the catalogue.
+MAX_MEMBERS = 200
+
 
 def _member_products(db: Session, product_id: Optional[str]) -> list[Product]:
     """Every product under ``product_id`` in the variant tree, ordered by code, itself left out.
 
     Walked one level at a time; a product already seen is never walked again, so a hand-made
-    cycle (a base linked under its own descendant) cannot loop.
+    cycle (a base linked under its own descendant) cannot loop. Stops at ``MAX_MEMBERS``.
     """
     if not product_id:
         return []
     seen: set[str] = {str(product_id)}
     found: list[Product] = []
     frontier = [str(product_id)]
-    while frontier:
-        children = db.query(Product).filter(Product.variant_of_id.in_(frontier)).all()
+    while frontier and len(found) < MAX_MEMBERS:
+        children = (
+            db.query(Product)
+            .filter(Product.variant_of_id.in_(frontier))
+            .order_by(Product.product_code, Product.id)
+            .all()
+        )
         frontier = []
         for child in children:
             if child.id in seen:
                 continue
+            if len(found) >= MAX_MEMBERS:
+                break
             seen.add(child.id)
             found.append(child)
             frontier.append(child.id)
@@ -55,14 +66,42 @@ def variant_members(db: Session, product_id: Optional[str]) -> list[dict]:
 def tag_variants(db: Session, product_id: Optional[str], excluded_ids=None) -> list[dict]:
     """The payload `variants` of a tag: live members (active, not discontinued, not excluded on
     the line), each `{product_id, code, specs}` through the product's own spec builder."""
+    from app.models.product_spec import ProductSpecifications
     from app.services.dealer_kit.tag_data_service import product_specs
+    from app.services.product_spec_registry import active_registry
 
     excluded = {str(i) for i in excluded_ids or []}
-    return [
-        {"product_id": p.id, "code": p.product_code or "", "specs": product_specs(db, p)}
+    live = [
+        p
         for p in _member_products(db, product_id)
         if p.is_active and not p.is_discontinued and p.id not in excluded
     ]
+    if not live:
+        return []
+    # Every member's reviewed spec row in one read (security review S2), not one per member.
+    rows = {
+        row.product_id: row
+        for row in db.query(ProductSpecifications)
+        .filter(ProductSpecifications.product_id.in_([p.id for p in live]))
+        .all()
+    }
+    registry = active_registry(db)
+    return [
+        {
+            "product_id": p.id,
+            "code": p.product_code or "",
+            # A member with no spec row has no specs (an empty stand-in, never a second read).
+            "specs": product_specs(db, p, rows.get(p.id) or _NO_SPECS, registry),
+        }
+        for p in live
+    ]
+
+
+class _NoSpecs:
+    values: dict = {}
+
+
+_NO_SPECS = _NoSpecs()
 
 
 def chooser(db: Session, product_id: str) -> Optional[dict]:

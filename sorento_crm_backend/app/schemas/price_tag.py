@@ -46,6 +46,11 @@ class LinePartIn(BaseModel):
     candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
+#: PRICETAG-UPGRADE-VARIANTS: a product id as a line's unticked member (a UUID is 36 characters);
+#: anything longer is a 422 at the boundary, never a database error.
+_VariantId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+
+
 class PriceTagRequestLineCreate(BaseModel):
     line_type: str = Field(..., pattern=r"^(product|product_set)$")
     product_id: Optional[str] = None
@@ -81,7 +86,7 @@ class PriceTagRequestLineCreate(BaseModel):
     tag_template_id: Optional[str] = None
     # PRICETAG-UPGRADE-VARIANTS S3: the variant members UNTICKED for this tag. Each must sit in
     # the line product's variant tree (422 NOT_A_VARIANT), checked in the service.
-    excluded_variant_ids: list[str] = Field(default_factory=list, max_length=500)
+    excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -114,7 +119,7 @@ class PriceTagReviseLineIn(BaseModel):
     manual_sell_price: Optional[ManualSellPrice] = None
     price_type: Optional[Literal["list", "selling"]] = None
     #: PRICETAG-UPGRADE-VARIANTS S3: None = not sent (the old line's list is carried over).
-    excluded_variant_ids: Optional[list[str]] = Field(default=None, max_length=500)
+    excluded_variant_ids: Optional[list[_VariantId]] = Field(default=None, max_length=500)
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -1933,7 +1938,7 @@ class TagPreviewLineIn(BaseModel):
     tag_template_id: Optional[str] = None
     price_type: Optional[Literal["list", "selling"]] = None
     #: PRICETAG-UPGRADE-VARIANTS S3: the members unticked on the line (only ever narrows the list).
-    excluded_variant_ids: list[str] = Field(default_factory=list, max_length=500)
+    excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
 
 
 class TagPreviewIn(BaseModel):

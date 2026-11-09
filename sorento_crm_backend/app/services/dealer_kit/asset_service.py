@@ -468,7 +468,7 @@ MAX_ICONS_PER_VALUE = 10
 BOOLEAN_VALUES = ("true", "false")
 
 
-def spec_value_keys(row) -> list[str]:
+def spec_value_keys(row, numeric_values: Optional[list[str]] = None) -> list[str]:
     """The values of a registry key an icon may be set on, in the key's own order.
 
     A yes/no key reads ``true`` / ``false`` (what a tag's ``raw`` holds for a stored bool); any
@@ -479,21 +479,30 @@ def spec_value_keys(row) -> list[str]:
     if row.data_type == "boolean":
         return list(BOOLEAN_VALUES)
     if row.data_type == "numeric":
-        return numeric_spec_values(row)
+        return numeric_value_keys(row, numeric_values)
     return [str(v) for v in merged_allowed_values(row)]
 
 
 def _numeric_text(value) -> Optional[str]:
-    """A stored number as the text a tag's ``raw`` holds: 150, 150.0 and "150" -> "150"."""
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        number = float(str(value).strip())
-    except ValueError:
-        return None
-    if number != number or number in (float("inf"), float("-inf")):
-        return None
-    return str(int(number)) if number.is_integer() else str(number)
+    """The one numeric normaliser (`product_spec_registry.numeric_value_text`), shared with a tag's raw."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(value)
+
+
+def _numeric_order(value: str):
+    text = _numeric_text(value)
+    return (0, float(text), "") if text is not None else (1, 0.0, value)
+
+
+def numeric_value_keys(row, product_values: Optional[list[str]] = None) -> list[str]:
+    """A numeric key's values that may carry icons: the ones products hold today (pass them in
+    when already read for several keys) plus every value it already carries icons on, so icons set
+    on a value no product holds any more (a discontinued 300 mm) are kept, not lost on the next
+    save. Numeric order."""
+    held = product_values if product_values is not None else numeric_spec_values(row)
+    stored = [str(value) for value in (row.value_icons or {})]
+    return sorted(set(held) | set(stored), key=_numeric_order)
 
 
 def numeric_spec_values(row) -> list[str]:
@@ -518,7 +527,9 @@ def numeric_spec_values_by_key(db: Session, keys: list[str]) -> dict[str, list[s
             "SELECT DISTINCT k.key, CASE WHEN jsonb_typeof(k.value) = 'object' "
             "THEN k.value ->> 'value' ELSE k.value #>> '{}' END "
             "FROM product_specifications s, jsonb_each(s.values) k "
-            "WHERE jsonb_typeof(s.values) = 'object' AND k.key = ANY(:keys)"
+            # `?|` first, so the GIN index on `values` narrows the rows before jsonb_each.
+            "WHERE s.values ?| CAST(:keys AS text[]) AND jsonb_typeof(s.values) = 'object' "
+            "AND k.key = ANY(:keys)"
         ),
         {"keys": list(keys)},
     ).all()
@@ -575,10 +586,14 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
         statement = statement.filter(Asset.company_id == company_id)
     names = {asset.id: asset.name for asset in statement.all()}
 
+    # One read for every numeric key, never one scan per key (security review S1).
+    numeric = numeric_spec_values_by_key(
+        db, [row.spec_key for row in rows if row.data_type == "numeric"]
+    )
     out: list[dict] = []
     for row in rows:
         mapping = row.value_icons or {}
-        ordered = spec_value_keys(row)
+        ordered = spec_value_keys(row, numeric.get(row.spec_key, []))
         # A value the key no longer lists keeps its icons (a product may still hold it).
         ordered += sorted(value for value in mapping if value not in ordered)
         for value in ordered:
