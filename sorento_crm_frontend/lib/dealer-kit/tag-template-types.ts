@@ -366,6 +366,8 @@ export interface AccessoryTextStyle {
   align?: 'left' | 'center' | 'right';
   letterSpacing?: number;
   color?: string;
+  /** PRICETAG-HEADER-DRAG round 2: line height of a resized (wrapping) header. Absent = 1. */
+  lineHeight?: number;
 }
 
 export interface AccessoriesLayerProps {
@@ -385,6 +387,21 @@ export interface AccessoriesLayerProps {
   headerOnBorder?: boolean;
   /** What shows behind a header on the border (the tag's own background). */
   headerBackground?: string;
+  /** PRICETAG-HEADER-DRAG: where the header was dragged to, its top-left in mm from the box's
+   *  top-left. Absent / null = today's computed spot. A moved header is plain text (never on the
+   *  border) and moves nothing else in the box. Part of the linked design (owner Q5, 9 Nov). */
+  headerPos?: { x_mm: number; y_mm: number } | null;
+  /** Round 2 (owner 9 Nov ~17:00, "resize it like a normal design component"): the header band's
+   *  size once resized; with it the text wraps inside the band at its set size. Only read with
+   *  `headerPos` (a resized header is a placed one). Absent / null = as wide as its text. */
+  headerSize?: { width_mm: number; height_mm: number } | null;
+  /** The header band's background; 'transparent' = none. Absent = today's rule (the "behind the
+   *  header" colour on the border, none elsewhere). */
+  headerFill?: string | null;
+  /** The header band's corner radius (mm). Absent = square. */
+  headerRadius_mm?: number;
+  /** Inner margin between the header band and its text (mm). Absent = 0. */
+  headerPadding?: LayerPadding;
   headerStyle?: AccessoryTextStyle;
   nameStyle?: AccessoryTextStyle;
   specStyle?: AccessoryTextStyle;

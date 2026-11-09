@@ -6,14 +6,14 @@ converges through create_all upgrades cleanly. `next_run_at` stays NULL: the hea
 row that never ran as due, the same as every seeded task.
 
 Revision ID: town_0002_scheduled_task
-Revises: sales_0008_no_replace_payee onto main's head by scripts/alembic-reparent.sh)
+Revises: oihr_0012_new_location
 """
 import sqlalchemy as sa
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "town_0002_scheduled_task"
-down_revision = "sales_0008_no_replace_payee"
+down_revision = "oihr_0012_new_location"
 branch_labels = None
 depends_on = None
 
