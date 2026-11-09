@@ -1552,6 +1552,33 @@ register(
     )
 )
 
+def _unlink_dealer_access(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
+    from app.services import dealer_access_screen
+
+    # Runs from whichever request commits the window: the requester is the actor, and the link must still be one of
+    # their own accounts' links (it fails, and stays, when it is not).
+    requester = str(payload.get("requested_by_id") or "")
+    if not requester:
+        raise ValueError("dealer_access.unlink has no requester")
+    with actor_scope(
+        AuditActor(actor_type="user", user_id=requester, real_user_id=requester), db=db
+    ):
+        return dealer_access_screen.unlink(db, requester, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="dealer_access.unlink",
+        # Parked on the LINK row (`respond_contact_customers`), one of the requester's own accounts'.
+        entity_types=("dealer_access_link",),
+        execute=_unlink_dealer_access,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit_own",
+        label="Unlink dealer access",
+    )
+)
+
 register(
     FormAction(
         key="customer.unassign_sales_agent",

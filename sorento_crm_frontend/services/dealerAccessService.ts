@@ -3,7 +3,7 @@
  * people who hold access to them. Module `sales`, permission `user_management.contacts.edit_own`.
  *
  *   GET  /api/v1/sales/dealer-access/accounts?company=SRT  -> [{ id, code, name }]
- *   GET  /api/v1/sales/dealer-access/people?page&limit&query&company[]&access -> { data, pagination }
+ *   GET  /api/v1/sales/dealer-access/people?page&limit&query&company[]&access -> { rows, total }
  *   POST /api/v1/sales/dealer-access/grant   { company, account_ids, people: [{ name, phone, role }] }
  *        422 carries `details.rows: [{ index, error }]`, one reason per refused person.
  *   PUT  /api/v1/sales/dealer-access/people/{contact_id}  { company, role, account_ids }
@@ -110,7 +110,11 @@ export async function getPeople(params: DealerAccessPeopleParams): Promise<Deale
   );
   const response = await apiFetch(`${BASE}/people?${qs.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load people'));
-  return response.json();
+  const body: { rows: DealerAccessRow[]; total: number } = await response.json();
+  return {
+    data: body.rows,
+    pagination: { page: params.pageIndex + 1, limit: params.pageSize, total: body.total },
+  };
 }
 
 export async function grant(body: DealerAccessGrantBody): Promise<DealerAccessGrantResult> {

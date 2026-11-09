@@ -254,6 +254,10 @@ def _assert_entity_visible(
 
         if get_link_by_id(db, entity_id) is None:
             raise handle_not_found("Customer link", entity_id)
+    elif action_key == "dealer_access.unlink":
+        from app.services import dealer_access_screen
+
+        dealer_access_screen.own_link(db, str(actor_id or ""), entity_id)  # 404 unless one of the requester's own
     elif action_key == "customer_group.delete":
         from app.services.customer_group_service import CustomerGroupService
 
@@ -424,6 +428,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "customer.remove_from_group",
     "customer.unassign_sales_agent",
     "customer_group.delete",
+    "dealer_access.unlink",
     "form_comment.delete",
     "my_request.delete",
     "my_request_attachment.unlink",
