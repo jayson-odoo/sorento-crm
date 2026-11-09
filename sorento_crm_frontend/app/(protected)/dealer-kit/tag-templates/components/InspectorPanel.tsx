@@ -2320,7 +2320,8 @@ function AccessoriesInspector({
               variant="outline"
               size="sm"
               className="h-7 self-start text-xs"
-              onClick={() => onChange({ headerPos: null })}
+              // Removes the key: a reset box saves exactly like one never moved (same design key).
+              onClick={() => onChange({ headerPos: undefined })}
             >
               Reset header position
             </Button>

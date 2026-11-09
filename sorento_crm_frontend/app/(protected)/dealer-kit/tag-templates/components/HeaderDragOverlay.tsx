@@ -2,55 +2,70 @@
 
 /**
  * PRICETAG-HEADER-DRAG (owner 9 Nov: "I want to drag and place it at other places"): a handle over the
- * selected accessories box's header. Dragging it moves the HEADER, not the box, anywhere inside the
- * box, with snapping guides; the drop is stored as `headerPos` in box millimetres, the spot every
- * render (canvas, preview, print) reads through `accessoryChrome`.
+ * selected accessories box's header text. Dragging it moves the HEADER, not the box, anywhere inside
+ * the box, with snapping guides; the text rides with the pointer (the box hides its own header for the
+ * drag) and the drop is stored as `headerPos` in box millimetres, the spot every render (canvas,
+ * preview, print) reads through `accessoryChrome`.
  */
 import { useState } from 'react';
-import { Group, Line, Rect } from 'react-konva';
+import { Group, Line, Rect, Text } from 'react-konva';
+import type Konva from 'konva';
+import { accessoryHeaderStyle, ptToMm, type AccessoryRect } from '@/lib/dealer-kit/accessory-box';
 import { snapHeader, type ElementGuide } from '@/lib/dealer-kit/accessory-card';
-import type { AccessoryRect } from '@/lib/dealer-kit/accessory-box';
-import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
+import type { AccessoriesLayerProps, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
 const round = (mm: number) => Math.round(mm * 100) / 100;
 
+/** Only the main button's press belongs to the header: a middle-button press still pans the canvas. */
+const mainButton = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) =>
+  !('button' in e.evt) || (e.evt as MouseEvent).button === 0;
+
 export function HeaderDragOverlay({
   layer,
-  header,
+  text,
+  fontSize_pt,
   frame,
   boxWidth_mm,
   boxHeight_mm,
   scale,
+  onDragState,
   onMove,
 }: {
   layer: TagLayer;
-  /** The header as the shared layout places it now. */
-  header: AccessoryRect;
+  /** Where the header text draws now (the layout's `header.text`). */
+  text: AccessoryRect;
+  fontSize_pt: number;
   frame: AccessoryRect | null;
   /** The box as drawn (closed up around its cards). */
   boxWidth_mm: number;
   boxHeight_mm: number;
   /** Canvas pixels per millimetre. */
   scale: number;
+  /** True while the header is being dragged (the box then hides its own header text). */
+  onDragState?: (dragging: boolean) => void;
   onMove: (pos: { x_mm: number; y_mm: number }) => void;
 }) {
   const [guides, setGuides] = useState<ElementGuide[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const props = layer.props as AccessoriesLayerProps;
+  const style = accessoryHeaderStyle(props);
   const area = { width_mm: boxWidth_mm, height_mm: boxHeight_mm };
   const land = (x: number, y: number) =>
-    snapHeader({ ...header, x_mm: x / scale, y_mm: y / scale }, frame, area);
+    snapHeader({ ...text, x_mm: x / scale, y_mm: y / scale }, frame, area);
+  const drop = (x: number, y: number) => {
+    setGuides([]);
+    setDragging(false);
+    onDragState?.(false);
+    const at = land(x, y);
+    onMove({ x_mm: round(at.x_mm), y_mm: round(at.y_mm) });
+  };
 
   return (
     <Group x={layer.x_mm * scale} y={layer.y_mm * scale} rotation={layer.rotation_deg || 0}>
-      <Rect
+      <Group
         name="accessory-header-handle"
-        x={header.x_mm * scale}
-        y={header.y_mm * scale}
-        width={header.width_mm * scale}
-        height={header.height_mm * scale}
-        fill="transparent"
-        stroke="#2563eb"
-        strokeWidth={1}
-        dash={[3, 3]}
+        x={text.x_mm * scale}
+        y={text.y_mm * scale}
         draggable
         onMouseEnter={(e) => {
           const stage = e.target.getStage();
@@ -62,16 +77,21 @@ export function HeaderDragOverlay({
         }}
         // The press is the header's, never the box's or the stage's (no box drag, no marquee).
         onMouseDown={(e) => {
-          e.cancelBubble = true;
+          if (mainButton(e)) e.cancelBubble = true;
         }}
         onTouchStart={(e) => {
           e.cancelBubble = true;
         }}
         onClick={(e) => {
-          e.cancelBubble = true;
+          if (mainButton(e)) e.cancelBubble = true;
         }}
         onTap={(e) => {
           e.cancelBubble = true;
+        }}
+        onDragStart={(e) => {
+          e.cancelBubble = true;
+          setDragging(true);
+          onDragState?.(true);
         }}
         onDragMove={(e) => {
           e.cancelBubble = true;
@@ -81,11 +101,33 @@ export function HeaderDragOverlay({
         }}
         onDragEnd={(e) => {
           e.cancelBubble = true;
-          setGuides([]);
-          const at = land(e.target.x(), e.target.y());
-          onMove({ x_mm: round(at.x_mm), y_mm: round(at.y_mm) });
+          drop(e.target.x(), e.target.y());
         }}
-      />
+      >
+        <Rect
+          width={text.width_mm * scale}
+          height={text.height_mm * scale}
+          fill="transparent"
+          stroke="#2563eb"
+          strokeWidth={1}
+          dash={[3, 3]}
+        />
+        {dragging && (
+          <Text
+            width={text.width_mm * scale}
+            height={text.height_mm * scale}
+            text={props.headerText}
+            align="center"
+            verticalAlign="middle"
+            fontStyle={style.fontWeight >= 600 ? 'bold' : 'normal'}
+            fontFamily={style.fontFamily ?? undefined}
+            fontSize={ptToMm(fontSize_pt) * scale}
+            fill={style.color}
+            wrap="none"
+            listening={false}
+          />
+        )}
+      </Group>
       {guides.map((g, i) => (
         <Line
           key={i}

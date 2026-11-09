@@ -1,6 +1,6 @@
 # CARD: drag the accessories box header in the Tag Template designer (PRICETAG-HEADER-DRAG, 09/11/2026)
 
-Status: Build (all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
+Status: Review (built on PR #2278; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
 lines, frontend only, no migration, no RBAC change).
 
 ## Owner rulings (9 Nov ~14:25, verbatim: "1a, 2 it should be up to my arrangement, 3 i don't need
@@ -57,10 +57,10 @@ H1. **The header becomes a draggable piece of its box.** With the box selected, 
 H2. **Where it may go: anywhere inside the box's outline** (Q1). It moves with the box, and it never
     leaves the box. A box that closes up (fewer cards) keeps the header inside: it is pulled in to
     the box's last edge rather than printing outside it.
-H3. **Cards make room** (Q2): while the header is in its default top spot, cards start under it as
+H3. SUPERSEDED by the Q2 ruling (no reflow). Proposed was: **Cards make room** (Q2): while the header is in its default top spot, cards start under it as
     today. Once it is moved, cards start from the box's top padding and the header draws on top of
     whatever is under it (the designer shows the overlap; the user arranges).
-H4. **On the border** (Q3): "On border" keeps its meaning wherever the header sits: the header paints
+H4. SUPERSEDED by the Q3 ruling (moved = plain text). Proposed was: **On the border** (Q3): "On border" keeps its meaning wherever the header sits: the header paints
     its background (`headerBackground`) behind its text, so placed on the top or bottom border it
     breaks the line there. The frame's top no longer drops by half a header once the header is moved
     off the top.

@@ -8,16 +8,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 type KonvaEvt = {
   cancelBubble: boolean;
+  evt: { button: number };
   target: { x: () => number; y: () => number; position: (p: { x: number; y: number }) => void; getStage: () => null };
 };
 
 const pressed: KonvaEvt[] = [];
 let dragTo = { x: 0, y: 0 };
+let nextButton = 0;
 
 vi.mock('react-konva', () => {
   const evt = (): KonvaEvt => {
     const e: KonvaEvt = {
       cancelBubble: false,
+      evt: { button: nextButton },
       target: {
         x: () => dragTo.x,
         y: () => dragTo.y,
@@ -41,12 +44,14 @@ vi.mock('react-konva', () => {
           onMouseDown={call('onMouseDown')}
           onClick={call('onClick')}
           onDragEnd={call('onDragEnd')}
+          onDragStart={call('onDragStart')}
+          data-text={String(props.text ?? '')}
         >
           {props.children}
         </div>
       );
     };
-  return { Group: stand('group'), Rect: stand('rect'), Line: stand('line') };
+  return { Group: stand('group'), Rect: stand('rect'), Line: stand('line'), Text: stand('text') };
 });
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -63,14 +68,16 @@ const layer = {
   z_index: 1, locked: false, visible: true, slot_binding: null, text_override: null,
   props: { ...defaultAccessoriesProps(), headerText: 'FREE' },
 } as unknown as TagLayer;
-const header = { x_mm: 20, y_mm: 0, width_mm: 10, height_mm: 4 };
+const text = { x_mm: 20, y_mm: 0, width_mm: 10, height_mm: 4 };
 const frame = { x_mm: 0, y_mm: 2, width_mm: 50, height_mm: 38 };
 
-function handle(onMove = vi.fn()) {
+function handle(onMove = vi.fn(), onDragState = vi.fn()) {
   const { container } = render(
     <HeaderDragOverlay
       layer={layer}
-      header={header}
+      text={text}
+      fontSize_pt={9}
+      onDragState={onDragState}
       frame={frame}
       boxWidth_mm={50}
       boxHeight_mm={40}
@@ -97,6 +104,28 @@ describe('HeaderDragOverlay', () => {
     dragTo = { x: 90 * SCALE, y: -20 * SCALE };
     fireEvent.dragEnd(el);
     expect(onMove).toHaveBeenCalledWith({ x_mm: 40, y_mm: 0 });
+  });
+
+  it('while dragging, the text rides in the handle and the editor is told (it hides the box header)', () => {
+    const onDragState = vi.fn();
+    const el = handle(vi.fn(), onDragState);
+    expect(el.querySelector('[data-kind="text"]')).toBeNull();
+    fireEvent.dragStart(el);
+    expect(onDragState).toHaveBeenLastCalledWith(true);
+    expect(el.querySelector('[data-kind="text"]')?.getAttribute('data-text')).toBe('FREE');
+    dragTo = { x: 0, y: 0 };
+    fireEvent.dragEnd(el);
+    expect(onDragState).toHaveBeenLastCalledWith(false);
+    expect(el.querySelector('[data-kind="text"]')).toBeNull();
+  });
+
+  it('a middle-button press is not taken (it still pans the canvas)', () => {
+    const el = handle();
+    pressed.length = 0;
+    nextButton = 1;
+    fireEvent.mouseDown(el);
+    nextButton = 0;
+    expect(pressed[0].cancelBubble).toBe(false);
   });
 
   it('the press is the header\'s: it never bubbles to the box or the stage', () => {
@@ -127,6 +156,8 @@ describe('Inspector header controls (owner Q3)', () => {
     expect(screen.queryByLabelText('Header on the border')).toBeNull();
     expect(screen.queryByText('Behind the header')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Reset header position' }));
-    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ headerPos: null }));
+    const sent = onUpdateProps.mock.calls.at(-1)![1] as Record<string, unknown>;
+    // The key goes (undefined, dropped on save): a reset box saves like one never moved.
+    expect('headerPos' in sent && sent.headerPos === undefined).toBe(true);
   });
 });

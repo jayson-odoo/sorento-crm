@@ -18,6 +18,7 @@ vi.mock('react-konva', () => {
           data-w={String(props.width ?? '')}
           data-text={String(props.text ?? '')}
           data-fill={String(props.fill ?? '')}
+          data-align={String(props.align ?? '')}
         >
           {props.children}
         </div>
@@ -94,7 +95,16 @@ function boxLayer(extra: Partial<AccessoriesLayerProps>): TagLayer {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { ...defaultAccessoriesProps(), headerText: 'FREE', headerOnBorder: true, headerPos: POS, ...extra },
+    // Left-aligned header style: a moved header must still centre in its own text-wide band on BOTH
+    // canvas and print, or the two would sit a padding apart.
+    props: {
+      ...defaultAccessoriesProps(),
+      headerText: 'FREE',
+      headerOnBorder: true,
+      headerStyle: { align: 'left' },
+      headerPos: POS,
+      ...extra,
+    },
   } as unknown as TagLayer;
 }
 
@@ -132,7 +142,11 @@ async function canvasHeader(layer: TagLayer) {
   const text = [...container.querySelectorAll('[data-konva="text"]')].find(
     (t) => t.getAttribute('data-text') === 'FREE',
   )!;
-  const out = { x: Number(text.getAttribute('data-x')), y: Number(text.getAttribute('data-y')) };
+  const out = {
+    x: Number(text.getAttribute('data-x')),
+    y: Number(text.getAttribute('data-y')),
+    align: text.getAttribute('data-align'),
+  };
   const backgrounds = [...container.querySelectorAll('[data-konva="rect"]')].filter(
     (r) => r.getAttribute('data-fill') === '#ffffff' && Number(r.getAttribute('data-x')) === out.x,
   );
@@ -151,9 +165,11 @@ describe('a moved header prints where the designer draws it', () => {
     expect(canvas.x).toBeCloseTo(POS.x_mm * SCALE, 6);
     expect(canvas.y).toBeCloseTo(POS.y_mm * SCALE, 6);
     expect(canvas.backgrounds).toBe(0);
+    expect(canvas.align).toBe('center');
 
     render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ [TAG_ID]: row() }} assets={{}} />);
     const header = screen.getByTestId('accessories-header');
+    expect(header.style.textAlign).toBe('center');
     expect(header.style.left).toBe(`${POS.x_mm}mm`);
     expect(header.style.top).toBe(`${POS.y_mm}mm`);
     expect(header.style.backgroundColor).toBe('');
@@ -169,9 +185,11 @@ describe('a moved header prints where the designer draws it', () => {
     expect(canvas.x).toBeCloseTo(POS.x_mm * SCALE, 6);
     expect(canvas.y).toBeCloseTo(POS.y_mm * SCALE, 6);
     expect(canvas.backgrounds).toBe(0);
+    expect(canvas.align).toBe('center');
 
     render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ [TAG_ID]: row() }} assets={{}} />);
     const header = screen.getByTestId('accessories-header');
+    expect(header.style.textAlign).toBe('center');
     expect(header.style.left).toBe(`${POS.x_mm}mm`);
     expect(header.style.top).toBe(`${POS.y_mm}mm`);
     expect(header.style.backgroundColor).toBe('');

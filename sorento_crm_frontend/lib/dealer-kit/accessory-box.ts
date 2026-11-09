@@ -156,7 +156,17 @@ export interface AccessoryBoxLayout {
   frame: AccessoryRect | null;
   /** The header band; null when hidden or blank. `onBorder`: drawn over the frame's top edge, on
    *  the header background, breaking the border behind it. */
-  header: (AccessoryRect & { fontSize_pt: number; onBorder: boolean; moved: boolean }) | null;
+  header:
+    | (AccessoryRect & {
+        fontSize_pt: number;
+        onBorder: boolean;
+        moved: boolean;
+        /** Where the text itself draws (as wide as the text): the band on the border or once moved;
+         *  inside the frame the text's own span in the band, per the header's alignment. The header
+         *  drag handle starts from this, so a first drag never jumps. */
+        text: AccessoryRect;
+      })
+    | null;
   /** The round "+" badge, null when switched off. */
   badge: AccessoryRect | null;
 }
@@ -419,6 +429,15 @@ export function accessoryChrome(
   // Dragged (PRICETAG-HEADER-DRAG): plain text, as wide as its text, at its stored spot, pulled back
   // inside a box that closed up. The frame, cards and footer stay where they are (owner Q2).
   const pos = headerH > 0 ? props.headerPos : null;
+  // The header style's alignment (`accessoryHeaderStyle`: centred unless the box sets otherwise).
+  const align = props.headerStyle?.align ?? 'center';
+  const textX = onBorder
+    ? (outW - bandW) / 2
+    : align === 'left'
+      ? headerInset
+      : align === 'right'
+        ? headerInset + room - tight
+        : headerInset + (room - tight) / 2;
   const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
   return {
     frame:
@@ -434,6 +453,12 @@ export function accessoryChrome(
           fontSize_pt: headerPt,
           onBorder: false,
           moved: true,
+          text: {
+            x_mm: clamp(pos.x_mm, outW - tight),
+            y_mm: clamp(pos.y_mm, outH - headerH),
+            width_mm: tight,
+            height_mm: headerH,
+          },
         }
       : headerH > 0
         ? {
@@ -444,6 +469,7 @@ export function accessoryChrome(
             fontSize_pt: headerPt,
             onBorder,
             moved: false,
+            text: { x_mm: textX, y_mm: onBorder ? 0 : pad * 0.5, width_mm: tight, height_mm: headerH },
           }
         : null,
     badge: props.showBadge

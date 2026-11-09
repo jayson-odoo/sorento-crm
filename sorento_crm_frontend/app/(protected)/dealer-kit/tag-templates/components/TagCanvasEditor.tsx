@@ -1607,6 +1607,10 @@ export function TagCanvasEditor({
     target: CardEditTarget;
     elementId: string | null;
   } | null>(null);
+  /** PRICETAG-HEADER-DRAG: the box whose header is being dragged (it hides its own header text), and
+   *  whether a box drag / transform is under way (the header handle is hidden then, it would lag). */
+  const [headerDragId, setHeaderDragId] = useState<string | null>(null);
+  const [boxGesture, setBoxGesture] = useState(false);
   const applyExternalLayerPropsRef = useRef<(patches: LayerPropsPatch[]) => void>(() => {});
   /** Line counts of the previewed lists, set once `accessoryFits` is computed below. */
   const accessoryLinesRef = useRef(new Map<string, number>());
@@ -1889,6 +1893,7 @@ export function TagCanvasEditor({
    *  none), card 1 as the editable frame. */
   const displayFor = (layer: TagLayer) => {
     const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    if (headerDragId === layer.id) return { ...display, accessoryHeaderHidden: true };
     if (accessoryEdit?.layerId !== layer.id) return display;
     // Under edit the box's OWN design is what is edited, never a previewed owner's override.
     return {
@@ -2494,6 +2499,7 @@ export function TagCanvasEditor({
       for (const layer of layers) {
         if (moving.has(layer.id)) start.set(layer.id, { x: layer.x_mm, y: layer.y_mm });
       }
+      setBoxGesture(true);
       dragRef.current = {
         anchorId: id,
         roots: [...roots],
@@ -2565,6 +2571,7 @@ export function TagCanvasEditor({
   const handleDragEnd = useCallback(
     (id: string) => {
       clearGuides();
+      setBoxGesture(false);
       const drag = dragRef.current;
       dragRef.current = null;
       if (!drag || drag.anchorId !== id) return;
@@ -2702,6 +2709,7 @@ export function TagCanvasEditor({
 
   const handleTransformEnd = useCallback(() => {
     setRotationLabel(null);
+    setBoxGesture(false);
     const transformer = transformerRef.current;
     if (!transformer) return;
 
@@ -4581,6 +4589,7 @@ export function TagCanvasEditor({
                         box is edited, locked, or drawn in a previewed owner's box style (that style's
                         design is what shows, so a drag here would not be what is seen). */}
                     {!handMode &&
+                      !boxGesture &&
                       selectedIds.size === 1 &&
                       (() => {
                         const box = layers.find((l) => selectedIds.has(l.id));
@@ -4596,11 +4605,13 @@ export function TagCanvasEditor({
                         return (
                           <HeaderDragOverlay
                             layer={box}
-                            header={layout.header}
+                            text={layout.header.text}
+                            fontSize_pt={layout.header.fontSize_pt}
                             frame={layout.frame}
                             boxWidth_mm={layout.boxWidth_mm}
                             boxHeight_mm={layout.boxHeight_mm}
                             scale={scale}
+                            onDragState={(dragging) => setHeaderDragId(dragging ? box.id : null)}
                             onMove={(headerPos) =>
                               updateLayerPropsLinked(box.id, { headerPos } as Partial<TagLayerProps>)
                             }
@@ -4645,6 +4656,7 @@ export function TagCanvasEditor({
                       rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
                       listening={!handMode}
                       onTransform={handleTransform}
+                      onTransformStart={() => setBoxGesture(true)}
                       onTransformEnd={handleTransformEnd}
                       // A polygon/boxed badge in EDIT-POINTS mode (S5) shows
                       // no resize anchors at all: a resize anchor sits

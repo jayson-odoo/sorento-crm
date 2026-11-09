@@ -32,15 +32,18 @@ vi.mock('react-konva', () => {
 vi.mock('./KonvaTagLayer', () => ({
   KonvaTagLayer: ({
     layer,
+    display,
     onSelect,
     onDoubleClick,
   }: {
     layer: TagLayer;
+    display?: { accessoryHeaderHidden?: boolean };
     onSelect?: (id: string, additive: boolean) => void;
     onDoubleClick?: (id: string) => void;
   }) => (
     <div
       data-testid={`layer-${layer.id}`}
+      data-header-hidden={display?.accessoryHeaderHidden ? 'yes' : ''}
       onClick={() => onSelect?.(layer.id, false)}
       onDoubleClick={() => onDoubleClick?.(layer.id)}
     />
@@ -90,8 +93,18 @@ vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
 }));
 
 vi.mock('./HeaderDragOverlay', () => ({
-  HeaderDragOverlay: ({ onMove }: { onMove: (p: { x_mm: number; y_mm: number }) => void }) => (
-    <button type="button" data-testid="header-handle" onClick={() => onMove({ x_mm: 4, y_mm: 30 })} />
+  HeaderDragOverlay: ({
+    onMove,
+    onDragState,
+  }: {
+    onMove: (p: { x_mm: number; y_mm: number }) => void;
+    onDragState: (dragging: boolean) => void;
+  }) => (
+    <>
+      <button type="button" data-testid="header-handle" onClick={() => onMove({ x_mm: 4, y_mm: 30 })} />
+      <button type="button" data-testid="header-grab" onClick={() => onDragState(true)} />
+      <button type="button" data-testid="header-release" onClick={() => onDragState(false)} />
+    </>
   ),
 }));
 
@@ -158,6 +171,16 @@ describe('header drag in the Tag Template designer', () => {
     expect(state.layers[0].y_mm).toBe(5);
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
     expect(propsOf(state).headerPos ?? null).toBeNull();
+  });
+
+  it('the box hides its own header text only while the header is dragged', () => {
+    mount(accessoriesLayer('acc1'));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    expect(screen.getByTestId('layer-acc1').getAttribute('data-header-hidden')).toBe('');
+    fireEvent.click(screen.getByTestId('header-grab'));
+    expect(screen.getByTestId('layer-acc1').getAttribute('data-header-hidden')).toBe('yes');
+    fireEvent.click(screen.getByTestId('header-release'));
+    expect(screen.getByTestId('layer-acc1').getAttribute('data-header-hidden')).toBe('');
   });
 
   it('a locked box has no handle', () => {

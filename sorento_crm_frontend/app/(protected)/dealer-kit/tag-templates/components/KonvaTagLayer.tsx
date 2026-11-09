@@ -435,6 +435,7 @@ function LayerContent({
           accessories={display?.accessories}
           editing={display?.accessoryEditing}
           boxStyle={display?.accessoryBoxStyle}
+          headerHidden={display?.accessoryHeaderHidden}
         />
       );
 
@@ -1179,6 +1180,7 @@ function AccessoriesContent({
   accessories,
   editing,
   boxStyle,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1189,6 +1191,7 @@ function AccessoriesContent({
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
   boxStyle?: TagAccessoryBoxStyle | null;
+  headerHidden?: boolean;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1204,6 +1207,7 @@ function AccessoriesContent({
         props={props}
         accessories={accessories}
         editing={editing}
+        headerHidden={headerHidden}
       />
     );
   }
@@ -1254,7 +1258,7 @@ function AccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
+      {!headerHidden && box.header?.onBorder && (
         // Breaks the border behind a header that sits on it (legend style).
         <Rect
           x={px(box.header.x_mm)}
@@ -1264,7 +1268,7 @@ function AccessoriesContent({
           fill={props.headerBackground || '#ffffff'}
         />
       )}
-      {box.header && (
+      {!headerHidden && box.header && (
         <Text
           x={px(box.header.x_mm)}
           y={px(box.header.y_mm)}
@@ -1374,6 +1378,7 @@ function DesignedAccessoriesContent({
   props,
   accessories,
   editing,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1383,6 +1388,7 @@ function DesignedAccessoriesContent({
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
+  headerHidden?: boolean;
 }) {
   const items = accessories ?? sampleAccessories();
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
@@ -1418,7 +1424,7 @@ function DesignedAccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
+      {!headerHidden && box.header?.onBorder && (
         <Rect
           x={px(box.header.x_mm)}
           y={px(box.header.y_mm)}
@@ -1427,7 +1433,7 @@ function DesignedAccessoriesContent({
           fill={props.headerBackground || '#ffffff'}
         />
       )}
-      {box.header && (
+      {!headerHidden && box.header && (
         <Text
           x={px(box.header.x_mm)}
           y={px(box.header.y_mm)}

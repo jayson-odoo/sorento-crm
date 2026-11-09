@@ -35,6 +35,28 @@ describe('accessoryChrome with a stored header position', () => {
     expect(chrome.header!.moved).toBe(false);
   });
 
+  it('inside the frame the text rect is the text\'s own span in the band (the handle starts there)', () => {
+    const h = accessoryChrome(base({ headerOnBorder: false }), 60, 40).header!;
+    expect(h.width_mm).toBeGreaterThan(h.text.width_mm);
+    // Centred by default: the text's centre is the band's centre.
+    expect(h.text.x_mm + h.text.width_mm / 2).toBeCloseTo(h.x_mm + h.width_mm / 2, 6);
+    const left = accessoryChrome(base({ headerOnBorder: false, headerStyle: { align: 'left' } as never }), 60, 40).header!;
+    expect(left.text.x_mm).toBeCloseTo(left.x_mm, 6);
+  });
+
+  it('first drag of an inside-frame header: dropped straight down, the text stays at the same x', () => {
+    const props = base({ headerOnBorder: false });
+    const before = accessoryChrome(props, 60, 40).header!;
+    const frame = accessoryChrome(props, 60, 40).frame;
+    // The handle starts from header.text; drag it 10 mm down with no sideways move.
+    const at = snapHeader({ ...before.text, y_mm: before.text.y_mm + 10 }, frame, { width_mm: 60, height_mm: 40 });
+    const after = accessoryChrome({ ...props, headerPos: { x_mm: at.x_mm, y_mm: at.y_mm } }, 60, 40).header!;
+    expect(after.text.x_mm + after.text.width_mm / 2).toBeCloseTo(before.text.x_mm + before.text.width_mm / 2, 1);
+    // And it can be dragged well right of the band's left inset.
+    const right = snapHeader({ ...before.text, x_mm: 40 }, frame, { width_mm: 60, height_mm: 40 });
+    expect(right.x_mm).toBeGreaterThan(30);
+  });
+
   it('null and absent positions draw the same header', () => {
     const a = accessoryChrome(base({ headerOnBorder: true }), 50, 40);
     const b = accessoryChrome(base({ headerOnBorder: true, headerPos: null }), 50, 40);
