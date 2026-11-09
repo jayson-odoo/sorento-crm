@@ -9,7 +9,7 @@ numeric(15,2) NULL, >= 0. Downgrade drops it and adds the two target columns bac
 links and payees are not restored).
 
 Revision ID: sales_0008_no_replace_payee
-Revises: lpcui_0001_list_price_changed
+Revises: town_0001_town_days
 Create Date: 2026-11-08
 """
 import sqlalchemy as sa
@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.models.sales import translated_schema
 
 revision = "sales_0008_no_replace_payee"
-down_revision = "lpcui_0001_list_price_changed"
+down_revision = "town_0001_town_days"
 branch_labels = None
 depends_on = None
 
