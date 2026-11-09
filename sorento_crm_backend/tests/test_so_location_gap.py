@@ -319,3 +319,31 @@ def test_a_line_moved_back_with_a_date_change_carries_only_the_date(api):
     assert (row.from_json.get("location"), row.to_json.get("location")) == (None, None)
     assert row.from_json.get("required_date") != row.to_json.get("required_date")
     assert _split(world, order)[str(line_a.id)] == (None, old)
+
+
+def test_a_legacy_row_naming_a_stop_in_between_is_replaced_from_where_it_was_confirmed(api):
+    """Review round 2: a pending row written before this fix by #2221's detection reads X -> Y
+    (X a stop in between; the line was confirmed at A). The repair leaves it, since it already
+    carries a location. The next push (a date change at Y) replaces it in place, and the
+    replacement reads A -> Y: the confirmed location outranks the older row's own from."""
+    _client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    x_wh, y_wh = _sibling(world), _third(world)
+    x, y = x_wh.warehouse_code, y_wh.warehouse_code
+    _move(world, line_a, x_wh)
+    _core_line_of(world, line_a).warehouse_id = y_wh.id
+    _push(world, [(line_a, x, y, 0)])
+    (legacy,) = _pending(world, line_a)
+    legacy.from_json = {**legacy.from_json, "location": x}  # as #2221's code wrote it
+    world.db.commit()
+
+    _date_change(world, line_a, y, y)
+
+    (row,) = _pending(world, line_a)
+    assert row.id != legacy.id, "premise: the date push replaced the row in place"
+    assert (row.from_json.get("location"), row.to_json.get("location")) == (old, y), (
+        row.from_json, row.to_json,
+    )
+    assert _split(world, order)[str(line_a.id)] == (old, y)
