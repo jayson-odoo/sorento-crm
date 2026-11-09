@@ -77,7 +77,7 @@ from app.models.base import company_scope  # noqa: E402
 from app.models.company import Company  # noqa: E402
 from app.models.dealer_kit import TagTemplate  # noqa: E402
 from app.models.product import Product  # noqa: E402
-from app.models.accessory import ProductComboAccessory  # noqa: E402
+from app.models.accessory import Accessory, ProductComboAccessory  # noqa: E402
 from app.models.product_combo import ProductCombo  # noqa: E402
 from app.services.accessory_service import AccessoryService  # noqa: E402
 from app.services.audit_service import register_audit_listeners  # noqa: E402
@@ -90,6 +90,8 @@ from app.services.product_combo_service import ProductComboService  # noqa: E402
 
 JOB_ID = "import_product_combos"
 MAX_SEED_BYTES = 20 * 1024 * 1024
+#: Without --strict a description is cut off at the old seed limit; --strict takes the service cap.
+LEGACY_DESCRIPTION_CAP = 1000
 REPORT_COLUMNS = [
     "id", "flyer", "page", "host", "combo", "shape", "status", "differences",
     "dropped_parts", "discontinued", "price_note", "unsure", "guess", "notes",
@@ -181,7 +183,7 @@ def read_seed(path: str) -> list[dict]:
     return data
 
 
-def invalid_entry(entry) -> Optional[str]:
+def invalid_entry(entry, legacy_cap: bool = False) -> Optional[str]:
     """Why a seed entry cannot be read, or None. Checked with the reader's own `Combo` model (one
     schema for the seed), against a copy: the entry itself is used as written, `title` standing in
     for a missing `combo_name` as it always has."""
@@ -194,6 +196,8 @@ def invalid_entry(entry) -> Optional[str]:
     except ValidationError as exc:
         first = exc.errors()[0]
         return f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}"[:300]
+    if legacy_cap and len(entry.get("combo_description") or "") > LEGACY_DESCRIPTION_CAP:
+        return f"combo_description: too long (over {LEGACY_DESCRIPTION_CAP} without --strict)"
     return None
 
 
@@ -524,6 +528,233 @@ def process_entry(
     return row
 
 
+# --------------------------------------------------------------------------- strict (flyer seed)
+
+VERDICT_ORDER = ("CREATE", "UPDATE", "SKIP", "UNMATCHED", "FAILED")
+
+
+def _entry_name(entry) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    return ((entry.get("combo_name") or entry.get("title") or "").strip())[:100]
+
+
+def _verdict_row(entry, verdict: str, details: str) -> dict:
+    """One strict result: the report row plus the printed `verdict` and `details`."""
+    row = {column: "" for column in REPORT_COLUMNS}
+    if isinstance(entry, dict):
+        row.update(
+            id=str(entry.get("id") or ""), flyer=str(entry.get("flyer") or ""),
+            page=str(entry.get("page") or ""), host=(entry.get("host_code") or "").strip(),
+            combo=_entry_name(entry), guess=entry.get("guess") or "",
+        )
+    row.update(status=verdict.lower(), differences=details, verdict=verdict, details=details)
+    return row
+
+
+def _free_resolve(db, free: dict, company_id, host, part_ids: set):
+    """A strict free item: ('product_id' | 'accessory_id', id), or None when nothing matches.
+    Nothing is ever created or guessed."""
+    kind = free.get("kind")
+    code = (free.get("code") or "").strip()
+    label = (free.get("label") or "").strip()
+    if kind in (None, "product") and code:
+        product = _free_product(db, code, company_id)
+        if product is not None and product.id != host.id and product.id not in part_ids:
+            return ("product_id", product.id)
+    if kind == "accessory" and label:
+        accessory = (
+            db.query(Accessory)
+            .filter(func.lower(Accessory.name) == label.lower(), Accessory.company_id == company_id)
+            .first()
+        )
+        if accessory is not None:
+            return ("accessory_id", accessory.id)
+    return None
+
+
+def process_entry_strict(
+    db, entry, host, parts_by_code, company_id, apply: bool, *, update: bool = False,
+    no_sp_ids=frozenset(),
+) -> dict:
+    """Judge (and on `--apply` write) one flyer seed entry under `--strict`. An entry whose host,
+    part or free item has no match writes nothing. Nothing is ever deleted."""
+    name = _entry_name(entry)
+    missing: list[str] = []
+    if host is None:
+        missing.append((entry.get("host_code") or "").strip() or "no host code")
+    keep: list[dict] = []
+    held_back: set = set()
+    for part in wanted_parts(entry):
+        product = parts_by_code.get(part["code"].upper()) if part["code"] else None
+        if not part["code"]:
+            missing.append(f"no code ({part['role'] or 'part'})")
+        elif product is None:
+            missing.append(part["code"])
+        elif product.is_discontinued:
+            held_back.add(product.id)
+        elif (host is None or product.id != host.id) and not any(k["product"].id == product.id for k in keep):
+            keep.append({**part, "product": product})
+    part_ids = {k["product"].id for k in keep} | held_back
+    free_keys, seen = [], set()
+    for free in entry.get("free_items") or []:
+        resolved = _free_resolve(db, free, company_id, host, part_ids) if host is not None else None
+        if resolved is None:
+            label = (free.get("code") or "").strip() if free.get("kind") != "accessory" else ""
+            missing.append(label or (free.get("label") or "").strip() or "free item")
+        elif resolved not in seen:
+            seen.add(resolved)
+            free_keys.append(resolved)
+    if missing or host is None:
+        unique = list(dict.fromkeys(missing))
+        return _verdict_row(entry, "UNMATCHED", f"missing: {', '.join(unique)}")
+
+    seed_lp, seed_sp = _money(entry.get("lp")), _money(entry.get("sp"))
+    host_no_sp = host.id in no_sp_ids
+    if host_no_sp:
+        seed_sp = None
+    for k in keep:
+        if host_no_sp or k["product"].id in no_sp_ids:
+            k["sp"] = k["topup"] = None
+
+    names = {name.lower(), *((a or "").strip().lower() for a in entry.get("aka") or [])} - {""}
+    host_combos = (
+        db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).order_by(ProductCombo.name).all()
+    )
+    existing = next((c for c in host_combos if (c.name or "").lower() in names), None)
+    if existing is None:
+        others = ", ".join(f'"{c.name}"' for c in host_combos)
+        details = f"host also has: {others}" if others else ""
+    else:
+        description = (entry.get("combo_description") or "").strip()
+        fill: dict = {}
+        if description and not (plain_text(existing.description) or "").strip():
+            fill["description"] = description
+        fields: list[str] = []
+        kept: list[str] = []
+        for field, label, current, seed_value in (
+            ("list_price", "list price", existing.list_price, seed_lp),
+            ("sell_price", "selling price", existing.sell_price, seed_sp),
+        ):
+            target = _wanted(current, seed_value, update)
+            if target is not None:
+                fill[field] = target
+            elif seed_value is not None and current is not None and current != seed_value:
+                kept.append(f"{label} {current} (flyer {seed_value})")
+        if "description" in fill:
+            fields.append("description")
+        elif description and (existing.description or "").strip() != description:
+            kept.append("description")
+        fields += [label for label, field in (("list price", "list_price"), ("selling price", "sell_price")) if field in fill]
+        want_free = bool(free_keys) and not _has_free_list(db, existing.id)
+        if want_free:
+            fields.append("free items")
+        have = {part.part_product_id: part for part in existing.parts}
+        part_fills = []
+        if not have:
+            # Parts are written only to a combo that has none; adding next to someone's own
+            # differently grouped parts would leave a mixed combo.
+            part_fills = [k["product"].product_code for k in keep]
+        else:
+            seed_set = {k["product"].id: (k["group"], k["upgrade"]) for k in keep}
+            file_set = {
+                pid: ((part.choice_group or None), bool(part.is_upgrade))
+                for pid, part in have.items() if pid not in held_back
+            }
+            if seed_set != file_set:
+                flyer_codes = ", ".join(k["product"].product_code for k in keep)
+                on_file = ", ".join(
+                    part.part_product.product_code for part in have.values() if part.part_product is not None
+                )
+                kept.append(f"parts differ (flyer: {flyer_codes}; on file: {on_file})")
+        if part_fills:
+            fields.append(f"parts {' '.join(part_fills)}")
+        if fields:
+            verdict, details = "UPDATE", f"fills: {', '.join(fields)}"
+        else:
+            verdict, details = "SKIP", f"kept: {'; '.join(kept)}" if kept else ""
+
+    if apply and (existing is None or fields):
+        service = ProductComboService(db)
+        combo_id = service.create(host.id, name, created_by=None)["id"] if existing is None else existing.id
+        have = {part.part_product_id: part for part in existing.parts} if existing else {}
+        update_fields: dict = {}
+        if existing is None:
+            if (entry.get("combo_description") or "").strip():
+                update_fields["description"] = entry["combo_description"].strip()
+            for field, value in (("list_price", seed_lp), ("sell_price", seed_sp)):
+                if value is not None:
+                    update_fields[field] = value
+        else:
+            update_fields = dict(fill)
+        if update_fields:
+            service.update(combo_id, update_fields)
+        if free_keys and (existing is None or want_free):
+            AccessoryService(db).set_combo_list(combo_id, [{key: value} for key, value in free_keys])
+        for k in (keep if not have else []):
+            created = service.add_part(combo_id, k["product"].id, k["group"], is_upgrade=k["upgrade"])
+            prices = {}
+            if k["sp"] is not None:
+                prices["sell_price"] = k["sp"]
+            if k["topup"] is not None:
+                prices["topup_amount"] = k["topup"]
+            if prices:
+                service.update_part(created["id"], prices, fields_set=set(prices))
+    if existing is None:
+        return _verdict_row(entry, "CREATE", details)
+    return _verdict_row(entry, verdict, details)
+
+
+def run_strict(db, entries, problems, found, company_id, args, no_sp_ids, out: TextIO) -> list[dict]:
+    """Every entry through `process_entry_strict`, one transaction per host on `--apply`:
+    inside a host block the session's `commit` only flushes, one real commit closes the block, and
+    any error rolls the whole host back (its entries read FAILED) before the next host loads."""
+    results: dict[int, dict] = {}
+    blocks: dict[str, list[int]] = {}
+    for index, (entry, problem) in enumerate(zip(entries, problems)):
+        if problem:
+            results[index] = _verdict_row(entry, "FAILED", f"invalid entry: {problem}")
+        else:
+            blocks.setdefault((entry.get("host_code") or "").strip().upper(), []).append(index)
+
+    for indexes in blocks.values():
+        real_commit = db.commit
+        if args.apply:
+            db.commit = db.flush
+        try:
+            block = []
+            for index in indexes:
+                entry = entries[index]
+                host = found.get((entry.get("host_code") or "").strip().upper())
+                block.append(
+                    process_entry_strict(
+                        db, entry, host, found, company_id, args.apply,
+                        update=args.update, no_sp_ids=no_sp_ids,
+                    )
+                )
+            if args.apply:
+                real_commit()
+            for index, row in zip(indexes, block):
+                results[index] = row
+        except Exception as exc:  # the whole host is rolled back; the next host still loads
+            db.rollback()
+            for index in indexes:
+                results[index] = _verdict_row(entries[index], "FAILED", str(exc)[:300])
+        finally:
+            if args.apply:
+                del db.commit
+    return [results[index] for index in range(len(entries))]
+
+
+def write_verdicts(rows: list[dict], out: TextIO) -> None:
+    for row in rows:
+        out.write(f"{row['verdict']} | {row['host']} | {row['combo']} | p{row['page']} | {row['details']}\n")
+    for verdict in VERDICT_ORDER:
+        count = sum(1 for row in rows if row["verdict"] == verdict)
+        if count:
+            out.write(f"{verdict}: {count}\n")
+
+
 # --------------------------------------------------------------------------- templates
 
 #: The approved mock's type, in points. The combo's price is the figure of the tag; every
@@ -663,6 +894,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
     parser.add_argument("--report", default=None, help="report CSV path (default: next to the seed)")
     parser.add_argument("--update", action="store_true", help="with --apply: bring a differing combo to the seed")
     parser.add_argument("--link-templates", action="store_true", help="link the published templates that fit each combo")
+    parser.add_argument("--strict", action="store_true", help="flyer seed rules: hold unmatched, aka, kind, one transaction per host")
     parser.add_argument("--templates", action="store_true", help="also create the starter templates")
     args = parser.parse_args(list(argv) if argv is not None else None)
     out = out or sys.stdout
@@ -687,7 +919,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
             return 1
 
         photos = Path(args.photos) if args.photos else None
-        problems = [invalid_entry(entry) for entry in entries]
+        problems = [invalid_entry(entry, legacy_cap=not args.strict) for entry in entries]
         codes: set[str] = set()
         for entry, problem in zip(entries, problems):
             if problem:
@@ -709,7 +941,9 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         rows = []
         try:
             with company_scope(db, frozenset({company_id})):
-                for entry, problem in zip(entries, problems):
+                if args.strict:
+                    rows = run_strict(db, entries, problems, found, company_id, args, no_sp_ids, out)
+                for entry, problem in ([] if args.strict else zip(entries, problems)):
                     if problem:
                         rows.append(
                             {**{column: "" for column in REPORT_COLUMNS},
@@ -745,6 +979,12 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         finally:
             clear_actor(db)
 
+        if args.strict:
+            write_verdicts(rows, out)
+            out.write(f"report: {report}\n")
+            if not args.apply:
+                out.write("DRY RUN: nothing written. Run with --apply to load.\n")
+            return 0
         for status in sorted({row["status"] for row in rows}):
             out.write(f"{status}: {sum(1 for row in rows if row['status'] == status)}\n")
         guesses = sum(1 for row in rows if row["guess"])
