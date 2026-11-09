@@ -59,7 +59,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
@@ -1559,7 +1559,18 @@ class DocumentIngestService(MasterRefResolver):
             if by_ref.pop(ref, None) is None:
                 unresolved_dropped += 1
 
+        # AC-REKEY-SAME-LINE: a line AutoCount only re-keyed takes over its old row's slot in
+        # `by_ref` (the matched loop below then writes the new `source_ref` onto it), so it is
+        # neither swept as removed nor created afresh.
+        rekeyed = (
+            self._pair_rekeyed_lines(by_ref, line_values)
+            if spec.entity_type == "sales_orders"
+            else 0
+        )
+
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+        if rekeyed:
+            counts["rekeyed"] = rekeyed
         # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, write site 2): every
         # SALES ORDER line this push cancels, captured only on the TRANSITION - two
         # collection points, both guarded the same way (prior status read BEFORE the
@@ -1722,10 +1733,22 @@ class DocumentIngestService(MasterRefResolver):
                 # to be here too, not just at the matched-by-ref site above - an
                 # unconditional append would re-flag a row purchasing already
                 # re-confirmed on every later push of the same reduced document.
-                if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
-                    newly_cancelled_so_line_ids.append(row.id)
+                # FP-EMAIL-ONE-TRIGGER (crew, 7 Nov): a line AutoCount REMOVED (a header this
+                # push does not cancel) is not flagged either. Its rows are still live (Q1 (a)
+                # left them for the board) and the flag would acknowledge them by the system;
+                # they keep their state and ack until CS's Confirm retires them.
+                removed_so_line = id(row) in removed_ids and header.status != CANCELLED
                 if (
-                    id(row) in removed_ids
+                    spec.entity_type == "sales_orders"
+                    and prior_line_status != CANCELLED
+                    and not removed_so_line
+                ):
+                    newly_cancelled_so_line_ids.append(row.id)
+                # Only a PO line's removal acts here (its links are released below); a removed
+                # SO line waits on the board (FP-EMAIL-ONE-TRIGGER Q1 (a)).
+                if (
+                    spec.entity_type == "purchase_orders"
+                    and id(row) in removed_ids
                     and prior_line_status != CANCELLED
                     and header.status != CANCELLED
                 ):
@@ -1760,12 +1783,13 @@ class DocumentIngestService(MasterRefResolver):
         if removed_lines and (line_values or dropped_refs):
             from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-            oi_service = ProjectOrderInquiryService(self.db)
-            if spec.entity_type == "purchase_orders":
-                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
-            elif spec.entity_type == "sales_orders":
-                # Retire BEFORE the flag below, which then only meets actioned rows.
-                oi_service.retire_rows_for_removed_so_lines(removed_lines)
+            # A REMOVED SALES ORDER line retires nothing here (FP-EMAIL-ONE-TRIGGER Q1 (a),
+            # owner 6 Nov 2026; SO398322): the removal waits on the board as this push's
+            # planning-change `cancelled` row, and CS's Confirm retires its order inquiry rows
+            # and tells purchasing (`planning_change_service._retire_inquiry_rows`).
+            ProjectOrderInquiryService(self.db).release_removed_lines(
+                po_line_ids=[r.id for r in removed_lines]
+            )
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,
@@ -1792,6 +1816,102 @@ class DocumentIngestService(MasterRefResolver):
             if order is not None:
                 ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
         return counts
+
+    def _pair_rekeyed_lines(
+        self, by_ref: dict[str, Any], line_values: list[dict[str, Any]]
+    ) -> int:
+        """AC-REKEY-SAME-LINE (owner, 6 Nov 2026): an AutoCount re-save can give an unchanged
+        sales order line a new DtlKey. Matched by `source_ref` alone, that read as one line
+        removed (OI rows retired, handover queued) and one created (a fresh mirror line, no OI
+        row): the demand was lost. A stored line whose ref this push no longer carries is the
+        SAME line as an incoming line whose ref matches no stored line when Seq, product,
+        ordered qty, unit price and delivery date are equal, the location too when the push
+        names one (D22), and nothing was delivered on either side or moved against the old
+        line (owner, 6 Nov). Only a pair unique on (Seq, product) on both sides counts;
+        anything ambiguous stays a removal plus a create, as before. A removed line
+        (cancelled, not by CS or a Cancel SO document) is never revived. Renames the `by_ref`
+        key in place; returns the number of pairs.
+        """
+
+        def _num(value: Any, places: str) -> Optional[Decimal]:
+            # Rounded as the column stores it (qty Numeric(15, 4), unit price Numeric(15, 2),
+            # `models/order.py`): a 4-decimal price pushed again must still equal its stored self.
+            if value is None:
+                return None
+            return Decimal(str(value)).quantize(Decimal(places), rounding=ROUND_HALF_UP)
+
+        def _slot(seq: Any, product_id: Any) -> Optional[tuple]:
+            if seq is None or product_id is None:
+                return None
+            return (int(seq), str(product_id))
+
+        incoming_refs = {values["source_ref"] for values in line_values}
+        old_by_slot: dict[tuple, list[tuple[str, Any]]] = {}
+        for ref, row in by_ref.items():
+            if ref in incoming_refs:
+                continue
+            if (
+                row.line_status == CANCELLED
+                and row.cancelled_at is None
+                and not row.cancelled_by_cancel_doc
+            ):
+                continue
+            slot = _slot(row.line_no, row.product_id)
+            if slot is not None:
+                old_by_slot.setdefault(slot, []).append((ref, row))
+
+        new_by_slot: dict[tuple, list[dict[str, Any]]] = {}
+        for values in line_values:
+            if values["source_ref"] in by_ref:
+                continue
+            slot = _slot(values.get("line_number"), values.get("product_id"))
+            if slot is not None:
+                new_by_slot.setdefault(slot, []).append(values)
+
+        paired = 0
+        for slot, olds in old_by_slot.items():
+            news = new_by_slot.get(slot) or []
+            # K2: unique on (Seq, product) on both sides, else no guess.
+            if len(olds) != 1 or len(news) != 1:
+                continue
+            (old_ref, row), values = olds[0], news[0]
+            if _num(row.qty_ordered, "0.0001") != _num(values.get("qty_ordered"), "0.0001"):
+                continue
+            if _num(row.unit_price, "0.01") != _num(values.get("unit_price"), "0.01"):
+                continue
+            if "warehouse_id" in values and str(values["warehouse_id"]) != str(row.warehouse_id):
+                continue
+            # Owner, 6 Nov: the delivery date is part of the key too.
+            if values.get("required_date") != row.required_date:
+                continue
+            # Owner, 6 Nov (delivered guard): a new DtlKey is a new AutoCount row, so what was
+            # delivered stays on the old one. Only an undelivered line nothing was delivered or
+            # moved against is the same line; anything else stays a removal.
+            if _num(row.qty_delivered, "0.0001") or _num(values.get("qty_delivered"), "0.0001"):
+                continue
+            if self._so_line_has_movement(str(row.id)):
+                continue
+            by_ref[values["source_ref"]] = by_ref.pop(old_ref)
+            paired += 1
+            logger.info(
+                "AC-REKEY-SAME-LINE: SO line %s (Seq %s) re-keyed %s -> %s",
+                row.id, row.line_no, old_ref, values["source_ref"],
+            )
+        return paired
+
+    def _so_line_has_movement(self, so_line_id: str) -> bool:
+        """AC-REKEY-SAME-LINE delivered guard: a DO line (`order_lines.sales_order_line_id`)
+        or a stock transfer (`projects.stock_transfers.so_line_id`) points at this SO line."""
+        from app.models.order import OrderLine
+        from app.models.stock_transfer import StockTransfer
+
+        for model, column in (
+            (OrderLine, OrderLine.sales_order_line_id),
+            (StockTransfer, StockTransfer.so_line_id),
+        ):
+            if self.db.query(model.id).filter(column == so_line_id).limit(1).first():
+                return True
+        return False
 
     def _adopt_lines(
         self,

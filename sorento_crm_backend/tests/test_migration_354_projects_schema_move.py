@@ -101,6 +101,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     "party_links",
     # PS-QUOTE-VIEWS (#2102, migration qiv_0001_issue_views): counted opens of a sign link.
     "quotation_issue_views",
+    # QUOTE-CERT-TAB (#2245, migration qcert_0001_quote_certificates): the certificates a quote
+    # document carries, born straight into `projects` beside `quotation_documents`.
+    "quotation_document_certificates",
 })
 
 MIGRATION = (

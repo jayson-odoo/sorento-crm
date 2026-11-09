@@ -37,5 +37,10 @@ export interface PdfViewerProps {
   fileActions?: boolean;
   /** Shown instead of pages when there is neither a `url` nor `loadData`. */
   unavailable?: ReactNode;
+  /**
+   * Drawn on top of each page's text layer (QUOTE-CERT-TAB: the boxes). Absent = nothing is
+   * rendered and the viewer behaves exactly as before.
+   */
+  renderPageOverlay?: (pageNumber: number) => ReactNode;
   className?: string;
 }

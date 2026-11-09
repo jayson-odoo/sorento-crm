@@ -653,6 +653,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/master-data-management/certificates',
             permission: 'master_data.certificates.view',
           },
+          {
+            title: 'Certificate Links',
+            path: '/master-data-management/certificates/links',
+            permission: 'master_data.certificates.view',
+          },
         ],
       },
     ],
@@ -728,6 +733,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Tag Sizes',
             path: '/dealer-kit/tag-sizes',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Accessory Templates',
+            path: '/dealer-kit/accessory-templates',
             permission: 'dealer_kit.page.view',
           },
         ],
@@ -1533,6 +1543,14 @@ export const MENU_SIDEBAR: MenuConfig = [
     audience: 'salesperson',
   },
   {
+    // AI-TOOLS-WAVE2 (owner ruling 5 Nov): own agent targets with their commission.
+    title: 'My targets',
+    icon: TrendingUp,
+    path: '/sales/targets',
+    permission: 'sales.targets.view_own',
+    audience: 'salesperson',
+  },
+  {
     title: 'Customer asks',
     icon: Star,
     path: '/sales/customer-asks',
@@ -2009,6 +2027,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Certificates',
       path: '/master-data-management/certificates',
+      permission: 'master_data.certificates.view',
+    },
+    {
+      title: 'Certificate Links',
+      path: '/master-data-management/certificates/links',
       permission: 'master_data.certificates.view',
     },
     {

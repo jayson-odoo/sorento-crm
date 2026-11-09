@@ -218,8 +218,8 @@ class Rec:
 
 
 BASIS_MESSAGE = (
-    "Say which sales basis: ask the user (invoiced is the usual one) or call once per basis "
-    "(invoiced, delivered, ordered) and label each."
+    "Say which sales basis. No basis named by the user: sales are invoiced (owner rule), so call again with "
+    "basis=invoiced; delivered or ordered only when the user names it. One basis per answer."
 )
 
 

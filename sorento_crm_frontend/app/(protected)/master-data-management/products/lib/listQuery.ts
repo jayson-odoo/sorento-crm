@@ -26,11 +26,16 @@ export type ProductsListParams = DataGridApiFetchParams & {
   status?: string;
   variant_filter?: 'base' | 'variant' | 'all';
   discontinued_batch_id?: string;
+  /** Deep link from a "list price changed" notification - show only that batch. */
+  list_price_batch_id?: string;
   /** The brand slice of a discontinued batch, when the recipient is scoped. */
   discontinued_brand_ids?: string;
   /** "Discontinued at" range (issue #1287), YYYY-MM-DD, Malaysia calendar day inclusive. */
   discontinued_from?: string;
   discontinued_to?: string;
+  /** "List price changed at" range, YYYY-MM-DD, Malaysia calendar day inclusive. */
+  list_price_changed_from?: string;
+  list_price_changed_to?: string;
   advancedFilter?: ListQueryFilterGroup | null;
 };
 
@@ -48,9 +53,12 @@ export function productsListQueryKey(params: ProductsListParams): QueryKey {
     params.variant_filter,
     params.advancedFilter,
     params.discontinued_batch_id,
+    params.list_price_batch_id,
     params.discontinued_brand_ids,
     params.discontinued_from,
     params.discontinued_to,
+    params.list_price_changed_from,
+    params.list_price_changed_to,
   ];
 }
 
@@ -75,6 +83,8 @@ export function fetchProductsPage(
         params.status && params.status !== 'all' ? params.status : undefined,
       discontinued_from: params.discontinued_from,
       discontinued_to: params.discontinued_to,
+      list_price_changed_from: params.list_price_changed_from,
+      list_price_changed_to: params.list_price_changed_to,
     });
   }
 
@@ -93,10 +103,19 @@ export function fetchProductsPage(
     ...(params.discontinued_batch_id
       ? { discontinued_batch_id: params.discontinued_batch_id }
       : {}),
+    ...(params.list_price_batch_id
+      ? { list_price_batch_id: params.list_price_batch_id }
+      : {}),
     ...(params.discontinued_from
       ? { discontinued_from: params.discontinued_from }
       : {}),
     ...(params.discontinued_to ? { discontinued_to: params.discontinued_to } : {}),
+    ...(params.list_price_changed_from
+      ? { list_price_changed_from: params.list_price_changed_from }
+      : {}),
+    ...(params.list_price_changed_to
+      ? { list_price_changed_to: params.list_price_changed_to }
+      : {}),
   });
 }
 
@@ -121,10 +140,14 @@ export function productsListParamsFromUrl(
     variant_filter:
       variant === 'base' || variant === 'variant' ? variant : 'all',
     discontinued_batch_id: f.discontinued_batch_id,
+    list_price_batch_id: f.list_price_batch_id,
     // The deep link's brand slice IS the `brand_id` param when a batch is named.
-    discontinued_brand_ids: f.discontinued_batch_id ? f.brand_id : undefined,
+    discontinued_brand_ids:
+      f.discontinued_batch_id || f.list_price_batch_id ? f.brand_id : undefined,
     discontinued_from: f.discontinued_from,
     discontinued_to: f.discontinued_to,
+    list_price_changed_from: f.list_price_changed_from,
+    list_price_changed_to: f.list_price_changed_to,
     advancedFilter:
       decodeAdvancedFilter<ListQueryFilterGroup>(f.advFilter) ?? undefined,
   };

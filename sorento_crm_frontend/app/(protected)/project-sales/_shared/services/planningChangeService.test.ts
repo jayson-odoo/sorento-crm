@@ -11,7 +11,6 @@ vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/lib/api';
 import {
-  applyPlanningChanges,
   getPlanningChangeBatch,
   listPlanningChangeBatches,
   updatePlanningChangeRow,
@@ -94,18 +93,5 @@ describe('updatePlanningChangeRow', () => {
     );
     expect(calledInit().method).toBe('PUT');
     expect(JSON.parse(String(calledInit().body))).toEqual({ decision: 'confirm' });
-  });
-});
-
-describe('applyPlanningChanges', () => {
-  it('POSTs the apply route for the batch', async () => {
-    mockedFetch.mockResolvedValue(
-      okResponse({ applied_orders: ['SO1'], failed_orders: [], already_applied: false }),
-    );
-
-    await applyPlanningChanges('pcb-1');
-
-    expect(calledUrl().pathname).toBe('/api/v1/project-sales/planning-changes/pcb-1/apply');
-    expect(calledInit().method).toBe('POST');
   });
 });

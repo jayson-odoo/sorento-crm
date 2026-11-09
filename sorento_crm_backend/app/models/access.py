@@ -300,6 +300,10 @@ class RespondContact(Base):
     # products with no class. NULL or empty = every class. Applies in every company, branded or
     # not. Read only through app.services.contact_brand_scope.
     allowed_item_class_codes = Column(ARRAY(String(50)), nullable=True)
+    # TAG-UNION: per tag setting, the value the contact's tags last wrote (`v`) and the value it held
+    # before tags took the setting over (`base`), keyed "<section>|<key>". NULL = never seeded.
+    # Read and written only by app.services.contact_tag_union (own changes = current vs `v`).
+    tag_settings_snapshot = Column(JSONB(astext_type=Text()), nullable=True)
     # Chatbot turn re-architecture (AC-1503): the Profile shelf, one JSONB blob
     # (tier, language, default ledgers - PLAN "Design > State"), written by explicit
     # picks (a WhatsApp pick, or the Contact > Access "Chatbot" card) and read as a

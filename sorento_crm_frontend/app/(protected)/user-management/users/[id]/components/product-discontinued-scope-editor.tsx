@@ -267,7 +267,7 @@ const ProductDiscontinuedScopeEditor = ({
   return (
     <div className="space-y-3 rounded-md border p-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm font-medium">Discontinued product scope</p>
+        <p className="text-sm font-medium">Product notification scope</p>
         <Button
           type="button"
           variant="outline"
@@ -285,7 +285,7 @@ const ProductDiscontinuedScopeEditor = ({
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           No scope set. This user will not be notified about any discontinued
-          product.
+          product or list price change.
         </p>
       ) : (
         <div className="space-y-2">

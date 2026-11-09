@@ -17,11 +17,37 @@ import type { ConsoleRoute } from '@/app/(protected)/system-management/chatbot-c
 
 export type { AIPageSnapshot };
 
+export interface SentFile {
+  id: string;
+  filename: string;
+  size: number;
+  mime_type: string;
+  kind: 'image' | 'sheet' | 'pdf';
+  sheet: string | null;
+  rows_read: number | null;
+  rows_total: number | null;
+  pages: number | null;
+  url?: string | null;
+  thumb_url?: string | null;
+}
+
+export interface AssistantFile {
+  id: string;
+  filename: string;
+  size: number;
+  mime_type: string;
+  kind: 'image' | 'sheet' | 'pdf';
+  thumb_url: string | null;
+  sheets: { name: string; rows: number }[];
+  pages: number | null;
+}
+
 export interface AIAssistantMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool';
   content: string;
   metadata_json: {
+    files?: SentFile[];
     links?: string[];
     sources?: Array<{ title?: string }>;
     selected_tools?: Array<{ tool_name?: string }>;
@@ -78,6 +104,7 @@ export interface AIAssistantConversationList {
 export interface AIAssistantGreeting {
   greeting: string;
   suggestions: string[];
+  can_attach?: boolean;
 }
 
 export async function fetchAIAssistantGreeting(): Promise<AIAssistantGreeting> {
@@ -94,6 +121,7 @@ export async function sendAIAssistantMessage(
   conversationId?: string,
   pageSnapshot?: AIPageSnapshot | null,
   confirmAction?: 'confirm' | 'cancel',
+  attachments: { id: string; sheet: string | null }[] = [],
 ) {
   const r = await apiFetch('/api/v1/system/ai-assistant/chat', {
     method: 'POST',
@@ -103,6 +131,7 @@ export async function sendAIAssistantMessage(
       conversation_id: conversationId || null,
       page_snapshot: pageSnapshot ?? null,
       confirm_action: confirmAction ?? null,
+      attachments,
     }),
   });
   if (!r.ok) {
@@ -110,6 +139,21 @@ export async function sendAIAssistantMessage(
     throw new Error((err as { detail?: string }).detail || 'Failed to chat with AI assistant');
   }
   return (await r.json()) as AIAssistantConversation;
+}
+
+export async function uploadAssistantFile(file: File): Promise<AssistantFile> {
+  const form = new FormData();
+  form.append('file', file);
+  const r = await apiFetch('/api/v1/system/ai-assistant/attachments', { method: 'POST', body: form });
+  if (!r.ok) throw new Error(await extractApiError(r, 'Upload failed'));
+  return (await r.json()) as AssistantFile;
+}
+
+export async function deleteAssistantFile(id: string): Promise<void> {
+  const r = await apiFetch(`/api/v1/system/ai-assistant/attachments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to remove the file'));
 }
 
 export async function listAIAssistantConversations(params: { q?: string; limit?: number } = {}) {

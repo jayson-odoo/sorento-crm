@@ -14,13 +14,13 @@ describe('ContactTagSettingsCell', () => {
     expect(screen.getByText('Matches')).toBeInTheDocument();
   });
 
-  it('shows "Differs: 2" with both labels in the title', () => {
+  it('shows "Own changes: 2" with both labels in the title', () => {
     render(
       <ContactTagSettingsCell
         contact={{ tag_settings: { status: 'differs', differ_count: 2, differ_labels: ['Stock checks', 'Tier'] } } as never}
       />,
     );
-    const badge = screen.getByText('Differs: 2');
+    const badge = screen.getByText('Own changes: 2');
     const title = badge.closest('[title]')?.getAttribute('title') ?? '';
     expect(title).toContain('Stock checks');
     expect(title).toContain('Tier');

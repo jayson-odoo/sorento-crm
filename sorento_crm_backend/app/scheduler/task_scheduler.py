@@ -454,6 +454,16 @@ def _handler_product_discontinued_check(db, task):
     return run_product_discontinued_check(db, task)
 
 
+def _handler_product_list_price_check(db, task):
+    """Report products whose list price changed (batched) to subscribed staff."""
+    from app.services.product_watched_field_notify_service import (
+        LIST_PRICE,
+        run_watched_field_check,
+    )
+
+    return run_watched_field_check(db, LIST_PRICE, task)
+
+
 def _handler_project_staleness_sweep(db, task):
     """Move every live project up or off the staleness ladder (AC-H5, AC-H6).
 
@@ -633,6 +643,18 @@ def _ai_trace_sweep_tick():
             sweep_expired_traces(db)
     except Exception as e:
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
+
+
+def _panel_draft_purge_tick():
+    """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
+    Owns its own DB session; best-effort and never raises."""
+    try:
+        from app.tasks.chat_turns import purge_panel_drafts
+
+        with scheduler_session("panel_draft_purge") as db:
+            purge_panel_drafts(db)
+    except Exception as e:
+        logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
 
 
 def _chat_facts_sweep_tick():
@@ -828,6 +850,7 @@ def register_task_handlers():
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
     register_handler("attachment_storage_audit", run_attachment_storage_audit)
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
+    register_handler("product_list_price_check", _handler_product_list_price_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
     register_handler("form_action_commit", _handler_form_action_commit)
@@ -896,6 +919,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=24),
         id="ai_trace_sweep",
         name="AI assistant trace retention sweep",
+        replace_existing=True,
+    )
+
+    # AI panel draft files (AGENT-PANEL-COMPOSER P1): hourly, drafts older than 24 hours.
+    scheduler.add_job(
+        _panel_draft_purge_tick,
+        trigger=IntervalTrigger(hours=1),
+        id="panel_draft_purge",
+        name="AI panel draft file purge",
         replace_existing=True,
     )
 

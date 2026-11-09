@@ -19,6 +19,7 @@
 
 import type {
   TagAccessory,
+  TagAccessoryBoxStyle,
   TagCombo,
   FeatureIconsLayerProps,
   TagSpecValue,
@@ -47,6 +48,7 @@ import {
 import type { PriceBadgeInput } from './price-badge';
 import { featureIconsFor, type FeatureIcon } from './feature-icons';
 import { accessoriesOf } from './accessory-box';
+import { accessoryBoxStyleOf } from './accessory-card';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
@@ -1305,6 +1307,10 @@ export interface TagLayerDisplay {
   icons?: { id: string; url: string }[];
   /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER: the box's card is being edited; the cards after the first fade. */
+  accessoryEditing?: boolean;
+  /** S6: the box style the previewed product / combo names; the box draws it instead of its own design. */
+  accessoryBoxStyle?: TagAccessoryBoxStyle | null;
 }
 
 /**
@@ -1428,7 +1434,9 @@ export function layerDisplay(
 
     case 'accessories':
       // No data bound (the template editor with nothing previewed): absent, so samples draw.
-      return data ? { accessories: accessoriesOf(data, layer) } : {};
+      return data
+        ? { accessories: accessoriesOf(data, layer), accessoryBoxStyle: accessoryBoxStyleOf(data, layer) }
+        : {};
 
     default:
       return undefined;

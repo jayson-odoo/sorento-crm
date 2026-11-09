@@ -63,6 +63,13 @@ vi.mock('../../tag-sizes/hooks/useTagSizes', () => ({
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 
+// The live link's hooks are react-query hooks this test has no QueryClientProvider for.
+vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
+  useUpdateAccessoryTemplate: () => ({ mutateAsync: vi.fn(async () => ({})) }),
+  useFetchAccessoryTemplate: () => vi.fn(async () => null),
+  useRefreshAccessoryTemplates: () => vi.fn(),
+}));
+
 vi.mock('../components/TagCanvasEditor', () => ({
   TagCanvasEditor: ({
     doc,

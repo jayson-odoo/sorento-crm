@@ -356,7 +356,7 @@ def build_login_response(db: Session, user: User, session_row: UserSession) -> L
     assignments = (
         db.query(UserRoleAssignment)
         .filter(UserRoleAssignment.user_id == uid)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .all()
     )
     role_ids = [str(a.role_id) for a in assignments if getattr(a, "role_id", None) is not None]

@@ -4,6 +4,7 @@ from app.api.v1.master_data import (
     products,
     brands,
     categories,
+    certificate_links,
     certificates,
     units_of_measure,
     countries,
@@ -50,6 +51,7 @@ router.include_router(countries.router, prefix="/countries", tags=["countries"])
 router.include_router(item_classes.router, prefix="/item-classes", tags=["item-classes"])
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(certificates.router, prefix="/certificates", tags=["certificates"])
+router.include_router(certificate_links.router, prefix="/certificate-links", tags=["certificates"])
 router.include_router(product_sets.router, prefix="/product-sets", tags=["product-sets"])
 router.include_router(
     product_companions.router,

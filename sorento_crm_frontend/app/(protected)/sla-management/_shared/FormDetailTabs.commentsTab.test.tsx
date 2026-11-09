@@ -177,7 +177,8 @@ describe('composition: pages opt in, detail components give the thread up', () =
   const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
   it.each([
-    ['app/(protected)/procurement-management/stock-inquiries/[id]/page.tsx', 'stock_inquiry'],
+    // The stock inquiry page composes its ONE tab bar in StockInquiryDetailTabs (NPA-FROM-SI).
+    ['app/(protected)/procurement-management/stock-inquiries/components/StockInquiryDetailTabs.tsx', 'stock_inquiry'],
     ['app/(protected)/procurement-management/purchase-requests/[id]/page.tsx', 'purchase_request'],
     ['app/(protected)/procurement-management/sponsorship-forms/[id]/page.tsx', 'sponsorship_form'],
     ['app/(protected)/complaint-management/complaints/[id]/page.tsx', 'complaint'],

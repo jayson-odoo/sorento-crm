@@ -239,7 +239,13 @@ export function useListingColumnPreferences<TData extends object>({
       for (const [colId, size] of Object.entries(payload.columnSizing as Record<string, unknown>)) {
         if (!canResizeIds.has(colId)) continue;
         const n = typeof size === 'number' ? size : Number(size);
-        if (Number.isFinite(n) && n > 0) filteredSizing[colId] = n;
+        if (!(Number.isFinite(n) && n > 0)) continue;
+        // A column's own minSize wins over a narrower saved width: a layout saved before
+        // the column needed more room (LIST-PRICE-CHANGE-UI: List Price gained a history
+        // icon, every saved Products layout said 120) must not clip it. TanStack's
+        // getSize() clamps the rendered width the same way; this keeps the state equal.
+        const min = table.getColumn(colId)?.columnDef.minSize;
+        filteredSizing[colId] = typeof min === 'number' && n < min ? min : n;
       }
       appliedSizing = filteredSizing;
       skipSaveOnceRef.current = true;

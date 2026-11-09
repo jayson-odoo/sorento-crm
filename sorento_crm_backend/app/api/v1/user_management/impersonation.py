@@ -66,7 +66,7 @@ def _serialize_target(db: Session, target: User) -> TargetUserSummary:
         db.query(UserRole.slug)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
         .filter(UserRoleAssignment.user_id == target.id)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .first()
     )
     try:

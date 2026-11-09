@@ -29,6 +29,7 @@ from app.schemas.certificate import (
     CertificateCreate,
     CertificateEditRequest,
     CertificateProductAddRequest,
+    CertificateProductPatchRequest,
     CertificateResponse,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -348,6 +349,46 @@ def add_certificate_product(
                 _log_coverage(db, service, certificate, row, product_link_audit.LINK, user_id)
         db.commit()
         return CertificateQueryService(db).get_detail(certificate_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.patch("/{certificate_id}/products/{coverage_id}", status_code=status.HTTP_200_OK)
+def update_certificate_product(
+    certificate_id: str,
+    coverage_id: str,
+    payload: CertificateProductPatchRequest,
+    current_user: dict = Depends(require_permission(_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Set the code printed on the certificate for a covered product (QUOTE-CERT-TAB, CERT-7/14).
+    A changed code resets the cached boxes; `confirm` keeps the suggested text as typed by a person."""
+    try:
+        validate_uuid_path(certificate_id, resource="Certificate")
+        validate_uuid_path(coverage_id, resource="Certificate coverage")
+        certificate = CertificateService(db).get_certificate(certificate_id)
+        coverage = (
+            db.query(CertificateProduct)
+            .filter(
+                CertificateProduct.id == coverage_id,
+                CertificateProduct.certificate_id == certificate.id,
+            )
+            .first()
+        )
+        if coverage is None:
+            raise handle_not_found("Certificate coverage", coverage_id)
+        if "model_code" in payload.model_fields_set:
+            code = (payload.model_code or "").strip() or None
+            if code != coverage.model_code:
+                coverage.boxes = None
+            coverage.model_code = code
+            coverage.model_code_source = "manual" if code else None
+        elif payload.confirm and coverage.model_code:
+            coverage.model_code_source = "manual"
+        db.commit()
+        return {"id": str(coverage.id), "model_code": coverage.model_code, "model_code_source": coverage.model_code_source}
     except HTTPException:
         raise
     except Exception as e:

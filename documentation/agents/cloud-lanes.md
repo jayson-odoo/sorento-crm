@@ -49,6 +49,20 @@ the empty, `scripts.bootstrap_env`-seeded schema (reference data only - roles, o
 permissions - no business rows, no customer data). A journey that needs real data runs locally
 instead.
 
+## Assistant coverage (DoD lines 6 to 8, AI tools standard, 5 Nov 2026)
+
+Every lane, cloud or local, meets `PRINCIPLES.md` DoD lines 6 to 8 before `crew-done`:
+
+6. A new list screen registers its entity in `sorento_crm_backend/app/services/assistant_registry/<module>.py`
+   (with its list route in `routes`), or its list route carries `# ai: not-for-assistant <reason>` directly
+   above its decorators. The PR gate step "Assistant coverage of new list routes" fails otherwise; run
+   `python3 scripts/ci_ai_coverage.py` locally (the pre-push hook does) to see the same verdict.
+7. A new record-changing button a user would ask for in words gets an `ActionDef`, or the plan says why not.
+8. Two eval prompts per feature in `sorento_crm_backend/scripts/chatbot_eval/gold/assistant_<module>.jsonl`.
+
+The `crew-done` comment names which of the three applied and where (file:line), or "n/a: no new list
+screen, button or feature the assistant would be asked about".
+
 ## CI trigger (standing rule, 25 Sep 2026)
 
 A push to a lane's PR never runs CI - `.github/workflows/deploy.yml`'s `pull_request` trigger is

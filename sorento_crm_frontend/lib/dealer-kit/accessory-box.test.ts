@@ -276,6 +276,23 @@ const WASTE: TagAccessory = {
   list_price: 68,
 };
 
+describe('accessoryCardLines with a rich spec', () => {
+  it('prints a plain spec exactly as before', () => {
+    const item = { ...DRAINER, spec: '390x300x140, Depth: 160mm' };
+    expect(accessoryCardLines(item)).toEqual(['DRAINER', '390x300x140, Depth: 160mm']);
+  });
+
+  it('prints the text of a rich spec, paragraphs joined by a space, no markup', () => {
+    const item = { ...DRAINER, spec: '<p><strong>390x300</strong>x140</p><p>Depth: 160mm</p>' };
+    expect(accessoryCardLines(item)).toEqual(['DRAINER', '390x300x140 Depth: 160mm']);
+  });
+
+  it('drops a rich spec with no text', () => {
+    const item = { ...DRAINER, spec: '<p></p>' };
+    expect(accessoryCardLines(item)).toEqual(['DRAINER']);
+  });
+});
+
 describe('accessoryCardLines', () => {
   it('a library accessory prints its name then its spec', () => {
     expect(accessoryCardLines(DRAINER)).toEqual(['DRAINER', '390x300x140, Depth: 160mm']);

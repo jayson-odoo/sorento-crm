@@ -77,7 +77,7 @@ def _role_name(db: Session, user_id: str) -> str | None:
         db.query(UserRole)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
         .filter(UserRoleAssignment.user_id == user_id)
-        .order_by(UserRoleAssignment.assigned_at.asc())
+        .order_by(*UserRoleAssignment.primary_order())
         .first()
     )
     return str(role.name) if role is not None and role.name else None

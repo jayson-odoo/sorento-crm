@@ -21,6 +21,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -45,7 +46,9 @@ class Accessory(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     name = Column(String(100), nullable=False)
-    spec = Column(String(200), nullable=True)
+    # Plain text or the sanitised rich HTML the shared editor emits (`app/utils/tag_rich_text.py`).
+    spec = Column(Text, nullable=True)
+    remark = Column(Text, nullable=True)
     # SET NULL: deleting the attachment clears the pointer rather than blocking on it, the same
     # rule `product_combos.image_attachment_id` follows.
     image_attachment_id = Column(
@@ -59,6 +62,54 @@ class Accessory(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("uq_accessories_company_lower_name", "company_id", text("lower(name)"), unique=True),
+    )
+
+
+class AccessoryImage(Base):
+    """One picture of an accessory, ordered, optionally tagged with a colour (PRICETAG-ACCESSORY-DESIGNER).
+    Reached through the accessory, which carries the company partition. The first picture is the default."""
+
+    __tablename__ = "accessory_images"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="CASCADE"), nullable=False
+    )
+    attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False
+    )
+    colour_name = Column(String(40), nullable=True)
+    colour_hex = Column(String(7), nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "colour_hex IS NULL OR colour_hex ~ '^#[0-9a-fA-F]{6}$'",
+            name="ck_accessory_images_colour_hex",
+        ),
+        Index("ix_accessory_images_accessory_id", "accessory_id"),
+    )
+
+
+class AccessoryColour(Base):
+    """One entry of an accessory's ordered colours list (PRICETAG-ACCESSORY-DESIGNER S7): independent of its
+    pictures. The card's colour dots are this list, one dot per colour. Reached through the accessory."""
+
+    __tablename__ = "accessory_colours"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    accessory_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessories.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(40), nullable=True)
+    hex = Column(String(7), nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("hex ~ '^#[0-9a-fA-F]{6}$'", name="ck_accessory_colours_hex"),
+        Index("uq_accessory_colours_accessory_hex", "accessory_id", text("lower(hex)"), unique=True),
     )
 
 
@@ -82,6 +133,13 @@ class ProductAccessory(Base):
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
     )
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # Per list row overrides (blank = the accessory's own).
+    image_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessory_images.id", ondelete="SET NULL"), nullable=True
+    )
+    name_override = Column(String(200), nullable=True)
+    spec_override = Column(Text, nullable=True)
+    remark_override = Column(Text, nullable=True)
 
     accessory = relationship("Accessory", lazy="joined")
     item_product = relationship("Product", foreign_keys=[item_product_id], lazy="joined")
@@ -116,6 +174,13 @@ class ProductComboAccessory(Base):
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
     )
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # Per list row overrides (blank = the accessory's own).
+    image_id = Column(
+        UUID(as_uuid=False), ForeignKey("accessory_images.id", ondelete="SET NULL"), nullable=True
+    )
+    name_override = Column(String(200), nullable=True)
+    spec_override = Column(Text, nullable=True)
+    remark_override = Column(Text, nullable=True)
 
     accessory = relationship("Accessory", lazy="joined")
     item_product = relationship("Product", foreign_keys=[item_product_id], lazy="joined")

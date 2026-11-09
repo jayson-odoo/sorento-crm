@@ -35,6 +35,19 @@ export function isSubmissionKind(
 }
 
 /**
+ * Kinds outside `SUBMISSION_KINDS` with a portal detail page of their own
+ * (`/portal/c/<slug>/<kind>/<id>`) that a WhatsApp View link opens, so the
+ * verify card returns the user to that record after the code, like a
+ * submission. New Product Application (NPA-FROM-SI): its update message's View.
+ */
+const OWN_DETAIL_PAGE_KINDS: readonly string[] = ['new_product_application'];
+
+/** Whether a verify deep link (?type=&id=) can land on the record itself. */
+export function hasPortalDetailPage(value: string | null | undefined): boolean {
+  return isSubmissionKind(value) || OWN_DETAIL_PAGE_KINDS.includes(value ?? '');
+}
+
+/**
  * Every form the landing dropdown can offer. Price Tag Request has a page of
  * its own (not part of `SUBMISSION_KINDS`, which is what the generic `[type]`
  * route guards read to decide what the shared submission pages may render),

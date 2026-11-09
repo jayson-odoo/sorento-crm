@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accessory card designer v2</title>
+<!--
+  PRICETAG-ACCESSORY-DESIGNER mock v2 (07/11/2026), after the owner's v1 answers (~21:55):
+  "so where do i design the drag and drop of the accessories, like how do I put the colour circles in" and
+  "where do I design the layout of the accesories box?". Answered click by click, all on the ONE Tag Template designer canvas.
+  Card: CARD-pricetag-accessory-designer-07nov.md, "Owner rulings on v1" + Rules v2 (V1-V5). Static, no data fetch.
+  Prices are placeholders; pictures are line drawings.
+
+  Element -> existing component it reuses (repo paths under sorento_crm_frontend/ unless named):
+  - Designer shell, toolbar, layers, inspector: app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx,
+    CanvasToolbar.tsx, LayersPanel.tsx, InspectorPanel.tsx (AccessoriesInspector)
+  - Card / footer editing mode (enter, Esc, click outside): the group-enter mechanism in TagCanvasEditor.tsx (`entered`,
+    `enterSelectedGroup`, `resolveTarget`); card elements are ordinary TagLayer objects (lib/dealer-kit/tag-template-types.ts)
+    stored on the box, with new card bindings (picture, name, code, spec, remark, price, colours)
+  - Drag, corner handles, snapping guides: the canvas's existing Konva Transformer + guides (TagCanvasEditor.tsx,
+    lib/dealer-kit/canvas-geometry.ts)
+  - Text element + rich styling: TextLayerProps + lib/dealer-kit/rich-text.ts + InlineTextEditor.tsx
+  - Picture element: ImageLayerProps (fit / crop / mask unchanged)
+  - Colour dots element: NEW layer kind 'colour_dots' drawn by KonvaTagLayer.tsx and
+    app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx; swatches components/common/ColorPicker.tsx
+  - Box layout (header on border, direction, gap, frame): AccessoriesLayerProps + accessoryBoxLayout (lib/dealer-kit/accessory-box.ts),
+    gains uniform shrink to 70% and the footer area
+  - Fit warning: InspectorPanel.tsx accessories warning + canvas warning from PR #2235 + lib/dealer-kit/accessory-drops.ts toast
+  - Save as accessories template dialog: app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/SaveAsSizeDialog.tsx
+  - Accessories menu (Default box + saved, rename, delete): app/(protected)/dealer-kit/components/TagSizeControl.tsx "Saved sizes"
+  - Management page: app/(protected)/dealer-kit/tag-sizes/ (page.tsx, components/TagSizesList.tsx, TagSizeDialog.tsx,
+    hooks/useTagSizes.ts) copied to app/(protected)/dealer-kit/accessory-templates/; services/tagSizeService.ts pattern;
+    BE NEW dealer_kit.accessory_box_preset modelled on TagSizePreset (sorento_crm_backend/app/models/dealer_kit.py)
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eef4ff;
+          --warn:#b45309; --warnbg:#fffbeb; --danger:#dc2626; --canvas:#e9ecf1; --click:#e11d48; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --canvas:#0b0d11; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#1b2540; --warnbg:#2b2110; --canvas:#0b0d11; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:36px 0 10px; }
+  h3 { font-size:15px; margin:0; }
+  .muted { color:var(--muted); font-size:12px; }
+  .toc { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .toc a { font-size:12px; border:1px solid var(--line); border-radius:999px; padding:2px 10px; color:var(--fg); text-decoration:none; background:var(--card); }
+  .frame { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; max-width:1180px; margin-bottom:18px; }
+  .fhead { display:flex; gap:10px; align-items:flex-start; margin-bottom:10px; }
+  .fnum { flex:none; width:28px; height:28px; border-radius:50%; background:var(--fg); color:var(--card); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; }
+  .click { display:inline-flex; gap:6px; align-items:center; background:#ffe4e6; color:#9f1239; border-radius:8px; padding:3px 8px; font-size:13px; margin-top:4px; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .click { background:#3b0d18; color:#fda4af; } }
+  .result { font-size:13px; color:var(--muted); margin-top:4px; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:4px 10px; font-size:12px; white-space:nowrap; position:relative; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn.on { background:var(--sel); border-color:var(--primary); color:var(--primary); }
+  .btn.hit, .hit { box-shadow:0 0 0 2px var(--click); }
+  .input { border:1px solid var(--line); border-radius:8px; padding:5px 9px; background:var(--card); color:var(--fg); font-size:12px; min-height:30px; display:flex; align-items:center; gap:6px; }
+  .lbl { display:block; font-size:12px; font-weight:500; margin:9px 0 4px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:3px 8px; font-size:12px; }
+  .seg span.on { background:var(--sel); color:var(--primary); }
+  .note { border-radius:8px; padding:7px 9px; font-size:12px; margin-top:8px; }
+  .note.info { background:var(--sel); color:var(--primary); }
+  .note.warn { background:var(--warnbg); color:var(--warn); }
+  .shell { display:grid; grid-template-columns: 170px minmax(0,1fr) 260px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .shell > * { min-width:0; }
+  @media (max-width: 900px) { .shell { grid-template-columns: minmax(0,1fr); } .shell .side { border:0 !important; border-top:1px solid var(--line) !important; } }
+  .toolbar { grid-column:1/-1; display:flex; gap:6px; flex-wrap:wrap; padding:8px; border-bottom:1px solid var(--line); align-items:center; }
+  .toolbar.mode { background:var(--sel); }
+  .toolbar .modelbl { font-weight:600; font-size:12px; color:var(--primary); }
+  .side { padding:10px; border-right:1px solid var(--line); font-size:12px; }
+  .side.right { border-right:0; border-left:1px solid var(--line); }
+  .layer { padding:3px 6px; border-radius:6px; }
+  .layer.sel { background:var(--sel); color:var(--primary); }
+  .layer.child { margin-left:14px; }
+  .crumb { font-size:12px; color:var(--muted); margin-bottom:6px; }
+  .crumb b { color:var(--fg); }
+  .stage { background:var(--canvas); padding:16px; overflow:auto; display:flex; justify-content:safe center; }
+  .view { position:relative; overflow:hidden; flex:none; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+  .zoomlbl { position:absolute; left:6px; bottom:4px; font-size:10px; color:#6b7280; background:#fff; padding:0 4px; border-radius:4px; }
+  /* print paper is always light */
+  .paper { position:absolute; left:0; top:0; color:#111; font-family:"DM Sans", system-ui, sans-serif; }
+  .abs { position:absolute; }
+  .frm { position:absolute; border:1.3px solid #1f4d36; border-radius:10px; background:#f3f7f4; }
+  .legend { position:absolute; left:50%; transform:translateX(-50%); background:#fff; color:#1f4d36; font-weight:800; padding:0 6px; white-space:nowrap; }
+  .acard { position:absolute; background:#fff; border-radius:5px; }
+  .acard.faded { opacity:.42; }
+  .acard.editing { outline:2px solid var(--primary); outline-offset:1px; }
+  .el { position:absolute; }
+  .el svg { width:100%; height:100%; display:block; }
+  .el.sel { outline:1.5px solid var(--primary); }
+  .el.ghost { outline:1.5px dashed #9ca3af; opacity:.5; }
+  .h { position:absolute; width:7px; height:7px; background:#fff; border:1.5px solid var(--primary); }
+  .h.hit { box-shadow:0 0 0 3px var(--click); }
+  .dots { display:flex; align-items:center; }
+  .dot { border-radius:50%; border:1px solid #444; flex:none; }
+  .nm { font-weight:800; white-space:nowrap; }
+  .sp { white-space:nowrap; color:#333; }
+  .guide { position:absolute; background:#ec4899; }
+  .arrow { position:absolute; pointer-events:none; }
+  .pin { position:absolute; width:24px; height:24px; border-radius:50%; background:var(--click); color:#fff; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 3px rgba(225,29,72,.25); z-index:4; }
+  .pinlbl { position:absolute; background:var(--click); color:#fff; font-size:11px; padding:1px 6px; border-radius:6px; white-space:nowrap; z-index:4; }
+  .boxsel { outline:1.5px solid var(--primary); outline-offset:2px; }
+  .warnbadge { position:absolute; right:0; bottom:-16px; background:#b45309; color:#fff; font-size:10px; border-radius:6px; padding:1px 6px; white-space:nowrap; }
+  .banner { grid-column:1/-1; background:var(--warnbg); color:var(--warn); font-size:12px; padding:6px 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  .dlg { border:1px solid var(--line); border-radius:12px; background:var(--card); padding:14px; width:360px; max-width:100%; box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  .dlg .foot { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+  .menu { width:290px; max-width:100%; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.12); padding:6px; font-size:13px; }
+  .menu .grp { font-size:11px; color:var(--muted); padding:6px 8px 2px; text-transform:uppercase; letter-spacing:.04em; }
+  .menu .it { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; }
+  .menu .it.hl { background:var(--sel); }
+  .menu .thumb { width:34px; height:26px; border:1.5px solid #1f4d36; border-radius:5px; background:#f3f7f4; flex:none; }
+  .menu .x { margin-left:auto; color:var(--muted); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+  .row > * { min-width:0; max-width:100%; }
+  table.grid { border-collapse:collapse; width:100%; font-size:13px; table-layout:fixed; min-width:620px; }
+  table.grid th, table.grid td { border-top:1px solid var(--line); padding:8px 6px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  table.grid th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .scroll { overflow-x:auto; }
+  .eye { color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>Accessory card designer, mock v2: where you design, click by click</h1>
+<div class="muted">07/11/2026. Answers "where do I put the colour circles" (frames 1-6) and "where do I design the layout of the box" (frames 7-9), then saving and reusing it (10-12). Everything happens on the same Tag Template designer canvas; red numbers are what you click.</div>
+<div class="toc">
+  <a href="#f1">1 Select box</a><a href="#f2">2 Edit card</a><a href="#f3">3 Add colour dots</a><a href="#f4">4 Drag</a><a href="#f5">5 Resize</a><a href="#f6">6 Done</a>
+  <a href="#f7">7 Box layout</a><a href="#f8">8 Footer note</a><a href="#f9">9 Horizontal + shrink</a><a href="#f10">10 Save as template</a><a href="#f11">11 Use in another template</a><a href="#f12">12 Management page</a>
+</div>
+
+<h2>A. Putting the colour circles in (card editing mode)</h2>
+<div id="partA"></div>
+<h2>B. Designing the box layout</h2>
+<div id="partB"></div>
+<h2>C. Save once, reuse everywhere (live link)</h2>
+<div id="partC"></div>
+
+<script>
+(function () {
+  var PICS = {
+    board: '<svg viewBox="0 0 40 40"><rect x="6" y="9" width="28" height="22" rx="3" fill="#d6b98c" stroke="#7a5b2e"/><circle cx="29" cy="14" r="2" fill="#fff" stroke="#7a5b2e"/></svg>',
+    colander: '<svg viewBox="0 0 40 40"><path d="M6 14h28l-3 16H9z" fill="#1f2937" stroke="#000"/><g fill="#fff"><circle cx="13" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><circle cx="23" cy="20" r="1"/><circle cx="28" cy="20" r="1"/><circle cx="15" cy="25" r="1"/><circle cx="20" cy="25" r="1"/><circle cx="25" cy="25" r="1"/></g></svg>',
+    drainer: '<svg viewBox="0 0 40 40"><rect x="5" y="12" width="30" height="16" rx="2" fill="#1f2937" stroke="#000"/><g stroke="#6b7280"><line x1="10" y1="14" x2="10" y2="26"/><line x1="15" y1="14" x2="15" y2="26"/><line x1="20" y1="14" x2="20" y2="26"/><line x1="25" y1="14" x2="25" y2="26"/><line x1="30" y1="14" x2="30" y2="26"/></g></svg>',
+    sink: '<svg viewBox="0 0 80 50"><rect x="2" y="6" width="76" height="38" rx="5" fill="#2b2f36" stroke="#000"/><rect x="8" y="11" width="40" height="28" rx="4" fill="#3d434d"/><rect x="52" y="11" width="21" height="28" rx="3" fill="#3d434d"/></svg>'
+  };
+  var BLACK = '#1f2937', GREY = '#9ca3af';
+  var ITEMS = [
+    { name: 'CHOPPING BOARD', spec: [], pic: 'board', dots: [] },
+    { name: 'COLANDER', spec: ['390x200x140', 'Depth: <b>160mm</b>'], pic: 'colander', dots: [BLACK, GREY] },
+    { name: 'DRAINER', spec: ['390x200x140', 'Depth: 160mm'], pic: 'drainer', dots: [BLACK, GREY] }
+  ];
+  var CARD = { w: 54, h: 24 };
+  // The one card layout, in card millimetres. `dots` null = not added yet.
+  function layout(dots) {
+    return {
+      pic: { x: 1.5, y: 1.5, w: 16, h: 16 },
+      name: { x: 20, y: 3, w: 32, h: 4.5 },
+      spec: { x: 20, y: 8.5, w: 32, h: 8 },
+      dots: dots || null
+    };
+  }
+  var DOTS_MID = { x: 24, y: 17.5, w: 7, h: 3, d: 2.4 };
+  var DOTS_UNDER = { x: 5.5, y: 18.5, w: 7, h: 3, d: 2.4 };
+  var DOTS_BIG = { x: 4.5, y: 18, w: 9, h: 4.2, d: 3.4 };
+
+  function px(v, Z) { return (v * Z) + 'px'; }
+
+  function cardHtml(item, L, s, Z, o) {
+    o = o || {};
+    var k = s * Z;
+    var h = '<div class="acard' + (o.cls ? ' ' + o.cls : '') + '" style="left:' + o.x + 'px;top:' + o.y + 'px;width:' + (o.w * k) + 'px;height:' + (CARD.h * k) + 'px">';
+    function box(r, cls) { return 'left:' + (r.x * k) + 'px;top:' + (r.y * k) + 'px;width:' + (r.w * k) + 'px;height:' + (r.h * k) + 'px'; }
+    h += '<div class="el' + (o.sel === 'pic' ? ' sel' : '') + '" style="' + box(L.pic) + '">' + PICS[item.pic] + '</div>';
+    h += '<div class="el nm" style="' + box(L.name) + ';font-size:' + (3.6 * k) + 'px;line-height:' + (4.5 * k) + 'px">' + item.name + '</div>';
+    h += '<div class="el" style="' + box(L.spec) + '">' + item.spec.map(function (t) { return '<div class="sp" style="font-size:' + (2.8 * k) + 'px;line-height:' + (3.6 * k) + 'px">' + t + '</div>'; }).join('') + '</div>';
+    if (o.ghost) h += '<div class="el ghost" style="' + box(o.ghost) + '"></div>';
+    if (L.dots) {
+      var D = L.dots, cols = item.dots.length ? item.dots : (o.editing ? [BLACK, GREY] : []);
+      h += '<div class="el dots' + (o.sel === 'dots' ? ' sel' : '') + '" style="' + box(D) + ';gap:' + (0.8 * k) + 'px">';
+      cols.forEach(function (c) { h += '<span class="dot" style="background:' + c + ';width:' + (D.d * k) + 'px;height:' + (D.d * k) + 'px"></span>'; });
+      h += '</div>';
+      if (o.sel === 'dots') {
+        var hs = [[D.x, D.y], [D.x + D.w, D.y], [D.x, D.y + D.h], [D.x + D.w, D.y + D.h]];
+        hs.forEach(function (p, i) { h += '<span class="h' + (o.hitHandle && i === 3 ? ' hit' : '') + '" style="left:' + (p[0] * k - 3.5) + 'px;top:' + (p[1] * k - 3.5) + 'px"></span>'; });
+      }
+    }
+    if (o.guide) h += '<div class="guide" style="left:' + ((L.pic.x + L.pic.w / 2) * k) + 'px;top:' + (L.pic.y * k) + 'px;width:1px;height:' + ((CARD.h - L.pic.y) * k) + 'px"></div>';
+    return h + '</div>';
+  }
+
+  // Box at (bx, by) mm, size bw x bh mm. Returns { html, scale, shown }.
+  function boxHtml(o, Z) {
+    var head = o.header === false ? 0 : 5.5, gap = o.gap == null ? 1.5 : o.gap, pad = 1.5;
+    var foot = o.footer ? 6.5 : 0;
+    var n = ITEMS.length, horiz = o.dir === 'h';
+    var availH = o.bh - head - pad - foot - 1, availW = o.bw - 2 * pad;
+    var s = horiz ? Math.min(1, (availW - (n - 1) * gap) / (n * CARD.w), availH / CARD.h)
+                  : Math.min(1, (availH - (n - 1) * gap) / (n * CARD.h));
+    var shown = n;
+    if (s < 0.7) { s = 0.7; shown = horiz ? Math.floor((availW + gap) / (CARD.w * s + gap)) : Math.floor((availH + gap) / (CARD.h * s + gap)); }
+    var h = '<div class="abs' + (o.sel ? ' boxsel' : '') + '" style="left:' + px(o.bx, Z) + ';top:' + px(o.by, Z) + ';width:' + px(o.bw, Z) + ';height:' + px(o.bh, Z) + '">';
+    h += '<div class="frm" style="left:0;right:0;bottom:0;top:' + px(head / 2, Z) + '"></div>';
+    if (head) h += '<div class="legend' + (o.hitHeader ? ' hit' : '') + '" style="top:0;font-size:' + px(head * 0.72, Z) + ';line-height:' + px(head, Z) + '">' + (o.headerText || 'ACCESSORIES INCLUDED') + '</div>';
+    var cw = horiz ? CARD.w : (o.bw - 2 * pad) / s;
+    for (var i = 0; i < shown; i++) {
+      var x = horiz ? pad + i * (CARD.w * s + gap) : pad;
+      var y = horiz ? head + 1 : head + 1 + i * (CARD.h * s + gap);
+      var cls = o.edit ? (i === 0 ? 'editing' : 'faded') : (o.fadeCards ? 'faded' : '');
+      h += cardHtml(ITEMS[i], o.L, s, Z, { x: x * Z, y: y * Z, w: cw, cls: cls, editing: o.edit && i === 0,
+        sel: o.edit && i === 0 ? o.elSel : null, ghost: o.edit && i === 0 ? o.ghost : null,
+        guide: o.edit && i === 0 && o.guide, hitHandle: o.hitHandle });
+    }
+    if (o.footer) {
+      var F = o.footer; // {tx, dx, sel, ghost, edit}
+      var fy = o.bh - foot;
+      var fcls = o.fadeFooter ? ' style="opacity:.42"' : '';
+      h += '<div class="abs' + (o.footerEdit ? ' acard editing' : '') + '" style="left:' + px(pad, Z) + ';top:' + px(fy, Z) + ';width:' + px(o.bw - 2 * pad, Z) + ';height:' + px(foot - 1, Z) + ';' + (o.fadeFooter ? 'opacity:.42;' : '') + 'background:transparent">';
+      h += '<div class="el' + (F.sel === 'text' ? ' sel' : '') + '" style="left:' + px(F.tx, Z) + ';top:' + px(1.2, Z) + ';font-size:' + px(2.4, Z) + ';white-space:nowrap;color:#333">* Accessories Color Follow Kitchen Sink Color</div>';
+      if (F.ghost != null) h += '<div class="el ghost" style="left:' + px(F.ghost, Z) + ';top:' + px(1, Z) + ';width:' + px(6, Z) + ';height:' + px(3, Z) + '"></div>';
+      if (F.dx != null) {
+        h += '<div class="el dots' + (F.sel === 'dots' ? ' sel' : '') + '" style="left:' + px(F.dx, Z) + ';top:' + px(1, Z) + ';width:' + px(6, Z) + ';height:' + px(3, Z) + ';gap:' + px(0.8, Z) + '"><span class="dot" style="background:' + BLACK + ';width:' + px(2.2, Z) + ';height:' + px(2.2, Z) + '"></span><span class="dot" style="background:' + GREY + ';width:' + px(2.2, Z) + ';height:' + px(2.2, Z) + '"></span></div>';
+      }
+      h += '</div>';
+    }
+    if (shown < n) h += '<div class="warnbadge">' + (n - shown) + ' of ' + n + ' do not fit</div>';
+    return { html: h + '</div>', scale: s, shown: shown };
+  }
+
+  // A zoomed canvas window onto the tag: tag mm range [x0, x0+vw] x [0, vh].
+  function canvas(boxOpts, Z, view, pins) {
+    var b = boxHtml(boxOpts, Z);
+    var paper = '<div class="paper" style="left:' + (-view.x0 * Z) + 'px;width:' + (148 * Z) + 'px;height:' + (105 * Z) + 'px">';
+    paper += '<div class="abs" style="left:' + px(4, Z) + ';top:' + px(3, Z) + ';font-weight:800;font-size:' + px(6, Z) + '">SRTKS7846</div>';
+    paper += '<div class="abs" style="left:' + px(4, Z) + ';top:' + px(22, Z) + ';width:' + px(74, Z) + ';height:' + px(46, Z) + '">' + PICS.sink + '</div>';
+    paper += '<div class="abs" style="left:' + px(4, Z) + ';top:' + px(88, Z) + ';font-weight:800;font-size:' + px(8, Z) + ';color:#c2410c">RM 0,000</div>';
+    paper += b.html + '</div>';
+    var pinHtml = (pins || []).map(function (p) {
+      var l = (p.x - view.x0) * Z, t = p.y * Z;
+      return '<div class="pin" style="left:' + (l - 12) + 'px;top:' + (t - 12) + 'px">' + p.n + '</div>' +
+        (p.label ? '<div class="pinlbl" style="left:' + (l + 15) + 'px;top:' + (t - 9) + 'px">' + p.label + '</div>' : '');
+    }).join('');
+    var arrows = (view.arrow ? '<svg class="arrow" style="left:0;top:0" width="' + (view.w * Z) + '" height="' + (view.h * Z) + '"><defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#e11d48"/></marker></defs><path d="M' + ((view.arrow[0] - view.x0) * Z) + ',' + (view.arrow[1] * Z) + ' Q' + ((view.arrow[4] - view.x0) * Z) + ',' + (view.arrow[5] * Z) + ' ' + ((view.arrow[2] - view.x0) * Z) + ',' + (view.arrow[3] * Z) + '" stroke="#e11d48" stroke-width="2" fill="none" stroke-dasharray="5 3" marker-end="url(#ah)"/></svg>' : '');
+    return { html: '<div class="view" style="width:' + (view.w * Z) + 'px;height:' + (view.h * Z) + 'px">' + paper + arrows + pinHtml + '<div class="zoomlbl">' + (view.zoomLabel || 'Zoom 150%') + '</div></div>', fit: b };
+  }
+
+  var TOOLBAR_TAG = '<button class="btn">Text</button><button class="btn">Image</button><button class="btn">Shape</button><button class="btn">Field</button><button class="btn">Feature icons</button><button class="btn">Accessories &#9662;</button>';
+  function toolbarCard(hit, what) {
+    var t = function (n) { return '<button class="btn' + (hit === n ? ' hit' : '') + '">' + n + '</button>'; };
+    var tools = what === 'footer' ? [t('Text'), t('Colour dots'), t('Shape')] : [t('Picture'), t('Text'), t('Colour dots'), t('Shape')];
+    return '<span class="modelbl">Editing ' + (what === 'footer' ? 'footer' : 'card') + ':</span>' + tools.join('') + '<span style="flex:1"></span><button class="btn primary' + (hit === 'Done' ? ' hit' : '') + '">Done</button>';
+  }
+  function layers(state) {
+    var h = '<div style="font-weight:600;margin-bottom:6px">Layers</div><div class="layer">Code</div><div class="layer">Photo (main)</div><div class="layer">Price</div>';
+    h += '<div class="layer' + (state === 'box' ? ' sel' : '') + '">&#9638; Accessories box</div>';
+    if (state && state.indexOf('card') === 0) {
+      h += '<div class="layer child">Picture</div><div class="layer child">Name</div><div class="layer child">Spec lines</div>';
+      if (state !== 'card') h += '<div class="layer child sel">Colour dots</div>';
+    }
+    if (state === 'footer') h += '<div class="layer child">Footer text</div><div class="layer child sel">Footer colour dots</div>';
+    return h;
+  }
+
+  function frame(id, n, title, click, result, shell) {
+    return '<div class="frame" id="' + id + '"><div class="fhead"><div class="fnum">' + n + '</div><div><h3>' + title + '</h3>' +
+      '<div class="click">&#128433; You click: ' + click + '</div><div class="result">' + result + '</div></div></div>' + shell + '</div>';
+  }
+  function shell(tool, mode, left, cv, right, banner) {
+    return '<div class="shell">' + (banner ? '<div class="banner">' + banner + '</div>' : '') +
+      '<div class="toolbar' + (mode ? ' mode' : '') + '">' + tool + '</div><div class="side">' + left + '</div><div class="stage">' + cv + '</div><div class="side right">' + right + '</div></div>';
+  }
+
+  var Z = 4.5, VIEW = { x0: 76, w: 72, h: 105 };
+  var BOX = { bx: 80, by: 4, bw: 64, bh: 96 };
+  function bo(extra) { var o = {}; for (var k in BOX) o[k] = BOX[k]; for (var e in extra) o[e] = extra[e]; return o; }
+  var FOOT_DONE = { tx: 0.5, dx: 49 };
+
+  var boxInspector = function (hit) {
+    return '<div class="crumb"><b>Accessories box</b></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn' + (hit === 'edit' ? ' hit' : '') + '">Edit card</button><button class="btn">Edit footer</button></div>' +
+      '<label class="lbl">Reads from</label><div class="input">This tag\'s list (combo or product) &#9662;</div>' +
+      '<div class="muted" style="margin-top:8px">Box layout: frame 7 below.</div>';
+  };
+  var dotsInspector = function (size, hit) {
+    return '<div class="crumb">Accessories box &rsaquo; Card &rsaquo; <b>Colour dots</b></div>' +
+      '<label class="lbl">Colours</label><div class="input">This accessory\'s colours &#9662;</div>' +
+      '<div class="muted" style="margin-top:3px">Or "Pick colours" to set them by hand</div>' +
+      '<label class="lbl">Dot size</label><div class="input' + (hit ? ' hit' : '') + '" style="width:90px">' + size + ' mm</div>' +
+      '<label class="lbl">Gap</label><div class="input" style="width:90px">0.8 mm</div>' +
+      '<label class="lbl">Run</label><div class="seg"><span class="on">Row</span><span>Column</span></div>' +
+      '<label class="lbl">Outline</label><div class="input" style="width:90px">#444444</div>' +
+      '<div style="margin-top:10px"><span class="eye">&#128065; Show</span> &nbsp; <span class="muted">Delete key removes it</span></div>' +
+      '<div class="note info">Every card in this box uses this layout; the faded cards follow as you edit. CHOPPING BOARD has no colours, so its dots print nothing.</div>';
+  };
+
+  var A = '';
+  // 1
+  var c1 = canvas(bo({ L: layout(null), sel: true }), Z, VIEW, [{ n: 1, x: 112, y: 40, label: 'click the box' }]);
+  A += frame('f1', 1, 'Select the Accessories box', 'the box on the tag (or "Accessories box" in Layers)',
+    'Blue outline round the box; the inspector shows the box. No colour dots yet: the card is today\'s look (picture, name, spec).',
+    shell(TOOLBAR_TAG, false, layers('box'), c1.html, boxInspector('edit')));
+  // 2
+  var c2 = canvas(bo({ L: layout(null), edit: true }), Z, VIEW, [{ n: 2, x: 112, y: 40, label: 'double-click' }]);
+  A += frame('f2', 2, 'Step inside: card editing mode', 'double-click the box, or "Edit card" in the inspector',
+    'Same canvas. The toolbar turns blue: "Editing card: Picture, Text, Colour dots, Shape, Done". Card 1 gets a blue outline and can be edited; cards 2 and 3 fade and copy every change. Layers lists the card\'s elements.',
+    shell(toolbarCard(null), true, layers('card'), c2.html,
+      '<div class="crumb">Accessories box &rsaquo; <b>Card</b></div><div class="muted">Card design size 54 x 24 mm. Click an element on card 1 to style it, or add one from the toolbar.</div><div class="note info">You are inside the box. Done, Escape or a click outside the box takes you back.</div>'));
+  // 3
+  var c3 = canvas(bo({ L: layout(DOTS_MID), edit: true, elSel: 'dots' }), Z, VIEW, [{ n: 3, x: 114, y: 26, label: 'new, in the middle of card 1' }]);
+  A += frame('f3', 3, 'Add the colour circles', '"Colour dots" in the blue toolbar',
+    'A Colour dots element drops into the middle of card 1, selected, with corner handles. It shows each accessory\'s own colours (COLANDER: Black, Grey).',
+    shell(toolbarCard('Colour dots'), true, layers('card-dots'), c3.html, dotsInspector('2.4')));
+  // 4
+  var v4 = { x0: 76, w: 72, h: 105, arrow: [111, 25, 91.5, 27, 100, 34] };
+  var c4 = canvas(bo({ L: layout(DOTS_UNDER), edit: true, elSel: 'dots', ghost: DOTS_MID, guide: true }), Z, v4, [{ n: 4, x: 104, y: 36, label: 'drag under the picture' }]);
+  A += frame('f4', 4, 'Drag the dots where you want them', 'press on the dots and drag them under the picture, let go',
+    'A pink guide shows it centred under the picture (snapping, as on the tag). Dashed outline = where it was. Cards 2 and 3 move their dots the same way.',
+    shell(toolbarCard(null), true, layers('card-dots'), c4.html, dotsInspector('2.4')));
+  // 5
+  var c5 = canvas(bo({ L: layout(DOTS_BIG), edit: true, elSel: 'dots', hitHandle: true }), Z, VIEW, [{ n: 5, x: 94, y: 37, label: 'drag the corner handle' }]);
+  A += frame('f5', 5, 'Make the dots bigger', 'drag the dots\' bottom-right corner handle outward (or type a dot size)',
+    'Dots grow with the element: 2.4 mm to 3.4 mm. Hide them with the eye; remove them with Delete.',
+    shell(toolbarCard(null), true, layers('card-dots'), c5.html, dotsInspector('3.4', true)));
+  // 6
+  var c6 = canvas(bo({ L: layout(DOTS_BIG), sel: true }), Z, VIEW, [{ n: 6, x: 140, y: 3, label: '' }]);
+  A += frame('f6', 6, 'Leave the card', '"Done" in the blue toolbar (or Escape)',
+    'Back to the whole tag. Every card now has its colour dots under the picture; CHOPPING BOARD has none, so nothing prints there. Saving the tag template saves the card layout.',
+    shell(toolbarCard('Done'), true, layers('box'), c6.html, boxInspector()));
+  document.getElementById('partA').innerHTML = A;
+
+  // ---------- Part B ----------
+  var B = '';
+  var layoutInspector = function (hits, dir, footer) {
+    var hit = function (k) { return hits.indexOf(k) >= 0 ? ' hit' : ''; };
+    return '<div class="crumb"><b>Accessories box</b> &middot; layout</div>' +
+      '<label class="lbl">Header <span class="pin" style="position:static;display:inline-flex;width:18px;height:18px;font-size:10px">7a</span></label>' +
+      '<div class="input' + hit('header') + '">ACCESSORIES INCLUDED</div>' +
+      '<div class="muted" style="margin-top:3px">On the border &#10003; &middot; Show &#10003; &middot; "+" badge off</div>' +
+      '<label class="lbl">Direction <span class="pin" style="position:static;display:inline-flex;width:18px;height:18px;font-size:10px">7b</span></label>' +
+      '<div class="seg' + hit('dir') + '"><span class="' + (dir === 'h' ? '' : 'on') + '">Vertical</span><span class="' + (dir === 'h' ? 'on' : '') + '">Horizontal</span></div>' +
+      '<label class="lbl">Gap between cards <span class="pin" style="position:static;display:inline-flex;width:18px;height:18px;font-size:10px">7c</span></label>' +
+      '<div class="input' + hit('gap') + '" style="width:90px">1.5 mm</div>' +
+      '<label class="lbl">Shrink to fit <span class="pin" style="position:static;display:inline-flex;width:18px;height:18px;font-size:10px">7d</span></label>' +
+      '<div class="input' + hit('shrink') + '">On, smallest 70% &#9662;</div>' +
+      '<label class="lbl">Footer note <span class="pin" style="position:static;display:inline-flex;width:18px;height:18px;font-size:10px">8</span></label>' +
+      '<div class="input' + hit('footer') + '">' + (footer ? '&#9745; Show' : '&#9744; Show') + '</div>' +
+      '<label class="lbl">Frame</label><div class="muted">Fill, border colour and width, corner radius (as today)</div>';
+  };
+  var c7 = canvas(bo({ L: layout(DOTS_BIG), sel: true, hitHeader: true }), Z, VIEW, [{ n: '7a', x: 112, y: 6.5, label: '' }]);
+  B += frame('f7', 7, 'The box layout lives in the inspector while the box is selected', 'the box once (not double), then the settings on the right: 7a header, 7b direction, 7c gap, 7d shrink',
+    'These change the whole box: header text on the border, vertical or horizontal, the space between cards and how far cards may shrink. The cards themselves are frames 2-6.',
+    shell(TOOLBAR_TAG, false, layers('box'), c7.html, layoutInspector(['header', 'dir', 'gap', 'shrink'], 'v', false)));
+
+  var c8 = canvas(bo({ L: layout(DOTS_BIG), fadeCards: true, footer: { tx: 0.5, dx: 54, sel: 'dots', ghost: 22 }, footerEdit: true }), Z,
+    { x0: 76, w: 72, h: 105, arrow: [104, 92, 133, 92, 118, 85] }, [{ n: 8, x: 118, y: 84, label: 'drag after the text' }]);
+  B += frame('f8', 8, 'Footer note with its own colour dots', 'tick "Footer note: Show", then double-click the footer (or "Edit footer"); add Text and Colour dots, drag the dots after the text',
+    'Footer editing mode: same blue toolbar, tools Text, Colour dots, Shape. The note is rich text you type; its dots show all colours in the box (Black, Grey) unless you pick them by hand. Both move and resize freely; nothing has a fixed spot.',
+    shell(toolbarCard('Colour dots', 'footer'), true, layers('footer'), c8.html,
+      '<div class="crumb">Accessories box &rsaquo; Footer &rsaquo; <b>Colour dots</b></div><label class="lbl">Colours</label><div class="input">All colours in this box &#9662;</div><label class="lbl">Dot size</label><div class="input" style="width:90px">2.2 mm</div><div class="note info">Cards fade while you edit the footer.</div>'));
+
+  var ZH = 3, VH = { x0: 0, w: 148, h: 105, zoomLabel: 'Zoom 100%' };
+  var c9 = canvas({ bx: 4, by: 66, bw: 140, bh: 36, L: layout(DOTS_BIG), sel: true, dir: 'h' }, ZH, VH, [{ n: '7b', x: 74, y: 64, label: 'Horizontal' }]);
+  var c9b = canvas({ bx: 4, by: 66, bw: 104, bh: 36, L: layout(DOTS_BIG), sel: true, dir: 'h' }, ZH, VH, []);
+  B += frame('f9', 9, 'Horizontal, and what happens when it gets tight', '"Horizontal" (7b), then drag the box narrower',
+    'Same card layout, cards in a row. At 140 mm wide all 3 shrink to ' + Math.round(c9.fit.scale * 100) + '%. At 104 mm they would need less than 70%, so only whole cards print (' + c9b.fit.shown + ' of 3) and the orange warning shows here, in the request preview and on the print toast. A card is never cut.',
+    '<div class="row"><div style="overflow-x:auto">' + c9.html + '</div><div style="overflow-x:auto">' + c9b.html + '</div></div>');
+  document.getElementById('partB').innerHTML = B;
+
+  // ---------- Part C ----------
+  var C = '';
+  C += frame('f10', 10, 'Save it as an accessories template', 'box selected, then "Save as accessories template" in the inspector; type a name; Save',
+    'The box is now linked: the inspector shows "Linked: Dealer Kit included (used in 1 tag template)". Saved: frame, header, footer, direction, gap, shrink and the card layout. Not saved: where the box sits on this tag, its size, and which list it reads.',
+    '<div class="row"><div class="dlg"><h3>Save as accessories template</h3><label class="lbl">Name</label><div class="input">Dealer Kit included</div>' +
+    '<div class="muted" style="margin-top:8px">Saves the box design and card layout. Boxes made from it stay linked: changing it later updates all of them.</div>' +
+    '<div class="foot"><button class="btn">Cancel</button><button class="btn primary hit">Save</button></div></div>' +
+    '<div class="dlg"><div class="crumb"><b>Accessories box</b></div><div class="note info" style="margin-top:0">Linked: <b>Dealer Kit included</b> (used in 1 tag template) <button class="btn" style="margin-left:4px">Detach</button></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button class="btn">Edit card</button><button class="btn">Edit footer</button></div></div></div>');
+
+  var c11 = canvas(bo({ L: layout(DOTS_BIG), edit: true, elSel: 'dots' }), Z, VIEW, []);
+  C += frame('f11', 11, 'Use it in another tag template (live link)', '"Accessories" in the toolbar of ANY tag template, then "Dealer Kit included"',
+    'A linked box is added; move and size it for this tag. Editing its card or layout in place edits the saved template: the yellow bar says so before your first change sticks (Undo works). To change only this tag template, click Detach first: the box keeps the current design as its own copy and stops following.',
+    '<div class="row" style="margin-bottom:12px"><div class="menu"><div class="input" style="margin:2px 2px 6px"><span class="muted">Search accessories templates</span></div><div class="it"><span class="thumb" style="background:#fff;border-color:#9ca3af"></span>Default box</div><div class="grp">Saved accessories templates</div><div class="it hl hit"><span class="thumb"></span>Dealer Kit included<span class="x">used in 3</span></div><div class="it"><span class="thumb" style="border-color:#c2410c;background:#fff7ed"></span>FREE vertical<span class="x">used in 2</span></div><div class="it"><span class="thumb"></span>Included row (horizontal)<span class="x">used in 1</span></div><div class="muted" style="padding:6px 8px">Rename or delete: Dealer Kit &gt; Accessory Templates (frame 12).</div></div></div>' +
+    shell(toolbarCard(null), true, layers('card-dots'), c11.html, dotsInspector('3.4'),
+      '&#9888; Linked to <b>Dealer Kit included</b>: changes here update 3 tag templates. <button class="btn">Detach</button>'));
+
+  C += frame('f12', 12, 'Management page: Dealer Kit > Accessory Templates', 'the sidebar entry beside Tag Sizes',
+    'List of saved accessories templates with where each is used. Rename in a modal; Delete starts the 10 s countdown with Cancel (no confirm). Deleting one detaches every box using it; each keeps its last design. Designing still happens only in the Tag Template designer.',
+    '<div class="frame" style="margin:0"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px"><h3>Accessory Templates</h3><div class="input" style="width:220px"><span class="muted">Search</span></div></div><div class="scroll"><table class="grid">' +
+    '<tr><th style="width:70px">Preview</th><th>Name</th><th style="width:150px">Used in</th><th style="width:110px">Updated</th><th style="width:110px">By</th><th style="width:120px"></th></tr>' +
+    '<tr><td><span class="menu" style="display:inline-block;width:auto;padding:0;border:0;box-shadow:none"><span class="thumb" style="display:inline-block"></span></span></td><td>Dealer Kit included</td><td><a href="#f11">3 tag templates</a></td><td>07/11/2026</td><td>Marketing</td><td><button class="btn">Rename</button> <button class="btn">Delete</button></td></tr>' +
+    '<tr><td><span class="thumb" style="display:inline-block;width:34px;height:26px;border:1.5px solid #c2410c;border-radius:5px;background:#fff7ed"></span></td><td>FREE vertical</td><td><a href="#f11">2 tag templates</a></td><td>06/11/2026</td><td>Marketing</td><td><button class="btn">Rename</button> <button class="btn">Delete</button></td></tr>' +
+    '<tr><td><span class="thumb" style="display:inline-block;width:34px;height:26px;border:1.5px solid #1f4d36;border-radius:5px;background:#f3f7f4"></span></td><td>Included row (horizontal)</td><td><a href="#f11">1 tag template</a></td><td>06/11/2026</td><td>Marketing</td><td><button class="btn">Rename</button> <button class="btn">Delete</button></td></tr>' +
+    '</table></div></div>');
+  document.getElementById('partC').innerHTML = C;
+})();
+</script>
+</body>
+</html>

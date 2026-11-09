@@ -24,6 +24,7 @@ import {
   CloudDownload,
   Barcode,
   ImagePlus,
+  History,
 } from 'lucide-react';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -49,6 +50,7 @@ import { useItemClassSelectQuery } from '../../shared/hooks/use-item-class-selec
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
+import ListPriceHistoryDialog, { type ListPriceHistoryProduct } from './ListPriceHistoryDialog';
 import { UploadCostPriceAction } from './UploadCostPriceAction';
 import { BarcodeImportDialog } from './BarcodeImportDialog';
 import { CatalogueUploadDialog } from './CatalogueUploadDialog';
@@ -100,6 +102,14 @@ function formatDateChip(value: string): string {
   return formatDateInMalaysia(value.slice(0, 10)) || value;
 }
 
+/** "<Prefix>: X - Y" both ends, "from X" / "to Y" one end, null when unset. */
+function rangeChipLabel(prefix: string, from: string | null, to: string | null): string | null {
+  if (from && to) return `${prefix}: ${formatDateChip(from)} - ${formatDateChip(to)}`;
+  if (from) return `${prefix}: from ${formatDateChip(from)}`;
+  if (to) return `${prefix}: to ${formatDateChip(to)}`;
+  return null;
+}
+
 const ProductsList = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -143,6 +153,11 @@ const ProductsList = () => {
   // own contract).
   const [discontinuedFrom, setDiscontinuedFrom] = useState<string | null>(null);
   const [discontinuedTo, setDiscontinuedTo] = useState<string | null>(null);
+  // "List price changed at" range (LIST-PRICE-CHANGE-UI), same contract.
+  const [listPriceChangedFrom, setListPriceChangedFrom] = useState<string | null>(null);
+  const [listPriceChangedTo, setListPriceChangedTo] = useState<string | null>(null);
+  // The product whose list-price history lightbox is open; null = closed.
+  const [priceHistoryProduct, setPriceHistoryProduct] = useState<ListPriceHistoryProduct | null>(null);
 
   const {
     setCategoryId,
@@ -164,9 +179,12 @@ const ProductsList = () => {
     isReloadRef.current = false;
     if (!searchParams.toString()) return;
     const batch = searchParams.get('discontinued_batch_id');
+    const priceBatch = searchParams.get('list_price_batch_id');
     const batchBrands = searchParams.get('brand_id');
-    if (batch) {
-      const kept = new URLSearchParams({ discontinued_batch_id: batch });
+    if (batch || priceBatch) {
+      const kept = new URLSearchParams(
+        batch ? { discontinued_batch_id: batch } : { list_price_batch_id: priceBatch as string },
+      );
       if (batchBrands) kept.set('brand_id', batchBrands);
       router.replace(`${pathname}?${kept.toString()}`);
     } else {
@@ -215,6 +233,8 @@ const ProductsList = () => {
       setSelectedVariantFilter(variant === 'base' || variant === 'variant' ? variant : 'all');
       setDiscontinuedFrom(state.filters.discontinued_from ?? null);
       setDiscontinuedTo(state.filters.discontinued_to ?? null);
+      setListPriceChangedFrom(state.filters.list_price_changed_from ?? null);
+      setListPriceChangedTo(state.filters.list_price_changed_to ?? null);
       setAdvancedFilter(
         decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter),
       );
@@ -241,9 +261,11 @@ const ProductsList = () => {
   // Deep link from a "products discontinued" notification - restrict the list to
   // exactly the products reported in that batch.
   const discontinuedBatchId = searchParams.get('discontinued_batch_id') || undefined;
+  // Same, from a "list price changed" notification.
+  const listPriceBatchId = searchParams.get('list_price_batch_id') || undefined;
   // ...and, for a recipient scoped to specific brands, to their slice of it. The
   // param is passed through verbatim (comma-separated ids filter with IN).
-  const discontinuedBrandIds = discontinuedBatchId
+  const discontinuedBrandIds = discontinuedBatchId || listPriceBatchId
     ? searchParams.get('brand_id') || undefined
     : undefined;
   const effectiveBrandId =
@@ -263,9 +285,12 @@ const ProductsList = () => {
       status: selectedStatus ?? 'all',
       variant_filter: selectedVariantFilter,
       discontinued_batch_id: discontinuedBatchId,
+      list_price_batch_id: listPriceBatchId,
       discontinued_brand_ids: discontinuedBrandIds,
       discontinued_from: discontinuedFrom ?? undefined,
       discontinued_to: discontinuedTo ?? undefined,
+      list_price_changed_from: listPriceChangedFrom ?? undefined,
+      list_price_changed_to: listPriceChangedTo ?? undefined,
       advancedFilter: advancedFilter ?? undefined,
     }),
     [
@@ -278,9 +303,12 @@ const ProductsList = () => {
       selectedStatus,
       selectedVariantFilter,
       discontinuedBatchId,
+      listPriceBatchId,
       discontinuedBrandIds,
       discontinuedFrom,
       discontinuedTo,
+      listPriceChangedFrom,
+      listPriceChangedTo,
       advancedFilter,
     ],
   );
@@ -338,6 +366,18 @@ const ProductsList = () => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
 
+  const handleListPriceChangedRangeChange = (next: { from: string | null; to: string | null }) => {
+    setListPriceChangedFrom(next.from);
+    setListPriceChangedTo(next.to);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
+  const handleClearListPriceChangedRange = () => {
+    setListPriceChangedFrom(null);
+    setListPriceChangedTo(null);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
   const handleClearFilters = () => {
     clearFilters();
     setSelectedCategory(null);
@@ -347,6 +387,8 @@ const ProductsList = () => {
     setSelectedVariantFilter('all');
     setDiscontinuedFrom(null);
     setDiscontinuedTo(null);
+    setListPriceChangedFrom(null);
+    setListPriceChangedTo(null);
     setAdvancedFilter(null);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
@@ -376,8 +418,11 @@ const ProductsList = () => {
         variant_filter:
           selectedVariantFilter !== 'all' ? selectedVariantFilter : undefined,
         discontinued_batch_id: discontinuedBatchId,
+        list_price_batch_id: listPriceBatchId,
         discontinued_from: discontinuedFrom ?? undefined,
         discontinued_to: discontinuedTo ?? undefined,
+        list_price_changed_from: listPriceChangedFrom ?? undefined,
+        list_price_changed_to: listPriceChangedTo ?? undefined,
         advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
@@ -621,19 +666,66 @@ const ProductsList = () => {
           />
         ),
         cell: ({ row }) => {
-          const price = row.original.list_price;
+          const product = row.original;
+          const price = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'MYR',
+          }).format(product.list_price);
           return (
-            <div className="text-sm">
-              {new Intl.NumberFormat('en-US', {
-                style: 'currency',
-                currency: 'MYR',
-              }).format(price)}
+            <div className="flex items-center gap-1 text-sm">
+              <span className="truncate" title={price}>
+                {price}
+              </span>
+              {product.list_price_changed_at && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  size="sm"
+                  className="size-6 shrink-0"
+                  aria-label="List price history"
+                  title="List price history"
+                  onClick={() =>
+                    setPriceHistoryProduct({
+                      id: product.id,
+                      product_code: product.product_code,
+                      product_name: product.product_name,
+                    })
+                  }
+                >
+                  <History className="size-3.5" />
+                </Button>
+              )}
             </div>
           );
         },
-        size: 120,
+        // Room for a five-figure price AND the history icon without clipping either. The
+        // minimum also wins over a narrower SAVED layout (every saved one said 120).
+        size: 170,
+        minSize: 170,
         meta: {
           headerTitle: 'List Price',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
+        accessorKey: 'list_price_changed_at',
+        id: 'list_price_changed_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="List price changed at"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => {
+          const value = row.original.list_price_changed_at;
+          return <div className="text-sm">{value ? formatDateInMalaysia(value) : ''}</div>;
+        },
+        size: 160,
+        meta: {
+          headerTitle: 'List price changed at',
           skeleton: <Skeleton className="h-4 w-20" />,
         },
         enableSorting: true,
@@ -890,17 +982,23 @@ const ProductsList = () => {
     (selectedItemClass ? 1 : 0) +
     (selectedStatus && selectedStatus !== 'all' ? 1 : 0) +
     (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0) +
-    (discontinuedFrom || discontinuedTo ? 1 : 0);
+    (discontinuedFrom || discontinuedTo ? 1 : 0) +
+    (listPriceChangedFrom || listPriceChangedTo ? 1 : 0);
 
-  // "Discontinued: 1 Sep 26 - 26 Sep 26" both ends, "from X" / "to Y" one end.
-  const discontinuedChipLabel =
-    discontinuedFrom && discontinuedTo
-      ? `Discontinued: ${formatDateChip(discontinuedFrom)} - ${formatDateChip(discontinuedTo)}`
-      : discontinuedFrom
-        ? `Discontinued: from ${formatDateChip(discontinuedFrom)}`
-        : discontinuedTo
-          ? `Discontinued: to ${formatDateChip(discontinuedTo)}`
-          : null;
+  const discontinuedChipLabel = rangeChipLabel('Discontinued', discontinuedFrom, discontinuedTo);
+  const listPriceChangedChipLabel = rangeChipLabel(
+    'List price changed',
+    listPriceChangedFrom,
+    listPriceChangedTo,
+  );
+  const rangeChips = [
+    ...(discontinuedChipLabel
+      ? [{ label: discontinuedChipLabel, onClear: handleClearDiscontinuedRange }]
+      : []),
+    ...(listPriceChangedChipLabel
+      ? [{ label: listPriceChangedChipLabel, onClear: handleClearListPriceChangedRange }]
+      : []),
+  ];
 
   const getExportPayload = () => ({
     filter: advancedFilter ?? undefined,
@@ -910,6 +1008,8 @@ const ProductsList = () => {
     product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
     discontinued_from: discontinuedFrom ?? undefined,
     discontinued_to: discontinuedTo ?? undefined,
+    list_price_changed_from: listPriceChangedFrom ?? undefined,
+    list_price_changed_to: listPriceChangedTo ?? undefined,
   });
 
   const openCreateProduct = () => router.push('/master-data-management/products/new');
@@ -934,9 +1034,13 @@ const ProductsList = () => {
     >
       <Card>
         <CardHeader className="block">
-          {discontinuedBatchId && (
+          {(discontinuedBatchId || listPriceBatchId) && (
             <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-              <span>Showing only the products from a recent “products discontinued” notification.</span>
+              <span>
+                {discontinuedBatchId
+                  ? 'Showing only the products from a recent “products discontinued” notification.'
+                  : 'Showing only the products from a recent “list price changed” notification.'}
+              </span>
               <Button variant="ghost" size="sm" onClick={() => router.replace(pathname)}>
                 Clear filter
               </Button>
@@ -957,9 +1061,7 @@ const ProductsList = () => {
               kind: 'custom',
               active: simpleFiltersActiveCount > 0,
               activeCount: simpleFiltersActiveCount,
-              activeSummary: discontinuedChipLabel
-                ? { label: discontinuedChipLabel, onClear: handleClearDiscontinuedRange }
-                : undefined,
+              activeSummary: rangeChips.length ? rangeChips : undefined,
               content: (
                 <div className="space-y-3">
                   <SearchableMultiSelect
@@ -1046,6 +1148,15 @@ const ProductsList = () => {
                       to={discontinuedTo}
                       onChange={handleDiscontinuedRangeChange}
                       aria-label="Discontinued between"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">List price changed between</Label>
+                    <DateRangePicker
+                      from={listPriceChangedFrom}
+                      to={listPriceChangedTo}
+                      onChange={handleListPriceChangedRangeChange}
+                      aria-label="List price changed between"
                     />
                   </div>
                   {(hasActiveFilters || simpleFiltersActiveCount > 0) && (
@@ -1209,6 +1320,12 @@ const ProductsList = () => {
         onOpenChange={setBulkChatSearchDialogOpen}
         productIds={selectedRowIds(table)}
         onSuccess={() => setRowSelection({})}
+      />
+      <ListPriceHistoryDialog
+        product={priceHistoryProduct}
+        onOpenChange={(open) => {
+          if (!open) setPriceHistoryProduct(null);
+        }}
       />
     </DataGrid>
   );

@@ -86,6 +86,8 @@ export interface Product {
   // When the discontinue-notify scheduler last noticed this product (issue #1287).
   // Null while available or before the first tick after discontinuing.
   discontinued_at?: string | null;
+  /** When the list-price checker last reported a list price change; null if never. */
+  list_price_changed_at?: string | null;
   // S5 (reorder-feedback-9sep.md, 9 Sep 2026): never appears in a reorder run, even
   // when named directly at Start Plan. Optional - absent on a cached response
   // predating the field, and the reader treats that as false.
@@ -426,14 +428,26 @@ export interface AuditLog {
   description?: string | null;
 }
 
-// Price History Entry
-export interface PriceHistory {
+/** One list-price history row, from the product's audit trail. */
+export interface PriceChange {
+  /** The audit row's id; a row key only, never shown. */
   id: string;
-  product_id: string;
-  list_price: number;
-  effective_date: Date;
-  created_by?: string | null;
-  created_at: Date;
+  /** `initial` = the price the product was created with (no old price, no %). */
+  kind: 'change' | 'initial';
+  /** Naive UTC ISO timestamp. */
+  changed_at: string | null;
+  old_price: number | null;
+  new_price: number | null;
+  /** One decimal; null when the old price was 0. */
+  change_pct: number | null;
+  /** "AutoCount sync", a staff name, or null when the trail names no one. */
+  changed_by: string | null;
+}
+
+/** `GET /master-data/products/{id}/list-price-history`: one DataGrid page. */
+export interface PriceHistory {
+  data: PriceChange[];
+  pagination: { total: number; page: number; limit: number };
 }
 
 // Product List Item (for grid display with joined data)
@@ -451,6 +465,8 @@ export interface ProductListItem {
   // When the discontinue-notify scheduler last noticed this product (issue #1287).
   // Null while available or before the first tick after discontinuing.
   discontinued_at?: string | null;
+  /** When the list-price checker last reported a list price change; null if never. */
+  list_price_changed_at?: string | null;
   // Chat-search flag (independent of is_active). Surfaced by ProductResponse.
   is_searchable?: boolean;
   // S5: never appears in a reorder run, even when named directly. Optional -

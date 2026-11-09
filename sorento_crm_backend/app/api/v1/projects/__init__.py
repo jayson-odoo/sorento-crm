@@ -15,6 +15,7 @@ from app.api.v1.projects import (
     planning_changes,
     po_intake,
     projects,
+    quotation_certificates,
     quotation_documents,
     quotation_templates,
     quotations,
@@ -56,6 +57,8 @@ router.include_router(quotations.router, tags=["project-quotations"])
 router.include_router(quotation_documents.router, tags=["project-quotations"])
 # PS-SPEC-SHEET: the spec sheet tab of a quotation document.
 router.include_router(spec_sheet.router, tags=["project-quotations"])
+# QUOTE-CERT-TAB: the Certification tab of a quotation document.
+router.include_router(quotation_certificates.router, tags=["project-quotations"])
 # Read-only project / task / lead status graphs for salespeople (never-stuck L10).
 router.include_router(status_graphs.router, tags=["project-status-graphs"])
 # Samples and customer POs mount at the root for the same reason: both are nested
