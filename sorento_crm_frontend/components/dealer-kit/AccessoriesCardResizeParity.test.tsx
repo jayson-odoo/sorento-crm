@@ -263,3 +263,51 @@ describe('below the readable floor, and the "+N" chip (review should-fix 3, 4)',
     expect(print.textContent).not.toContain('+1');
   });
 });
+
+describe('a field that resolves to nothing prints NOTHING (crew check A, owner rule: missing = no space)', () => {
+  const tag = '{{product.price_tag_description}}';
+
+  function withUnder(layer: TagLayer): TagLayer {
+    const card = (layer.props as { card: { elements: unknown[] } }).card;
+    card.elements.push({ id: 'under', kind: 'text', field: null, text: 'UNDER', x_mm: 1, y_mm: 10, width_mm: 30, height_mm: 5 });
+    return layer;
+  }
+
+  it('Free items: an item with no description prints no text and no raw tag; the element under moves up', async () => {
+    const layer = withUnder(boxLayer(60, 80, { text: tag }));
+    const noDescription: TagAccessory[] = [
+      { kind: 'product', id: 'p2', name: 'Bare', spec: null, image: null, code: 'BARE1', list_price: 10, price_tag_description: null },
+    ];
+    const data = row(noDescription);
+    const { container } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+    const texts = [...container.querySelectorAll<HTMLElement>('[data-testid="accessories-element-text"]')];
+    expect(texts.map((t) => t.textContent)).toEqual(['UNDER']);
+    expect(container.textContent).not.toContain('{{');
+    // The element below moves up into the freed space (no gap).
+    expect(parseFloat(texts[0].style.top)).toBeCloseTo(1, 6);
+    cleanup();
+    const c = await canvas(layer, data);
+    expect(c.textContent ?? '').not.toContain('{{');
+    expect([...c.querySelectorAll('[data-konva="text"]')].map((t) => t.getAttribute('data-text'))).not.toContain(tag);
+  });
+
+  it('Upgrades: an upgrade with no description prints no text and no raw tag', async () => {
+    const layer = withUnder(boxLayer(60, 80, { text: tag }));
+    (layer.props as { list?: string }).list = 'upgrades';
+    const data = {
+      ...row([]),
+      combo: {
+        id: 'c', name: 'C', description: null, free_items: null, choices: [],
+        upgrades: [{ product_id: 'u2', code: 'NODESC', description: 'No desc', topup_amount: 50, picked: false }],
+      },
+      slots: { fixed: [], groups: [], upgrades: [{ product_id: 'u2', code: 'NODESC', name: 'No desc', dimensions: '', list_price: 90 }] },
+    } as unknown as ResolvedLineData;
+    const { container } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+    const texts = [...container.querySelectorAll<HTMLElement>('[data-testid="accessories-element-text"]')];
+    expect(texts.map((t) => t.textContent)).toEqual(['UNDER']);
+    expect(container.textContent).not.toContain('{{');
+    cleanup();
+    const c = await canvas(layer, data);
+    expect([...c.querySelectorAll('[data-konva="text"]')].map((t) => t.getAttribute('data-text'))).not.toContain(tag);
+  });
+});
