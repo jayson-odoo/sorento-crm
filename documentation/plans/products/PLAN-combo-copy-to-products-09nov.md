@@ -1,8 +1,9 @@
 # PLAN: Copy a product combo to other products (COMBO-COPY-TO-PRODUCTS)
 
-Status: Build (owner answered 9 Nov ~16:35). Built on top of #2280's branch
-(claude/acc-copy-to-products-kxcij3, merged into this lane) until #2280 lands on main. Track: small
-fix track (no migration, existing permissions) plus security review because it is a bulk write.
+Status: Review (built 75bbcf27; taken over locally as lane COMBO-COPY-LOCAL 9 Nov 18:02; origin/main
+with #2280, #2281 and #2282 merged in at 98b45464). Track: small fix track (no migration, existing
+permissions) plus security review because it is a bulk write. Guide:
+`documentation/user-guides/marketing/price-tag-packages.md` "Copy a combo to other products".
 
 ## Journey
 
