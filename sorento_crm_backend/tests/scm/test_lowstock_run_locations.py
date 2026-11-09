@@ -71,6 +71,10 @@ def _product(db, stem="SRTWT167-QT"):
 
 
 def _run(db, warehouse_ids):
+    """A run whose locations were TICKED. One more active location the run did not tick
+    exists beside them, as in any real estate: a scope covering every active warehouse is
+    a run with nothing ticked (`report_warehouse_ids`), which `_no_ticks_run` builds."""
+    _warehouse(db, "UNTICKED")
     run = ReorderRun(
         id=_u(), status="completed", buy_scope="warehouse",
         warehouse_ids=[str(w) for w in warehouse_ids] if warehouse_ids is not None else None,
@@ -530,3 +534,56 @@ def test_network_wide_readers_still_exclude_project_bins(db):
     assert svc._pool_on_hand_map(db, [product.id])[product.id] == 6.0
     assert open_po_by_product(db, [product.id])[product.id]["qty"] == 100.0
     assert open_spo_by_product(db, [product.id]).get(product.id, {"qty": 0.0})["qty"] == 0.0
+
+
+# Crew decision 10 Nov 2026 (option (b), owner may override): a run with NOTHING ticked
+# (stamped with every active warehouse, `reorder_run_service._resolve_warehouse_ids`) is
+# site pool only, as before; a project bin counts only when ticked by name.
+
+
+def _no_ticks_run(db):
+    from app.services.scm import reorder_run_service
+
+    created = reorder_run_service.create_run(db, None, enqueue=False)
+    run = db.get(ReorderRun, created["run_id"])
+    run.status = "completed"
+    run.decision_grain = "product"
+    run.front_planning_contract_version = 1
+    db.flush()
+    return run
+
+
+def test_a_run_with_nothing_ticked_excludes_project_bins(db):
+    """Nothing ticked: BRW-IB's newer receipt, stock and supply never count (BRW-BB too)."""
+    brw, brw_ib, product, spo_brw, _spo_ib, po_brw, _po_ib = _srtwcx7405_pj(db)
+    brw_bb = _warehouse(db, "BRW-BB", segment="project")
+    _stock(db, product, brw_bb, 500)
+    run = _no_ticks_run(db)
+    assert brw_ib.id in run.warehouse_ids and brw_bb.id in run.warehouse_ids
+    _buy(db, run, product, brw)
+
+    wids = svc.report_warehouse_ids(db, run)
+    assert brw.id in wids
+    assert brw_ib.id not in wids and brw_bb.id not in wids
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_brw
+    assert float(row.pool_on_hand) == 6.0
+    assert float(row.po_open_qty) == 100.0
+    assert [d["number"] for d in row.po_open_docs] == [po_brw.po_number]
+    assert float(row.incoming_spo_qty or 0) == 0.0
+
+
+def test_a_run_ticking_brw_ib_by_name_includes_it(db):
+    """The same data, BRW + BRW-IB ticked by name: BRW-IB counts in every column."""
+    brw, brw_ib, product, _spo_brw, spo_ib, _po_brw, _po_ib = _srtwcx7405_pj(db)
+    run = _run(db, [brw.id, brw_ib.id])
+    _buy(db, run, product, brw)
+
+    assert svc.report_warehouse_ids(db, run) == sorted([brw.id, brw_ib.id])
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_ib
+    assert float(row.pool_on_hand) == 20.0
+    assert float(row.po_open_qty) == 140.0
+    assert float(row.incoming_spo_qty) == 20.0

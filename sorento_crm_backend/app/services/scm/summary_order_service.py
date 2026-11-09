@@ -897,22 +897,36 @@ def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
     low stock job, whose run is created from its own `warehouse_codes`).
 
     The run's own `warehouse_ids` (what the planner, or the daily job's config, selected),
-    AS-IS (LOWSTOCK-PROJECT-BINS, owner ruling 10 Nov 2026): a project bin the planner
-    ticked (BRW-IB, BRW-BB) counts like any other ticked location, and nothing the run did
-    not select counts. The daily job's codes name no project bin, so its scope is the same
-    as before. The query only keeps the session's company scope on `Warehouse`.
+    AS-IS when locations were TICKED (LOWSTOCK-PROJECT-BINS, owner ruling 10 Nov 2026): a
+    project bin ticked by name (BRW-IB, BRW-BB) counts like any other ticked location, and
+    nothing the run did not select counts.
+
+    A run with NOTHING ticked is stamped with every active warehouse
+    (`reorder_run_service._resolve_warehouse_ids`), project bins included, so its stored
+    scope cannot say which bins anybody chose. That run reads the active SITE POOL only
+    (`pool_predicate.active_site_pool_sql`), as before #2293 (crew decision 10 Nov 2026,
+    option (b)): project stock never leaks into an unticked report, and a daily job with
+    empty `warehouse_codes` reads as it always did. "Nothing ticked" is the same test the
+    plans list labels "All" with (`reorder_run_service.resolve_run_scope`'s
+    `is_all_warehouses`: the scope covers every active warehouse the run could see).
 
     None when the run stored no scope at all (NULL: `create_run` always stamps a list, so
     only a run older than scopes, or a hand-built one): each reader then keeps its own
     pre-lane network-wide site-pool reading rather than this guessing a scope nobody chose.
     An empty stored scope is `[]`, which matches nothing.
+
+    ORM, so the session's company filter scopes `Warehouse`.
     """
+    from app.services.scm.reorder_run_service import resolve_run_scope
+
     if run.warehouse_ids is None:
         return None
     wids = [str(w) for w in run.warehouse_ids]
     if not wids:
         return []
     q = db.query(Warehouse.id).filter(Warehouse.id.in_(wids))
+    if resolve_run_scope(db, wids, None, run.started_at)["is_all_warehouses"]:
+        q = q.filter(text(active_site_pool_sql("warehouses")))
     return sorted(str(wid) for (wid,) in q.all())
 
 
