@@ -1644,6 +1644,8 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: font,
+        // TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on the canvas.
+        overflow: box.clipped ? 'hidden' : undefined,
       }}
       data-testid="accessories-box"
     >

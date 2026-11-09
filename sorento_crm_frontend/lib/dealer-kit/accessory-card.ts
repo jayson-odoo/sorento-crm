@@ -43,6 +43,12 @@ import { defaultAccessoriesProps } from './tag-template-types';
 const EPS = 1e-9;
 /** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
 export const CARD_SHRINK_MIN = 0.7;
+/**
+ * TAG-ACC-CARD-RESIZE Q1: a box too small for one card at `shrinkMin` keeps shrinking that card
+ * down to this readable floor instead of drawing nothing; below the floor the card is drawn at the
+ * floor, clipped to the box (`clipped`).
+ */
+export const CARD_SHRINK_FLOOR = 0.35;
 
 export type CardBoxProps = LayoutProps &
   Pick<AccessoriesLayerProps, 'card' | 'footer' | 'shrinkMin' | 'columns'>;
@@ -54,6 +60,8 @@ export interface CardBoxLayout extends AccessoryBoxLayout {
   footer: AccessoryRect | null;
   /** Columns actually drawn (a grid may draw fewer than asked when the card is too wide). 0 = nothing drawn. */
   columns: number;
+  /** True when even the floor-sized card overflows the box: renderers clip the cards to the box. */
+  clipped: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +96,7 @@ export function cardBoxLayout(
     scale: 1,
     footer: null,
     columns: 0,
+    clipped: false,
   });
   if (total === 0) return empty(0);
   const card = props.card;
@@ -102,9 +111,58 @@ export function cardBoxLayout(
   const min = Math.min(1, Math.max(0.1, props.shrinkMin ?? CARD_SHRINK_MIN));
 
   const innerW = boxWidth_mm - 2 * pad;
+  const availH = boxHeight_mm - top - pad - footerH;
+
+  /**
+   * TAG-ACC-CARD-RESIZE Q1: not even one card fits at `min`. One column (or one row), every card at
+   * the largest factor at which one whole card fits, never above `min` nor below the floor; under
+   * the floor one card is drawn at the floor and clipped to the box. Only boxes that drew NOTHING
+   * before reach this, so every layout that already printed is unchanged.
+   */
+  const tooSmall = (): CardBoxLayout => {
+    const vertical = props.columns !== undefined && props.columns !== null ? true : props.direction !== 'horizontal';
+    const floor = Math.min(CARD_SHRINK_FLOOR, min);
+    const oneFits = Math.min(innerW / card.width_mm, availH / card.height_mm);
+    const clipped = !(oneFits >= floor - EPS);
+    const scale = clipped ? floor : Math.min(min, oneFits);
+    const w = card.width_mm * scale;
+    const h = card.height_mm * scale;
+    const availMain = vertical ? availH : innerW;
+    const mainAt = vertical ? h : w;
+    const shown = clipped
+      ? 1
+      : Math.min(total, Math.max(1, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
+    const cards: AccessoryRect[] = [];
+    for (let i = 0; i < shown; i += 1) {
+      cards.push(
+        vertical
+          ? { x_mm: pad, y_mm: top + i * (h + gap), width_mm: w, height_mm: h }
+          : { x_mm: pad + i * (w + gap), y_mm: top, width_mm: w, height_mm: h },
+      );
+    }
+    const last = cards[shown - 1];
+    const cardsBottom = last.y_mm + last.height_mm;
+    const outW = clipped || vertical ? boxWidth_mm : last.x_mm + last.width_mm + pad;
+    const outH = clipped ? boxHeight_mm : vertical ? cardsBottom + footerH + pad : boxHeight_mm;
+    return {
+      cards,
+      shown,
+      dropped: total - shown,
+      boxWidth_mm: outW,
+      boxHeight_mm: outH,
+      ...accessoryChrome(props, outW, outH),
+      scale,
+      columns: vertical ? 1 : shown,
+      footer:
+        footerH > 0
+          ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }
+          : null,
+      clipped,
+    };
+  };
+
   if (props.columns !== undefined && props.columns !== null) {
     // S6 grid: cards fill left to right, wrap to the next row, every card the same size.
-    const availH = boxHeight_mm - top - pad - footerH;
     const wanted =
       props.columns === 'auto'
         ? Math.floor((innerW + gap + EPS) / (card.width_mm + gap))
@@ -125,10 +183,11 @@ export function cardBoxLayout(
     }
     const cw = card.width_mm * scale;
     const ch = card.height_mm * scale;
-    if (cw > innerW + EPS || !(ch > 0)) return empty(total);
+    if (!(ch > 0)) return empty(total);
+    if (cw > innerW + EPS) return tooSmall();
     const maxRows = Math.floor((availH + gap + EPS) / (ch + gap));
     const gridShown = Math.min(total, Math.max(0, maxRows) * cols);
-    if (gridShown === 0) return empty(total);
+    if (gridShown === 0) return tooSmall();
     const gridCards: AccessoryRect[] = [];
     for (let i = 0; i < gridShown; i += 1) {
       gridCards.push({
@@ -149,6 +208,7 @@ export function cardBoxLayout(
       ...accessoryChrome(props, boxWidth_mm, gridOutH),
       scale,
       columns: cols,
+      clipped: false,
       footer:
         footerH > 0
           ? { x_mm: pad, y_mm: gridBottom, width_mm: Math.max(0, boxWidth_mm - 2 * pad), height_mm: footerH }
@@ -157,8 +217,8 @@ export function cardBoxLayout(
   }
 
   const vertical = props.direction !== 'horizontal';
-  const availMain = vertical ? boxHeight_mm - top - pad - footerH : innerW;
-  const availCross = vertical ? innerW : boxHeight_mm - top - pad - footerH;
+  const availMain = vertical ? availH : innerW;
+  const availCross = vertical ? innerW : availH;
   const cardMain = vertical ? card.height_mm : card.width_mm;
   const cardCross = vertical ? card.width_mm : card.height_mm;
 
@@ -166,10 +226,12 @@ export function cardBoxLayout(
   const scale = fit >= min ? fit : min;
 
   const mainAt = cardMain * scale;
-  if (cardCross * scale > availCross + EPS || !(mainAt > 0)) return empty(total);
+  if (!(mainAt > 0)) return empty(total);
+  if (cardCross * scale > availCross + EPS) return tooSmall();
   const shown = Math.min(total, Math.max(0, Math.floor((availMain + gap + EPS) / (mainAt + gap))));
   // NaN-safe: a design missing a number (e.g. no gap) lays out nothing rather than throwing.
-  if (!(shown > 0)) return empty(total);
+  if (Number.isNaN(shown)) return empty(total);
+  if (!(shown > 0)) return tooSmall();
 
   const w = card.width_mm * scale;
   const h = card.height_mm * scale;
@@ -194,6 +256,7 @@ export function cardBoxLayout(
     ...accessoryChrome(props, outW, outH),
     scale,
     columns: vertical ? 1 : shown,
+    clipped: false,
     footer:
       footerH > 0
         ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }

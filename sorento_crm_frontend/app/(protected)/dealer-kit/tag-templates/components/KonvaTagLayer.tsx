@@ -441,6 +441,7 @@ function LayerContent({
           cardIcons={display?.cardIcons}
           iconUrls={display?.iconUrls}
           headerHidden={display?.accessoryHeaderHidden}
+          dropMarker={display?.accessoryDropMarker}
         />
       );
 
@@ -1188,6 +1189,7 @@ function AccessoriesContent({
   cardIcons,
   iconUrls,
   headerHidden,
+  dropMarker,
 }: {
   w: number;
   h: number;
@@ -1201,6 +1203,7 @@ function AccessoriesContent({
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
   headerHidden?: boolean;
+  dropMarker?: boolean;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1219,6 +1222,7 @@ function AccessoriesContent({
         cardIcons={cardIcons}
         iconUrls={iconUrls}
         headerHidden={headerHidden}
+        dropMarker={dropMarker}
       />
     );
   }
@@ -1369,6 +1373,7 @@ function DesignedAccessoriesContent({
   cardIcons,
   iconUrls,
   headerHidden,
+  dropMarker,
 }: {
   w: number;
   h: number;
@@ -1381,6 +1386,7 @@ function DesignedAccessoriesContent({
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
   headerHidden?: boolean;
+  dropMarker?: boolean;
 }) {
   // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
   const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
@@ -1407,7 +1413,7 @@ function DesignedAccessoriesContent({
   const headerNode = !headerHidden && box.header && (
     <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
   );
-  return (
+  const content = (
     <>
       {box.frame && (
         <Rect
@@ -1489,6 +1495,48 @@ function DesignedAccessoriesContent({
         </Group>
       )}
     </>
+  );
+  return (
+    <>
+      {/* TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on print. */}
+      {box.clipped ? (
+        <Group clipX={0} clipY={0} clipWidth={w} clipHeight={h}>
+          {content}
+        </Group>
+      ) : (
+        content
+      )}
+      {/* Q2: editor only (never print): how many accessories the box has no room for. */}
+      {dropMarker && box.dropped > 0 && <DropMarker w={w} h={h} dropped={box.dropped} />}
+    </>
+  );
+}
+
+/** TAG-ACC-CARD-RESIZE Q2: the "+N" chip in the box's bottom-right corner, editor canvas only. */
+function DropMarker({ w, h, dropped }: { w: number; h: number; dropped: number }) {
+  const label = `+${dropped}`;
+  const fontSize = Math.max(8, Math.min(11, h / 4));
+  const chipW = fontSize * (0.65 * label.length + 0.9);
+  const chipH = fontSize * 1.5;
+  return (
+    <Group
+      x={Math.max(0, w - chipW - 2)}
+      y={Math.max(0, h - chipH - 2)}
+      listening={false}
+      name="accessory-drop-marker"
+    >
+      <Rect width={chipW} height={chipH} fill="#f59e0b" cornerRadius={chipH / 2} />
+      <Text
+        width={chipW}
+        height={chipH}
+        text={label}
+        align="center"
+        verticalAlign="middle"
+        fontStyle="bold"
+        fontSize={fontSize}
+        fill="#ffffff"
+      />
+    </Group>
   );
 }
 

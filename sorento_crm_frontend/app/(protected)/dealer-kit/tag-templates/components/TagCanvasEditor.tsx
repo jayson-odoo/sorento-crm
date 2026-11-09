@@ -1909,7 +1909,9 @@ export function TagCanvasEditor({
   /** What the canvas draws for a layer: the box under edit shows its previewed list (samples when it has
    *  none), card 1 as the editable frame. */
   const displayFor = (layer: TagLayer) => {
-    const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    const shown = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+    // TAG-ACC-CARD-RESIZE Q2: the editor (never print) marks the cards a box has no room for.
+    const display = layer.props.kind === 'accessories' ? { ...shown, accessoryDropMarker: true } : shown;
     if (headerDragId === layer.id) return { ...display, accessoryHeaderHidden: true };
     if (accessoryEdit?.layerId !== layer.id) return display;
     // Under edit the box's OWN design is what is edited, never a previewed owner's override.

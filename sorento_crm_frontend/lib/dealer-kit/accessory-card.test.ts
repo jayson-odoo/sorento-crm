@@ -19,6 +19,7 @@ import {
   accessoryDesign,
   applyAccessoryDesign,
   boxColours,
+  CARD_SHRINK_FLOOR,
   cardBoxLayout,
   cardElementsFor,
   cardElementsForDesign,
@@ -567,5 +568,67 @@ describe('cardElementsFor close-up under a kept element', () => {
     // freed space starts at the picture's bottom (15), not the dots' top (10): 16 - (16 - 15)... name moves up by 1 at most
     expect(byId(out, 'name')!.y_mm as number).toBeGreaterThanOrEqual(15 - 1e-6);
     expect(byId(out, 'name')!.y_mm).toBeCloseTo(15);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAG-ACC-CARD-RESIZE Q1: a box too small for one card at shrinkMin keeps rendering
+// ---------------------------------------------------------------------------
+
+describe('cardBoxLayout: a box too small for one card at shrinkMin (TAG-ACC-CARD-RESIZE)', () => {
+  it('narrower than one card at 70%: shrinks below 70% to the width, never draws nothing', () => {
+    // card 30 wide, inner width 20 - 3 = 17: 17 / 30 = 0.567 < 0.7
+    const out = cardBoxLayout(3, boxProps(), 20, 80);
+    expect(out.shown).toBeGreaterThan(0);
+    expect(out.scale).toBeCloseTo(17 / 30);
+    expect(out.cards[0].width_mm).toBeCloseTo(17);
+    expect(out.shown + out.dropped).toBe(3);
+    expect(out.clipped).toBe(false);
+  });
+
+  it('shorter than one card at 70%: one card at the height that fits, the rest dropped', () => {
+    // card 20 high, room 12 - 3 = 9: 9 / 20 = 0.45
+    const out = cardBoxLayout(3, boxProps(), 60, 12);
+    expect(out.shown).toBe(1);
+    expect(out.dropped).toBe(2);
+    expect(out.scale).toBeCloseTo(0.45);
+    expect(out.cards[0].height_mm).toBeCloseTo(9);
+    expect(out.boxHeight_mm).toBeLessThanOrEqual(12 + 1e-6);
+  });
+
+  it('below the readable floor: one card at the floor, clipped to the box as drawn', () => {
+    const out = cardBoxLayout(3, boxProps(), 10, 8);
+    expect(out.shown).toBe(1);
+    expect(out.dropped).toBe(2);
+    expect(out.scale).toBe(CARD_SHRINK_FLOOR);
+    expect(out.clipped).toBe(true);
+    expect(out.boxWidth_mm).toBe(10);
+    expect(out.boxHeight_mm).toBe(8);
+  });
+
+  it('a horizontal box shorter than one card at 70% keeps rendering too', () => {
+    const props = boxProps({ direction: 'horizontal', card: { width_mm: 20, height_mm: 20, elements: [] } });
+    const out = cardBoxLayout(3, props, 70, 12);
+    expect(out.shown).toBeGreaterThan(0);
+    expect(out.scale).toBeCloseTo(9 / 20);
+  });
+
+  it('a grid box narrower than one card at 70% keeps rendering', () => {
+    const out = cardBoxLayout(4, boxProps({ columns: 2 }), 20, 80);
+    expect(out.shown).toBeGreaterThan(0);
+    expect(out.columns).toBe(1);
+    expect(out.scale).toBeCloseTo(17 / 30);
+  });
+
+  it('a box that fits at or above 70% is laid out exactly as before (no clip)', () => {
+    const out = cardBoxLayout(3, boxProps(), 60, 40);
+    expect(out.scale).toBe(0.7);
+    expect(out.shown).toBe(2);
+    expect(out.clipped).toBe(false);
+  });
+
+  it('an empty list or a card with no size still draws nothing', () => {
+    expect(cardBoxLayout(0, boxProps(), 10, 8).shown).toBe(0);
+    expect(cardBoxLayout(2, boxProps({ card: { width_mm: 0, height_mm: 20, elements: [] } }), 10, 8).shown).toBe(0);
   });
 });
