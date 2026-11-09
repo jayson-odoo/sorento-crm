@@ -56,7 +56,8 @@ def _parse(remark=None, tier4=None, with_remark=True):
 
 def _yearly(parsed):
     return sorted(
-        ((s.codes, s.start, s.end, [(t.threshold, t.rate) for t in s.tiers], s.replaced_by)
+        # The last item was the replaced-by link, gone since lane TARGET-PER-ACCOUNT-PAYOUT: always None.
+        ((s.codes, s.start, s.end, [(t.threshold, t.rate) for t in s.tiers], None)
          for s in parsed.schemes if s.kind == "yearly"),
         key=lambda x: x[0],
     )

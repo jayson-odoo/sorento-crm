@@ -267,13 +267,6 @@ function TargetsGrid({
               size: 150,
               meta: { headerTitle: 'Counts', skeleton: <Skeleton className="h-5 w-24" /> },
             },
-            {
-              id: 'payout',
-              header: ({ column }) => <DataGridColumnHeader title="Pays to" column={column} />,
-              cell: ({ row }) => <TextCell value={row.original.payout_label} />,
-              size: 100,
-              meta: { headerTitle: 'Pays to', skeleton: <Skeleton className="h-4 w-16" /> },
-            },
           ]
         : tab === 'team'
         ? [

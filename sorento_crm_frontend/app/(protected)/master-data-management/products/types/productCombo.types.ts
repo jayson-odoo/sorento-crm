@@ -98,3 +98,6 @@ export interface ProductComboUpdate {
   list_price?: number | null;
   sell_price?: number | null;
 }
+
+/** `product_combos.name` is VARCHAR(100); the API answers 422 past it (COMBO-RENAME). */
+export const COMBO_NAME_MAX = 100;

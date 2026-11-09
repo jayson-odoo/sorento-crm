@@ -87,7 +87,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { apiError, extractApiError } from '@/lib/api-client';
 import type {
   ProductComboCreate,
   ProductComboImage,
@@ -163,7 +163,8 @@ export async function updateProductCombo(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(write),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the combo'));
+  // Carries the status: a rename tells a taken name (409) from other refusals.
+  if (!res.ok) throw await apiError(res, 'Failed to save the combo');
   return (await res.json()) as ProductComboRow;
 }
 

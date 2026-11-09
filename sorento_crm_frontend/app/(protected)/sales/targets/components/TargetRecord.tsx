@@ -165,6 +165,8 @@ interface TierDraft {
   period: string;
   /** Dealer targets: the rate typed for each counted account; empty = earns nothing. */
   accountRates: Record<string, string>;
+  /** Dealer targets: each account's own RM Additional (owner 8 Nov); empty = none. */
+  accountBonuses: Record<string, string>;
   /** Saved with per-account rates (`target_tier_rates`, as the import writes them): Save keeps
    * them per account rather than collapsing equal rates into the tier rate, so a Save never
    * rewrites the rates of tiers nobody touched (crew browser pass, 7 Nov). */
@@ -176,8 +178,12 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
   nextTierKey += 1;
   const threshold = tier ? (tier.from_pct ?? tier.threshold) : null;
   const accountRates: Record<string, string> = {};
+  const accountBonuses: Record<string, string> = {};
   if (tier?.account_rates) {
-    for (const r of tier.account_rates) accountRates[r.customer_id] = String(r.rate);
+    for (const r of tier.account_rates) {
+      accountRates[r.customer_id] = String(r.rate);
+      if (r.bonus_amount !== null && r.bonus_amount !== undefined) accountBonuses[r.customer_id] = String(r.bonus_amount);
+    }
   } else if (tier && tier.rate !== null && tier.rate !== undefined) {
     for (const id of accounts) accountRates[id] = String(tier.rate);
   }
@@ -193,6 +199,7 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
     additional: !!tier?.is_additional,
     period: tier?.period_start ?? '',
     accountRates,
+    accountBonuses,
     perAccount: !!tier?.account_rates,
   };
 }
@@ -222,9 +229,8 @@ interface Draft {
   newAgentFigures: Record<string, Record<string, string>>;
   method: CommissionMethod;
   tiers: TierDraft[];
-  /** Dealer targets: the counted accounts and the paid one (customer ids). */
+  /** Dealer targets: the counted accounts (customer ids), each its own payee. */
   accountIds: string[];
-  payoutId: string;
   thresholdUnit: ThresholdUnit;
   rounding: Rounding;
   perPeriod: boolean;
@@ -254,7 +260,6 @@ function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
     method: 'none',
     tiers: [],
     accountIds: [],
-    payoutId: '',
     // A dealer scheme is fixed RM tiers per period, highest tier paying (owner, 16 Oct).
     thresholdUnit: preset?.kind === 'dealer' ? 'amount' : 'pct',
     rounding: 'sen',
@@ -290,7 +295,6 @@ function draftOf(target: SalesTargetDetail): Draft {
     method: target.commission_method ?? 'none',
     tiers: (target.tiers ?? []).map((t) => tierDraft(t, '', accountIds)),
     accountIds,
-    payoutId: target.payout_account?.customer_id ?? '',
     thresholdUnit: target.threshold_unit ?? 'pct',
     rounding: target.rounding ?? 'sen',
     perPeriod: !!target.tiers_per_period,
@@ -312,18 +316,24 @@ function savedFigures(target: SalesTargetDetail): Record<string, string> {
 }
 
 /** A dealer tier's rates: one `rate` when every counted account has the same one, else the
- * accounts given a rate (only they earn on the tier). A tier saved per account stays per
- * account. */
+ * accounts given a rate (only they earn on the tier). A tier saved per account, or with an RM
+ * Additional typed per account, stays per account. */
 function dealerRates(t: TierDraft, accountIds: string[]): Pick<CommissionTier, 'rate' | 'account_rates'> {
   const typed = accountIds.map((id) => (t.accountRates[id] ?? '').trim());
-  if (!t.perAccount && typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
+  const bonus = (id: string) => (t.accountBonuses[id] ?? '').trim();
+  const ownBonus = accountIds.some((id) => bonus(id) !== '');
+  if (!t.perAccount && !ownBonus && typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
     return { rate: Number(typed[0]), account_rates: null };
   }
   return {
     rate: 0,
     account_rates: accountIds
-      .filter((id) => (t.accountRates[id] ?? '').trim() !== '')
-      .map((id) => ({ customer_id: id, rate: Number(t.accountRates[id]) })),
+      .filter((id) => (t.accountRates[id] ?? '').trim() !== '' || bonus(id) !== '')
+      .map((id) => ({
+        customer_id: id,
+        rate: Number(t.accountRates[id] || 0),
+        ...(bonus(id) !== '' ? { bonus_amount: Number(bonus(id)) } : {}),
+      })),
   };
 }
 
@@ -355,10 +365,27 @@ function tierProblem(draft: Draft): string {
     return draft.thresholdUnit === 'pct' ? 'Type a from % for every tier.' : `Type the threshold (${unit}) of every tier.`;
   }
   if (draft.tiers.some((t) => !t.additional && bad(t.addValue, false))) return 'An Additional is not a number.';
+  if (
+    dealer &&
+    draft.accountIds.length > 1 &&
+    draft.tiers.some((t) => !t.additional && t.addKind === 'amount' && t.addValue.trim() !== '')
+  ) {
+    return 'This target counts several accounts: set the RM Additional per account, not for the tier.';
+  }
   if (dealer) {
     if (draft.tiers.some((t) => Object.values(t.accountRates).some((v) => bad(v, false)))) return 'A rate is not a number.';
+    if (draft.tiers.some((t) => Object.values(t.accountBonuses).some((v) => bad(v, false)))) {
+      return 'An Additional is not a number.';
+    }
     if (draft.tiers.some((t) => !draft.accountIds.some((id) => (t.accountRates[id] ?? '').trim() !== ''))) {
       return 'Give every tier a rate for at least one account.';
+    }
+    if (
+      draft.tiers.some(
+        (t) => t.addValue.trim() !== '' && draft.accountIds.some((id) => (t.accountBonuses[id] ?? '').trim() !== ''),
+      )
+    ) {
+      return "A tier's Additional is set per account or for the tier, not both.";
     }
   } else if (draft.tiers.some((t) => bad(t.rate, true))) {
     return 'Type a rate for every tier.';
@@ -420,7 +447,6 @@ function changes(target: SalesTargetDetail, draft: Draft): SalesTargetUpdatePayl
   if (target.subject_kind === 'dealer') {
     const before = (target.accounts ?? []).map((a) => a.customer_id);
     if (draft.accountIds.join() !== before.join()) out.customer_ids = draft.accountIds;
-    if (draft.payoutId !== (target.payout_account?.customer_id ?? '')) out.payout_customer_id = draft.payoutId || null;
   }
   // A child's What counts and Dates follow its team target (T3); its figures and tiers are its own.
   if (target.parent) return out;
@@ -575,9 +601,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   for (const c of options?.categories ?? []) labels.current.set(c.id, c.label);
   for (const b of options?.brands ?? []) labels.current.set(b.id, b.label);
   for (const a of target?.accounts ?? []) labels.current.set(a.customer_id, `${a.code} - ${a.name}`);
-  if (target?.payout_account) {
-    labels.current.set(target.payout_account.customer_id, `${target.payout_account.code} - ${target.payout_account.name}`);
-  }
   const searchCustomers = useTargetCustomerSearch();
   const fetchCustomers = useCallback(
     async (query: string) => {
@@ -730,7 +753,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
         ? {
             subject_kind: 'dealer',
             customer_ids: draft.accountIds,
-            ...(draft.payoutId ? { payout_customer_id: draft.payoutId } : {}),
             ...figure,
             ...common,
           }
@@ -871,7 +893,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                         subjectId: '',
                         agentFigures: {},
                         accountIds: [],
-                        payoutId: '',
                         // A dealer scheme is fixed RM tiers, highest tier paying (owner, 16 Oct).
                         ...(v === 'dealer' ? { thresholdUnit: 'amount' as const, perPeriod: true } : {}),
                       })
@@ -892,12 +913,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   <SearchableMultiSelect
                     id="target-who"
                     value={draft.accountIds}
-                    onChange={(ids) =>
-                      set({
-                        accountIds: ids,
-                        payoutId: draft.payoutId || ids[0] || '',
-                      })
-                    }
+                    onChange={(ids) => set({ accountIds: ids })}
                     fetchOptions={fetchCustomers}
                     selectedOptions={draft.accountIds.map((id) => ({ value: id, label: labels.current.get(id) ?? 'Loading account' }))}
                     placeholder="Search customers by code or name"
@@ -1124,7 +1140,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   commission={target.commission_method !== 'none'}
                   ratio={target.threshold_unit === 'points'}
                   provisional={isDealer && target.basis !== 'invoiced'}
-                  paysTo={isDealer}
                 >
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
@@ -1177,17 +1192,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                             </td>
                             <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                               {future || paid === null ? '-' : formatMoney(paid)}
-                              {p.replaced ? (
-                                <span className="block text-xs text-muted-foreground">
-                                  {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
-                                </span>
-                              ) : null}
                             </td>
-                            {isDealer ? (
-                              <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                                {paid ? payoutShort(target) : '-'}
-                              </td>
-                            ) : null}
                           </>
                         ) : null}
                       </tr>
@@ -1246,8 +1251,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   target={target}
                   draft={draft}
                   labels={labels.current}
-                  fetchCustomers={fetchCustomers}
-                  set={set}
                 />
               </section>
             </Card>
@@ -1374,9 +1377,14 @@ function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
   return p.commission_earned + (p.bonus_earned ?? 0);
 }
 
-/** `+ 1.00%`, `+ RM 1.00/unit` or `+ RM 500.00`: a tier's Additional; `''` when it has none. */
+/** `+ 1.00%`, `+ RM 1.00/unit`, `+ RM 500.00` or, set per account, `+ A/C I RM 500.00, A/C III
+ * RM 100.00`: a tier's Additional; `''` when it has none. */
 export function additionalText(add: TierAdditional | null | undefined, metric: TargetMetric): string {
   if (!add || !add.value) return '';
+  if (add.kind === 'amount' && add.accounts?.length) {
+    const own = add.accounts.filter((e) => e.rate).map((e) => `${e.label ?? ''} RM ${formatMoney(e.rate)}`.trim());
+    return `+ ${own.join(', ')}`;
+  }
   if (add.kind === 'amount') return `+ RM ${formatMoney(add.value)}`;
   return metric === 'quantity' ? `+ RM ${formatMoney(add.value)}/unit` : `+ ${formatMoney(add.value)}%`;
 }
@@ -1399,34 +1407,14 @@ export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMet
     .join(', ');
 }
 
-/** `300-A077 (A/C I)` for a table cell; the full name sits in the summary and the title. */
-function payoutShort(target: SalesTargetDetail): string {
-  const a = target.payout_account;
-  return a ? `${a.code} (${a.label})` : '-';
-}
-
-/** `A CRAFT IDEA SDN BHD (A/C I)`: the label in brackets once, also when the account's own
- * name already ends with it in round or square brackets (`... [A/C I]`, as on prod). */
-function nameWithLabel(a: { name: string; label: string }): string {
-  const name = a.name.trimEnd();
-  return name.endsWith(`(${a.label})`) || name.endsWith(`[${a.label}]`) ? a.name : `${a.name} (${a.label})`;
-}
-
-/** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */
-function payoutText(target: SalesTargetDetail): string {
-  const a = target.payout_account;
-  return a ? `${a.code} - ${nameWithLabel(a)}` : '-';
-}
-
-/** Above the tabs: what the target has earned so far and where it is paid (owner, 4 Nov:
- * "this dealer is eligible for around 6k commission right? how do I see this 6k pay to which
- * acc?"). Earned to date counts ended periods only; the current period is shown apart. */
+/** Above the tabs: what the target has earned so far. Earned to date counts ended periods
+ * only; the current period is shown apart. A dealer target pays each account its own share,
+ * shown per account on the Accounts tab (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov). */
 function CommissionSummary({ target }: { target: SalesTargetDetail }) {
   const current = target.periods.find((p) => p.is_current);
-  const isDealer = target.subject_kind === 'dealer';
   return (
     <Card>
-      <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
+      <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
         <Field label="Commission earned to date (RM)">
           <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_to_date ?? 0)}</span>
         </Field>
@@ -1442,13 +1430,6 @@ function CommissionSummary({ target }: { target: SalesTargetDetail }) {
             <span className="text-lg font-semibold">-</span>
           )}
         </Field>
-        {isDealer ? (
-          <Field label="Pays to">
-            <span className="block truncate font-medium" title={payoutText(target)}>
-              {payoutText(target)}
-            </span>
-          </Field>
-        ) : null}
       </section>
     </Card>
   );
@@ -1465,7 +1446,6 @@ function PeriodsTable({
   commission = false,
   ratio = false,
   provisional = false,
-  paysTo = false,
   footer = null,
   children,
 }: {
@@ -1473,8 +1453,6 @@ function PeriodsTable({
   commission?: boolean;
   ratio?: boolean;
   provisional?: boolean;
-  /** A dealer target: the account each period's commission pays to. */
-  paysTo?: boolean;
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -1495,7 +1473,6 @@ function PeriodsTable({
                 <th className="px-3 py-2 text-start font-medium">Tier reached</th>
                 <th className="px-3 py-2 text-end font-medium">Rate</th>
                 <th className="px-3 py-2 text-end font-medium">Commission (RM)</th>
-                {paysTo ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
               </>
             ) : null}
           </tr>
@@ -1907,25 +1884,19 @@ function accountColumns(
   return ids.map((id) => ({ id, label: byId.get(id) ?? (labels.get(id) ?? '').split(' - ')[0] ?? '' }));
 }
 
-/** A dealer target's Accounts tab: in read mode, each counted account's sales in every period
- * with the period's total, its commission and the account that commission pays to (owner Q5,
- * 4 Nov: commission is earned on all the accounts together and paid to one, so it sits on the
- * period's total, never split per selling account). In Edit, the accounts being picked. The
- * paid account may be one the target does not count (owner ruling 16 Oct). */
+/** A dealer target's Accounts tab: in read mode, each counted account's sales and its own
+ * commission in every period, then the period's total (lane TARGET-PER-ACCOUNT-PAYOUT, owner
+ * 8 Nov: each account is its own payee, no single "Pays to"). In Edit, the accounts being picked. */
 function DealerAccounts({
   target,
   draft,
   labels,
-  fetchCustomers,
-  set,
   onOpenTiers,
 }: {
   onOpenTiers: (p: TargetPeriod) => void;
   target: SalesTargetDetail | undefined;
   draft: Draft | null;
   labels: Map<string, string>;
-  fetchCustomers: (query: string) => Promise<{ value: string; label: string }[]>;
-  set: (patch: Partial<Draft>) => void;
 }) {
   const accounts: TargetAccount[] = draft
     ? draft.accountIds.map((id) => {
@@ -1971,37 +1942,6 @@ function DealerAccounts({
           <span className="text-xs text-muted-foreground">Pick them under Details.</span>
         </div>
       )}
-      <div className="sm:w-96">
-        <Field label="Pays to" htmlFor={draft ? 'target-pays-to' : undefined}>
-          {draft ? (
-            <SearchableSelect
-              id="target-pays-to"
-              value={draft.payoutId}
-              onChange={(v) => set({ payoutId: v })}
-              fetchOptions={(query) => fetchCustomers(query)}
-              selectedOption={
-                draft.payoutId ? { value: draft.payoutId, label: labels.get(draft.payoutId) ?? '' } : undefined
-              }
-              placeholder="The first counted account"
-              clearable
-              wrapOptions
-            />
-          ) : target?.payout_account ? (
-            payoutText(target)
-          ) : (
-            '-'
-          )}
-        </Field>
-      </div>
-      {target?.replaced_by ? (
-        <div className="sm:w-96">
-          <Field label="Replaced by">
-            <Link href={`/sales/targets/${target.replaced_by.target_id}`} className="text-primary hover:underline">
-              {`${target.replaced_by.target_no} ${target.replaced_by.name}`}
-            </Link>
-          </Field>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -2155,11 +2095,18 @@ function CommissionTiers({
     );
   }
   const fromLabel = draft.thresholdUnit === 'pct' ? 'From (%)' : `From (${THRESHOLD_LABEL[draft.thresholdUnit]})`;
+  // Several counted accounts: each account's own RM Additional, like its rate (owner 8 Nov).
+  const ownBonus = dealer && accounts.length > 1;
   // Legacy "+ Additional" rows not yet folded onto their tier keep their Type column.
   const legacy = draft.tiers.some((t) => t.additional);
+  // A combined target takes its RM Additional per account only (owner 8 Nov 23:59): the tier's
+  // own Additional is a % there.
   const addKindOptions = [
     { value: 'pct', label: draft.metric === 'quantity' ? 'RM/unit' : '%' },
-    { value: 'amount', label: 'RM' },
+    // A legacy tier-level amount keeps its RM option so it shows what Save asks to clear.
+    ...(ownBonus && !draft.tiers.some((t) => t.addKind === 'amount' && t.addValue.trim() !== '')
+      ? []
+      : [{ value: 'amount', label: 'RM' }]),
   ];
   const periodOptions = periodStarts.map((p) => ({ value: p.start, label: periodLabel(p.start) }));
   return (
@@ -2181,6 +2128,11 @@ function CommissionTiers({
               ) : (
                 <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
               )}
+              {ownBonus
+                ? accounts.map((a) => (
+                    <th key={`b-${a.id}`} className="px-3 py-2 text-end font-medium">{`${a.label} additional (RM)`}</th>
+                  ))
+                : null}
               <th className="px-3 py-2 text-end font-medium">Additional</th>
               <th className="w-10 px-3 py-2">
                 <span className="sr-only">Remove</span>
@@ -2252,6 +2204,24 @@ function CommissionTiers({
                     />
                   </td>
                 )}
+                {ownBonus
+                  ? accounts.map((a) => (
+                      <td key={`b-${a.id}`} className="px-3 py-1.5">
+                        {t.additional ? null : (
+                          <NumberInput
+                            min={0}
+                            step="any"
+                            aria-label={`Tier ${i + 1} ${a.label} additional (RM)`}
+                            value={t.accountBonuses[a.id] ?? ''}
+                            onChange={(e) =>
+                              setTier(t.key, { accountBonuses: { ...t.accountBonuses, [a.id]: e.target.value } })
+                            }
+                            className="ms-auto h-8 w-24 text-end"
+                          />
+                        )}
+                      </td>
+                    ))
+                  : null}
                 <td className="px-3 py-1.5">
                   {t.additional ? null : (
                     <div className="flex items-center justify-end gap-1.5">
@@ -2319,10 +2289,30 @@ function ColumnsButton<T>({ table }: { table: Table<T> }) {
 }
 
 /** A tier's Additional as the engine reads it: its % first, else its RM (Bonus). */
-function tierAdditional(t: CommissionTier): TierAdditional | null {
+function tierAdditional(t: CommissionTier, labelOf: (customerId: string) => string): TierAdditional | null {
   if (t.additional_rate) return { kind: 'pct', value: t.additional_rate };
+  const own = (t.account_rates ?? []).filter((r) => r.bonus_amount);
+  if (own.length) {
+    return {
+      kind: 'amount',
+      value: own.reduce((sum, r) => sum + (r.bonus_amount ?? 0), 0),
+      accounts: own.map((r) => ({ label: labelOf(r.customer_id), rate: r.bonus_amount ?? null })),
+    };
+  }
   if (t.bonus_amount) return { kind: 'amount', value: t.bonus_amount };
   return null;
+}
+
+/** The tier table's Additional cell; a legacy tier-level RM amount on a combined target pays
+ * nothing (owner 8 Nov 23:59), so it says so. */
+function tierAdditionalText(t: CommissionTier, target: SalesTargetDetail): string {
+  const labelOf = (id: string) => target.accounts?.find((a) => a.customer_id === id)?.label ?? '';
+  const add = tierAdditional(t, labelOf);
+  const combined = target.subject_kind === 'dealer' && (target.accounts ?? []).length > 1;
+  if (combined && add?.kind === 'amount' && !add.accounts?.length) {
+    return `RM ${formatMoney(add.value)} not paid: set it per account`;
+  }
+  return additionalText(add, target.metric);
 }
 
 /** A period's tiers in the engine's order: main tiers by threshold (so position n is "Tier n"),
@@ -2448,7 +2438,16 @@ function TiersGrid({
       id: 'additional',
       accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
       header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
-      cell: ({ row }) => additionalText(tierAdditional(row.original.tier), target.metric) || '-',
+      cell: ({ row }) => {
+        const text = tierAdditionalText(row.original.tier, target);
+        return text ? (
+          <span className="block truncate" title={text}>
+            {text}
+          </span>
+        ) : (
+          '-'
+        );
+      },
       size: 130,
       meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
     });
@@ -2671,35 +2670,13 @@ function PeriodsGrid({
           cell: ({ row }) => {
             const p = row.original;
             const paid = paidIn(p);
-            return (
-              <span>
-                {future(p) || paid === null ? '-' : formatMoney(paid)}
-                {p.replaced ? (
-                  <span className="block text-xs text-muted-foreground">
-                    {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
-                  </span>
-                ) : null}
-              </span>
-            );
+            return <span>{future(p) || paid === null ? '-' : formatMoney(paid)}</span>;
           },
           footer: () => formatMoney(sum(paidIn)),
           size: 150,
           meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
         },
       );
-      if (isDealer) {
-        out.push({
-          id: 'pays_to',
-          accessorFn: (p) => (paidIn(p) ? payoutShort(target) : ''),
-          header: ({ column }) => <DataGridColumnHeader title="Pays to" column={column} />,
-          cell: ({ row }) => {
-            const paid = paidIn(row.original);
-            return <span title={paid ? payoutText(target) : undefined}>{paid ? payoutShort(target) : '-'}</span>;
-          },
-          size: 170,
-          meta: { headerTitle: 'Pays to' },
-        });
-      }
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2730,8 +2707,9 @@ interface AccountRow {
   first: boolean;
 }
 
-/** The Accounts tab in read mode: each counted account's sales per period, then the period's
- * total with its commission and the account it pays to. */
+/** The Accounts tab in read mode: each counted account's sales and its own commission per
+ * period (each account is its own payee, owner 8 Nov), then the period's total. On a points
+ * target, Points beside Sales (RM), at the period's own ratio (the one the tiers are read with). */
 function AccountsGrid({
   target,
   accounts,
@@ -2744,6 +2722,7 @@ function AccountsGrid({
   onOpenTiers: (p: TargetPeriod) => void;
 }) {
   const commission = target.commission_method !== 'none';
+  const points = target.threshold_unit === 'points';
   const rows = useMemo<AccountRow[]>(
     () =>
       periods.flatMap((p) => [
@@ -2753,10 +2732,11 @@ function AccountsGrid({
     [periods, accounts],
   );
   const columns = useMemo<ColumnDef<AccountRow>[]>(() => {
-    const sales = (r: AccountRow) =>
-      r.account
-        ? ((r.period.accounts ?? []).find((a) => a.customer_id === r.account?.customer_id)?.achieved_value ?? 0)
-        : (r.period.achieved_value ?? 0);
+    const own = (r: AccountRow) => (r.period.accounts ?? []).find((a) => a.customer_id === r.account?.customer_id);
+    const sales = (r: AccountRow) => (r.account ? (own(r)?.achieved_value ?? 0) : (r.period.achieved_value ?? 0));
+    const pointsOf = (r: AccountRow) => (r.account ? own(r)?.achieved_points : r.period.achieved_points) ?? null;
+    // Each account's own commission + bonus; the total row is the period's.
+    const paid = (r: AccountRow) => (r.account ? (own(r)?.commission_earned ?? null) : paidIn(r.period));
     const out: ColumnDef<AccountRow>[] = [
       {
         id: 'period',
@@ -2778,7 +2758,7 @@ function AccountsGrid({
             </span>
           );
         },
-        size: 240,
+        size: 200,
         meta: { headerTitle: 'Period' },
       },
       {
@@ -2786,7 +2766,7 @@ function AccountsGrid({
         accessorFn: (r) => r.account?.code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         cell: ({ row }) => row.original.account?.code ?? '',
-        size: 110,
+        size: 120,
         meta: { headerTitle: 'Code' },
       },
       {
@@ -2798,7 +2778,7 @@ function AccountsGrid({
             {row.original.account?.name ?? ''}
           </span>
         ),
-        size: 240,
+        size: 120,
         meta: { headerTitle: 'Customer' },
       },
       {
@@ -2819,7 +2799,7 @@ function AccountsGrid({
           />
         ),
         cell: ({ row }) => formatMoney(sales(row.original)),
-        size: 190,
+        size: 170,
         meta: {
           headerTitle: target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`,
           cellClassName: 'text-end tabular-nums',
@@ -2827,32 +2807,34 @@ function AccountsGrid({
         },
       },
     ];
+    if (points) {
+      out.push({
+        id: 'points',
+        accessorFn: pointsOf,
+        header: ({ column }) => <DataGridColumnHeader title="Points" column={column} />,
+        cell: ({ row }) => {
+          const value = pointsOf(row.original);
+          return row.original.period.ratio_missing || value === null ? 'No ratio' : formatFigure(value);
+        },
+        size: 130,
+        meta: { headerTitle: 'Points', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
     if (commission) {
-      out.push(
-        {
-          id: 'commission',
-          accessorFn: (r) => (r.account ? null : paidIn(r.period)),
-          header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
-          cell: ({ row }) => (row.original.account ? '' : formatMoney(paidIn(row.original.period))),
-          size: 150,
-          meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      out.push({
+        id: 'commission',
+        accessorFn: paid,
+        header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
+        cell: ({ row }) => {
+          const value = paid(row.original);
+          return value === null ? '-' : formatMoney(value);
         },
-        {
-          id: 'pays_to',
-          accessorFn: (r) => (r.account ? '' : payoutShort(target)),
-          header: ({ column }) => <DataGridColumnHeader title="Pays to" column={column} />,
-          cell: ({ row }) => {
-            if (row.original.account) return '';
-            const paid = paidIn(row.original.period);
-            return <span title={paid ? payoutText(target) : undefined}>{paid ? payoutShort(target) : '-'}</span>;
-          },
-          size: 170,
-          meta: { headerTitle: 'Pays to' },
-        },
-      );
+        size: 180,
+        meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
     }
     return out;
-  }, [target, commission, onOpenTiers]);
+  }, [target, commission, points, onOpenTiers]);
   return (
     <PanelDataGrid
       toolbar={({ table }) => (
