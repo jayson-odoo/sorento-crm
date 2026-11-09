@@ -44,7 +44,15 @@ scope (none stored) keeps the pre-lane readings; `[]` matches nothing. `last_in_
 a line by warehouse id, and by the book's `location_code` only when the line has no
 warehouse id.
 
+Last in qty is ONE RECEIPT, not one line (crew decision, 10 Nov 2026): the lines of the
+newest SPO number + container + delivery date inside the report locations, SUMMED, so it
+matches BRW incoming qty (SRTWB248 on BRW + BRW-RSV: 170 + 4 = 174). A tie on date and
+recorded instant falls to SPO number, then container, highest first: never row order.
+
 ## Consequences named for the owner
+
+- OPEN with the owner, unchanged here: whether a project bin (BRW-IB, BRW-BB) picked in
+  Start Plan should count in these columns. Today `report_warehouse_ids` drops it on purpose.
 
 - On a location-scoped run, "BRW on hand" is now that location's stock, so the "Low stock"
   sheet (`_is_low`: on hand below reorder level) can list a product that has stock only

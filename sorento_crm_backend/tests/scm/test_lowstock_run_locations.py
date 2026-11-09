@@ -333,3 +333,82 @@ def test_an_empty_stored_scope_reads_no_location_at_all(db):
     assert svc.report_warehouse_ids(db, _run(db, [])) == []
     assert svc.report_warehouse_ids(db, _run(db, None)) is None
     assert svc.report_warehouse_ids(db, _run(db, [brw.id])) == [brw.id]
+
+
+def _one_receipt_in_two_locations(db, *, qty_a, qty_b):
+    """One receipt (same SPO, container and delivery date) split across two site-pool
+    locations, both lines created in the SAME instant, the way an import writes them."""
+    a = _warehouse(db, "BRW")
+    b = _warehouse(db, "BRW-RSV")
+    product = _product(db, "SRTWB248")
+    spo = _code("SPO", 50)
+    same_instant = datetime(2026, 10, 1, 9, 0, 0)
+    for wh, qty in ((a, qty_a), (b, qty_b)):
+        _spo(db, product, wh, qty, spo_number=spo, container="TGBU8974861",
+             expected=date(2026, 10, 5), created_at=same_instant)
+    # An OLDER receipt at the same locations, which must never be summed in.
+    _spo(db, product, a, 999, spo_number=_code("SPO-OLD", 50), container="OLDU0000001",
+         expected=date(2026, 6, 1), created_at=same_instant)
+    return a, b, product, spo
+
+
+def test_last_in_sums_every_line_of_the_newest_receipt_in_the_runs_locations(db):
+    """SRTWB248 shape on a BRW + BRW-RSV plan: one receipt of 170 + 4 reads `- 174`, the
+    same figure BRW incoming qty prints, never one line picked arbitrarily."""
+    a, b, product, spo = _one_receipt_in_two_locations(db, qty_a=170, qty_b=4)
+    run = _run(db, [a.id, b.id])
+    _buy(db, run, product, a)
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert float(row.last_receipt_qty) == 174.0
+    assert row.last_receipt_spo_number == spo
+    assert row.last_receipt_container_number == "TGBU8974861"
+    assert row.last_receipt_date == date(2026, 10, 5)
+    assert float(row.incoming_spo_qty) == 1173.0  # 174 + the older open 999
+    report_row = svc.report(db, run_id=run.id)["rows"][0]
+    assert svc._last_in_text(report_row["last_receipt"]) == "TGBU8974861 - 174"
+
+
+def test_last_in_sums_only_the_lines_inside_the_runs_locations(db):
+    """The same receipt on a BRW-only plan: only BRW's line (170) is inside the plan, so
+    Last in is `- 170`, and that is the same on every run."""
+    a, _b, product, _spo_number = _one_receipt_in_two_locations(db, qty_a=170, qty_b=4)
+    run = _run(db, [a.id])
+    _buy(db, run, product, a)
+
+    svc.write_rows(db, run.id)
+    assert float(_row(db, run, product).last_receipt_qty) == 170.0
+
+
+def test_one_receipt_split_into_several_lines_at_one_location_is_summed(db):
+    """Two lines of one receipt at the SAME location (SRTWCX7405-RL-S-PJ shape: 11 + 31)
+    read as one receipt of 42."""
+    brw = _warehouse(db, "BRW")
+    product = _product(db, "SRTWCX7405")
+    spo = _code("SPO", 50)
+    same_instant = datetime(2026, 5, 20, 9, 0, 0)
+    for qty in (11, 31):
+        _spo(db, product, brw, qty, spo_number=spo, container="OOCU7774397",
+             expected=date(2026, 5, 29), created_at=same_instant)
+    run = _run(db, [brw.id])
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    assert float(_row(db, run, product).last_receipt_qty) == 42.0
+
+
+def test_two_different_receipts_on_one_date_pick_the_same_one_every_time(db):
+    """Two DIFFERENT receipts on the same delivery date, created in the same instant: the
+    pick is a fixed rule (SPO number, then container, highest first), not row order."""
+    from app.services.spo_last_receipt_service import last_in_map
+
+    brw = _warehouse(db, "BRW")
+    product = _product(db, "TIE")
+    same_instant = datetime(2026, 8, 1, 9, 0, 0)
+    for spo, cont, qty in (("SPO-A", "CONT-A", 5), ("SPO-B", "CONT-B", 7)):
+        _spo(db, product, brw, qty, spo_number=_code(spo, 20) + "-" + spo, container=cont,
+             expected=date(2026, 8, 10), created_at=same_instant)
+    picks = {last_in_map(db, [product.id], [brw.id])[product.id]["container_number"]
+             for _ in range(5)}
+    assert picks == {"CONT-B"}

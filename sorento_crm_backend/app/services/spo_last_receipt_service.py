@@ -309,13 +309,15 @@ def last_in_map(
     db: Session, product_ids: list[str], warehouse_ids: Optional[list[str]] = None
 ) -> dict[str, dict]:
     """``{product_id: {spo_number, container_number, qty, date}}`` - the newest VISIBLE
-    `spo_allocations` line PER PRODUCT, received or not, for the Summary Order Report / low
+    RECEIPT PER PRODUCT (one SPO number + container + delivery date, its lines summed;
+    LOWSTOCK-LASTIN-LOCATION crew decision 10 Nov 2026), received or not, for the Summary Order Report / low
     stock workbooks' "Last in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling
     second round, 15 Sep: "for last in, please refer to our MCP service, i think even
     haven't GR we also show as last in").
 
-    The EXACT pick `last_receipt_rows(product_ids=..., top_n=1)` makes for a product: same
-    key (`coalesce(expected_date, issue_date, created_at::date) DESC, created_at DESC`),
+    The same ordering `last_receipt_rows` uses, applied to receipts rather than lines:
+    `coalesce(expected_date, issue_date, created_at::date) DESC`, then the receipt's newest
+    `created_at DESC`, then SPO number and container DESC so a tie is never row order;
     same `visible_line_clauses()` (a retired, never-received line still cannot answer; a
     retired line WITH a receipt can - #753), same explicit company predicate on
     `SPOAllocation` (`.subquery()` loses the session's `with_loader_criteria` listener, the
@@ -323,7 +325,7 @@ def last_in_map(
     the PRODUCT - a caller can name a `product_id` outside the scope, and the line's own
     `company_id` matching the scope is not enough on its own (measured: a Mocha product
     with a Sorento-owned line leaked through under a Sorento scope until this join was
-    added). `qty` is `allocated_quantity` - the SPO's OWN ordered quantity, the figure the
+    added). `qty` is the receipt's summed `allocated_quantity` - the SPO's OWN ordered quantity, the figure the
     MCP row itself prints as "SPO quantity" - never `quantity_received`: the owner's
     ruling surfaces an unreceived line too, and reading "received if any else ordered"
     would hide which one a cell states.
@@ -332,28 +334,28 @@ def last_in_map(
     stock report it should take BRW only") filters lines to those locations BEFORE the
     pick, by warehouse id, or by the book's `location_code` for a line with no warehouse
     id (the W4 fallback `last_receipt_rows` applies through `spo_warehouse_predicate`): a
-    receipt split BRW 121 / BRW-BB 99 answers 121 for a BRW report, and a product with no line in those locations gets NO entry - a
-    blank Last in, never one borrowed from another location. An empty list matches
+    receipt split BRW 121 / BRW-BB 99 answers 121 for a BRW report (and BRW 170 /
+    BRW-RSV 4 answers 174 for a plan over both), and a product with no line in those
+    locations gets NO entry - a blank Last in, never one borrowed from another location. An empty list matches
     nothing; None keeps the network-wide pick.
     """
     if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
     key_expr = _key_expr()
-    rn = (
-        func.row_number()
-        .over(
-            partition_by=SPOAllocation.product_id,
-            order_by=(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc()),
-        )
-        .label("rn")
-    )
-    numbered = db.query(
-        SPOAllocation.product_id,
-        SPOAllocation.spo_number,
-        SPOAllocation.container_number,
-        SPOAllocation.allocated_quantity,
+    container = func.nullif(SPOAllocation.container_number, "")
+    # ONE RECEIPT = the lines of one SPO in one container on one delivery date, summed over
+    # the lines that pass the location filter below (crew decision, 10 Nov 2026: Last in
+    # qty is the SUM of the newest receipt's lines within the report locations, so it
+    # matches BRW incoming qty, which groups by SPO number and container the same way).
+    # Picking one LINE instead was arbitrary when an import wrote a split receipt's lines
+    # in the same instant: SRTWB248 read "- 170" on one run and "- 4" on another.
+    receipts = db.query(
+        SPOAllocation.product_id.label("product_id"),
+        SPOAllocation.spo_number.label("spo_number"),
+        container.label("container_number"),
         key_expr.label("spo_date"),
-        rn,
+        func.sum(SPOAllocation.allocated_quantity).label("allocated_quantity"),
+        func.max(SPOAllocation.created_at).label("created_at"),
     ).filter(
         SPOAllocation.product_id.in_(product_ids),
         *visible_line_clauses(),
@@ -365,7 +367,7 @@ def last_in_map(
         # warehouse id (`spo_warehouse_predicate`'s W4 fallback), so a line resolved to a
         # project bin can never count for a selected location through a stray code.
         by_id = SPOAllocation.warehouse_id.in_(wids)
-        numbered = numbered.filter(
+        receipts = receipts.filter(
             or_(by_id, and_(SPOAllocation.warehouse_id.is_(None),
                             SPOAllocation.location_code.in_(codes)))
             if codes else by_id
@@ -379,8 +381,30 @@ def last_in_map(
     # already does the job.
     predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
     if predicate is not None:
-        numbered = numbered.filter(predicate)
-    sub = numbered.subquery()
+        receipts = receipts.filter(predicate)
+    grouped = receipts.group_by(
+        SPOAllocation.product_id, SPOAllocation.spo_number, container, key_expr,
+    ).subquery()
+
+    # Newest receipt first; a tie on date AND recorded instant falls to a FIXED rule (SPO
+    # number, then container, highest first), never to row order.
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=grouped.c.product_id,
+            order_by=(
+                grouped.c.spo_date.desc().nulls_last(),
+                grouped.c.created_at.desc(),
+                grouped.c.spo_number.desc().nulls_last(),
+                grouped.c.container_number.desc().nulls_last(),
+            ),
+        )
+        .label("rn")
+    )
+    sub = db.query(
+        grouped.c.product_id, grouped.c.spo_number, grouped.c.container_number,
+        grouped.c.allocated_quantity, grouped.c.spo_date, rn,
+    ).subquery()
 
     rows = (
         db.query(
