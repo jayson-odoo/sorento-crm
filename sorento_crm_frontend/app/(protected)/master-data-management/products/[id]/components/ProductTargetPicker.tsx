@@ -67,6 +67,7 @@ export function CopyCapNote() {
 export function useProductTargetPicker(sourceProductId: string): {
   picked: string[];
   overCap: boolean;
+  cappedFrom: number | null;
   grid: ReactNode;
 } {
   const search = useDebouncedSearch('');
