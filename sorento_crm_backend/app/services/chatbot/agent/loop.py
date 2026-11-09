@@ -1549,11 +1549,7 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
         k for step in (action.steps if action is not None else None) or []
         if step.get("batch") for k in [normalise_phone((step.get("args") or {}).get("phone"))] if k
     ))
-    # What the immediately preceding table verified as typed counts for its re-sent rows even when it left no row
-    # waiting (UAC A17/A18, every row of the last table; #2268 last live check: a ready new-request row re-sent on
-    # `all` was asked "which company" although its customer was resolved and its company typed).
-    typed = current["typed"] if current is not None else list(got.get("batch_typed") or [])
-    return {**(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready}
+    return {**(current or empty), "expired": older, "card": card, "ready": ready}
 
 
 def _run(
