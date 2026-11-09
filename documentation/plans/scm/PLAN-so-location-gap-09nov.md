@@ -1,6 +1,7 @@
 # PLAN: A location move made before #2221 is part of the next change (SO-LOCATION-GAP)
 
-Status: Plan. Small fix track (S): no migration, no auth / RBAC change, no new ingest surface.
+Status: built, in review. Small fix track (S): no migration, no auth / RBAC change, no new ingest surface.
+Owner ruling 9 Nov ~22:05: option (a), write-time fix plus a one-off repair script.
 UAC: `so-location-gap-acceptance-criteria.md`.
 
 ## Journey
@@ -67,12 +68,36 @@ older row's `from.location`, else this row's own: it keeps working unchanged.
 Nothing else changes: the split read, lightbox, history phrase and email all already read the row
 (or the snapshots) the way they should.
 
-## Open
+## Rows already pending (owner ruling (a), 9 Nov ~22:05)
 
-- Rows already pending before this ships (SO429664 on prod, 3 on the dev copy) keep their
-  location-less `from` / `to` until rewritten. Asked crew: one-off repair or leave.
+Rows written before this ships (SO429664 on prod; on the dev copy SO423675 line 400, SO427115
+line 96, SO427803 line 16) keep location-less `from` / `to`. `scripts/repair_pending_change_location.py`
+gives each PENDING row what a row written now carries, through the same
+`carry_planned_location`: dry run by default (prints SO / line / item / kind / old -> new / row
+id), `--apply` writes `from_json.location` / `to_json.location` only; a repaired row carries a
+location, so a re-run finds nothing. Prod, after the release that carries it (server A):
+
+    cd /opt/sorento-crm2
+    be=$(docker compose ps --status running --services | grep -E '^backend_(blue|green)$' | head -1)
+    docker compose exec -T "$be" python scripts/repair_pending_change_location.py
+    docker compose exec -T "$be" python scripts/repair_pending_change_location.py --apply
+
+## Dev repro (sorento_prod_1104, rolled back)
+
+SO422453 line 16 SRTWT165-QT: confirmed at BRW-AM (Buy 11, ORDER raised at BRW-AM), AutoCount
+has it at BRW-BB, no change row. A date push +7 days at BRW-BB on both sides:
+
+- main: row `delayed`, from/to location None; Review split LOCATION BRW-BB, no NEW LOCATION.
+- fix: row `delayed`, from BRW-AM to BRW-BB; Review split LOCATION BRW-AM, NEW LOCATION BRW-BB.
+
+Repair dry run on the same copy lists exactly the 3 pending rows above.
 
 ## Tests (red first)
+
+Also `tests/test_repair_pending_change_location.py`: dry run prints and writes nothing, apply
+writes what the lightbox and Review split read, re-run is a no-op, applied rows and unmoved lines
+are left alone, an undecided line reads its ORDER rows' location.
+
 
 `tests/test_so_location_gap.py`, the exact owner sequence: Buy confirmed at the old location (ORDER
 raised there), core line moved with no change row, then a date change detected through
