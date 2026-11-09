@@ -473,8 +473,6 @@ def process_entry(
             service.update(combo_id, update_fields)
         if want_free:
             accessories = AccessoryService(db)
-            combo_row = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
-            in_combo = {host.id} | {part.part_product_id for part in (combo_row.parts if combo_row else [])}
             items, seen = [], set()
             for free in entry.get("free_items") or []:
                 text = f"{(free.get('code') or '').strip()} {(free.get('label') or '').strip()}".strip()
@@ -482,7 +480,8 @@ def process_entry(
                     continue
                 # Owner, 6 Nov ~10:45: a free item with a catalogue code is that PRODUCT, read live.
                 product = _free_product(db, (free.get("code") or "").strip(), host.company_id)
-                if product is not None and product.id not in in_combo:
+                # A part may also be the free item (COMBO-FREE-PART); only the host never is.
+                if product is not None and product.id != host.id:
                     key = ("product_id", product.id)
                 else:
                     key = ("accessory_id", accessories.find_or_create(text, host.company_id).id)
@@ -581,15 +580,16 @@ def _verdict_row(entry, verdict: str, details: str) -> dict:
     return row
 
 
-def _free_resolve(db, free: dict, company_id, host, part_ids: set):
+def _free_resolve(db, free: dict, company_id, host):
     """A strict free item: ('product_id' | 'accessory_id', id), or None when nothing matches.
-    Nothing is ever created or guessed."""
+    Nothing is ever created or guessed. A part of the combo may be its free item
+    (COMBO-FREE-PART); only the host never is."""
     kind = free.get("kind")
     code = (free.get("code") or "").strip()
     label = (free.get("label") or "").strip()
     if kind in (None, "product") and code:
         product = _free_product(db, code, company_id)
-        if product is not None and (host is None or product.id != host.id) and product.id not in part_ids:
+        if product is not None and (host is None or product.id != host.id):
             return ("product_id", product.id)
     if kind == "accessory" and label:
         accessory = (
@@ -629,7 +629,6 @@ def process_entry_strict(
                 discontinued_codes.append(product.product_code)
     if discontinued_codes:
         notes.append(f"loaded (discontinued): {', '.join(discontinued_codes)}")
-    part_ids = {k["product"].id for k in keep}
     names = {name.lower(), *((a or "").strip().lower() for a in entry.get("aka") or [])} - {""}
     host_combos = (
         db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).order_by(ProductCombo.name).all()
@@ -639,15 +638,9 @@ def process_entry_strict(
     existing = next((c for c in host_combos if (c.name or "").lower() == name.lower()), None) or next(
         (c for c in host_combos if (c.name or "").lower() in names), None
     )
-    file_part_ids = {part.part_product_id for part in existing.parts} if existing is not None else set()
     free_keys, seen = [], set()
     for free in entry.get("free_items") or []:
-        if free.get("kind") in (None, "product") and (free.get("code") or "").strip():
-            found_free = _free_product(db, (free.get("code") or "").strip(), company_id)
-            if found_free is not None and found_free.id in file_part_ids and found_free.id not in part_ids:
-                notes.append(f"already a part: {found_free.product_code}")
-                continue
-        resolved = _free_resolve(db, free, company_id, host, part_ids)
+        resolved = _free_resolve(db, free, company_id, host)
         if resolved is None:
             label = (free.get("code") or "").strip() if free.get("kind") != "accessory" else ""
             missing.append(label or (free.get("label") or "").strip() or "free item")
