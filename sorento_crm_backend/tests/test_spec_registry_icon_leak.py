@@ -30,6 +30,11 @@ def _history_row(db, row_id: str, old: dict, new: dict) -> None:
     db.commit()
 
 
+def _updates(res) -> list[dict]:
+    """The hand-written UPDATE rows (creating the key also writes its own INSERT row)."""
+    return [e for e in res.json()["data"] if e["action"] == "UPDATE"]
+
+
 def _setup(two_companies):  # noqa: F811
     db, _as, client, other, as_company = two_companies
     a_icon, a_icon2 = _icon(db, "ZZT A"), _icon(db, "ZZT A2")
@@ -56,7 +61,7 @@ def test_history_hides_another_companys_icon_ids(two_companies):  # noqa: F811
 
     res = client.get(_HISTORY.format(row.id))
     assert res.status_code == 200, res.text
-    [entry] = res.json()["data"]
+    [entry] = _updates(res)
     assert b_icon.id not in res.text
     # The caller's own icons, and the rest of the diff, are untouched.
     assert entry["old_values"] == {"value_icons": {"a": [a_icon.id]}, "label": "Old"}
@@ -68,7 +73,7 @@ def test_history_hides_another_companys_icon_ids(two_companies):  # noqa: F811
     as_company(other)
     res = client.get(_HISTORY.format(row.id))
     assert res.status_code == 200, res.text
-    [entry] = res.json()["data"]
+    [entry] = _updates(res)
     assert a_icon.id not in res.text and a_icon2.id not in res.text
     assert entry["new_values"]["value_icons"] == {"a": [b_icon.id], "b": [b_icon.id]}
     assert entry["old_values"]["value_icons"] == {"a": [b_icon.id]}
@@ -87,7 +92,7 @@ def test_history_hides_another_companys_ids_in_value_icon_conditions(two_compani
     res = client.get(_HISTORY.format(row.id))
     assert res.status_code == 200, res.text
     assert b_icon.id not in res.text
-    [entry] = res.json()["data"]
+    [entry] = _updates(res)
     assert entry["new_values"] == {"value_icon_conditions": {"a": {a_icon.id: cond}}}
 
 
@@ -102,7 +107,7 @@ def test_history_hides_a_deleted_icon_of_another_company_keeps_my_deleted_one(tw
 
     res = client.get(_HISTORY.format(row.id))
     assert res.status_code == 200, res.text
-    [entry] = res.json()["data"]
+    [entry] = _updates(res)
     assert entry["new_values"] == {"value_icons": {"a": [a_icon.id]}}
 
 
