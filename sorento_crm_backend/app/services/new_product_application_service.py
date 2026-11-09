@@ -790,8 +790,9 @@ def save_purchasing_response(
     app.feedback_by = actor.user_id
     app.feedback_at = datetime.utcnow()
     db.flush()
-    # NPA-FORM-SLA: a save is purchasing's answer, the SI's purchasing_respond (response clock).
-    return event or PURCHASING_RESPOND
+    # A save moves no Form SLA clock, as the SI's plain save (owner re-test 9 Nov ~03:05): only
+    # Update & Reply is purchasing's answer (`PURCHASING_RESPOND`, emitted by the reply route).
+    return event
 
 
 def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
@@ -1795,7 +1796,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
 
 # ------------------------------------------------------------------ form SLA (NPA-FORM-SLA)
 
-#: The purchasing response save: stops the purchasing stage's response clock, tells nobody.
+#: Update & Reply (either channel): the SI's purchasing_respond, the purchasing stage's response.
 PURCHASING_RESPOND = "purchasing_respond"
 #: The moves the Form SLA config listens to. The NPA's own move names are its SLA events
 #: (documentation/plans/procurement/PLAN-npa-form-sla-08nov.md stage map).

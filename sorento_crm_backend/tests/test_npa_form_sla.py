@@ -157,14 +157,23 @@ def test_resubmit_after_reject_starts_a_fresh_approval_stage(world, sla):
 # ------------------------------------------------------------------ purchasing stage
 
 
-def test_a_purchasing_response_save_stops_the_response_clock_only(world, sla):
-    d = _approved(world)
+def test_save_only_moves_no_clock_and_update_and_reply_stops_the_response_clock(world, sla, monkeypatch):
+    """Like the SI (owner re-test 9 Nov ~03:05): its plain save emits nothing; only Update & Reply
+    emits purchasing_respond (procurement_service.update_inquiry_and_reply)."""
+    _capture(monkeypatch)
+    d = _portal_approved(world)
     res = world.api.as_(world.buyer).put(
         f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Supplier quoting"}
     )
     assert res.status_code == 200, res.text
     tracker = open_tracker(world.db, KIND, d["id"])
-    assert tracker.is_responded and not tracker.is_resolved
+    assert not tracker.is_responded and not tracker.is_resolved
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Supplier quoting"}
+    )
+    assert res.status_code == 200, res.text
+    tracker = open_tracker(world.db, KIND, d["id"])
+    assert tracker.is_responded and not tracker.is_resolved  # the seeded row resolves on completed
     assert str(tracker.responded_by) == world.buyer
 
 
@@ -1196,3 +1205,60 @@ def test_a_staff_raised_npa_with_no_stock_inquiry_still_cannot_reply(world, monk
     )
     assert res.status_code == 422
     assert seen["whatsapp"] == []
+
+
+# ------------------------------------------------------------------ owner re-test 9 Nov ~03:05: his own purchasing stage config
+
+
+def _owner_stages(db):
+    """The owner's npa_purchasing row as he set it (respond purchasing_respond; resolve completed,
+    rejected, purchasing_respond), behind the seeded approval row."""
+    chain = sla_chain(
+        db,
+        KIND,
+        [
+            {"start_event": "submitted,resubmitted", "resolve_event": "approved,rejected"},
+            {
+                "start_event": "approved",
+                "respond_event": "purchasing_respond",
+                "resolve_event": "completed,rejected,purchasing_respond",
+            },
+        ],
+    )
+    for stage in chain.stages:
+        stage.config.next_config_id = None
+    db.commit()
+    return chain.stages[1]
+
+
+def _purchasing_tracker(w, aid, stage):
+    rows = [t for t in trackers(w.db, KIND, aid) if t.team_set_code == stage.team_set]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_owner_config_update_and_reply_on_a_portal_npa_resolves_the_purchasing_stage(world, monkeypatch):
+    _capture(monkeypatch)
+    stage = _owner_stages(world.db)
+    d = _portal_approved(world)
+    assert not _purchasing_tracker(world, d["id"], stage).is_resolved
+    res = world.api.as_(world.buyer).post(
+        f"{NPA}/{d['id']}/purchasing-response/reply", json={"purchasing_response": "Supplier quotes 6 weeks."}
+    )
+    assert res.status_code == 200, res.text
+    tracker = _purchasing_tracker(world, d["id"], stage)
+    assert tracker.is_responded and tracker.is_resolved
+
+
+def test_owner_config_save_only_moves_nothing_like_the_si_save(world, monkeypatch):
+    """The SI's plain save emits no Form SLA event (only Update & Reply emits purchasing_respond,
+    procurement_service.update_inquiry_and_reply), so the NPA's Save only moves no clock either."""
+    _capture(monkeypatch)
+    stage = _owner_stages(world.db)
+    d = _portal_approved(world)
+    res = world.api.as_(world.buyer).put(
+        f"{NPA}/{d['id']}/purchasing-response", json={"purchasing_response": "Draft note for myself."}
+    )
+    assert res.status_code == 200, res.text
+    tracker = _purchasing_tracker(world, d["id"], stage)
+    assert not tracker.is_responded and not tracker.is_resolved

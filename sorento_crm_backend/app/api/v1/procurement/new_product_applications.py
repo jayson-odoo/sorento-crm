@@ -473,6 +473,8 @@ def save_purchasing_response_and_reply(
                 db, app, actor=actor, data=payload.model_dump(exclude_unset=True)
             )
             detail = _done(db, app, event, actor.user_id)
+            # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+            svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
             svc.notify_purchasing_reply(db, app)
             db.commit()
             return detail
@@ -495,6 +497,9 @@ def save_purchasing_response_and_reply(
         link = svc.portal_url(db, app)
         template_vars = svc.template_vars(db, app)
         detail = _done(db, app, event, actor.user_id)
+        # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+        svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
+        db.commit()
     except Exception:
         db.rollback()
         raise
