@@ -92,7 +92,7 @@ def test_be7_the_rules_feed_lists_the_icon_on_the_normalised_value(db):
     reg.value_icons = {"150": [icon.id]}
     db.flush()
     mine = [r for r in feature_icon_rules(db) if r["spec_key"] == "trap_length"]
-    assert mine == [{"id": icon.id, "name": "ZZT 6in", "spec_key": "trap_length", "values": ["150"]}]
+    assert mine == [{"id": icon.id, "name": "ZZT 6in", "spec_key": "trap_length", "values": ["150"], "conditions": []}]
 
 
 def _client_as(db, user_id):

@@ -458,18 +458,33 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   // full-width click-to-edit value for those rows (and for users who cannot see icons at all).
   const valueAdornment = useCallback(
     (row: SpecTableRow) => {
-      const icons = iconsFor(row);
+      const icons = iconsFor(row, rows);
       if (icons.length === 0) return null;
+      // A conditioned icon names the other rows that earned it.
+      const reasons: Record<string, string> = {};
+      for (const icon of icons) {
+        if (!icon.conditions?.length) continue;
+        reasons[icon.id] = icon.conditions
+          .map((c) => {
+            const partner = rows.find((r) => r.specKey === c.spec_key);
+            return partner
+              ? `${partner.label} = ${readableValue(partner.value, partner.unit ?? undefined, partner.valueLabels)}`
+              : '';
+          })
+          .filter(Boolean)
+          .join(', ');
+      }
       return (
         <SpecValueIcons
           specKey={row.specKey}
           label={row.label}
           icons={icons}
+          reasons={reasons}
           canManage={canManageIcons}
         />
       );
     },
-    [iconsFor, canManageIcons],
+    [iconsFor, canManageIcons, rows],
   );
 
   if (isLoading) {

@@ -326,6 +326,8 @@ export interface SpecRegistryKey {
    * shows for a product holding that value. Optional on older fixtures; absent reads `{}`.
    */
   value_icons?: Record<string, string[]>;
+  /** value -> icon id -> the other spec values a product must also hold for that icon to print. */
+  value_icon_conditions?: Record<string, Record<string, IconCondition[]>>;
   /** asset id -> name for every icon in `value_icons`, so the screen never shows an id. */
   value_icon_names?: Record<string, string>;
   /** This spec's place in a price tag's one feature icon sequence (1 first); null = last. */
@@ -371,4 +373,10 @@ export interface SpecUnderstanding {
   exclusions: { key: string; value: string | number | boolean }[];
   free_terms: string[];
   notes: string;
+}
+
+/** One more spec value a product must hold for an icon to print (SPEC-ICON-COMBINED). */
+export interface IconCondition {
+  spec_key: string;
+  value: string;
 }

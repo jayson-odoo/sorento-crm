@@ -1058,6 +1058,13 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconCondition(BaseModel):
+    """One more spec value the product must hold for the icon to print (SPEC-ICON-COMBINED)."""
+
+    spec_key: str
+    value: str
+
+
 class FeatureIconOut(BaseModel):
     """One library icon and its "show when" rule (feature icons, contract B5)."""
 
@@ -1065,6 +1072,7 @@ class FeatureIconOut(BaseModel):
     name: str
     spec_key: str
     values: list[str]
+    conditions: list[FeatureIconCondition] = []
 
 
 class FeatureIconItem(FeatureIconOut):
