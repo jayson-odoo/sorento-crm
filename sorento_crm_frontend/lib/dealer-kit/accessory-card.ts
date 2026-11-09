@@ -121,6 +121,8 @@ export function cardBoxLayout(
    * before reach this, so every layout that already printed is unchanged.
    */
   const tooSmall = (): CardBoxLayout => {
+    // A saved design missing a number (e.g. no gap) lays out nothing rather than throwing.
+    if (!Number.isFinite(gap) || !Number.isFinite(innerW) || !Number.isFinite(availH)) return empty(total);
     const vertical = props.columns !== undefined && props.columns !== null ? true : props.direction !== 'horizontal';
     const floor = Math.min(CARD_SHRINK_FLOOR, min);
     const oneFits = Math.min(innerW / card.width_mm, availH / card.height_mm);

@@ -632,3 +632,14 @@ describe('cardBoxLayout: a box too small for one card at shrinkMin (TAG-ACC-CARD
     expect(cardBoxLayout(2, boxProps({ card: { width_mm: 0, height_mm: 20, elements: [] } }), 10, 8).shown).toBe(0);
   });
 });
+
+describe('cardBoxLayout: a design missing a number in a too-small box (review blocker)', () => {
+  it('lays out nothing instead of throwing when the gap is missing', () => {
+    const props = boxProps({ gap_mm: undefined, card: { width_mm: 40, height_mm: 10, elements: [] } });
+    expect(() => cardBoxLayout(3, props, 20, 100)).not.toThrow();
+    expect(cardBoxLayout(3, props, 20, 100).shown).toBe(0);
+    const horizontal = boxProps({ gap_mm: undefined, direction: 'horizontal', card: { width_mm: 40, height_mm: 10, elements: [] } });
+    expect(() => cardBoxLayout(3, horizontal, 100, 6)).not.toThrow();
+    expect(cardBoxLayout(4, boxProps({ gap_mm: undefined, columns: 2 }), 20, 80).shown).toBe(0);
+  });
+});

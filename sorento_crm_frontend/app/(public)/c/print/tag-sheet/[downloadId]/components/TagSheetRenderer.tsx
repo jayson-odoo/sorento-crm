@@ -1925,9 +1925,11 @@ function CardTextBlock({
           : {}),
         ...(element.padding
           ? {
-              padding: `${boxed.text.y_mm}mm ${element.width_mm * factor - boxed.text.x_mm - widthMm}mm ${
-                element.height_mm * factor - boxed.text.y_mm - heightMm
-              }mm ${boxed.text.x_mm}mm`,
+              // Each side clamped at 0 (CSS drops the whole declaration on a negative side).
+              padding: `${boxed.text.y_mm}mm ${Math.max(0, element.width_mm * factor - boxed.text.x_mm - widthMm)}mm ${Math.max(
+                0,
+                element.height_mm * factor - boxed.text.y_mm - heightMm,
+              )}mm ${boxed.text.x_mm}mm`,
             }
           : {}),
       }}

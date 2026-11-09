@@ -25,6 +25,9 @@ vi.mock('react-konva', () => {
           data-text={String(props.text ?? '')}
           data-size={String(props.fontSize ?? '')}
           data-y={String(props.y ?? 0)}
+          data-x={String(props.x ?? 0)}
+          data-name={String(props.name ?? '')}
+          data-clipw={String(props.clipWidth ?? '')}
           data-align={String(props.align ?? '')}
           data-style={String(props.fontStyle ?? '')}
           data-family={String(props.fontFamily ?? '')}
@@ -174,6 +177,11 @@ describe('card Text style and fields (owner 22:30 / 22:35)', () => {
     const [bg] = rects(c, '#dc2626');
     expect(Number(bg.getAttribute('data-w')) / SCALE).toBeCloseTo(30, 6);
     expect(texts(c)).toContain('SRTW5000');
+    // The canvas insets the text by the same padding print uses: left 2 mm, top 1 mm, 30 - 4 mm wide.
+    const node = [...c.querySelectorAll('[data-konva="text"]')].find((t) => t.getAttribute('data-text') === 'SRTW5000')!;
+    const inset = node.closest('[data-konva="group"][data-x="8"][data-y="4"]');
+    expect(inset).not.toBeNull();
+    expect(Number(node.getAttribute('data-w')) / SCALE).toBeCloseTo(26, 6);
     // The library accessory has no code: its text prints nothing on either surface.
     expect(print[1]?.texts ?? []).toHaveLength(0);
   });
@@ -205,5 +213,46 @@ describe('card Text style and fields (owner 22:30 / 22:35)', () => {
     expect(print.map((card) => card.texts[0]?.text)).toEqual(['Tap copy']);
     const c = await canvas(layer, data);
     expect(texts(c)).toContain('Tap copy');
+  });
+});
+
+describe('below the readable floor, and the "+N" chip (review should-fix 3, 4)', () => {
+  it('both surfaces clip the floor-sized card to the box', async () => {
+    const layer = boxLayer(8, 8);
+    const data = row(LIST);
+    const { container } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+    const box = container.querySelector<HTMLElement>('[data-testid="accessories-box"]')!;
+    expect(box.style.overflow).toBe('hidden');
+    cleanup();
+    const c = await canvas(layer, data);
+    expect(c.querySelector(`[data-konva="group"][data-clipw="${8 * SCALE}"]`)).not.toBeNull();
+  });
+
+  it('a box that fits draws no clip on either surface', async () => {
+    const layer = boxLayer(60, 80);
+    const data = row(LIST);
+    const { container } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+    expect(container.querySelector<HTMLElement>('[data-testid="accessories-box"]')!.style.overflow).toBe('');
+    cleanup();
+    const c = await canvas(layer, data);
+    expect([...c.querySelectorAll('[data-konva="group"]')].some((g) => g.getAttribute('data-clipw'))).toBe(false);
+  });
+
+  it('the editor canvas marks dropped cards with "+N"; print never does', async () => {
+    const layer = boxLayer(60, 20);
+    const data = row(LIST);
+    const display = { ...layerDisplay(layer, { kind: 'line', line: data as unknown as LineTagData }, {}), accessoryDropMarker: true };
+    const { container: c } = render(<KonvaTagLayer layer={layer} scale={SCALE} display={display} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(c.querySelector('[data-name="accessory-drop-marker"]')).not.toBeNull();
+    expect(texts(c)).toContain('+1');
+    cleanup();
+    // Without the editor flag (request preview), no chip.
+    expect((await canvas(layer, data)).querySelector('[data-name="accessory-drop-marker"]')).toBeNull();
+    cleanup();
+    const { container: print } = render(<TagSheetRenderer doc={doc(layer)} resolvedData={{ t1: data }} assets={{}} />);
+    expect(print.textContent).not.toContain('+1');
   });
 });

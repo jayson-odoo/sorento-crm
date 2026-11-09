@@ -59,3 +59,25 @@ def test_a_library_accessory_has_no_product_fields(db):
     assert entry.get("sell_price") is None
     assert entry.get("spec_lines") is None
     assert entry.get("price_tag_description") is None
+
+
+def test_a_product_entry_sell_price_is_the_viewers_offer(db, monkeypatch):
+    """The offer `resolve_prices` gives this viewer is what `{{product.sell_price}}` prints."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from app.services.accessory_service import tag_product_entry
+    from app.services.dealer_kit import pricing
+
+    waste = _product(db, "ZZCARDSP")
+    monkeypatch.setattr(
+        pricing,
+        "resolve_prices",
+        lambda _db, products, _viewer, _promo: {
+            p.id: SimpleNamespace(list_price=Decimal("100.00"), offer_price=Decimal("79.00")) for p in products
+        },
+    )
+    entry = tag_product_entry(db, waste)
+    assert entry["list_price"] == Decimal("100.00")
+    assert entry["sell_price"] == Decimal("79.00")
+    assert TagAccessory(**entry).sell_price == 79.0

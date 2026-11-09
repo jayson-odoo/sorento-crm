@@ -1558,8 +1558,6 @@ function CardElementNode({
   const px = (mm: number) => mm2px(mm * factor, scale);
   const x = px(element.x_mm);
   const y = px(element.y_mm);
-  const wMm = element.width_mm * factor;
-  const hMm = element.height_mm * factor;
   switch (element.kind) {
     case 'picture':
       if (element.placeholder) {
