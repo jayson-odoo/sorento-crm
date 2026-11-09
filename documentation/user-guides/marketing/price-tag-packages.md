@@ -37,6 +37,18 @@ The group names you type are the names the pickers and templates show, so name t
 10. To give the combo its own price tag templates, use **Price tag templates** in the **Add combo** dialog or on the combo, and with two or more linked pick a **Default template**. A request line on this combo then uses them; a combo with none falls back to the host product's templates. The picker says what each template needs in this combo's words (for example *105 x 148 mm. Needs 3 from Kitchen tap, upgrade*), and greys out a template the combo cannot fill with the reason (for example *Needs 6 from choice group 1; Kitchen tap has 5*). This needs the tag templates manage permission; without it the field does not show.
 11. For a product on two catalogue pages, click **Add combo** again and build the second one. Order matters only within a combo: fixed parts print first, then each choice group in the order its label first appears.
 
+### Copy a combo to other products
+
+When many products carry the same package (for example every freestanding bathtub with the same mixer tap upgrades and free items), build it once and copy it.
+
+1. On the combo you want to copy, click **Copy to other products** in its header (next to the trash icon). It shows only if you can edit products.
+2. Pick the products that should get it. Search, narrow with **Category** and **Brand** (both take several values), and tick rows; shift-click or drag selects a run of rows, and **Select all** ticks every product the search and filters match. The product you are on cannot be ticked. Discontinued products can still be picked. The footer counts what you picked; one copy takes at most 500 products.
+3. Click **Next**. The confirm step says how many products get the combo as a new one, and names any picked product that is itself a part of this combo (it is skipped: a product can never be a part of its own combo).
+4. If a picked product already has a combo with the same name (capital letters ignored), it is listed with **Skip** or **Overwrite**. Skip is the default. **Overwrite all** sets every row at once. Overwrite replaces that combo's parts, prices, description, picture, accessories included, box style and price tag templates with this one's, and keeps its place on requests already raised.
+5. Click **Copy**. Everything is written in one go: if anything is refused, nothing is copied.
+
+Each copy gets the same name, parts (fixed parts, choice groups, prices if picked, upgrades and top-ups), list and sell price, description with its formatting, cover picture and accessories included. The target product becomes the host. Adjust what differs afterwards, such as the size line in the description or the price. Price tag templates are copied only if you can manage tag templates; otherwise the confirm step says they are not copied, and an overwritten combo keeps its own.
+
 Editing a combo's **parts** takes effect on requests raised **after** the change: a request already submitted keeps the parts that were copied onto it. A change to its **description, accessories included or prices** reaches tags still being designed, with the usual change note and roll back. An approved tag stays as it was, apart from the cover picture, which always shows the current one.
 
 ### Reading it from a part's own page
