@@ -30,16 +30,22 @@ export function SpecValueIcons({
   canManage: boolean;
 }) {
   if (icons.length === 0) return null;
-  const href = withTab(`/master-data-management/product-specifications/${specKey}`, 'choices');
+  const href = withTab(
+    `/master-data-management/product-specifications/${specKey}`,
+    'choices',
+  );
   return (
-    <span className="flex shrink-0 items-center gap-1" data-spec-icons={specKey}>
+    <span
+      className="flex shrink-0 items-center gap-1"
+      data-spec-icons={specKey}
+    >
       {icons.map((icon) => {
         const picture = (
           <AttachmentImage
             url={icon.url}
             size="original"
             alt={icon.name}
-            className="size-5 object-contain"
+            className="size-6 object-contain"
           />
         );
         return canManage ? (
@@ -49,7 +55,7 @@ export function SpecValueIcons({
             title={icon.name}
             aria-label={`${icon.name}, open ${label}`}
             data-spec-icon={icon.id}
-            className="inline-flex shrink-0 rounded-sm hover:ring-1 hover:ring-border"
+            className="inline-flex shrink-0 rounded-sm outline-none hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring"
           >
             {picture}
           </Link>

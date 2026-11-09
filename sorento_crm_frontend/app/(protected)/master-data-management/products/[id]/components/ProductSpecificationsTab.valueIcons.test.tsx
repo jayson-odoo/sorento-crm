@@ -33,27 +33,34 @@ vi.mock('next/link', () => ({
 
 // The table stub calls the tab's adornment for one fixed row, the way the real table does per row.
 vi.mock('@/components/spec-table', () => ({
-  SpecTable: ({ valueAdornment }: { valueAdornment?: (row: unknown) => ReactNode }) => (
+  SpecTable: ({
+    valueAdornment,
+  }: {
+    valueAdornment?: (row: unknown) => ReactNode;
+  }) => (
     <div data-testid="spec-table-stub">
-      {valueAdornment?.({
-        specKey: 'water_supply',
-        label: 'Water supply',
-        value: 'mixer',
-        unit: null,
-        dataType: 'text',
-        options: [],
-        source: 'derived',
-        evidence: null,
-        unknownKey: false,
-        valueLabels: {},
-        conflict: null,
-      })}
+      {
+        (adornmentResult.value = valueAdornment?.({
+          specKey: 'water_supply',
+          label: 'Water supply',
+          value: 'mixer',
+          unit: null,
+          dataType: 'text',
+          options: [],
+          source: 'derived',
+          evidence: null,
+          unknownKey: false,
+          valueLabels: {},
+          conflict: null,
+        }))
+      }
     </div>
   ),
   AddSpecificationDialog: () => null,
 }));
 
 const iconsFor = vi.fn();
+const adornmentResult: { value: unknown } = { value: undefined };
 vi.mock('../../hooks/useSpecValueIcons', () => ({
   useSpecValueIcons: () => ({ iconsFor, canManage: false }),
 }));
@@ -74,11 +81,14 @@ const createPendingAction = vi.fn().mockResolvedValue({
   window_seconds: 5,
 });
 const cancelPendingAction = vi.fn().mockResolvedValue({});
-const getCurrentPendingAction = vi.fn().mockResolvedValue({ pending: null, last_outcome: null });
+const getCurrentPendingAction = vi
+  .fn()
+  .mockResolvedValue({ pending: null, last_outcome: null });
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: (...args: unknown[]) => createPendingAction(...args),
   cancelPendingAction: (...args: unknown[]) => cancelPendingAction(...args),
-  getCurrentPendingAction: (...args: unknown[]) => getCurrentPendingAction(...args),
+  getCurrentPendingAction: (...args: unknown[]) =>
+    getCurrentPendingAction(...args),
 }));
 
 const verify = vi.fn();
@@ -90,7 +100,13 @@ vi.mock('../../hooks/useProductSpecTable', () => ({
 
 vi.mock('../../hooks/useProducts', () => ({
   useProduct: () => ({
-    data: { id: 'p-1', product_code: 'WC100', product_name: 'WC100', list_price: null, price_tag_description: null },
+    data: {
+      id: 'p-1',
+      product_code: 'WC100',
+      product_name: 'WC100',
+      list_price: null,
+      price_tag_description: null,
+    },
     isLoading: false,
   }),
   useUpdateProduct: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -191,10 +207,6 @@ function mockHook(
   });
 }
 
-
-
-
-
 beforeEach(() => {
   vi.clearAllMocks();
   usePermissions.mockReturnValue({
@@ -206,10 +218,21 @@ afterEach(() => cleanup());
 
 describe('ProductSpecificationsTab value icons', () => {
   beforeEach(() => {
-    usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.view']), isLoading: false });
-    iconsFor.mockReset().mockReturnValue([
-      { id: 'hot', name: 'Hot water', spec_key: 'water_supply', values: ['mixer'], url: 'https://cdn/hot.png' },
-    ]);
+    usePermissions.mockReturnValue({
+      permissionSet: new Set(['master_data.products.view']),
+      isLoading: false,
+    });
+    iconsFor
+      .mockReset()
+      .mockReturnValue([
+        {
+          id: 'hot',
+          name: 'Hot water',
+          spec_key: 'water_supply',
+          values: ['mixer'],
+          url: 'https://cdn/hot.png',
+        },
+      ]);
   });
   afterEach(() => cleanup());
 
@@ -230,6 +253,25 @@ describe('ProductSpecificationsTab value icons', () => {
     const icon = table.querySelector('[data-spec-icon="hot"]');
     expect(icon).toBeTruthy();
     expect(icon?.getAttribute('title')).toBe('Hot water');
-    expect(iconsFor).toHaveBeenCalledWith(expect.objectContaining({ specKey: 'water_supply', value: 'mixer' }));
+    expect(iconsFor).toHaveBeenCalledWith(
+      expect.objectContaining({ specKey: 'water_supply', value: 'mixer' }),
+    );
+  });
+
+  it('hands the table null, not an empty element, for a value with no icon (row keeps its full-width click)', () => {
+    iconsFor.mockReturnValue([]);
+    mockHook(
+      baseDetail({
+        state: 'unverified',
+        verified_by_name: null,
+        verified_at: null,
+        invalidated_at: null,
+        invalidated_reason: null,
+        invalidated_by_name: null,
+        invalidated_diff: null,
+      }),
+    );
+    renderTab();
+    expect(adornmentResult.value).toBeNull();
   });
 });

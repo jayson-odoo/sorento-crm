@@ -4,7 +4,10 @@ import { useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { usePermissions } from '@/hooks/usePermissions';
-import { FEATURE_ICONS_KEY, kitLibraryClient } from '@/lib/dealer-kit/kit-library-cache';
+import {
+  FEATURE_ICONS_KEY,
+  kitLibraryClient,
+} from '@/lib/dealer-kit/kit-library-cache';
 import { iconsForSpecValue } from '@/lib/dealer-kit/feature-icons';
 import {
   listFeatureIcons,
@@ -26,12 +29,18 @@ const NONE: FeatureIconWithUrl[] = [];
  */
 export function useSpecValueIcons() {
   const { permissionSet, isLoading } = usePermissions();
-  const canView = !isLoading && permissionSet.has('dealer_kit.tag_templates.view');
-  const canManage = !isLoading && permissionSet.has('dealer_kit.library.manage');
+  const canView =
+    !isLoading && permissionSet.has('dealer_kit.tag_templates.view');
+  const canManage =
+    !isLoading && permissionSet.has('dealer_kit.library.manage');
 
   // A list that will not load leaves the table as it was; it must not break the tab.
   const { data } = useQuery(
-    { queryKey: FEATURE_ICONS_KEY, queryFn: async () => listFeatureIcons(), enabled: canView },
+    {
+      queryKey: FEATURE_ICONS_KEY,
+      queryFn: async () => listFeatureIcons(),
+      enabled: canView,
+    },
     kitLibraryClient,
   );
   const icons = canView ? data : undefined;

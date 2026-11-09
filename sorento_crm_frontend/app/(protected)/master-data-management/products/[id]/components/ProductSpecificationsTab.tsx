@@ -454,15 +454,21 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   const canEdit = permissionSet.has('master_data.products.edit');
   // The price-tag icons each saved value carries, by the tag's own rule (SPEC-VALUE-ICONS).
   const { iconsFor, canManage: canManageIcons } = useSpecValueIcons();
+  // Null, not an element that renders nothing, when a value has no icon: the table keeps its
+  // full-width click-to-edit value for those rows (and for users who cannot see icons at all).
   const valueAdornment = useCallback(
-    (row: SpecTableRow) => (
-      <SpecValueIcons
-        specKey={row.specKey}
-        label={row.label}
-        icons={iconsFor(row)}
-        canManage={canManageIcons}
-      />
-    ),
+    (row: SpecTableRow) => {
+      const icons = iconsFor(row);
+      if (icons.length === 0) return null;
+      return (
+        <SpecValueIcons
+          specKey={row.specKey}
+          label={row.label}
+          icons={icons}
+          canManage={canManageIcons}
+        />
+      );
+    },
     [iconsFor, canManageIcons],
   );
 

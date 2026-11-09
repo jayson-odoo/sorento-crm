@@ -8,7 +8,10 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 import { SpecTable } from './SpecTable';
@@ -33,7 +36,9 @@ function renderTable(valueAdornment?: (row: SpecTableRow) => React.ReactNode) {
     onTombstone: vi.fn().mockResolvedValue(undefined),
     onRevert: vi.fn().mockResolvedValue(undefined),
   };
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <SpecTable
@@ -49,7 +54,9 @@ function renderTable(valueAdornment?: (row: SpecTableRow) => React.ReactNode) {
 describe('SpecTable valueAdornment', () => {
   it('draws the adornment on the rows it returns one for, and nothing elsewhere', async () => {
     renderTable((row) =>
-      row.specKey === 'material' ? <span data-testid="adorn-material">icons</span> : null,
+      row.specKey === 'material' ? (
+        <span data-testid="adorn-material">icons</span>
+      ) : null,
     );
     expect(await screen.findByTestId('adorn-material')).toBeTruthy();
     expect(screen.queryAllByText('icons')).toHaveLength(1);
@@ -57,28 +64,40 @@ describe('SpecTable valueAdornment', () => {
 
   it('sits in the same cell as the value, after it', async () => {
     renderTable((row) =>
-      row.specKey === 'material' ? <span data-testid="adorn-material">icons</span> : null,
+      row.specKey === 'material' ? (
+        <span data-testid="adorn-material">icons</span>
+      ) : null,
     );
     const adorn = await screen.findByTestId('adorn-material');
-    const value = document.querySelector('[data-spec-value="material"]') as HTMLElement;
+    const value = document.querySelector(
+      '[data-spec-value="material"]',
+    ) as HTMLElement;
     expect(value).toBeTruthy();
     expect(adorn.closest('td')).toBe(value.closest('td'));
-    expect(value.compareDocumentPosition(adorn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      value.compareDocumentPosition(adorn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('is hidden while the row is in edit', async () => {
     renderTable((row) =>
-      row.specKey === 'material' ? <span data-testid="adorn-material">icons</span> : null,
+      row.specKey === 'material' ? (
+        <span data-testid="adorn-material">icons</span>
+      ) : null,
     );
     await screen.findByTestId('adorn-material');
-    fireEvent.click(document.querySelector('[data-spec-value="material"]') as HTMLElement);
+    fireEvent.click(
+      document.querySelector('[data-spec-value="material"]') as HTMLElement,
+    );
     expect(screen.queryByTestId('adorn-material')).toBeNull();
   });
 
   it('leaves the value cell as it was when no adornment is given', async () => {
     renderTable();
     await screen.findAllByText(/Stainless Steel/i);
-    const value = document.querySelector('[data-spec-value="material"]') as HTMLElement;
+    const value = document.querySelector(
+      '[data-spec-value="material"]',
+    ) as HTMLElement;
     expect(value.className).toContain('w-full');
   });
 });

@@ -305,7 +305,17 @@ export function SpecTable({
         },
       },
     ],
-    [canEdit, editingKey, editDraft, busyKey, callbacks, synonymsByKey, draftKey, startEdit, valueAdornment],
+    [
+      canEdit,
+      editingKey,
+      editDraft,
+      busyKey,
+      callbacks,
+      synonymsByKey,
+      draftKey,
+      startEdit,
+      valueAdornment,
+    ],
   );
 
   const table = useReactTable({
