@@ -2379,3 +2379,17 @@ def test_S8_with_sorento_active_an_owner_grant_for_a_contact_linked_to_my_own_mo
     steps, skipped, _ = propose(db, w, [row_(person.phone_number, role="owner", codes=[w.cust_a.customer_code])])
 
     assert steps and skipped == []
+
+
+def test_TAG_the_level_is_the_owner_tag_dealer_types_without_it_promote_by_adding_the_tag(db):
+    owner_tags(db)
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, types=("end_user", "dealer", "cabana_dealer"), customers=(w.cust_a,))
+
+    res, step = update_step(db, w, {"contact_id": person.id, "role": "owner"}, seen={person.id})
+
+    assert res.status == "proposed", f"{res.status}: {res.message}"
+    outcome = confirm(db, w, store(db, w, [step]))
+    assert outcome.status == "executed", outcome.steps
+    assert SRT_TAG in tags_of(db, person.id)

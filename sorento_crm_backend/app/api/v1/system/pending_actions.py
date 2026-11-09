@@ -184,7 +184,7 @@ _ANY_OF_PERMISSIONS: dict = {
 #: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
 #: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
 #: The commit runs after the request, so the admin is stored with the action, server-side.
-_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink")
+_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink", "dealer_access_link.unlink")
 
 
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID

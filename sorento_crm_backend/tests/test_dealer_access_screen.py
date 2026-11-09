@@ -26,6 +26,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401  register every model and the app's listeners
@@ -1394,3 +1395,27 @@ def test_S5_tag_a_contact_that_already_holds_the_tag_has_nothing_to_promote(db):
         writes._contact_execute(db, user, {"contact_id": str(person.id), "role": "owner"})
 
     assert NOTHING in err.value.message
+
+
+def test_S6_an_admin_viewing_as_the_salesperson_is_the_real_user_of_the_unlink_audit(db, api):
+    o = two_sales(db)
+    w = o.w
+    admin = make_world(db, slugs=(NEITHER,), superadmin=True).user_id
+    person = dealer(db, w, customers=(w.cust_a, w.twin1), name="ZZT Viewed As")
+    link = link_row(db, person.id, w.cust_a.id)
+    client = api.as_user(o.s1)
+
+    def impersonated(request: Request):
+        request.state.real_user = {"id": admin}
+        return _load_user_dict_from_db(db, o.s1)
+
+    app.dependency_overrides[get_current_user] = impersonated
+    try:
+        outcome = commit(client, db, park(client, link.id), link.id)
+    finally:
+        clear_actor()
+
+    assert outcome["last_outcome"]["status"] == "committed", outcome
+    audit = events(db, person.id)
+    assert len(audit) == 1
+    assert str(audit[0].user_id) == str(o.s1) and str(audit[0].real_user_id) == str(admin)

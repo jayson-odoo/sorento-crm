@@ -279,7 +279,11 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
     add = [c for c in picked if str(c.id) not in held]
     picked_ids = {str(c.id) for c in picked}
     change: dict = {"contact_id": str(contact_id), "unlink_customer_ids": sorted((held & mine) - picked_ids)}
-    if role != current:
+    # Employee means no dealer prices: the owner types of a legacy contact (types, no tag) go too (owner ruling 9 Nov).
+    with company_scope(db, None):
+        types = {t.code for t in db.get(RespondContact, str(contact_id)).access_types}
+    legacy = role == "employee" and bool(types & writes._owner_types([code]))
+    if role != current or legacy:
         change["role"] = role
         change["role_companies"] = [code]  # the level is per company: only this row's tags and types move
     user = _user(db, user_id)

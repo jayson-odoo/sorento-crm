@@ -1561,8 +1561,12 @@ def _unlink_dealer_access(db: Session, payload: dict):
     requester = str(payload.get("requested_by_id") or "")
     if not requester:
         raise ValueError("dealer_access_link.unlink has no requester")
+    # `real_user_id` is the admin while one views as the requester (stamped at park time, `_REAL_USER_ACTIONS`).
     with actor_scope(
-        AuditActor(actor_type="user", user_id=requester, real_user_id=requester), db=db
+        AuditActor(
+            actor_type="user", user_id=requester, real_user_id=str(payload.get("real_user_id") or requester)
+        ),
+        db=db,
     ):
         return dealer_access_screen.unlink(db, requester, _entity_id(payload))
 
