@@ -17,7 +17,7 @@ from .test_oi_saved_line_email import _order, _post, emails  # noqa: F401
 from .test_planning_change_apply_on_board import _confirm, api, world  # noqa: F401
 from .test_planning_changes import _line_payload
 from .test_so_line_location_change_email import _move, _rows, _sibling
-from .test_so_location_gap import _date_change, _pending, _push, _split
+from .test_so_location_gap import _date_change, _pending, _push, _split, _third
 
 
 def _script():
@@ -204,6 +204,10 @@ def test_an_applied_row_in_a_batch_still_open_is_left_alone(api, emails):
     world.db.refresh(batch)
     assert batch.applied_at is None, "premise: the batch is still open"
     assert _pending(world, line_1) == [], "premise: the first order's row was applied"
+    # Line 1 moves again after that Confirm (the book upload's id-less path still does it
+    # silently): its applied row would read as a move now, and only the state filter keeps
+    # the history as it was told.
+    _move(world, line_1, _third(world))
 
     result = _script().run(world.db, apply=True)
     world.db.commit()
