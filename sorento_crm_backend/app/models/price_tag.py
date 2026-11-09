@@ -254,6 +254,11 @@ class PriceTagRequestLine(Base):
     included_accessories = Column(Text, nullable=True)
     # Free-text note on the line (D6, r7).
     remarks = Column(Text, nullable=True)
+    # PRICETAG-UPGRADE-VARIANTS S3: the variant members the dealer UNTICKED for this tag, so a
+    # variant added later joins ticked. Product ids inside the line product's variant tree.
+    excluded_variant_ids = Column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     sort_order = Column(Integer, nullable=False, server_default="0")
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False

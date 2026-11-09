@@ -50,6 +50,10 @@ def _slots_of(layer) -> list:
     props = layer.get("props") if isinstance(layer, dict) else None
     found = []
     slot = props.get("subjectSlot") if isinstance(props, dict) else None
+    # PRICETAG-UPGRADE-VARIANTS U6: an Upgrades box is a list, like free items; it reads the
+    # combo's upgrades whatever position it still names, so it never makes a template "need" one.
+    if isinstance(props, dict) and props.get("list") == "upgrades":
+        slot = None
     if isinstance(slot, dict):
         found.append(slot)
     if isinstance(layer, dict):

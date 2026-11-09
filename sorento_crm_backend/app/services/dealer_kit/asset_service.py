@@ -446,7 +446,21 @@ def doc_has_feature_icons(doc: Optional[dict]) -> bool:
     for sheet in doc.get("sheets", []) or []:
         for tag in (sheet or {}).get("tags", []) or []:
             layers.extend((tag or {}).get("layers", []) or [])
-    return any((layer or {}).get("type") == FEATURE_ICONS_LAYER for layer in layers)
+    return any(_layer_has_feature_icons(layer or {}) for layer in layers)
+
+
+def _layer_has_feature_icons(layer: dict) -> bool:
+    """A feature_icons layer, or (PRICETAG-UPGRADE-VARIANTS S1) an accessories box whose card
+    draws a feature_icons element: either needs the icon rules and their signed urls."""
+    if layer.get("type") == FEATURE_ICONS_LAYER:
+        return True
+    if layer.get("type") != "accessories":
+        return False
+    card = (layer.get("props") or {}).get("card") or {}
+    return any(
+        (element or {}).get("kind") == FEATURE_ICONS_LAYER
+        for element in card.get("elements") or []
+    )
 
 
 #: The most icons one spec value may carry.
@@ -464,7 +478,56 @@ def spec_value_keys(row) -> list[str]:
 
     if row.data_type == "boolean":
         return list(BOOLEAN_VALUES)
+    if row.data_type == "numeric":
+        return numeric_spec_values(row)
     return [str(v) for v in merged_allowed_values(row)]
+
+
+def _numeric_text(value) -> Optional[str]:
+    """A stored number as the text a tag's ``raw`` holds: 150, 150.0 and "150" -> "150"."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def numeric_spec_values(row) -> list[str]:
+    """PRICETAG-UPGRADE-VARIANTS S4: the distinct values products hold for a numeric key
+    (bare or wrapped ``{"value": ...}``), normalised, in numeric order, so one can carry icons."""
+    from sqlalchemy.orm import object_session
+
+    db = object_session(row)
+    if db is None:
+        return []
+    return numeric_spec_values_by_key(db, [row.spec_key]).get(row.spec_key, [])
+
+
+def numeric_spec_values_by_key(db: Session, keys: list[str]) -> dict[str, list[str]]:
+    """`numeric_spec_values` for several keys in one read (the registry list)."""
+    from sqlalchemy import text as sql_text
+
+    if not keys:
+        return {}
+    found = db.execute(
+        sql_text(
+            "SELECT DISTINCT k.key, CASE WHEN jsonb_typeof(k.value) = 'object' "
+            "THEN k.value ->> 'value' ELSE k.value #>> '{}' END "
+            "FROM product_specifications s, jsonb_each(s.values) k "
+            "WHERE jsonb_typeof(s.values) = 'object' AND k.key = ANY(:keys)"
+        ),
+        {"keys": list(keys)},
+    ).all()
+    out: dict[str, set[str]] = {}
+    for key, value in found:
+        text = _numeric_text(value)
+        if text is not None:
+            out.setdefault(key, set()).add(text)
+    return {key: sorted(values, key=float) for key, values in out.items()}
 
 
 def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:

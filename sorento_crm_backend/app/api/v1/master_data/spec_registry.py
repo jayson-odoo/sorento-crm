@@ -34,6 +34,7 @@ from app.dependencies import (
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
+from app.services.dealer_kit.asset_service import numeric_spec_values, numeric_spec_values_by_key
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_spec_rules import (
     BRAND_IS_NOT_A_SPEC,
@@ -134,7 +135,9 @@ def _visible_icons(rows) -> dict[str, tuple[dict, dict]]:
     return out
 
 
-def _serialise(row, owners: Optional[dict] = None, icons: Optional[dict] = None) -> dict:
+def _serialise(
+    row, owners: Optional[dict] = None, icons: Optional[dict] = None, numeric: Optional[dict] = None
+) -> dict:
     if icons is None:
         icons = _visible_icons([row])
     value_icons, icon_names = icons.get(row.spec_key, ({}, {}))
@@ -205,6 +208,11 @@ def _serialise(row, owners: Optional[dict] = None, icons: Optional[dict] = None)
         "value_icon_names": icon_names,
         # Where this spec's icons sit in the tag's one icon sequence (null: last).
         "icon_order": row.icon_order,
+        # PRICETAG-UPGRADE-VARIANTS S4: a numeric key's values that products hold, so each can
+        # carry icons on the Values and words tab. Empty on every other key.
+        "numeric_values": (numeric.get(row.spec_key, []) if numeric is not None else numeric_spec_values(row))
+        if row.data_type == "numeric"
+        else [],
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -229,7 +237,10 @@ def get_spec_registry(
         rows = active_registry(db)
         owners = vocabulary_owners(db)
         icons = _visible_icons(rows)
-        keys = [_serialise(row, owners, icons) for row in rows]
+        numeric = numeric_spec_values_by_key(
+            db, [row.spec_key for row in rows if row.data_type == "numeric"]
+        )
+        keys = [_serialise(row, owners, icons, numeric) for row in rows]
         stamps = [r.updated_at or r.created_at for r in rows]
         updated_at = max(stamps).isoformat() if stamps else None
 

@@ -60,6 +60,7 @@ from app.schemas.price_tag import (
     TagSheetExportIn,
     TagSheetExportOut,
     TransitionPayload,
+    VariantMembersOut,
 )
 from app.services import price_tag_review_service
 from app.services.uuid_path_param import validate_uuid_path
@@ -307,6 +308,24 @@ def price_tag_request_line_pricing(
         viewer=staff_viewer(),
     )
     return [LinePricingRow(**row) for row in rows]
+
+
+@router.get("/variant-members/{product_id}", response_model=VariantMembersOut)
+def price_tag_request_variant_members(
+    product_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW_OR_OWN),
+):
+    """PRICETAG-UPGRADE-VARIANTS S3: the line's "Variants on this tag" list - every member of the
+    product's variant tree (inactive left out, discontinued flagged) and its own list price.
+    Company-scoped like every other product read; the portal has the same route."""
+    from app.services.dealer_kit.variant_service import chooser
+
+    product_id = validate_uuid_path(product_id, resource="Product")
+    body = chooser(db, product_id)
+    if body is None:
+        raise AppException(status_code=404, message="Product not found.", code="NOT_FOUND")
+    return VariantMembersOut(**body)
 
 
 # ---------------------------------------------------------------------------

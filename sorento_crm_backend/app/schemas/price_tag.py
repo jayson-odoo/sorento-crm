@@ -79,6 +79,9 @@ class PriceTagRequestLineCreate(BaseModel):
     # in the service against the product's published links; anything else is
     # dropped, never stored.
     tag_template_id: Optional[str] = None
+    # PRICETAG-UPGRADE-VARIANTS S3: the variant members UNTICKED for this tag. Each must sit in
+    # the line product's variant tree (422 NOT_A_VARIANT), checked in the service.
+    excluded_variant_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -110,6 +113,8 @@ class PriceTagReviseLineIn(BaseModel):
     tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
     price_type: Optional[Literal["list", "selling"]] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: None = not sent (the old line's list is carried over).
+    excluded_variant_ids: Optional[list[str]] = Field(default=None, max_length=500)
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -206,6 +211,8 @@ class PriceTagRequestLineResponse(BaseModel):
     package_warning: Optional[str] = None
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the variant members unticked for this tag.
+    excluded_variant_ids: list[str] = []
     sort_order: int
     # What gets printed for this line: one tag by default, N after a split (D3).
     # The marketing override moved onto the TAG in S3 and its columns are dropped
@@ -580,6 +587,9 @@ SLOT_BINDINGS = (
     "combo_topups",
     # PS-SPEC-SHEET: the technical drawing of the subject.
     "drawing",
+    # PRICETAG-UPGRADE-VARIANTS S2: on an "Upgrade N" position, its top-up and the tag SP plus it.
+    "upgrade_topup",
+    "sell_price_with_upgrade",
 )
 
 
@@ -633,8 +643,15 @@ class SlotUpgrade(_StrictProps):
     index: int = Field(ge=0, lt=64)
 
 
+class SlotVariants(_StrictProps):
+    """PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer on "All variants" (the line product
+    and the live members of its variant tree). Never a combo position."""
+
+    kind: Literal["variants"]
+
+
 #: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
-SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade]
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade, SlotVariants]
 
 
 class ImageLayerPropsDoc(_StrictProps):
@@ -672,6 +689,8 @@ class TextLayerPropsDoc(_StrictProps):
     padding: Optional[LayerPaddingDoc] = None
     subjectSlot: Optional[SubjectSlotDoc] = None
     showCurrency: Optional[bool] = None
+    #: PRICETAG-UPGRADE-VARIANTS S2: printed before the upgrade_topup / sell_price_with_upgrade figure.
+    prefix: Optional[str] = Field(default=None, max_length=60)
 
 
 class PolygonPointDoc(_StrictProps):
@@ -1402,6 +1421,15 @@ class TagCombo(BaseModel):
     upgrades: list[TagComboUpgrade] = []
 
 
+class TagVariant(BaseModel):
+    """PRICETAG-UPGRADE-VARIANTS S3: one live member of the tag product's variant tree, for a
+    feature icons layer on "All variants". Declared here or `response_model` drops it."""
+
+    product_id: str
+    code: str
+    specs: list[SpecValue] = []
+
+
 class ProductTagData(BaseModel):
     """Everything a product block draws. Resolved per request, never stored."""
 
@@ -1435,6 +1463,8 @@ class ProductTagData(BaseModel):
     #: PRICETAG-ACCESSORIES: the product's own list (an Ala Carte tag prints it).
     accessories: list[TagAccessory] = []
     accessory_box_style: Optional[TagAccessoryBoxStyle] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree.
+    variants: list[TagVariant] = []
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1569,6 +1599,8 @@ class TagPartData(BaseModel):
     role: Optional[str] = None
     #: r10 S6: true on the candidate THIS tag's own choices name.
     chosen: Optional[bool] = None
+    #: PRICETAG-UPGRADE-VARIANTS S1: an upgrade position's top-up; None elsewhere.
+    topup_amount: Optional[float] = None
 
 
 class TagSlotGroup(BaseModel):
@@ -1631,6 +1663,8 @@ class ResolvedLineData(BaseModel):
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
     slots: Optional[TagSlots] = None
+    #: PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members.
+    variants: list[TagVariant] = []
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1814,6 +1848,23 @@ class RequestVersionSummary(BaseModel):
 # ---------------------------------------------------------------------------
 # PRICETAG-TEMPLATE-PER-PRODUCT
 # ---------------------------------------------------------------------------
+
+
+class VariantMemberItem(BaseModel):
+    """PRICETAG-UPGRADE-VARIANTS S3: one member of a line product's variant tree."""
+
+    product_id: str
+    code: str
+    name: str = ""
+    list_price: Optional[float] = None
+    is_discontinued: bool = False
+
+
+class VariantMembersOut(BaseModel):
+    """The request line's "Variants on this tag" lookup (staff and portal)."""
+
+    members: list[VariantMemberItem] = []
+    own_list_price: Optional[float] = None
 
 
 class ProductTagTemplateItem(BaseModel):
