@@ -224,7 +224,8 @@ def test_an_account_and_an_amount_in_an_incentive_column_is_a_bonus_on_that_tier
         (Decimal("100000"), Decimal("2"), None),
         (Decimal("300000"), Decimal("0"), Decimal("15000")),
     ]
-    assert target.payout_customer_id == ledger.id
+    # The named account is the one counted account: the tier's RM Additional is its own.
+    assert _accounts == [ledger.id]
 
 
 def test_an_amount_past_the_rate_limit_skips_that_tier_and_loads_the_rest(api):
@@ -310,3 +311,105 @@ def test_the_masked_account_pick_shapes_words_that_could_name_a_dealer():
 
     row = {"suggestions": [], "account_pick": {"pick_key": "k", "label": "Acme 9", "choices": ["Deluxe", "A/C I"]}}
     assert _pick_detail(row) == 'account pick "xxxx 9": xxxxxx, A/C I or skip'
+
+
+def test_a_bonus_naming_one_of_two_counted_accounts_is_that_account_s_own(api):
+    """Owner 8 Nov (lane TARGET-PER-ACCOUNT-PAYOUT, Q3): the RM Additional is set per account,
+    like the rate. "A/C I- 15,000" over a target counting A/C I and A/C II is A/C I's own, never
+    15,000 to each account."""
+
+    def fill(ws):
+        ws["A1"], ws["B1"], ws["C1"] = "DEALER NAME", "ACCOUNT", "Q1"
+        ws.merge_cells("A1:A2")
+        ws.merge_cells("B1:B2")
+        ws.merge_cells("C1:F1")
+        ws["C2"], ws["D2"], ws["E2"], ws["F2"] = "Tier 1", "Tier 1 Incentive", "Tier 4", "Tier 4 Incentive"
+        ws["A3"], ws["B3"] = "GOLF HOME SDN BHD", "A/C I"
+        ws["A4"], ws["B4"] = "GOLF HOME SDN BHD", "A/C II"
+        ws["C3"], ws["E3"], ws["F3"] = 100000, 300000, "A/C I- 15,000"
+        ws.merge_cells("C3:C4")
+        ws.merge_cells("E3:E4")
+        ws.merge_cells("F3:F4")
+        ws["D3"] = 0.02
+        ws.merge_cells("D3:D4")
+
+    client, db, company_id = api
+    a1 = _customer(db, company_id, "GOLF HOME SDN BHD [A/C I]", 1)
+    a2 = _customer(db, company_id, "GOLF HOME SDN BHD [A/C II]", 2)
+    done = _post(client, db, _bytes(fill), dry_run=False)
+    assert all(r["status"] == "mapped" for r in done["rows"]), done["rows"]
+    _target, tiers, _rates, accounts = _tiers(db, done["rows"][0]["target_nos"][0])
+    assert sorted(accounts) == sorted([a1.id, a2.id])
+    top = tiers[-1]
+    assert top.bonus_amount is None
+    from app.models.sales import SalesTargetTierRate
+
+    own = {r.customer_id: r.bonus_amount for r in db.query(SalesTargetTierRate).filter(SalesTargetTierRate.tier_id == top.id)}
+    assert own == {a1.id: Decimal("15000"), a2.id: None}
+
+
+def _golf(bonus_cell):
+    def fill(ws):
+        ws["A1"], ws["B1"], ws["C1"] = "DEALER NAME", "ACCOUNT", "Q1"
+        ws.merge_cells("A1:A2")
+        ws.merge_cells("B1:B2")
+        ws.merge_cells("C1:F1")
+        ws["C2"], ws["D2"], ws["E2"], ws["F2"] = "Tier 1", "Tier 1 Incentive", "Tier 4", "Tier 4 Incentive"
+        ws["A3"], ws["B3"] = "HOTEL HOME SDN BHD", "A/C I"
+        ws["A4"], ws["B4"] = "HOTEL HOME SDN BHD", "A/C II"
+        ws["C3"], ws["E3"], ws["F3"] = 100000, 300000, bonus_cell
+        ws.merge_cells("C3:C4")
+        ws.merge_cells("E3:E4")
+        ws.merge_cells("F3:F4")
+        ws["D3"] = 0.02
+        ws.merge_cells("D3:D4")
+
+    return _bytes(fill)
+
+
+def test_a_bonus_naming_no_counted_account_of_a_combined_target_refuses_the_row(api):
+    """Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional is set per
+    account only. A bonus naming an account the target does not count refuses the row, naming the
+    target and the tier; no tier-level amount is ever written."""
+    from app.models.sales import SalesTargetCommissionTier
+
+    client, db, company_id = api
+    _customer(db, company_id, "HOTEL HOME SDN BHD [A/C I]", 1)
+    _customer(db, company_id, "HOTEL HOME SDN BHD [A/C II]", 2)
+    _customer(db, company_id, "HOTEL HOME SDN BHD [A/C III]", 3)
+    before = db.query(SalesTargetCommissionTier).count()
+    rows = _post(client, db, _golf("A/C III- 15,000"), dry_run=False)["rows"]
+    assert all(r["status"] == "not_representable" for r in rows), rows
+    reason = rows[0]["reason"]
+    assert "HOTEL HOME SDN BHD" in reason and "300,000" in reason and "per account" in reason, reason
+    assert db.query(SalesTargetCommissionTier).count() == before
+
+
+def test_an_existing_combined_target_with_a_tier_level_rm_bonus_is_listed(api):
+    """A legacy tier-level RM amount on a combined target (dev has none) is listed by the dry run
+    and the import, never paid once per account."""
+    from datetime import date as _date
+
+    from app.models.sales import SalesTarget, SalesTargetAccount, SalesTargetCommissionTier, SalesTargetPeriod
+
+    client, db, company_id = api
+    a1 = _customer(db, company_id, "HOTEL HOME SDN BHD [A/C I]", 1)
+    a2 = _customer(db, company_id, "HOTEL HOME SDN BHD [A/C II]", 2)
+    first = _post(client, db, _golf("A/C I- 15,000"), dry_run=False)["rows"]
+    assert all(r["status"] == "mapped" for r in first), first
+    target = db.query(SalesTarget).filter(SalesTarget.target_no == first[0]["target_nos"][0]).one()
+    # Make it legacy: a tier-level amount, as written before the ruling.
+    top = (
+        db.query(SalesTargetCommissionTier)
+        .filter(SalesTargetCommissionTier.target_id == target.id)
+        .order_by(SalesTargetCommissionTier.threshold.desc())
+        .first()
+    )
+    top.bonus_amount = 15000
+    db.flush()
+    rows = _post(client, db, _golf("A/C I- 15,000"), dry_run=True)["rows"]
+    notes = [w for r in rows for w in r["warnings"]]
+    assert any(target.target_no in w and "per account" in w for w in notes), notes
+    assert {a1.id, a2.id} == {a.customer_id for a in db.query(SalesTargetAccount).filter(SalesTargetAccount.target_id == target.id)}
+    assert db.query(SalesTargetPeriod).filter(SalesTargetPeriod.target_id == target.id).count() >= 1
+    assert _date  # imported for symmetry with the other gate tests

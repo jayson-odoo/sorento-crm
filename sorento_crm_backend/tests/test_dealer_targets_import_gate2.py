@@ -250,10 +250,11 @@ def test_a_period_looking_column_the_reader_cannot_place_fails_the_rows_holding_
 
 
 
-# 3. ruling (b): per-account Tier 1-3 targets replaced by the dealer's Tier 4-5 target --------
+# 3. per-account Tier 1-3 targets beside the dealer's Tier 4-5 target; since lane
+# TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov) they stack, none replaces another --------
 
 
-def test_per_account_tiers_and_merged_dealer_tiers_become_linked_targets():
+def test_per_account_tiers_and_merged_dealer_tiers_become_stacking_targets():
     parsed, s_rows, _ = _parse()
     keys = [_k(S, s_rows[f"CHARLIE:{label}"]) for label in ("A/C I", "A/C III", "A/C IV")]
     for key in keys:
@@ -264,16 +265,15 @@ def test_per_account_tiers_and_merged_dealer_tiers_become_linked_targets():
         (D("2000000"), None, dict(zip(keys, (D("2"), D("2.5"), D("3"))))),
         (D("2500000"), None, dict(zip(keys, (D("3"), D("3.5"), D("4"))))),
     ]
-    assert dealer.replaced_by is None
     for i, key in enumerate(keys):
         own = next(s for s in yearly if s.codes == [key])
         assert [(t.threshold, t.rate) for t in own.tiers] == [
             (D(100000 * n + 10000 * i), D("1")) for n in (1, 2, 3)
         ]
-        assert own.replaced_by == dealer.key
+        assert not hasattr(own, "replaced_by")
 
 
-def test_apply_links_each_account_target_to_its_dealer_target(api):
+def test_apply_writes_each_account_target_beside_its_dealer_target(api):
     from app.models.order import Customer
 
     client, db, company_id = api
@@ -295,8 +295,8 @@ def test_apply_links_each_account_target_to_its_dealer_target(api):
     details = [client.get(f"{BASE}/{r['target_id']}").json() for r in yearly]
     dealer = next(d for d in details if len(d["accounts"]) == 3)
     owns = [d for d in details if len(d["accounts"]) == 1]
-    assert len(owns) == 3
-    assert all(d["replaced_by"]["target_no"] == dealer["target_no"] for d in owns)
+    assert len(owns) == 3 and dealer["target_no"] not in {d["target_no"] for d in owns}
+    assert all("replaced_by" not in d for d in owns + [dealer])
 
 
 def test_the_account_suffix_reader_is_linear():
@@ -352,8 +352,9 @@ def test_an_account_tier_equal_on_every_row_by_chance_stays_the_account_s():
         assert all(len(o.tiers) == 3 for o in owns)
 
 
-def test_account_targets_with_another_window_than_their_dealer_fail():
-    """Review should-fix 4: the replacement needs the dealer's period to cover the account's."""
+def test_account_targets_with_another_window_than_their_dealer_are_read():
+    """Review should-fix 4 retired (owner 8 Nov): targets stack, so an account's window need not
+    match its dealer's."""
     from openpyxl import Workbook
 
     from app.services.sales.dealer_target_import import parse_workbook
@@ -371,9 +372,7 @@ def test_account_targets_with_another_window_than_their_dealer_fail():
     buf = io.BytesIO()
     wb.save(buf)
     parsed = parse_workbook(buf.getvalue(), year=2026)
-    assert all(r.status == "not_representable" and "window" in r.reason for r in parsed.rows), [
-        (r.status, r.reason) for r in parsed.rows
-    ]
+    assert all(r.status == "mapped" for r in parsed.rows), [(r.status, r.reason) for r in parsed.rows]
 
 
 def test_apply_writes_a_monthly_block_with_no_months(api):
