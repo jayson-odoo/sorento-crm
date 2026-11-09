@@ -190,12 +190,16 @@ def _row_records(records: list[dict] | None, key: Any, n: int) -> list[dict]:
     return mine or [r for r in records if key is None and r.get("key") is None and r.get("row") == n]
 
 
-def _expired_code(args: dict, key: Any, n: int, expired: list[dict] | None, user_text: str) -> str | None:
+def _expired_code(
+    args: dict, key: Any, n: int, expired: list[dict] | None, user_text: str, current: list[dict] | None = None
+) -> str | None:
     """UAC F3: a code listed only by an older pick, one a newer request has expired, is never linked unless the user
-    typed it now."""
-    listed = {
-        " ".join(str(c).split()).lower() for p in _row_records(expired, key, n) for c in (p.get("codes") or [])
-    }
+    typed it now. A code the current open pick lists for this row is never expired, even when an older pick listed it
+    too (crew live x3 round 4: the same person offered the same accounts twice)."""
+    def codes(records: list[dict] | None) -> set[str]:
+        return {" ".join(str(c).split()).lower() for p in _row_records(records, key, n) for c in (p.get("codes") or [])}
+
+    listed = codes(expired) - codes(current)
     for code in args.get("customer_codes") or []:
         said = " ".join(str(code).split())
         typed = re.search(rf"(?<![0-9a-z]){re.escape(said.lower())}(?![0-9a-z])", str(user_text or "").lower())
@@ -328,8 +332,10 @@ def propose_rows(
                     earlier = _row_records(previous_typed, key, n)
                     written = [p.get("written") for p in picked] + [m for r in earlier for m in r.get("names") or []]
                     companies = [c for r in earlier for c in r.get("companies") or []]
-                    args, unlisted = contact_grant.typed_names(args, user_text, written, companies)
-                    unlisted = unlisted or _expired_code(args, key, n, expired_waiting, user_text)
+                    # Expiry first (crew live x3 round 4): a closed list says so, not "which company".
+                    unlisted = _expired_code(args, key, n, expired_waiting, user_text, current=previous_waiting)
+                    if not unlisted:
+                        args, unlisted = contact_grant.typed_names(args, user_text, written, companies)
                     if not unlisted:
                         # `key` here too: a ready row's step carries none of its own.
                         typed = {

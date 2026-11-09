@@ -159,6 +159,9 @@ F3. A pick answers only the table of the IMMEDIATELY preceding agent turn, and o
     older table with waiting rows is expired, and a table with no waiting rows is never the pick. A single grant row
     that waits for a pick is a pick too. This immediacy is the grant's only: the tag and customer-agent tables keep
     answering the newest earlier table.
+    Crew live x3 round 4: a code the CURRENT open pick lists for that row is never expired, even when an older pick
+    listed the same code (the same person offered the same accounts twice). The expiry check runs before the
+    company check (A18), so an answer to a closed pick says the list is closed, not "which company".
 F4. Rows of this message only (grant). When this turn's message names at least one person (a phone in any format,
     012-345 6789, +60 12..., 6012..., or a person's name), the card holds only the rows it names, plus the rows of
     the last table when the turn answers that table's pick (a row with codes the table listed for it, or the user

@@ -1937,7 +1937,9 @@ def test_F4_run1_a_new_request_leaves_the_earlier_waiting_row_out_and_all_links_
     c = _turn(db, w, [_batch_call([{**ali_row, "customer_codes": chin_codes}], "b3"), answer_("Linked.")], "all")
 
     assert c.pending_action is None or not any(ali in line for line in c.pending_action["lines"])
-    assert not any(code in c.reply_text for code in chin_codes)
+    # Crew live x3 round 4 (FAIL B): expiry is checked first, so the row says its list is closed (naming the
+    # salesperson's own code from that closed list); nothing is proposed or linked for Ali.
+    assert "is from an earlier list that is closed now" in c.reply_text
     assert state(db, ali) is None
 
 
@@ -2219,3 +2221,45 @@ def test_F4_a_waiting_row_of_the_undecided_previous_card_is_still_left_out_besid
     assert waits not in two.reply_text
     left = [x["phone"] for r in _tool_results(used[0], 1) for x in (r.get("data") or {}).get("left_out") or []]
     assert left == [waits]
+
+
+# ------------------------------------------------------------------ crew live x3 round 4 (F3 order and current pick)
+
+
+def test_F3_a_code_the_current_pick_lists_is_never_expired_by_an_older_pick_of_the_same_accounts(db):
+    """Crew live x3 round 4, FAIL A (3/3, step 7): an earlier pick (as owner) and the current pick (as employee)
+    offered the same person the same accounts; 'all' was refused as 'from an earlier list'."""
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone = fake_phone()
+    stem, accounts = _pick_turn(db, w, phone)
+    _turn(db, w, [answer_("It is morning here.")], "what time is it")
+    again = row_(phone, role="employee", names=[stem])
+    second = _turn(db, w, [_batch_call([again], "b2"), answer_("Which account?")], f"Sorento {phone} {stem} employee")
+    assert [x["written"] for x in _turn_record(db, second.turn_id).get("batch_waiting") or []] == [stem]
+    picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
+
+    result = _turn(db, w, [_batch_call([picked], "b3"), answer_("ok")], "all")
+
+    assert "is from an earlier list that is closed now" not in result.reply_text
+    assert result.pending_action is not None
+    assert all(a.customer_code in " ".join(result.pending_action["lines"]) for a in accounts)
+
+
+def test_F3_an_expired_pick_answer_naming_no_company_gets_the_expired_text_not_the_company_question(db):
+    """Crew live x3 round 4, FAIL B: expiry is checked before the company (A18), so 'all' after a newer request says
+    the list is closed instead of asking which company."""
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    phone = fake_phone()
+    stem, accounts = _pick_turn(db, w, phone)
+    _turn(db, w, [answer_("It is morning here.")], "what time is it")
+    picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
+
+    result = _turn(db, w, [_batch_call([picked], "b2"), answer_("Linked.")], "all")
+
+    assert "is from an earlier list that is closed now" in result.reply_text
+    assert "Say which company" not in result.reply_text
+    assert state(db, phone) is None
