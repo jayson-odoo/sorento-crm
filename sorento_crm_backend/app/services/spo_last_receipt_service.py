@@ -65,7 +65,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import Date, case, cast, func
+from sqlalchemy import Date, and_, case, cast, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -330,9 +330,9 @@ def last_in_map(
 
     `warehouse_ids` (LOWSTOCK-LASTIN-LOCATION, owner ruling 9 Nov 2026: "when I run BRW
     stock report it should take BRW only") filters lines to those locations BEFORE the
-    pick, by `spo_warehouse_predicate` (warehouse id OR the book's `location_code`, the
-    same match `last_receipt_rows` applies): a receipt split BRW 121 / BRW-BB 99 answers
-    121 for a BRW report, and a product with no line in those locations gets NO entry - a
+    pick, by warehouse id, or by the book's `location_code` for a line with no warehouse
+    id (the W4 fallback `last_receipt_rows` applies through `spo_warehouse_predicate`): a
+    receipt split BRW 121 / BRW-BB 99 answers 121 for a BRW report, and a product with no line in those locations gets NO entry - a
     blank Last in, never one borrowed from another location. An empty list matches
     nothing; None keeps the network-wide pick.
     """
@@ -360,7 +360,16 @@ def last_in_map(
     )
     if warehouse_ids is not None:
         wids = [str(w) for w in warehouse_ids]
-        numbered = numbered.filter(spo_warehouse_predicate(wids, warehouse_codes_for(db, wids)))
+        codes = warehouse_codes_for(db, wids)
+        # By warehouse id; the book's `location_code` answers only for a line that has NO
+        # warehouse id (`spo_warehouse_predicate`'s W4 fallback), so a line resolved to a
+        # project bin can never count for a selected location through a stray code.
+        by_id = SPOAllocation.warehouse_id.in_(wids)
+        numbered = numbered.filter(
+            or_(by_id, and_(SPOAllocation.warehouse_id.is_(None),
+                            SPOAllocation.location_code.in_(codes)))
+            if codes else by_id
+        )
     # COMPANY SCOPE, EXPLICITLY - same reason as `last_receipt_rows`'s per-product branch.
     # Belt-and-braces, not "the only copy": measured, the company predicate can land on
     # this query from more than one path once the outer query below joins `Product` (its

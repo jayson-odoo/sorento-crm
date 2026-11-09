@@ -307,3 +307,29 @@ def test_excel_export_is_one_row_per_item_with_the_brw_last_in(db):
         "800",
         *sorted([f"{po1.po_number} - 300", f"{po2.po_number} - 500"]),
     ]
+
+
+def test_a_project_bin_line_carrying_a_selected_locations_code_does_not_count(db):
+    """The book's `location_code` is a fallback for a line with NO warehouse id only: a line
+    resolved to BRW-BB never answers a BRW report through a stray `location_code` of BRW."""
+    brw = _warehouse(db, "BRW")
+    brw_bb = _warehouse(db, "BRW-BB", segment="project")
+    product = _product(db, "STRAYCODE")
+    spo_brw = _code("SPO-BRW", 50)
+    _spo(db, product, brw, 121, spo_number=spo_brw, expected=date(2026, 9, 1))
+    _spo(db, product, brw_bb, 99, spo_number=_code("SPO-BB", 50), expected=date(2026, 10, 25),
+         location_code=brw.warehouse_code)
+    run = _run(db, [brw.id])
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    assert _row(db, run, product).last_receipt_spo_number == spo_brw
+
+
+def test_an_empty_stored_scope_reads_no_location_at_all(db):
+    """A run whose stored scope is `[]` (codes asked for, none resolved) has no location:
+    the shared set is empty, never widened to the network the way NULL keeps it."""
+    brw = _warehouse(db, "BRW")
+    assert svc.report_warehouse_ids(db, _run(db, [])) == []
+    assert svc.report_warehouse_ids(db, _run(db, None)) is None
+    assert svc.report_warehouse_ids(db, _run(db, [brw.id])) == [brw.id]

@@ -8,8 +8,9 @@ own rule has one home a modal or the engine can read from too, instead of stayin
 the sheet and getting re-derived by hand wherever else the same number is needed.
 
 Both apply `pool_predicate.active_site_pool_sql` - active, not `segment='project'` - and are
-PRODUCT-WIDE: every site-pool warehouse the product has supply at, not narrowed to one run's
-plan basis. A document naming no warehouse, or naming a project bin, is not counted either
+PRODUCT-WIDE by default: every site-pool warehouse the product has supply at. The low stock
+sheet passes `warehouse_ids` (a run's own `summary_order_service.report_warehouse_ids`,
+LOWSTOCK-LASTIN-LOCATION) to narrow both to that run's locations. A document naming no warehouse, or naming a project bin, is not counted either
 way: not known to be site-pool supply, or known not to be.
 """
 from __future__ import annotations

@@ -1021,7 +1021,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     #     level), else `products.reorder_level` with the same 0-is-not-a-level rule;
     #     compared against `stock` summed over ACTIVE SITE POOL warehouses that
     #     `counts_as_available`, which is `summary_order_service._pool_on_hand_map`'s own
-    #     predicate. `_product_level` additionally reads a mirrored `autocount` row as a
+    #     predicate (network-wide here; the sheet's own figure is narrowed to a run's
+    #     locations since LOWSTOCK-LASTIN-LOCATION, so on a location-scoped run the two
+    #     agree only for an all-locations run). `_product_level` additionally reads a mirrored `autocount` row as a
     #     master level; that row is a COPY of `products.reorder_level` by construction, so
     #     the SQL reads the master directly rather than carrying the mirror's precedence
     #     into the admission gate (captain's ruling, 14 Sep).
