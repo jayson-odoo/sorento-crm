@@ -75,7 +75,8 @@ export function AccessoryEntryDialog({
                 aria-label="Picture choice"
                 value={imageId}
                 clearable
-                placeholder="First picture"
+                // No pick = the accessory's own first picture: show that one too.
+                placeholder={withThumb({ value: pictures[0].id, label: 'First picture' }, 'size-6')}
                 options={pictures.map((picture, index) => ({
                   value: picture.id,
                   label: picture.colour_name ?? `Picture ${index + 1}`,
