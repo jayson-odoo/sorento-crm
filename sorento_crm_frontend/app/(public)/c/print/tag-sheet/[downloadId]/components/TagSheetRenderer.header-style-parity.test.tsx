@@ -213,6 +213,7 @@ describe('a resized, filled header prints where and how the designer draws it', 
     const lines = screen.getByTestId('accessories-header-lines');
     expect(lines.style.maxHeight).toBe(`${cap.lineHeight_mm}mm`);
     expect(lines.style.overflow).toBe('hidden');
+    expect(lines.style.overflowWrap).toBe('anywhere');
   });
 
   it('the line cap is Konva\'s rule: keep a line while the next still fits, the first always', () => {

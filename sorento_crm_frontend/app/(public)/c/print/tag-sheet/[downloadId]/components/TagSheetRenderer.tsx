@@ -1362,7 +1362,13 @@ function HeaderLines({
   const cap = headerLineCap(header, lineHeight);
   return (
     <div
-      style={{ maxHeight: `${cap.lines * cap.lineHeight_mm}mm`, overflow: 'hidden', flexShrink: 0 }}
+      style={{
+        maxHeight: `${cap.lines * cap.lineHeight_mm}mm`,
+        overflow: 'hidden',
+        flexShrink: 0,
+        // A single word wider than the band breaks inside the word, as Konva's word wrap does.
+        overflowWrap: 'anywhere',
+      }}
       data-testid="accessories-header-lines"
     >
       {children}
