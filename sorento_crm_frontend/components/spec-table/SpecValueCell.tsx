@@ -117,14 +117,15 @@ export function SpecValueCell({
   if (!editing) {
     const displayed = readableValue(row.value, row.unit ?? undefined, row.valueLabels);
     if (trailing) {
-      // Inline after the value (SPEC-VALUE-ICONS 1a): the value keeps its own click to edit
-      // and truncates first, so the trailing pictures stay whole at 375px.
+      // Inline after the value (SPEC-VALUE-ICONS 1a): the value keeps its own click to edit and
+      // its own width (it truncates only when it alone is wider than the cell); the trailing
+      // block wraps to the next line instead of squeezing it (SPEC-ICON-COMBINED FU F2).
       return (
-        <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
           <button
             type="button"
             onClick={onStartEdit}
-            className="min-w-0 truncate text-start text-sm hover:underline"
+            className="max-w-full shrink-0 truncate text-start text-sm hover:underline"
             title={displayed}
             data-spec-value={row.specKey}
           >

@@ -58,8 +58,9 @@ export interface HeaderTabProps {
 export function HeaderTab({ row, mode, draft, setDraft, wordError }: HeaderTabProps) {
   const isNumeric = row.data_type === 'numeric';
   const isList = row.data_type === 'enum';
-  // Only a spec whose values are fixed (or yes/no) can carry feature icons.
-  const carriesIcons = row.data_type === 'boolean' || (row.allowed_values ?? []).length > 0;
+  // Only a spec whose values are fixed, yes/no or numbers can carry feature icons.
+  const carriesIcons =
+    row.data_type === 'boolean' || isNumeric || (row.allowed_values ?? []).length > 0;
 
   const otherNames = draft ? draft.words[SELF_KEY] ?? EMPTY_WORDS : row.synonyms?.[SELF_KEY] ?? EMPTY_WORDS;
 

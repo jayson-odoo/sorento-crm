@@ -37,48 +37,46 @@ export function SpecValueIcons({
     'choices',
   );
   return (
-    <span
-      className="flex shrink-0 items-center gap-1"
-      data-spec-icons={specKey}
-    >
-      {icons.map((icon) => {
-        const picture = (
-          <AttachmentImage
-            url={icon.url}
-            size="original"
-            alt={icon.name}
-            className="size-6 object-contain"
-          />
-        );
-        return canManage ? (
-          <Link
-            key={icon.id}
-            href={href}
-            title={icon.name}
-            aria-label={`${icon.name}, open ${label}`}
-            data-spec-icon={icon.id}
-            className="inline-flex shrink-0 rounded-sm outline-none hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {picture}
-          </Link>
-        ) : (
-          <span
-            key={icon.id}
-            title={icon.name}
-            data-spec-icon={icon.id}
-            className="inline-flex shrink-0"
-          >
-            {picture}
-          </span>
-        );
-      })}
+    <span className="contents" data-spec-icons={specKey}>
+      <span className="flex shrink-0 items-center gap-1">
+        {icons.map((icon) => {
+          const picture = (
+            <AttachmentImage
+              url={icon.url}
+              size="original"
+              alt={icon.name}
+              className="size-6 object-contain"
+            />
+          );
+          return canManage ? (
+            <Link
+              key={icon.id}
+              href={href}
+              title={icon.name}
+              aria-label={`${icon.name}, open ${label}`}
+              data-spec-icon={icon.id}
+              className="inline-flex shrink-0 rounded-sm outline-none hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {picture}
+            </Link>
+          ) : (
+            <span
+              key={icon.id}
+              title={icon.name}
+              data-spec-icon={icon.id}
+              className="inline-flex shrink-0"
+            >
+              {picture}
+            </span>
+          );
+        })}
+      </span>
       {icons.map((icon) =>
         reasons[icon.id] ? (
           <span
             key={icon.id}
             data-spec-icon-reason={icon.id}
-            title={`shown because ${reasons[icon.id]}`}
-            className="min-w-0 max-w-40 truncate text-xs text-muted-foreground"
+            className="basis-full text-xs text-muted-foreground"
           >
             shown because {reasons[icon.id]}
           </span>
