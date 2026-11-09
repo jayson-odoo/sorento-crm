@@ -238,7 +238,7 @@ def propose_rows(
     previous_waiting: list[dict] | None = None, closed: dict | None = None,
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
-    previous_card: list[str] | None = None,
+    previous_card: list[str] | None = None, previous_ready: list[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -248,8 +248,9 @@ def propose_rows(
     refused (`expired_waiting`, F3). Each entry of a checked grant row carries `typed`, what was verified. UAC F4: a
     message that names a person (a phone in any format, or a row's person by name, as `_asked_again` reads it) holds
     only the rows it names, plus every row of the last table when this call answers its pick; a message naming nobody
-    is a follow-up about the immediately preceding card (`previous_card`), whose rows may come back. Any other row is
-    left out (`left_out`, never shown)."""
+    is a follow-up about the immediately preceding card (`previous_card`), whose rows may come back. The ready rows of
+    that card while it is undecided (`previous_ready`) may always come back: the user is extending it. Any other row
+    is left out (`left_out`, never shown)."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -283,6 +284,9 @@ def propose_rows(
         if not names_someone:
             # A follow-up naming nobody ("give them Mocha too") is about the immediately preceding card (UAC F4).
             table_keys |= set(previous_card or [])
+        # Its ready rows while it is undecided: the user is extending that card. Its waiting rows come back only
+        # through a pick answer above (the crew leaks were waiting rows).
+        table_keys |= set(previous_ready or [])
     for position, args in enumerate(rows, 1):
         n = position
         if isinstance(args, dict):
@@ -439,6 +443,7 @@ def propose(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
         previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
+        previous_ready=(previous or {}).get("ready"),
     )
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting). A left-out row
     # was not sent as far as this card goes (UAC F4).

@@ -309,9 +309,12 @@ def test_a_cancelled_row_re_sent_with_the_phone_and_name_written_differently_sta
         row_(d.phone_number, name="devi", codes=[w.cust_a.customer_code]),
         *_rows(w, c),
     ]
-    second, _ = _batch_turn(db, w, resent, "Tag the new one with that customer too")
+    second, provider = _batch_turn(db, w, resent, "Tag the new one with that customer too")
 
     lines = _lines(second)
-    assert c.phone_number in lines
+    # UAC F4: the message names nobody, so only the previous card's rows may come back; C was never on it (left_out).
+    assert c.phone_number not in lines
     assert a.phone_number not in lines and d.phone_number not in lines
     assert CANCELLED_REASON in second.reply_text
+    results = [json.loads(m["content"]) for m in provider.seen[1]["messages"] if m.get("role") == "tool"]
+    assert [x["phone"] for r in results for x in (r.get("data") or {}).get("left_out") or []] == [c.phone_number]

@@ -163,8 +163,10 @@ F4. Rows of this message only (grant). When this turn's message names at least o
     012-345 6789, +60 12..., 6012..., or a person's name), the card holds only the rows it names, plus the rows of
     the last table when the turn answers that table's pick (a row with codes the table listed for it, or the user
     typed). When the message names no person, it is a follow-up about the immediately preceding card, decided or
-    waiting, so that card's rows may be re-sent ("give them Mocha too", "do the same two with Mocha instead"). A row
-    of a decided card keeps its own reason, and codes of an expired pick get the F3 refusal. Any other row the model
+    waiting, so that card's rows may be re-sent ("give them Mocha too", "do the same two with Mocha instead"). The
+    READY rows of the immediately preceding card while it is still undecided (neither confirmed nor cancelled) may
+    be re-sent even when the message names someone (the user is extending that card); its WAITING rows come back only
+    when the turn answers their pick. A row of a decided card keeps its own reason, and codes of an expired pick get the F3 refusal. Any other row the model
     re-sends is left out of the card, the preview and the not-changed list, and returned to the model as `left_out`
     with `Not in this message; ask again with this person's phone to include them.` (live x3: an earlier waiting
     person re-sent into a new request was linked to the older pick).

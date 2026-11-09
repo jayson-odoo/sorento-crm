@@ -2179,3 +2179,43 @@ def test_F4_a_follow_up_naming_nobody_may_re_send_the_previous_cards_rows(db):
     assert two.pending_action is not None, two.reply_text
     lines = two.pending_action["lines"]
     assert len(lines) == 2 and any(a.phone_number in x for x in lines) and any(b.phone_number in x for x in lines)
+
+
+def test_F4_the_ready_rows_of_the_undecided_previous_card_come_back_beside_a_new_person(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    a, b = fake_phone(), fake_phone()
+    ready = row_(a, name="ZZT Ahmad", role="employee", codes=[w.cust_a.customer_code])
+    one = _turn(db, w, [_batch_call([ready]), answer_("ok")], f"Sorento {a}")
+    assert one.pending_action is not None
+
+    new = row_(b, name="ZZT Devi", role="employee", codes=[w.cust_a.customer_code])
+    two = _turn(db, w, [_batch_call([ready, new], "b2"), answer_("ok")], f"and {b} too, Sorento")
+
+    assert two.pending_action is not None, two.reply_text
+    lines = two.pending_action["lines"]
+    assert len(lines) == 2 and any(a in x for x in lines) and any(b in x for x in lines)
+
+
+def test_F4_a_waiting_row_of_the_undecided_previous_card_is_still_left_out_beside_a_new_person(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    chin, _ = _shop(db, w, "ZZT Chin Choy")
+    a, waits, b = fake_phone(), fake_phone(), fake_phone()
+    ready = row_(a, name="ZZT Ahmad", role="employee", codes=[w.cust_a.customer_code])
+    waiting = row_(waits, name="ZZT Ali", role="employee", names=[chin])
+    one = _turn(db, w, [_batch_call([ready, waiting]), answer_("ok")], f"Sorento {a}, ZZT Ali {waits} at {chin}")
+    assert one.pending_action is not None
+
+    new = row_(b, name="ZZT Devi", role="employee", codes=[w.cust_a.customer_code])
+    used: list = []
+    two = _turn(db, w, [_batch_call([ready, waiting, new], "b2"), answer_("ok")], f"and {b} too, Sorento",
+                provider=used)
+
+    lines = two.pending_action["lines"]
+    assert any(a in x for x in lines) and any(b in x for x in lines)
+    assert waits not in two.reply_text
+    left = [x["phone"] for r in _tool_results(used[0], 1) for x in (r.get("data") or {}).get("left_out") or []]
+    assert left == [waits]

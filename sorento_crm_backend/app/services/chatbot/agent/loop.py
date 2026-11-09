@@ -1486,7 +1486,8 @@ def _decided_reply(ledger: dict[str, dict]) -> str:
 def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict:
     """The table a pick may answer, as {"write", "waiting", "skipped", "typed", "reply", "expired"}.
 
-    `card`: the phones of the immediately preceding turn's table, decided or waiting (UAC F4).
+    `card`: the phones of the immediately preceding turn's table, decided or waiting; `ready`: the ready rows of that
+    turn's card while it is still undecided (UAC F4).
     `immediate` (the grant, UAC F3): only the IMMEDIATELY preceding agent turn of this conversation that did not fail
     (a retried message after a provider failure still answers the pick), and only when it ended with rows waiting
     for a pick; any newer request expires an older pick. `typed`: what that table verified as typed for each of its
@@ -1514,10 +1515,12 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
             "reply": got.get("reply_text") or "", "expired": [],
         }
 
-    empty = {"write": None, "waiting": [], "skipped": [], "typed": [], "reply": "", "expired": [], "card": []}
+    empty = {
+        "write": None, "waiting": [], "skipped": [], "typed": [], "reply": "", "expired": [], "card": [], "ready": [],
+    }
     if not immediate:
         newest = tables.first()
-        return {**record(newest), "card": []} if newest is not None else empty
+        return {**record(newest), "card": [], "ready": []} if newest is not None else empty
     last = base.first()
     current = record(last) if last is not None and (last.response or {}).get("batch_waiting") else None
     older = [
@@ -1530,7 +1533,20 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
         r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped") for r in got.get(k) or []
         if isinstance(r, dict) and r.get("key")
     ))
-    return {**(current or empty), "expired": older, "card": card}
+    # The ready rows of that card while it is still undecided: the user may extend it (UAC F4).
+    from app.models.chatbot_agent import AgentAction
+    from app.services.contact_setup_engine import normalise_phone
+
+    action = (
+        db.query(AgentAction.steps)
+        .filter(AgentAction.turn_id == str(last.id), AgentAction.status == "proposed").first()
+        if last is not None else None
+    )
+    ready = list(dict.fromkeys(
+        k for step in (action.steps if action is not None else None) or []
+        if step.get("batch") for k in [normalise_phone((step.get("args") or {}).get("phone"))] if k
+    ))
+    return {**(current or empty), "expired": older, "card": card, "ready": ready}
 
 
 def _run(
