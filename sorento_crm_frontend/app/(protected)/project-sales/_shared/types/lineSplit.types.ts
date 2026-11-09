@@ -29,6 +29,11 @@ export interface LineSplitLine {
    * `item_code` is then its NEW ITEM CODE). Null when the product did not change.
    */
   was_item_code?: string | null;
+  /**
+   * SPLIT-SHEET-LOCATION: the location AutoCount moved the line from (the email's LOCATION;
+   * `location` is then its NEW LOCATION). Null when the line did not move.
+   */
+  was_location?: string | null;
   location: string;
   base_qty: number;
   base_date: string | null;

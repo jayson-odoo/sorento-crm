@@ -474,6 +474,8 @@ export function coveredSheetLines(
       itemCode: line.itemCode,
       // PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from, off the read.
       wasItemCode: (line.lineId ? byId.get(line.lineId)?.wasItemCode : null) ?? null,
+      // SPLIT-SHEET-LOCATION: the location AutoCount moved the line from, off the read.
+      wasLocation: (line.lineId ? byId.get(line.lineId)?.wasLocation : null) ?? null,
       location: line.location,
       baseQty: line.qty,
       baseDate: line.date,
