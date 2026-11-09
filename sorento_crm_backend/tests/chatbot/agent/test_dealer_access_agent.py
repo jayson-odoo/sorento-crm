@@ -2338,3 +2338,44 @@ def test_A18_a_ready_row_of_the_new_request_re_sent_on_all_is_not_asked_which_co
     assert c.pending_action is not None, c.reply_text
     assert any(firdaus in line for line in c.pending_action["lines"])
     assert state(db, ali) is None
+
+
+def test_M1_a_decided_card_carries_nothing_to_the_next_turn(db):
+    """UAC M1: a row READY on the preceding card (its customer name typed in that message) is carried to the next
+    turn only while that card is undecided. Once the card is cancelled the user's `all` does not type the name, so
+    the re-sent row gets the A17 refusal: never proposed as verified by the old card."""
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent import actions
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    name = w.cust_a.customer_name
+    phone = fake_phone()
+    row = row_(phone, name="ZZT Firdaus", role="employee", names=[name])
+
+    b = _turn(db, w, [_batch_call([row]), answer_("ok")], f"Sorento: ZZT Firdaus {phone} employee at {name}")
+    assert b.pending_action is not None, b.reply_text
+    card = db.query(AgentAction).filter(AgentAction.status == "proposed").order_by(AgentAction.created_at.desc()).first()
+    actions.cancel(db, w.respond_id, str(card.id))
+
+    # The user asks for the number again without typing the dealer name: the cancelled card vouches for nothing.
+    c = _turn(db, w, [_batch_call([row], "b2"), answer_("ok")], f"Sorento: {phone} employee, try again")
+
+    assert c.pending_action is None, c.reply_text
+    assert NOT_TYPED.format(name=name) in c.reply_text
+    assert state(db, phone) is None
+
+
+def test_S8_with_sorento_active_an_owner_grant_for_a_contact_linked_to_my_own_mocha_account_is_not_another_account(db):
+    from app.models.user import User
+
+    o = own_world(db)
+    w = o.w
+    with company_scope(db, None):
+        db.query(User).filter(User.id == w.user_id).update({"last_active_company_id": w.srt})
+    db.commit()
+    person = dealer(db, w, customers=(w.cust_b,), companies=(w.srt, w.mch))
+
+    steps, skipped, _ = propose(db, w, [row_(person.phone_number, role="owner", codes=[w.cust_a.customer_code])])
+
+    assert steps and skipped == []

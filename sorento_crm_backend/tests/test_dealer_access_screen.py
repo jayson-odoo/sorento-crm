@@ -1186,3 +1186,88 @@ def test_S7_the_route_module_writes_nothing_itself():
     ):
         assert forbidden not in source, f"the route module must not write a contact itself: {forbidden!r}"
     assert "require_permission" in source and "user_management.contacts.edit_own" in source
+
+
+# ================================================================== S8 two-company salesperson (all granted companies)
+
+
+def set_active(db, uid, company_id) -> None:
+    from app.models.user import User
+
+    with company_scope(db, None):
+        db.query(User).filter(User.id == uid).update({"last_active_company_id": company_id})
+    db.commit()
+
+
+def both_companies_person(db, o, name, types=("end_user",)):
+    return dealer(db, o.w, types=types, customers=(o.w.cust_a, o.w.cust_b), companies=(o.w.srt, o.w.mch), name=name)
+
+
+def test_S8_with_sorento_active_a_person_linked_only_to_my_mocha_account_can_be_edited_and_unlinked(db, api):
+    o = two_sales(db)
+    w = o.w
+    set_active(db, o.s1, w.srt)
+    owner_tag(db, MCH_TAG)
+    person = dealer(db, w, types=("end_user",), customers=(w.cust_b,), companies=(w.mch,), name="ZZT Mocha Only")
+    link = link_row(db, person.id, w.cust_b.id)
+
+    service().update(db, o.s1, str(person.id), "MCH", "owner", ids_of(w.cust_b))
+    assert MCH_TAG in tags_of(db, person.id)
+
+    client = api.as_user(o.s1)
+    outcome = commit(client, db, park(client, link.id), link.id)
+
+    assert outcome["last_outcome"]["status"] == "committed", outcome
+    assert links_of(db, person.id) == set()
+
+
+@pytest.mark.parametrize("active", ["srt", "mch"])
+def test_S8_a_person_linked_to_my_sorento_and_my_mocha_accounts_is_not_another_account(db, active):
+    o = two_sales(db)
+    w = o.w
+    set_active(db, o.s1, getattr(w, active))
+    owner_tag(db, SRT_TAG)
+    person = both_companies_person(db, o, "ZZT Both Mine")
+
+    rows = person_rows(db, o.s1)
+    assert rows and all(r["other_account"] is False for r in rows)
+
+    service().update(db, o.s1, str(person.id), "SRT", "owner", ids_of(w.cust_a))
+
+    assert SRT_TAG in tags_of(db, person.id)
+
+
+# ================================================================== S5 the level is per company
+
+
+def test_S5_demoting_on_the_sorento_row_leaves_the_mocha_owner_tag_and_types(db):
+    from app.models.access import ContactAccessType  # noqa: F401
+
+    o = two_sales(db)
+    w = o.w
+    owner_tag(db, SRT_TAG)
+    owner_tag(db, MCH_TAG)
+    person = both_companies_person(
+        db, o, "ZZT Owner Of Both", types=("end_user", "dealer", "cabana_dealer", "mocha_dealer")
+    )
+    tag_contact(db, person.id, owner_tag(db, SRT_TAG))
+    tag_contact(db, person.id, owner_tag(db, MCH_TAG))
+    service().update(db, o.s1, str(person.id), "SRT", "employee", ids_of(w.cust_a))
+
+    assert tags_of(db, person.id) == [MCH_TAG]
+    types = state(db, person.phone_number)["types"]
+    assert "mocha_dealer" in types
+    assert not ({"dealer", "cabana_dealer"} & set(types))
+
+
+def test_S5_promoting_on_the_sorento_row_adds_only_the_sorento_tag(db):
+    o = two_sales(db)
+    w = o.w
+    owner_tag(db, SRT_TAG)
+    owner_tag(db, MCH_TAG)
+    person = both_companies_person(db, o, "ZZT Promote Sorento Only")
+
+    service().update(db, o.s1, str(person.id), "SRT", "owner", ids_of(w.cust_a))
+
+    assert tags_of(db, person.id) == [SRT_TAG]
+    assert "mocha_dealer" not in state(db, person.phone_number)["types"]

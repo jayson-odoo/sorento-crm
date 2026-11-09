@@ -938,11 +938,13 @@ def _own_agent_ids(db, user_id: str) -> list[str]:
 
 @contextmanager
 def _users_scope(db, user_id: str):
-    """The user's company scope for the body, whatever scope the session carries (restored after)."""
+    """EVERY company the user is granted for the body, whatever scope the session carries (restored after).
+    Own accounts, "another account" and the contact facts are read over all the user's companies, never only
+    the active one (DEALER-ACCESS-SCREEN S8)."""
     from app.models.base import company_scope
     from app.services import company_scope_resolver
 
-    with company_scope(db, company_scope_resolver._scope_for_user(db, user_id, None)):
+    with company_scope(db, frozenset(company_scope_resolver.resolve_user_grant_ids(db, user_id))):
         yield
 
 
@@ -1193,6 +1195,9 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     remove_tags: list = []
     lines: list[str] = []
     template_codes = facts["template_codes"]
+    if args.get("role_companies"):
+        # The Dealer access screen changes the level of ONE company's row: only ever narrows (S5).
+        template_codes = [c for c in template_codes if c in set(args["role_companies"])]
     if role == "owner" and not template_codes:
         raise AppException(
             status_code=422,

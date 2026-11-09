@@ -178,17 +178,12 @@ def list_people(
     total = len(rows)
     start = max(int(page) - 1, 0) * int(limit)
     shown = rows[start:start + int(limit)]
-    # A boolean only: another account's link is never named or counted (S3). The same rule as
-    # `writes._not_own_links`, but over every granted company at once (that helper reads the active company only,
-    # which would call a Mocha account of mine "another account" while Sorento is active).
-    shown_ids = sorted({r["contact_id"] for r in shown})
-    with company_scope(db, None):
-        linked = db.query(RespondContactCustomer.contact_id, RespondContactCustomer.customer_id).filter(
-            RespondContactCustomer.contact_id.in_(shown_ids)
-        )
-        others = {str(cid) for cid, cust in linked if str(cust) not in by_customer}
-    for r in shown:
-        r["other_account"] = r["contact_id"] in others
+    # A boolean only: another account's link is never named or counted (S3, S8: over all my granted companies).
+    for contact_id in {r["contact_id"] for r in shown}:
+        other = bool(writes._not_own_links(db, user_id, contact_id))
+        for r in shown:
+            if r["contact_id"] == contact_id:
+                r["other_account"] = other
     return {"rows": shown, "total": total}
 
 
@@ -197,7 +192,8 @@ def list_people(
 
 def grant(db: Session, user_id: str, company: str, account_ids: list[str], people: list[dict]) -> dict:
     """S4: every person is checked with the agent's grant plan first; one refusal refuses the form and writes
-    nothing. Otherwise each person is executed with the agent's grant execute."""
+    nothing. Otherwise each person is executed with the agent's grant execute, each committing on its own (S9: only a
+    concurrent change between the plan and the execute can leave earlier rows written)."""
     from app.services.company_scope_resolver import grants_scope
     from app.services.contact_setup_engine import normalise_phone
 
@@ -250,16 +246,25 @@ def _editable(db: Session, user_id: str, contact_id: str) -> None:
 
 
 def update(db: Session, user_id: str, contact_id: str, company: str, role: str, account_ids: list[str]) -> dict:
-    """S5: set which of my accounts of this company the person holds, and their level there."""
+    """S5: set which of my accounts of this company the person holds, and their level there.
+
+    Both steps are planned first (neither plan writes), so a refusal from either writes nothing. Then the new links
+    commit through the grant (role `employee`, add-only: the only way an edit_own holder links), and only after that
+    the unlinks and a role change commit through the access update (`role_companies` limits the level to this
+    company)."""
     from app.models.access import RespondContact, RespondContactCustomer
     from app.services.company_scope_resolver import grants_scope
     from app.services.contact_tag_service import owner_tag, tags_by_contact
 
     _editable(db, user_id, contact_id)
-    picked = _picked(db, user_id, company, account_ids)
-    code = str(company).strip().upper()
     row = _company_row(db, user_id, company)
-    mine = {str(c.id) for c in _own_customers(db, user_id, {str(row.id)})}
+    own = {str(c.id): c for c in _own_customers(db, user_id, {str(row.id)})}
+    ids = list(dict.fromkeys(str(i) for i in account_ids or []))
+    if not ids or any(i not in own for i in ids):
+        raise _refuse(PICK_OWN)
+    picked = [own[i] for i in ids]
+    code = str(company).strip().upper()
+    mine = set(own)
     with company_scope(db, None):
         contact = db.query(RespondContact.id, RespondContact.name, RespondContact.phone_number).filter(
             RespondContact.id == str(contact_id)
@@ -276,6 +281,7 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
     change: dict = {"contact_id": str(contact_id), "unlink_customer_ids": sorted((held & mine) - picked_ids)}
     if role != current:
         change["role"] = role
+        change["role_companies"] = [code]  # the level is per company: only this row's tags and types move
     user = _user(db, user_id)
     # An edit_own holder links only through the grant (A13/A14 and the template apply), role `employee`: add-only.
     grant_args = {
