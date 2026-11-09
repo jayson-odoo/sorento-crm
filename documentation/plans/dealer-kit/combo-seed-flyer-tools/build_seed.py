@@ -169,6 +169,10 @@ for c in combos:
                 free.append({"kind": "product", "code": only["code"], "label": g["role"], "note": free_note})
             else:
                 components.append({"code": only["code"], "role": g["role"]})
+                # The flyer printed the package price on that one option (p24 gold basins, p26 basins: basin +
+                # tap + waste at one SP): it is the combo's selling price, not lost with the group.
+                if only.get("sp") is not None and c.get("sp") is None:
+                    c["sp"] = only["sp"]
         else:
             keep_groups.append(g)
     groups = keep_groups

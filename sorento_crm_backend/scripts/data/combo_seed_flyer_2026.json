@@ -4560,7 +4560,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 899,
   "unsure": "Basin tile SP (not basin LP) is read as the package price for each tap option; ADD ON items print LP only. Each option carries the tile IV in its iv key. Single tap, so a one-option group."
  },
  {
@@ -4585,7 +4585,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 899,
   "unsure": "Basin tile SP (not basin LP) is read as the package price for each tap option; ADD ON items print LP only. Each option carries the tile IV in its iv key. Single tap, so a one-option group."
  },
  {
@@ -4610,7 +4610,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 899,
   "unsure": "Basin tile SP (not basin LP) is read as the package price for each tap option; ADD ON items print LP only. Each option carries the tile IV in its iv key. Single tap, so a one-option group."
  },
  {
@@ -4635,7 +4635,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 899,
   "unsure": "Basin tile SP (not basin LP) is read as the package price for each tap option; ADD ON items print LP only. Each option carries the tile IV in its iv key. Single tap, so a one-option group."
  },
  {
@@ -5870,7 +5870,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 659,
   "unsure": "ADD ON items print LP only; basin SP is read as the package price of the single tap option. Box left of the basin."
  },
  {
@@ -5895,7 +5895,7 @@
   "topups": [],
   "free_items": [],
   "lp": null,
-  "sp": null,
+  "sp": 739,
   "unsure": "ADD ON items print LP only; basin SP is read as the package price of the single tap option. Box right of the basin."
  },
  {
@@ -5933,7 +5933,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 299,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
@@ -5971,7 +5971,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 499,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
@@ -6009,7 +6009,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 499,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
@@ -6047,7 +6047,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 499,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
@@ -6085,7 +6085,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 299,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
@@ -6123,7 +6123,7 @@
    }
   ],
   "lp": null,
-  "sp": null,
+  "sp": 299,
   "unsure": "Basins of a box are joined by OR; each has its own SP, so each is its own combo with the box's tap (one-option group, sp = that basin's SP) and popup fixed. FOC Fixing Bolts and SRTFT203 printed under the box, read as applying to every basin of it."
  },
  {
