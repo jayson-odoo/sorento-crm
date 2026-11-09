@@ -462,3 +462,30 @@ def test_B4_a_stale_stored_condition_does_not_block_the_next_save(reg):
         {"mixer": {hot.id: [stale], cold.id: [stale]}},
     )
     assert res.status_code == 422, res.text
+
+
+def test_B4_a_condition_on_a_deactivated_partner_key_is_kept(reg):
+    """Round 3: a partner key switched off after the condition was saved keeps the icon narrow."""
+    db, _as, client = reg
+    host, trap, _length, hot, cold = _world(db)
+    stale = _cond(trap, "s_trap")
+    res = _patch_both(client, host, {"mixer": [hot.id, cold.id]}, {"mixer": {hot.id: [stale]}})
+    assert res.status_code == 200, res.text
+    _stored(db, trap).is_active = False
+    db.commit()
+
+    other = _cond(_world(db)[1], "s_trap")  # an unrelated active key, for the NEW condition on Cold
+    res = _patch_both(
+        client, host, {"mixer": [hot.id, cold.id]},
+        {"mixer": {hot.id: [stale], cold.id: [other]}},
+    )
+    assert res.status_code == 200, res.text
+    assert _stored(db, host).value_icon_conditions["mixer"][hot.id] == [stale]
+    assert [r["conditions"] for r in _rules_for(db, host) if r["id"] == hot.id] == [[stale]]
+
+    # The same gone key sent as NEW on another icon is refused.
+    res = _patch_both(
+        client, host, {"mixer": [hot.id, cold.id]},
+        {"mixer": {hot.id: [stale], cold.id: [stale]}},
+    )
+    assert res.status_code == 422, res.text

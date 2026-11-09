@@ -824,6 +824,8 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
                     if (key, raw) in already:
                         # A partner taken away since: the stored condition STAYS (dropping it
                         # would widen the icon to every product holding the host value).
+                        if key in seen:
+                            raise _refuse_condition(f"{key} is used twice on one icon.")
                         seen.add(key)
                         cleaned.append({"spec_key": key, "value": raw})
                         continue
