@@ -1311,6 +1311,8 @@ export interface TagLayerDisplay {
   accessoryEditing?: boolean;
   /** S6: the box style the previewed product / combo names; the box draws it instead of its own design. */
   accessoryBoxStyle?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-HEADER-DRAG: the header is being dragged; the drag handle draws it, the box does not. */
+  accessoryHeaderHidden?: boolean;
 }
 
 /**
