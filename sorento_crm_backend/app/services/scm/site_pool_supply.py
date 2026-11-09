@@ -14,6 +14,8 @@ way: not known to be site-pool supply, or known not to be.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -66,7 +68,8 @@ def _grouped_supply_map(rows) -> dict[str, dict]:
     return out
 
 
-def open_po_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
+def open_po_by_product(db: Session, product_ids: list[str],
+                       warehouse_ids: Optional[list[str]] = None) -> dict[str, dict]:
     """``{product_id: {"qty": total, "docs": [...]}}`` of open PO lines still owed at a
     SITE POOL location - the sheet's own "BRW PO Qty" (Phase 3 nit), the same
     `pool_predicate` module `po_book_service`/`reorder_run_service` already read, rather
@@ -80,10 +83,15 @@ def open_po_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
     `NULL AS container` is what lets both callers hand `_grouped_supply_map` one row shape
     (S2, AC-20). A purchase order has no container - the goods have not been shipped under
     one yet - so the PO half of the cell prints exactly as it did before that slice.
+
+    `warehouse_ids` (LOWSTOCK-LASTIN-LOCATION) narrows the count to those locations - a
+    reorder run's own `report_warehouse_ids`; None keeps the product-wide reading.
     """
-    if not product_ids:
+    if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
     co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="poo")
+    wh_sql = "AND pol.warehouse_id::text = ANY(:wids)" if warehouse_ids is not None else ""
+    wh_params = {"wids": [str(w) for w in warehouse_ids]} if warehouse_ids is not None else {}
     rows = db.execute(text(f"""
         SELECT pol.product_id::text AS pid,
                po.po_number AS po_number,
@@ -95,13 +103,15 @@ def open_po_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
         WHERE pol.product_id::text = ANY(:pids)
           AND pol.line_status = 'open'
           AND {ACTIVE_SITE_POOL_SQL}
+          {wh_sql}
           {("AND " + co) if co else ""}
         GROUP BY pol.product_id, po.po_number
-    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    """), {"pids": [str(p) for p in product_ids], **co_params, **wh_params}).fetchall()
     return _grouped_supply_map(rows)
 
 
-def open_spo_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
+def open_spo_by_product(db: Session, product_ids: list[str],
+                        warehouse_ids: Optional[list[str]] = None) -> dict[str, dict]:
     """``{product_id: {"qty": total, "docs": [...]}}`` still to come on an open SPO at a
     SITE POOL warehouse only - `spo_supply`'s own "trust the book" rule (open, not yet
     received, not landed), re-scoped (S14, AC-S14.2) to the same `pool_predicate` rule the
@@ -121,14 +131,16 @@ def open_spo_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
     itself wins, an empty string there is not a container number and falls through to the
     shipment's, and a line on neither carries no container key at all. The
     `inbound_shipments` outer join was already here, for `open_incoming_clauses`.
+
+    `warehouse_ids`: the same narrowing as `open_po_by_product`'s.
     """
-    if not product_ids:
+    if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
     container = func.coalesce(
         func.nullif(SPOAllocation.container_number, ""),
         InboundShipment.shipping_container_number,
     )
-    rows = (
+    query = (
         db.query(
             SPOAllocation.product_id,
             SPOAllocation.spo_number,
@@ -145,7 +157,8 @@ def open_spo_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
             *open_incoming_clauses(),
             text(active_site_pool_sql("warehouses")),
         )
-        .group_by(SPOAllocation.product_id, SPOAllocation.spo_number, container)
-        .all()
     )
+    if warehouse_ids is not None:
+        query = query.filter(SPOAllocation.warehouse_id.in_([str(w) for w in warehouse_ids]))
+    rows = query.group_by(SPOAllocation.product_id, SPOAllocation.spo_number, container).all()
     return _grouped_supply_map(rows)

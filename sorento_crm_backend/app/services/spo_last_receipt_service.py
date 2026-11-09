@@ -305,7 +305,9 @@ def last_receipt_rows(
     return out
 
 
-def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+def last_in_map(
+    db: Session, product_ids: list[str], warehouse_ids: Optional[list[str]] = None
+) -> dict[str, dict]:
     """``{product_id: {spo_number, container_number, qty, date}}`` - the newest VISIBLE
     `spo_allocations` line PER PRODUCT, received or not, for the Summary Order Report / low
     stock workbooks' "Last in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling
@@ -325,8 +327,16 @@ def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     MCP row itself prints as "SPO quantity" - never `quantity_received`: the owner's
     ruling surfaces an unreceived line too, and reading "received if any else ordered"
     would hide which one a cell states.
+
+    `warehouse_ids` (LOWSTOCK-LASTIN-LOCATION, owner ruling 9 Nov 2026: "when I run BRW
+    stock report it should take BRW only") filters lines to those locations BEFORE the
+    pick, by `spo_warehouse_predicate` (warehouse id OR the book's `location_code`, the
+    same match `last_receipt_rows` applies): a receipt split BRW 121 / BRW-BB 99 answers
+    121 for a BRW report, and a product with no line in those locations gets NO entry - a
+    blank Last in, never one borrowed from another location. An empty list matches
+    nothing; None keeps the network-wide pick.
     """
-    if not product_ids:
+    if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
     key_expr = _key_expr()
     rn = (
@@ -348,6 +358,9 @@ def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
         SPOAllocation.product_id.in_(product_ids),
         *visible_line_clauses(),
     )
+    if warehouse_ids is not None:
+        wids = [str(w) for w in warehouse_ids]
+        numbered = numbered.filter(spo_warehouse_predicate(wids, warehouse_codes_for(db, wids)))
     # COMPANY SCOPE, EXPLICITLY - same reason as `last_receipt_rows`'s per-product branch.
     # Belt-and-braces, not "the only copy": measured, the company predicate can land on
     # this query from more than one path once the outer query below joins `Product` (its
