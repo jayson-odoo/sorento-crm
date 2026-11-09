@@ -60,6 +60,8 @@ def test_a_buy_line_moved_by_autocount_tells_purchasing_the_new_location(api, em
     assert _lines(emails[0]) == [
         (world.product.product_code, "10", new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
     ], _lines(emails[0])
+    # Owner change request (9 Nov): LOCATION old, NEW LOCATION new, off `was.location`.
+    assert (emails[0]["lines"][0].get("was") or {}).get("location") == old
     # Q3: the Order Inquiry rows stay as they were: no cancel, no fresh order.
     world.db.expire_all()
     assert {(str(r.id), r.state, r.verb, r.qty) for r in _rows(world, line_a)} == rows_before
@@ -307,6 +309,7 @@ def test_a_first_confirm_of_a_moved_line_with_an_imported_order_says_where_it_wa
     assert _lines(emails[0]) == [
         (world.product.product_code, "10", new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
     ], _lines(emails[0])
+    assert (emails[0]["lines"][0].get("was") or {}).get("location") == old
     world.db.expire_all()
     (after,) = _rows(world, line)
     assert (str(after.id), after.state, after.verb, after.qty) == before
@@ -351,6 +354,7 @@ def test_first_confirm_two_imported_rows_moved_reads_changed_then_the_move(api, 
     assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
         (new_wh.warehouse_code, f"CHANGED: ORDER 10 & ORDER 3 -> ORDER 8, NEW LOCATION (was {old})"),
     ]
+    assert (emails[0]["lines"][0].get("was") or {}).get("location") == old
 
 
 def test_first_confirm_use_plus_buy_moved_reads_the_mixed_change_then_the_move(api, emails):
@@ -389,6 +393,7 @@ def test_first_confirm_moved_with_nothing_else_to_say_is_the_move_alone(api, ema
     assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
         (new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
     ]
+    assert (emails[0]["lines"][0].get("was") or {}).get("location") == old
 
 
 def test_first_confirm_with_a_planners_remark_still_says_the_move(api, emails):
@@ -404,3 +409,22 @@ def test_first_confirm_with_a_planners_remark_still_says_the_move(api, emails):
     assert len(emails) == 1, emails
     [remark] = [l["remark"] for l in emails[0]["lines"]]
     assert remark == f"Site rushes it., NEW LOCATION (was {old})", remark
+
+
+def test_review_split_names_the_old_location_and_the_new_one_on_a_moved_line(api):
+    """Owner change request (9 Nov): the Confirm preview reads LOCATION the old location and
+    NEW LOCATION the new one, off the pending change, as NEW QTY / NEW DATE are."""
+    from app.services.project_line_split_service import LineSplitService
+
+    _client, world = api
+    order, line_a, line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    new_wh = _sibling(world)
+    _raise_move_row(world, order, line_a, old, new_wh)
+
+    listed = LineSplitService(world.db).read(order)
+    by_id = {str(l["line_id"]): l for l in listed["lines"]}
+    moved, still = by_id[str(line_a.id)], by_id[str(line_b.id)]
+    assert (moved["was_location"], moved["location"]) == (old, new_wh.warehouse_code)
+    assert (still["was_location"], still["location"]) == (None, old)

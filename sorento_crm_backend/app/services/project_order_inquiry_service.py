@@ -1032,6 +1032,8 @@ def _say_moved(item: Dict[str, Any], was: str, now: Mapping[str, Any]) -> None:
     entry = item.get("line") or {}
     phrase = _new_location_remark(was)
     entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+    # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026).
+    entry["was"] = {**(entry.get("was") or {}), "location": was}
     if location:
         entry["location"] = location
         item["stock_location"] = location
@@ -5412,6 +5414,7 @@ class ProjectOrderInquiryService:
                 # the line's first plan row (the saved line it replaces said it).
                 phrase = _new_location_remark(moved_from)
                 entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+                entry["was"] = {**(entry.get("was") or {}), "location": moved_from}
                 item["verb_keys"] = [*item["verb_keys"], "CHANGE_LOCATION"]
 
     @staticmethod
@@ -5834,6 +5837,10 @@ class ProjectOrderInquiryService:
             )
             remark = phrase if nothing_else or not remark else f"{remark}, {phrase}"
             keys.append("CHANGE_LOCATION")
+        if moved_from:
+            # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026,
+            # as QTY / NEW QTY).
+            was["location"] = moved_from
         facts = self._handover_order_facts(pso_id)
         # OI-SAVED-LINE-RAISER-HOTFIX: the raiser rides the item, as a row line's does
         # (`handover_item`), so routing never has to read the header back post-commit.

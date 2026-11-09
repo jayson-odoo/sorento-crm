@@ -293,6 +293,16 @@ class LineFacts:
         )
 
     @property
+    def was_location(self) -> Optional[str]:
+        """SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): the location AutoCount moved the line
+        from, read off the same change NEW QTY / NEW DATE read (a pending one, else the last
+        applied); None when the line did not move. LOCATION prints it, NEW LOCATION the
+        line's own location now, as the purchasing email does."""
+        source = self.pending_from if self.pending_from is not None else self.applied_from
+        was = (source or {}).get("location") or None
+        return was if was and was != self.location else None
+
+    @property
     def shows_change(self) -> bool:
         """NEW QTY / NEW DATE are read off a change: a pending one, else the last applied."""
         return self.pending or self.refers_back
@@ -884,6 +894,9 @@ class LineSplitService:
                     # PRODUCT-CHANGE-TALLY: the email's ITEM CODE when AutoCount swapped the
                     # product (`item_code` is then its NEW ITEM CODE); null otherwise.
                     "was_item_code": plan.was_item_code,
+                    # SPLIT-SHEET-LOCATION: LOCATION = where the line was (the change's old
+                    # location), NEW LOCATION = `location` beside it; null when it did not move.
+                    "was_location": f.was_location,
                     "location": f.location,
                     "base_qty": float(plan.base_qty),
                     "base_date": plan.base_date,

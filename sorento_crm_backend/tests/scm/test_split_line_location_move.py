@@ -33,6 +33,7 @@ def test_a_moved_line_with_acting_splits_says_new_location_once(api, emails):
     told = [ln for ln in lines if phrase in (ln.get("remark") or "")]
     assert len(told) == 1, [(ln.get("location"), ln.get("remark")) for ln in lines]
     assert told[0]["location"] == sibling.warehouse_code, told[0]
+    assert (told[0].get("was") or {}).get("location") == old, told[0]
     # The lines AutoCount did not move say nothing about a location.
     assert sum("NEW LOCATION" in (ln.get("remark") or "") for ln in lines) == 1
 
