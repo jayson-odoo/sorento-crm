@@ -179,6 +179,25 @@ def test_a_build_inside_the_tick_runs_with_a_five_second_statement_timeout(env):
     assert seen and all(value in ("5s", "5000ms") for value in seen), seen
 
 
+def test_a_build_inside_the_tick_runs_with_jit_off(env):
+    """TOWN-PROD-TIMEOUT: the sales type gives `_today_and_compare` a planner cost above
+    `jit_inline_above_cost` for Sorento, and prod's JIT compile alone outran the 5 s timeout (the
+    dev Postgres has no JIT, so it never showed there). The build runs with JIT off, as the report
+    engine does for the same expression (`reports/engine.py` `_jit_off`)."""
+    from app.services.town import snapshot as town
+
+    env.db.execute(sa.text("SET LOCAL jit = on"))  # the server default: the build must turn it off
+    seen: list[str] = []
+
+    def probe(session, company_id, day, *, now):
+        seen.append(session.execute(sa.text("show jit")).scalar_one())
+        return fake_full(day, company_id)
+
+    env.patch.setattr(town, "build_snapshot", probe)
+    _tick(env, myt(DAY, 10, 0))
+    assert seen and all(value == "off" for value in seen), seen
+
+
 # --------------------------------------------------------------------------- AC-9
 
 

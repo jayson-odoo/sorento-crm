@@ -252,6 +252,14 @@ def _plan_contact(
             todo["stock"] = (False, include_ids, hide)
         if "agent_access" in skip:
             todo["agents"] = []
+        # The agent's own-scope grant skips these on a contact another account reaches (DEALER-ACCESS-PORTAL A13);
+        # the sheet upload never names them.
+        todo["switches"] = {k: v for k, v in todo["switches"].items() if k not in skip}
+        if "brands" in skip:
+            todo.pop("brands", None)
+            todo.pop("brands_every", None)
+        if "media" in skip:
+            todo["media"] = None
     return out, todo
 
 
