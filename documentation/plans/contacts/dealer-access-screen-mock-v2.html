@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealer access mock v2</title>
+<!--
+  DEALER-ACCESS-SCREEN mock v2 (lane follow-up of #2268). Static, no data fetch, no script.
+  Case: the masked dev case of CARD-dealer-access-portal-09nov.md section 0: dealer CHO*** has Sorento accounts
+  300-N034..N036 (salesperson WT***, the viewer here) and Mocha accounts 300-N026..N043 (salesperson JIM***).
+  People are "Person A..E", phones are agreed fake values (scripts/pii_guard.py). No real name or phone.
+  Every element carries [n]; the table at the bottom maps [n] to the existing component it reuses.
+-->
+<style>
+  :root { --bg:#fafafa; --card:#fff; --fg:#09090b; --muted:#71717a; --mutedbg:#f4f4f5; --line:#ececee; --input:#e4e4e7;
+          --primary:#3b82f6; --primaryfg:#fff; --primarysoft:#eff6ff; --primarytext:#1d4ed8;
+          --ok:#166534; --okbg:#dcfce7; --warn:#a16207; --warnbg:#fef9c3; --err:#b91c1c; --errbg:#fef2f2; --destr:#dc2626; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+          --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --mutedbg:#1f1f23; --line:#27272a; --input:#3f3f46;
+          --primarysoft:#172554; --primarytext:#bfdbfe; --ok:#86efac; --okbg:#052e16; --warn:#fde047; --warnbg:#2a2306;
+          --err:#fca5a5; --errbg:#2a1215; } }
+  :root[data-theme="dark"] { --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --mutedbg:#1f1f23; --line:#27272a;
+          --input:#3f3f46; --primarysoft:#172554; --primarytext:#bfdbfe; --ok:#86efac; --okbg:#052e16; --warn:#fde047;
+          --warnbg:#2a2306; --err:#fca5a5; --errbg:#2a1215; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 Inter, system-ui, sans-serif; padding:24px 16px; }
+  .wrap { max-width:1280px; margin:0 auto; display:grid; gap:28px; }
+  section { min-width:0; }
+  .state { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+  .n { display:inline-block; font-size:10px; color:var(--muted); border:1px dashed var(--input); border-radius:4px;
+       padding:0 3px; margin-left:4px; vertical-align:middle; font-weight:400; }
+  .page { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .crumb { color:var(--muted); font-size:12px; margin-bottom:2px; }
+  h1 { font-size:18px; margin:0 0 14px; font-weight:600; }
+  .search { width:100%; height:48px; border:1px solid var(--input); border-radius:6px; padding:0 14px 0 38px; font:inherit;
+            font-size:15px; background:var(--card) no-repeat 12px center; color:var(--fg); }
+  .bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:12px 0; }
+  .bar .left { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .btn { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 12px; border-radius:6px; font:inherit;
+         border:1px solid var(--input); background:var(--card); color:var(--fg); cursor:pointer; white-space:nowrap; }
+  .btn.sm { height:28px; padding:0 10px; font-size:12px; }
+  .btn.primary { background:var(--primary); border-color:var(--primary); color:var(--primaryfg); }
+  .btn.ghost { border-color:transparent; background:transparent; color:var(--muted); }
+  .btn.icon { width:28px; padding:0; justify-content:center; }
+  .count { background:var(--mutedbg); color:var(--fg); border-radius:999px; padding:0 6px; font-size:11px; }
+  .chip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border-radius:999px;
+          background:var(--primarysoft); color:var(--primarytext); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; table-layout:fixed; width:100%; min-width:1000px; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden;
+           text-overflow:ellipsis; vertical-align:middle; }
+  th { font-size:12px; color:var(--muted); font-weight:500; background:var(--card); }
+  tr:last-child td { border-bottom:0; }
+  .pill { display:inline-flex; align-items:center; height:20px; padding:0 6px; border-radius:999px; font-size:11px;
+          background:var(--mutedbg); color:var(--muted); margin-right:3px; }
+  .b { display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:999px; font-size:12px; }
+  .b-primary { background:var(--primarysoft); color:var(--primarytext); }
+  .b-secondary { background:var(--mutedbg); color:var(--muted); }
+  .b-success { background:var(--okbg); color:var(--ok); }
+  .b-warning { background:var(--warnbg); color:var(--warn); }
+  .muted { color:var(--muted); font-size:12px; }
+  .dim td { opacity:.45; }
+  .countdown { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:6px; background:var(--card);
+               padding:4px 6px 4px 10px; font-size:12px; position:relative; overflow:hidden; }
+  .countdown .barline { position:absolute; left:0; bottom:0; height:3px; width:60%; background:var(--destr); }
+  .pop { width:320px; max-width:100%; padding:12px; display:grid; gap:10px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .field { display:grid; gap:6px; }
+  .field label, .lbl { font-size:12px; font-weight:500; }
+  .select { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:32px; border:1px solid var(--input);
+            border-radius:6px; padding:3px 8px; background:var(--card); color:var(--fg); font-size:12px; flex-wrap:wrap; }
+  .select .ph { color:var(--muted); }
+  .x { color:var(--muted); font-size:12px; }
+  .menu { width:240px; padding:4px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .menu div { padding:6px 8px; border-radius:4px; font-size:13px; }
+  .menu .hd { color:var(--muted); font-size:11px; padding-top:8px; }
+  .menu .sep { border-top:1px solid var(--line); padding:0; margin:4px 0; }
+  .menu .red { color:var(--destr); }
+  .modal { max-width:640px; margin:0 auto; box-shadow:0 12px 40px rgba(0,0,0,.12); }
+  .modal header { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .modal header h2 { font-size:15px; margin:0; font-weight:600; }
+  .modal .body { padding:16px; display:grid; gap:14px; background:var(--bg); max-height:none; }
+  .inner { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; display:grid; gap:12px; }
+  .inner-h { display:flex; justify-content:space-between; align-items:center; }
+  .inner-h b { font-size:13px; }
+  .person { display:grid; grid-template-columns: 1.1fr 1.3fr 1fr 28px; gap:8px; align-items:start; padding-top:12px;
+            border-top:1px solid var(--line); }
+  .person:first-of-type { border-top:0; padding-top:0; }
+  .input { height:32px; border:1px solid var(--input); border-radius:6px; padding:0 8px; background:var(--card); color:var(--fg);
+           font:inherit; font-size:12px; width:100%; min-width:0; }
+  .phone { display:flex; gap:0; }
+  .phone .cc { flex:0 0 74px; border-radius:6px 0 0 6px; border-right:0; display:flex; align-items:center; justify-content:center; }
+  .phone .input:last-child { border-radius:0 6px 6px 0; }
+  .alert { grid-column:1 / -1; border-radius:6px; padding:6px 10px; font-size:12px; }
+  .alert.err { background:var(--errbg); color:var(--err); }
+  .alert.info { background:var(--primarysoft); color:var(--primarytext); }
+  .err-in { border-color:var(--destr); }
+  .modal footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--line); background:var(--card); border-radius:0 0 8px 8px; }
+  .meta { display:flex; flex-wrap:wrap; gap:16px; font-size:12px; color:var(--muted); }
+  .meta b { color:var(--fg); font-weight:500; }
+  .ro { font-size:13px; padding:6px 0; }
+  .empty { text-align:center; padding:32px 16px; color:var(--muted); }
+  .empty b { display:block; color:var(--fg); font-size:14px; margin-bottom:4px; }
+  .phonebox { width:100%; max-width:375px; border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--bg); }
+  .cardlist { display:grid; gap:8px; }
+  .pcard { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; display:grid; gap:4px; }
+  .pcard .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .map { width:100%; min-width:760px; }
+  .map td, .map th { white-space:normal; }
+  code { font-size:11.5px; overflow-wrap:anywhere; }
+  .grid2 { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:20px; }
+  @media (max-width: 760px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .person { grid-template-columns: 1fr; }
+    .person .btn.icon { justify-self:end; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="muted" style="margin:0">Dealer access, mock v2. Viewer: salesperson WT*** (Sorento accounts of CHO***). Levels are the contact tags;
+an Employee carries no owner tag. Every element is an existing component (table at the bottom).</p>
+
+<!-- ============================================================ STATE 1: the list -->
+<section>
+  <p class="state">State 1: the list (one page, all my companies; sidebar MY WORK &gt; Dealer access)</p>
+  <div class="page">
+    <div class="crumb">My work / Dealer access</div>
+    <h1>Dealer access <span class="n">1</span></h1>
+    <input class="search" placeholder="Search person, phone or account"><span class="n">2</span>
+    <div class="bar">
+      <div class="left">
+        <button class="btn sm">&#9783; Filter <span class="count">1</span></button><span class="n">3</span>
+        <span class="chip">Company: Sorento &#x2715;</span>
+        <button class="btn sm ghost">Clear all</button>
+        <button class="btn sm">Sort: Newest &#9662;</button>
+        <span style="display:inline-flex"><button class="btn sm" style="border-radius:6px 0 0 6px">Cards</button><button class="btn sm" style="border-radius:0 6px 6px 0;background:var(--mutedbg)">List</button></span>
+      </div>
+      <button class="btn sm primary">+ Add people</button>
+    </div>
+    <div class="card scroll"><span class="n" style="margin:6px">4</span>
+      <table>
+        <colgroup><col style="width:150px"><col style="width:140px"><col style="width:90px"><col style="width:260px">
+          <col style="width:170px"><col style="width:110px"><col style="width:140px"><col style="width:52px"></colgroup>
+        <thead><tr><th>Person</th><th>Phone</th><th>Company</th><th>My accounts</th><th>Access <span class="n">5</span></th>
+          <th>WhatsApp</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+          <tr><td title="Person A">Person A</td><td>+60 12-000 0001</td><td>Sorento</td>
+            <td title="300-N034, 300-N035, 300-N036"><span class="pill">300-N034</span><span class="pill">300-N035</span><span class="pill">+1</span></td>
+            <td><span class="pill" style="background:var(--primarysoft);color:var(--primarytext)">Sorento Business Owner</span></td>
+            <td><span class="b b-success">Linked</span></td>
+            <td title="By you, 9 Nov 2026">You, 9 Nov</td><td><button class="btn icon ghost">&#8943;</button><span class="n">7</span></td></tr>
+          <tr><td>Person B</td><td>+60 16-000 0002</td><td>Sorento</td>
+            <td><span class="pill">300-N034</span></td>
+            <td><span class="muted">Employee</span></td>
+            <td><span class="b b-warning">Waiting</span></td>
+            <td>You, 9 Nov</td><td><button class="btn icon ghost">&#8943;</button></td></tr>
+          <tr><td title="Person C">Person C</td><td>+60 17-000 0003</td><td>Sorento</td>
+            <td><span class="pill">300-N036</span></td>
+            <td><span class="muted">Employee</span><div class="muted">Also has access through another account</div></td>
+            <td><span class="b b-success">Linked</span></td>
+            <td title="By the office, 2 Nov 2026">Office, 2 Nov</td><td><button class="btn icon ghost">&#8943;</button></td></tr>
+          <tr class="dim"><td>Person D</td><td>+60 19-000 0004</td><td>Sorento</td>
+            <td><span class="pill">300-N035</span></td><td><span class="muted">Employee</span></td>
+            <td><span class="b b-success">Linked</span></td><td>You, 8 Nov</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <div class="countdown" style="width:280px">Unlinking Person D from 300-N035 in 6s <button class="btn sm ghost">Cancel</button>
+        <div class="barline"></div></div><span class="n">8</span>
+    </div>
+    <p class="muted" style="margin:8px 0 0">One row per person and company. "My accounts" lists only WT***'s own accounts; Person C's other
+      dealer is never named. Row D: unlink pending (row dimmed, 5 s, Cancel; Escape does not cancel).</p>
+  </div>
+</section>
+
+<!-- ============================================================ STATE 2: filter popover + row menu -->
+<section class="grid2">
+  <div>
+    <p class="state">State 2a: Filter popover</p>
+    <div class="card pop">
+      <div class="field"><label>Company</label>
+        <div class="select"><span class="chip">Sorento &#x2715;</span><span class="x">&#9662;</span></div></div>
+      <div class="field"><label>Access</label>
+        <div class="select"><span class="ph">Any access</span><span class="x">&#9662;</span></div></div>
+      <div class="field"><label>Account</label>
+        <div class="select"><span class="ph">Any account</span><span class="x">&#9662;</span></div></div>
+      <div class="field"><label>WhatsApp</label>
+        <div class="select"><span class="ph">Any status</span><span class="x">&#9662;</span></div></div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn sm ghost">Clear all</button></div>
+    </div>
+    <p class="muted">Company options are only my companies. Access: Business Owner / Employee. Account: my own accounts only.</p>
+  </div>
+  <div>
+    <p class="state">State 2b: row menu (Person A)</p>
+    <div class="card menu">
+      <div>View / edit</div>
+      <div class="sep"></div>
+      <div class="hd">Unlink from</div>
+      <div class="red">300-N034 CHO*** (A/C I)</div>
+      <div class="red">300-N035 CHO*** (A/C II)</div>
+      <div class="red">300-N036 CHO*** (A/C III)</div>
+    </div>
+    <p class="muted">Destructive items last, red, after a separator. Unlinking the last link turns AI replies off in the same change.</p>
+  </div>
+</section>
+
+<!-- ============================================================ STATE 3: Add people modal -->
+<section>
+  <p class="state">State 3: Add people (modal, portal form)</p>
+  <div class="card modal">
+    <header><h2>Add people <span class="n">9</span></h2><button class="btn icon ghost">&#x2715;</button></header>
+    <div class="body">
+      <div class="inner">
+        <div class="field"><label>Company</label>
+          <div class="select"><span>Sorento</span><span class="x">&#9662;</span></div><span class="n">10</span></div>
+        <div class="field"><label>My accounts</label>
+          <div class="select"><span><span class="chip">300-N034 CHO*** (A/C I) &#x2715;</span> <span class="chip">300-N035 CHO*** (A/C II) &#x2715;</span></span><span class="x">&#9662;</span></div>
+          <span class="n">11</span></div>
+      </div>
+      <div class="inner">
+        <div class="inner-h"><b>People</b><button class="btn sm">+ Add person</button></div>
+        <div class="person">
+          <input class="input" value="Person E">
+          <div class="phone"><span class="input cc">MY +60</span><input class="input" value="12-000 0005"></div><span class="n" style="display:none"></span>
+          <div class="select"><span>Business Owner</span><span class="x">&#9662;</span></div>
+          <button class="btn icon ghost">&#128465;</button>
+        </div>
+        <div class="person">
+          <input class="input" value="Person F">
+          <div class="phone"><span class="input cc">MY +60</span><input class="input" value="17-000 0006"></div>
+          <div class="select"><span>Employee</span><span class="x">&#9662;</span></div>
+          <button class="btn icon ghost">&#128465;</button>
+          <div class="alert info">Also has access through another account. Kept as they are: AI replies, stock, brands and media.</div>
+        </div>
+        <div class="person">
+          <input class="input" value="Person G">
+          <div class="phone"><span class="input cc err-in">MY +60</span><input class="input err-in" value="11-111 1111"></div>
+          <div class="select"><span>Employee</span><span class="x">&#9662;</span></div>
+          <button class="btn icon ghost">&#128465;</button>
+          <div class="alert err">This number belongs to a staff member.</div>
+        </div>
+        <span class="muted">Fields: name, phone <span class="n">12</span>, access <span class="n">13</span>; per-row reason <span class="n">14</span>.</span>
+      </div>
+    </div>
+    <footer><button class="btn">Cancel</button><button class="btn primary">Grant access</button></footer>
+  </div>
+  <p class="muted">Nothing pre-ticked: accounts are explicit picks from my own accounts of the chosen company. Any refused row
+    blocks Grant access with its reason on that row; nothing is half-written. The texts are the #2268 service's own.</p>
+</section>
+
+<!-- ============================================================ STATE 4: view = edit -->
+<section class="grid2">
+  <div>
+    <p class="state">State 4a: View (Person A), read-only</p>
+    <div class="card modal" style="max-width:none">
+      <header><h2>Person A</h2><button class="btn icon ghost">&#x2715;</button></header>
+      <div class="body">
+        <div class="meta"><span>Phone <b>+60 12-000 0001</b></span><span>WhatsApp <b>Linked</b></span><span>Added <b>you, 9 Nov 2026</b></span></div>
+        <div class="inner">
+          <div class="field"><span class="lbl">Company</span><div class="ro">Sorento</div></div>
+          <div class="field"><span class="lbl">My accounts</span><div class="ro">300-N034, 300-N035, 300-N036</div></div>
+          <div class="field"><span class="lbl">Access</span><div class="ro"><span class="pill" style="background:var(--primarysoft);color:var(--primarytext)">Sorento Business Owner</span></div></div>
+        </div>
+      </div>
+      <footer><button class="btn">Close</button><button class="btn primary">Edit</button></footer>
+    </div>
+  </div>
+  <div>
+    <p class="state">State 4b: Edit (Person C), same layout</p>
+    <div class="card modal" style="max-width:none">
+      <header><h2>Person C</h2><button class="btn icon ghost">&#x2715;</button></header>
+      <div class="body">
+        <div class="meta"><span>Phone <b>+60 17-000 0003</b></span><span>WhatsApp <b>Linked</b></span><span>Added <b>office, 2 Nov 2026</b></span></div>
+        <div class="inner">
+          <div class="field"><span class="lbl">Company</span><div class="ro">Sorento</div></div>
+          <div class="field"><span class="lbl">My accounts</span>
+            <div class="select"><span><span class="chip">300-N036 CHO*** (A/C III) &#x2715;</span></span><span class="x">&#9662;</span></div></div>
+          <div class="field"><span class="lbl">Access</span>
+            <div class="select"><span>Business Owner</span><span class="x">&#9662;</span></div>
+            <div class="alert err">This person also has access through another account; ask the office to change their level.</div></div>
+        </div>
+      </div>
+      <footer><button class="btn">Cancel</button><button class="btn primary">Save</button></footer>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ STATE 5: 375px + empty -->
+<section class="grid2">
+  <div>
+    <p class="state">State 5a: 375px</p>
+    <div class="phonebox">
+      <h1 style="font-size:16px;margin-bottom:10px">Dealer access</h1>
+      <input class="search" placeholder="Search person, phone or account">
+      <div class="bar"><button class="btn sm">&#9783; Filter <span class="count">1</span></button><button class="btn sm primary">+ Add people</button></div>
+      <div class="cardlist">
+        <div class="pcard"><div class="top"><b>Person A</b><button class="btn icon ghost">&#8943;</button></div>
+          <span class="muted">+60 12-000 0001 · Sorento</span>
+          <div><span class="pill" style="background:var(--primarysoft);color:var(--primarytext)">Sorento Business Owner</span><span class="b b-success">Linked</span></div>
+          <div><span class="pill">300-N034</span><span class="pill">300-N035</span><span class="pill">+1</span></div></div>
+        <div class="pcard"><div class="top"><b>Person B</b><button class="btn icon ghost">&#8943;</button></div>
+          <span class="muted">+60 16-000 0002 · Sorento</span>
+          <div><span class="muted">Employee</span> <span class="b b-warning">Waiting</span></div>
+          <div><span class="pill">300-N034</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <p class="state">State 5b: empty (no people yet) and no accounts</p>
+    <div class="card empty"><b>No people have access yet</b>Add people to give them access to your accounts.</div>
+    <div class="card empty" style="margin-top:12px"><b>No customers are assigned to you yet</b>Your customers appear here once the office assigns them.</div>
+    <p class="muted">Heading + hint, no button (the one CTA is Add people in the toolbar).</p>
+  </div>
+</section>
+
+<!-- ============================================================ reuse map -->
+<section>
+  <p class="state">Element -&gt; existing component (sorento_crm_frontend/)</p>
+  <div class="card scroll">
+    <table class="map">
+      <colgroup><col style="width:44px"><col style="width:180px"><col style="width:300px"><col></colgroup>
+      <thead><tr><th>#</th><th>Element</th><th>Reuses</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Page header</td><td><code>components/common/PageHeader.tsx</code></td><td>Title only, no subtitle; as <code>OwnSalesOpportunitiesView</code> (<code>app/(protected)/sales/opportunities/components/SalesOpportunitiesView.tsx</code>)</td></tr>
+        <tr><td>2</td><td>Search</td><td><code>components/common/ListSearchInput.tsx</code></td><td>Portal size <code>h-12 text-base</code>, as <code>app/(auth)/portal/components/SubmissionList.tsx</code></td></tr>
+        <tr><td>3</td><td>Filter + Add people bar</td><td><code>app/(auth)/portal/components/LandingToolbar.tsx</code></td><td>Filter popover with <code>SearchableMultiSelect clearable size="sm"</code> per field; Company options from <code>getMyCompanyContext</code> (as <code>user-management/contacts/components/ContactFiltersPopover.tsx</code>); its Sort dropdown and cards/list <code>ListBoardViewToggle</code> as on every portal list; primary sm button right, as <code>SubmissionList.tsx</code> toolbar. Owner v1 note 1: "1 tab is enough, should reuse portal layout with all the filters components"</td></tr>
+        <tr><td>4</td><td>Listing</td><td><code>components/ui/data-grid.tsx</code> (DataGrid, DataGridTable, DataGridPagination)</td><td><code>tableLayout fixed + columnsResizable</code>, <code>columnResizeMode onChange</code>, explicit sizes, truncate + title; account codes via <code>components/common/PillOverflow.tsx</code> (+N)</td></tr>
+        <tr><td>5</td><td>Access = owner tag pill</td><td><code>app/(protected)/user-management/contacts/components/ContactTagsCell.tsx</code></td><td>The contact's owner tag as the contacts screen shows tags; Employee = plain text (no tag). WhatsApp status: <code>components/ui/badge.tsx</code> success / warning light</td></tr>
+        <tr><td>6</td><td>Row click</td><td><code>rowHref</code> / row onClick of DataGrid</td><td>Opens state 4a</td></tr>
+        <tr><td>7</td><td>Row menu</td><td><code>components/common/RowActionsMenu.tsx</code> + <code>components/common/recordActions.tsx</code></td><td>Destructive "Unlink from" items last, red</td></tr>
+        <tr><td>8</td><td>Unlink countdown</td><td><code>hooks/useDeferredRowAction.tsx</code> + <code>components/common/DeferredActionButton.tsx</code></td><td>Server-deferred record action (5 s reversible, System Settings), row dimmed, Cancel; no dialog</td></tr>
+        <tr><td>9</td><td>Add / view / edit modal</td><td><code>components/ui/dialog.tsx</code> (Dialog, DialogHeader, DialogBody)</td><td>Portal form look of <code>app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm.tsx</code>: Cards with Label + field; view and edit the same layout. Owner v1 note 2: "should reuse our portal design"</td></tr>
+        <tr><td>10</td><td>Company</td><td><code>components/common/SearchableSelect.tsx</code></td><td>My companies only; hidden when I have one</td></tr>
+        <tr><td>11</td><td>My accounts</td><td><code>components/common/SearchableMultiSelect.tsx</code> + <code>app/(protected)/order-management/customers/hooks/useCustomerMultiPicker.ts</code></td><td>Options from the new own-accounts endpoint (own accounts of the company only), clearable, nothing pre-ticked</td></tr>
+        <tr><td>12</td><td>Phone</td><td><code>components/common/PhoneInput.tsx</code></td><td><code>defaultCountry="MY"</code></td></tr>
+        <tr><td>13</td><td>Access level</td><td><code>components/common/SearchableSelect.tsx</code></td><td>Business Owner / Employee</td></tr>
+        <tr><td>14</td><td>Row reason / notice</td><td><code>components/ui/alert.tsx</code></td><td>Destructive for a refusal, info for "also has access through another account"; text from the service</td></tr>
+        <tr><td>-</td><td>People rows</td><td><code>app/(auth)/portal/sales_opportunity/components/PortalOpportunityLineRow.tsx</code> pattern</td><td>Card header "People" + outline sm "+ Add person"; ghost trash per row</td></tr>
+        <tr><td>-</td><td>375px cards</td><td><code>app/(auth)/portal/components/LandingCardShell.tsx</code></td><td>Same as the portal's mobile card list</td></tr>
+        <tr><td>-</td><td>Load error</td><td><code>components/common/LoadErrorState.tsx</code></td><td>Retry</td></tr>
+        <tr><td>-</td><td>Menu item</td><td><code>config/menu.config.tsx</code> MY WORK</td><td><code>audience: 'salesperson'</code>, permission <code>user_management.contacts.edit_own</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">Backend: no second write path. Grant, level change and unlink call the #2268 service
+    (<code>sorento_crm_backend/app/services/chatbot/agent/contact_grant.py</code> plan/execute and the
+    <code>crm_contact_access_update</code> write), with the same own-scope checks, refusal texts, audit row and Respond job.</p>
+</section>
+
+</div>
+</body>
+</html>
