@@ -35,7 +35,7 @@ def test_ac_6_existing_with_fewer_parts_is_skip_parts_differ_and_untouched(db, t
     assert set(_parts(db, _combos(db, "ZZQH1", "Pack")[0])) == {"ZZQA1"}
 
 
-def test_ac_15b_discontinued_part_is_not_loaded_but_combo_is_created(db, tmp_path):
+def test_ac_15b_discontinued_part_is_loaded_and_named(db, tmp_path):
     _prod(db, "ZZQH2")
     _prod(db, "ZZQA2")
     d = _prod(db, "ZZQD2")
@@ -46,8 +46,24 @@ def test_ac_15b_discontinued_part_is_not_loaded_but_combo_is_created(db, tmp_pat
     _, out = _run(db, tmp_path, entries, apply=True)
     for text in (dry, out):
         verdict, _h, _n, _p, details = _line(text, "Pack")
-        assert verdict == "CREATE" and "not loaded (discontinued): ZZQD2" in details
-    assert set(_parts(db, _combos(db, "ZZQH2", "Pack")[0])) == {"ZZQA2"}
+        assert verdict == "CREATE" and "loaded (discontinued): ZZQD2" in details
+        assert "not loaded" not in details
+    assert set(_parts(db, _combos(db, "ZZQH2", "Pack")[0])) == {"ZZQA2", "ZZQD2"}
+
+
+def test_ac_15b_discontinued_choice_option_is_loaded_in_its_group(db, tmp_path):
+    _prod(db, "ZZQH7")
+    _prod(db, "ZZQO7")
+    d = _prod(db, "ZZQD7")
+    d.is_discontinued = True
+    db.commit()
+    entries = [_entry("ZZQH7", "Pack", 1,
+                      choice_groups=[{"role": "Basin", "options": [{"code": "ZZQO7"}, {"code": "ZZQD7"}]}])]
+    _, out = _run(db, tmp_path, entries, apply=True)
+    details = _line(out, "Pack")[4]
+    assert "loaded (discontinued): ZZQD7" in details and "not loaded" not in details
+    parts = _parts(db, _combos(db, "ZZQH7", "Pack")[0])
+    assert {k: v.choice_group for k, v in parts.items()} == {"ZZQO7": "Basin", "ZZQD7": "Basin"}
 
 
 def test_ac_15b_discontinued_host_still_creates_with_a_note(db, tmp_path):
