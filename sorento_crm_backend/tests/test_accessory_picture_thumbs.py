@@ -71,6 +71,7 @@ def test_list_pictures_carry_the_thumb_rendition(db, monkeypatch, storage):
     assert pictures[1]["thumb_url"] is None, "not ready: no thumb, the caller falls back"
     assert pictures[0]["url"] == first["url"], "the original stays as it was"
     assert rows[1]["images"][0]["thumb_url"].endswith(".thumb.jpg")
+    assert rows[0]["image"]["thumb_url"] == pictures[0]["thumb_url"], "a legacy-only picture reads `image`"
     assert len(asked) == 1 and asked[0][1] == "thumb", "one rendition call for the whole list"
 
 

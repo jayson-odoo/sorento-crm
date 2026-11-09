@@ -361,6 +361,8 @@ class AccessoryService:
         from app.services import image_thumbnailer
 
         ids = [picture["attachment_id"] for row in rows for picture in row.get("images") or []]
+        # `image` too: a legacy accessory keeps its only picture there, outside `images`.
+        ids += [row["image"]["attachment_id"] for row in rows if row.get("image")]
         thumbs = (
             image_thumbnailer.rendition_urls(self.db, ids, "thumb", wait_seconds=THUMB_WAIT_SECONDS)
             if ids
@@ -371,6 +373,8 @@ class AccessoryService:
                 {**picture, "thumb_url": thumbs.get(picture["attachment_id"])}
                 for picture in row.get("images") or []
             ]
+            if row.get("image"):
+                row["image"] = {**row["image"], "thumb_url": thumbs.get(row["image"]["attachment_id"])}
         return rows
 
     @staticmethod
