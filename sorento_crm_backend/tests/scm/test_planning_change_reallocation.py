@@ -60,6 +60,7 @@ from app.services.scm.outstanding_diff import CLOSED, DATE_MOVED, QTY_CHANGED, C
 
 from tests._pg_fixture import blank_session
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
+    apply_batch,
     BASE,
     api,
     _classification,
@@ -1658,7 +1659,7 @@ def test_the_wire_carries_the_cancelled_rows_reallocation_result_and_null_for_pe
     )
     assert put.status_code == 200, put.text
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     assert apply_response.json()["failed_orders"] == [], apply_response.json()
 

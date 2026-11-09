@@ -138,17 +138,6 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     # An agent's team is the one it is in today, as the Agents tab shows it.
     team_of_agent = {m.sales_agent_id: t for m, t in ts._covering_on(db, today)}
     dealer_accounts = ts._accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
-    # The paid account as the Dealers tab prints it ("A/C I"): tells same-name dealer rows apart (owner 8 Nov).
-    from app.models.order import Customer
-
-    payee_ids = {t.payout_customer_id for t in targets if t.payout_customer_id}
-    payees = {c.id: ts.account_label(c) for c in db.query(Customer).filter(Customer.id.in_(payee_ids))} if payee_ids else {}
-    # The dealer target that replaces one in a period it reaches a tier (Q5: the answer names it).
-    replacing_ids = {t.replaced_by_target_id for t in targets if t.replaced_by_target_id}
-    replacing = (
-        dict(db.query(SalesTarget.id, SalesTarget.target_no).filter(SalesTarget.id.in_(replacing_ids)))
-        if replacing_ids else {}
-    )
 
     rows = []
     for target, period, fig in ts.period_figures(db, targets, date_from=date_from, date_to=date_to):
@@ -189,7 +178,12 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "_agent_id": agent.id if agent else None,
                 # The Dealers tab's own label (`list_all_targets`), ledger marker kept (crew live round 2).
                 "_tab_label": tab_label,
-                "_payout_account": payees.get(target.payout_customer_id),
+                # Each counted account's own share of the payout (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov:
+                # every account is its own payee), in the Dealers tab's account order with its label ("A/C I").
+                "_account_shares": [
+                    (_share_label(c, dealer_accounts.get(target.id, [])), fig["by_account"].get(c.id, 0.0))
+                    for c in dealer_accounts.get(target.id, [])
+                ] if target.subject_kind == "dealer" and has_commission else [],
                 "team": team.name if team else None,
                 "period": period.period_start,
                 "period_start": period.period_start,
@@ -207,8 +201,6 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "commission": commission if has_commission else None,
                 "bonus": bonus if has_commission else None,
                 "payout": round((commission or 0) + (bonus or 0), 2) if has_commission else None,
-                "replaced": fig["replaced"],
-                "replaced_by": replacing.get(target.replaced_by_target_id) if fig["replaced"] else None,
                 "_next": fig["next_tier"],
                 "_has_tiers": has_commission,
             }
@@ -226,6 +218,17 @@ def _next_fields(nxt: dict | None) -> dict:
         "next_tier_payout": nxt.get("payout"),
         "next_tier_gain": nxt.get("gain"),
     }
+
+
+def _share_label(customer, accounts) -> str:
+    """The account as the Dealers tab prints it ("A/C I"); with its code when another counted account of the
+    target prints the same, so two accounts' shares never merge into one."""
+    from app.services.sales import target_service as ts
+
+    label = ts.account_label(customer)
+    if sum(1 for other in accounts if ts.account_label(other) == label) > 1:
+        return f"{label} ({customer.customer_code})"
+    return label
 
 
 def _below(pct) -> bool:
@@ -291,11 +294,11 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         key = (kind, row["target_id"] if kind == "dealer" else name)
         out = per.setdefault(key, {
             "id": f"{kind}:{key[1]}", "owner": name, "owner_kind": kind, "period": row["period_start"],
-            "agent": extra["agent"], "team": extra["team"], "payout_account": row.get("_payout_account"),
+            "agent": extra["agent"], "team": extra["team"], "account_payouts": None,
             "periods": 0, "targets": set(), "target_value": 0.0,
-            "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None, "replaced_by": None,
+            "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None,
             "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
-            "_zero": set(), "_replaced": set(), "_has_commission": False,
+            "_zero": set(), "_shares": {}, "_has_commission": False,
         })
         if out["agent"] != extra["agent"]:
             # Dealer targets of one name whose accounts different agents own: no single owning agent.
@@ -321,10 +324,10 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         for k in ("commission", "bonus", "payout"):
             if row[k] is not None:
                 out[k] = round((out[k] or 0.0) + row[k], 2)
-        if row.get("replaced_by"):
-            out["_replaced"].add((row["target_no"], row["replaced_by"]))
         if row["_has_tiers"]:
             out.setdefault("_periods", {}).setdefault(row["target_no"], []).append(row)
+        for label, share in row.get("_account_shares") or []:
+            out["_shares"][label] = round(out["_shares"].get(label, 0.0) + share, 2)
     rows = []
     for out in per.values():
         # W-A: each commission target's live period, the row's numbers only when there is one (owner card Q2 a).
@@ -354,10 +357,10 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         out["achieved_pct"] = (
             ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))) if complete and goal else None
         )
-        out["replaced_by"] = ", ".join(sorted({by for _no, by in out["_replaced"]})) or None
+        shares = out.pop("_shares")
+        out["account_payouts"] = "; ".join(f"{label} {share:,.2f}" for label, share in shares.items()) or None
         out["_names"] = {k: sorted(v) for k, v in out["_names"].items()}
         out["_zero"] = sorted(out["_zero"])
-        out["_replaced"] = sorted(out["_replaced"])
         rows.append(out)
     # Agents by name, then teams, then dealers (the result ranks them by payout, `EntityDef.rank_by`).
     rows.sort(key=lambda r: ({"agent": 0, "team": 1}.get(r["owner_kind"], 2), r["owner"]))
@@ -419,8 +422,6 @@ def _next_line(owner: str, live: dict) -> str:
         f"{no} ({owner}, {when}): tier {nxt['tier']} at {_rm(nxt['threshold'], unit)}, {_rm(nxt['gap'], unit)} to "
         f"go, would pay {_rm(nxt['payout'])} ({_rm(nxt['gain'])} more than now)"
     )
-    if nxt.get("replaced"):
-        line += ", 0 while this period stays replaced by its dealer target"
     if nxt.get("mix") == "so_far":
         line += ", if the rest comes in the same account mix as sold so far"
     elif nxt.get("mix") == "even":
@@ -433,7 +434,7 @@ def _next_line(owner: str, live: dict) -> str:
 
 def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     """What the answer must say about the rows it shows (owner C3, Q5): which targets of 0 were left out of target
-    and achieved, whose payout is empty because no commission is set (never "RM 0"), and a replaced dealer period."""
+    and achieved, and whose payout is empty because no commission is set (never "RM 0")."""
     parts = []
     zero = [no for r in rows for no in r["_zero"]]
     if zero:
@@ -441,11 +442,6 @@ def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
         parts.append(f"No commission is set on the targets of {_some(unset)}.")
-    for r in rows:
-        for no, by in r["_replaced"]:
-            parts.append(
-                f"{no} ({r['owner']}) is replaced by {by} in the periods that target reached a tier, so it pays 0 there."
-            )
     # Next tier (W-A): one line per commission target's live period, so a subject with several targets is answered
     # target by target (owner card Q2 a: a sum of two distances is not a distance).
     # Only when the question is about the next tier (one of its fields asked, filtered or sorted on).
@@ -576,10 +572,6 @@ register(
                 "Point ratio missing", kind="boolean",
                 note="A points target with no RM per point on file for the period: target and % are empty.",
             ),
-            "replaced": FieldDef(
-                "Replaced by dealer target", kind="boolean",
-                note="True when the dealer's own target reached a tier, so this one pays nothing.",
-            ),
         },
         name_by=("target_no", "subject"),
         screen_path="/sales/targets/{target_id}",
@@ -629,9 +621,10 @@ register(
             "target_no": FieldDef(
                 "Target", kind="text", note="The TGT number(s); a dealer row is one target, as on the Dealers tab.",
             ),
-            "payout_account": FieldDef(
-                "Payout account", kind="text",
-                note="Dealer rows: the paid account as the Dealers tab shows it (A/C I), so same-name dealers differ.",
+            "account_payouts": FieldDef(
+                "Payout per account", kind="text",
+                note="Dealer rows: each counted account is its own payee; its label as the Dealers tab shows it "
+                     "(A/C I) and its own share of the payout, so same-name dealers differ.",
             ),
             "kinds": FieldDef("Target kinds", kind="text"),
             "periods": FieldDef("Periods", kind="number"),
@@ -647,10 +640,6 @@ register(
             "payout": FieldDef(
                 "Commission payout", kind="number",
                 note="Commission plus bonus over the window; empty (not 0) when no commission is set.",
-            ),
-            "replaced_by": FieldDef(
-                "Replaced by", kind="text",
-                note="A dealer target that replaced this dealer's own target in a period it reached a tier (pays 0).",
             ),
             **NEXT_TIER_FIELDS,
         },
@@ -672,9 +661,9 @@ register(
         default_window="this_year",
         # Every agent, team and dealer of a normal window in one result (the table is rendered by code).
         default_limit=50,
-        row_identity=("owner", "target_no", "payout_account"),
+        row_identity=("owner", "target_no", "account_payouts"),
         card_min_rows=2,
-        always_fields=("target_no", "payout_account"),
+        always_fields=("target_no", "account_payouts"),
     ),
     EntityDef(
         key="target_list",

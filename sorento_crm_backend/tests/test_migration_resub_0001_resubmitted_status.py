@@ -8,10 +8,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "resub_0001_resubmitted_status"
+# NPA-FORM-SLA (#2261, migration npasla_0003_npa_responded) widened the same NPA CHECK again, adding
+# 'responded'. The database ends on that migration's CHECK, so the chain must hold: it starts from
+# exactly this migration's set and its widened set is the model's.
+LATER_NPA_CHECK = "npasla_0003_npa_responded"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location(NAME, ROOT / "alembic" / "versions" / f"{NAME}.py")
+def _load(name: str = NAME):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "alembic" / "versions" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -33,10 +37,17 @@ def test_revision_id_fits_and_alembic_has_one_head():
 def test_npa_check_matches_the_model():
     from app.models.new_product_application import STATUSES
 
+    def values(csv: str) -> set[str]:
+        return {s.strip().strip("'") for s in csv.split(",")}
+
     module = _load()
-    migrated = {s.strip().strip("'") for s in module._NPA_STATUSES_NEW.split(",")}
-    assert migrated == set(STATUSES)
+    later = _load(LATER_NPA_CHECK)
+    later_source = (ROOT / "alembic" / "versions" / f"{LATER_NPA_CHECK}.py").read_text()
+    migrated = values(module._NPA_STATUSES_NEW)
     assert "resubmitted" in migrated
+    assert "ck_new_product_applications_status" in later_source
+    assert values(later._WITHOUT) == migrated
+    assert values(later._WITH) == set(STATUSES)
 
 
 def test_edition_open_keys_match_the_model_index_and_the_service():

@@ -22,8 +22,9 @@ Question: "How far is Agent A / dealer D1 / Team T1 from the next tier, and what
 
 - `target_service._next_tier` (called from `period_figures`, key `next_tier`): the first rung of `tier_ladder` not
   `_reached`, and `period_payout` on the achievement raised to that rung's threshold. None at the top tier, without
-  commission, with no knowable threshold (points, no ratio) or on a pct target of 0. A replaced dealer period would
-  pay 0 (the replacing target's tier does not move).
+  commission, with no knowable threshold (points, no ratio) or on a pct target of 0. Since #2262 (dealer targets
+  stack, per-account payout) there is no replaced period, and a tier's RM bonus pays one bucket only, as the engine
+  says.
 - Fields on `agent_target_summary` (per subject; not on the hidden per-period `sales_target`, which has no note to state the assumptions, review S2): `next_tier`, `next_tier_at`,
   `to_next_tier`, `next_tier_payout`, `next_tier_gain`. On the summary the numbers are filled only when the subject
   has one commission target in the window; its live period is today's, else the last one started by today.
@@ -55,7 +56,7 @@ Keep #2242's set as it is, plus:
 `sorento_crm_backend/tests/chatbot/agent/test_agent_commission_wa.py` W1-W14: agent next tier and would-pay (W1,
 W2), top tier (W3, W7, W8), kill test the would-pay equals the page after the sale lands (W4), two targets (W5),
 dealer (W6), per-account mix and even split with rates (W9, W10), view_own (W11), index hint (W12), per-period rows
-(W13: none on the hidden per-period entity), lines only when asked (W14, W21); review round 1: live period (W15, W22), three-way split (W16), negative account (W17), no ratio / no tiers (W18), replaced (W19), quantity units (W20).
+(W13: none on the hidden per-period entity), lines only when asked (W14, W21); review round 1: live period (W15, W22), three-way split (W16), negative account (W17), no ratio / no tiers (W18), quantity units (W20); W19 (replaced) retired with #2262.
 
 ## Shape rounds (crew live x3 on 0c5c7b78 and bb85f8b5)
 
@@ -69,4 +70,7 @@ lead line, no targets table), the one "No agent target has a commission ladder t
 payout or other answer kept, a named subject not found kept unless a full ranking covers it, and `final_reply`'s
 not-done lines. Tests: `test_agent_commission_wa_shape.py` N1-N14, R1-R15.
 
-Open, out of this lane: #2242's `strip_self_agent` and `_user_named` still read the message text.
+Semantic round: #2242's `strip_self_agent` and `_user_named` read the message text. Now the model's `about_self`
+argument says a question is about the asker; `query_as_asker` runs the call as given and drops the asker's own name
+only when the call ran and found nothing (`test_agent_commission_wa_semantic.py` S1-S12). Deferred as rare: a name
+variant that is not part of the stored name ("Mr Teh") still counts as a named miss.

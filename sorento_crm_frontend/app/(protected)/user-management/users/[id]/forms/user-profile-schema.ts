@@ -31,6 +31,8 @@ export const UserProfileSchema = z.object({
   notify_email_on_mention: z.boolean().optional(),
   notify_email_on_product_discontinued: z.boolean().optional(),
   notify_whatsapp_on_product_discontinued: z.boolean().optional(),
+  notify_email_on_product_list_price: z.boolean().optional(),
+  notify_whatsapp_on_product_list_price: z.boolean().optional(),
 });
 
 export type UserProfileSchemaType = z.infer<typeof UserProfileSchema>;

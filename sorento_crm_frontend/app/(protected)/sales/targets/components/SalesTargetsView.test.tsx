@@ -101,6 +101,10 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 }));
 
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
+// The Point ratio dialog's deferred delete (POINT-RATIO-EDIT) needs a QueryClient this file does not mount.
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false, countdown: null }),
+}));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
 }));
@@ -110,6 +114,10 @@ const hooks = vi.hoisted(() => ({
   useSalesTargets: vi.fn(),
   usePointRatios: () => ({ data: { rows: [] }, isLoading: false }),
   useSavePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  POINT_RATIOS_KEY: ['sales-target-point-ratios'],
+  SALES_TARGETS_KEY: ['sales-targets'],
+  SALES_TARGET_KEY: ['sales-target'],
   useImportDealerTargets: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDownloadDealerTemplate: () => ({ mutate: vi.fn(), isPending: false }),
   useDownloadCommissionStatement: () => statement,
@@ -255,14 +263,14 @@ describe('SalesTargetsView', () => {
     expect(screen.getByText('No team targets yet')).toBeTruthy();
   });
 
-  it('Dealers lists dealer targets with Counts, Pays to and the current commission (lane SALES-TARGET-DEALER)', () => {
+  it('Dealers lists dealer targets with Counts and the current commission, no Pays to (lane TARGET-PER-ACCOUNT-PAYOUT)', () => {
     perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
     withRows([
       row({
         target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
         sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
         product_scope: 'all', scope_labels: [], account_labels: ['A/C I', 'A/C III'],
-        account_codes: ['300-A0123', '300-A0124'], payout_label: 'A/C I', commission_earned: 5400,
+        account_codes: ['300-A0123', '300-A0124'], commission_earned: 5400,
       }),
     ]);
     render(<SalesTargetsView />);
@@ -270,7 +278,7 @@ describe('SalesTargetsView', () => {
     expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'dealer' });
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
     expect(headers).toEqual([
-      'Number', 'Name', 'Dealer', 'Counts', 'Pays to', 'Measures', 'Dates', 'Target',
+      'Number', 'Name', 'Dealer', 'Counts', 'Measures', 'Dates', 'Target',
       'Achieved (sales orders, incl. tax)', '%', 'Commission',
     ]);
     expect(screen.getByText('Dealer A Sdn Bhd')).toBeTruthy();
@@ -286,7 +294,7 @@ describe('SalesTargetsView', () => {
         target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
         sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
         basis: 'invoiced', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
-        account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+        account_codes: ['300-A0123'], commission_earned: 0,
       }),
     ]);
     render(<SalesTargetsView />);
@@ -302,7 +310,7 @@ describe('SalesTargetsView', () => {
     const dealer = {
       sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
       subject_kind: 'dealer', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
-      account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+      account_codes: ['300-A0123'], commission_earned: 0,
     };
     withRows([
       row({ ...dealer, target_id: 'ti', target_no: 'TGT-000301', name: 'Invoiced one', basis: 'invoiced', achieved_value: 1234 }),

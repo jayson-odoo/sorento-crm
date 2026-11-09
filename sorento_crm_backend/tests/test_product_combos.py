@@ -831,3 +831,65 @@ def test_ac_s5_13_the_stored_attachment_carries_the_real_entity_type(db, monkeyp
 
     stored = db.query(Attachment).filter(Attachment.id == response.json()["attachment_id"]).one()
     assert stored.entity_type == "product_combo_image"
+
+
+# --------------------------------------------------------------------------- COMBO-RENAME
+# Rename a combo after creating it (PLAN-combo-rename-09nov). The column is VARCHAR(100)
+# (`app/models/product_combo.py`), so a longer name is a schema 422, never a DB error.
+
+
+def test_combo_create_name_over_100_chars_is_422(db, monkeypatch):
+    host = _product(db, "SRTRN1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    url = COMBOS.format(product_id=host.id)
+
+    too_long = client.post(url, json={"name": "A" * 101})
+    assert too_long.status_code == 422, too_long.text
+
+    exactly = client.post(url, json={"name": "B" * 100})
+    assert exactly.status_code == 201, exactly.text
+
+
+def test_combo_rename_trims_and_saves(db, monkeypatch):
+    host = _product(db, "SRTRN2")
+    combo = _combo(db, host, "WALL HUNG WATER CLOSET COMBO")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.patch(COMBO.format(combo_id=combo.id), json={"name": "  WALL HUNG WC SET  "})
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "WALL HUNG WC SET"
+
+
+def test_combo_rename_over_100_chars_is_422(db, monkeypatch):
+    host = _product(db, "SRTRN3")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+
+    response = client.patch(COMBO.format(combo_id=combo.id), json={"name": "A" * 101})
+    assert response.status_code == 422, response.text
+    db.refresh(combo)
+    assert combo.name == "3 in 1"
+
+
+def test_combo_rename_empty_is_422_and_taken_is_409(db, monkeypatch):
+    host = _product(db, "SRTRN4")
+    combo = _combo(db, host, "3 in 1")
+    _combo(db, host, "4 in 1", sort_order=1)
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    url = COMBO.format(combo_id=combo.id)
+
+    empty = client.patch(url, json={"name": "   "})
+    assert empty.status_code == 422, empty.text
+
+    taken = client.patch(url, json={"name": "4 IN 1"})
+    assert taken.status_code == 409, taken.text
+    assert taken.json()["code"] == "COMBO_NAME_TAKEN"
+
+
+def test_combo_rename_needs_edit_permission(db, monkeypatch):
+    host = _product(db, "SRTRN5")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW}, monkeypatch)
+
+    response = client.patch(COMBO.format(combo_id=combo.id), json={"name": "5 in 1"})
+    assert response.status_code == 403, response.text

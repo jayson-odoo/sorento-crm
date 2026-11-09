@@ -44,7 +44,7 @@ def _uuid_str() -> str:
     return str(uuid.uuid4())
 
 
-STATUSES = ("draft", "submitted", "resubmitted", "approved", "rejected", "completed", "cancelled")
+STATUSES = ("draft", "submitted", "resubmitted", "approved", "responded", "rejected", "completed", "cancelled")
 SOURCES = ("staff", "portal")
 
 
@@ -76,7 +76,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     )
     #: Typed when the customer has no debtor code; copied as TEXT from the inquiry, never matched.
     customer_name = Column(String(255), nullable=True)
-    project_name = Column(String(255), nullable=True)
+    project_name = Column(Text, nullable=True)  # as stock_inquiries.project_name (npasi_0001)
     needed_by = Column(Date, nullable=True)
     remark = Column(Text, nullable=True)
 
@@ -86,6 +86,9 @@ class NewProductApplication(Base, CompanyScopedMixin):
     reject_reason = Column(Text, nullable=True)
     #: The latest "What changed, and why?" (the audit trail keeps every earlier one).
     revise_reason = Column(Text, nullable=True)
+    #: How many times it was revised (NPA-FORM-SLA, owner 9 Nov: the list's Rev column, like the
+    #: stock inquiry's). 0 = never; each Revise adds one.
+    revision_no = Column(Integer, nullable=False, default=0, server_default="0")
     cancelled_at = Column(DateTime(timezone=False), nullable=True)
     cancel_reason = Column(Text, nullable=True)
     completed_at = Column(DateTime(timezone=False), nullable=True)
@@ -93,11 +96,34 @@ class NewProductApplication(Base, CompanyScopedMixin):
     lead_time = Column(Text, nullable=True)
     feedback_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     feedback_at = Column(DateTime(timezone=False), nullable=True)
+    #: NPA-FROM-SI (owner, mock v3): the ONE new product code purchasing links once AutoCount
+    #: sent it, or why it is not opened. Either completes the application.
+    new_product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+    )
+    new_code_closed_reason = Column(Text, nullable=True)
+    #: The code purchasing typed for a NEW item it opens in AutoCount (owner 8 Nov). Read as that
+    #: product by exact code (case folded) once AutoCount sends it; `new_product_id` stays NULL.
+    new_code_text = Column(String(100), nullable=True)
+    #: Purchasing's response text, the stock inquiry's "Purchasing response" (owner 8 Nov 15:10:
+    #: the same Edit purchasing response, Save only / Update & Reply).
+    purchasing_response = Column(Text, nullable=True)
+    #: PURCHASING FEEDBACK cost for an application with no product rows (raised from an SI).
+    cost_price = Column(Numeric(12, 2), nullable=True)
+    new_code_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    new_code_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    #: NPA-FROM-SI: the CURRENT product codes the new code is built from (one or many, picked).
+    sources = relationship(
+        "NewProductApplicationSource",
+        back_populates="application",
+        cascade="all, delete-orphan",
+        order_by="NewProductApplicationSource.position",
+    )
     lines = relationship(
         "NewProductApplicationLine",
         back_populates="application",
@@ -108,7 +134,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("company_id", "application_no", name="uq_new_product_application_no"),
         CheckConstraint(
-            "status IN ('draft','submitted','resubmitted','approved','rejected','completed','cancelled')",
+            "status IN ('draft','submitted','resubmitted','approved','responded','rejected','completed','cancelled')",
             name="ck_new_product_applications_status",
         ),
         CheckConstraint("source IN ('staff','portal')", name="ck_new_product_applications_source"),
@@ -116,6 +142,14 @@ class NewProductApplication(Base, CompanyScopedMixin):
         Index("ix_new_product_applications_applicant", "applicant_id"),
         Index("ix_new_product_applications_contact", "contact_id"),
         Index("ix_new_product_applications_inquiry", "stock_inquiry_id"),
+        Index("ix_new_product_applications_new_product", "new_product_id"),
+        CheckConstraint(
+            "new_product_id IS NULL OR new_code_closed_reason IS NULL",
+            name="ck_new_product_applications_one_new_code_outcome",
+        ),
+        CheckConstraint(
+            "cost_price IS NULL OR cost_price >= 0", name="ck_new_product_applications_cost"
+        ),
     )
 
 
@@ -191,6 +225,39 @@ class NewProductApplicationLine(Base):
         ),
         Index("ix_new_product_application_lines_application", "application_id"),
         Index("ix_new_product_application_lines_product", "opened_product_id"),
+    )
+
+
+class NewProductApplicationSource(Base):
+    """NPA-FROM-SI lineage: one current product the application's new code is built from.
+
+    With `NewProductApplication.new_product_id` this is "current codes -> new code", and the
+    application is the why. Scoped through its application (no company_id of its own).
+    Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md.
+    """
+
+    __tablename__ = "new_product_application_sources"
+    __audit_entity_type__ = "new_product_application_source"
+    __audit_track__ = True
+    #: Company chain and history through the application, never through the product.
+    __audit_parent__ = "application_id"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    application_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("new_product_applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    position = Column(Integer, nullable=False, default=1, server_default="1")
+
+    application = relationship("NewProductApplication", back_populates="sources")
+
+    __table_args__ = (
+        UniqueConstraint("application_id", "product_id", name="uq_npa_sources_application_product"),
+        Index("ix_npa_sources_product", "product_id"),
     )
 
 

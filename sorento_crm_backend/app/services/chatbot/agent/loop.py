@@ -1042,6 +1042,14 @@ def _fetch_catalog() -> dict:
     )
 
 
+def agent_provider_name(db) -> str:
+    """The provider the agent will call (`gemini` unless an admin picked another), without its key."""
+    from app.services import ai_prompt_registry
+
+    name, _model = ai_prompt_registry.agent_model(db, PROMPT_KEY)
+    return name or DEFAULT_PROVIDER
+
+
 def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
     """(provider client, provider name, model, reasoning effort). Raises _AgentUnavailable."""
     from app.models.ai_assistant import AIAssistantConfig
@@ -1255,8 +1263,13 @@ def run_agent_turn(
     is_test: bool = True,
     context_before: str = "",
     context_after: str = "",
+    images: list | None = None,
+    files: list[dict] | None = None,
+    file_text: str = "",
 ) -> AgentTurnResult:
-    """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
+    """`file_text` is the text read from the user's attached files: quoted data in a message of its own
+    before the user's, never part of `text`. `images` ride every model call of the turn but the history summary (the panel's pictures and
+    PDFs); `files` is what the turn read, recorded on its envelope. `is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
     operator behind it, its rate limit keys on the contact.
 
     `context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
@@ -1270,7 +1283,7 @@ def run_agent_turn(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
-            context_after=context_after,
+            context_after=context_after, images=images, files=files, file_text=file_text,
         )
 
 
@@ -1349,7 +1362,7 @@ def _previous_waiting(db, conv, turn_id: str) -> dict:
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    is_test=True, context_before="", context_after="",
+    is_test=True, context_before="", context_after="", images=None, files=None, file_text="",
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -1368,6 +1381,10 @@ def _run(
         envelope["operator_user_id"] = str(operator_user_id)
     if staff_principal.current() is not None:
         envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
+    if files:
+        envelope["files"] = list(files)  # what the turn read, for the audit
+    if file_text:
+        envelope["file_text"] = file_text  # history rebuilds the quoted message from it
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
@@ -1420,8 +1437,9 @@ def _run(
             raise TimeoutError("the turn ran out of time")
         started = clock()
         try:
+            extra = {"images": images} if images and kind != "compaction" else {}
             result = send(
-                messages, tools=tools, model=model, timeout=timeout,
+                messages, tools=tools, model=model, timeout=timeout, **extra,
                 # The summary of older turns is a side call: it neither thinks nor shows thoughts.
                 reasoning_effort=None if kind == "compaction" else effort,
                 include_thoughts=kind != "compaction",
@@ -1501,7 +1519,7 @@ def _run(
             for t in folded:
                 msgs = memory._turn_messages(t, notes.get(str(t.id)))
                 created = t.created_at.date().isoformat() if t.created_at else ""
-                lines.append(f"[{created}] User: {msgs[0]['content']}\nAssistant: {msgs[1]['content']}")
+                lines.append(f"[{created}] User: {msgs[-2]['content']}\nAssistant: {msgs[-1]['content']}")
             prompt = (
                 "Fold the earlier conversation into one running summary. Keep corrections the user made, "
                 "open questions, the entities involved and the figures already answered, each with the "
@@ -1543,7 +1561,9 @@ def _run(
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
             messages.append({"role": "user", "content": context_after})
-        messages.append({"role": "user", "content": text})
+        if file_text:
+            messages.append(memory.files_message(file_text))
+        messages.append({"role": "user", "content": text or (memory.FILES_ONLY if file_text or images else "")})
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
@@ -1554,6 +1574,9 @@ def _run(
             schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
+            if file_text or images:
+                # What the files say is not the user's yes: only their own message or the card's button confirms.
+                schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
         action_id = str(uuid.uuid4())
         id_names: dict[str, str] = {}
@@ -1744,11 +1767,12 @@ def _run(
                     )
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
-                elif name == CONFIRM_ACTION and run.rounds > 1:
+                elif name == CONFIRM_ACTION and (run.rounds > 1 or file_text or images):
                     out = ToolResult(
                         "denied",
                         message="Not done: a change is confirmed only from the user's own message, "
-                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                        "before any tool runs this turn and never on a turn with attached files. "
+                        "Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)

@@ -65,12 +65,32 @@ def test_the_models_carry_the_new_columns():
         assert set(NEW_COLUMNS[table]) <= names, (table, set(NEW_COLUMNS[table]) - names)
 
 
+# NPA-FROM-SI (#2233, migration npasi_0001_lineage) added the purchasing new-code columns to the
+# header table after this revision. A column counts as covered by it only when its DDL adds that
+# column to that same table.
+# NPA-FORM-SLA (#2261, migration npasla_0002_npa_revision_no) added revision_no to the header
+# table the same way.
+LATER_MIGRATIONS = ("npasi_0001_lineage", "npasla_0002_npa_revision_no")
+
+
+def _added_by_later_migrations(table: str) -> set[str]:
+    added: set[str] = set()
+    for name in LATER_MIGRATIONS:
+        source = _path(name).read_text()
+        added |= set(re.findall(rf"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS (\w+) ", source))
+    return added
+
+
 def test_migration_covers_every_model_column_that_npa_0001_does_not():
     from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
 
     first = (ROOT / "alembic" / "versions" / "npa_0001_new_product_apps.py").read_text()
     second = _path(NAME).read_text()
     for model in (NewProductApplication, NewProductApplicationLine):
+        later = _added_by_later_migrations(model.__tablename__)
         for column in model.__table__.columns:
             in_first = f"            {column.name} " in first
-            assert in_first or re.search(rf"\b{column.name}\b", second), (model.__tablename__, column.name)
+            in_later = column.name in later
+            assert in_first or in_later or re.search(rf"\b{column.name}\b", second), (
+                model.__tablename__, column.name,
+            )

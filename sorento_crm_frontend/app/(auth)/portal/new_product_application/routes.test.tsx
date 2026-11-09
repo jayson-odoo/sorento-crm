@@ -20,10 +20,14 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('../components/NewProductApplicationForm', () => ({
   __esModule: true,
-  default: (props: { applicationId?: string; slug?: string }) => (
+  default: (props: {
+    applicationId?: string;
+    slug?: string;
+    startFromInquiryId?: string;
+  }) => (
     <div data-testid="npa-form">
       {props.applicationId ? `edit:${props.applicationId}` : 'new'}|slug:
-      {String(props.slug ?? '')}
+      {String(props.slug ?? '')}|from:{String(props.startFromInquiryId ?? '')}
     </div>
   ),
 }));
@@ -41,8 +45,28 @@ describe('impersonated /portal (no slug) reaches the new product application for
       '/portal/new_product_application/new',
     );
     const { default: NewPage } = await import('./new/page');
-    render(<NewPage />);
-    expect(screen.getByTestId('npa-form').textContent).toContain('new');
+    await act(async () => {
+      render(
+        <Suspense fallback={null}>
+          <NewPage searchParams={Promise.resolve({})} />
+        </Suspense>,
+      );
+    });
+    expect((await screen.findByTestId('npa-form')).textContent).toContain('new');
+  });
+
+  it('?stock_inquiry_id= starts the form from that inquiry', async () => {
+    const { default: NewPage } = await import('./new/page');
+    await act(async () => {
+      render(
+        <Suspense fallback={null}>
+          <NewPage searchParams={Promise.resolve({ stock_inquiry_id: 'si-9' })} />
+        </Suspense>,
+      );
+    });
+    expect((await screen.findByTestId('npa-form')).textContent).toContain(
+      'from:si-9',
+    );
   });
 
   it('an existing card opens that request, trailing link punctuation trimmed', async () => {
@@ -59,7 +83,7 @@ describe('impersonated /portal (no slug) reaches the new product application for
       );
     });
     expect((await screen.findByTestId('npa-form')).textContent).toBe(
-      `edit:${id}|slug:`,
+      `edit:${id}|slug:|from:`,
     );
   });
 
@@ -81,12 +105,15 @@ describe('the slug tree reaches the same form', () => {
     await act(async () => {
       render(
         <Suspense fallback={null}>
-          <NewPage params={Promise.resolve({ slug: 'acme' })} />
+          <NewPage
+            params={Promise.resolve({ slug: 'acme' })}
+            searchParams={Promise.resolve({ stock_inquiry_id: 'si-9' })}
+          />
         </Suspense>,
       );
     });
     expect((await screen.findByTestId('npa-form')).textContent).toBe(
-      'new|slug:acme',
+      'new|slug:acme|from:si-9',
     );
   });
 
@@ -104,7 +131,7 @@ describe('the slug tree reaches the same form', () => {
       );
     });
     expect((await screen.findByTestId('npa-form')).textContent).toBe(
-      `edit:${id}|slug:acme`,
+      `edit:${id}|slug:acme|from:`,
     );
 
     const { default: ListPage } =

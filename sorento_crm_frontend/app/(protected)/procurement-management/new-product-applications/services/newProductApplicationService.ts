@@ -1,6 +1,4 @@
 import { apiFetch } from '@/lib/api';
-import { filenameFromContentDisposition } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import { saveBlobAs } from '@/lib/save-blob';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { stockInquiryLabel } from '@/lib/new-product-application-form';
@@ -9,9 +7,12 @@ import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
   type NewProductApplicationFeedbackWrite,
+  type NewProductApplicationLineage,
   type NewProductApplicationPage,
   type NewProductApplicationPrefill,
+  type NewProductApplicationPurchasingResponseWrite,
   type NewProductApplicationProductHit,
+  type NewProductApplicationSuggestion,
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
 } from '@/types/newProductApplication';
@@ -46,6 +47,7 @@ async function fail(res: Response, fallback: string): Promise<never> {
     message,
     typeof body?.code === 'string' ? body.code : null,
     typeof body?.details?.field === 'string' ? body.details.field : null,
+    res.status,
   );
 }
 
@@ -183,6 +185,45 @@ export const closeNewProductApplicationLine = (
 export const undoNewProductApplicationLine = (id: string, lineId: string) =>
   post(`${at(id)}/lines/${at(lineId)}/undo`, 'Failed to undo the line');
 
+export const linkNewProductApplicationNewCode = (id: string, productId: string) =>
+  post(`${at(id)}/new-code/link`, 'Failed to link the product', {
+    product_id: productId,
+  });
+export const closeNewProductApplicationNewCode = (id: string, reason: string) =>
+  post(`${at(id)}/new-code/close`, 'Failed to save the reason', { reason });
+export const undoNewProductApplicationNewCode = (id: string) =>
+  post(`${at(id)}/new-code/undo`, 'Failed to undo the code');
+
+/** Purchasing refuses an Approved application: it becomes Rejected with the reason. */
+export const purchasingRejectNewProductApplication = (id: string, reason: string) =>
+  post(`${at(id)}/purchasing-reject`, 'Failed to reject the application', {
+    reason,
+  });
+
+/** Purchasing's one save: the answer on the new code, lead time and cost(s). */
+export async function saveNewProductApplicationPurchasingResponse(
+  id: string,
+  data: NewProductApplicationPurchasingResponseWrite,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${BASE}/${at(id)}/purchasing-response`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to save the response');
+}
+
+/** The same save, then the response is sent to the contact (Update & Reply). */
+export async function replyNewProductApplicationPurchasingResponse(
+  id: string,
+  data: NewProductApplicationPurchasingResponseWrite,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${BASE}/${at(id)}/purchasing-response/reply`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to send the reply');
+}
+
 /** Lists matches only (dashes, spaces and case ignored); a person picks one. */
 export async function searchNewProductApplicationProducts(
   q: string,
@@ -192,6 +233,30 @@ export async function searchNewProductApplicationProducts(
     res,
     'Failed to search products',
   );
+}
+
+/** Codes already created from exactly this set of current codes (newest first, at most 3). */
+export async function getNewProductApplicationReuseSuggestions(
+  productIds: string[],
+): Promise<NewProductApplicationSuggestion[]> {
+  if (productIds.length === 0) return [];
+  const res = await apiFetch(
+    `${BASE}/reuse-suggestions?product_ids=${encodeURIComponent(productIds.join(','))}`,
+  );
+  return read<NewProductApplicationSuggestion[]>(
+    res,
+    'Failed to load earlier codes',
+  );
+}
+
+/** A product's lineage: what it was created from and what was made from it. */
+export async function getProductLineage(
+  productId: string,
+): Promise<NewProductApplicationLineage> {
+  const res = await apiFetch(
+    `${BASE}/lineage?product_id=${encodeURIComponent(productId)}`,
+  );
+  return read<NewProductApplicationLineage>(res, 'Failed to load the lineage');
 }
 
 /** PURCHASING FEEDBACK: lead time and one cost per product (open_code, Approved or Completed). */
@@ -219,15 +284,17 @@ export async function linkNewProductApplicationAttachment(
 }
 
 /** The paper sheet as a workbook; the name comes from the server so file and sheet agree. */
-export async function downloadNewProductApplicationExcel(
+/**
+ * Queue the application's workbook in My Downloads (NPA-FORM-SLA, owner 9 Nov), the stock inquiry
+ * PDF's way: POST {id}/export/xlsx -> { id, kind: 'new_product_application_xlsx', status: 'pending' }.
+ * The RQ worker fills it; the list's Print Count counts these rows.
+ */
+export async function exportNewProductApplicationXlsx(
   id: string,
-): Promise<void> {
-  const res = await apiFetch(`${BASE}/${at(id)}/download`);
-  if (!res.ok) return fail(res, 'Failed to download the application');
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
-    'new-product-application.xlsx';
-  saveBlobAs(await res.blob(), filename);
+): Promise<{ id: string; kind: string; status: string; filename?: string | null }> {
+  const res = await apiFetch(`${BASE}/${at(id)}/export/xlsx`, { method: 'POST' });
+  if (!res.ok) return fail(res, 'Failed to start the download');
+  return res.json();
 }
 
 /** Stock inquiries for the header picker, labelled "SI26-0412 - <product code>". */

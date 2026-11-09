@@ -26,6 +26,7 @@ from app.services.attachment_field_link_service import AttachmentFieldLinkServic
 from app.models.certificate import CERTIFICATE_SOURCE_AI
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentType
+from app.services.entity_attachment_service import exclude_private_types
 from app.api.v1.external.utils import scope_to_attachment_company
 from app.services.attachment_notification_helper import (
     build_attachment_detail_url,
@@ -182,27 +183,69 @@ def _log_certificate_not_created(
         )
 
 
-def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[str, object, str]], list[str]]:
-    """Adapter over the ONE resolver, kept for this module's existing call shape.
+def _resolve_product_codes(
+    db: Session, codes: list[str], attachment=None
+) -> tuple[list[tuple[str, object, str]], list[str]]:
+    """Adapter over the ONE resolver for the certificate-linking leg.
 
-    Returns ``([(requested_code, product, via)], unmatched_codes)``. The tiers,
-    the substring behaviour and the product-set expansion all live in
-    ``app.services.product_code_resolution`` so that this path and the promotion
-    path cannot drift apart again - they used to, and the same flyer code could
-    link a file here and fail to create a promotion there.
+    Returns ``([(requested_code, product, via)], unmatched_codes)``. The tiers and the
+    product-set expansion live in ``app.services.product_code_resolution`` so this path and the
+    promotion path cannot drift apart.
 
-    ``allow_prefix=True``: this is the certificate-linking leg of the
-    attachment-link path (PLAN-shared-brand-attachments.md S1), so a
-    certificate reading "SRTBV - BRASS BALL VALVE" resolves to the family it
-    names.
+    CERT-LINK-CLEANUP (R8, 8 Nov): a certificate links only what it prints. A substring match needs a
+    contained run of 3+ characters with a digit on a boundary and never digits only, and when the PDF
+    has text the string must be printed on it as a whole token (``certificate_link_check``). The
+    family-prefix tier stays ON as the LAST resort (owner 8 Nov 21:00, applying ruling #440 R7): the
+    resolver reaches it only when tiers 1-4 find nothing, and its family head must be printed. Every string that fails is returned in ``unmatched``, so it lands
+    in the revision's unmatched list and its review flag, never dropped silently.
 
-    Company isolation still comes from the session: the caller pinned it to the
-    attachment's company, so a same-coded product or set in another company never
-    resolves (SEC-1).
+    Company isolation still comes from the session: the caller pinned it to the attachment's
+    company, so a same-coded product or set in another company never resolves (SEC-1).
     """
+    from app.services import certificate_link_check as link_check
+
     resolved = _resolve_codes(db, codes, allow_prefix=True)
-    matched = [(m.requested_code, m.product, m.via) for m in resolved.matches]
-    return matched, list(resolved.unmatched)
+    text = (
+        _certificate_text(
+            db,
+            attachment,
+            link_check.wanted_for_codes(
+                codes,
+                [m.product.product_code for m in resolved.matches if m.via == "plus_split"],
+            ),
+        )
+        if attachment is not None
+        else None
+    )
+    unmatched = list(resolved.unmatched)
+    matched: list[tuple[str, object, str]] = []
+    kept: set[str] = set()
+    rejected: list[str] = []
+    for m in resolved.matches:
+        if link_check.ingest_printed(
+            text, m.requested_code, m.via, getattr(m.product, "product_code", None)
+        ) and link_check.ingest_match_allowed(
+            m.requested_code, m.via, getattr(m.product, "product_code", None)
+        ):
+            matched.append((m.requested_code, m.product, m.via))
+            kept.add(m.requested_code)
+        elif m.requested_code not in rejected:
+            rejected.append(m.requested_code)
+    unmatched.extend(code for code in rejected if code not in kept)
+    return matched, unmatched
+
+
+def _certificate_text(db: Session, attachment, wanted: set[str]):
+    """The certificate PDF's printed runs, or None when the file cannot be read (cannot check)."""
+    from app.services import certificate_link_check as link_check
+    from app.services.resources_service import AttachmentService
+
+    try:
+        data = AttachmentService(db).get_file_content_for(attachment)
+    except Exception:  # noqa: BLE001 - an unreadable file means "cannot check", never a failed link
+        logger.info("certificate text unreadable for attachment=%s", getattr(attachment, "id", None))
+        return None
+    return link_check.read_text(data, wanted)
 
 def _store_printed_codes(db: Session, certificate_id: str, matched) -> None:
     """CERT-14: the requested text of a matched product is the code printed on the certificate,
@@ -251,7 +294,7 @@ def _link_via_certificate(
     stranded link.
     """
     created_by = current_user["id"]
-    matched, unmatched = _resolve_product_codes(db, codes)
+    matched, unmatched = _resolve_product_codes(db, codes, attachment)
     matched_ids = [str(getattr(product, "id")) for _code, product, _via in matched]
 
     service = CertificateService(db)
@@ -414,7 +457,7 @@ def create_product_attachment(
     the regression guard the 951 Technical Specifications and all Product Photos
     rows depend on (ING-4 / ING-5).
     """
-    attachment = db.query(Attachment).filter(Attachment.id == payload.attachment_id).first()
+    attachment = exclude_private_types(db.query(Attachment)).filter(Attachment.id == payload.attachment_id).first()
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -572,7 +615,7 @@ def _link_attachment_to_products_bulk(
     service = ProductAttachmentService(db)
     field_link_service = AttachmentFieldLinkService(db)
     attachment_row = (
-        db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        exclude_private_types(db.query(Attachment)).filter(Attachment.id == attachment_id).first()
     )
     # Multi-company isolation (Group G): restrict product matching to the
     # attachment's company. Covers the /link-products route that reaches this
@@ -698,7 +741,7 @@ def link_attachment_to_products(
     Link one attachment to many products by product code.
     Products are matched by product_code after removing spaces (e.g. "WC 8038" matches "WC8038").
     """
-    attachment = db.query(Attachment).filter(Attachment.id == payload.attachment_id).first()
+    attachment = exclude_private_types(db.query(Attachment)).filter(Attachment.id == payload.attachment_id).first()
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

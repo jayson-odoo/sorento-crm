@@ -265,7 +265,7 @@ const UserProfile = ({
               </div>
             )}
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
-              <dt>Discontinued product scope:</dt>
+              <dt>Product notification scope:</dt>
               <dd>
                 <span className="inline-flex flex-wrap items-center gap-1.5">
                   {scopeRows.length ? (
@@ -276,7 +276,7 @@ const UserProfile = ({
                     ))
                   ) : (
                     <span className="text-muted-foreground">
-                      No scope set. No discontinued product notices.
+                      No scope set. No discontinued or list price notices.
                     </span>
                   )}
                 </span>

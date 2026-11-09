@@ -3,6 +3,8 @@
 export interface AccessoryImage {
   attachment_id: string;
   url: string;
+  /** The 320 px rendition; absent or null while not ready (then draw `url`). */
+  thumb_url?: string | null;
 }
 
 /** One of an accessory's ordered pictures, with its optional colour. */
@@ -91,3 +93,7 @@ export type OwnerAccessories = AccessoryEntry[] & { box_style_id?: string | null
 
 export const withBoxStyle = (items: AccessoryEntry[], boxStyleId: string | null | undefined): OwnerAccessories =>
   Object.assign([...items], { box_style_id: boxStyleId ?? null });
+
+/** The picture a list row shows: the one its `entry.image_id` picks, else the accessory's own first. */
+export const rowPicture = (e: AccessoryEntry): AccessoryImage | null =>
+  (e.images ?? []).find((picture) => picture.id === e.entry?.image_id) ?? e.images?.[0] ?? e.image ?? null;

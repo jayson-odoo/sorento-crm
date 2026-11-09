@@ -536,20 +536,6 @@ def test_default_current_period_and_named_span(client, db):
     assert {l["is_current"] for l in span["dealers"]} == {False}
 
 
-def test_replaced_target_listed(client, db):
-    """T2-2: a target with `replaced_by_target_id` is listed like any other."""
-    a1, a3 = _customer(db, "ZZT REPL DEALER", 1), _customer(db, "ZZT REPL DEALER", 3)
-    replaced = _dealer_target(db, [a1])
-    replacing = _dealer_target(db, [a1, a3])
-    replaced.replaced_by_target_id = replacing.id
-    db.flush()
-    contact = _dealer_contact(db, a1, a3)
-
-    resp = _get(client, contact)
-    assert resp.status_code == 200, resp.text
-    assert sorted(_nos(resp.json()["dealers"])) == sorted([replaced.target_no, replacing.target_no])
-
-
 def test_achieved_matches_target_detail(client, db):
     """T2-3: the engine's own figure, the one the CRM target page shows."""
     from app.services.sales import target_service

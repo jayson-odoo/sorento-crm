@@ -5,7 +5,9 @@ A target is a header (who, what counts, which products, a date range and an opti
 with one row per period holding the figure. The subject is an agent, a team or a dealer.
 
 **A dealer target** (lane SALES-TARGET-DEALER) counts the orders of its accounts
-(`target_accounts`), whatever agent sold them, and pays to `payout_customer_id`. It runs on the
+(`target_accounts`), whatever agent sold them, and pays each account its own share (lane
+TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov: no single payee, and no target zeroes another; separate
+targets on one account stack). It runs on the
 same engine as every other target: the same periods, tiers and `commission_service.payout_for`.
 Every subject may have thresholds in % of the figure, RM or points, tiers per period, stacking
 "+ Additional" tiers and rounding to sen or ringgit. On a target whose thresholds are not a %,
@@ -31,10 +33,11 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Integer, cast, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
@@ -203,93 +206,6 @@ def _write_accounts(db: Session, target: SalesTarget, customer_ids: Sequence[str
     db.flush()
 
 
-def _write_replaced_by(db: Session, target: SalesTarget, replaced_by_id: Optional[str]) -> None:
-    """The dealer target that replaces this one in a period it reaches a tier (crew ruling
-    16 Oct, owner ruling 4: Tier 1-5 are one scale). Another dealer target of this company, not
-    itself replaced (one level, no chains)."""
-    if not replaced_by_id:
-        target.replaced_by_target_id = None
-        return
-    if target.subject_kind != "dealer":
-        raise _unprocessable("Only a dealer target can be replaced by another.", "INVALID_SUBJECT")
-    # Both rows locked, so two requests cannot link A to B and B to A at once.
-    other = db.query(SalesTarget).filter(SalesTarget.id == replaced_by_id).with_for_update().first()
-    if other is None or other.subject_kind != "dealer" or other.id == target.id:
-        raise _unprocessable("Pick another dealer target to replace this one.", "INVALID_REPLACED_BY")
-    db.query(SalesTarget.id).filter(SalesTarget.id == target.id).with_for_update().first()
-    if db.query(SalesTarget.id).filter(SalesTarget.replaced_by_target_id == target.id).first():
-        raise _unprocessable(
-            "Other targets are replaced by this one, so it cannot be replaced itself.", "INVALID_REPLACED_BY"
-        )
-    if other.replaced_by_target_id:
-        raise _unprocessable(
-            "That dealer target is itself replaced by another; pick the top one.", "INVALID_REPLACED_BY"
-        )
-    target.replaced_by_target_id = other.id
-
-
-def _replacing_reached(
-    db: Session, target: SalesTarget, periods: List[SalesTargetPeriod], cache: Optional[dict] = None
-) -> Dict[str, bool]:
-    """{period id: True} where the dealer target that replaces `target` reached a main tier in
-    a period covering it. Empty for a target nobody replaces. `cache` (one per list read) holds
-    each replacing target's periods once (security review gate 2 S1)."""
-    if not target.replaced_by_target_id:
-        return {}
-    cache = {} if cache is None else cache
-    key = target.replaced_by_target_id
-    if key not in cache:
-        cache[key] = _reached_by_period(db, key)
-    return {
-        p.id: any(
-            reached
-            for start, end, reached in cache[key]
-            if start <= p.period_start and end >= p.period_end
-        )
-        for p in periods
-    }
-
-
-def _reached_by_period(db: Session, target_id: str) -> List[Tuple[date, date, bool]]:
-    """(start, end, a main tier reached) per period of one target."""
-    other = db.query(SalesTarget).filter(SalesTarget.id == target_id).first()
-    if other is None:
-        return []
-    o_periods = _periods(db, other.id)
-    by_account = _achieved_by_account(db, other.company_id, [(other, p) for p in o_periods])
-    tiers = _tiers(db, other.id)
-    engine = _engine_tiers(tiers, _tier_rates(db, [t.id for t in tiers]))
-    starts = [t.period_start for t in tiers]
-    ratios = point_ratios(db) if other.threshold_unit == "points" else []
-    return [
-        (
-            op.period_start,
-            op.period_end,
-            period_payout(other, op, engine, starts, by_account.get(op.id, {}), ratios).tier_reached is not None,
-        )
-        for op in o_periods
-    ]
-
-
-_ZERO_PAYOUT = commission_service.Payout(Decimal("0"), Decimal("0"), [], None, False)
-
-
-def _write_payout(db: Session, target: SalesTarget, payout_customer_id: Optional[str]) -> None:
-    """The paid account: the one named, else the first counted account (16 Oct ruling: it may
-    be an account the target does not count)."""
-    if payout_customer_id:
-        target.payout_customer_id = _visible_customers(db, [payout_customer_id])[0].id
-    else:
-        first = (
-            db.query(SalesTargetAccount)
-            .filter(SalesTargetAccount.target_id == target.id)
-            .order_by(SalesTargetAccount.sort_order)
-            .first()
-        )
-        target.payout_customer_id = first.customer_id if first else None
-    db.flush()
-
-
 def point_ratios(db: Session) -> List[SalesPointRatio]:
     """The acting company's ratios, newest first."""
     return db.query(SalesPointRatio).order_by(SalesPointRatio.effective_from.desc()).all()
@@ -314,6 +230,61 @@ def save_point_ratio(db: Session, effective_from: date, rm_per_point: float) -> 
     row.rm_per_point = Decimal(str(rm_per_point)).quantize(Decimal("0.0001"))
     db.flush()
     return row
+
+
+def _point_ratio(db: Session, ratio_id: str) -> SalesPointRatio:
+    """One of the acting company's ratios by id, or a 404 (the read is company-scoped)."""
+    from app.services.error_handler import handle_not_found
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(ratio_id, resource="Point ratio")
+    row = db.query(SalesPointRatio).filter(SalesPointRatio.id == ratio_id).first()
+    if row is None:
+        raise handle_not_found("Point ratio", ratio_id)
+    return row
+
+
+def _ratio_clash_message(effective_from: date) -> str:
+    return f"A ratio from {effective_from.strftime('%d/%m/%Y')} already exists. Edit that one instead."
+
+
+def update_point_ratio(
+    db: Session, ratio_id: str, effective_from: date, rm_per_point: float
+) -> SalesPointRatio:
+    """Fix a ratio's value or date (lane POINT-RATIO-EDIT). Moving it onto a date another
+    ratio already holds is refused rather than merged: the reader picks which one goes."""
+    row = _point_ratio(db, ratio_id)
+    clash = (
+        db.query(SalesPointRatio.id)
+        .filter(SalesPointRatio.effective_from == effective_from, SalesPointRatio.id != row.id)
+        .first()
+    )
+    if clash is not None:
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from))
+    row.effective_from = effective_from
+    row.rm_per_point = Decimal(str(rm_per_point)).quantize(Decimal("0.0001"))
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Two edits racing onto one date pass the check above; the unique index answers.
+        if "uq_sales_point_ratios_company_from" not in str(exc.orig):
+            raise
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from)) from exc
+    return row
+
+
+def delete_point_ratio(db: Session, ratio_id: str) -> None:
+    """The parked `point_ratio.delete` handler, a hard delete (D7). The next older ratio then
+    applies from that date on; with none left, a points target reads as "ratio missing", the
+    state before the first ratio. Already gone is not an error (`delete_target_by_id`)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(ratio_id, resource="Point ratio")
+    row = db.query(SalesPointRatio).filter(SalesPointRatio.id == ratio_id).first()
+    if row is None:
+        return
+    db.delete(row)
+    db.commit()
 
 
 #: One target's scope ids: (category ids, product ids, brand ids).
@@ -569,6 +540,27 @@ def _tier_rates(db: Session, tier_ids: Iterable[str]) -> Dict[str, Dict[str, Dec
     return out
 
 
+def _tier_bonuses(db: Session, tier_ids: Iterable[str]) -> Dict[str, Dict[str, Decimal]]:
+    """{tier id: {account: its own RM Additional}} for tiers that set one per account (owner
+    8 Nov, Q3: like the rate)."""
+    ids = list(set(tier_ids))
+    out: Dict[str, Dict[str, Decimal]] = {}
+    if not ids:
+        return out
+    for row in db.query(SalesTargetTierRate).filter(
+        SalesTargetTierRate.tier_id.in_(ids), SalesTargetTierRate.bonus_amount.isnot(None)
+    ):
+        out.setdefault(row.tier_id, {})[row.customer_id] = row.bonus_amount
+    return out
+
+
+#: Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional is set only per
+#: account, never for the tier (it would be paid once per account).
+COMBINED_RM_MESSAGE = (
+    "This target counts several accounts: set the RM Additional per account, not for the tier."
+)
+
+
 #: The commission fields a create or PATCH payload may carry.
 COMMISSION_FIELDS = ("commission_method", "threshold_unit", "rounding", "tiers_per_period", "tiers")
 
@@ -606,13 +598,21 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 "account_rates": (
                     None
                     if t.account_rates is None
-                    else [(r.customer_id, Decimal(str(r.rate))) for r in t.account_rates]
+                    else [
+                        (
+                            r.customer_id,
+                            Decimal(str(r.rate)),
+                            None if r.bonus_amount is None else Decimal(str(r.bonus_amount)),
+                        )
+                        for r in t.account_rates
+                    ]
                 ),
             }
             for t in commission["tiers"] or []
         ]
     else:
         rates = _tier_rates(db, [t.id for t in _tiers(db, target.id)])
+        bonuses = _tier_bonuses(db, rates)
         tiers = [
             {
                 "from_pct": t.from_pct,
@@ -622,7 +622,11 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 "additional_rate": t.additional_rate,
                 "is_additional": t.is_additional,
                 "period_start": t.period_start,
-                "account_rates": list(rates[t.id].items()) if t.id in rates else None,
+                "account_rates": (
+                    [(cid, rate, bonuses.get(t.id, {}).get(cid)) for cid, rate in rates[t.id].items()]
+                    if t.id in rates
+                    else None
+                ),
             }
             for t in _tiers(db, target.id)
         ]
@@ -663,6 +667,17 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
             raise _unprocessable(
                 "Turn on own tiers per period to give a tier a period.", "INVALID_TIERS"
             )
+        if t["bonus"] is not None and len(counted) > 1:
+            raise _unprocessable(COMBINED_RM_MESSAGE, "INVALID_TIERS")
+        own_bonus = any(b is not None for _c, _r, b in t["account_rates"] or [])
+        if (t["additional_rate"] is not None or t["bonus"] is not None) and own_bonus:
+            raise _unprocessable(
+                "A tier's Additional is set per account or for the tier, not both.", "INVALID_TIERS"
+            )
+        if own_bonus and t["is_additional"]:
+            raise _unprocessable(
+                "A \"+ Additional\" row cannot carry an Additional of its own.", "INVALID_TIERS"
+            )
         if t["additional_rate"] is not None and t["bonus"] is not None:
             raise _unprocessable(
                 "A tier's Additional is a % or an RM amount, not both.", "INVALID_TIERS"
@@ -680,11 +695,8 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
         if t["account_rates"] is not None:
             if target.subject_kind != "dealer":
                 raise _unprocessable("Only a dealer target has rates per account.", "INVALID_TIERS")
-            if method != "retroactive":
-                raise _unprocessable(
-                    "Rates per account need \"Highest rate on everything\".", "INVALID_TIERS"
-                )
-            ids = [customer_id for customer_id, _ in t["account_rates"]]
+            # Marginal pays each account its own rate on its part of each slice (owner 8 Nov, Q3).
+            ids = [customer_id for customer_id, _r, _b in t["account_rates"]]
             if len(set(ids)) != len(ids):
                 raise _unprocessable("A tier names an account twice.", "INVALID_TIERS")
             if set(ids) - counted:
@@ -727,10 +739,11 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
         )
         db.add(tier)
         db.flush()
-        for customer_id, rate in t["account_rates"] or []:
+        for customer_id, rate, bonus in t["account_rates"] or []:
             db.add(
                 SalesTargetTierRate(
-                    company_id=target.company_id, tier_id=tier.id, customer_id=customer_id, rate=rate
+                    company_id=target.company_id, tier_id=tier.id, customer_id=customer_id, rate=rate,
+                    bonus_amount=None if bonus is None else _money(bonus),
                 )
             )
     db.flush()
@@ -789,10 +802,8 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
     )
 
     by_threshold = payload.threshold_unit != "pct"
-    if payload.subject_kind != "dealer" and (payload.customer_ids or payload.payout_customer_id):
+    if payload.subject_kind != "dealer" and payload.customer_ids:
         raise _unprocessable("Only a dealer target has accounts.", "INVALID_SUBJECT")
-    if payload.subject_kind != "dealer" and payload.replaced_by_target_id:
-        raise _unprocessable("Only a dealer target can be replaced by another.", "INVALID_SUBJECT")
 
     if payload.subject_kind == "dealer":
         if payload.sales_agent_id or payload.sales_team_id or payload.agent_figures is not None:
@@ -804,8 +815,6 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
         db.add(target)
         db.flush()
         _write_accounts(db, target, payload.customer_ids or [])
-        _write_payout(db, target, payload.payout_customer_id)
-        _write_replaced_by(db, target, payload.replaced_by_target_id)
         _write_scope(db, target, *scope_ids)
         _add_periods(db, target, bounds, [payload.target_value or 0] * len(bounds))
         _write_commission(db, target, _commission_of(payload))
@@ -980,13 +989,7 @@ def update_target(
     new_agents = changes.pop("new_agents", None) or []
     commission = {k: changes.pop(k) for k in COMMISSION_FIELDS if k in changes}
     accounts = changes.pop("customer_ids", None)
-    payout_sent = "payout_customer_id" in changes
-    payout = changes.pop("payout_customer_id", None)
-    replaced_sent = "replaced_by_target_id" in changes
-    replaced_by = changes.pop("replaced_by_target_id", None)
-    if replaced_sent:
-        _write_replaced_by(db, target, replaced_by)
-    if (accounts is not None or payout_sent) and target.subject_kind != "dealer":
+    if accounts is not None and target.subject_kind != "dealer":
         raise _unprocessable("Only a dealer target has accounts.", "INVALID_SUBJECT")
     if "name" in changes and changes["name"] is None:
         changes.pop("name")
@@ -1009,6 +1012,10 @@ def update_target(
             user_id=user_id,
         )
     if accounts is not None:
+        if len(set(accounts)) > 1 and "tiers" not in commission and any(
+            t.bonus_amount is not None for t in _tiers(db, target.id)
+        ):
+            raise _unprocessable(COMBINED_RM_MESSAGE, "INVALID_TIERS")
         _write_accounts(db, target, accounts)
         # Rates naming an account no longer counted go with it.
         kept = set(accounts)
@@ -1018,12 +1025,6 @@ def update_target(
                 SalesTargetTierRate.tier_id.in_(tier_ids),
                 SalesTargetTierRate.customer_id.notin_(kept),
             ).delete(synchronize_session=False)
-    if accounts is not None or payout_sent:
-        current = target.payout_customer_id
-        if payout_sent:
-            _write_payout(db, target, payout)
-        elif current not in (accounts or []):
-            _write_payout(db, target, current)
 
     if changes:
         _apply_header(db, target, changes)
@@ -1166,7 +1167,6 @@ def _copy(
         threshold_unit=source.threshold_unit,
         rounding=source.rounding,
         tiers_per_period=source.tiers_per_period,
-        payout_customer_id=source.payout_customer_id,
     )
     db.add(copy)
     db.flush()
@@ -1185,6 +1185,7 @@ def _copy(
     new_start = {old: bounds[i][0] for i, old in enumerate(source_starts) if i < len(bounds)}
     tiers = _tiers(db, source.id)
     rates = _tier_rates(db, [t.id for t in tiers])
+    bonuses = _tier_bonuses(db, [t.id for t in tiers])
     for tier in tiers:
         if tier.period_start is not None and tier.period_start not in new_start:
             continue
@@ -1204,7 +1205,8 @@ def _copy(
         for customer_id, rate in rates.get(tier.id, {}).items():
             db.add(
                 SalesTargetTierRate(
-                    company_id=copy.company_id, tier_id=twin.id, customer_id=customer_id, rate=rate
+                    company_id=copy.company_id, tier_id=twin.id, customer_id=customer_id, rate=rate,
+                    bonus_amount=bonuses.get(tier.id, {}).get(customer_id),
                 )
             )
     _add_periods(db, copy, bounds, [figures[min(i, len(figures) - 1)] for i in range(len(bounds))])
@@ -1373,7 +1375,9 @@ def _specs(
 
 
 def _engine_tiers(
-    tiers: List[SalesTargetCommissionTier], rates: Dict[str, Dict[str, Decimal]]
+    tiers: List[SalesTargetCommissionTier],
+    rates: Dict[str, Dict[str, Decimal]],
+    bonuses: Optional[Dict[str, Dict[str, Decimal]]] = None,
 ) -> List[commission_service.Tier]:
     return [
         commission_service.Tier(
@@ -1384,6 +1388,7 @@ def _engine_tiers(
             is_additional=bool(t.is_additional),
             account_rates=rates.get(t.id),
             additional_rate=t.additional_rate,
+            account_bonuses=(bonuses or {}).get(t.id),
         )
         for t in tiers
     ]
@@ -1431,9 +1436,23 @@ def _achieved_by_account(
     among `pairs` (its per-account rates need it); agent and team targets run the plain
     statement under one `None` key, which is all `period_payout` reads for them."""
     specs = _specs(db, company_id, pairs)
-    if any(target.subject_kind == "dealer" for target, _ in pairs):
-        return ach.achieved_by_period_and_account(db, specs, company_id)
+    dealers = [target for target, _ in pairs if target.subject_kind == "dealer"]
+    if dealers:
+        out = ach.achieved_by_period_and_account(db, specs, company_id)
+        # Every counted account has a key, sales or none: a one-for-all RM Additional pays each
+        # counted account (owner 8 Nov, Q3), not only those that sold in the period.
+        counted = _accounts_by_target(db, {t.id for t in dealers})
+        for target, period in pairs:
+            if target.subject_kind == "dealer":
+                row = out.setdefault(period.id, {})
+                for customer in counted.get(target.id, []):
+                    row.setdefault(customer.id, Decimal("0"))
+        return out
     return {pid: {None: total} for pid, total in ach.achieved_by_period(db, specs, company_id).items()}
+
+
+def _round_points(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _num(value) -> Optional[float]:
@@ -1653,6 +1672,21 @@ def list_all_targets(
         } if targets else {}
         labels = {team_id: team.name for team_id, team in teams.items()}
 
+    # Search before periods and achievement (TARGET-SEARCH-FAST): achievement is the slow part,
+    # so a search hitting 3 targets computes it for those 3 only. Same fields the row shows.
+    if query and query.strip():
+        needle = query.strip().lower()
+        label_key = {"dealer": "id", "agent": "sales_agent_id"}.get(subject, "sales_team_id")
+        targets = [
+            t
+            for t in targets
+            if any(
+                needle in (v or "").lower()
+                for v in (labels.get(getattr(t, label_key), ""), t.name, t.target_no)
+            )
+            or any(needle in (c.customer_code or "").lower() for c in accounts.get(t.id, []))
+        ]
+
     periods_by_target: Dict[str, List[SalesTargetPeriod]] = {}
     if targets:
         for period in db.query(SalesTargetPeriod).filter(
@@ -1665,13 +1699,8 @@ def list_all_targets(
     scopes = _scope_labels(db, {t.id for t in targets})
     tiers_of = _tiers_by_target(db, [t.id for t in targets])
     rates = _tier_rates(db, [tier.id for tiers in tiers_of.values() for tier in tiers])
+    bonuses = _tier_bonuses(db, rates)
     ratios = point_ratios(db) if any(t.threshold_unit == "points" for t in targets) else []
-    payout_customers = {
-        c.id: c
-        for c in db.query(Customer).filter(
-            Customer.id.in_({t.payout_customer_id for t in targets if t.payout_customer_id})
-        )
-    } if subject == "dealer" else {}
 
     def figure(target: SalesTarget, period: SalesTargetPeriod) -> Decimal:
         if target.threshold_unit != "points":
@@ -1679,20 +1708,19 @@ def list_all_targets(
         ratio = ratio_on(ratios, period.period_end)
         return period.target_value * ratio if ratio is not None else period.target_value
 
-    replacing_cache: dict = {}
-
     def current_commission(target: SalesTarget, periods: List[SalesTargetPeriod]) -> Optional[float]:
         tiers = tiers_of.get(target.id, [])
         now = next((p for p in periods if p.period_start <= on <= p.period_end), None)
         if not tiers or now is None:
             return None
-        if _replacing_reached(db, target, [now], replacing_cache).get(now.id):
-            return 0.0
         payout = period_payout(
-            target, now, _engine_tiers(tiers, rates), [t.period_start for t in tiers],
+            target, now, _engine_tiers(tiers, rates, bonuses), [t.period_start for t in tiers],
             by_account.get(now.id, {}), ratios,
         )
-        return _num(payout.commission)
+        if payout.commission is None:
+            return None
+        # Commission + bonus, as the target page's current period reads it (crew pass, 8 Nov).
+        return _num(payout.commission + (payout.bonus or Decimal("0")))
 
     rows: List[dict] = []
     for target in targets:
@@ -1701,12 +1729,10 @@ def list_all_targets(
         value = sum((achieved.get(p.id, Decimal("0")) for p in periods), Decimal("0"))
         if subject == "dealer":
             mine = accounts.get(target.id, [])
-            payout_customer = payout_customers.get(target.payout_customer_id)
             subject_id = target.id
             subject_fields = {
                 "account_labels": [account_label(c) for c in mine],
                 "account_codes": [c.customer_code for c in mine],
-                "payout_label": account_label(payout_customer) if payout_customer else None,
             }
         elif subject == "agent":
             team = team_of_agent.get(target.sales_agent_id)
@@ -1747,14 +1773,6 @@ def list_all_targets(
             }
         )
 
-    if query and query.strip():
-        needle = query.strip().lower()
-        rows = [
-            r
-            for r in rows
-            if any(needle in (r.get(key) or "").lower() for key in ("subject_label", "name", "target_no"))
-            or any(needle in code.lower() for code in r.get("account_codes") or [])
-        ]
     # Newest range first, then by who and the number, so the current targets lead.
     rows.sort(key=lambda r: (r["subject_label"].lower(), r["target_no"]))
     rows.sort(key=lambda r: r["start_date"], reverse=True)
@@ -1779,18 +1797,18 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
 
     tiers = _tiers(db, target.id)
     rates = _tier_rates(db, [t.id for t in tiers])
-    engine_tiers = _engine_tiers(tiers, rates)
+    bonuses = _tier_bonuses(db, rates)
+    engine_tiers = _engine_tiers(tiers, rates, bonuses)
     tier_starts = [t.period_start for t in tiers]
     ratios = point_ratios(db) if target.threshold_unit == "points" else []
     accounts = _accounts_by_target(db, [target.id])[target.id] if target.subject_kind == "dealer" else []
-    replaced = _replacing_reached(db, target, periods)
 
     labels = [(c.id, account_label(c)) for c in accounts]
 
     def period_out(p: SalesTargetPeriod) -> dict:
         payout = period_payout(target, p, engine_tiers, tier_starts, by_account.get(p.id, {}), ratios)
-        if replaced.get(p.id):
-            payout = _ZERO_PAYOUT
+        shares = payout.by_account or {}
+        has_commission = payout.commission is not None
         ladder = tier_ladder(engine_tiers, tier_starts, p, target, ratios, labels)
         reached_rung = (
             ladder[payout.tier_reached - 1]
@@ -1801,6 +1819,11 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         value = achieved.get(p.id, Decimal("0"))
         # A points figure is shown in RM at the period's ratio, so it compares with sales.
         figure = p.target_value * ratio if ratio is not None else p.target_value
+
+        def points(sales: Decimal) -> Optional[float]:
+            # Sales in points at the ratio the engine reads the tiers with (the period's last day,
+            # `period_payout`), so the points shown match the tier reached (owner 8 Nov, Q6 a).
+            return float(_round_points(sales / ratio)) if ratio else None
         return {
             "id": p.id,
             "period_start": p.period_start,
@@ -1808,6 +1831,7 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
             "target_value": float(figure),
             "achieved_value": float(value),
             "achieved_pct": ach.achieved_pct(value, figure),
+            "achieved_points": points(value),
             "is_current": p.period_start <= on <= p.period_end,
             "commission_earned": _num(payout.commission),
             "bonus_earned": _num(payout.bonus),
@@ -1824,9 +1848,14 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
             "point_ratio": _num(ratio),
             "ratio_missing": payout.ratio_missing,
             "accounts": [
-                _account_out(c, by_account.get(p.id, {}).get(c.id, Decimal("0"))) for c in accounts
+                {
+                    **_account_out(c, by_account.get(p.id, {}).get(c.id, Decimal("0"))),
+                    "achieved_points": points(by_account.get(p.id, {}).get(c.id, Decimal("0"))),
+                    # Each account's own share (owner 8 Nov): it is its own payee.
+                    "commission_earned": _num(shares.get(c.id, Decimal("0"))) if has_commission else None,
+                }
+                for c in accounts
             ],
-            "replaced": bool(replaced.get(p.id)),
         }
 
     team_name = None
@@ -1936,7 +1965,11 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
                 "period_start": t.period_start,
                 "account_rates": (
                     [
-                        {"customer_id": customer_id, "rate": float(rate)}
+                        {
+                            "customer_id": customer_id,
+                            "rate": float(rate),
+                            "bonus_amount": _num(bonuses.get(t.id, {}).get(customer_id)),
+                        }
                         for customer_id, rate in sorted(
                             rates[t.id].items(),
                             key=lambda kv: next(
@@ -1951,8 +1984,6 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
             for t in tiers
         ],
         "accounts": [_account_out(c) for c in accounts],
-        "payout_account": _payout_out(db, target),
-        "replaced_by": _replaced_by_out(db, target),
         "created_at": target.created_at,
         "updated_at": target.updated_at,
     }
@@ -2048,6 +2079,8 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
                     "threshold_rm": _r2(rung["threshold_rm"]),
                     "rates": rung["rates"],
                     "additional_rates": rung["additional_rates"],
+                    # The tier's own Additional; an RM one set per account names each account.
+                    "additional": rung["additional"],
                     # Main tiers run in threshold order, so every tier up to the one reached is.
                     "reached": row["tier_reached"] is not None and rung["tier"] <= row["tier_reached"],
                 }
@@ -2055,20 +2088,6 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
             ]
         out.append(detail)
     return out
-
-
-def _replaced_by_out(db: Session, target: SalesTarget) -> Optional[dict]:
-    if not target.replaced_by_target_id:
-        return None
-    other = db.query(SalesTarget).filter(SalesTarget.id == target.replaced_by_target_id).first()
-    return {"target_id": other.id, "target_no": other.target_no, "name": other.name} if other else None
-
-
-def _payout_out(db: Session, target: SalesTarget) -> Optional[dict]:
-    if not target.payout_customer_id:
-        return None
-    customer = db.query(Customer).filter(Customer.id == target.payout_customer_id).first()
-    return _account_out(customer) if customer else None
 
 
 def options(db: Session) -> dict:
@@ -2297,6 +2316,17 @@ def tier_ladder(
     def additional(tier: commission_service.Tier) -> Optional[dict]:
         if tier.additional_rate:
             return {"kind": "pct", "value": float(tier.additional_rate)}
+        if tier.account_bonuses:
+            # Each account's own RM Additional (owner 8 Nov, Q3), labelled like its rate.
+            return {
+                "kind": "amount",
+                "value": float(sum(tier.account_bonuses.values(), Decimal("0"))),
+                "accounts": _rate_entries(tier.account_bonuses, labels or []),
+            }
+        if tier.bonus_amount and len(labels or []) > 1:
+            # A legacy tier-level amount on a combined target pays nothing (owner 8 Nov 23:59):
+            # no Additional for the rate it reached; the tier table flags it to be set per account.
+            return None
         if tier.bonus_amount:
             return {"kind": "amount", "value": float(tier.bonus_amount)}
         return None
@@ -2351,10 +2381,10 @@ def period_figures(
 ) -> List[Tuple[SalesTarget, SalesTargetPeriod, dict]]:
     """Each period of `targets` overlapping the window with the target page's own figures
     (`target_detail.period_out`: target, achieved, %, tier reached, commission, bonus, the
-    "replaced by its dealer" zeroing), batched over many targets for the assistant's
+    each dealer account's own share), batched over many targets for the assistant's
     `crm_query` (AI-TOOLS-WAVE2). The same calls as the page, in the same order:
     `_achieved_by_account` (per company, dealers apart, as `period_progress` batches it),
-    `period_payout`, `_replacing_reached`. No figure is computed here that the page does not.
+    `period_payout`. No figure is computed here that the page does not.
     `tests/chatbot/agent/test_ai_tools_wave2.py` holds every figure equal to `target_detail`."""
     if not targets:
         return []
@@ -2384,11 +2414,8 @@ def period_figures(
                 by_account.update(_achieved_by_account(db, company_id, chunk))
     tiers_by = _tiers_by_target(db, [t.id for t, _ in pairs])
     rates = _tier_rates(db, [x.id for rows in tiers_by.values() for x in rows])
+    bonuses = _tier_bonuses(db, rates)
     ratios = point_ratios(db) if any(t.threshold_unit == "points" for t, _ in pairs) else []
-    replacing_cache: dict = {}
-    replaced: Dict[str, bool] = {}
-    for target in {t.id: t for t, _ in pairs}.values():
-        replaced.update(_replacing_reached(db, target, by_target[target.id], replacing_cache))
 
     accounts = _accounts_by_target(db, [t.id for t, _ in pairs if t.subject_kind == "dealer"])
 
@@ -2396,15 +2423,13 @@ def period_figures(
     for target, p in pairs:
         tiers = tiers_by.get(target.id, [])
         mine = [r for r in ratios if r.company_id == target.company_id]
-        engine, starts = _engine_tiers(tiers, rates), [t.period_start for t in tiers]
+        engine, starts = _engine_tiers(tiers, rates, bonuses), [t.period_start for t in tiers]
         payout = period_payout(target, p, engine, starts, by_account.get(p.id, {}), mine)
-        if replaced.get(p.id):
-            payout = _ZERO_PAYOUT
         ratio = ratio_on(mine, p.period_end) if target.threshold_unit == "points" else None
         value = sum(by_account.get(p.id, {}).values(), Decimal("0"))
         nxt = _next_tier(
             target, p, engine, starts, by_account.get(p.id, {}), mine,
-            [(c.id, account_label(c)) for c in accounts.get(target.id, [])], bool(replaced.get(p.id)), payout,
+            [(c.id, account_label(c)) for c in accounts.get(target.id, [])], payout,
         )
         figure = p.target_value * ratio if ratio is not None else p.target_value
         out.append(
@@ -2418,7 +2443,10 @@ def period_figures(
                     "tier_reached": payout.tier_reached,
                     "commission_earned": _num(payout.commission),
                     "bonus_earned": _num(payout.bonus),
-                    "replaced": bool(replaced.get(p.id)),
+                    # Dealer targets: each account's own share of commission + bonus (owner 8 Nov).
+                    "by_account": {
+                        key: float(value) for key, value in (payout.by_account or {}).items()
+                    } if payout.commission is not None else {},
                     "ratio_missing": payout.ratio_missing,
                     "next_tier": nxt,
                 },
@@ -2435,7 +2463,6 @@ def _next_tier(
     by_account: Dict[Optional[str], Decimal],
     ratios: List[SalesPointRatio],
     labels: List[Tuple[str, str]],
-    replaced: bool,
     payout: commission_service.Payout,
 ) -> Optional[dict]:
     """The period's next rung on the target page's own ladder (`tier_ladder`, `_reached`, as `period_progress`
@@ -2445,7 +2472,7 @@ def _next_tier(
     period); None without commission. `unit`: RM, or units on a quantity target (threshold and gap; the payout is
     RM). Per-account rates (a dealer): the rest is bought in the mix sold so far, split evenly across the counted
     accounts when nothing is sold yet (owner card Q1 a); `mix` says which and `rates` names each account's rate on
-    the rung when they differ. A replaced period pays 0 there too (the replacing target's tier does not move)."""
+    the rung when they differ."""
     if (target.commission_method or "none") == "none":
         return None
     unit = "units" if target.metric == "quantity" else "RM"
@@ -2483,7 +2510,7 @@ def _next_tier(
         t.account_rates is not None for t in engine
     )
     rates = [r for r in rung["rates"] if r["label"] is not None]
-    would = _ZERO_PAYOUT if replaced else period_payout(target, period, engine, starts, raised, ratios)
+    would = period_payout(target, period, engine, starts, raised, ratios)
     now = (payout.commission or Decimal("0")) + (payout.bonus or Decimal("0"))
     pay = (would.commission or Decimal("0")) + (would.bonus or Decimal("0"))
     return {
@@ -2496,7 +2523,6 @@ def _next_tier(
         "gain": _r2(pay - now),
         "mix": ("so_far" if total > 0 else "even") if per_account else None,
         "rates": rates if per_account and len({r["rate"] for r in rates}) > 1 else [],
-        "replaced": replaced,
     }
 
 
@@ -2530,6 +2556,7 @@ def period_progress(
 
     tiers_by = _tiers_by_target(db, [t.id for t in targets])
     all_rates = _tier_rates(db, [x.id for rows in tiers_by.values() for x in rows])
+    all_bonuses = _tier_bonuses(db, all_rates)
     accounts = _accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
     all_ratios = point_ratios(db) if any((t.threshold_unit or "pct") == "points" for t in targets) else []
     company_codes = {
@@ -2554,18 +2581,18 @@ def period_progress(
         ratios = [r for r in all_ratios if r.company_id == target.company_id]
         dealer_accounts = accounts.get(target.id, [])
         labels = [(c.id, account_label(c)) for c in dealer_accounts]
-        engine = _engine_tiers(tiers_by[target.id], all_rates)
+        engine = _engine_tiers(tiers_by[target.id], all_rates, all_bonuses)
         starts = [x.period_start for x in tiers_by[target.id]]
         if target.subject_kind == "dealer":
             # A chat line never carries a ledger marker ("[A/C I]"): the group name stays, a
             # single account's name loses its marker.
-            from app.services.ledger_family import without_ledger_marker
+            from app.services.ledger_family import ledger_family_label
 
             subject = dealer_label(db, dealer_accounts)
             groups = {c.customer_group_id for c in dealer_accounts}
             shared_group = len(groups) == 1 and None not in groups
             if not (shared_group and db.get(CustomerGroup, next(iter(groups))) is not None):
-                subject = without_ledger_marker(subject)
+                subject = ledger_family_label(subject)
         elif target.subject_kind == "agent":
             agent = agents.get(target.sales_agent_id)
             subject = agent_label(agent) if agent else ""

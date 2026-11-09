@@ -37,7 +37,6 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: (...args: unknown[]) => listPlanningChangeBatches(...args),
   getPlanningChangeBatch: vi.fn(),
   updatePlanningChangeRow: vi.fn(),
-  applyPlanningChanges: vi.fn(),
 }));
 
 import { PlanningChangesListClient } from './PlanningChangesListClient';

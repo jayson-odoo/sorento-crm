@@ -102,7 +102,7 @@ def test_N4b_closest_dealers_rank_by_distance_and_keep_the_closest_row(targets):
     pid = _product_id(db, company_id)
     near = _customer(db, company_id, "ZZT NEAR DEALER", level=1)
     _sale(db, company_id, near, "59000", date(2026, 10, 2), product_id=pid)
-    assert client.post(BASE, json=_dealer_body([near], payout_customer_id=near.id, tiers=[
+    assert client.post(BASE, json=_dealer_body([near], tiers=[
         {"period_start": "2026-10-01", "threshold": 60000, "rate": 5}])).status_code == 201
     reply = _turn(db, [{"entity": ENTITY, "next_tier": "closest", "subjects": "dealer", "limit": 1}])
     assert "ZZT NEAR DEALER" in reply and "ZZT DEALER W2" not in reply and "Payout at the next tier (RM)" in reply
@@ -125,7 +125,7 @@ def no_agent_ladder(api, grant):
     _so_line(db, company_id, agent_id=c.id, order_date=date(2026, 10, 5), line_total=Decimal("1000"), product_id=pid)
     dealer = _customer(db, company_id, "ZZT LADDER DEALER", level=1)
     _sale(db, company_id, dealer, "10000", date(2026, 10, 2), product_id=pid)
-    assert client.post(BASE, json=_dealer_body([dealer], payout_customer_id=dealer.id, tiers=[
+    assert client.post(BASE, json=_dealer_body([dealer], tiers=[
         {"period_start": "2026-10-01", "threshold": 60000, "rate": 5}])).status_code == 201
     return db
 

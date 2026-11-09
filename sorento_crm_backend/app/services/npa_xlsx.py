@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
 from app.models.order import Customer
+from app.models.procurement import StockInquiry
 from app.models.product import Brand
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.resources import Attachment
@@ -147,6 +148,16 @@ def _cell(value):
     return _xlsx_safe_text(value) if value not in (None, "") else None
 
 
+def _qty(line: Optional[NewProductApplicationLine], inquiry: Optional[StockInquiry]):
+    if line is not None:
+        return float(line.expected_qty) if line.expected_qty is not None else None
+    text = ((inquiry.quantity if inquiry else None) or "").strip()
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return text  # a free-text quantity on the inquiry prints as typed
+
+
 def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
     import openpyxl
     from openpyxl.drawing.image import Image as XlImage
@@ -172,6 +183,13 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
     wb.remove(wb.active)
 
     image = _first_image(db, app)  # one picture for the application, shown on every sheet
+    # Owner 8 Nov: an application raised from a stock inquiry has no product rows; its one sheet
+    # reads the product from the inquiry and the cost from purchasing's header answer.
+    inquiry = (
+        db.query(StockInquiry).filter(StockInquiry.id == app.stock_inquiry_id).first()
+        if app.stock_inquiry_id and not app.lines
+        else None
+    )
     lines: List[Optional[NewProductApplicationLine]] = list(app.lines) or [None]
     for number, line in enumerate(lines, start=1):
         ws = wb.create_sheet(f"Product {number}")
@@ -204,8 +222,8 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
         field(2, "REFF:", stem)
         field(3, "DATE:", date_text)
         field(4, "SALES PERSON:", person)
-        field(5, "PRODUCT CODE:", line.proposed_code if line else None)
-        field(6, "PRODUCT TYPE:", line.description if line else None)
+        field(5, "PRODUCT CODE:", line.proposed_code if line else (inquiry.product_code if inquiry else None))
+        field(6, "PRODUCT TYPE:", line.description if line else (inquiry.item_description if inquiry else None))
         field(7, "DIMENSION:", line.dimension if line else None)
         field(8, "MATERIAL:", line.material if line else None)
         field(9, "THICKNESS:", line.thickness if line else None)
@@ -218,11 +236,12 @@ def to_xlsx(db: Session, app: NewProductApplication) -> Tuple[bytes, str]:
             ws.row_dimensions[12].height = picture.height * 0.75 + 6
         field(13, "CUSTOMER:", customer)
         field(14, "PROJECT:", app.project_name)
-        field(15, "QTY:", float(line.expected_qty) if line and line.expected_qty is not None else None)
+        field(15, "QTY:", _qty(line, inquiry))
         field(16, "TARGET DELIVERY:", needed)
         field(17, "REMARK:", app.remark)
         heading(18, "PURCHASING FEEDBACK")
-        field(19, "COST:", float(line.cost_price) if line and line.cost_price is not None else None)
+        cost = line.cost_price if line else app.cost_price
+        field(19, "COST:", float(cost) if cost is not None else None)
         field(20, "LEADTIME:", app.lead_time)
 
     buf = io.BytesIO()

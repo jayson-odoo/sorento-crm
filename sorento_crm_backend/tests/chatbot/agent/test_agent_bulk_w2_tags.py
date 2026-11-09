@@ -139,11 +139,13 @@ def test_01_the_batch_tool_offers_both_writes_with_the_slug_and_neither_without(
     from app.services.chatbot.agent import batch
 
     w = make_world(db, superadmin=False)
-    enum = batch.schema_for(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
-    assert set(enum) == {GRANT, TAGS}
+    enum = batch.batch_tool_schema(db, ctx_of(db, w))["function"]["parameters"]["properties"]["write"]["enum"]
+    # Both contact writes ride the contacts edit slug; other waves add their own writes under their own slugs, so
+    # this pins membership, not the whole enum (MAIN-RED-4).
+    assert GRANT in enum and TAGS in enum
 
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.schema_for(db, ctx_of(db, own)) is None
+    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
     steps = []
     out = batch.propose(db, ctx_of(db, own), {"write": TAGS, "rows": [row_(fake_phone(), add=["x"])]}, steps,
                         seen_ids=set())

@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import {
   InquiryFormTableRow,
   InquiryReadValue,
@@ -30,6 +31,14 @@ export interface NewProductApplicationHeaderProps {
   readOnly?: boolean;
   stockInquiryField: ReactNode;
   customerField: ReactNode;
+  /** PRODUCT CODES, directly under STOCK INQUIRY. */
+  productCodesField: ReactNode;
+  /** NEW PRODUCT CODE, directly under REMARK. */
+  newCodeField: ReactNode;
+  /** COST (MYR) of an application with no product rows; omitted when the table carries the costs. */
+  costField?: ReactNode;
+  /** PURCHASING RESPONSE, read-only: the text purchasing saved. */
+  purchasingResponseField?: ReactNode;
   feedback?: { editable: boolean; onSave?: () => void; saving?: boolean };
 }
 
@@ -42,6 +51,10 @@ export function NewProductApplicationHeader({
   readOnly,
   stockInquiryField,
   customerField,
+  productCodesField,
+  newCodeField,
+  costField,
+  purchasingResponseField,
   feedback,
 }: NewProductApplicationHeaderProps) {
   const patch = (next: Partial<FormState>) => onChange({ ...value, ...next });
@@ -65,12 +78,27 @@ export function NewProductApplicationHeader({
       <InquiryFormTableRow label="STOCK INQUIRY:">
         {stockInquiryField}
       </InquiryFormTableRow>
+      <InquiryFormTableRow
+        label="PRODUCT CODES:"
+        labelClassName="items-start pt-3"
+      >
+        {productCodesField}
+      </InquiryFormTableRow>
       <InquiryFormTableRow label="CUSTOMER:">
         {customerField}
       </InquiryFormTableRow>
       <InquiryFormTableRow label="PROJECT:">
         {readOnly ? (
-          <InquiryReadValue>{value.project_name}</InquiryReadValue>
+          // Long project titles clamp everywhere; the eye button opens the full name.
+          <InquiryReadValue>
+            {value.project_name?.trim() ? (
+              <TruncatedTextCell
+                text={value.project_name}
+                lines={2}
+                dialogTitle="Project"
+              />
+            ) : null}
+          </InquiryReadValue>
         ) : (
           <Input
             aria-label="Project"
@@ -105,6 +133,12 @@ export function NewProductApplicationHeader({
           />
         )}
       </InquiryFormTableRow>
+      <InquiryFormTableRow
+        label="NEW PRODUCT CODE:"
+        labelClassName="items-start pt-3"
+      >
+        {newCodeField}
+      </InquiryFormTableRow>
       <InquiryFormTableRow label="LEADTIME:">
         {editableFeedback ? (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -131,6 +165,17 @@ export function NewProductApplicationHeader({
           </p>
         )}
       </InquiryFormTableRow>
+      {costField !== undefined && (
+        <InquiryFormTableRow label="COST:">{costField}</InquiryFormTableRow>
+      )}
+      {purchasingResponseField !== undefined && (
+        <InquiryFormTableRow
+          label="PURCHASING RESPONSE:"
+          labelClassName="items-start pt-3"
+        >
+          {purchasingResponseField}
+        </InquiryFormTableRow>
+      )}
     </ProductInquiryFormLayout>
   );
 }

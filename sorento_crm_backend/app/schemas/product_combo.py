@@ -73,15 +73,19 @@ class ProductSoldWithListOut(BaseModel):
 #: Raw input cap before sanitising (the 5000 limit applies to the stored value, in the service).
 RAW_DESCRIPTION_LIMIT = 20000
 
+#: `product_combos.name` is VARCHAR(100) (`app/models/product_combo.py`): a longer name is a 422 here,
+#: not a DB error at commit.
+COMBO_NAME_MAX = 100
+
 
 class ProductComboCreate(BaseModel):
-    name: str
+    name: str = Field(max_length=COMBO_NAME_MAX)
     #: Sanitised and length-checked in the service (the limit applies to the stored value).
     description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
 
 
 class ProductComboUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=COMBO_NAME_MAX)
     sort_order: Optional[int] = None
     #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
     #: Sanitised and length-checked in the service (the limit applies to the stored value).

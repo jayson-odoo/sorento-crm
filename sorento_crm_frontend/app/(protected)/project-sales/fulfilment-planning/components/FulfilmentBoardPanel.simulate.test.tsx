@@ -59,7 +59,6 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: vi.fn(),
   getPlanningChangeBatch: vi.fn(),
   updatePlanningChangeRow: vi.fn(),
-  applyPlanningChanges: vi.fn(),
 }));
 
 vi.mock('@/lib/toast', () => ({

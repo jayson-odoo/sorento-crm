@@ -142,7 +142,7 @@ def two_accounts(targets):
     _sale(db, company_id, a1, "30000", date(2026, 10, 3), product_id=pid)
     _sale(db, company_id, a2, "10000", date(2026, 10, 4), product_id=pid)
     rates = [{"customer_id": a1.id, "rate": 2}, {"customer_id": a2.id, "rate": 4}]
-    res = client.post(BASE, json={**_dealer_body([a1, a2], payout_customer_id=a1.id, tiers=[
+    res = client.post(BASE, json={**_dealer_body([a1, a2], tiers=[
         {"period_start": "2026-07-01", "threshold": 100000, "account_rates": rates},
         {"period_start": "2026-10-01", "threshold": 100000, "account_rates": rates},
     ]), "name": "ZZT MIX 2026"})
@@ -236,11 +236,11 @@ def _tier(threshold, rate=None, account_rates=None, bonus=None):
                 account_rates=account_rates, additional_rate=None)
 
 
-def _call(target, period, tiers, by_account, labels=(), replaced=False, ratios=()):
-    from app.services.sales import target_service as ts
+def _call(target, period, tiers, by_account, labels=(), ratios=()):
+    from app.services.sales import commission_service, target_service as ts
 
-    return ts._next_tier(target, period, tiers, [None] * len(tiers), by_account, list(ratios), list(labels),
-                         replaced, ts._ZERO_PAYOUT)
+    zero = commission_service.Payout(Decimal("0"), Decimal("0"), [], None, False)
+    return ts._next_tier(target, period, tiers, [None] * len(tiers), by_account, list(ratios), list(labels), zero)
 
 
 def test_W16_three_accounts_split_evenly_still_reach_the_tier_exactly():
@@ -249,8 +249,9 @@ def test_W16_three_accounts_split_evenly_still_reach_the_tier_exactly():
     rates = {"a": Decimal("2"), "b": Decimal("4"), "c": Decimal("6")}
     nxt = _call(target, period, [_tier("100000", account_rates=rates, bonus=Decimal("500"))], {},
                 labels=[("a", "A"), ("b", "B"), ("c", "C")])
-    # 33,333.33 at 2% + 33,333.33 at 4% + 33,333.34 at 6% + RM 500 bonus.
-    assert nxt["state"] == "next" and nxt["payout"] == 666.67 + 1333.33 + 2000.0 + 500.0
+    # 33,333.33 at 2% + 33,333.33 at 4% + 33,333.34 at 6%. The tier's RM bonus is not paid across several accounts
+    # (#2262, TARGET-PER-ACCOUNT-PAYOUT: `Tier.bonus_amount` pays one bucket only); the engine decides, W-A follows.
+    assert nxt["state"] == "next" and nxt["payout"] == 666.67 + 1333.33 + 2000.0
     sold = _call(target, period, [_tier("100000", account_rates=rates)],
                  {"a": Decimal("10000"), "b": Decimal("10000"), "c": Decimal("10000")},
                  labels=[("a", "A"), ("b", "B"), ("c", "C")])
@@ -276,17 +277,6 @@ def test_W18_no_ratio_and_no_tiers_are_never_called_the_top_tier():
     assert _call(target, period, [], {None: Decimal("0")})["state"] == "no_tiers"
     live = {"target_no": "TGT-9", "start": period.period_start, "end": period.period_end, "next": {"state": "no_ratio"}}
     assert "top tier" not in _next_line("D", live) and "RM per point" in _next_line("D", live)
-
-
-def test_W19_a_replaced_period_would_still_pay_0_and_says_why():
-    """Review S3: the replacing dealer target's tier does not move, so reaching this one's own tier pays 0."""
-    from app.services.assistant_registry.sales import _next_line
-
-    target, period = _fake(subject_kind="agent")
-    nxt = _call(target, period, [_tier("100000", rate=Decimal("1"))], {None: Decimal("40000")}, replaced=True)
-    assert (nxt["gap"], nxt["payout"], nxt["gain"]) == (60000.0, 0.0, 0.0)
-    live = {"target_no": "TGT-9", "start": period.period_start, "end": period.period_end, "next": nxt}
-    assert "replaced by its dealer target" in _next_line("D", live)
 
 
 def test_W20_a_quantity_target_says_units_not_ringgit():

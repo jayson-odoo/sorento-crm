@@ -206,6 +206,30 @@ def _restore(originals) -> None:
     app.dependency_overrides.clear()
 
 
+class _Applied:
+    """The standalone `POST /planning-changes/{id}/apply` route is gone (FP-EMAIL-ONE-TRIGGER
+    Q2, owner 6 Nov 2026: no more AutoCount SO book uploads; the board Confirm applies a
+    batch). `apply_batch` runs the same service apply and answers in the route's old shape,
+    so a test that used the route as its harness reads the same."""
+
+    status_code = 200
+
+    def __init__(self, result):
+        self._result = result
+        self.text = str(result)
+
+    def json(self):
+        return self._result
+
+
+def apply_batch(db, batch, actor=None) -> _Applied:
+    from fastapi.encoders import jsonable_encoder
+
+    result = planning_change_service.apply(db, str(batch.id), actor or batch.created_by)
+    db.commit()
+    return _Applied(jsonable_encoder(result))
+
+
 class _World:
     def __init__(self, db, company_id, actor, project, product, own_wh, pool_wh):
         self.db = db
@@ -1070,7 +1094,7 @@ def test_routes_list_get_put_and_apply_happy_path(api):
     assert put.status_code == 200, put.text
     assert put.json()["decision"] == "confirm"
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     assert apply_response.json()["already_applied"] is False
 
@@ -1134,8 +1158,6 @@ def test_apply_and_put_are_denied_for_a_view_only_principal(api):
         )
         assert put.status_code == 403
 
-        apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
-        assert apply_response.status_code == 403
     finally:
         UserPermissionService.check_user_has_permission = original
 
@@ -1329,7 +1351,7 @@ def test_route_put_confirm_composes_from_the_proposal_and_apply_writes_it(api):
     assert body["composition"]["buy_qty"] == "72"  # no stock seeded - the whole line is Buy
     assert body["composition"]["project_line_id"] == line.id
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     result = apply_response.json()
     assert result["applied_orders"] == [order.autocount_doc_no]
@@ -1401,7 +1423,7 @@ def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it
         }
     ]
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
 
     from app.models.project_so import SOSupplyDecision
@@ -2307,7 +2329,7 @@ def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its
     assert put.status_code == 200, put.text
     assert Decimal(put.json()["composition"]["buy_qty"]) == Decimal("10")
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
 
@@ -2423,7 +2445,7 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_is_cancelled_and_un
     reserve_total = sum((Decimal(c["qty"]) for c in composition["reserve"]), Decimal("0"))
     assert reserve_total == Decimal("10")
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
 
@@ -2591,7 +2613,7 @@ def test_apply_advance_with_pool_available_records_the_freed_placed_qty_for_purc
     reserve_total = sum((Decimal(c["qty"]) for c in composition["reserve"]), Decimal("0"))
     assert reserve_total == Decimal("432")
 
-    apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+    apply_response = apply_batch(world.db, batch, world.actor)
     assert apply_response.status_code == 200, apply_response.text
     assert apply_response.json()["applied_orders"] == [order.autocount_doc_no]
 
