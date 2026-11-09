@@ -1,6 +1,6 @@
 # PLAN: price tag upgrade items on combos + one tag per product family with variant icons
 
-Status: Build (Phase 2, mock v3 approved 09/11/2026 ~11:55). Track: full (migration + payload + designer + request line).
+Status: PR+CI (built; reviewer fix round 1 done, security READY, cloud browser pass a-f PASS, print not reachable in the sandbox; owner hand test pending). Track: full (migration + payload + designer + request line).
 
 Lane: PRICETAG-UPGRADE-VARIANTS. Behaviour card: `CARD-pricetag-upgrade-variants-09nov.md` (U1-U9, F1-F8 + owner rulings
 at the top win). UAC: `pricetag-upgrade-variants-acceptance-criteria.md`. Mock: `pricetag-upgrade-variants-mock.html` (v3).
