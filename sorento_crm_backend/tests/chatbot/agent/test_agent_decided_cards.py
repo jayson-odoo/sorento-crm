@@ -8,6 +8,8 @@ real grant write. Postgres only (blank schema); phones, names and codes are inve
 """
 from __future__ import annotations
 
+import json
+
 from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures are used by name)
     BATCH,
     GRANT,
@@ -18,6 +20,8 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     make_world,
     row_,
     state,
+    typed_companies,
+    typed_phones,
 )
 from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc
 
@@ -25,9 +29,11 @@ CANCELLED_REASON = "earlier cancelled table"
 DONE_REASON = "earlier confirmed table"
 
 
+# UAC F4: a first table turn is a paste, so its text carries the people's phones (`typed_phones`).
 def _batch_turn(db, w, rows, text_):
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Here is the table.")]
-    return run_turn(db, w, script, text_=text_)
+    # UAC A18: the user's message names the rows' company, as a real one does.
+    return run_turn(db, w, script, text_=typed_companies(text_, rows))
 
 
 def _three(db, w):
@@ -59,7 +65,7 @@ def test_cancel_then_follow_up_does_not_bring_the_cancelled_rows_back(db):
 
     w = make_world(db)
     a, d, c = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     # The model re-sends the whole table plus the new row, exactly the crew's live shape.
@@ -78,7 +84,7 @@ def test_after_a_cancel_the_next_turn_tells_the_model_the_card_was_cancelled(db)
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     _, provider = run_turn(db, w, [answer_("ok")], text_="thanks")
@@ -94,7 +100,7 @@ def test_a_cancelled_row_proposes_again_when_the_user_asks_for_it_by_phone(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     second, _ = _batch_turn(db, w, _rows(w, a, d), f"sorry, do {local(a.phone_number)} after all")
@@ -109,7 +115,7 @@ def test_a_cancelled_row_proposes_again_when_the_user_names_the_person(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     second, _ = _batch_turn(db, w, _rows(w, a, d), "redo zzt devi please")
@@ -124,7 +130,7 @@ def test_a_row_asked_for_again_stays_open_on_the_cards_after_it(db):
 
     w = make_world(db)
     a, d, c = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
     _batch_turn(db, w, _rows(w, a), f"do {a.name} again")
 
@@ -138,7 +144,7 @@ def test_a_new_table_with_no_decided_rows_proposes_every_row(db):
     w = make_world(db)
     a, d, c = _three(db, w)
 
-    result, _ = _batch_turn(db, w, _rows(w, a, d, c), "grant access to these three")
+    result, _ = _batch_turn(db, w, _rows(w, a, d, c), typed_phones("grant access to these three", _rows(w, a, d, c)))
 
     lines = _lines(result)
     assert all(p.phone_number in lines for p in (a, d, c))
@@ -152,7 +158,7 @@ def test_confirm_then_follow_up_lists_the_done_rows_as_done_not_as_new_rows(db):
 
     w = make_world(db)
     a, d, c = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     outcome = actions.confirm(db, w.respond_id, first.pending_action["id"], via="console")
     assert outcome.status == "executed", outcome.steps
 
@@ -175,7 +181,7 @@ def test_history_carries_the_decision_after_the_proposing_turn(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     conv = memory.latest_conversation(db, w.respond_id)
@@ -196,7 +202,7 @@ def test_a_cancelled_person_asked_for_something_else_is_a_new_row(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     other = [row_(p.phone_number, name=p.name, companies=["MCH"], codes=[w.cust_b.customer_code]) for p in (a, d)]
@@ -212,7 +218,7 @@ def test_a_confirmed_person_asked_for_more_is_a_new_row(db):
 
     w = make_world(db)
     a, _, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a), "grant access")
+    first, _ = _batch_turn(db, w, _rows(w, a), typed_phones("grant access", _rows(w, a)))
     assert actions.confirm(db, w.respond_id, first.pending_action["id"], via="console").status == "executed"
 
     more = [row_(a.phone_number, name=a.name, companies=["MCH"], codes=[w.cust_b.customer_code])]
@@ -227,7 +233,7 @@ def test_a_pasted_list_of_phones_asks_for_every_one_of_them_again(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     second, _ = _batch_turn(db, w, _rows(w, a, d), f"redo these:\n{local(a.phone_number)}\n{local(d.phone_number)}")
@@ -243,7 +249,7 @@ def test_a_row_that_failed_on_a_confirmed_card_stays_open(db):
 
     w = make_world(db)
     a, d, c = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     db.add(RespondContactCompany(respond_contact_id=d.id, company_id=w.mch))
     db.commit()
     outcome = actions.confirm(db, w.respond_id, first.pending_action["id"], via="console")
@@ -252,8 +258,11 @@ def test_a_row_that_failed_on_a_confirmed_card_stays_open(db):
     second, provider = _batch_turn(db, w, _rows(w, a, d, c), f"now {c.name} as well")
 
     lines = _lines(second)
-    assert d.phone_number in lines and c.phone_number in lines
-    assert a.phone_number not in lines
+    # UAC F4: "now ZZT Chong as well" names only Chong, so the failed row D is left out (returned in left_out).
+    assert c.phone_number in lines
+    assert d.phone_number not in lines and a.phone_number not in lines
+    results = [json.loads(m["content"]) for m in provider.seen[1]["messages"] if m.get("role") == "tool"]
+    assert d.phone_number in [x["phone"] for r in results for x in (r.get("data") or {}).get("left_out") or []]
     assert "(failed" in _history_text(provider)
 
 
@@ -267,7 +276,7 @@ def test_compaction_keeps_the_decision_of_a_folded_card(db):
 
     w = make_world(db)
     a, d, _ = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
     conv = memory.latest_conversation(db, w.respond_id)
     later = datetime.now(timezone.utc) + timedelta(minutes=1)
@@ -292,7 +301,7 @@ def test_a_cancelled_row_re_sent_with_the_phone_and_name_written_differently_sta
 
     w = make_world(db)
     a, d, c = _three(db, w)
-    first, _ = _batch_turn(db, w, _rows(w, a, d), "grant access to these two")
+    first, _ = _batch_turn(db, w, _rows(w, a, d), typed_phones("grant access to these two", _rows(w, a, d)))
     actions.cancel(db, w.respond_id, first.pending_action["id"])
 
     resent = [
@@ -300,9 +309,12 @@ def test_a_cancelled_row_re_sent_with_the_phone_and_name_written_differently_sta
         row_(d.phone_number, name="devi", codes=[w.cust_a.customer_code]),
         *_rows(w, c),
     ]
-    second, _ = _batch_turn(db, w, resent, "Tag the new one with that customer too")
+    second, provider = _batch_turn(db, w, resent, "Tag the new one with that customer too")
 
     lines = _lines(second)
-    assert c.phone_number in lines
+    # UAC F4: the message names nobody, so only the previous card's rows may come back; C was never on it (left_out).
+    assert c.phone_number not in lines
     assert a.phone_number not in lines and d.phone_number not in lines
     assert CANCELLED_REASON in second.reply_text
+    results = [json.loads(m["content"]) for m in provider.seen[1]["messages"] if m.get("role") == "tool"]
+    assert [x["phone"] for r in results for x in (r.get("data") or {}).get("left_out") or []] == [c.phone_number]
