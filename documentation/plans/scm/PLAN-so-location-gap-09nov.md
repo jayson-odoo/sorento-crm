@@ -68,6 +68,21 @@ older row's `from.location`, else this row's own: it keeps working unchanged.
 Nothing else changes: the split read, lightbox, history phrase and email all already read the row
 (or the snapshots) the way they should.
 
+## Review round 1 (lane reviewer, 9 Nov)
+
+- The planned location is THE reference, also when the push carries a move of its own: a line
+  confirmed at A, moved to X before detection, then pushed X -> Y reads A -> Y (row, Review split,
+  email "was A"). The replace-in-place path re-applies it after `_carry_location`, since an older
+  row may name a stop in between.
+- A fresh row whose push only takes the line back where it was planned is not raised (nothing
+  left for CS to decide), as a replacement that nets to nothing already retires
+  (`_nets_to_nothing`). With a date change too, the row carries only the date.
+- The repair touches only rows with no location on either side (the gap the owner named), and
+  sets the company scope to every company explicitly (`set_company_scope(db, None)`).
+- Kept: `confirmed_locations` reads `line_snapshots` beside `_frozen_by_line` rather than adding
+  `location` to frozen entries, which carry-forward and board paths consume; it reads one key and
+  says nothing about coverage.
+
 ## Rows already pending (owner ruling (a), 9 Nov ~22:05)
 
 Rows written before this ships (SO429664 on prod; on the dev copy SO423675 line 400, SO427115
