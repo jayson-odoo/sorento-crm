@@ -506,6 +506,9 @@ export interface CardElement {
   cornerRadius_mm?: number;
   /** text with a field: printed before the value when there is one ("TOPUP "). */
   prefix?: string;
+  /** text (owner 9 Nov ~22:30): space around the text inside its element, like the box header's.
+   *  A text element's `fill` is its background and `cornerRadius_mm` that background's corners. */
+  padding?: LayerPadding;
   /** feature_icons: the icon size and the space between icons (defaults 4.6 / 0.8). */
   iconSize_mm?: number;
   gap_mm?: number;
@@ -949,6 +952,12 @@ export interface TagAccessory {
   colours?: { name: string | null; hex: string }[];
   code?: string | null;
   list_price?: number | null;
+  /** TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for this viewer (null = none), its
+   *  spec lines and its own price tag description, read live. Absent on a library accessory and on
+   *  a row pinned before them. */
+  sell_price?: number | null;
+  spec_lines?: string[];
+  price_tag_description?: string | null;
   /** An upgrade's top-up, and the tag's SP plus it (null when either is missing). */
   topup_amount?: number | null;
   price_with_upgrade?: number | null;

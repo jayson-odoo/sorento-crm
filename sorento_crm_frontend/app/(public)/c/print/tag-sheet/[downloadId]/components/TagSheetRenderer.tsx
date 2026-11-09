@@ -82,6 +82,7 @@ import {
   cardBoxLayout,
   cardElementsFor,
   cardIconLayout,
+  cardTextBox,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -1644,6 +1645,8 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: font,
+        // TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on the canvas.
+        overflow: box.clipped ? 'hidden' : undefined,
       }}
       data-testid="accessories-box"
     >
@@ -1882,8 +1885,10 @@ function CardTextBlock({
 }) {
   const epoch = useFontsEpoch();
   const text = element.text ?? '';
-  const widthMm = element.width_mm * factor;
-  const heightMm = element.height_mm * factor;
+  // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as the canvas).
+  const boxed = cardTextBox(element, factor);
+  const widthMm = boxed.text.width_mm;
+  const heightMm = boxed.text.height_mm;
   const props = useMemo(() => {
     void epoch; // re-measure once a face has loaded
     return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
@@ -1912,6 +1917,21 @@ function CardTextBlock({
         lineHeight: props.lineHeight,
         boxSizing: 'border-box',
         whiteSpace: 'pre',
+        ...(boxed.background
+          ? {
+              backgroundColor: safeColour(boxed.background.fill),
+              borderRadius: `${boxed.background.radius_mm}mm`,
+            }
+          : {}),
+        ...(element.padding
+          ? {
+              // Each side clamped at 0 (CSS drops the whole declaration on a negative side).
+              padding: `${boxed.text.y_mm}mm ${Math.max(0, element.width_mm * factor - boxed.text.x_mm - widthMm)}mm ${Math.max(
+                0,
+                element.height_mm * factor - boxed.text.y_mm - heightMm,
+              )}mm ${boxed.text.x_mm}mm`,
+            }
+          : {}),
       }}
       data-testid="accessories-element-text"
     >
