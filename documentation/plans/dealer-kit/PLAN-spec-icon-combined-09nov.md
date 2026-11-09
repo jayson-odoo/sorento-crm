@@ -1,6 +1,6 @@
 # PLAN: price tag icon linked to a combination of spec values (SPEC-ICON-COMBINED, 9 Nov)
 
-Status: Build (owner answered 9 Nov ~22:55; Q2 still open, building on rec (a)). Red-first tests next. Track: standard lane, size M (one additive migration, so not the small fix track).
+Status: Build (all 5 answered, card closed 9 Nov). Red-first tests next. Track: standard lane, size M (one additive migration, so not the small fix track).
 
 Owner, 9 Nov: an icon "S trap 150mm" means trap type = S AND outlet length = 150 mm. Today an icon
 hangs on ONE spec value (ruling 5 Nov). Owner OK'd a proper rule: an icon can be linked to a
@@ -29,8 +29,8 @@ COMBINATION of spec values (two specs, both must match).
 
 - Q1 UNION: a condition-carrying icon never suppresses single-value icons. Every icon whose rule
   matches prints (S/150 prints both "S trap" and "S trap 150mm" when both are linked).
-- Q2 order: building on rec (a), the slot of the value the icon is set on. Being re-explained to the
-  owner; adjust if he picks (b) (the earlier of the specs involved).
+- Q2 (a): a conditioned icon prints at the slot of the spec it is set on (that key's Icon order); the
+  admin picks the slot by choosing which value to hang it on.
 - Q3 (b) N: the condition is an AND over N other spec values, not only one.
 - Q4 (a): any condition value missing means the icon does not print and takes no space; every other
   icon prints as usual.
