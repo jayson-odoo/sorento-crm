@@ -62,9 +62,11 @@ the owner's answers.
 - AC-15 A combo whose host, any part, or any free item is unmatched is not written at all; its line reads
   `UNMATCHED (<every missing code or name>)`. The rest of the seed loads.
 
-- AC-15b A discontinued part (`products.is_discontinued`) is not loaded and is named on the line (`not loaded
-  (discontinued): <code>`), never dropped silently (combo card 4 Nov, `CARD-pricetag-combo-render-04nov.md:109-110`);
-  the rest of the combo loads. A discontinued host is named too (`host discontinued`); its combo still loads.
+- AC-15b A discontinued part (`products.is_discontinued`), fixed or choice or upgrade, loads like any part and is
+  named on the line (`loaded (discontinued): <code>`) so the owner sees it. A discontinued host is named too
+  (`host discontinued`); its combo loads. Rule: owner, 7 Nov ~21:30-21:50 (price tag flow: discontinued items stay
+  selectable with the Discontinued hint, a discontinued fixed part warns only, dealers still sell discontinued
+  stock), relayed by crew 9 Nov; it supersedes `CARD-pricetag-combo-render-04nov.md:109-110` for combos.
 - AC-15c A free product that is already a part of the combo on file is left off the free list and named
   (`already a part: <code>`); it never fails the host.
 
