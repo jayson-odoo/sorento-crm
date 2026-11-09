@@ -126,7 +126,7 @@ export function CopyComboDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <DialogContent
-        className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-5xl flex-col"
+        className="flex max-h-[90dvh] w-[calc(100vw-2rem)] max-w-5xl flex-col"
         aria-describedby={undefined}
       >
         <DialogHeader>
