@@ -30,8 +30,10 @@ change if the owner answers otherwise.
 
 - AC-5 A combo already on the host with the same name (case-insensitive) is never duplicated.
 - AC-6 Without `--update`, an existing combo only gets what it lacks: an empty description, an empty free
-  items list, a blank list or selling price, a missing part. A value someone set (name, description, price,
-  free items list) is never overwritten. The line reads `UPDATE (<filled fields>)` or `SKIP`.
+  items list, a blank list or selling price, and its parts only when it has no parts at all. A value someone
+  set (name, description, price, free items list, parts) is never overwritten or mixed with the flyer's: a
+  combo whose parts differ from the flyer keeps its own (`kept: parts differ (flyer: ...; on file: ...)`).
+  The line reads `UPDATE (<filled fields>)` or `SKIP`.
 - AC-7 A seed entry with `aka: ["<old name>"]` matches an existing combo on that host named any of those names
   (case-insensitive) and treats it as the same combo: no new combo; the existing name is kept.
 - AC-8 When the host already has combos under other names and none matches the entry's name or aka, the line
