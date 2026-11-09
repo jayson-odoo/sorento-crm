@@ -1,6 +1,7 @@
 # PLAN: show each spec value's price-tag icons on the product Specifications tab (SPEC-VALUE-ICONS, 9 Nov)
 
-Status: owner answered 9 Nov ~14:25; building (PR #2279). Track: small fix track (expected diff
+Status: built and reviewed (reviewer READY, cloud browser pass PASS); owner hand test next (PR #2279,
+laneboard/scripts/2279.md). Track: small fix track (expected diff
 well under 300 lines, no migration, no auth/RBAC change, no new ingest surface).
 
 Owner, 9 Nov ~13:55 MYT, on product detail > Specifications: "think it will be good if I can view
