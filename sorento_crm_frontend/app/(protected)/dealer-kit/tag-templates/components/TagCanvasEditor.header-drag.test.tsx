@@ -88,9 +88,13 @@ vi.mock('../../services/accessoryTemplateService', () => ({
   getAccessoryTemplateUsage: vi.fn(async () => ({ templates: [] })),
 }));
 
+const TEMPLATES = [
+  { id: 'p1', name: 'FREE vertical', design: {}, used_in: 2, created_by_name: null, created_at: '', updated_at: '' },
+];
 const hookStub = () => ({ data: undefined, isLoading: false, mutate: vi.fn(), mutateAsync: vi.fn(), run: vi.fn() });
 vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
-  useAccessoryTemplatesQuery: () => ({ ...hookStub(), data: [] }),
+  // One saved template, so a linked box (presetId p1) can show its "changes here update" strip.
+  useAccessoryTemplatesQuery: () => ({ ...hookStub(), data: TEMPLATES }),
   useAccessoryTemplateQuery: hookStub,
   useAccessoryTemplateUsage: hookStub,
   useCreateAccessoryTemplate: hookStub,
@@ -102,11 +106,23 @@ vi.mock('./HeaderDragOverlay', () => ({
   HeaderDragOverlay: ({
     onMove,
     onDragState,
+    onSelect,
+    onResize,
+    selected,
   }: {
     onMove: (p: { x_mm: number; y_mm: number }) => void;
     onDragState: (dragging: boolean) => void;
+    onSelect: () => void;
+    onResize: (r: { x_mm: number; y_mm: number; width_mm: number; height_mm: number }) => void;
+    selected: boolean;
   }) => (
     <>
+      <button type="button" data-testid="header-select" data-selected={selected ? 'yes' : ''} onClick={onSelect} />
+      <button
+        type="button"
+        data-testid="header-resize"
+        onClick={() => onResize({ x_mm: 2, y_mm: 3, width_mm: 22, height_mm: 9 })}
+      />
       <button type="button" data-testid="header-handle" onClick={() => onMove({ x_mm: 4, y_mm: 30 })} />
       <button type="button" data-testid="header-grab" onClick={() => onDragState(true)} />
       <button type="button" data-testid="header-release" onClick={() => onDragState(false)} />
@@ -225,5 +241,48 @@ describe('header drag in the Tag Template designer', () => {
     fireEvent.click(screen.getByTestId('header-handle'));
     expect(propsOf(state).presetId ?? null).toBeNull();
     expect(propsOf(state).headerPos).toEqual({ x_mm: 4, y_mm: 30 });
+  });
+
+  it('clicking the header selects it: header Inspector, no box Transformer target, Escape back to the box', () => {
+    mount(accessoriesLayer('acc1'));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    expect(screen.queryByText('Background')).toBeNull();
+    fireEvent.click(screen.getByTestId('header-select'));
+    expect(screen.getByTestId('header-select').getAttribute('data-selected')).toBe('yes');
+    expect(screen.getByText('Background')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByTestId('header-select').getAttribute('data-selected')).toBe('');
+    expect(screen.queryByText('Background')).toBeNull();
+  });
+
+  it('Delete with the header selected never deletes the box', () => {
+    const state = mount(accessoriesLayer('acc1'));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    fireEvent.click(screen.getByTestId('header-select'));
+    fireEvent.keyDown(window, { key: 'Delete' });
+    expect(state.layers).toHaveLength(1);
+  });
+
+  it('a resize stores position and size as one step; the box keeps its place', () => {
+    const state = mount(accessoriesLayer('acc1'));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    fireEvent.click(screen.getByTestId('header-select'));
+    fireEvent.click(screen.getByTestId('header-resize'));
+    expect(propsOf(state).headerPos).toEqual({ x_mm: 2, y_mm: 3 });
+    expect((state.layers[0].props as unknown as { headerSize?: unknown }).headerSize).toEqual({ width_mm: 22, height_mm: 9 });
+    expect(state.layers[0].x_mm).toBe(5);
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(propsOf(state).headerPos ?? null).toBeNull();
+  });
+
+  it('a linked box shows the "changes here update" strip while its header is selected or dragged', () => {
+    mount(accessoriesLayer('acc1', { presetId: 'p1' }));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    expect(screen.queryByText(/changes here update/)).toBeNull();
+    fireEvent.click(screen.getByTestId('header-grab'));
+    expect(screen.getByText(/changes here update/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('header-release'));
+    fireEvent.click(screen.getByTestId('header-select'));
+    expect(screen.getByText(/changes here update/)).toBeInTheDocument();
   });
 });
