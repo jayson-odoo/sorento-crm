@@ -26,7 +26,7 @@ Template button in the import dialog) is the same layout plus a CUSTOMER CODE co
 | `DEALER NAME`, `CUSTOMER NAME`, `NAME`, `DEALER`, `CUSTOMER` | Dealer name; the customer is matched on it (below). Merged down over the dealer's account rows. |
 | `CUSTOMER CODE`, `CODE` | Optional. When a row has a code, the code wins over the name. |
 | `ACCOUNT`, `A/C` | Account label: `A/C I` .. `A/C IV`, `Deluxe`, `Mastile`, `W-Ply`, `[CERAMIC]`, `[IBORN]`. |
-| `PAY TO` | Optional: the account paid (a code, or an account label of the same dealer). |
+| `PAY TO` | Read as a no-op since lane TARGET-PER-ACCOUNT-PAYOUT (owner 8 Nov): every counted account is paid its own share; the row carries the warning "PAY TO not used: each counted account is paid its own share". |
 | `ROUND` | Optional: `sen` / `0.01` (default) or `ringgit` / `RM` / `1`. |
 | `Q1` .. `Q4` (with or without `QUARTERLY` above, `JAN-MAR` below) | Quarterly scheme; Q1 is always January to March of the import year. |
 | `Monthly` over `JAN` .. `DEC`, or a month alone | Monthly scheme. |
@@ -99,11 +99,13 @@ mapped and every sheet was read (`gate_passes`).
   target, that incentive paying every quarter.
 - `Monthly` over `Tier n` / `Tier n Incentive` with no month: the same tiers every month.
 - A column under period words the reader cannot place fails every row with a figure in it.
-- Yearly Tier 1-3 per account beside Tier 4-5 merged over the accounts (crew ruling 16 Oct, from
-  owner ruling 4, one tier scale): one dealer target (Tier 4-5, combined sales, rate per account)
-  plus one target per account (Tier 1-3, its own sales) that names the dealer target in
-  `replaced_by_target_id`. In a period the dealer target reaches a tier, the account target
-  pays nothing; below it, the account target pays its own tier.
+- Yearly Tier 1-3 per account beside Tier 4-5 merged over the accounts: one dealer target
+  (Tier 4-5, combined sales, rate per account) plus one target per account (Tier 1-3, its own
+  sales). They stack (owner 8 Nov, lane TARGET-PER-ACCOUNT-PAYOUT, replacing the crew reading of
+  16 Oct): both pay, nothing links them, and an account's window may differ from its dealer's.
+- A rate or bonus cell naming an account the target does not count names no payee (warning
+  above). A bonus cell naming one counted account of a multi-account target ("A/C I- 15,000") is
+  that account's own RM Additional.
 
 ## Fifth real-file gate (16 Oct, round 4 on the 15 Oct prod backup)
 
