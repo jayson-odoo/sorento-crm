@@ -10,8 +10,10 @@ the sheet and getting re-derived by hand wherever else the same number is needed
 Both apply `pool_predicate.active_site_pool_sql` - active, not `segment='project'` - and are
 PRODUCT-WIDE by default: every site-pool warehouse the product has supply at. The low stock
 sheet passes `warehouse_ids` (a run's own `summary_order_service.report_warehouse_ids`,
-LOWSTOCK-LASTIN-LOCATION) to narrow both to that run's locations. A document naming no warehouse, or naming a project bin, is not counted either
-way: not known to be site-pool supply, or known not to be.
+LOWSTOCK-LASTIN-LOCATION) and then those locations REPLACE the site-pool rule: a project bin
+the planner ticked counts like any other ticked location (LOWSTOCK-PROJECT-BINS, owner ruling
+10 Nov 2026). Without `warehouse_ids`, a document naming a project bin is not counted. A
+document naming no warehouse is never counted.
 """
 from __future__ import annotations
 
@@ -85,13 +87,15 @@ def open_po_by_product(db: Session, product_ids: list[str],
     (S2, AC-20). A purchase order has no container - the goods have not been shipped under
     one yet - so the PO half of the cell prints exactly as it did before that slice.
 
-    `warehouse_ids` (LOWSTOCK-LASTIN-LOCATION) narrows the count to those locations - a
-    reorder run's own `report_warehouse_ids`; None keeps the product-wide reading.
+    `warehouse_ids` (LOWSTOCK-LASTIN-LOCATION) is a reorder run's own
+    `report_warehouse_ids`: the count reads exactly those locations, a ticked project bin
+    included (LOWSTOCK-PROJECT-BINS); None keeps the product-wide site-pool reading.
     """
     if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
     co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="poo")
-    wh_sql = "AND pol.warehouse_id::text = ANY(:wids)" if warehouse_ids is not None else ""
+    wh_sql = ("AND pol.warehouse_id::text = ANY(:wids)" if warehouse_ids is not None
+              else f"AND {ACTIVE_SITE_POOL_SQL}")
     wh_params = {"wids": [str(w) for w in warehouse_ids]} if warehouse_ids is not None else {}
     rows = db.execute(text(f"""
         SELECT pol.product_id::text AS pid,
@@ -103,7 +107,6 @@ def open_po_by_product(db: Session, product_ids: list[str],
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id::text = ANY(:pids)
           AND pol.line_status = 'open'
-          AND {ACTIVE_SITE_POOL_SQL}
           {wh_sql}
           {("AND " + co) if co else ""}
         GROUP BY pol.product_id, po.po_number
@@ -133,7 +136,8 @@ def open_spo_by_product(db: Session, product_ids: list[str],
     shipment's, and a line on neither carries no container key at all. The
     `inbound_shipments` outer join was already here, for `open_incoming_clauses`.
 
-    `warehouse_ids`: the same narrowing as `open_po_by_product`'s.
+    `warehouse_ids`: the same reading as `open_po_by_product`'s (those locations as-is,
+    a ticked project bin included; None is the product-wide site-pool reading).
     """
     if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
@@ -156,10 +160,11 @@ def open_spo_by_product(db: Session, product_ids: list[str],
         .filter(
             SPOAllocation.product_id.in_(product_ids),
             *open_incoming_clauses(),
-            text(active_site_pool_sql("warehouses")),
         )
     )
-    if warehouse_ids is not None:
+    if warehouse_ids is None:
+        query = query.filter(text(active_site_pool_sql("warehouses")))
+    else:
         query = query.filter(SPOAllocation.warehouse_id.in_([str(w) for w in warehouse_ids]))
     rows = query.group_by(SPOAllocation.product_id, SPOAllocation.spo_number, container).all()
     return _grouped_supply_map(rows)
