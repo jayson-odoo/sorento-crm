@@ -139,10 +139,15 @@ def _customers(
         return True
 
     columns = (Customer.id, Customer.customer_code, Customer.customer_name, Customer.company_id)
-    for code in dict.fromkeys(_clean(c) for c in args.get("customer_codes") or []):
-        if code:
-            keep(query(*columns).filter(func.lower(func.trim(Customer.customer_code)) == code.lower()).all(),
-                 code, "code")
+    codes = [c for c in dict.fromkeys(_clean(c) for c in args.get("customer_codes") or []) if c]
+    resolved = [
+        keep(query(*columns).filter(func.lower(func.trim(Customer.customer_code)) == code.lower()).all(), code, "code")
+        for code in codes
+    ]
+    if codes and all(resolved):
+        # UAC A19: codes that all resolve decide the row; a name beside them is only the row's typed label (a pick
+        # answer re-sends both), so it is not searched again.
+        return list(out.values()), problems, choices
     norm = func.lower(func.regexp_replace(func.trim(Customer.customer_name), r"\s+", " ", "g"))
 
     def offer(name: str, found: list) -> None:
