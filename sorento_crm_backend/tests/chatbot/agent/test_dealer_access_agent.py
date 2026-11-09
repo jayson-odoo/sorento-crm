@@ -2263,3 +2263,25 @@ def test_F3_an_expired_pick_answer_naming_no_company_gets_the_expired_text_not_t
     assert "is from an earlier list that is closed now" in result.reply_text
     assert "Say which company" not in result.reply_text
     assert state(db, phone) is None
+
+
+@pytest.mark.parametrize("flow", [False, True], ids=["plain", "dealer flow"])
+def test_S7_a_single_row_pick_shows_the_account_list_like_a_table_pick(db, flow):
+    """Crew live x3 round 5 (3 of 11 picks): the model used the single-row grant, and the reply was only
+    'Which account? "<name>" fits 2 accounts' with no list. A stored pick shows the same account list (code and name
+    per account, the typed name in "You wrote") whichever tool raised it."""
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    stem, accounts = _shop(db, w, "ZZT Big Wall Hardware")
+    phone = fake_phone()
+    row = row_(phone, role="employee", names=[stem])
+
+    first = _turn(
+        db, w, [round_of(tc(GRANT, row, "g1")), answer_("Which account?")], f"Sorento {phone} {stem}", dealer_access=flow
+    )
+
+    assert first.pending_action is None
+    for a in accounts:
+        assert f"{a.customer_code} {a.customer_name}" in first.reply_text, first.reply_text
+    assert stem in first.reply_text and phone in first.reply_text

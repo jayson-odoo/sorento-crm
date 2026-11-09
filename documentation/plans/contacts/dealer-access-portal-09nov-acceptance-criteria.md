@@ -162,6 +162,8 @@ F3. A pick answers only the table of the IMMEDIATELY preceding agent turn, and o
     Crew live x3 round 4: a code the CURRENT open pick lists for that row is never expired, even when an older pick
     listed the same code (the same person offered the same accounts twice). The expiry check runs before the
     company check (A18), so an answer to a closed pick says the list is closed, not "which company".
+    Crew live x3 round 5: a pick a single grant row raises shows the same account list as a table pick (each
+    account's code and name, the typed name under "You wrote"), whichever tool raised it.
 F4. Rows of this message only (grant). When this turn's message names at least one person (a phone in any format,
     012-345 6789, +60 12..., 6012..., or a person's name), the card holds only the rows it names, plus the rows of
     the last table when the turn answers that table's pick (a row with codes the table listed for it, or the user

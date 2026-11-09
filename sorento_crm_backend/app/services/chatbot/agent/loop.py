@@ -898,7 +898,10 @@ def _propose(
             # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
             single_waiting += [
                 {"row": 1, "key": typed["key"], "written": c.get("written"), "codes": [x["code"] for x in c["candidates"]],
-                 "kept": [], "write": name, "noun": None, "typed": typed}
+                 "kept": [], "write": name, "noun": None, "typed": typed,
+                 # What the pick table shows, as for a table row (crew live x3 round 5).
+                 "candidates": c["candidates"], "more": bool(c.get("more")),
+                 "cells": contact_grant._preview(args, None)}
                 for c in choices
             ]
         return out
@@ -2201,9 +2204,10 @@ def _run(
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
-    if status != "failed" and not steps and (batch_skipped or batch_waiting):
+    if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting):
         # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
-        reply = _batch_reply([], batch_skipped, batch_waiting, confirm_notes)
+        # A single grant row's pick shows the same account list (crew live x3 round 5): whichever tool raised it.
+        reply = _batch_reply([], batch_skipped, batch_waiting or single_waiting, confirm_notes)
         try:
             # The old confirm card no longer matches what the user was just shown.
             actions.expire_previous(db, ctx, [], test=is_test)
