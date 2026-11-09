@@ -12,12 +12,16 @@ three different path roots (`/products/{id}/...`, `/product-combos/...`,
 """
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.product_combo import (
+    ProductComboCopyIn,
+    ProductComboCopyOut,
     ProductComboCreate,
     ProductComboImageOut,
     ProductComboListOut,
@@ -28,13 +32,17 @@ from app.schemas.product_combo import (
     ProductComboUpdate,
     ProductSoldWithListOut,
 )
+from app.services.error_handler import AppException
 from app.services.product_combo_service import ProductComboService
+from app.services.user_service import holds_permission
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
 VIEW = "master_data.products.view"
 EDIT = "master_data.products.edit"
+#: The price tag template links are marketing's (dealer_kit/tag_data.py `_MANAGE`).
+TEMPLATES_MANAGE = "dealer_kit.tag_templates.manage"
 
 
 @router.get("/products/{product_id}/combos", response_model=ProductComboListOut)
@@ -83,6 +91,31 @@ def update_product_combo(
 ):
     validate_uuid_path(combo_id, resource="Combo")
     return ProductComboService(db).update(combo_id, payload.model_dump(exclude_unset=True))
+
+
+@router.post("/product-combos/{combo_id}/copy", response_model=ProductComboCopyOut)
+def copy_product_combo(
+    combo_id: str,
+    payload: ProductComboCopyIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """COMBO-COPY-TO-PRODUCTS: copy this combo to hand-picked products, one transaction.
+    Signed-in only (a bulk write), like the accessories copy."""
+    validate_uuid_path(combo_id, resource="Combo")
+    for value in [*payload.target_product_ids, *payload.overwrite_product_ids]:
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            raise AppException(status_code=422, message="Each target must be a product id")
+    return ProductComboService(db).copy_to_products(
+        combo_id,
+        payload.target_product_ids,
+        overwrite_ids=payload.overwrite_product_ids,
+        dry_run=payload.dry_run,
+        copy_template_links=holds_permission(db, current_user, TEMPLATES_MANAGE),
+        created_by=current_user.get("id"),
+    )
 
 
 @router.delete("/product-combos/{combo_id}", status_code=status.HTTP_204_NO_CONTENT)
