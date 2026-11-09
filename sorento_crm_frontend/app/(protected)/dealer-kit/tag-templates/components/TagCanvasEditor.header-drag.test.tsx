@@ -285,4 +285,24 @@ describe('header drag in the Tag Template designer', () => {
     fireEvent.click(screen.getByTestId('header-select'));
     expect(screen.getByText(/changes here update/)).toBeInTheDocument();
   });
+
+  it('the linked strip floats over the canvas: it never adds a row above it (no stage shift mid-gesture)', () => {
+    mount(accessoriesLayer('acc1', { presetId: 'p1' }));
+    fireEvent.click(screen.getByTestId('layer-acc1'));
+    // Where the canvas sits before the strip shows: the elements laid out above it.
+    const canvas = screen.getByTestId('layer-acc1').closest('[data-canvas-area]') as HTMLElement;
+    expect(canvas).not.toBeNull();
+    const rowsAbove = () => {
+      const column = canvas.parentElement!;
+      return [...column.children].indexOf(canvas);
+    };
+    const before = rowsAbove();
+    fireEvent.click(screen.getByTestId('header-grab'));
+    const strip = screen.getByText(/changes here update/).closest('[data-linked-strip]') as HTMLElement;
+    expect(strip).not.toBeNull();
+    // Inside the canvas area, positioned over it, and nothing new above the canvas.
+    expect(canvas.contains(strip)).toBe(true);
+    expect(strip.className).toMatch(/\babsolute\b/);
+    expect(rowsAbove()).toBe(before);
+  });
 });

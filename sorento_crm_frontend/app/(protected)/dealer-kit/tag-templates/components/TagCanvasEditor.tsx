@@ -4427,12 +4427,44 @@ export function TagCanvasEditor({
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
 
+  // Editing a linked box edits the saved template for every tag template using it: card editing, and
+  // (round 2) a linked box's header selected or dragged. It FLOATS over the canvas (bottom centre)
+  // rather than taking a row above it: a row that appears mid-gesture would push the stage down under
+  // the pointer (crew re-pass: a header drag 30 mm down landed 1.2 mm up).
+  const linkedStripLayer =
+    (accessoryEdit || activeHeaderSel || headerDragId) && linkedAccessoryBoxes === 'live'
+      ? layers.find((l) => l.id === (accessoryEdit?.layerId ?? activeHeaderSel ?? headerDragId))
+      : undefined;
+  const linkedStripTemplate = accessoryTemplateOf(linkedStripLayer);
+  const linkedStrip =
+    linkedStripLayer && linkedStripTemplate ? (
+      <div
+        data-linked-strip
+        className="absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-md border bg-background/95 px-3 py-1 text-xs shadow-sm"
+      >
+        <span className="min-w-0 truncate">
+          Linked to {linkedStripTemplate.name}: changes here update {linkedStripTemplate.usedIn} tag template
+          {linkedStripTemplate.usedIn === 1 ? '' : 's'}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6 shrink-0 px-2 text-xs"
+          onClick={() => updateLayerProps(linkedStripLayer.id, { presetId: null } as Partial<TagLayerProps>)}
+        >
+          Detach
+        </Button>
+      </div>
+    ) : null;
+
   const canvasArea = (
     <>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
               ref={containerRef}
+              data-canvas-area
               className={cn(
                 'relative flex-1 overflow-hidden bg-muted/50',
                 handMode && 'cursor-grab active:cursor-grabbing',
@@ -4440,6 +4472,7 @@ export function TagCanvasEditor({
               )}
               onContextMenu={handleStageContextMenu}
             >
+              {linkedStrip}
               {!embedded && (
               <CanvasRulers
                 widthMm={doc.width_mm}
@@ -5392,34 +5425,6 @@ export function TagCanvasEditor({
         />
         </Suspense>
       )}
-
-      {/* Editing a linked box edits the saved template for every tag template using it. */}
-      {/* Also while a linked box's header is selected or dragged (round 2): those edits are design too. */}
-      {(accessoryEdit || activeHeaderSel || headerDragId) && linkedAccessoryBoxes === 'live' &&
-        (() => {
-          const editedLayer = layers.find(
-            (l) => l.id === (accessoryEdit?.layerId ?? activeHeaderSel ?? headerDragId),
-          );
-          const linked = accessoryTemplateOf(editedLayer);
-          if (!editedLayer || !linked) return null;
-          return (
-            <div className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-3 py-1 text-xs">
-              <span className="min-w-0 truncate">
-                Linked to {linked.name}: changes here update {linked.usedIn} tag template
-                {linked.usedIn === 1 ? '' : 's'}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-6 shrink-0 px-2 text-xs"
-                onClick={() => updateLayerProps(editedLayer.id, { presetId: null } as Partial<TagLayerProps>)}
-              >
-                Detach
-              </Button>
-            </div>
-          );
-        })()}
 
       {/* Preview combo (AC-5.1): template editor only - the request designer already
           has its line's combo on the canvas. */}
