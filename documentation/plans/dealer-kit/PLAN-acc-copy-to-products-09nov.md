@@ -1,6 +1,6 @@
 # PLAN: Copy a product's accessories list to other products (ACC-COPY-TO-PRODUCTS)
 
-Status: Review - built and reviewed (reviewer READY, security no blockers, findings fixed); browser pass and hand test next. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
+Status: Merge-ready pending the owner hand test (laneboard/scripts/2280.md) - built, reviewed (reviewer READY, security no blockers, findings fixed), browser pass 12/12 PASS. Track: small fix track + security review. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
 
 ## Journey
 
