@@ -44,7 +44,7 @@ import { useProductCategorySelectQuery } from '../../../shared/hooks/use-product
 import { useBrandSelectQuery } from '../../../shared/hooks/use-brand-select-query';
 import { useProducts } from '../../hooks/useProducts';
 import { getProducts } from '../../services/productService';
-import type { ProductListItem } from '../../types/product.types';
+import type { Product } from '../../types/product.types';
 import { useCopyProductAccessories } from '../../../accessories/hooks/useAccessories';
 import type { AccessoryCopySummary } from '../../../accessories/services/accessoryService';
 
@@ -135,9 +135,9 @@ export function CopyAccessoriesDialog({
   const rows = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
 
-  const columns = useMemo<ColumnDef<ProductListItem>[]>(
+  const columns = useMemo<ColumnDef<Product>[]>(
     () => [
-      buildSelectColumn<ProductListItem>({
+      buildSelectColumn<Product>({
         enableRow: (row) => row.original.id !== sourceProductId,
         disabledReason: (row) => (row.original.id === sourceProductId ? SOURCE_REASON : undefined),
         rowLabel: (row) => `Select ${row.original.product_code}`,
@@ -160,7 +160,7 @@ export function CopyAccessoriesDialog({
         id: 'product_name',
         header: ({ column }) => <DataGridColumnHeader title="Product Name" column={column} />,
         cell: ({ row }) => {
-          const name = distinctName(row.original.product_code, row.original.product_name);
+          const name = distinctName(row.original.product_code, row.original.product_name) ?? '';
           return (
             <div className="truncate text-sm" title={name}>
               {name}
@@ -172,11 +172,11 @@ export function CopyAccessoriesDialog({
         enableSorting: true,
       },
       {
-        accessorKey: 'category_name',
+        accessorFn: (row) => row.category?.category_name ?? '',
         id: 'category_name',
         header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
         cell: ({ row }) => {
-          const name = row.original.category_name || row.original.category?.category_name || '';
+          const name = row.original.category?.category_name ?? '';
           return (
             <div className="truncate text-sm" title={name}>
               {name || ' - '}
@@ -188,11 +188,11 @@ export function CopyAccessoriesDialog({
         enableSorting: true,
       },
       {
-        accessorKey: 'brand_name',
+        accessorFn: (row) => row.brand?.brand_name ?? '',
         id: 'brand_name',
         header: ({ column }) => <DataGridColumnHeader title="Brand" column={column} />,
         cell: ({ row }) => {
-          const name = row.original.brand_name || row.original.brand?.brand_name || '';
+          const name = row.original.brand?.brand_name ?? '';
           return (
             <div className="truncate text-sm" title={name}>
               {name || ' - '}
