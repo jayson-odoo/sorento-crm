@@ -215,3 +215,52 @@ describe('combo copy wording', () => {
     );
   });
 });
+
+describe('CopyComboDialog round 2', () => {
+  function mountNamed(comboName: string) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CopyComboDialog open onOpenChange={vi.fn()} sourceProductId={SOURCE} comboId={COMBO} comboName={comboName} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('keeps the combo name unbroken in its own truncating element at 375px', () => {
+    mountNamed('SRTBT1860-16');
+    const heading = screen.getByRole('heading', { name: /Copy combo/ });
+    expect(heading.textContent).toBe('Copy combo "SRTBT1860-16" to other products');
+    const name = heading.querySelector('[title="SRTBT1860-16"]') as HTMLElement | null;
+    expect(name).not.toBeNull();
+    expect(name!.textContent).toBe('SRTBT1860-16');
+    expect(name!.className).toMatch(/truncate|whitespace-nowrap/);
+  });
+
+  it('after Select all over 500 matches the confirm line says first 500 of 1,234', async () => {
+    const many = Array.from({ length: 501 }, (_, i) => row(`m${i}`, `ZZT-M${i}`));
+    products.getProducts.mockImplementation(async (params: { pageSize: number }) =>
+      params.pageSize > 25
+        ? { data: many, pagination: { total: 1234, page: 1, limit: params.pageSize } }
+        : { data: PAGE, pagination: { total: 1234, page: 1, limit: 25 } },
+    );
+    service.copyProductCombo.mockResolvedValue(summary({ targets: 500, created: 500, skipped: [], conflicts: [] }));
+    mountNamed('X');
+    await screen.findByText('ZZT-BT1835');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(await screen.findByRole('button', { name: /select (all|first 500 of) 1,?234/i }));
+    await screen.findByText(/500 products picked/);
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const panel = await screen.findByTestId('copy-combo-summary');
+    expect(within(panel).getByText('Copy combo "X" to the first 500 of 1,234 products.')).toBeTruthy();
+  });
+
+  it('a hand-picked set still reads "to N products."', async () => {
+    mountNamed('X');
+    for (const code of ['ZZT-BT1835', 'ZZT-BT1846']) {
+      fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${code}` }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const panel = await screen.findByTestId('copy-combo-summary');
+    expect(within(panel).getByText('Copy combo "X" to 3 products.')).toBeTruthy();
+  });
+});

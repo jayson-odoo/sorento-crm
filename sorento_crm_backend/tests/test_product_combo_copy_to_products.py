@@ -615,3 +615,72 @@ def test_no_template_permission_but_nothing_to_withhold_reports_links_copied(db,
     response = _copy(client, source, [_product(db, "ZZBT1835")], dry_run=dry_run)
     assert response.status_code == 200, response.text
     assert response.json()["template_links_copied"] is True
+
+
+# --------------------------------------------------------------------------- deleting a combo with a picture
+
+
+def _spy_deletes(storage, monkeypatch) -> list:
+    deleted: list = []
+    real_delete = storage.delete_file
+
+    def spy(key):
+        deleted.append(key)
+        return real_delete(key)
+
+    monkeypatch.setattr(storage, "delete_file", spy)
+    return deleted
+
+
+def _gallery(db, product, attachment_id) -> int:
+    db.expire_all()
+    return db.query(ProductAttachment).filter(
+        ProductAttachment.product_id == product.id, ProductAttachment.attachment_id == attachment_id
+    ).count()
+
+
+def test_deleting_a_combo_drops_a_picture_nobody_else_uses(db, monkeypatch, storage):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source, seed = _bathtub_combo(db)
+    host, picture = seed["host"], source.image_attachment_id
+    deleted = _spy_deletes(storage, monkeypatch)
+
+    assert client.delete(f"/api/v1/master-data/product-combos/{source.id}").status_code == 204
+    assert _gallery(db, host, picture) == 0, "the host's gallery link goes with the combo"
+    assert db.query(Attachment).filter(Attachment.id == picture).first() is None
+    assert deleted, "the stored file is swept"
+
+
+def test_deleting_a_copy_leaves_the_shared_picture_for_the_source(db, monkeypatch, storage):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source, seed = _bathtub_combo(db)
+    host, target = seed["host"], _product(db, "ZZBT1835")
+    assert _copy(client, source, [target]).status_code == 200
+    [copy] = _combos_on(db, target)
+    picture = source.image_attachment_id
+    deleted = _spy_deletes(storage, monkeypatch)
+
+    assert client.delete(f"/api/v1/master-data/product-combos/{copy.id}").status_code == 204
+    assert _gallery(db, target, picture) == 0, "the target's own gallery link goes"
+    assert db.query(Attachment).filter(Attachment.id == picture).first() is not None
+    assert db.get(ProductCombo, source.id).image_attachment_id == picture
+    assert _gallery(db, host, picture) == 1
+    assert deleted == []
+
+
+def test_deleting_one_of_two_combos_on_a_host_sharing_a_picture_keeps_the_link(db, monkeypatch, storage):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    first, seed = _bathtub_combo(db)
+    host, picture = seed["host"], first.image_attachment_id
+    second = ProductCombo(
+        id=str(uuid.uuid4()), host_product_id=host.id, name="Second Combo", sort_order=1,
+        image_attachment_id=picture,
+    )
+    db.add(second)
+    db.flush()
+    deleted = _spy_deletes(storage, monkeypatch)
+
+    assert client.delete(f"/api/v1/master-data/product-combos/{first.id}").status_code == 204
+    assert _gallery(db, host, picture) == 1
+    assert db.query(Attachment).filter(Attachment.id == picture).first() is not None
+    assert deleted == []
