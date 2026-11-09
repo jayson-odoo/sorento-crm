@@ -43,6 +43,7 @@ from tests._ask_todo_seed import contact as seed_plain_contact
 from tests._ask_todo_seed import customer as seed_customer
 from tests._pg_fixture import blank_session, unique_code
 from tests.chatbot.agent._seed import seed_contact, seed_user
+from tests.chatbot.agent.test_agent_bulk_grant import ensure_owner_tags
 from tests.chatbot.agent.test_agent_writes import (  # noqa: F401 - helpers, not tests
     PROPOSAL_HEAD,
     answer_,
@@ -97,7 +98,8 @@ class CW:
 
 
 def ensure_catalog(db) -> str:
-    """The access types the sheet TEMPLATE uses (plus one extra) and the MCH company. Returns MCH's id."""
+    """The access types the sheet TEMPLATE uses (plus one extra), the owner tags (UAC C1) and the MCH company.
+    Returns MCH's id."""
     for code in ("dealer", "cabana_dealer", "mocha_dealer", "end_user", "zzt_extra"):
         if db.get(ContactAccessType, code) is None:
             db.add(ContactAccessType(code=code, name=f"ZZT {code}", is_active=True, sort_order=1))
@@ -106,6 +108,7 @@ def ensure_catalog(db) -> str:
         mch = Company(id=str(uuid.uuid4()), name="ZZT Mocha Co", code="MCH")
         db.add(mch)
     db.flush()
+    ensure_owner_tags(db)
     return str(mch.id)
 
 
