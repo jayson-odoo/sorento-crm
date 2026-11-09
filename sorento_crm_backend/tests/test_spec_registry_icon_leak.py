@@ -15,7 +15,7 @@ from app.main import app  # noqa: E402,F401
 
 from tests.test_feature_icons_spec_value import _icon, _patch, _spec_key, reg  # noqa: F401
 from tests.test_feature_icons_spec_value_fixround import _stored, two_companies  # noqa: F401
-from tests.test_spec_registry_pr2_routes import _key
+from tests.test_spec_registry_pr2_routes import _BASE, _key
 
 _HISTORY = "/api/v1/audit/logs/?entity_type=product_spec_registry&entity_id={}"
 
@@ -248,3 +248,76 @@ def test_own_icons_still_save_and_another_companys_stored_ones_are_kept(two_comp
     assert res.status_code == 200, res.text
     assert res.json()["value_icons"] == {"a": [a_icon.id], "b": [a_icon2.id, a_icon.id]}
     assert _stored(db, row.spec_key) == {"a": [b_icon.id, a_icon.id], "b": [a_icon2.id, a_icon.id]}
+
+
+# ---------------------------------------------------------------------------
+# 3. value_icon_conditions save (SPEC-ICON-COMBINED, #2291)
+# ---------------------------------------------------------------------------
+
+
+def _conditioned(two_companies):  # noqa: F811
+    """Company B's icon is on value "a" with a condition; company A then saves."""
+    db, client, other, as_company, row, a_icon, _a2, b_icon = _setup(two_companies)
+    trap = _key(db, _spec_key(), data_type="enum", allowed_values=["s_trap", "p_trap"])
+    db.commit()
+    cond = [{"spec_key": trap.spec_key, "value": "s_trap"}]
+    as_company(other)
+    res = client.patch(f"{_BASE}/{row.spec_key}", json={
+        "value_icons": {"a": [b_icon.id]}, "value_icon_conditions": {"a": {b_icon.id: cond}},
+    })
+    assert res.status_code == 200, res.text
+    _as_sorento(db)
+    return db, client, row, trap, a_icon, b_icon, cond
+
+
+def _as_sorento(db) -> None:
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from tests.test_feature_icons_spec_value import SORENTO
+
+    async def _a_scope():
+        scope = frozenset({SORENTO})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _a_scope
+
+
+def _row(db, key):
+    from app.models.product_spec import ProductSpecRegistry
+
+    db.expire_all()
+    return db.query(ProductSpecRegistry).filter_by(spec_key=key).one()
+
+
+def test_a_condition_naming_another_companys_icon_is_refused(two_companies):  # noqa: F811
+    db, client, row, trap, a_icon, b_icon, cond = _conditioned(two_companies)
+    other_cond = [{"spec_key": trap.spec_key, "value": "p_trap"}]
+
+    for payload in (
+        # Conditions only, and conditions alongside an icon save that keeps B's icon in place.
+        {"value_icon_conditions": {"a": {b_icon.id: other_cond}}},
+        {"value_icons": {"a": [a_icon.id]}, "value_icon_conditions": {"a": {b_icon.id: other_cond}}},
+    ):
+        res = client.patch(f"{_BASE}/{row.spec_key}", json=payload)
+        assert res.status_code == 422, res.text
+        body = res.json()
+        assert body["code"] == "spec_registry_icon_condition"
+        # The same words as an icon that is not on the value: nothing says B's icon exists.
+        assert "A condition belongs to an icon set on that value." in res.text
+        stored = _row(db, row.spec_key)
+        assert stored.value_icons == {"a": [b_icon.id]}
+        assert stored.value_icon_conditions == {"a": {b_icon.id: cond}}
+
+
+def test_my_conditions_still_save_beside_another_companys(two_companies):  # noqa: F811
+    db, client, row, trap, a_icon, b_icon, cond = _conditioned(two_companies)
+    mine = [{"spec_key": trap.spec_key, "value": "p_trap"}]
+
+    res = client.patch(f"{_BASE}/{row.spec_key}", json={
+        "value_icons": {"a": [a_icon.id]}, "value_icon_conditions": {"a": {a_icon.id: mine}},
+    })
+    assert res.status_code == 200, res.text
+    assert res.json()["value_icon_conditions"] == {"a": {a_icon.id: mine}}
+    stored = _row(db, row.spec_key)
+    assert stored.value_icon_conditions == {"a": {b_icon.id: cond, a_icon.id: mine}}
