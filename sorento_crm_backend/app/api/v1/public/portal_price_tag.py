@@ -37,6 +37,7 @@ from app.schemas.price_tag import (
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
     ProductTagTemplateItem,
+    VariantMembersOut,
     RequestChangesPayload,
     RequestChangesResponse,
     ResolvedLineData,
@@ -923,6 +924,25 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     # a line's own Promotion select reads THIS, not a flat promotion list, since
     # which promotions are even offered now depends on what is on the line.
     # ---------------------------------------------------------------------------
+
+
+    @router.get("/lookups/variant-members/{product_id}", response_model=VariantMembersOut)
+    def portal_lookup_variant_members(
+        product_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """PRICETAG-UPGRADE-VARIANTS S3: the line's "Variants on this tag" list, the same body
+        as the CRM route. Same gate and company scope as `product-combos`."""
+        from app.services.dealer_kit.variant_service import chooser
+
+        product_id = validate_uuid_path(product_id, resource="Product")
+        _assert_visible(db, token.contact_id)
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            body = chooser(db, product_id)
+            if body is None:
+                raise handle_not_found("Product", product_id)
+            return VariantMembersOut(**body)
 
 
     @router.get(

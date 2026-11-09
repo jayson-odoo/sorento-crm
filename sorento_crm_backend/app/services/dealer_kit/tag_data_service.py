@@ -263,7 +263,7 @@ def _spec_display_value(raw, value_labels: Optional[dict] = None) -> str:
     return display_spec_value(raw, value_labels, title_case=True)
 
 
-def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
+def product_specs(db: Session, product: Product, spec_row=None, registry=None) -> list[dict]:
     """The product's reviewed specs, key by key, for `{{spec.<key>}}` (D58).
 
     `spec_lines` has always carried the rendered spec SENTENCE, which is one
@@ -286,7 +286,8 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
         return []
 
     specs: list[dict] = []
-    for key in active_registry(db):
+    # `registry`: the active keys, read once by a caller building many products' specs.
+    for key in registry if registry is not None else active_registry(db):
         if key.spec_key not in values:
             continue
         stored = values[key.spec_key]
@@ -301,17 +302,31 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
                 "label": key.label,
                 "value": _spec_display_value(raw, key.value_labels),
                 "unit": key.unit,
-                # Feature icons match on the STORED value, never the label (contract B4).
-                "raw": _spec_raw_text(raw),
+                # Feature icons match on the STORED value, never the label (contract B4). A
+                # numeric key reads through the same normaliser its icon values are keyed on, so a
+                # legacy "150.0" string still matches "150".
+                "raw": _numeric_raw(raw) if key.data_type == "numeric" else _spec_raw_text(raw),
             }
         )
     return specs
 
 
+def _numeric_raw(raw) -> str:
+    """A numeric key's raw text: normalised when it reads as a number, else as stored."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(raw) or _spec_raw_text(raw)
+
+
 def _spec_raw_text(raw) -> str:
-    """A stored spec value as text: a bool reads `true` / `false`, anything else `str()`."""
+    """A stored spec value as text: a bool reads `true` / `false`, a whole number with no ".0"
+    (150.0 -> "150", so it matches the value an icon is set on), anything else `str()`."""
+    from app.services.product_spec_registry import numeric_value_text
+
     if isinstance(raw, bool):
         return "true" if raw else "false"
+    if isinstance(raw, (int, float)):
+        return numeric_value_text(raw) or str(raw)
     return str(raw)
 
 
@@ -354,8 +369,12 @@ def product_tag_data(
     promotion_id: Optional[str] = None,
     *,
     with_images: bool = True,
+    with_variants: bool = True,
+    excluded_variant_ids: Optional[list] = None,
 ) -> dict:
     """Everything a product block draws, for THIS viewer, right now."""
+    from app.services.dealer_kit.variant_service import tag_variants
+
     spec_row = _spec_row(db, product)
     prices = resolve_prices(db, [product], viewer, promotion_id).get(product.id)
 
@@ -387,6 +406,9 @@ def product_tag_data(
         "accessories": product_tag_accessories(db, product.id, viewer),
         # PRICETAG-ACCESSORY-DESIGNER S6: this product's own box style, or None.
         "accessory_box_style": box_style_for(db, product_id=product.id),
+        # PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree, for a feature icons
+        # layer on "All variants"; a line leaves out the members it unticked.
+        "variants": tag_variants(db, product.id, excluded_variant_ids) if with_variants else [],
     }
 
 
@@ -718,7 +740,8 @@ def _part_row(
     prints.
     """
     if product.id not in cache:
-        cache[product.id] = product_tag_data(db, product, viewer, promotion_id)
+        # A part row never carries `variants` (only the line's own product reads "All variants").
+        cache[product.id] = product_tag_data(db, product, viewer, promotion_id, with_variants=False)
     data = cache[product.id]
     return {
         # The id rides along so a caller can match a part back to the choice that
@@ -991,6 +1014,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 # an Ala Carte line its product's; the old free text is never read.
                 "accessories": accessories,
                 "accessory_box_style": box_style,
+                # PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members.
+                "variants": data.get("variants") or [],
                 "included_accessories": names_text(accessories),
                 "combo": combo_obj,
                 "slots": slots,
@@ -1017,9 +1042,9 @@ def _combo_choice_groups(combo) -> dict[str, int]:
     return {group["role"]: group["size"] for group in combo_shape(combo)["groups"]}
 
 
-def _combo_upgrade_products(combo) -> list:
+def _combo_upgrade_parts(combo) -> list:
     return [
-        part.part_product
+        part
         for part in (combo.parts or [])
         if part.part_product is not None and part.is_upgrade
     ]
@@ -1056,8 +1081,8 @@ def _line_slots(
     if not placed and combo_row is None:
         return None
 
-    upgrade_products = _combo_upgrade_products(combo_row) if combo_row is not None else []
-    upgrade_ids = {product.id for product in upgrade_products}
+    upgrade_parts = _combo_upgrade_parts(combo_row) if combo_row is not None else []
+    upgrade_ids = {part.part_product_id for part in upgrade_parts}
     wanted = {product_id for _, product_id in placed}
     host = db.query(Product).filter(Product.id == line.product_id).first()
     products = (
@@ -1091,9 +1116,14 @@ def _line_slots(
         {"role": role, "size": size, "picks": picks_by_role.get(role, [])}
         for role, size in group_sizes.items()
     ]
+    # PRICETAG-UPGRADE-VARIANTS S1: an upgrade row carries its part's top-up.
     upgrades = [
-        {**row(product), "chosen": product.id in picked_upgrade_ids}
-        for product in upgrade_products
+        {
+            **row(part.part_product),
+            "chosen": part.part_product_id in picked_upgrade_ids,
+            "topup_amount": part.topup_amount,
+        }
+        for part in upgrade_parts
     ]
     return _slots_dict(row(host) if host is not None else None, fixed, groups, upgrades)
 
@@ -1115,7 +1145,7 @@ def _preview_slots(db: Session, combo, host) -> dict:
         if product is None:
             continue
         if part.is_upgrade:
-            upgrades.append({**row(product), "chosen": False})
+            upgrades.append({**row(product), "chosen": False, "topup_amount": part.topup_amount})
         elif part.choice_group:
             picks.setdefault(part.choice_group, []).append(row(product))
         else:
@@ -1402,12 +1432,16 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "currency": data["currency"],
             "accessories": [],
             "accessory_box_style": None,
+            "variants": [],
         }
     if line.product_id:
         product = get_product(db, line.product_id)
         if product is None:
             return None
-        data = product_tag_data(db, product, viewer, promotion_id)
+        data = product_tag_data(
+            db, product, viewer, promotion_id,
+            excluded_variant_ids=getattr(line, "excluded_variant_ids", None),
+        )
         return {
             "code": data["code"],
             "name": data["name"],
@@ -1423,6 +1457,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "currency": data["currency"],
             "accessories": data["accessories"],
             "accessory_box_style": data.get("accessory_box_style"),
+            "variants": data["variants"],
         }
     return None
 

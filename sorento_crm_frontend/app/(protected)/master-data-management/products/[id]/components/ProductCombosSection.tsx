@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Copy, ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -37,6 +37,7 @@ import type {
 } from '../../types/productCombo.types';
 import { COMBO_NAME_MAX } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
+import { CopyComboDialog } from './CopyComboDialog';
 import { ComboTagPreview } from './ComboTagPreview';
 import { ComboTemplatesField } from './ComboTemplatesField';
 import { AccessoryListField } from './AccessoryListField';
@@ -571,6 +572,7 @@ interface ComboBlockProps {
   isDeleting: boolean;
   removingPartId: string | null;
   onDelete: () => void;
+  onCopy: () => void;
   onRemovePart: (part: ProductComboPartRow) => void;
   onChoiceGroup: (part: ProductComboPartRow, label: string | null) => void;
   onPartWrite: (
@@ -591,6 +593,7 @@ function ComboBlock({
   isDeleting,
   removingPartId,
   onDelete,
+  onCopy,
   onRemovePart,
   onChoiceGroup,
   onPartWrite,
@@ -645,21 +648,34 @@ function ComboBlock({
       <div className="flex items-start justify-between gap-2 border-b p-3">
         <ComboNameField name={combo.name} canEdit={canEdit} onRename={onRename} />
         {canEdit ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0"
-            onClick={onDelete}
-            disabled={isDeleting}
-            aria-label={`Delete combo ${combo.name}`}
-          >
-            {isDeleting ? (
-              <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : (
-              <Trash2 className="size-4 text-destructive" />
-            )}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* COMBO-COPY-TO-PRODUCTS: this combo, as it is, onto hand-picked products. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={onCopy}
+              aria-label={`Copy combo ${combo.name} to other products`}
+            >
+              <Copy className="size-4" />
+              <span className="hidden sm:inline">Copy to other products</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              disabled={isDeleting}
+              aria-label={`Delete combo ${combo.name}`}
+            >
+              {isDeleting ? (
+                <LoaderCircleIcon className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4 text-destructive" />
+              )}
+            </Button>
+          </div>
         ) : null}
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
@@ -772,6 +788,7 @@ function ComboBlock({
  */
 export function ProductCombosSection({ productId }: { productId: string }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [copying, setCopying] = useState<ProductComboRow | null>(null);
   const [addPartError, setAddPartError] = useState<{ comboId: string; message: string } | null>(
     null,
   );
@@ -849,6 +866,7 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 isDeleting={comboDeletion.targetId === combo.id && comboDeletion.isPending}
                 removingPartId={partDeletion.isPending ? partDeletion.targetId : null}
                 onDelete={() => comboDeletion.run({ id: combo.id, subject: combo.name })}
+                onCopy={() => setCopying(combo)}
                 onRemovePart={(part) =>
                   partDeletion.run({ id: part.id, subject: `${part.code} from ${combo.name}` })
                 }
@@ -874,6 +892,16 @@ export function ProductCombosSection({ productId }: { productId: string }) {
           </div>
         )}
       </CardContent>
+      {/* Mounted only while open: its product grid queries nothing until the button is pressed. */}
+      {canEdit && copying ? (
+        <CopyComboDialog
+          open
+          onOpenChange={(next) => !next && setCopying(null)}
+          sourceProductId={productId}
+          comboId={copying.id}
+          comboName={copying.name}
+        />
+      ) : null}
       {canEdit ? (
         <AddComboModal
           open={addOpen}

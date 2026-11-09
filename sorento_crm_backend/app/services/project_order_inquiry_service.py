@@ -490,6 +490,7 @@ _HANDOVER_VERB_ORDER = (
     IV_CHANGE_SO,
     IV_CANCEL_BALANCE,
     "CHANGE_ITEM_CODE",
+    "CHANGE_LOCATION",
     "QTY_CHANGE",
     "USE_OWN",
     "USE",
@@ -511,6 +512,8 @@ _HANDOVER_VERB_LABEL = {
     # the email's headline would otherwise print blank. Worded as REMARK words it
     # (OI-EMAIL-PRINT, owner 9 Oct).
     "CHANGE_ITEM_CODE": "NEW ITEM CODE",
+    # SPLIT-SHEET-LOCATION (owner, 7 Nov 2026): AutoCount moved the line's location.
+    "CHANGE_LOCATION": "NEW LOCATION",
     # EMAIL-SO-CHANGES (crew decision, 12 Oct): the headline is never empty. A line whose
     # quantity or date moved but that asks purchasing for nothing (landed stock meets a
     # rise; a date set where none was) reads QTY CHANGE.
@@ -968,6 +971,80 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
         ),
         _own_remark(snapshot),
     )
+
+
+def _location_moved_from(
+    before: Optional[Mapping[str, Any]], now: Mapping[str, Any]
+) -> Optional[str]:
+    """SPLIT-SHEET-LOCATION (owner, 7 Nov 2026, Q3): the location a saved line was confirmed
+    at before, when AutoCount has since moved the line (its snapshot `location` is the core
+    warehouse, `ProjectSupplyService._snapshot`); None when it did not move. Any move counts,
+    within the pool or not (Q4)."""
+    was = (before or {}).get("location") or None
+    now_location = now.get("location") or None
+    return was if was and now_location and was != now_location else None
+
+
+def held_order_locations(db: Session, line_ids: Sequence[str]) -> Dict[str, Tuple[str, Decimal]]:
+    """SPLIT-SHEET-LOCATION: per line, the ONE location purchasing's live orders for it sit at
+    (its ORDER / ORDER BACK rows, not redirected to the pool); a line whose orders sit at two
+    locations, or that has none, is left out. Read by a Confirm BEFORE it writes, because the
+    write restamps a raised row onto the line's own location. Each entry is `(location, qty
+    held)`. An imported row can only differ from its line's location after a move: the sheet
+    import refuses one whose location differs (`LOCATION_DIFFERS`)."""
+    if not line_ids:
+        return {}
+    codes: Dict[str, set] = {}
+    qty: Dict[str, Decimal] = {}
+    for line_id, code, row_qty in db.query(
+        OrderInquiryRow.so_line_id, OrderInquiryRow.stock_location, OrderInquiryRow.qty
+    ).filter(
+        OrderInquiryRow.so_line_id.in_(list(line_ids)),
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+        OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+        OrderInquiryRow.redirected_to_pool.is_(False),
+    ):
+        key = str(line_id)
+        codes.setdefault(key, set()).add(code or "")
+        qty[key] = qty.get(key, _ZERO) + _dec(row_qty)
+    return {
+        key: (next(iter(found)), qty[key])
+        for key, found in codes.items()
+        if len(found) == 1 and next(iter(found))
+    }
+
+
+def _held_location_moved_from(
+    held: Optional[Tuple[str, Decimal]], now: Mapping[str, Any]
+) -> Optional[str]:
+    """Where purchasing's order sits when the line's own location is now elsewhere, for a line
+    confirmed for the first time (no snapshot to compare with); None otherwise."""
+    location = now.get("location") or None
+    if not held or not location:
+        return None
+    return held[0] if held[0] != location else None
+
+
+def _say_moved(item: Dict[str, Any], was: str, now: Mapping[str, Any]) -> None:
+    """A queued row line told for a moved saved line: at the line's new location, with the
+    move in REMARK (the row itself keeps its location, owner Q3)."""
+    location = now.get("location") or None
+    entry = item.get("line") or {}
+    phrase = _new_location_remark(was)
+    entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+    # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026).
+    entry["was"] = {**(entry.get("was") or {}), "location": was}
+    if location:
+        entry["location"] = location
+        item["stock_location"] = location
+    item["verb_keys"] = [*(item.get("verb_keys") or []), "CHANGE_LOCATION"]
+    # Read by `_queue_plan_rows` when the line's splits tell it in place of this line.
+    item["moved_from"] = was
+
+
+def _new_location_remark(was: str) -> str:
+    """REMARK's words for a moved line: the new code already prints in LOCATION."""
+    return f"NEW LOCATION (was {was})"
 
 
 def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -4932,6 +5009,7 @@ class ProjectOrderInquiryService:
         pso_id: str,
         saved: Sequence[Tuple[ProjectSalesOrderLine, Mapping[str, Any], Optional[Mapping[str, Any]]]],
         actor_user_id: Optional[str] = None,
+        held_locations: Optional[Mapping[str, str]] = None,
     ) -> None:
         """The purchasing email of one Confirm: ONE line per SAVED line whose decision is new
         or changed, saying what was decided (ORDERBACK-DELTA extension, owner 13 Oct 2026
@@ -4962,6 +5040,15 @@ class ProjectOrderInquiryService:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
             own = _own_remark(now)
+            # SPLIT-SHEET-LOCATION (crew browser pass, SO358013 line 224): a line's FIRST
+            # Confirm has no decision to compare locations with, but purchasing's own order
+            # may sit at the old location (read before this Confirm wrote).
+            held = (held_locations or {}).get(str(line.id)) if before is None else None
+            held_from = _held_location_moved_from(held, now)
+            moved = {
+                "moved_from": held_from,
+                "held_qty": held[1] if held_from and held else None,
+            }
             if own is not None and not unchanged and not (
                 purchasing_remark(now) or (before is not None and purchasing_remark(before))
             ):
@@ -4984,6 +5071,7 @@ class ProjectOrderInquiryService:
                 # Cancel SO is told); a remark-only change is a change.
                 self._queue_saved_line(
                     pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
+                    **moved,
                     keys=[
                         key for _w, _l, _q, key in _saved_line_parts(now)
                         if key in _PURCHASING_KEYS
@@ -5006,8 +5094,11 @@ class ProjectOrderInquiryService:
             no_record = before is None or not _decision_words(before)
             # Only a Buy line: a mixed decision (Use BRW and Buy) reads in full, and a
             # Borrow's own hole row is not the line's decision.
-            if (unchanged and row_lines) or (
-                buy_words and (same_kind or no_record) and len(row_lines) == 1
+            # A moved line is told from its snapshots (`_queue_saved_line`), at its new
+            # location with NEW LOCATION: its rows' own lines read the old one.
+            if _location_moved_from(before, now) is None and (
+                (unchanged and row_lines)
+                or (buy_words and (same_kind or no_record) and len(row_lines) == 1)
             ):
                 # The rows already told this line in the one-line form purchasing works
                 # from (QTY = what they held, QTY CHANGE TO = the new need, EMAIL-HANDOVER-
@@ -5015,6 +5106,9 @@ class ProjectOrderInquiryService:
                 # refused row restated, AC-H6): that line stands as the line.
                 for item in row_lines:
                     item["told_for_saved_line"] = True
+                if held_from and row_lines:
+                    # The rows' own one line carries the move (a settle, a rise).
+                    _say_moved(row_lines[0], held_from, now)
                 queue.extend(row_lines)
                 continue
             if unchanged:
@@ -5066,6 +5160,7 @@ class ProjectOrderInquiryService:
                 # Several row lines for one line of the same kind (a redirect, two rows):
                 # what purchasing must order is what the rows raised, never need - held.
                 raised=raised if same_kind and lines_told > 1 else None,
+                **moved,
             )
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
@@ -5207,6 +5302,8 @@ class ProjectOrderInquiryService:
                     "stock_location": f.line.stock_location or f.location,
                     "verb_keys": ["QTY_CHANGE"],
                     "line": {**sample["line"], "item_code": f.item_code},
+                    # `sample` is another line's item: its move is not this line's.
+                    "moved_from": None,
                 }
             ]
         if not told:
@@ -5311,6 +5408,14 @@ class ProjectOrderInquiryService:
             self.decorate_handover_line(entry, item.get("core_line_id"))
             entry["continued"] = index > 0
             item["verb_keys"] = self._plan_row_keys(row, template)
+            moved_from = template.get("moved_from")
+            if moved_from and index == 0:
+                # SPLIT-SHEET-LOCATION (review S3): the move AutoCount made, said once, on
+                # the line's first plan row (the saved line it replaces said it).
+                phrase = _new_location_remark(moved_from)
+                entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+                entry["was"] = {**(entry.get("was") or {}), "location": moved_from}
+                item["verb_keys"] = [*item["verb_keys"], "CHANGE_LOCATION"]
 
     @staticmethod
     def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
@@ -5542,7 +5647,12 @@ class ProjectOrderInquiryService:
         taken_back: Decimal = _ZERO,
         raised: Optional[Decimal] = None,
         taken_rows: Sequence[Tuple[Decimal, Decimal, str]] = (),
+        moved_from: Optional[str] = None,
+        held_qty: Optional[Decimal] = None,
     ) -> None:
+        """`moved_from` / `held_qty` (SPLIT-SHEET-LOCATION): on a line's first Confirm, the
+        location purchasing's live order sits at when the line has moved since, and how much
+        it holds there (`held_order_locations`)."""
         explicit = remark is not None
         if not explicit:
             # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): only purchasing's parts. A line
@@ -5576,6 +5686,7 @@ class ProjectOrderInquiryService:
                     now,
                 )
                 keys = keys + ["CHANGED"]
+        moved_from = moved_from or _location_moved_from(before, now)
         if before is not None:
             qty_before = _dec(before.get("open_qty"))
             date_before, date_now = before.get("required_date"), now.get("required_date")
@@ -5687,7 +5798,7 @@ class ProjectOrderInquiryService:
                     # donor is named beside any date or quantity word
                     # (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
                     not same_kinds
-                    or not pieces
+                    or (not pieces and not moved_from)
                     or _borrow_donors(before) != _borrow_donors(now)
                 ):
                     pieces.append(remark)
@@ -5695,13 +5806,41 @@ class ProjectOrderInquiryService:
                     # What the customer's cut takes off what purchasing holds.
                     pieces.append(f"CANCEL {_qty_str(taken_back)}")
                     keys.append(IV_CANCEL_BALANCE)
+                if moved_from:
+                    # SPLIT-SHEET-LOCATION (owner Q3): only the move is stated; purchasing
+                    # decides what to do with what they hold at the old location.
+                    pieces.append(_new_location_remark(moved_from))
+                    keys.append("CHANGE_LOCATION")
                 remark = ", ".join(piece for piece in pieces if piece)
                 if not remark:
                     # Nothing of purchasing's moved: no line.
                     return
+            elif moved_from:
+                remark = ", ".join(
+                    piece for piece in (remark, _new_location_remark(moved_from)) if piece
+                )
+                keys.append("CHANGE_LOCATION")
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")
                 keys.append("CHANGE_ITEM_CODE")
+        elif moved_from:
+            # A first Confirm of a line AutoCount moved away from where purchasing's order
+            # sits (crew browser pass, SO358013 line 224). When nothing else changed for
+            # them (they hold what the line now orders, nothing taken back), the move is
+            # the whole line; otherwise it follows what the line already says.
+            phrase = _new_location_remark(moved_from)
+            nothing_else = (
+                not explicit
+                and taken_back <= _ZERO
+                and held_qty is not None
+                and held_qty == _purchasing_qty(now)
+            )
+            remark = phrase if nothing_else or not remark else f"{remark}, {phrase}"
+            keys.append("CHANGE_LOCATION")
+        if moved_from:
+            # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026,
+            # as QTY / NEW QTY).
+            was["location"] = moved_from
         facts = self._handover_order_facts(pso_id)
         # OI-SAVED-LINE-RAISER-HOTFIX: the raiser rides the item, as a row line's does
         # (`handover_item`), so routing never has to read the header back post-commit.
@@ -5750,6 +5889,9 @@ class ProjectOrderInquiryService:
                 "item_code": now.get("item_code"),
                 "verb_keys": keys or ["QTY_CHANGE"],
                 "line": line_entry,
+                # SPLIT-SHEET-LOCATION: read by `_queue_plan_rows` when the line's splits
+                # tell it in place of this line.
+                "moved_from": moved_from,
                 "actor": self._handover_actor(actor_user_id),
                 "tx_chain": tx_chain,
                 "tx": tx_chain[-1] if tx_chain else None,

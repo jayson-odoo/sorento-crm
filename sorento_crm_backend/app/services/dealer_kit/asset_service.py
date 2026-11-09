@@ -446,7 +446,21 @@ def doc_has_feature_icons(doc: Optional[dict]) -> bool:
     for sheet in doc.get("sheets", []) or []:
         for tag in (sheet or {}).get("tags", []) or []:
             layers.extend((tag or {}).get("layers", []) or [])
-    return any((layer or {}).get("type") == FEATURE_ICONS_LAYER for layer in layers)
+    return any(_layer_has_feature_icons(layer or {}) for layer in layers)
+
+
+def _layer_has_feature_icons(layer: dict) -> bool:
+    """A feature_icons layer, or (PRICETAG-UPGRADE-VARIANTS S1) an accessories box whose card
+    draws a feature_icons element: either needs the icon rules and their signed urls."""
+    if layer.get("type") == FEATURE_ICONS_LAYER:
+        return True
+    if layer.get("type") != "accessories":
+        return False
+    card = (layer.get("props") or {}).get("card") or {}
+    return any(
+        (element or {}).get("kind") == FEATURE_ICONS_LAYER
+        for element in card.get("elements") or []
+    )
 
 
 #: The most icons one spec value may carry.
@@ -454,7 +468,7 @@ MAX_ICONS_PER_VALUE = 10
 BOOLEAN_VALUES = ("true", "false")
 
 
-def spec_value_keys(row) -> list[str]:
+def spec_value_keys(row, numeric_values: Optional[list[str]] = None) -> list[str]:
     """The values of a registry key an icon may be set on, in the key's own order.
 
     A yes/no key reads ``true`` / ``false`` (what a tag's ``raw`` holds for a stored bool); any
@@ -464,7 +478,67 @@ def spec_value_keys(row) -> list[str]:
 
     if row.data_type == "boolean":
         return list(BOOLEAN_VALUES)
+    if row.data_type == "numeric":
+        return numeric_value_keys(row, numeric_values)
     return [str(v) for v in merged_allowed_values(row)]
+
+
+def _numeric_text(value) -> Optional[str]:
+    """The one numeric normaliser (`product_spec_registry.numeric_value_text`), shared with a tag's raw."""
+    from app.services.product_spec_registry import numeric_value_text
+
+    return numeric_value_text(value)
+
+
+def _numeric_order(value: str):
+    text = _numeric_text(value)
+    return (0, float(text), "") if text is not None else (1, 0.0, value)
+
+
+def numeric_value_keys(row, product_values: Optional[list[str]] = None) -> list[str]:
+    """A numeric key's values that may carry icons: the ones products hold today (pass them in
+    when already read for several keys) plus every value it already carries icons on, so icons set
+    on a value no product holds any more (a discontinued 300 mm) are kept, not lost on the next
+    save. Numeric order."""
+    held = product_values if product_values is not None else numeric_spec_values(row)
+    stored = [str(value) for value in (row.value_icons or {})]
+    return sorted(set(held) | set(stored), key=_numeric_order)
+
+
+def numeric_spec_values(row) -> list[str]:
+    """PRICETAG-UPGRADE-VARIANTS S4: the distinct values products hold for a numeric key
+    (bare or wrapped ``{"value": ...}``), normalised, in numeric order, so one can carry icons."""
+    from sqlalchemy.orm import object_session
+
+    db = object_session(row)
+    if db is None:
+        return []
+    return numeric_spec_values_by_key(db, [row.spec_key]).get(row.spec_key, [])
+
+
+def numeric_spec_values_by_key(db: Session, keys: list[str]) -> dict[str, list[str]]:
+    """`numeric_spec_values` for several keys in one read (the registry list)."""
+    from sqlalchemy import text as sql_text
+
+    if not keys:
+        return {}
+    found = db.execute(
+        sql_text(
+            "SELECT DISTINCT k.key, CASE WHEN jsonb_typeof(k.value) = 'object' "
+            "THEN k.value ->> 'value' ELSE k.value #>> '{}' END "
+            "FROM product_specifications s, jsonb_each(s.values) k "
+            # `?|` first, so the GIN index on `values` narrows the rows before jsonb_each.
+            "WHERE s.values ?| CAST(:keys AS text[]) AND jsonb_typeof(s.values) = 'object' "
+            "AND k.key = ANY(:keys)"
+        ),
+        {"keys": list(keys)},
+    ).all()
+    out: dict[str, set[str]] = {}
+    for key, value in found:
+        text = _numeric_text(value)
+        if text is not None:
+            out.setdefault(key, set()).add(text)
+    return {key: sorted(values, key=float) for key, values in out.items()}
 
 
 def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
@@ -512,10 +586,14 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
         statement = statement.filter(Asset.company_id == company_id)
     names = {asset.id: asset.name for asset in statement.all()}
 
+    # One read for every numeric key, never one scan per key (security review S1).
+    numeric = numeric_spec_values_by_key(
+        db, [row.spec_key for row in rows if row.data_type == "numeric"]
+    )
     out: list[dict] = []
     for row in rows:
         mapping = row.value_icons or {}
-        ordered = spec_value_keys(row)
+        ordered = spec_value_keys(row, numeric.get(row.spec_key, []))
         # A value the key no longer lists keeps its icons (a product may still hold it).
         ordered += sorted(value for value in mapping if value not in ordered)
         for value in ordered:

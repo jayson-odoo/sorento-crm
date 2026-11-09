@@ -19,6 +19,7 @@ import type {
   ProductCombosLookup,
   ProductTagTemplateOption,
   TagItemOption,
+  VariantMembersLookup,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { defaultOptionFor } from '@/lib/dealer-kit/template-price-type';
@@ -34,6 +35,7 @@ import {
   pickedProductIds,
   restoreGroupCandidates,
   trimPicksToTemplate,
+  withVariantMembers,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 
@@ -74,6 +76,8 @@ export interface PriceTagLineLookups {
     productId: string,
     comboId?: string | null,
   ) => Promise<ProductTagTemplateOption[]>;
+  /** PRICETAG-UPGRADE-VARIANTS: optional so a caller without it shows no variant chooser. */
+  lookupVariantMembers?: (productId: string) => Promise<VariantMembersLookup>;
 }
 
 interface Options {
@@ -316,6 +320,49 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       (comboId ? lookup(productId, comboId) : lookup(productId)).then(apply).catch(() => apply([]));
     }
   }, [lines, lookups, setLines, priceMode]);
+
+  /**
+   * PRICETAG-UPGRADE-VARIANTS: the product's variant members, asked once per product on a line
+   * (same reasoning as the combos effect). A failed lookup shows no chooser; the saved unticked
+   * list stays as it was.
+   */
+  const variantsAskedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const lookup = lookups.lookupVariantMembers;
+    if (!lookup) return;
+    const pending = lines.filter(
+      (l) =>
+        l.line_type === 'product' &&
+        l.product_id &&
+        l.variant_members_for !== l.product_id &&
+        !variantsAskedRef.current.has(`${l.key}:${l.product_id}`),
+    );
+    for (const line of pending) {
+      const productId = line.product_id as string;
+      const asked = `${line.key}:${productId}`;
+      variantsAskedRef.current.add(asked);
+      lookup(productId)
+        .then((answer: VariantMembersLookup) => {
+          variantsAskedRef.current.delete(asked);
+          setLines((prev) =>
+            prev.map((l) =>
+              l.key === line.key && l.product_id === productId ? withVariantMembers(l, productId, answer) : l,
+            ),
+          );
+        })
+        .catch(() => {
+          // No chooser; the saved unticked list is left exactly as it was (nothing to check it against).
+          variantsAskedRef.current.delete(asked);
+          setLines((prev) =>
+            prev.map((l) =>
+              l.key === line.key && l.product_id === productId
+                ? { ...l, variant_members: [], variant_members_for: productId }
+                : l,
+            ),
+          );
+        });
+    }
+  }, [lines, lookups, setLines]);
 
   /** The Template select on a line whose product allows several (AC-14). */
   const chooseTemplate = useCallback(
@@ -569,6 +616,11 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           promotion_locked: false,
           manual_sell_price: null,
           pricing: null,
+          // The variant family was the old product's too.
+          variant_members: undefined,
+          variant_members_for: null,
+          own_list_price: null,
+          excluded_variant_ids: [],
         });
         return;
       }
@@ -611,6 +663,10 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
         promotion_locked: false,
         manual_sell_price: null,
         pricing: null,
+        variant_members: undefined,
+        variant_members_for: null,
+        own_list_price: null,
+        excluded_variant_ids: [],
       });
     },
     [forgetCombosAsked, updateLine, lines],

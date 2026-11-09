@@ -5910,6 +5910,16 @@ class ProjectSupplyService:
             str(snap.get("project_line_id")): snap
             for snap in ((previous.line_snapshots or []) if previous is not None else [])
         }
+        # SPLIT-SHEET-LOCATION: where purchasing's live orders sit, read before the write
+        # below restamps a raised row onto the line's own location; the email of a line with
+        # no decision yet says a move against it.
+        from app.services.project_order_inquiry_service import held_order_locations
+
+        held_locations = held_order_locations(
+            self.db,
+            [str(line.id) for line, _entry, _fact in checked
+             if str(line.id) not in before_by_line],
+        )
         body = self._write_decision(
             order,
             checked,
@@ -5934,7 +5944,10 @@ class ProjectSupplyService:
         body["lines_fulfilled_skipped"] = len(fulfilled)
         body["landed_buy_notices"] = list(self._landed_buy_notices.values()) or None
         body["stock_short_notices"] = self._stock_short_notices(checked) or None
-        self._tell_saved_lines(order, checked, before_by_line, actor_user_id=actor_user_id)
+        self._tell_saved_lines(
+            order, checked, before_by_line, actor_user_id=actor_user_id,
+            held_locations=held_locations,
+        )
         return body
 
     def _tell_saved_lines(
@@ -5944,6 +5957,7 @@ class ProjectSupplyService:
         before_by_line: Mapping[str, Mapping[str, Any]],
         *,
         actor_user_id: Optional[str] = None,
+        held_locations: Optional[Mapping[str, str]] = None,
     ) -> None:
         """ONE purchasing email line per line this Confirm SAVED whose decision is new or
         changed (ORDERBACK-DELTA extension, owner 13 Oct 2026 22:40). A shortfall is never
@@ -5978,7 +5992,8 @@ class ProjectSupplyService:
         ]
         if saved:
             ProjectOrderInquiryService(self.db).record_saved_lines(
-                pso_id=str(order.id), saved=saved, actor_user_id=actor_user_id
+                pso_id=str(order.id), saved=saved, actor_user_id=actor_user_id,
+                held_locations=held_locations,
             )
 
     def _record_short(

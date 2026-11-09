@@ -72,6 +72,8 @@ export function previewLines(lines: DraftLine[], priceMode?: PriceMode): TagPrev
       manual_sell_price: (l.price_type ?? priceMode) === 'list' ? null : l.manual_sell_price,
       tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
       price_type: l.price_type ?? null,
+      // PRICETAG-UPGRADE-VARIANTS: an "All variants" layer draws only the ticked members.
+      excluded_variant_ids: l.line_type === 'product' ? (l.excluded_variant_ids ?? []) : [],
     }));
 }
 

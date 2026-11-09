@@ -330,6 +330,9 @@ export interface SpecRegistryKey {
   value_icon_names?: Record<string, string>;
   /** This spec's place in a price tag's one feature icon sequence (1 first); null = last. */
   icon_order?: number | null;
+  /** PRICETAG-UPGRADE-VARIANTS S4: a numeric key's values products hold ("150", "200"), sorted,
+   *  so each can carry icons. Empty / absent on every other key. */
+  numeric_values?: string[];
   /** What this field means to the chatbot: one line the parser sees. Null when unset. */
   parser_hint: string | null;
   /** True once staff edited the Name: the seed repair leaves it alone. */

@@ -85,7 +85,8 @@ export function ValuesAndWordsTab({
 }: ValuesAndWordsTabProps) {
   const isBoolean = row.data_type === 'boolean';
   const isNumeric = row.data_type === 'numeric';
-  const canEdit = mode === 'edit' && !isBoolean;
+  // A numeric key's rows are the values products hold: they carry icons, never a rename or removal.
+  const canEdit = mode === 'edit' && !isBoolean && !isNumeric;
 
   const [editing, setEditing] = useState<{ value: string; column: 'choice' | 'words' } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -231,16 +232,19 @@ export function ValuesAndWordsTab({
 
   // A choice the business has taken away is not a choice (B-6): it is neither
   // listed nor counted, whether the removal came from this grid or an earlier Save.
+  const numericValues = row.numeric_values ?? EMPTY_STRING_ARRAY;
   const choices = useMemo(
     () =>
-      dedupe([...(isBoolean ? ['true'] : liveValues), ...Object.keys(words)]).filter(
-        (value) => value !== SELF_KEY && !droppedValues.includes(value),
-      ),
-    [isBoolean, liveValues, droppedValues, words],
+      isNumeric
+        ? numericValues
+        : dedupe([...(isBoolean ? ['true'] : liveValues), ...Object.keys(words)]).filter(
+            (value) => value !== SELF_KEY && !droppedValues.includes(value),
+          ),
+    [isNumeric, numericValues, isBoolean, liveValues, droppedValues, words],
   );
 
   const displayName = (value: string) =>
-    value === 'true' && isBoolean ? 'Yes' : readableValue(value, undefined, valueLabels);
+    value === 'true' && isBoolean ? 'Yes' : isNumeric ? value : readableValue(value, undefined, valueLabels);
 
   const commitAdd = () => {
     const trimmed = newChoice.trim();
@@ -483,6 +487,8 @@ export function ValuesAndWordsTab({
       minSize: 120,
     };
 
+    // A numeric value has no words of its own (the key's other names are on Details).
+    if (isNumeric) return [choiceColumn, iconsColumn, productsColumn];
     if (!canEdit) return [choiceColumn, wordsColumn, iconsColumn, productsColumn];
 
     const actionsColumn: ColumnDef<ChoiceRow> = {
@@ -547,6 +553,7 @@ export function ValuesAndWordsTab({
     row.allowed_values,
     row.also_on,
     wordError,
+    isNumeric,
   ]);
 
   const table = useReactTable({
@@ -604,7 +611,7 @@ export function ValuesAndWordsTab({
             header, in read mode and edit mode - the same place as Add a rule (fix
             round 5, owner ruling 27 Sep 2026). A yes-or-no specification has its
             one choice already, so it has no toolbar. */}
-        {!isBoolean && (
+        {!isBoolean && !isNumeric && (
           <div
             data-testid="choices-grid-toolbar"
             className="flex flex-wrap items-center justify-end gap-2 border-b p-2"
