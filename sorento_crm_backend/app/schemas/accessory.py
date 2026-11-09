@@ -17,7 +17,9 @@ class AccessoryPictureOut(BaseModel):
 class AccessoryImageOut(BaseModel):
     """One of an accessory's ordered pictures, with its optional colour."""
 
-    id: str
+    #: The accessory picture row's id. Null on a catalogue product entry: its picture is the
+    #: product's own photo, not an accessory picture (HOTFIX-COMBO-IMAGE-ID, prod 9 Nov).
+    id: Optional[str] = None
     attachment_id: str
     url: str
     colour_name: Optional[str] = None

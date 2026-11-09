@@ -1,6 +1,6 @@
 # PLAN: HOTFIX-COMBO-IMAGE-ID (prod hotfix, 9 Nov 2026)
 
-Status: implemented (small fix track: BE only, 1 schema line + 1 test, no migration, no auth change)
+Status: fix on branch, awaiting review + owner merge/deploy (small fix track: BE only, 1 schema line + 1 test, no migration, no auth change)
 
 UAC: `hotfix-combo-image-id-acceptance-criteria.md`
 
