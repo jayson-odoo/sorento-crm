@@ -410,6 +410,23 @@ export function accessoryBoxLayout(
 }
 
 /**
+ * PRICETAG-HEADER-DRAG round 2: how many wrapped lines a resized header shows, Konva's own rule
+ * (`Text._setTextData`, konva 10: a line is kept while the next one still fits the text height, and
+ * the first line always is). The print sheet caps its header text to this many lines so canvas and
+ * print agree; the kept lines are centred in the band on both (and may spill when even one does
+ * not fit).
+ */
+export function headerLineCap(
+  header: { height_mm: number; fontSize_pt: number; padding: { top: number; bottom: number } },
+  lineHeight = 1,
+): { lines: number; lineHeight_mm: number } {
+  const lineHeight_mm = Math.max(0, header.fontSize_pt) * PT_TO_MM * (lineHeight > 0 ? lineHeight : 1);
+  const innerH = Math.max(0, header.height_mm - header.padding.top - header.padding.bottom);
+  const lines = lineHeight_mm > 0 ? Math.max(1, Math.floor(innerH / lineHeight_mm + 1e-9)) : 1;
+  return { lines, lineHeight_mm };
+}
+
+/**
  * The box's frame, header band and "+" badge for a box closed up to `outW` x `outH`. Shared by the
  * legacy layout and the designed-card layout (`cardBoxLayout`) so the two draw the same chrome.
  */

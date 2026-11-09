@@ -40,6 +40,7 @@ vi.mock('react-konva', () => {
   };
 });
 
+import { accessoryChrome, headerLineCap } from '@/lib/dealer-kit/accessory-box';
 import { KonvaTagLayer } from '@/app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer';
 import {
   defaultAccessoriesProps,
@@ -204,7 +205,25 @@ describe('a resized, filled header prints where and how the designer draws it', 
     const header = screen.getByTestId('accessories-header');
     expect(header.style.whiteSpace).toBe('normal');
     expect(header.style.justifyContent).toBe('center');
+    // The band itself never clips (a line taller than it spills, centred, as on the canvas) ...
     expect(header.style.overflow).toBe('');
+    // ... and the text is cut to the lines Konva keeps: one 9 pt line in a 4.81 mm band.
+    const cap = headerLineCap(accessoryChrome(layer.props as AccessoriesLayerProps, 45, 60).header!, 1);
+    expect(cap.lines).toBe(1);
+    const lines = screen.getByTestId('accessories-header-lines');
+    expect(lines.style.maxHeight).toBe(`${cap.lineHeight_mm}mm`);
+    expect(lines.style.overflow).toBe('hidden');
+  });
+
+  it('the line cap is Konva\'s rule: keep a line while the next still fits, the first always', () => {
+    const h = (height_mm: number) => ({ height_mm, fontSize_pt: 9, padding: { top: 0, bottom: 0 } });
+    const line = headerLineCap(h(1), 1).lineHeight_mm;
+    expect(headerLineCap(h(line * 0.5)).lines).toBe(1);
+    expect(headerLineCap(h(line * 1.99)).lines).toBe(1);
+    expect(headerLineCap(h(line * 2)).lines).toBe(2);
+    expect(headerLineCap(h(line * 3.2)).lines).toBe(3);
+    expect(headerLineCap({ height_mm: line * 3.2, fontSize_pt: 9, padding: { top: line, bottom: 0 } }).lines).toBe(2);
+    expect(headerLineCap(h(line * 3), 1.5).lines).toBe(2);
   });
 
   it('no stored style: the print header keeps today\'s single-line, unpadded, square look', () => {

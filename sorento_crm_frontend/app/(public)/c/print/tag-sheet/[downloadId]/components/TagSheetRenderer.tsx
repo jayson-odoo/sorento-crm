@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type {
   ImpositionConfig,
@@ -71,6 +71,7 @@ import {
   accessoryLineCount,
   accessoryLineStyle,
   fitLinePt,
+  headerLineCap,
   type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
@@ -1348,10 +1349,31 @@ function renderFeatureIconsLayer(
   );
 }
 
+/** A resized header's text, cut to the lines the canvas keeps (`headerLineCap`), never with "...". */
+function HeaderLines({
+  header,
+  lineHeight,
+  children,
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  lineHeight: number | undefined;
+  children: ReactNode;
+}) {
+  const cap = headerLineCap(header, lineHeight);
+  return (
+    <div
+      style={{ maxHeight: `${cap.lines * cap.lineHeight_mm}mm`, overflow: 'hidden', flexShrink: 0 }}
+      data-testid="accessories-header-lines"
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
  * PRICETAG-HEADER-DRAG round 2: the header band's box CSS, matching the canvas (`KonvaTagLayer`):
  * corners, padding inside the band, and the text as one line (unresized: shrunk to fit by the
- * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized), never clipped. Nothing extra is
+ * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized). Nothing extra is
  * set for a header with no stored style, so it prints as before.
  */
 function headerBoxCss(
@@ -1371,9 +1393,8 @@ function headerBoxCss(
           display: 'flex',
           flexDirection: 'column' as const,
           justifyContent: 'center',
-          // No clipping: Konva (10.x) keeps every wrapped line of a paragraph and centres the block,
-          // so text too tall for its band spills evenly above and below it on the canvas; print
-          // spills the same way (a centred flex column), never cut.
+          // The kept lines (`headerLineCap`, the canvas's rule) are centred; a single line taller than
+          // the band spills evenly above and below it, as on the canvas, never cut.
         }
       : { whiteSpace: 'nowrap' as const, lineHeight: `${innerH}mm` }),
   };
@@ -1430,7 +1451,13 @@ function renderAccessoriesLayer(
       }}
       data-testid="accessories-header"
     >
-      {props.headerText}
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
     </div>
   );
   return (
@@ -1588,7 +1615,13 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
       }}
       data-testid="accessories-header"
     >
-      {props.headerText}
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
     </div>
   );
   return (
