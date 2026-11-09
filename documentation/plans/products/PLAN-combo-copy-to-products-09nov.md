@@ -1,8 +1,8 @@
 # PLAN: Copy a product combo to other products (COMBO-COPY-TO-PRODUCTS)
 
-Status: Plan (behaviour card posted 9 Nov as `crew-ask` on PR #2284, waiting on owner answers;
-code waits for the answers and for #2280 to merge). Track: TBD after the answers (likely small
-fix track + security review, no migration).
+Status: Build (owner answered 9 Nov ~16:35). Built on top of #2280's branch
+(claude/acc-copy-to-products-kxcij3, merged into this lane) until #2280 lands on main. Track: small
+fix track (no migration, existing permissions) plus security review because it is a bulk write.
 
 ## Journey
 
@@ -55,6 +55,48 @@ Q1 Name and host. Q2 Prices. Q3 Description and picture. Q4 Same name already on
 Q5 Tag template links. Button placement stated as an assumption. Full text on the PR comment;
 answers are recorded below once given.
 
-## Owner answers
+## Owner answers (9 Nov ~16:35)
 
-(pending)
+Verbatim: "just copy as is, price also copy, just copy all, yeah we can ask for overwrite or skip
+when target already has, for price template link also copy yeah a".
+
+- Q1 (b): the name copies as-is (the unique-per-product rule still applies). The target becomes the
+  host; every part stays. A target that is itself a part of the combo is skipped and listed (the
+  host can never be its own part).
+- Q2 (b): list / sell price copy; option prices, top-ups and the upgrade marker copy.
+- Q3 (b): description with its formatting AND the picture copy. The picture is shared, not
+  re-uploaded: each new combo points at the same attachment and the target gets its own gallery
+  link (`product_attachments`), the same shape an upload makes.
+- Q4 (new): the confirm step lists every target that already has a combo with that name (case
+  ignored), each with Overwrite / Skip, plus an "apply to all" toggle; default Skip. Overwrite keeps
+  that combo's row (so request lines naming it stay linked) and replaces its fields, parts, free
+  items, legacy free-items text, box style, prices, description, picture and template links with
+  the source's.
+- Q5 (a): template links (with the LP / SP defaults) copy when the caller holds
+  `dealer_kit.tag_templates.manage`; without it the combo copies without links (an overwritten
+  combo keeps its own links) and the result says so.
+
+## Design
+
+- `POST /api/v1/master-data/product-combos/{combo_id}/copy`
+  `{target_product_ids: [..] (1-500), overwrite_product_ids: [..] (subset), dry_run: bool}`,
+  `master_data.products.edit`, signed-in only (`require_permission`, like #2280).
+- Answer (dry run and write alike): `{targets, created, overwritten, skipped: [{code, name,
+  reason}], conflicts: [{product_id, code, name}], template_links_copied: bool}`; `reason` is
+  `exists` or `part`. The dry run is what the confirm step reads.
+- Service `ProductComboService.copy_to_products`: source combo resolved under scope; every target
+  resolved under scope AND in the source host's company (else 404 for the whole call); source host
+  dropped from the targets; target rows locked FOR NO KEY UPDATE on a write (as #2280); one
+  transaction, all or nothing; old pictures swept from storage only after the commit.
+- A free item naming the target itself is left out for that target (a product is never its own
+  free item, `accessory_service.set_combo_list`).
+- Picture sweep guard: `_unlink_combo_image` keeps the host's gallery link while another combo on
+  the same host still shows that picture, and keeps the attachment while any combo points at it.
+- UI: "Copy to other products" in each combo block's header, before Delete, editors only. The
+  product picker grid of #2280 is lifted out of `CopyAccessoriesDialog` into a shared
+  `ProductTargetPicker` (no second copy of it); `CopyComboDialog` adds the conflict step.
+
+## Tests
+
+- Backend: `sorento_crm_backend/tests/test_product_combo_copy_to_products.py`.
+- Frontend: `CopyComboDialog.test.tsx`; `CopyAccessoriesDialog.test.tsx` stays green after the lift.
