@@ -20,6 +20,8 @@ class AccessoryImageOut(BaseModel):
     id: str
     attachment_id: str
     url: str
+    #: The 320 px rendition (rendition service); None while not ready, then show `url`.
+    thumb_url: Optional[str] = None
     colour_name: Optional[str] = None
     colour_hex: Optional[str] = None
 

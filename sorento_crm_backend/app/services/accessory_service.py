@@ -318,16 +318,25 @@ class AccessoryService:
 
     # ------------------------------------------------------------------ library
 
-    def serialize(self, accessory: Accessory, counts: Optional[Dict[str, tuple]] = None, link=None) -> Dict[str, Any]:
+    def serialize(
+        self,
+        accessory: Accessory,
+        counts: Optional[Dict[str, tuple]] = None,
+        link=None,
+        thumbs: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """The library row as the master data screen reads it (its OWN text; a list row's overrides
-        ride in `entry`, never merged in)."""
+        ride in `entry`, never merged in). Each picture also carries `thumb_url`, its 320 px
+        rendition (None while not ready: the screen falls back to `url`)."""
         if counts is None:
             counts = self._counts([accessory.id])
+        if thumbs is None:
+            thumbs = self._thumbs([accessory.id])
         product_count, combo_count = counts.get(accessory.id, (0, 0))
         pictures = _picture_rows(self.db, accessory.id)
         out = {
             **tag_accessory(self.db, accessory, None, pictures),
-            "images": pictures,
+            "images": [{**picture, "thumb_url": thumbs.get(picture["attachment_id"])} for picture in pictures],
             "colours": _colour_rows(self.db, accessory.id),
             "product_count": product_count,
             "combo_count": combo_count,
@@ -335,6 +344,21 @@ class AccessoryService:
         if link is not None:
             out["entry"] = self._entry_of(link)
         return out
+
+    def _thumbs(self, accessory_ids: List[str]) -> Dict[str, str]:
+        """The thumb rendition of every picture of these accessories, in ONE rendition-service call
+        (IMAGE-UNIFY: never the original on a screen that shows a small picture)."""
+        from app.services import image_thumbnailer
+
+        attachment_ids = [
+            row[0]
+            for row in self.db.query(AccessoryImage.attachment_id)
+            .filter(AccessoryImage.accessory_id.in_(accessory_ids))
+            .all()
+        ]
+        if not attachment_ids:
+            return {}
+        return image_thumbnailer.rendition_urls(self.db, attachment_ids, "thumb")
 
     @staticmethod
     def _entry_of(link) -> Dict[str, Any]:
@@ -358,8 +382,9 @@ class AccessoryService:
             .all()
         )
         counts = self._counts([row.id for row in rows])
+        thumbs = self._thumbs([row.id for row in rows])
         return {
-            "data": [self.serialize(row, counts) for row in rows],
+            "data": [self.serialize(row, counts, thumbs=thumbs) for row in rows],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -765,6 +790,7 @@ class AccessoryService:
     def _serialize_links(self, links) -> List[Dict[str, Any]]:
         accessories = [link.accessory for link in links if not link.item_product_id and link.accessory]
         counts = self._counts([item.id for item in accessories])
+        thumbs = self._thumbs([item.id for item in accessories])
         out: List[Dict[str, Any]] = []
         for link in links:
             if link.item_product_id:
@@ -778,7 +804,7 @@ class AccessoryService:
                         }
                     )
             elif link.accessory is not None:
-                out.append(self.serialize(link.accessory, counts, link))
+                out.append(self.serialize(link.accessory, counts, link, thumbs))
         return out
 
     def _resolve_items(
