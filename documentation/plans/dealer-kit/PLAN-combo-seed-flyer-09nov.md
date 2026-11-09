@@ -94,6 +94,8 @@ the owner can name the right codes later (then the seed gets exactly those codes
 (d) Bathtub combos: SRTWT51012 a free item; the 4 colour mixers RM 150 upgrades.
 (e) Load every family: bathtub, WC, urinal, bathroom furniture, basin, shower fitting package (host = the
 concealed mixer valve), kitchen sink. SRTSCBD291 (p12) left out: one product with its fittings.
+(f) Discontinued parts (crew, 9 Nov, from the owner's 7 Nov price tag ruling): load like any part, named on the
+line as `loaded (discontinued): CODE`; discontinued hosts load (`host discontinued`). UAC AC-15b.
 
 ## Prod run (owner, on server A, the primary; never run by a lane)
 
