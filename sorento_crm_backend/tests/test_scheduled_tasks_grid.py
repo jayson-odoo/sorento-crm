@@ -111,6 +111,10 @@ def test_enabled_filter(client, tasks):
     assert _names(client, enabled=["true", "false"]) == ["Alpha", "Bravo", "Charlie"]
 
 
+def test_an_unknown_enabled_value_is_refused(client, tasks):
+    assert client.get(URL, params={"enabled": "maybe"}).status_code == 422
+
+
 def test_last_status_filter_is_multi_value_and_knows_never(client, tasks):
     assert _names(client, last_status=["failed", "never"]) == ["Bravo", "Charlie"]
     assert _names(client, last_status="success,failed") == ["Alpha", "Bravo"]

@@ -252,7 +252,23 @@ class OverdueTask:
         return f"<OverdueTask {_task_key(self.task)} late_by={self.late_by}>"
 
 
-def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
+def _clamp_to_window(task: ScheduledTask, due: Optional[datetime], now: Optional[datetime]) -> Optional[datetime]:
+    """A task with an active_window is not owed a run while the window is shut: while `now` is
+    outside it, the run is owed at the next opening; inside it, never before today's opening.
+    Judging by `now`, not only by `due`, matters: a run owed at 22:04:55 that the 10s heartbeat
+    only reaches after 22:05 would otherwise read overdue all night (review B1)."""
+    if due is None or _active_window(task) is None:
+        return due
+    now = now or datetime.utcnow()
+    if not in_active_window(task, now):
+        return _shift_into_window(task, now)
+    start, _end, tz = _active_window(task)
+    local_now = now.replace(tzinfo=_UTC).astimezone(tz)
+    opening = local_now.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    return max(due, opening.astimezone(_UTC).replace(tzinfo=None))
+
+
+def compute_due_at(task: ScheduledTask, now: Optional[datetime] = None) -> Optional[datetime]:
     """When this task's next run was owed, on the scheduler's own terms.
 
     Mirrors `_is_task_due`: a task is owed a run at `last_run_at + interval`, or
@@ -268,14 +284,13 @@ def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
         # fallback so a task seeded without `start_at` still has an honest
         # baseline rather than being skipped (the old watchdog dropped these).
         created_at = getattr(task, "created_at", None)
-        return _shift_into_window(task, start_at or (created_at if isinstance(created_at, datetime) else None))
+        return _clamp_to_window(task, start_at or (created_at if isinstance(created_at, datetime) else None), now)
 
     delta = _interval_delta(
         str(getattr(task, "interval_unit")),
         int(getattr(task, "interval_value")),
     )
-    # A task with an active_window is not owed a run while the window is shut.
-    return _shift_into_window(task, last_run + delta)
+    return _clamp_to_window(task, last_run + delta, now)
 
 
 def compute_grace(task: ScheduledTask, grace_percent: Optional[int] = None) -> timedelta:
@@ -334,7 +349,7 @@ def get_overdue_tasks(
         if isinstance(start_at, datetime) and start_at > now:
             continue  # not expected to have run yet
 
-        due_at = compute_due_at(task)
+        due_at = compute_due_at(task, now)
         if due_at is None:
             continue
 

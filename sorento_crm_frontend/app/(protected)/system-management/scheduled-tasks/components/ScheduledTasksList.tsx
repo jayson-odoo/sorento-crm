@@ -171,7 +171,7 @@ export default function ScheduledTasksList() {
         accessorKey: 'last_run_at',
         header: ({ column }) => <DataGridColumnHeader title="Last run" visibility column={column} />,
         cell: ({ row }) => dateCell(row.original.last_run_at),
-        size: 170,
+        size: 190,
         meta: { headerTitle: 'Last run' },
       },
       {
@@ -179,7 +179,7 @@ export default function ScheduledTasksList() {
         accessorKey: 'next_run_at',
         header: ({ column }) => <DataGridColumnHeader title="Next run" visibility column={column} />,
         cell: ({ row }) => dateCell(row.original.next_run_at),
-        size: 170,
+        size: 190,
         meta: { headerTitle: 'Next run' },
       },
       {
@@ -230,7 +230,9 @@ export default function ScheduledTasksList() {
       onRetry={() => void refetch()}
       rowHref={(task) => `/system-management/scheduled-tasks/${task.id}`}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyMessage="No scheduled tasks match your filters."
+      emptyMessage={
+        activeFilters > 0 || searchQuery ? 'No scheduled tasks match your filters.' : 'No scheduled tasks yet.'
+      }
     >
       <Card>
         <CardHeader className="block">

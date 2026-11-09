@@ -301,6 +301,21 @@ def test_the_failure_names_the_company_not_its_id(env):
     assert MOCHA_ID not in str(raised.value)
 
 
+def test_the_failure_keeps_the_first_line_of_each_error(env):
+    """A database error carries its SQL after the first line; the last error keeps the cause."""
+
+    def flaky(session, company_id, day, *, now):
+        if company_id == MOCHA_ID:
+            raise RuntimeError('relation "finance.billing_documents" does not exist\n[SQL: SELECT max(x) FROM y]')
+        return fake_full(day, company_id)
+
+    env.patch.setattr(env.town, "build_snapshot", flaky)
+    with pytest.raises(env.town.TownSnapshotFailed) as raised:
+        _tick(env, myt(DAY, 10, 0))
+    assert 'relation "finance.billing_documents" does not exist' in str(raised.value)
+    assert "[SQL:" not in str(raised.value)
+
+
 def test_town_snapshot_is_a_registered_scheduled_task_handler():
     from app.scheduler.task_scheduler import register_task_handlers
     from app.services.scheduled_task_service import TASK_HANDLERS
@@ -416,6 +431,38 @@ def test_a_clean_tick_records_success_with_its_summary(env):
     assert env.db.get(ScheduledTask, task.id).last_status == "success"
     (run,) = env.db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
     assert run.summary == {"companies": 2, "built": 2, "failed": 0}
+
+
+def test_a_run_ending_just_before_close_shows_the_next_opening(env):
+    """Review S1: the run thread's own success path writes Next run through the window, so a
+    run that ends at 22:04 MYT reads 07:00 the next morning, not 22:07."""
+    from app.models.scheduled_task import ScheduledTask
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services import scheduled_task_service as sts
+
+    real = sts.datetime
+    frozen = datetime(2026, 11, 9, 14, 4)  # 22:04 MYT, naive UTC
+
+    class _Clock(real):
+        @classmethod
+        def utcnow(cls):
+            return frozen
+
+    register_task_handlers()
+    _open_window_all_day(env)
+    env.patch.setattr(sts, "datetime", _Clock)
+    env.patch.setattr(sts, "_start_thread", lambda target, args, name: target(*args))
+    env.patch.setattr(sts, "SessionLocal", lambda: _KeepOpen(env.db))
+    task = _town_task(env)
+    task.metadata_ = {"active_window": {"start": "07:00", "end": "22:05", "timezone": "Asia/Kuala_Lumpur"}}
+    task.last_run_at = frozen - timedelta(minutes=3)
+    env.db.flush()
+    _redis().delete("town:lock")
+    sts.run_due_tasks(env.db)
+    env.db.expire_all()
+    row = env.db.get(ScheduledTask, task.id)
+    assert row.last_status == "success"
+    assert row.next_run_at == datetime(2026, 11, 9, 23, 0)  # 07:00 MYT on the 10th
 
 
 def test_the_migration_seeds_the_town_snapshot_row():

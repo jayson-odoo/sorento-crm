@@ -535,7 +535,10 @@ def run_town_snapshot_tick(now: Optional[datetime] = None) -> dict[str, Any]:
                 _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE, use_replica)
             except Exception as exc:  # noqa: BLE001 - one company must not stop the next
                 logger.error("town snapshot failed for company %s", company_id, exc_info=True)
-                failures.append(f"{name or 'Unnamed company'}: {exc}")
+                # First line only: a database error carries its whole SQL statement after it, and
+                # the full traceback is in the log line above.
+                first_line = (str(exc).strip().splitlines() or [type(exc).__name__])[0][:300]
+                failures.append(f"{name or 'Unnamed company'}: {first_line}")
     finally:
         redis_conn.eval(_RELEASE, 1, LOCK_KEY, token)
     if failures:

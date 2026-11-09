@@ -60,7 +60,7 @@ def _task_to_response(task: ScheduledTask, grace_percent: Optional[int] = None) 
         except (TypeError, ValueError):
             pass
 
-    due_at = compute_due_at(task)
+    due_at = compute_due_at(task, now)
     grace = compute_grace(task, grace_percent)
 
     resp.grace_percent = effective_percent
@@ -95,7 +95,10 @@ def list_scheduled_tasks(
     not run yet."""
     if sort and sort not in TASK_SORT_COLUMNS:
         raise HTTPException(status_code=422, detail=f"Cannot sort scheduled tasks by '{sort}'.")
-    enabled_values = [v.lower() in ("true", "yes", "1") for v in _split_multi(enabled)]
+    enabled_raw = [v.lower() for v in _split_multi(enabled)]
+    if any(v not in ("true", "false") for v in enabled_raw):
+        raise HTTPException(status_code=422, detail="enabled must be true or false.")
+    enabled_values = [v == "true" for v in enabled_raw]
     tasks, total = list_tasks(
         db,
         query=query,

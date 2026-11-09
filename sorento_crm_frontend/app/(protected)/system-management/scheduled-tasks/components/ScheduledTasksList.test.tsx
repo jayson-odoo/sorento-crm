@@ -129,6 +129,19 @@ describe('ScheduledTasksList', () => {
     expect(calls.at(-1)?.sorting).toEqual([{ id: 'name', desc: false }]);
   });
 
+  it('keeps the order the server sent, never re-sorting on the client', () => {
+    // Frequency sorted on the server by real interval length; a client sort of the text
+    // would put "Every 1 day" before "Every 30 secs".
+    rows = [
+      task({ id: 'a', name: 'Fast', interval_unit: 'seconds', interval_value: 30 }),
+      task({ id: 'b', name: 'Slow', interval_unit: 'days', interval_value: 1 }),
+    ];
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: /Frequency/ }));
+    const names = screen.getAllByRole('row').slice(1).map((r) => within(r).queryByText(/^(Fast|Slow)$/)?.textContent);
+    expect(names).toEqual(['Fast', 'Slow']);
+  });
+
   it('asks the server for a new order when a column header sorts', () => {
     renderList();
     fireEvent.click(screen.getByRole('button', { name: /Last error/ }));

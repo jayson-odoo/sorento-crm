@@ -59,14 +59,70 @@ def test_the_next_run_after_the_last_tick_of_the_day_is_the_next_opening():
 
 def test_overnight_the_task_is_not_overdue():
     task = town(last_run_at=utc_of_myt(2026, 11, 9, 22, 4))
-    assert sts.compute_due_at(task) == utc_of_myt(2026, 11, 10, 7, 0)
+    assert sts.compute_due_at(task, utc_of_myt(2026, 11, 10, 3, 0)) == utc_of_myt(2026, 11, 10, 7, 0)
     assert task.next_run_at is None  # (display column untouched by the read)
+
+
+def test_a_run_owed_seconds_before_close_is_not_overdue_overnight():
+    """Review B1: owed at 22:04:55 (inside the window), but the 10s heartbeat only gets there
+    after 22:05, so it never runs; it must not read overdue all night."""
+    from datetime import datetime as dt
+
+    task = town(last_run_at=dt(2026, 11, 9, 22, 1, 55) - timedelta(hours=8))
+    now = utc_of_myt(2026, 11, 10, 3, 0)
+    assert sts._is_task_due(task, dt(2026, 11, 9, 22, 5, 2) - timedelta(hours=8)) is False
+    due = sts.compute_due_at(task, now)
+    assert due == utc_of_myt(2026, 11, 10, 7, 0)
+    assert now <= due + sts.compute_grace(task, 25)
+
+
+def test_just_after_opening_the_overnight_gap_is_not_lateness():
+    task = town(last_run_at=utc_of_myt(2026, 11, 9, 22, 4))
+    assert sts.compute_due_at(task, utc_of_myt(2026, 11, 10, 7, 0) + timedelta(seconds=30)) == utc_of_myt(
+        2026, 11, 10, 7, 0
+    )
+
+
+def test_get_overdue_tasks_skips_a_shut_window(monkeypatch):
+    """The watchdog's own entry point, with the B1 timing."""
+    from datetime import datetime as dt
+
+    task = town(last_run_at=dt(2026, 11, 9, 22, 1, 55) - timedelta(hours=8))
+
+    class _Q:
+        def filter(self, *a):
+            return self
+
+        def all(self):
+            return [task]
+
+    class _Db:
+        def query(self, *a):
+            return _Q()
+
+    assert sts.get_overdue_tasks(_Db(), now=utc_of_myt(2026, 11, 10, 3, 0), grace_percent=25) == []
+    late = sts.get_overdue_tasks(_Db(), now=utc_of_myt(2026, 11, 10, 7, 5), grace_percent=25)
+    assert [o.task for o in late] == [task]  # once open, a missed opening run is late again
+
+
+def test_editing_the_task_shows_the_next_opening_when_it_falls_overnight(monkeypatch):
+    """Review N1: `update_task` recomputes Next run through the window too."""
+    from app.models.base import set_company_scope
+
+    with blank_session() as db:
+        set_company_scope(db, None)
+        task = town(last_run_at=utc_of_myt(2026, 11, 9, 22, 4))
+        task.key = unique_code("zzt_window_edit").lower()[:100]
+        db.add(task)
+        db.commit()
+        updated = sts.update_task(db, task.id, interval_value=3)
+        assert updated.next_run_at == utc_of_myt(2026, 11, 10, 7, 0)
 
 
 def test_a_task_without_a_window_is_unchanged():
     task = town(last_run_at=utc_of_myt(2026, 11, 9, 22, 4), metadata=None)
     assert sts._is_task_due(task, utc_of_myt(2026, 11, 10, 3, 0)) is True
-    assert sts.compute_due_at(task) == utc_of_myt(2026, 11, 9, 22, 7)
+    assert sts.compute_due_at(task, utc_of_myt(2026, 11, 10, 3, 0)) == utc_of_myt(2026, 11, 9, 22, 7)
 
 
 def test_a_malformed_window_is_ignored_not_fatal():
