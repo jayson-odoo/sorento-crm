@@ -155,3 +155,28 @@ export function stackTags(
   }
   return tags.map((_, index) => result.raise.get(index) ?? null);
 }
+
+/** A box on screen: its centre `x`, `y` and its size. */
+export interface ScreenBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Moves `box` the least that puts it wholly inside `view` (the canvas edges in the same screen units),
+ * so a label turned toward the edge is never cut off. Returns the box's centre; a box bigger than the
+ * view is centred.
+ */
+export function clampInView(
+  box: ScreenBox,
+  view: { left: number; right: number; bottom: number; top: number },
+  margin = 0.3,
+): { x: number; y: number } {
+  const clamp = (value: number, low: number, high: number) => (low > high ? (low + high) / 2 : Math.min(Math.max(value, low), high));
+  return {
+    x: clamp(box.x, view.left + box.w / 2 + margin, view.right - box.w / 2 - margin),
+    y: clamp(box.y, view.bottom + box.h / 2 + margin, view.top - box.h / 2 - margin),
+  };
+}

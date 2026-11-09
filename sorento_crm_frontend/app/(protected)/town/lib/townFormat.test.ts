@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, sceneSelection, stackTags, tagLabel, townFrame,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, sceneSelection, stackTags, tagLabel, townFrame,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -156,5 +156,29 @@ describe('compactCount', () => {
     expect(compactCount(1000)).toBe('1k');
     expect(compactCount(2202)).toBe('2.2k');
     expect(compactCount(12500)).toBe('12.5k');
+  });
+});
+
+describe('clampInView', () => {
+  const view = { left: -30, right: 30, bottom: -20, top: 20 };
+
+  it('leaves a box that is inside the view where it is', () => {
+    expect(clampInView({ x: 5, y: 3, w: 10, h: 2 }, view)).toEqual({ x: 5, y: 3 });
+  });
+
+  it('pulls a box that sticks out of the right or top edge back inside, by the least', () => {
+    const spot = clampInView({ x: 28, y: 19.5, w: 10, h: 2 }, view, 0.5);
+    expect(spot.x + 5).toBeCloseTo(30 - 0.5, 5);
+    expect(spot.y + 1).toBeCloseTo(20 - 0.5, 5);
+  });
+
+  it('pulls a box that sticks out of the left or bottom edge back inside', () => {
+    const spot = clampInView({ x: -33, y: -21, w: 10, h: 2 }, view, 0.5);
+    expect(spot.x - 5).toBeCloseTo(-30 + 0.5, 5);
+    expect(spot.y - 1).toBeCloseTo(-20 + 0.5, 5);
+  });
+
+  it('centres a box wider than the view', () => {
+    expect(clampInView({ x: 7, y: 0, w: 100, h: 2 }, view).x).toBe(0);
   });
 });

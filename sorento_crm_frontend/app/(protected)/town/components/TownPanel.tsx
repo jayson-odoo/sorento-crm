@@ -67,7 +67,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
                 ['Credit notes', count(today.credit_note_count)],
                 ['Customers', count(today.customer_count)],
                 ...(full && compare?.last_week_amount
-                  ? ([[compare.label, rm(compare.last_week_amount)]] as [string, ReactNode][])
+                  ? ([[`vs all of ${compare.label}`, rm(compare.last_week_amount)]] as [string, ReactNode][])
                   : []),
               ]}
             />
@@ -118,7 +118,7 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
       return {
         title: `${count(reorder.below_count)} products low`,
         meta: `below their reorder level, of ${count(reorder.set_count)} with a level`,
-        content: link(ROUTES.reorder, 'Open reorder list'),
+        content: link(ROUTES.reorder, 'Open reorder planning'),
       };
     case 'deliver':
       return {

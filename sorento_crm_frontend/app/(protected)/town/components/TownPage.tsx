@@ -63,7 +63,13 @@ export function TownPage() {
       {snapshot ? (
         <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 pb-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
           {ready && sceneAvailable ? <TownScene snapshot={ready} onSelect={setTarget} /> : null}
-          <div className={ready && sceneAvailable ? 'min-w-0' : 'min-w-0 lg:col-span-2'}>
+          <div
+            className={
+              ready && sceneAvailable
+                ? 'min-w-0 lg:max-h-[calc(100dvh-20rem)] lg:min-h-[22rem] lg:overflow-y-auto lg:overscroll-contain'
+                : 'min-w-0 lg:col-span-2'
+            }
+          >
             <TownCards snapshot={snapshot} onOpen={setTarget} />
           </div>
         </div>

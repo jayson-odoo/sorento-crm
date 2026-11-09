@@ -8,6 +8,17 @@ import { cleanup, render } from '@testing-library/react';
  * window listeners.
  */
 const made = vi.hoisted(() => ({ instanced: [] as { count: number }[], sprites: 0 }));
+const stacked = vi.hoisted(() => ({ calls: [] as { obstacles: { x: number; y: number }[] }[] }));
+vi.mock('../lib/townFormat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/townFormat')>();
+  return {
+    ...actual,
+    stackTags: (tags: never, margin: never, options: { obstacles: { x: number; y: number }[] }) => {
+      stacked.calls.push({ obstacles: options.obstacles });
+      return actual.stackTags(tags, margin, options as never);
+    },
+  };
+});
 const renderer = vi.hoisted(() => ({
   render: vi.fn(),
   dispose: vi.fn(),
@@ -64,6 +75,7 @@ beforeEach(() => {
   queue = [];
   made.instanced.length = 0;
   made.sprites = 0;
+  stacked.calls.length = 0;
   Object.values(renderer).forEach((fn) => typeof fn === 'function' && 'mockClear' in fn && (fn as ReturnType<typeof vi.fn>).mockClear());
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => queue.push(cb));
   vi.stubGlobal('cancelAnimationFrame', () => undefined);
@@ -120,5 +132,24 @@ describe('TownScene applies the crowding caps', () => {
     // fixed labels: low stock, to deliver, approvals, and "+N more dealers"
     expect(made.sprites - 4).toBeLessThanOrEqual(SCENE_TAG_CAP);
     expect(made.sprites - 4).toBeGreaterThan(0);
+  });
+});
+
+describe('TownScene keeps tags clear of every fixed label', () => {
+  it('stacks the tags around the scoreboard, the "!" bubble, the depot sign, the approvals badge and the "+N" pill', () => {
+    const lit = {
+      ...SNAPSHOT,
+      today: { ...SNAPSHOT.today, dealer_customer_count: 9 },
+      shops: [{ key: 's1', kind: 'shop', account_label: null, today_docs: 2, rank: null }],
+      reorder: { below_count: 5, set_count: 9 },
+      deliveries: { to_deliver: 4 },
+      approvals: { total: 2, purchase_requests: 2, quotation_documents: 0 },
+    };
+    render(<TownScene snapshot={lit as never} onSelect={() => undefined} />);
+    const { obstacles } = stacked.calls[stacked.calls.length - 1];
+    // the scoreboard, "!", "To deliver", the approvals badge and "+N more dealers"
+    expect(obstacles).toHaveLength(5);
+    const spots = new Set(obstacles.map((o) => `${o.x.toFixed(2)},${o.y.toFixed(2)}`));
+    expect(spots.size).toBe(5); // five different places, not one repeated
   });
 });

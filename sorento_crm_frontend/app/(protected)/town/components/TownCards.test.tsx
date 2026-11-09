@@ -113,7 +113,7 @@ describe('TownCards, full snapshot', () => {
     expect(text).toMatch(/RM\s?560,000\.00/);
     expect(text).toMatch(/321\s+invoices/);
     expect(text).toMatch(/\+12%/); // (560000 - 500000) / 500000
-    expect(text).toContain('vs Tue 27 Oct');
+    expect(text).toContain('vs all of Tue 27 Oct');
   });
 
   it('shows a fall as a negative percentage', () => {

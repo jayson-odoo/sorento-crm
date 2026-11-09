@@ -70,18 +70,23 @@ def test_compare_is_day_minus_7_with_the_same_calculation(db):
     assert set(compare) == {"label", "last_week_amount", "last_week_invoice_count"}
 
 
-def test_compare_stops_at_the_same_time_of_day_in_the_daytime_and_takes_the_whole_day_at_night(db):
+def test_compare_is_the_whole_day_by_document_date_whenever_the_document_arrived(db):
+    """`created_at` is when the CRM received the document, not when it was raised: a day-7 document that
+    arrived on day-6 or much later still counts, in the daytime and at night alike."""
     from app.services.town.snapshot import build_snapshot
     from tests.town._town_seed import myt
 
     c = cust(db)
-    _at(doc(db, "invoice", "100.00", WEEK_AGO, customer=c), 1)  # 01:00 UTC = 09:00 MYT, before 15:42
-    _at(doc(db, "invoice", "40.00", WEEK_AGO, customer=c), 12)  # 12:00 UTC = 20:00 MYT, after 15:42
-    _at(doc(db, "invoice", "30.00", WEEK_AGO, customer=c), 15, 30)  # 15:30 UTC = 23:30 MYT, after closing time
-    day = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=NOW)["compare"]
-    assert day["last_week_amount"] == "100.00" and day["last_week_invoice_count"] == 1
-    night = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=myt(DAY, 22, 0))["compare"]
-    assert night["last_week_amount"] == "170.00" and night["last_week_invoice_count"] == 3
+    _at(doc(db, "invoice", "100.00", WEEK_AGO, customer=c), 1)  # arrived early on its own day
+    late = doc(db, "invoice", "40.00", WEEK_AGO, customer=c)
+    late.created_at = datetime(WEEK_AGO.year, WEEK_AGO.month, WEEK_AGO.day) + timedelta(days=1, hours=3)  # day-6
+    later = doc(db, "invoice", "30.00", WEEK_AGO, customer=c)
+    later.created_at = datetime(DAY.year, DAY.month, DAY.day, 9, 0)  # arrived on the day itself
+    db.flush()
+    for now in (NOW, myt(DAY, 22, 0)):
+        compare = build_snapshot(db, DEFAULT_COMPANY_ID, DAY, now=now)["compare"]
+        assert compare["last_week_amount"] == "170.00" and compare["last_week_invoice_count"] == 3
+        assert compare["label"] == "Tue 27 Oct"
 
 
 def test_compare_for_a_quiet_week_ago_is_zero_not_missing(db):

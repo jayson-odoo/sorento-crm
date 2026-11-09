@@ -75,17 +75,14 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def _today_and_compare(db: Session, company_id: str, day: date, now: datetime) -> tuple:
-    """Today's figures and the same weekday last week, from one query over the two days. Last week
-    stops at the same time of day (documents created by `now - 7 days`); at night it is the whole day."""
+def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
+    """Today's figures and the same weekday last week, from one query over the two days. Last week is
+    the whole day by document date, with the same expressions as today: AutoCount gives no document
+    time, and `created_at` is when the CRM received the document, so it cannot cut the day."""
     week_ago = day - timedelta(days=7)
     sales_type = inv.document_sales_type()
     today = BillingDocument.doc_date == day
-    now_myt = now.astimezone(MYT)
     last = BillingDocument.doc_date == week_ago
-    if now_myt.hour * 60 + now_myt.minute < NIGHT_MINUTE:
-        cutoff = (now_myt - timedelta(days=7)).astimezone(timezone.utc).replace(tzinfo=None)
-        last = sa.and_(last, BillingDocument.created_at <= cutoff)
     not_credit = BillingDocument.document_type != CREDIT_NOTE
     row = db.execute(
         sa.select(
@@ -313,7 +310,7 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
             BillingDocument.company_id == company_id, BillingDocument.doc_date >= day - timedelta(days=7)
         )
     ).scalar_one()
-    today, compare = _today_and_compare(db, company_id, day, now)
+    today, compare = _today_and_compare(db, company_id, day)
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,

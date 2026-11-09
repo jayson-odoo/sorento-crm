@@ -96,7 +96,7 @@ export function TownCards({
               <span className={pct >= 0 ? 'font-semibold text-success' : 'font-semibold text-destructive'}>
                 {signedPercent(pct)}
               </span>{' '}
-              vs {compare.label}
+              vs all of {compare.label}
             </>
           ) : null}
         </span>

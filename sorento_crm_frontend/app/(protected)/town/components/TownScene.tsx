@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { changePercent, count, rm0, sceneSelection, stackTags, tagLabel, townFrame } from '../lib/townFormat';
+import { changePercent, count, rm0, clampInView, sceneSelection, stackTags, tagLabel, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -112,23 +112,37 @@ function mountScene(
   };
 
   // name tags: re-stacked in screen space whenever the camera turns or the view resizes, so they never
-  // cover each other, the scoreboard or the "+N more dealers" pill, and none is clipped at the top.
-  // They are in priority order (busiest first); the lowest priority is dropped before one is clipped.
+  // cover each other or any fixed label (the scoreboard, the "!" bubble, the depot sign, the approvals
+  // badge, the "+N more dealers" pill), and none is clipped at the top. They are in priority order
+  // (busiest first); the lowest priority is dropped before one is clipped. The pill is also kept
+  // inside the canvas after the town is turned.
   const tagSprites: { sprite: THREE.Sprite; anchor: THREE.Vector3 }[] = [];
-  let pill: THREE.Sprite | null = null;
+  const fixedLabels: THREE.Sprite[] = [];
+  const fixed = (sprite: THREE.Sprite) => {
+    fixedLabels.push(sprite);
+    return sprite;
+  };
+  let pill: { sprite: THREE.Sprite; anchor: THREE.Vector3 } | null = null;
   const layoutTags = () => {
-    if (!tagSprites.length) return;
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
     const box = (position: THREE.Vector3, sprite: THREE.Sprite) => ({
       x: position.dot(right), y: position.dot(up), w: sprite.scale.x, h: sprite.scale.y,
     });
+    const centreY = BOARD_LOOK_Y * up.y; // what the camera looks at, on screen
+    if (pill) {
+      const at = box(pill.anchor, pill.sprite);
+      const view = { left: cam.left, right: cam.right, bottom: centreY + cam.bottom, top: centreY + cam.top };
+      const spot = clampInView(at, view);
+      pill.sprite.position.copy(pill.anchor).addScaledVector(right, spot.x - at.x).addScaledVector(up, spot.y - at.y);
+    }
+    if (!tagSprites.length) return;
     const obstacles = [
       // the scoreboard: always facing the camera, 16.4 wide, 6.4 tall (foreshortened by the elevation), centred 9.2 up
       { x: 0, y: BOARD_Y * up.y, w: BOARD_W, h: BOARD_H * up.y },
-      ...(pill ? [box(pill.position, pill)] : []),
+      ...fixedLabels.map((sprite) => box(sprite.position, sprite)),
     ];
-    const top = BOARD_LOOK_Y * up.y + cam.top - 0.3;
+    const top = centreY + cam.top - 0.3;
     const raise = stackTags(tagSprites.map(({ sprite, anchor }) => box(anchor, sprite)), 0.3, { obstacles, top });
     tagSprites.forEach(({ sprite, anchor }, i) => {
       const lift = raise[i];
@@ -244,7 +258,7 @@ function mountScene(
       (full ? `${count(snapshot.today.invoice_count)} invoices   ` : '') +
       (pct == null || !snapshot.compare
         ? ''
-        : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs ${snapshot.compare.label}`);
+        : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs all of ${snapshot.compare.label}`);
     g.fillText(line, 512, 300);
   }
   const boardTex = new THREE.CanvasTexture(board);
@@ -309,7 +323,9 @@ function mountScene(
     });
   if (others) {
     const [x, z] = polar(24, 30);
-    pill = label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
+    const sprite = label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
+    pill = { sprite, anchor: sprite.position.clone() };
+    fixed(sprite);
   }
 
   // (3) warehouse district: a few calm buildings, one red "!" bubble
@@ -338,7 +354,7 @@ function mountScene(
   pickables.push([whMesh, () => select({ kind: 'low' })]);
   const [bx, bz] = polar(18, 182);
   pickables.push([
-    label(`!  ${count(snapshot.reorder.below_count)} low`, bx, 7, bz, '#dc2626', '#ffffff', 300, 1.05),
+    fixed(label(`!  ${count(snapshot.reorder.below_count)} low`, bx, 7, bz, '#dc2626', '#ffffff', 300, 1.05)),
     () => select({ kind: 'low' }),
   ]);
 
@@ -384,7 +400,7 @@ function mountScene(
   scene.add(lorries);
   pickables.push([lorries, () => select({ kind: 'deliver' })]);
   pickables.push([
-    label(`To deliver: ${deliveries ? count(deliveries.to_deliver) : '-'}`, dx, 5.4, dz, '#1d4ed8', '#ffffff', 380, 0.9),
+    fixed(label(`To deliver: ${deliveries ? count(deliveries.to_deliver) : '-'}`, dx, 5.4, dz, '#1d4ed8', '#ffffff', 380, 0.9)),
     () => select({ kind: 'deliver' }),
   ]);
 
@@ -404,12 +420,14 @@ function mountScene(
   scene.add(office);
   pickables.push([office, () => select({ kind: 'approve' })]);
   pickables.push([
-    label(
-      total ? `Approvals  ${total}` : 'Approvals: all clear',
-      ox, 6, oz,
-      total ? '#7c3aed' : '#dcfce7',
-      total ? '#ffffff' : '#166534',
-      380, 0.9,
+    fixed(
+      label(
+        total ? `Approvals  ${total}` : 'Approvals: all clear',
+        ox, 6, oz,
+        total ? '#7c3aed' : '#dcfce7',
+        total ? '#ffffff' : '#166534',
+        380, 0.9,
+      ),
     ),
     () => select({ kind: 'approve' }),
   ]);
@@ -538,7 +556,7 @@ export function TownScene({
 
   return (
     <div
-      className={`flex flex-col overflow-hidden rounded-xl border border-border sm:h-[70dvh] sm:max-h-[41rem] ${
+      className={`flex flex-col overflow-hidden rounded-xl border border-border sm:h-[calc(100dvh-20rem)] sm:min-h-[22rem] sm:max-h-[41rem] ${
         snapshot.phase === 'night' ? 'bg-slate-800' : 'bg-sky-50 dark:bg-slate-800'
       }`}
     >

@@ -14,7 +14,13 @@ describe('TownPanel', () => {
   it('shows the target, links to the existing screen, and says nothing more about the figure', () => {
     render(<TownPanel snapshot={SNAPSHOT as never} target={{ kind: 'low' }} onClose={() => undefined} />);
     expect(screen.getByText('7 products low')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open reorder list' }).getAttribute('href')).toBe('/scm/reorder');
+    expect(screen.getByRole('link', { name: 'Open reorder planning' }).getAttribute('href')).toBe('/scm/reorder');
+  });
+
+  it('names the last week row as the whole day', () => {
+    const withCompare = { ...SNAPSHOT, compare: { label: 'Tue 27 Oct', last_week_amount: '50.00', last_week_invoice_count: 1 } };
+    render(<TownPanel snapshot={withCompare as never} target={{ kind: 'sales' }} onClose={() => undefined} />);
+    expect(screen.getByText('vs all of Tue 27 Oct')).toBeTruthy();
   });
 
   it('has no explanatory line under the sales title', () => {
