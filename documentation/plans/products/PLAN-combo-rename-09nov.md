@@ -1,6 +1,6 @@
 # PLAN - Rename a product combo after creating it
 
-Status: in build (Track: small fix - no migration, no auth/RBAC change, expected diff under 300 lines). Plan created 2026-11-09.
+Status: merge-ready on PR #2281, awaiting owner hand test (Track: small fix - no migration, no auth/RBAC change, expected diff under 300 lines). Plan created 2026-11-09.
 
 crew-lane: COMBO-RENAME. Base: main 609b53bb.
 
