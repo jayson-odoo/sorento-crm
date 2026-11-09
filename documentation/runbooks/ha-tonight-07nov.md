@@ -74,7 +74,7 @@ then recreate the wrong one with it:
 | 9 Nov ~11:45 | S5.8 first try | backend_green waited on `pgbouncer:5432`: S5.3 had not run. S5.3 then DONE (`--auto`, HA_*_2 for the frontend block) |
 | 9 Nov ~11:52 | S5.8 | DONE: green on the release SHA, health 200, role standby 503, no workers, no db |
 | 9 Nov ~12:10 | MCP URL | `AI_ASSISTANT_MCP_URL` named A's public address: B-only override entry `http://<B_PUBLIC_IP>:8765/mcp` (4 services), hairpin check 401. The manual `up` that applied it had no `IMAGE_TAG` and started `backend-1.0.1`; repaired with the release tag. New rule: "Manual docker compose up" section |
-| next | three-container tag check on B, S5.1 parity, S6.0 drill, S7 | pending |
+| next | Post-S5 continuation P1-P6 (no downtime), then S4 (announced window), then S7 | pending |
 
 ## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
 
@@ -156,6 +156,201 @@ curl -s -o /dev/null -w 'health %{http_code}\n' http://127.0.0.1:$P/api/v1/healt
 
 Expected: `sorento_crm_replica|streaming|async|0` (the last number may be a few thousand bytes
 under load, never growing), then `health 200`.
+
+---
+
+## Post-S5 continuation (9 Nov, business hours, no downtime)
+
+**Supersedes** the S1, S2.4, S3 and S6.0 blocks below for the state after S5 (crew-ask on #2166,
+9 Nov ~12:00). Order: 1 remove the stale replica containers (B) -> 2 S1 in its final S2.4 form (A)
+-> 3 pg_hba / `.pgpass` cleanup (A + B) -> 4 Hostinger rules -> 5 S3 (B) -> 6 S6.0 drill (B). S4 stays
+a separate announced window; S7 comes last. Run each Check before the next step; any mismatch:
+Rollback, stop, post.
+
+- `sorento_crm_replica_s23` (pre-S2.3, its `primary_conninfo` names A's PUBLIC address) must go before
+  S2.4; `sorento_crm_replica_old` (pre-S5.2) goes too: both are stopped containers on the SAME data
+  volume as the live replica, and starting either would run two Postgres on one data directory.
+- 5434 (published on `0.0.0.0`) needs the `DOCKER-USER ... ! -i wg0` rule in S3: Docker DNATs a
+  published port into FORWARD, so INPUT rules never see it. 5433 is loopback-only (no rule).
+  B's host nginx listens on 8765 since S5.6: S3 drops it on the public interface; B's own MCP
+  hairpin (`AI_ASSISTANT_MCP_URL`) enters on the docker bridge and keeps working (401 check).
+- Both nodes' `sorento-edge.sh` take `del` to remove exactly what they add: that is the rollback.
+
+### P1 (B): remove the two stopped replica containers
+
+```bash
+docker ps -a --filter name=sorento_crm_replica --format '{{.Names}} {{.State}}'
+#   Expected: sorento_crm_replica running / _old exited / _s23 exited. Either of the two running: STOP.
+for c in sorento_crm_replica sorento_crm_replica_old sorento_crm_replica_s23; do printf '%s: ' $c; docker inspect --format '{{range .Mounts}}{{.Type}}:{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}->{{.Destination}} {{end}}restart={{.HostConfig.RestartPolicy.Name}}' $c; done
+#   Expected: the SAME volume -> /var/lib/postgresql/data on all three; _old and _s23 restart=no
+# THIS CHANGES PROD (node B). NO -v: the volume stays (the live replica uses it).
+docker rm sorento_crm_replica_s23 sorento_crm_replica_old
+docker ps -a --filter name=sorento_crm_replica --format '{{.Names}} {{.State}}'          # only: sorento_crm_replica running
+docker volume ls --format '{{.Name}}' | grep -cx '<volume name printed above>'            # 1
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_is_in_recovery(), status, sender_host from pg_stat_wal_receiver"   # t|streaming|10.77.0.1
+```
+
+Rollback: none (a stopped container holds no state; the volume is untouched).
+
+### P2 (A): Postgres 5432 closed on A's public interface (S1 in its S2.4 form)
+
+```bash
+# READ-ONLY first
+sudo iptables -S DOCKER-USER | grep -c 5432; systemctl is-enabled sorento-edge.service 2>&1   # 0 and not-found
+sudo conntrack -L -p tcp --orig-port-dst 5432 2>/dev/null | grep -oE 'src=[0-9a-f.:]+' | sort | uniq -c | sort -rn | head
+#   Expected: only src=10.77.0.2 and 172.x. A public address: STOP.
+cd /opt/sorento-crm2 && docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select client_addr, state from pg_stat_replication"   # 10.77.0.2|streaming
+```
+
+```bash
+# THIS CHANGES PROD (node A).
+sudo tee /usr/local/sbin/sorento-edge.sh >/dev/null <<'SH'
+#!/bin/sh
+# Edge rules for published DB ports. `sorento-edge.sh` adds (idempotent), `sorento-edge.sh del` removes.
+set -eu
+IF=<A_PUBLIC_IF>; ACT=${1:-add}
+r4() { if [ "$ACT" = del ]; then iptables  -D "$@" 2>/dev/null || true; else iptables  -C "$@" 2>/dev/null || iptables  -I "$@"; fi; }
+r6() { if [ "$ACT" = del ]; then ip6tables -D "$@" 2>/dev/null || true; else ip6tables -C "$@" 2>/dev/null || ip6tables -I "$@"; fi; }
+r4 DOCKER-USER -i "$IF" -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL -j DROP
+r6 INPUT -i "$IF" -p tcp --dport 5432 -j DROP
+SH
+sudo chmod 700 /usr/local/sbin/sorento-edge.sh
+sudo tee /etc/systemd/system/sorento-edge.service >/dev/null <<'UNIT'
+[Unit]
+Description=Sorento edge rules (published DB ports)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sorento-edge.sh
+[Install]
+WantedBy=multi-user.target docker.service
+UNIT
+sudo systemctl daemon-reload && sudo systemctl enable --now sorento-edge.service
+```
+
+Check: `sudo iptables -S DOCKER-USER | grep 5432` is ONE line with `-i <A_PUBLIC_IF>`,
+`--ctorigdstport 5432`, `-j DROP` and no `-s`; after 30 s `pg_stat_replication` shows
+`10.77.0.2|streaming` with a small, not growing lag; standard health check `health 200`; one n8n
+test workflow succeeds (n8n uses 6432/8765, untouched); phone hotspot `nc -4 -z -w 5 <A_PUBLIC_IP> 5432` closed.
+Rollback: `sudo systemctl disable --now sorento-edge.service && sudo /usr/local/sbin/sorento-edge.sh del`.
+
+### P3: forget B's public path (A pg_hba row, B `.pgpass` line)
+
+```bash
+# A (cd /opt/sorento-crm2)
+docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select line_number, type, database, user_name, address from pg_hba_file_rules where address = '<B_PUBLIC_IP>'"
+#   Expected: ONE row N|host|{replication}|{replicator}|<B_PUBLIC_IP>. Anything else on B's address: STOP.
+# THIS CHANGES PROD (node A). Reload only.
+docker compose exec -T -u postgres db sh -c 'f="$PGDATA/pg_hba.conf"; cp -p "$f" "$f.bak-09nov" && grep -v -E "^host[[:space:]]+replication[[:space:]]+replicator[[:space:]]+<B_PUBLIC_IP>(/32)?[[:space:]]" "$f.bak-09nov" > "$f"; grep -c -F "<B_PUBLIC_IP>" "$f"; grep -c "10.77.0.2" "$f"'   # 0 then 1
+docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select pg_reload_conf()"                                   # t
+docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select line_number, error from pg_hba_file_rules where error is not null"   # nothing
+```
+
+```bash
+# B. THIS CHANGES PROD (node B). Prints host names only.
+docker exec -u postgres sorento_crm_replica sh -c 'f=/var/lib/postgresql/data/.pgpass; cp -p $f $f.bak-09nov && grep -v "^<A_PUBLIC_IP>:" $f.bak-09nov > $f; cut -d: -f1 $f; stat -c %a $f'   # 10.77.0.1, then 600
+# One forced reconnect proves the tunnel path end to end (walreceiver restarts by itself in ~5 s):
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_terminate_backend(pid) from pg_stat_activity where backend_type = 'walreceiver'"   # t
+sleep 15; docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select status, sender_host from pg_stat_wal_receiver"   # streaming|10.77.0.1
+```
+
+Rollback: A `cp -p "$PGDATA/pg_hba.conf.bak-09nov" "$PGDATA/pg_hba.conf"` (inside `db`, as above) +
+reload; B `cp -p /var/lib/postgresql/data/.pgpass.bak-09nov /var/lib/postgresql/data/.pgpass`. Not
+`streaming|10.77.0.1` within 1 minute: restore both, post `docker logs --since 2m sorento_crm_replica | tail`.
+Next day: `docker exec -u postgres sorento_crm_replica rm /var/lib/postgresql/data/.pgpass.bak-09nov`.
+
+### P4 (hPanel, shared rule set)
+
+Delete the `TCP 5432` and `TCP 27017` rules (source B). Keep 22/80/443, 6432, 8765 and UDP 51820
+(n8n on B still reaches A's pgbouncer and MCP over the public path). Check: replication on A still
+`10.77.0.2|streaming`; the outside-in loop above shows every DB/cache/MCP port closed. Rollback: re-add them.
+
+### P5 (B): S3 for the post-S5 node
+
+```bash
+# READ-ONLY first
+for p in 5432 6379 27017 6432 5434 8765; do echo "== $p"; sudo conntrack -L -p tcp --orig-port-dst $p 2>/dev/null | grep -oE 'src=[0-9a-f.:]+' | sort | uniq -c | sort -rn | head -5; done
+#   Expected: only A, 10.77.0.1, loopback or 172.x. Anything else: STOP.
+sudo iptables -S DOCKER-USER | grep -cE '5432|6379|27017|5434'; systemctl is-enabled sorento-edge.service 2>&1   # 0 and not-found
+```
+
+```bash
+# THIS CHANGES PROD (node B).
+sudo tee /usr/local/sbin/sorento-edge.sh >/dev/null <<'SH'
+#!/bin/sh
+# Edge rules. `sorento-edge.sh` adds (idempotent), `sorento-edge.sh del` removes.
+set -eu
+IF=<B_PUBLIC_IF>; A=<A_PUBLIC_IP>; ACT=${1:-add}
+r4() { if [ "$ACT" = del ]; then iptables  -D "$@" 2>/dev/null || true; else iptables  -C "$@" 2>/dev/null || iptables  -I "$@"; fi; }
+r6() { if [ "$ACT" = del ]; then ip6tables -D "$@" 2>/dev/null || true; else ip6tables -C "$@" 2>/dev/null || ip6tables -I "$@"; fi; }
+for p in 5432 6379 27017; do       # n8n Postgres, Redis, MongoDB (docker-published)
+  r4 DOCKER-USER -i "$IF" -p tcp -m conntrack --ctorigdstport $p --ctdir ORIGINAL ! -s "$A/32" -j DROP
+  r6 INPUT -i "$IF" -p tcp --dport $p -j DROP
+done
+r4 INPUT -i "$IF" -p tcp --dport 6432 ! -s "$A/32" -j DROP      # host pgbouncer (not docker)
+r6 INPUT -i "$IF" -p tcp --dport 6432 -j DROP
+r4 DOCKER-USER -p tcp -m conntrack --ctorigdstport 5434 --ctdir ORIGINAL ! -i wg0 -j DROP   # CRM replica: tunnel only
+r6 INPUT -i "$IF" -p tcp --dport 5434 -j DROP
+r4 INPUT -i "$IF" -p tcp --dport 8765 -j DROP                   # B's MCP via host nginx: B-local only
+r6 INPUT -i "$IF" -p tcp --dport 8765 -j DROP
+r4 INPUT -i "$IF" -p udp --dport 51820 ! -s "$A/32" -j DROP     # WireGuard from A only
+r6 INPUT -i "$IF" -p udp --dport 51820 -j DROP
+SH
+sudo chmod 700 /usr/local/sbin/sorento-edge.sh
+# then the same sorento-edge.service unit as P2, and:
+sudo systemctl daemon-reload && sudo systemctl enable --now sorento-edge.service
+```
+
+Check (B): `docker exec n8n-main wget -qO- http://127.0.0.1:5678/healthz` `{"status":"ok"}`; `docker logs
+--since 10m n8n-main 2>&1 | grep -ciE 'ECONNREFUSED|ETIMEDOUT'` `0`; `sudo wg show wg0 latest-handshakes`
+fresh; the replica `streaming|10.77.0.1`; app `health 200`; the MCP hairpin
+(`docker compose exec -T backend_$C curl ... http://<B_PUBLIC_IP>:8765/mcp` with the wrong bearer) `401`;
+one n8n test workflow succeeds; phone hotspot: 5432 6379 27017 6432 5433 5434 8765 on `<B_PUBLIC_IP>` all closed.
+Rollback: `sudo systemctl disable --now sorento-edge.service && sudo /usr/local/sbin/sorento-edge.sh del`.
+Stop if n8n or a workflow fails, or the 401 becomes `000`/`403`.
+
+### P6 (B): S6.0 drill for the post-S5 replica
+
+Uses the replica's own image, uid and `-c` settings (a standby refuses to start when `max_connections`
+is lower than its upstream's; the live replica runs `-c max_connections=500`).
+
+```bash
+# READ-ONLY first
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_size_pretty(sum(pg_database_size(datname))) from pg_database"; df -h /var/lib | tail -1   # free >= 2x size
+U=$(docker exec sorento_crm_replica id -u postgres); G=$(docker exec sorento_crm_replica id -g postgres); IMG=$(docker inspect --format '{{.Image}}' sorento_crm_replica); echo "$U:$G $IMG"
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select type, database, user_name, address, auth_method from pg_hba_file_rules where 'replication' = any(database) or 'all' = any(database)"
+#   Expected: postgres may replicate from 127.0.0.1 with trust. None: STOP (do not edit pg_hba for a drill).
+mapfile -t PGA < <(docker inspect sorento_crm_replica | python3 -I -c 'import json,sys
+cmd=json.load(sys.stdin)[0]["Config"]["Cmd"] or []; i=0
+while i < len(cmd):
+    if cmd[i] == "-c" and i + 1 < len(cmd):
+        kv = cmd[i+1]; i += 2
+        if kv.split("=",1)[0] not in ("primary_conninfo","primary_slot_name","port"): print("-c"); print(kv)
+    else: i += 1'); echo "${PGA[@]}"
+#   Expected: e.g. -c max_connections=500; NO primary_conninfo / primary_slot_name / port
+```
+
+```bash
+# DRILL (node B). Creates, then deletes, a scratch copy.
+sudo install -d -o "$U" -g "$G" -m 700 /var/lib/ha-drill
+time docker run --rm -u "$U:$G" --network container:sorento_crm_replica -v /var/lib/ha-drill:/drill "$IMG" \
+  pg_basebackup -h 127.0.0.1 -p 5432 -U postgres -D /drill/data -X stream -c fast -R
+docker run -d --name ha_drill_pg -u "$U:$G" --network container:sorento_crm_replica \
+  -v /var/lib/ha-drill/data:/var/lib/postgresql/data "$IMG" postgres -c port=5499 "${PGA[@]}"
+sleep 20; D='docker exec ha_drill_pg psql -p 5499 -U postgres -d postgres -Atc'
+$D "select pg_is_in_recovery(), (select status from pg_stat_wal_receiver)"     # t|streaming
+time $D "select pg_promote(true, 60)"                                           # t
+$D "select pg_is_in_recovery()"                                                 # f
+$D "create table ha_drill_probe(x int); insert into ha_drill_probe values (1); select count(*) from ha_drill_probe"   # 1
+docker rm -f ha_drill_pg && sudo rm -rf /var/lib/ha-drill
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select status, sender_host from pg_stat_wal_receiver"   # streaming|10.77.0.1
+```
+
+`ha_drill_pg` exits instead of answering: post `docker logs ha_drill_pg | tail -20`, then the cleanup
+line. Post the two `time` values on #2166. Rollback: the cleanup line.
 
 ---
 
