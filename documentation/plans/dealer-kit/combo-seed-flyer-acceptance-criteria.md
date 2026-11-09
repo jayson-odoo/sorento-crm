@@ -108,6 +108,12 @@ Script `scripts/oneoff/remove_flyer_seed_duplicates.py` (`--file` a seed with ak
   flyer combo's `created_by` is NULL; it has an audit row of its creation by job `import_product_combos`; every audit
   row on it is by that job (nobody touched it since); no price tag request line and no tag template link points at it.
   Anything else is KEEP with the failed condition named. The owner's combos are never deleted or changed.
+- AC-D3b (review round, 9 Nov) Also required for DELETE: the paired owner combo was made or edited by a person
+  (`created_by` set, or at least one audit row on it as entity or root not by job `import_product_combos`); the
+  duplicate has no picture of its own (`image_attachment_id` NULL: the service sweeps picture bytes before the run's one
+  real commit). The duplicate row is locked (`SELECT ... FOR UPDATE`) between the checks and the delete.
+- AC-D2b The DELETE line names when the importer created the duplicate (dd/mm/yyyy HH:MM), so an older import run is
+  visible before `--apply`.
 - AC-D4 Without `--apply` nothing is written (the transaction is read only). `--apply` deletes through the combo
   service (parts, free items cascade); existing audit rows stay and the delete itself is audited (job
   `remove_flyer_seed_duplicates`). A second run reads NO DUPLICATE for every pair it deleted (idempotent).
