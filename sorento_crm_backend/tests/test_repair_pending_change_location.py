@@ -17,7 +17,7 @@ from .test_oi_saved_line_email import _order, _post, emails  # noqa: F401
 from .test_planning_change_apply_on_board import _confirm, api, world  # noqa: F401
 from .test_planning_changes import _line_payload
 from .test_so_line_location_change_email import _move, _rows, _sibling
-from .test_so_location_gap import _date_change, _pending, _split
+from .test_so_location_gap import _date_change, _pending, _push, _split
 
 
 def _script():
@@ -176,3 +176,41 @@ def test_a_line_with_no_decision_reads_where_its_order_sits(api):
     world.db.expire_all()
     (row,) = _pending(world, line)
     assert (row.from_json.get("location"), row.to_json.get("location")) == (old, new)
+
+
+def test_an_applied_row_in_a_batch_still_open_is_left_alone(api, emails):
+    """Review round 1: one push spans two orders, so its batch stays open after the first
+    order's Confirm applies that order's row (prod's usual shape). Only the other order's
+    PENDING row is repaired; the applied one is history."""
+    client, world = api
+    first, line_1, _b1 = _order(api)
+    second, line_2, _b2 = _order(api)
+    old = world.own_wh.warehouse_code
+    for order, line in ((first, line_1), (second, line_2)):
+        _post(api, order, [_line_payload(line.id, buy_qty="10")])
+    new_wh = _sibling(world)
+    new = new_wh.warehouse_code
+    _move(world, line_1, new_wh)
+    _move(world, line_2, new_wh)
+    batch = _push(world, [(line_1, new, new, 7), (line_2, new, new, 7)])
+    (row_1,), (row_2,) = _pending(world, line_1), _pending(world, line_2)
+    assert row_1.batch_id == row_2.batch_id, "premise: one batch spans both orders"
+    _as_written_before_the_fix(world, row_1)
+    _as_written_before_the_fix(world, row_2)
+    response = _confirm(client, first.id, [_line_payload(line_1.id, buy_qty="10")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.refresh(batch)
+    assert batch.applied_at is None, "premise: the batch is still open"
+    assert _pending(world, line_1) == [], "premise: the first order's row was applied"
+
+    result = _script().run(world.db, apply=True)
+    world.db.commit()
+
+    assert (result["found"], result["repaired"]) == (1, 1), result
+    world.db.expire_all()
+    world.db.refresh(row_1)
+    assert (row_1.from_json.get("location"), row_1.to_json.get("location")) == (None, None)
+    (row_2,) = _pending(world, line_2)
+    assert (row_2.from_json.get("location"), row_2.to_json.get("location")) == (old, new)

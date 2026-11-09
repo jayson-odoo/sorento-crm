@@ -32,30 +32,43 @@ def _date_change(world, project_line, before_code, after_code, days=7):
     line sits at `before_code` in the push's before side and `after_code` in its after side:
     equal when the move came in an EARLIER push (the owner's case), different when this push
     carries the move itself (a detected move)."""
+    return _push(world, [(project_line, before_code, after_code, days)])
+
+
+def _push(world, changes, *, expect_row=True):
+    """One AutoCount push over several lines (real diff, line_id pairs): each entry is
+    `(project_line, before_code, after_code, days)`. The caller has already put the core line
+    at `after_code` (`_move`, or `warehouse_id` for a detected move)."""
     from app.models.order import SalesOrder
     from app.services import planning_change_service
     from app.services.scm.outstanding_diff import Line, diff_lines
 
-    core = _core_line_of(world, project_line)
-    so = world.db.get(SalesOrder, core.sales_order_id)
-    old_date = core.required_date
-    new_date = old_date + timedelta(days=days)
+    befores, afters, orders = [], [], {}
+    for project_line, before_code, after_code, days in changes:
+        core = _core_line_of(world, project_line)
+        so = world.db.get(SalesOrder, core.sales_order_id)
+        old_date = core.required_date
+        new_date = old_date + timedelta(days=days)
 
-    def side(code, when):
-        return Line(doc_number=so.so_number, item_code=world.product.product_code,
-                    location=code, qty=float(core.qty_ordered), required_date=when,
-                    row_ref=str(core.id), line_id=str(core.id))
+        def side(code, when, core=core, so=so):
+            return Line(doc_number=so.so_number, item_code=world.product.product_code,
+                        location=code, qty=float(core.qty_ordered), required_date=when,
+                        row_ref=str(core.id), line_id=str(core.id))
 
-    core.required_date = new_date
-    diff = diff_lines([side(before_code, old_date)], [side(after_code, new_date)])
+        befores.append(side(before_code, old_date))
+        afters.append(side(after_code, new_date))
+        core.required_date = new_date
+        orders[so.so_number] = str(so.id)
+    diff = diff_lines(befores, afters)
     batch = planning_change_service.build_batch(
         world.db, diff,
-        applied_line_ids={id(c): str(core.id) for c in diff.changes},
-        order_ids={so.so_number: str(so.id)},
+        applied_line_ids={id(c): (c.after or c.before).line_id for c in diff.changes},
+        order_ids=orders,
         actor=world.actor, import_job_id=None, file_name=None,
     )
     world.db.commit()
-    assert batch is not None, "premise: the date change raised a change row"
+    if expect_row:
+        assert batch is not None, "premise: the push raised a change row"
     return batch
 
 
@@ -203,3 +216,106 @@ def test_a_line_with_no_decision_reads_the_move_from_where_its_order_sits(api):
         row.from_json, row.to_json,
     )
     assert _split(world, order)[str(line.id)] == (old, new)
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 (lane reviewer, 9 Nov): the CONFIRMED location is the reference
+# whatever the push's own before side says, as the email's is.
+# --------------------------------------------------------------------------- #
+
+
+def _third(world):
+    """A third location in the same pool (the `_sibling` is the second)."""
+    from .test_planning_changes import _warehouse
+
+    wh = _warehouse(world.db, f"{world.own_wh.warehouse_code}Y", segment="project",
+                    pool_warehouse_id=world.pool_wh.id)
+    world.db.commit()
+    return wh
+
+
+def test_a_confirmed_line_with_no_live_order_reads_the_move_from_its_decision(api):
+    """A decided line whose ORDER is gone (cancelled): the confirmed snapshot alone says where
+    it was planned (prod SO429664's own branch: a line with a decision)."""
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    _client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    (raised,) = _rows(world, line_a)
+    raised.state = INQUIRY_CANCELLED
+    world.db.commit()
+    new_wh = _sibling(world)
+    new = new_wh.warehouse_code
+    _move(world, line_a, new_wh)
+
+    _date_change(world, line_a, new, new)
+
+    (row,) = _pending(world, line_a)
+    assert (row.from_json.get("location"), row.to_json.get("location")) == (old, new), (
+        row.from_json, row.to_json,
+    )
+    assert _split(world, order)[str(line_a.id)] == (old, new)
+
+
+def test_a_line_moved_twice_reads_from_where_it_was_confirmed(api, emails):
+    """Confirmed at A, moved to X before detection, then a push moves it X -> Y with a date
+    change: the row, the Review split and the email all read A -> Y."""
+    client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    emails.clear()
+    x_wh, y_wh = _sibling(world), _third(world)
+    _move(world, line_a, x_wh)
+    _core_line_of(world, line_a).warehouse_id = y_wh.id
+    batch = _date_change(world, line_a, x_wh.warehouse_code, y_wh.warehouse_code)
+
+    (row,) = _pending(world, line_a)
+    assert (row.from_json.get("location"), row.to_json.get("location")) == (
+        old, y_wh.warehouse_code,
+    ), (row.from_json, row.to_json)
+    assert _split(world, order)[str(line_a.id)] == (old, y_wh.warehouse_code)
+
+    response = _confirm(client, order.id, [_line_payload(line_a.id, buy_qty="10")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    ((_item, _qty, location, remark),) = _lines(emails[0])
+    assert (location, remark) == (y_wh.warehouse_code, f"DELAY, NEW LOCATION (was {old})")
+
+
+def test_a_line_moved_back_where_it_was_confirmed_raises_nothing(api):
+    """Confirmed at A, moved to X before detection, then a push moves it back X -> A and
+    nothing else: against its decision nothing changed, so no row (as a replacement that nets
+    to nothing retires, SPLIT-SHEET-LOCATION review S2)."""
+    _client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    x_wh = _sibling(world)
+    _move(world, line_a, x_wh)
+    _core_line_of(world, line_a).warehouse_id = world.own_wh.id
+
+    _push(world, [(line_a, x_wh.warehouse_code, old, 0)], expect_row=False)
+
+    assert _pending(world, line_a) == []
+    assert _split(world, order)[str(line_a.id)] == (None, old)
+
+
+def test_a_line_moved_back_with_a_date_change_carries_only_the_date(api):
+    _client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    x_wh = _sibling(world)
+    _move(world, line_a, x_wh)
+    _core_line_of(world, line_a).warehouse_id = world.own_wh.id
+
+    _date_change(world, line_a, x_wh.warehouse_code, old)
+
+    (row,) = _pending(world, line_a)
+    assert (row.from_json.get("location"), row.to_json.get("location")) == (None, None)
+    assert row.from_json.get("required_date") != row.to_json.get("required_date")
+    assert _split(world, order)[str(line_a.id)] == (None, old)
