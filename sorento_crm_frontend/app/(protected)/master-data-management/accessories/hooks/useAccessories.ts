@@ -7,6 +7,7 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   addAccessoryPicture,
+  copyProductAccessories,
   createAccessory,
   deleteAccessoryImage,
   getAccessory,
@@ -222,4 +223,27 @@ export function useReplaceAccessoryColours() {
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save the colours'),
   });
+}
+
+/**
+ * ACC-COPY-TO-PRODUCTS: `preview` is the dry run behind the confirm step, `copy` the write.
+ * Every product's list is refetched after a copy, since any of them may have changed.
+ */
+export function useCopyProductAccessories(sourceId: string) {
+  const queryClient = useQueryClient();
+  const preview = useMutation({
+    mutationFn: (targetIds: string[]) => copyProductAccessories(sourceId, targetIds, true),
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const copy = useMutation({
+    mutationFn: (targetIds: string[]) => copyProductAccessories(sourceId, targetIds),
+    onSuccess: (summary) => {
+      queryClient.invalidateQueries({ queryKey: ['owner-accessories'] });
+      queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
+      const noun = summary.targets === 1 ? 'product' : 'products';
+      toast.success(`Accessories copied to ${summary.targets} ${noun}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  return { preview, copy };
 }

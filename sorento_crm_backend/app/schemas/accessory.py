@@ -126,3 +126,19 @@ class AccessoryItemsIn(BaseModel):
     items: List[AccessoryListItemIn] = Field(default_factory=list, max_length=100)
     #: Omitted = unchanged, null = cleared, an id = that saved accessories template (404 if not visible).
     box_style_id: Optional[str] = None
+
+
+class AccessoryCopyIn(BaseModel):
+    """ACC-COPY-TO-PRODUCTS: the hand-picked products to receive the list."""
+
+    target_product_ids: List[str] = Field(min_length=1, max_length=500)
+    #: True = answer the summary and write nothing (the confirm step).
+    dry_run: bool = False
+
+
+class AccessoryCopyOut(BaseModel):
+    targets: int
+    targets_with_a_list: int
+    entries_added: int
+    entries_already_there: int
+    box_style_set: int
