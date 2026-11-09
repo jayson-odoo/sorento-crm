@@ -1,6 +1,6 @@
 # PLAN: SPEC-ICON-COMBINED follow-up (crew pass findings, 9 Nov)
 
-Status: Build. Track: small fix track (size S, no migration, no auth/RBAC change, no new ingest surface).
+Status: built and reviewed (reviewer READY at 825a4318, cloud browser pass PASS at 1440 + 375); PR #2297. Track: small fix track (size S, no migration, no auth/RBAC change, no new ingest surface).
 Follows PR #2291 (merged, main ba0e7578). Plan of the parent: `_archive`-bound
 `documentation/plans/dealer-kit/PLAN-spec-icon-combined-09nov.md`.
 
@@ -28,7 +28,14 @@ F1. Hints move to their own line(s) under the value, full text, wrapping (no tru
 F2. The value text keeps its width: the first line is value + icons; icons wrap to the next line rather
     than squeezing the value to nothing.
 F3. Icon order shows for numeric keys too (view and edit).
-F4. Staff tag preview passes `feature_icons`.
+F4. Staff tag preview passes `feature_icons`, and the product page combo Tag preview card
+    (`products/[id]/components/ComboTagPreview.tsx`) hands them to the viewer (found by the browser pass:
+    the route answered them but the card dropped them).
+F5. The hint undoes the Value cell's inherited `nowrap` (`whitespace-normal break-words`), so a long
+    reason wraps instead of being clipped (review).
+
+Out of scope, noted: `project_spec_sheet_service.py:1212-1224,1742-1752` builds a spec-sheet design
+payload with no `feature_icons`; matters only if a spec-sheet page can hold a feature_icons layer.
 
 ## Tests (red first)
 
