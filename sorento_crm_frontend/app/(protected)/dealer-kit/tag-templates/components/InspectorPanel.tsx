@@ -7,7 +7,7 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback, useId, useMemo } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import type {
   AccessoriesLayerProps,
   CardElement,
@@ -23,6 +23,8 @@ import {
   type AccessoryRect,
 } from '@/lib/dealer-kit/accessory-box';
 import {
+  accessoryBinding,
+  accessoryDesignSamples,
   cardBoxLayout,
   cardDropped,
   cardFromLegacy,
@@ -83,6 +85,7 @@ import { ColorPicker } from '@/components/common/ColorPicker';
 import { richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { InsertFieldDialog } from './InsertFieldDialog';
 import type { Editor } from '@tiptap/react';
 
 // ---------------------------------------------------------------------------
@@ -2373,15 +2376,37 @@ function AccessoriesInspector({
           min={0}
           max={50}
         />
-        {props.direction === 'horizontal' && (
-          <NumberInput
-            label="Card width (mm)"
-            value={props.cardWidth_mm}
-            onChange={(v) => onChange({ cardWidth_mm: v })}
-            step={0.5}
-            min={5}
-            max={300}
-          />
+        {props.card ? (
+          // TAG-ACC-CARD-RESIZE Q3: a designed card's own size, the same value its frame handles set.
+          <>
+            <NumberInput
+              label="Card width (mm)"
+              value={props.card.width_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, width_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+            <NumberInput
+              label="Card height (mm)"
+              value={props.card.height_mm}
+              onChange={(v) => onChange({ card: { ...props.card!, height_mm: v } })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          </>
+        ) : (
+          props.direction === 'horizontal' && (
+            <NumberInput
+              label="Card width (mm)"
+              value={props.cardWidth_mm}
+              onChange={(v) => onChange({ cardWidth_mm: v })}
+              step={0.5}
+              min={5}
+              max={300}
+            />
+          )
         )}
         <ColorPicker
           label="Card fill"
@@ -2816,6 +2841,7 @@ function AccessoryElementInspector({
   const element = elements?.find((candidate) => candidate.id === edit.elementId);
   const textId = useId();
   const prefixId = useId();
+  const [insertOpen, setInsertOpen] = useState(false);
   if (!element) return null;
   const patch = (changes: Partial<CardElement>) => onUpdate(element.id, changes);
   const inCard = edit.target === 'card';
@@ -2923,15 +2949,43 @@ function AccessoryElementInspector({
 
       {element.kind === 'text' && !element.field && (
         <div className="flex flex-col gap-1">
-          <Label htmlFor={textId} className="text-xs text-muted-foreground">
-            Text
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor={textId} className="text-xs text-muted-foreground">
+              Text
+            </Label>
+            {/* TAG-ACC-CARD-RESIZE Q4: the normal text layer's fields, read per accessory (card only). */}
+            {inCard && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-xs"
+                onClick={() => setInsertOpen(true)}
+              >
+                Insert field
+              </Button>
+            )}
+          </div>
           <Input
             id={textId}
             className="h-7 px-2 text-xs"
             value={element.text ?? ''}
             onChange={(e) => patch({ text: e.target.value })}
           />
+          {inCard && (
+            <InsertFieldDialog
+              open={insertOpen}
+              value={element.text ?? ''}
+              data={accessoryBinding(accessoryDesignSamples(props.list)[0])}
+              specKeys={[]}
+              groups={['Product']}
+              onCancel={() => setInsertOpen(false)}
+              onDone={(content) => {
+                setInsertOpen(false);
+                patch({ text: content });
+              }}
+            />
+          )}
         </div>
       )}
 

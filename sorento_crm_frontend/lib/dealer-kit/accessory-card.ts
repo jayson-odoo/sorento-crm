@@ -23,6 +23,7 @@ import {
   type LayoutProps,
 } from './accessory-box';
 import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
+import { hasMergeField, renderMergeFields, renderPriceTagDescription } from './merge-fields';
 import { formatTagPrice } from './price-badge';
 import { isRich, parseRichText, richPlainText } from './rich-text';
 import { textLayerLines } from './text-layout';
@@ -384,6 +385,50 @@ function resolveElements(elements: readonly CardElement[], resolve: Resolver): R
   return out;
 }
 
+/**
+ * TAG-ACC-CARD-RESIZE Q4: one accessory as the bound product, so a card's fixed text resolves
+ * `{{product.*}}` through the ONE merge-field resolver a normal text layer uses (no second
+ * resolver). A catalogue product carries its code, name, prices, spec lines and price tag
+ * description; a library accessory has a name and a spec (read as both its description and its
+ * spec lines), and every other field resolves to nothing.
+ */
+export function accessoryBinding(item: TagAccessory): TagBindingData {
+  const spec = item.spec ?? null;
+  const specPlain = spec ? (isRich(spec) ? richPlainText(spec) : spec) : '';
+  const ownLines = specPlain.split('\n').map((line) => line.trim()).filter(Boolean);
+  return {
+    kind: 'product',
+    product: {
+      id: item.id,
+      code: item.code ?? '',
+      name: item.name ?? '',
+      dimensions: '',
+      spec_lines: item.spec_lines ?? ownLines,
+      specs: item.specs ?? [],
+      images: [],
+      list_price: item.list_price ?? null,
+      offer_price: item.sell_price ?? null,
+      promotion_id: null,
+      barcode: null,
+      price_tag_description: item.kind === 'product' ? (item.price_tag_description ?? spec) : spec,
+    },
+  };
+}
+
+const TOKEN = /\{\{\s*[A-Za-z0-9_.]+\s*\}\}/g;
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** A card's fixed text with its fields resolved for `item`; text with no field is returned as is. */
+function cardFixedText(item: TagAccessory, text: string): string {
+  if (!hasMergeField(text)) return text;
+  const binding = accessoryBinding(item);
+  // Rich: each field's value goes in escaped, so a value never becomes markup.
+  if (isRich(text)) return text.replace(TOKEN, (token) => escapeHtml(renderMergeFields(token, binding, 'print')));
+  // Plain: a line whose fields all came back empty is dropped with no gap (the description rule).
+  return renderPriceTagDescription(text, binding, 'print');
+}
+
 function textOf(value: string | string[] | null): string | null {
   return typeof value === 'string' && !isBlank(value) ? value : null;
 }
@@ -420,7 +465,7 @@ export function cardElementsFor(
       case 'text': {
         const text = element.field
           ? withPrefix(element, textOf(cardFieldValue(item, element.field)))
-          : textOf(element.text ?? null);
+          : textOf(element.text != null ? cardFixedText(item, element.text) : null);
         return text ? { ...element, text } : null;
       }
       case 'feature_icons': {
@@ -457,7 +502,11 @@ export function cardElementsForDesign(
           return { ...element, colours };
         }
         case 'text': {
-          if (!element.field) return { ...element, text: element.text ?? '' };
+          if (!element.field) {
+            // Fields resolve against this item; nothing to show, the typed text stays so it can be placed.
+            const typed = element.text ?? '';
+            return { ...element, text: textOf(cardFixedText(item, typed)) ?? typed };
+          }
           const own = textOf(cardFieldValue(item, element.field));
           const value = own ?? textOf(cardFieldValue(sample, element.field)) ?? cardFieldValue(upgradeSample, element.field);
           return { ...element, text: withPrefix(element, typeof value === 'string' ? value : '') ?? '' };
@@ -758,6 +807,7 @@ export function accessoryDesignSamples(list?: AccessoriesLayerProps['list']): Ta
     remark: 'Remark',
     code: 'CODE',
     list_price: 68,
+    sell_price: 59,
     image: null,
     images: [],
     colours,
