@@ -14,7 +14,9 @@ import type {
   PriceTagRequestLineInput,
   ProductComboOption,
   ProductTagTemplateOption,
+  VariantMemberOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { defaultOptionFor, fittingOptions, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
@@ -93,6 +95,15 @@ export interface DraftLine {
   /** R13: the template and LP/SP a LOADED line was saved with. While both are unchanged the
    *  template is kept (AC-37): no "No SP template linked" pill, eye enabled, no Submit reason. */
   kept_template?: { id: string; price_type: PriceMode } | null;
+  // ---- PRICETAG-UPGRADE-VARIANTS ----
+  /** The product's variant members, answered once per product. Absent = not asked yet. */
+  variant_members?: VariantMemberOption[];
+  /** Which product `variant_members` was answered for. */
+  variant_members_for?: string | null;
+  /** The line product's own list price, for the "Variants price differently" warning. */
+  own_list_price?: number | null;
+  /** The members UNTICKED for this tag; a member added later joins ticked. */
+  excluded_variant_ids?: string[];
 }
 
 /** The combo the line is asked for as, once the combos lookup has answered. */
@@ -132,6 +143,7 @@ export interface DraftLineSource {
   manual_sell_price?: number | null;
   tag_template_id?: string | null;
   price_type?: PriceMode | null;
+  excluded_variant_ids?: string[] | null;
 }
 
 let partKeySeq = 0;
@@ -337,6 +349,7 @@ export function emptyDraftLine(): DraftLine {
     promotion_locked: false,
     manual_sell_price: null,
     pricing: null,
+    excluded_variant_ids: [],
   };
 }
 
@@ -430,6 +443,8 @@ export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): Dra
     // request's mode is read as FOLLOWING Preferred Default (price_type null); only a line that
     // differs keeps its own.
     price_type: line.price_type && line.price_type !== requestMode ? line.price_type : null,
+    // The members lookup answers `variant_members` once the line is on screen.
+    excluded_variant_ids: line.excluded_variant_ids ?? [],
   };
 }
 
@@ -594,7 +609,26 @@ export function draftLinesPayload(
     manual_sell_price:
       (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
+    excluded_variant_ids: l.line_type === 'product' ? (l.excluded_variant_ids ?? []) : [],
   }));
+}
+
+/** PRICETAG-UPGRADE-VARIANTS Q5: "Variants price differently: RM x to RM y" over the line product
+ *  and its ticked live members, or null when they all list the same (or nothing is known). */
+export function variantPriceWarning(
+  line: Pick<DraftLine, 'variant_members' | 'own_list_price' | 'excluded_variant_ids'>,
+): string | null {
+  const unticked = new Set(line.excluded_variant_ids ?? []);
+  const prices = [
+    line.own_list_price,
+    ...(line.variant_members ?? [])
+      .filter((m) => !m.is_discontinued && !unticked.has(m.product_id))
+      .map((m) => m.list_price),
+  ].filter((price): price is number => price != null);
+  if (prices.length < 2) return null;
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+  return low === high ? null : `Variants price differently: ${formatTagPrice(low)} to ${formatTagPrice(high)}`;
 }
 
 /** The template the line prints with: its pick, or the lone link. Null when not decided. */

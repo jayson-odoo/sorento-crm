@@ -272,6 +272,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         const fn = optionalCall(() => svc().lookupProductTagTemplates);
         return fn ? fn(productId, comboId) : Promise.resolve([]);
       },
+      // PRICETAG-UPGRADE-VARIANTS: same guard, a service without it answers "no variants".
+      lookupVariantMembers: (productId) => {
+        const fn = optionalCall(() => svc().lookupVariantMembers);
+        return fn ? fn(productId) : Promise.resolve({ members: [], own_list_price: null });
+      },
     };
   }, [client]);
   const previewLookup = useCallback(

@@ -42,6 +42,7 @@ import {
   picksNeeded,
   templateAfterFlip,
   unfittedPriceType,
+  variantPriceWarning,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -170,6 +171,75 @@ export function PriceTagLinesTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Variants on this tag (PRICETAG-UPGRADE-VARIANTS S3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which members of the line product's variant tree a feature icons layer on "All variants" reads:
+ * every member ticked by default, the line's own product locked on, a discontinued member listed
+ * with its hint but not counted. The line stores the UNTICKED ids. The Q5 warning sits under it.
+ */
+function VariantsRow({
+  line,
+  colSpan,
+  onUpdate,
+}: {
+  line: DraftLine;
+  colSpan: number;
+  onUpdate: (key: string, patch: Partial<DraftLine>) => void;
+}) {
+  const members = line.variant_members ?? [];
+  const own = line.product_id as string;
+  const unticked = new Set(line.excluded_variant_ids ?? []);
+  const live = members.filter((m) => !m.is_discontinued);
+  const tickedLive = live.filter((m) => !unticked.has(m.product_id)).length;
+  const value = [own, ...members.filter((m) => !unticked.has(m.product_id)).map((m) => m.product_id)];
+  const options = [
+    { value: own, label: line.code, disabled: true },
+    ...members.map((m) => ({
+      value: m.product_id,
+      label: m.code,
+      description: distinctName(m.code, m.name) ?? undefined,
+      badgeText: m.is_discontinued ? 'Discontinued' : undefined,
+    })),
+  ];
+  const codes = new Map(options.map((option) => [option.value, option.label]));
+  const warning = variantPriceWarning(line);
+  const id = `variants-${line.key}`;
+  return (
+    <tr className="align-top">
+      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
+        <div className="sticky left-0 max-w-[calc(100vw-9rem)] space-y-1 border-l-2 border-border pl-3 sm:max-w-md">
+          <div className="flex items-baseline justify-between gap-2">
+            <Label htmlFor={id} className="text-xs font-medium">
+              Variants on this tag
+            </Label>
+            <span className="text-xs text-muted-foreground">{`${tickedLive + 1} of ${live.length + 1} ticked`}</span>
+          </div>
+          <SearchableMultiSelect
+            id={id}
+            value={value}
+            onChange={(ids) => {
+              const keep = new Set(ids);
+              onUpdate(line.key, {
+                excluded_variant_ids: members.filter((m) => !keep.has(m.product_id)).map((m) => m.product_id),
+              });
+            }}
+            options={options}
+            renderTriggerLabel={(selected) => (
+              <span className="truncate">{selected.map((option) => codes.get(option.value) ?? option.label).join(', ')}</span>
+            )}
+            emptyMessage="No variants."
+            size="sm"
+          />
+          {warning && <p className="text-xs text-warning">{warning}</p>}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -765,6 +835,9 @@ function LineRow({
             </div>
           </td>
         </tr>
+      )}
+      {!isSet && line.product_id && (line.variant_members?.length ?? 0) > 0 && (
+        <VariantsRow line={line} colSpan={subRowSpan} onUpdate={onUpdate} />
       )}
       {showPackage && (
         <tr className="align-top">
