@@ -1,9 +1,12 @@
 """COMBO-SEED-FLYER AC-6b: under --strict, a plain existing description with the flyer's words gets the flyer's bold."""
 from __future__ import annotations
 
-from tests.test_import_product_combos_strict import (  # noqa: F401  (db is a fixture)
-    _combos, _entry, _existing, _line, _lines, _prod, _run, db,
+from tests import test_import_product_combos_strict as _strict
+from tests.test_import_product_combos_strict import (
+    _combos, _entry, _existing, _line, _lines, _prod, _run,
 )
+
+db = _strict.db  # pytest fixture, re-exported
 
 SEED_HTML = "<p><strong>A</strong> (CABINET)</p><p>L1</p>"
 

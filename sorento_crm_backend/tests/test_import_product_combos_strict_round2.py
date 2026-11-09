@@ -8,9 +8,12 @@ from app.models.base import company_scope
 from app.models.product_combo import ProductComboPart
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
-from tests.test_import_product_combos_strict import (  # noqa: F401  (db is a fixture)
-    _combos, _entry, _existing, _line, _lines, _parts, _prod, _run, db,
+from tests import test_import_product_combos_strict as _strict
+from tests.test_import_product_combos_strict import (
+    _combos, _entry, _existing, _line, _lines, _parts, _prod, _run,
 )
+
+db = _strict.db  # pytest fixture, re-exported
 
 
 def _add_part(db, combo, prod):
@@ -21,7 +24,8 @@ def _add_part(db, combo, prod):
 
 def test_ac_6_existing_with_fewer_parts_is_skip_parts_differ_and_untouched(db, tmp_path):
     _prod(db, "ZZQH1")
-    a, _b = _prod(db, "ZZQA1"), _prod(db, "ZZQB1")
+    a = _prod(db, "ZZQA1")
+    _prod(db, "ZZQB1")
     combo = _existing(db, "ZZQH1", "Pack")
     _add_part(db, combo, a)
     entries = [_entry("ZZQH1", "Pack", 1, components=[{"code": "ZZQA1", "role": "A"}, {"code": "ZZQB1", "role": "B"}])]

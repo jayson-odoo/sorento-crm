@@ -4,12 +4,14 @@ from __future__ import annotations
 import uuid
 
 from app.models.base import company_scope
-from app.models.product import Product
 from app.models.product_combo import ProductComboPart
 
-from tests.test_import_product_combos_strict import (  # noqa: F401  (db is a fixture)
-    _combos, _entry, _existing, _line, _parts, _prod, _run, db,
+from tests import test_import_product_combos_strict as _strict
+from tests.test_import_product_combos_strict import (
+    _combos, _entry, _existing, _line, _parts, _prod, _run,
 )
+
+db = _strict.db  # pytest fixture, re-exported
 
 
 def test_ac_15_missing_host_names_only_the_host(db, tmp_path):
