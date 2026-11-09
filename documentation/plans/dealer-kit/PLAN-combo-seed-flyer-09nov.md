@@ -52,8 +52,35 @@ SRTWT, SRTMCB, SRTMR), basins p24-27, kitchen sinks p55-69 (SRTKS, SRTKT, SRTWF,
 
 ## Architecture
 
-TODO after the code map lands: layer (script only, no API/UI change), mechanism (reuse or sibling of
-`import_product_combos.py`), classes touched.
+Layer: script only (`sorento_crm_backend/scripts/`). No API, schema, migration or UI change.
+
+What already exists and is reused unchanged (code map, 9 Nov):
+- `import_product_combos.py` loads a JSON seed through `ProductComboService` and `AccessoryService`; matches
+  host + combo name case-insensitive (:366-370); without `--update` it fills only empty fields (description,
+  free list, photo, null prices) and adds missing parts (`_wanted` :252-259, fill block :408-415);
+  `--update` overwrites and prunes (:468-497). Parts: components = fixed, choice group options = parts sharing
+  the label with option `sp`, `topups` = `is_upgrade` parts (`wanted_parts` :151-171). Seed model:
+  `flyer_combo_read.py:123-133`. 63 tests in `tests/test_import_product_combos*.py`.
+- Rich text: `combo_description` passes through `clean_description` (`app/services/tag_description.py:13`,
+  5000-char cap) and `sanitise_tag_html` (`app/utils/tag_rich_text.py:199`, allow-list :19-22: `<strong>`
+  kept, `<b>` dropped). Editor shape on dev rows: one `<p>` per line, `<strong>` per bold run.
+
+What changes (one new flag, `--strict`, so legacy behaviour and its tests stay as they are):
+1. Free item `kind`: `product` = exact code match only; `accessory` = existing library accessory by exact
+   name (case-insensitive, company). Under `--strict` nothing is `find_or_create`d (today :459-461 creates
+   "CODE label" accessories).
+2. Hold rule: under `--strict` an entry with an unmatched host, part or free item writes nothing and prints
+   `UNMATCHED (<codes/names>)`.
+3. `aka` on an entry: previous combo names that also count as a match (owner renames).
+4. Per-host transaction under `--strict --apply`: entries grouped by host; inside a host block the session's
+   `commit` only flushes (the services commit per call today, e.g. `ProductComboService.create` :260), then
+   one real commit; any failure rolls the whole host back and marks its entries FAILED.
+5. Printed verdict per combo (`CREATE` / `UPDATE (fields)` / `SKIP` / `UNMATCHED` / `FAILED`) plus the
+   names of other combos already on the host; the CSV report stays.
+6. Seed model: `combo_description` cap 1000 -> 5000 (the service cap), `Free.kind`, `Combo.aka`.
+
+Data: `scripts/data/combo_seed_flyer_2026.json` built from the flyer by the lead (PyMuPDF spans for exact text
+and bold, page images for tile grouping, cross-checked against `flyer_reading` 7dc0db32 LP/SP per code).
 
 ## Open questions for the owner (filed with the review page)
 
