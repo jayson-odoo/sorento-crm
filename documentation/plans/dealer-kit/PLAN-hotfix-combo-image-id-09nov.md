@@ -8,7 +8,8 @@ UAC: `hotfix-combo-image-id-acceptance-criteria.md`
 
 Prod, product SRTWB7065: the Combos card shows "Internal server error" / "Could not load combos".
 `GET /api/v1/master-data/products/{id}/combos`, `GET|PUT /product-combos/{combo_id}/accessories` and
-`GET|PUT /products/{id}/accessories` 500 with `ResponseValidationError` at
+`GET|PUT /products/{id}/accessories` and `PATCH /product-combos/{combo_id}` (returns the combo with its
+list) 500 with `ResponseValidationError` at
 `('response', ..., 'images', 0, 'id') Field required`.
 
 Cause: a catalogue product listed as a free item (#2237) is built by
