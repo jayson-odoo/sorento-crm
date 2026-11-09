@@ -456,7 +456,10 @@ def _replica_reachable() -> bool:
 
 class _build_session:
     """The session a build runs on: the read replica when configured (and `use_replica`), else the
-    primary. 5 s limit."""
+    primary. 5 s limit, and JIT off for the build's transaction: the sales type
+    (`inv.document_sales_type()`) gives Sorento's statements a planner cost above
+    `jit_inline_above_cost`, and on prod the compile alone outran the 5 s (TOWN-PROD-TIMEOUT; the
+    report engine's `_jit_off` is the same rule for the same expression)."""
 
     def __init__(self, use_replica: bool = True) -> None:
         self._use_replica = use_replica
@@ -468,6 +471,7 @@ class _build_session:
             self._ctx = scheduler_session("town_snapshot")
             self._db = self._ctx.__enter__()
         self._db.execute(sa.text(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
+        self._db.execute(sa.text("SET LOCAL jit = off"))
         return self._db
 
     def __exit__(self, *exc) -> None:
