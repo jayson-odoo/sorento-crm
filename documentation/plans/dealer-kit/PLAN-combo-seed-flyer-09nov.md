@@ -17181,3 +17181,16 @@ Lane: COMBO-SEED-FLYER. PR #2282.
 Status: Built and verified (reviewer READY, security CLEAN, browser pass PASS on a throwaway dev copy, seed v2).
 Waiting: CI, merge go, then the owner's prod run (section "Prod run"). Track: full (prod data bulk write, size L).
 Lane: COMBO-SEED-FLYER. PR #2282.
+## Follow-up: the owner's hand-made combos as aka (owner "map ok", 9 Nov ~22:10)
+
+Prod dry run 9 Nov ~21:55 (e81cc34f): CREATE 110, UPDATE 2, SKIP 100, UNMATCHED 31; 20 CREATE rows sat on hosts with an
+owner hand-made combo under another name. Seed now carries the owner's pairing as `aka` (21 entries): "BATHTUB COMBO" x5;
+"WALL HUNG WATER CLOSET COMBO" (push panel row) / "... 2" (flush valve row) on SRTWC6021-SH-UF, SRTWC6011-RL-BL,
+SRTWC6022-SH-UF; "FLOOR STANDING WATER CLOSET COMBO" (+SRTFP4001) / "... 2" (+SRTFV2011) on SRTWC6031-SH-UF;
+"URINAL BOWL COMBO" x5; "BATHROOM FURNITURE COMBO" on SRTBF11412; "CERAMIC BASIN COMBO" on SRTWB1419-GY; and
+"SRTBF11834 + SRTMR502-BL" on the flyer's "(p21)" entry. That name was the p20 entry's exact name, so the p20 package
+is now "SRTBF11834 + SRTMR502-BL (p20)" (created as its own combo). SRTWB7065: no pairing (owner).
+Kitchen sinks SRTKS8835-BL / SRTKS1235-BL / SRTKS8835 / SRTKS1035: their own-code combos are already the exact-name
+match of the flyer's p56 entries (dev 4 Nov: same SRTKT71SS tap); no aka, so the p55 SRTKT74SS packages still create.
+An aka match keeps the owner's name and fills only what is empty. No release is needed: `--file` takes a patched copy
+(`crew/state/files/COMBO-SEED-FLYER/prod-aka2.sh`).
