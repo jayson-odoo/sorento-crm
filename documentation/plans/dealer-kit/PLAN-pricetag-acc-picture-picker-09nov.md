@@ -1,6 +1,6 @@
 # PLAN: PRICETAG-ACC-PICTURE-PICKER - accessory picture choice shows thumbnails; the row follows the pick
 
-Status: Review READY (reviewer x2), browser pass done at 1280 + 375; awaiting owner hand test. Track: small fix (expected diff under 300 lines, no migration, no auth/RBAC change).
+Status: Merged (#2273, owner hand test PASS). Follow-ups (375px combo cell, "First picture" thumbnail) in a new small PR. Track: small fix.
 UAC: `pricetag-acc-picture-picker-acceptance-criteria.md`.
 
 ## Owner ask (9 Nov ~11:20 MYT)
