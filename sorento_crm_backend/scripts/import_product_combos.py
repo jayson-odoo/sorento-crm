@@ -52,7 +52,27 @@ USAGE
     venv/bin/python scripts/import_product_combos.py --file seed.json --photos DIR --report out.csv
     venv/bin/python scripts/import_product_combos.py --file seed.json --photos DIR --report out.csv --apply [--update] [--link-templates] [--templates]
 
-The seed and the photos are real business data and stay outside this repository.
+STRICT FLYER SEED
+-----------------
+    venv/bin/python scripts/import_product_combos.py --strict --file scripts/data/combo_seed_flyer_2026.json [--apply]
+
+`--strict` loads a flyer seed under stricter rules and prints one line per entry in seed order,
+`<VERDICT> | <host> | <combo> | p<page> | <details>`, then a count per verdict:
+* An entry whose host, part code or free item is not in the catalogue is not written at all
+  (UNMATCHED, `missing: ...`). A discontinued part is not loaded and is named in the details.
+* A seed entry's `aka` lists earlier names of the same combo on that host; the exact name wins,
+  then an aka, and the name on file is kept.
+* A free item carries `kind`: "product" is the catalogue product with that code, "accessory" is the
+  library accessory with that name. Nothing is ever created or guessed.
+* An existing combo gets only what it lacks (never overwritten without --update); parts are added
+  only to a combo that has none. Nothing is ever deleted.
+* `--apply` is one transaction per host product: any error rolls that host back (FAILED, exit
+  code 2) and the other hosts still load.
+* `--photos`, `--link-templates` and `--templates` are ignored under `--strict` (a line says so).
+
+The flyer seed (`scripts/data/combo_seed_flyer_2026.json`) holds product codes, prices and flyer text
+only, no customer data. Any other seed and the photos are real business data and stay outside this
+repository.
 """
 from __future__ import annotations
 
@@ -61,6 +81,7 @@ import csv
 import json
 import mimetypes
 import os
+import re
 import sys
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -539,6 +560,10 @@ def _entry_name(entry) -> str:
     return ((entry.get("combo_name") or entry.get("title") or "").strip())[:100]
 
 
+def _one_line(text: str) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", text or "").strip()
+
+
 def _verdict_row(entry, verdict: str, details: str) -> dict:
     """One strict result: the report row plus the printed `verdict` and `details`."""
     row = {column: "" for column in REPORT_COLUMNS}
@@ -548,6 +573,10 @@ def _verdict_row(entry, verdict: str, details: str) -> dict:
             page=str(entry.get("page") or ""), host=(entry.get("host_code") or "").strip(),
             combo=_entry_name(entry), guess=entry.get("guess") or "",
         )
+    # One verdict is one line: a name or code from the seed or the database cannot break it.
+    for column in ("host", "combo"):
+        row[column] = _one_line(row[column])
+    details = _one_line(details)
     row.update(status=verdict.lower(), differences=details, verdict=verdict, details=details)
     return row
 
@@ -585,6 +614,10 @@ def process_entry_strict(
         missing.append((entry.get("host_code") or "").strip() or "no host code")
     keep: list[dict] = []
     held_back: set = set()
+    notes: list[str] = []
+    discontinued_codes: list[str] = []
+    if host is not None and host.is_discontinued:
+        notes.append("host discontinued")
     for part in wanted_parts(entry):
         product = parts_by_code.get(part["code"].upper()) if part["code"] else None
         if not part["code"]:
@@ -593,11 +626,30 @@ def process_entry_strict(
             missing.append(part["code"])
         elif product.is_discontinued:
             held_back.add(product.id)
+            if product.product_code not in discontinued_codes:
+                discontinued_codes.append(product.product_code)
         elif (host is None or product.id != host.id) and not any(k["product"].id == product.id for k in keep):
             keep.append({**part, "product": product})
+    if discontinued_codes:
+        notes.append(f"not loaded (discontinued): {', '.join(discontinued_codes)}")
     part_ids = {k["product"].id for k in keep} | held_back
+    names = {name.lower(), *((a or "").strip().lower() for a in entry.get("aka") or [])} - {""}
+    host_combos = (
+        db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).order_by(ProductCombo.name).all()
+        if host is not None else []
+    )
+    # The exact name wins over an aka match.
+    existing = next((c for c in host_combos if (c.name or "").lower() == name.lower()), None) or next(
+        (c for c in host_combos if (c.name or "").lower() in names), None
+    )
+    file_part_ids = {part.part_product_id for part in existing.parts} if existing is not None else set()
     free_keys, seen = [], set()
     for free in entry.get("free_items") or []:
+        if free.get("kind") in (None, "product") and (free.get("code") or "").strip():
+            found_free = _free_product(db, (free.get("code") or "").strip(), company_id)
+            if found_free is not None and found_free.id in file_part_ids and found_free.id not in part_ids:
+                notes.append(f"already a part: {found_free.product_code}")
+                continue
         resolved = _free_resolve(db, free, company_id, host, part_ids)
         if resolved is None:
             label = (free.get("code") or "").strip() if free.get("kind") != "accessory" else ""
@@ -617,11 +669,6 @@ def process_entry_strict(
         if host_no_sp or k["product"].id in no_sp_ids:
             k["sp"] = k["topup"] = None
 
-    names = {name.lower(), *((a or "").strip().lower() for a in entry.get("aka") or [])} - {""}
-    host_combos = (
-        db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).order_by(ProductCombo.name).all()
-    )
-    existing = next((c for c in host_combos if (c.name or "").lower() in names), None)
     if existing is None:
         others = ", ".join(f'"{c.name}"' for c in host_combos)
         details = f"host also has: {others}" if others else ""
@@ -729,6 +776,7 @@ def process_entry_strict(
                 prices["topup_amount"] = k["topup"]
             if prices:
                 service.update_part(created["id"], prices, fields_set=set(prices))
+    details = "; ".join(part for part in (details, *notes) if part)
     if existing is None:
         return _verdict_row(entry, "CREATE", details)
     return _verdict_row(entry, verdict, details)
@@ -927,6 +975,11 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
     parser.add_argument("--templates", action="store_true", help="also create the starter templates")
     args = parser.parse_args(list(argv) if argv is not None else None)
     out = out or sys.stdout
+    if args.strict:
+        ignored = [flag for flag, on in (("--photos", args.photos), ("--link-templates", args.link_templates),
+                                         ("--templates", args.templates)) if on]
+        if ignored:
+            out.write(f"--strict ignores {', '.join(ignored)}\n")
 
     try:
         entries = read_seed(args.file)
@@ -1001,7 +1054,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
             )
             # The report first: a template failure must not lose it.
             write_report(report, rows)
-            if args.templates:
+            if args.templates and not args.strict:
                 create_templates(db, company_id, args.apply, out)
             if not args.apply:
                 db.rollback()
@@ -1013,7 +1066,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
             out.write(f"report: {report}\n")
             if not args.apply:
                 out.write("DRY RUN: nothing written. Run with --apply to load.\n")
-            return 0
+            return 2 if any(row["verdict"] == "FAILED" for row in rows) else 0
         for status in sorted({row["status"] for row in rows}):
             out.write(f"{status}: {sum(1 for row in rows if row['status'] == status)}\n")
         guesses = sum(1 for row in rows if row["guess"])
