@@ -1,6 +1,6 @@
 # CARD: drag the accessories box header in the Tag Template designer (PRICETAG-HEADER-DRAG, 09/11/2026)
 
-Status: Review (built on PR #2278; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
+Status: Hand test (built on PR #2278, reviewer READY, browser pass PASS; all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
 lines, frontend only, no migration, no RBAC change).
 
 ## Owner rulings (9 Nov ~14:25, verbatim: "1a, 2 it should be up to my arrangement, 3 i don't need
