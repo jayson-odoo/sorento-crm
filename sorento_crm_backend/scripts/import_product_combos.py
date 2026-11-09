@@ -560,7 +560,7 @@ def _free_resolve(db, free: dict, company_id, host, part_ids: set):
     label = (free.get("label") or "").strip()
     if kind in (None, "product") and code:
         product = _free_product(db, code, company_id)
-        if product is not None and product.id != host.id and product.id not in part_ids:
+        if product is not None and (host is None or product.id != host.id) and product.id not in part_ids:
             return ("product_id", product.id)
     if kind == "accessory" and label:
         accessory = (
@@ -598,7 +598,7 @@ def process_entry_strict(
     part_ids = {k["product"].id for k in keep} | held_back
     free_keys, seen = [], set()
     for free in entry.get("free_items") or []:
-        resolved = _free_resolve(db, free, company_id, host, part_ids) if host is not None else None
+        resolved = _free_resolve(db, free, company_id, host, part_ids)
         if resolved is None:
             label = (free.get("code") or "").strip() if free.get("kind") != "accessory" else ""
             missing.append(label or (free.get("label") or "").strip() or "free item")
@@ -670,11 +670,32 @@ def process_entry_strict(
                 for pid, part in have.items() if pid not in held_back
             }
             if seed_set != file_set:
-                flyer_codes = ", ".join(k["product"].product_code for k in keep)
-                on_file = ", ".join(
-                    part.part_product.product_code for part in have.values() if part.part_product is not None
-                )
-                kept.append(f"parts differ (flyer: {flyer_codes}; on file: {on_file})")
+                def listing(groups: dict) -> str:
+                    return "; ".join(
+                        f"{label}: {', '.join(sorted(codes))}" for label, codes in sorted(groups.items())
+                    )
+
+                def grouped(pairs) -> dict:
+                    out_groups: dict = {}
+                    for code, (group, upgrade) in pairs:
+                        label = "upgrade" if upgrade else (group or "fixed")
+                        out_groups.setdefault(label, []).append(code)
+                    return out_groups
+
+                flyer_pairs = [(k["product"].product_code, seed_set[k["product"].id]) for k in keep]
+                file_pairs = [
+                    (part.part_product.product_code, file_set[pid])
+                    for pid, part in have.items() if pid in file_set and part.part_product is not None
+                ]
+                if set(seed_set) == set(file_set):
+                    kept.append(
+                        f"parts grouped differently (flyer: {listing(grouped(flyer_pairs))}; "
+                        f"on file: {listing(grouped(file_pairs))})"
+                    )
+                else:
+                    flyer_codes = ", ".join(sorted(code for code, _ in flyer_pairs))
+                    on_file = ", ".join(sorted(code for code, _ in file_pairs))
+                    kept.append(f"parts differ (flyer: {flyer_codes}; on file: {on_file})")
         if part_fills:
             fields.append(f"parts {' '.join(part_fills)}")
         if fields:
