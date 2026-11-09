@@ -385,6 +385,10 @@ export interface AccessoriesLayerProps {
   headerOnBorder?: boolean;
   /** What shows behind a header on the border (the tag's own background). */
   headerBackground?: string;
+  /** PRICETAG-HEADER-DRAG: where the header was dragged to, its top-left in mm from the box's
+   *  top-left. Absent / null = today's computed spot. A moved header is plain text (never on the
+   *  border) and moves nothing else in the box. Part of the linked design (owner Q5, 9 Nov). */
+  headerPos?: { x_mm: number; y_mm: number } | null;
   headerStyle?: AccessoryTextStyle;
   nameStyle?: AccessoryTextStyle;
   specStyle?: AccessoryTextStyle;

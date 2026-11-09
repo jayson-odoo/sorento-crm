@@ -72,7 +72,8 @@ const LIST: TagAccessory[] = [
     list_price: 68,
   },
 ];
-const POS = { x_mm: 6.5, y_mm: 22 };
+// Inside the closed-up box of one card (designed card 16 mm tall), so the spot is not pulled in.
+const POS = { x_mm: 6.5, y_mm: 14 };
 const CARD = {
   width_mm: 38,
   height_mm: 16,

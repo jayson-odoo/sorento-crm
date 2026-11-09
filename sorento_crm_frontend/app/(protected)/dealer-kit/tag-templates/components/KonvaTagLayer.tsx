@@ -1271,7 +1271,7 @@ function AccessoriesContent({
           width={px(box.header.width_mm)}
           height={px(box.header.height_mm)}
           text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
+          align={box.header.onBorder || box.header.moved ? 'center' : header.align}
           verticalAlign="middle"
           fontStyle={konvaFontStyle(header)}
           textDecoration={konvaDecoration(header)}
@@ -1434,7 +1434,7 @@ function DesignedAccessoriesContent({
           width={px(box.header.width_mm)}
           height={px(box.header.height_mm)}
           text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
+          align={box.header.onBorder || box.header.moved ? 'center' : header.align}
           verticalAlign="middle"
           fontStyle={konvaFontStyle(header)}
           textDecoration={konvaDecoration(header)}

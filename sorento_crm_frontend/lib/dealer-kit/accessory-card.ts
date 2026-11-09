@@ -765,6 +765,25 @@ export function snapElement(
   return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
 }
 
+/**
+ * PRICETAG-HEADER-DRAG: where a dragged box header lands, in mm from the box's top-left. It snaps
+ * (left / centre / right, top / middle / bottom) onto the box's edges and centre lines and onto the
+ * frame's edges (so its middle can sit on the top border), then is kept inside the box.
+ */
+export function snapHeader(
+  header: Box,
+  frame: Box | null,
+  box: { width_mm: number; height_mm: number },
+): { x_mm: number; y_mm: number; guides: ElementGuide[] } {
+  const snapped = snapElement(header, frame ? [frame] : [], box);
+  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
+  return {
+    x_mm: clamp(snapped.x_mm, box.width_mm - header.width_mm),
+    y_mm: clamp(snapped.y_mm, box.height_mm - header.height_mm),
+    guides: snapped.guides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Live link between boxes and a saved template
 // ---------------------------------------------------------------------------

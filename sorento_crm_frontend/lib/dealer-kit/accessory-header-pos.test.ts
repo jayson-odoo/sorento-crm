@@ -84,11 +84,11 @@ describe('box layouts: the cards never move with the header (Q2)', () => {
   it('designed card box: same cards, footer and size with and without a moved header', () => {
     const props = base({ headerOnBorder: true, card: CARD });
     const before = cardBoxLayout(2, props, 50, 80);
-    const after = cardBoxLayout(2, { ...props, headerPos: { x_mm: 3, y_mm: 60 } }, 50, 80);
+    const after = cardBoxLayout(2, { ...props, headerPos: { x_mm: 3, y_mm: 30 } }, 50, 80);
     expect(after.cards).toEqual(before.cards);
     expect(after.footer).toEqual(before.footer);
     expect(after.boxHeight_mm).toBe(before.boxHeight_mm);
-    expect(after.header!.y_mm).toBe(60);
+    expect(after.header!.y_mm).toBe(30);
   });
 
   it('legacy box: same cards with and without a moved header', () => {

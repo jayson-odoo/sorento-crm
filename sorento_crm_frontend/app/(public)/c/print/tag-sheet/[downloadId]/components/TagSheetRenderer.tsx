@@ -1424,7 +1424,7 @@ function renderAccessoriesLayer(
             lineHeight: `${box.header.height_mm}mm`,
             // On the border: the header background breaks the border behind the text (legend).
             backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
+            ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
             // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
             whiteSpace: 'nowrap',
@@ -1573,7 +1573,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             height: `${box.header.height_mm}mm`,
             lineHeight: `${box.header.height_mm}mm`,
             backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
+            ...accessoryTextCss(headerStyle, box.header.onBorder || box.header.moved ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
             whiteSpace: 'nowrap',
           }}
