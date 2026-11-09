@@ -440,7 +440,7 @@ def test_the_migration_seeds_the_town_snapshot_row():
 
     def read(db):
         return db.execute(sa.text(
-            "SELECT name, interval_unit, interval_value, enabled, next_run_at "
+            "SELECT name, interval_unit, interval_value, enabled, next_run_at, metadata "
             "FROM scheduled_tasks WHERE key = 'town_snapshot'"
         )).mappings().all()
 
@@ -451,5 +451,9 @@ def test_the_migration_seeds_the_town_snapshot_row():
         (row,) = read(db)
         assert row["name"] == "Sorento town snapshot"
         assert (row["interval_unit"], row["interval_value"], row["enabled"]) == ("minutes", 3, True)
+        # Owner ruling Q3 (b): no run rows outside 07:00-22:05 Malaysia time.
+        assert row["metadata"] == {
+            "active_window": {"start": "07:00", "end": "22:05", "timezone": "Asia/Kuala_Lumpur"}
+        }
         run(db, "downgrade")
         assert read(db) == []

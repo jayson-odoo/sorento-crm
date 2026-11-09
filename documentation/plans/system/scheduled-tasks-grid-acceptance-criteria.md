@@ -9,9 +9,14 @@ Plan: `PLAN-scheduled-tasks-grid-09nov.md`.
 - AC-2 The job runs through the scheduled-tasks heartbeat only; no bare APScheduler job
   `town_snapshot` remains (so it never runs twice per tick).
 - AC-3 A tick inside 07:00-22:05 MYT that builds every company records status Success with
-  summary `{companies, built, failed: 0}`; outside the window, Success with
-  `{"skipped": "outside 07:00-22:05 Malaysia time"}`; while another run holds the lock,
-  Success with `{"skipped": "an earlier town run is still going"}`.
+  summary `{companies, built, failed: 0}`; while another run holds the lock, Success with
+  `{"skipped": "an earlier town run is still going"}`.
+- AC-3b (Q3 b) Outside 07:00-22:05 MYT the scheduler writes NO run row and leaves Last run
+  alone; Next run reads the next 07:00 MYT; the task is not reported overdue overnight. A Run
+  now pressed outside the window records Success with `{"skipped": "outside 07:00-22:05
+  Malaysia time"}`.
+- AC-3c (Q4 c) The build never runs on the heartbeat thread: the heartbeat marks the task
+  Started and hands the run to its own thread, which records status, error and duration.
 - AC-4 A company whose build fails does not stop the others; the run then records status
   Failed and the task's Last error reads `Town snapshot failed for N of M companies: <company
   name>: <error>` (company NAME, never its id).

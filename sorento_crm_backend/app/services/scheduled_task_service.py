@@ -1,7 +1,8 @@
 """Service for scheduled task execution and run logging."""
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy import case, or_
@@ -144,10 +145,63 @@ def compute_next_run(
     return from_time + delta
 
 
+def _active_window(task: ScheduledTask) -> Optional[tuple[time, time, ZoneInfo]]:
+    """`metadata.active_window` = {"start": "HH:MM", "end": "HH:MM", "timezone": "<IANA>"}:
+    the local hours a task may run in (start <= local time <= end, same day). Outside them the
+    task is not due, writes no run row and is not overdue. Absent or malformed = always on."""
+    meta = getattr(task, "metadata_", None)
+    window = meta.get("active_window") if isinstance(meta, dict) else None
+    if not isinstance(window, dict):
+        return None
+    try:
+        start = time.fromisoformat(str(window["start"]))
+        end = time.fromisoformat(str(window["end"]))
+        tz = ZoneInfo(str(window.get("timezone") or "UTC"))
+    except (KeyError, ValueError, ZoneInfoNotFoundError):
+        logger.warning("Scheduled task %s has a malformed active_window %r; ignoring it", _task_key(task), window)
+        return None
+    if start >= end:
+        logger.warning("Scheduled task %s active_window must start before it ends; ignoring it", _task_key(task))
+        return None
+    return start, end, tz
+
+
+def in_active_window(task: ScheduledTask, when: datetime) -> bool:
+    """Whether `when` (naive UTC, like every scheduler timestamp) is inside the task's window."""
+    window = _active_window(task)
+    if window is None:
+        return True
+    start, end, tz = window
+    local = when.replace(tzinfo=_UTC).astimezone(tz).time()
+    return start <= local <= end
+
+
+def _shift_into_window(task: ScheduledTask, when: Optional[datetime]) -> Optional[datetime]:
+    """`when` itself if it is inside the task's window, else the window's next opening (naive UTC)."""
+    window = _active_window(task)
+    if when is None or window is None or in_active_window(task, when):
+        return when
+    start, _end, tz = window
+    local = when.replace(tzinfo=_UTC).astimezone(tz)
+    opening = local.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    if opening <= local:
+        opening = (local + timedelta(days=1)).replace(
+            hour=start.hour, minute=start.minute, second=0, microsecond=0
+        )
+    return opening.astimezone(_UTC).replace(tzinfo=None)
+
+
+def next_run_for(task: ScheduledTask, from_time: datetime) -> datetime:
+    """`compute_next_run` for this task, moved to its window's opening when it lands outside."""
+    return _shift_into_window(task, compute_next_run(*_task_schedule_args(task), from_time))
+
+
 def _is_task_due(task: ScheduledTask, now: datetime) -> bool:
-    """Frequency-driven: task fires if start_at has passed AND
-    (never ran OR `now - last_run >= interval`).
+    """Frequency-driven: task fires if start_at has passed AND it is inside its
+    `active_window` (if any) AND (never ran OR `now - last_run >= interval`).
     """
+    if not in_active_window(task, now):
+        return False
     start_at = getattr(task, "start_at", None)
     if isinstance(start_at, datetime) and start_at > now:
         return False
@@ -214,13 +268,14 @@ def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
         # fallback so a task seeded without `start_at` still has an honest
         # baseline rather than being skipped (the old watchdog dropped these).
         created_at = getattr(task, "created_at", None)
-        return start_at or (created_at if isinstance(created_at, datetime) else None)
+        return _shift_into_window(task, start_at or (created_at if isinstance(created_at, datetime) else None))
 
     delta = _interval_delta(
         str(getattr(task, "interval_unit")),
         int(getattr(task, "interval_value")),
     )
-    return last_run + delta
+    # A task with an active_window is not owed a run while the window is shut.
+    return _shift_into_window(task, last_run + delta)
 
 
 def compute_grace(task: ScheduledTask, grace_percent: Optional[int] = None) -> timedelta:
@@ -452,13 +507,13 @@ def update_task(
         else now
     )
     interval_unit_value, interval_value_value, timezone_value, task_start_at = _task_schedule_args(task)
-    setattr(task, "next_run_at", compute_next_run(
+    setattr(task, "next_run_at", _shift_into_window(task, compute_next_run(
         interval_unit_value,
         interval_value_value,
         timezone_value,
         task_start_at,
         base_time,
-    ))
+    )))
     setattr(task, "updated_at", now)
     db.commit()
     db.refresh(task)
@@ -494,7 +549,7 @@ def _execute_task_run(
                 duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
                 summary={"reason": "no handler registered"},
             )
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 bg_db, _task_id(task), "skipped", None,
                 {"reason": "no handler registered"}, next_run,
@@ -509,7 +564,7 @@ def _execute_task_run(
             summary = handler(bg_db, task)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(bg_db, run_id, status="success", duration_ms=duration_ms, summary=summary or {})
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(bg_db, _task_id(task), "success", None, summary, next_run)
         except Exception as e:
             logger.exception("Scheduled task %s failed in background", task_key)
@@ -520,7 +575,7 @@ def _execute_task_run(
             except Exception:
                 pass
             finish_run(bg_db, run_id, status="failed", duration_ms=duration_ms, error=err_msg)
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(bg_db, _task_id(task), "failed", err_msg, None, next_run)
     finally:
         try:
@@ -712,7 +767,7 @@ def run_due_tasks(db: Session) -> None:
                 setattr(task, "last_run_at", now)
                 setattr(task, "last_status", "started")
                 setattr(task, "last_error", None)
-                setattr(task, "next_run_at", compute_next_run(*_task_schedule_args(task), now))
+                setattr(task, "next_run_at", next_run_for(task, now))
                 db.commit()
                 _dispatch_run_in_thread(db, task)
                 continue
@@ -731,10 +786,7 @@ def run_due_tasks(db: Session) -> None:
                 set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
-            next_run = compute_next_run(
-                *_task_schedule_args(task),
-                datetime.utcnow(),
-            )
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 db, _task_id(task), last_status="success", last_error=None, summary=summary, next_run_at=next_run
             )
@@ -750,10 +802,7 @@ def run_due_tasks(db: Session) -> None:
                     duration_ms=duration_ms,
                     error=err_msg,
                 )
-            next_run = compute_next_run(
-                *_task_schedule_args(task),
-                datetime.utcnow(),
-            )
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 db, _task_id(task), last_status="failed", last_error=err_msg, summary=None, next_run_at=next_run
             )
