@@ -8,9 +8,9 @@ REMARK says "NEW LOCATION (was BRW)".
 
 This gives each such row what a row written now carries (`planning_change_service.
 carry_planned_location`, the one rule): `from.location` = where the line was last confirmed
-(else where its live ORDER rows sit), `to.location` = where it is now. Only pending rows, only
-those two keys; nothing else on the row changes. A repaired row carries a location, so a second
-run finds nothing.
+(else where its live ORDER rows sit), `to.location` = where it is now. Only pending rows that
+carry no location on either side, only those two keys; nothing else on the row changes. A
+repaired row carries a location, so a second run finds nothing.
 
 Dry run is the default. `run()` does not commit; `main()` does, after `run()` returns.
 
@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.database import SessionLocal  # noqa: E402
+from app.models.base import set_company_scope  # noqa: E402
 from app.models.inventory import Warehouse  # noqa: E402
 from app.models.order import SalesOrderLine  # noqa: E402
 from app.models.planning_change import (  # noqa: E402
@@ -43,6 +44,7 @@ from app.services.planning_change_service import (  # noqa: E402
     confirmed_locations,
 )
 from app.services.project_line_split_service import display_line_nos  # noqa: E402
+from app.services.company_scope import register_company_scope_listeners  # noqa: E402
 from app.services.project_supply_service import ProjectSupplyService  # noqa: E402
 
 
@@ -88,6 +90,9 @@ def run(db: Session, *, apply: bool) -> dict:
     so_numbers: Dict[str, str] = {}
     found = []
     for row in rows:
+        if (row.from_json or {}).get("location") or (row.to_json or {}).get("location"):
+            # Already says a move (detected, or repaired by an earlier run): left as it is.
+            continue
         pso_id = str(row.project_sales_order_id)
         if pso_id not in confirmed_by_order:
             confirmed_by_order[pso_id] = confirmed_locations(supply.active_decision(pso_id))
@@ -103,7 +108,7 @@ def run(db: Session, *, apply: bool) -> dict:
             confirmed=confirmed_by_order[pso_id],
             now_location=now.get(line_id),
         )
-        if new_from.get("location") == (row.from_json or {}).get("location"):
+        if not new_from.get("location"):
             continue
         found.append((row, new_from, new_to))
         print(
@@ -130,7 +135,11 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Write. Default is a dry run.")
     args = parser.parse_args()
 
+    register_company_scope_listeners()
     db = SessionLocal()
+    # No request to resolve a company from: `None` reads every company (the scope otherwise
+    # defaults to fail-closed, 0 rows), as `recompute_planning_change_proposals.py` does.
+    set_company_scope(db, None)
     try:
         result = run(db, apply=args.apply)
         if not args.apply:

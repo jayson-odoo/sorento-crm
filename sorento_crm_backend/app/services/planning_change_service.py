@@ -898,21 +898,20 @@ def carry_planned_location(
     confirmed: Dict[str, Optional[str]],
     now_location: Optional[str],
 ) -> Tuple[dict, dict]:
-    """SO-LOCATION-GAP (owner, 9 Nov 2026, prod SO429664): a change on a line that sits at
-    another location than the one it was planned at carries that move, whichever AutoCount
-    push made it. `_from_to` compares the two sides of ONE push only, so a move an earlier push
-    made (one before #2221 detected moves) never reached the row, while the purchasing email
-    (and the Review split's REMARK, its dry run) said it.
+    """SO-LOCATION-GAP (owner, 9 Nov 2026, prod SO429664): a change on a line carries the move
+    from where the line was planned to where it is now, whichever AutoCount push made it.
+    `_from_to` compares the two sides of ONE push only, so a move an earlier push made (one
+    before #2221 detected moves) never reached the row, while the purchasing email (and the
+    Review split's REMARK, its dry run) said it.
 
     Planned is the purchasing email's own reference: the location the active decision
     confirmed the line at (`confirmed`, `_location_moved_from`), else, for a line no decision
     covers, the one location its live ORDER rows sit at (`held_order_locations`,
-    `_held_location_moved_from`). A row that already carries a location (the push moved it,
-    or the row it replaces did), an `added` or `cancelled` row, or a line where it was planned
-    is returned as is. Returns `(from_json, to_json)`."""
+    `_held_location_moved_from`). It wins over the push's own before side (a line moved before
+    detection and moved again reads from where it was confirmed, lane review round 1), and a
+    line back where it was planned carries no location. With no reference, or on an `added` or
+    `cancelled` row, the row is returned as is. Returns `(from_json, to_json)`."""
     if kind in ("added", "cancelled") or not project_line_id or not now_location:
-        return from_json, to_json
-    if (from_json or {}).get("location") or (to_json or {}).get("location"):
         return from_json, to_json
     if project_line_id in confirmed:
         planned = confirmed[project_line_id]
@@ -921,9 +920,13 @@ def carry_planned_location(
 
         held = held_order_locations(db, [project_line_id]).get(project_line_id)
         planned = held[0] if held else None
-    if not planned or planned == now_location:
+    if not planned:
         return from_json, to_json
-    return {**(from_json or {}), "location": planned}, {**(to_json or {}), "location": now_location}
+    moved = planned != now_location
+    return (
+        {**(from_json or {}), "location": planned if moved else None},
+        {**(to_json or {}), "location": now_location if moved else None},
+    )
 
 
 def _nets_to_nothing(row: PlanningChangeRow) -> bool:
@@ -1275,6 +1278,11 @@ def build_batch(
                     older.applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
                     older.applied_reason = "Line changed again; the row no longer describes it"
                 continue
+            if older is None and _nets_to_nothing(row):
+                # SO-LOCATION-GAP: a push that only takes the line back where it was
+                # planned leaves nothing for CS to decide; no row (as a replacement that nets
+                # to nothing retires, below).
+                continue
             kept_orders.add(pso_id)
             if open_batch_id:
                 # R1 (captain's ruling, review round): one open batch per order, always -
@@ -1293,6 +1301,17 @@ def build_batch(
                     # chained it through.
                     row.from_json, row.to_json = _carry_location(
                         older.from_json, row.from_json, row.to_json, e["change"]
+                    )
+                    # SO-LOCATION-GAP: where the line was confirmed outranks the older row's
+                    # own "from" (an older row may name a stop in between).
+                    row.from_json, row.to_json = carry_planned_location(
+                        db, row.from_json, row.to_json,
+                        kind=row.kind,
+                        project_line_id=entry_line_id,
+                        confirmed=confirmed,
+                        now_location=(
+                            e["change"].after.location if e["change"].after is not None else None
+                        ),
                     )
                     if _nets_to_nothing(row):
                         # Moved back where it was planned, nothing else changed: the
