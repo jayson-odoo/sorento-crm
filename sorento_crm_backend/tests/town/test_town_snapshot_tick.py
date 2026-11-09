@@ -320,24 +320,9 @@ def test_town_snapshot_is_no_longer_a_bare_apscheduler_job():
     assert 'id="town_snapshot"' not in source
 
 
-def test_a_failed_company_surfaces_as_the_scheduled_tasks_last_error(env):
-    """Through the heartbeat itself: the row reads failed, with the company and the error."""
-    from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
-    from app.scheduler.task_scheduler import register_task_handlers
-    from app.services.scheduled_task_service import run_due_tasks
+def _town_task(env):
+    from app.models.scheduled_task import ScheduledTask
 
-    register_task_handlers()
-    # The heartbeat calls the tick with the real clock; open the window all day for the test.
-    env.patch.setattr(env.town, "OPEN_MINUTE", 0)
-    env.patch.setattr(env.town, "CLOSE_MINUTE", 24 * 60)
-    env.patch.setattr(env.town, "NIGHT_MINUTE", 24 * 60 + 1)
-
-    def flaky(session, company_id, day, *, now):
-        if company_id == DEFAULT_COMPANY_ID:
-            raise RuntimeError("ZZT boom")
-        return fake_full(day, company_id)
-
-    env.patch.setattr(env.town, "build_snapshot", flaky)
     db = env.db
     db.execute(sa.text("DELETE FROM scheduled_tasks WHERE key = 'town_snapshot'"))
     task = ScheduledTask(
@@ -347,15 +332,90 @@ def test_a_failed_company_surfaces_as_the_scheduled_tasks_last_error(env):
     )
     db.add(task)
     db.flush()
+    return task
+
+
+def _open_window_all_day(env):
+    # The heartbeat calls the tick with the real clock; open the window all day for the test.
+    env.patch.setattr(env.town, "OPEN_MINUTE", 0)
+    env.patch.setattr(env.town, "CLOSE_MINUTE", 24 * 60)
+    env.patch.setattr(env.town, "NIGHT_MINUTE", 24 * 60 + 1)
+
+
+def test_town_runs_off_the_heartbeat_thread(env):
+    """Crew ruling Q4 (c): the heartbeat dispatches Town on Run now's own thread path and
+    returns; it never runs the build itself, and claims the tick so the next 10s heartbeat
+    does not dispatch it again while the build is still going."""
+    from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services import scheduled_task_service as sts
+
+    register_task_handlers()
+    assert "town_snapshot" in sts.BACKGROUND_TASK_KEYS
+    started: list[tuple] = []
+    env.patch.setattr(sts, "_start_thread", lambda target, args, name: started.append(args))
+    task = _town_task(env)
+
+    sts.run_due_tasks(env.db)
+    assert env.calls == []  # the heartbeat thread built nothing
+    assert len(started) == 1 and started[0][0] == task.id and started[0][2] == "town_snapshot"
+    env.db.expire_all()
+    row = env.db.get(ScheduledTask, task.id)
+    assert row.last_status == "started" and row.last_run_at is not None
+    (run,) = env.db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
+    assert run.status == "started" and str(run.id) == started[0][1]
+
+    sts.run_due_tasks(env.db)  # the next heartbeat, 10s later
+    assert len(started) == 1
+
+
+def test_a_failed_company_surfaces_as_the_scheduled_tasks_last_error(env):
+    """Through the heartbeat and the run thread: the row reads failed, naming the company."""
+    from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services import scheduled_task_service as sts
+
+    register_task_handlers()
+    _open_window_all_day(env)
+    # Run the "thread" inline, on the test's own session (a real thread's session could not
+    # see this test's uncommitted rows).
+    env.patch.setattr(sts, "_start_thread", lambda target, args, name: target(*args))
+    env.patch.setattr(sts, "SessionLocal", lambda: _KeepOpen(env.db))
+
+    def flaky(session, company_id, day, *, now):
+        if company_id == DEFAULT_COMPANY_ID:
+            raise RuntimeError("ZZT boom")
+        return fake_full(day, company_id)
+
+    env.patch.setattr(env.town, "build_snapshot", flaky)
+    task = _town_task(env)
     _redis().delete("town:lock")
-    run_due_tasks(db)
-    db.expire_all()
-    row = db.get(ScheduledTask, task.id)
+    sts.run_due_tasks(env.db)
+    env.db.expire_all()
+    row = env.db.get(ScheduledTask, task.id)
     assert row.last_status == "failed"
     assert "1 of 2 companies" in row.last_error and "ZZT boom" in row.last_error
     assert row.next_run_at is not None and row.last_run_at is not None
-    (run,) = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
-    assert run.status == "failed" and "ZZT boom" in run.error
+    (run,) = env.db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
+    assert run.status == "failed" and "ZZT boom" in run.error and run.duration_ms is not None
+
+
+def test_a_clean_tick_records_success_with_its_summary(env):
+    from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services import scheduled_task_service as sts
+
+    register_task_handlers()
+    _open_window_all_day(env)
+    env.patch.setattr(sts, "_start_thread", lambda target, args, name: target(*args))
+    env.patch.setattr(sts, "SessionLocal", lambda: _KeepOpen(env.db))
+    task = _town_task(env)
+    _redis().delete("town:lock")
+    sts.run_due_tasks(env.db)
+    env.db.expire_all()
+    assert env.db.get(ScheduledTask, task.id).last_status == "success"
+    (run,) = env.db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
+    assert run.summary == {"companies": 2, "built": 2, "failed": 0}
 
 
 def test_the_migration_seeds_the_town_snapshot_row():

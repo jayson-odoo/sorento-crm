@@ -27,6 +27,12 @@ TaskHandler = Callable[[Session, ScheduledTask], dict[str, Any]]
 # Registry of task key -> handler. Populated when handlers are registered.
 TASK_HANDLERS: dict[str, TaskHandler] = {}
 
+# Keys whose scheduled runs leave the heartbeat thread (SCHEDULED-TASKS-GRID, crew ruling Q4):
+# the heartbeat runs handlers one after another, so a slow handler would make every 15s task
+# (form_action_commit, ...) slip by its duration. These dispatch on Run now's own thread path
+# (`_dispatch_run_in_thread`), which writes the run row and the task's last status/error.
+BACKGROUND_TASK_KEYS: set[str] = set()
+
 
 def _task_schedule_args(task: ScheduledTask) -> tuple[str, int, str, Optional[datetime]]:
     interval_unit = str(getattr(task, "interval_unit"))
@@ -79,9 +85,14 @@ def task_company_scope(task: ScheduledTask):
     return frozenset(ids) if ids else None
 
 
-def register_handler(key: str, handler: TaskHandler) -> None:
-    """Register a handler for a scheduled task key."""
+def register_handler(key: str, handler: TaskHandler, *, background: bool = False) -> None:
+    """Register a handler for a scheduled task key. `background=True` runs each scheduled run
+    off the heartbeat thread, the way Run now always does."""
     TASK_HANDLERS[key] = handler
+    if background:
+        BACKGROUND_TASK_KEYS.add(key)
+    else:
+        BACKGROUND_TASK_KEYS.discard(key)
 
 
 def _handler_cost_price_daily_tick(db: Session, task: ScheduledTask) -> dict[str, Any]:
@@ -518,17 +529,18 @@ def _execute_task_run(
             pass
 
 
-def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
-    """
-    Trigger a manual run asynchronously. Creates the run record synchronously
-    (so the caller gets a run_id), then dispatches the handler in a background
-    thread. Returns immediately with status="started"; clients should poll
-    /scheduled-tasks/{task_id}/runs for completion.
-    """
-    task = get_task(db, task_id)
-    if not task:
-        return None
+def _start_thread(target, args, name: str) -> None:
+    """Seam for tests: the run thread opens its own session, which a rolled-back test
+    transaction cannot share."""
+    threading.Thread(target=target, args=args, name=name, daemon=True).start()
 
+
+def _dispatch_run_in_thread(
+    db: Session, task: ScheduledTask, requested_by_user_id: Optional[str] = None
+) -> str:
+    """Open the run row now (status started) and run the handler on its own thread, which
+    records the outcome on the run and the task (`_execute_task_run`). Run now and the
+    background scheduled tasks both come through here. Returns the run id."""
     run = create_run(db, _task_id(task), status="started")
     run_id = _run_id(run)
     task_key = _task_key(task)
@@ -549,14 +561,26 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
         ), audit_context_scope(correlation_id=run_id):
             _execute_task_run(*args)
 
-    thread = threading.Thread(
-        target=_run_as_requester,
-        args=(task_id_str, run_id, task_key, requested_by_user_id),
-        name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
-        daemon=True,
+    _start_thread(
+        _run_as_requester,
+        (task_id_str, run_id, task_key, requested_by_user_id),
+        f"scheduled-task-run-{task_key}-{run_id[:8]}",
     )
-    thread.start()
+    return run_id
 
+
+def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
+    """
+    Trigger a manual run asynchronously. Creates the run record synchronously
+    (so the caller gets a run_id), then dispatches the handler in a background
+    thread. Returns immediately with status="started"; clients should poll
+    /scheduled-tasks/{task_id}/runs for completion.
+    """
+    task = get_task(db, task_id)
+    if not task:
+        return None
+
+    run_id = _dispatch_run_in_thread(db, task, requested_by_user_id)
     return {
         "run_id": run_id,
         "status": "started",
@@ -679,6 +703,18 @@ def run_due_tasks(db: Session) -> None:
                         "leaving it due for one that has.",
                         _task_key(task),
                     )
+                continue
+            if _task_key(task) in BACKGROUND_TASK_KEYS:
+                # Claim the tick on THIS thread (last_run_at drives `_is_task_due`), so the next
+                # heartbeat does not dispatch it again while the run is still going; the run
+                # thread stamps the outcome when it finishes.
+                now = datetime.utcnow()
+                setattr(task, "last_run_at", now)
+                setattr(task, "last_status", "started")
+                setattr(task, "last_error", None)
+                setattr(task, "next_run_at", compute_next_run(*_task_schedule_args(task), now))
+                db.commit()
+                _dispatch_run_in_thread(db, task)
                 continue
             run = create_run(db, _task_id(task), status="started")
             from app.audit_context import AuditActor, actor_scope

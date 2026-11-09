@@ -877,8 +877,9 @@ def register_task_handlers():
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
     # SORENTO-TOWN: a `scheduled_tasks` row (town_0002), every 3 minutes; the job itself keeps
-    # to 07:00-22:05 MYT. It was a bare APScheduler job, invisible on Scheduled Tasks.
-    register_handler("town_snapshot", _handler_town_snapshot)
+    # to 07:00-22:05 MYT. It was a bare APScheduler job, invisible on Scheduled Tasks. Off the
+    # heartbeat thread: a build takes seconds (ranking capped at 30s) every 3 minutes.
+    register_handler("town_snapshot", _handler_town_snapshot, background=True)
 
 
 def start_scheduler():
