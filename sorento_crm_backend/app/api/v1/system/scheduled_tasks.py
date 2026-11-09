@@ -1,6 +1,6 @@
 """Scheduled tasks API: list, detail, update, run logs, run-now."""
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, PaginationResponse
 from app.services.user_service import UserPermissionService
 from app.services.scheduled_task_service import (
     DEFAULT_GRACE_PERCENT,
+    TASK_SORT_COLUMNS,
     compute_due_at,
     compute_grace,
     get_task,
@@ -75,20 +76,48 @@ def _task_to_response(task: ScheduledTask, grace_percent: Optional[int] = None) 
     return resp
 
 
+# ai: not-for-assistant a superadmin console of cron jobs (Enabled, Run now, run log); nobody asks the assistant about scheduler internals
 @router.get("/scheduled-tasks", response_model=ListResponse[ScheduledTaskResponse])
 def list_scheduled_tasks(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    query: Optional[str] = Query(None),
+    enabled: Optional[List[str]] = Query(None),
+    last_status: Optional[List[str]] = Query(None),
+    interval_unit: Optional[List[str]] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all scheduled tasks."""
-    tasks = list_tasks(db)
+    """The Scheduled Tasks grid: server-side search, sort and page; every filter is
+    multi-value (repeated param or comma-separated). `last_status=never` is a task that has
+    not run yet."""
+    if sort and sort not in TASK_SORT_COLUMNS:
+        raise HTTPException(status_code=422, detail=f"Cannot sort scheduled tasks by '{sort}'.")
+    enabled_values = [v.lower() in ("true", "yes", "1") for v in _split_multi(enabled)]
+    tasks, total = list_tasks(
+        db,
+        query=query,
+        enabled=enabled_values or None,
+        last_status=_split_multi(last_status) or None,
+        interval_unit=_split_multi(interval_unit) or None,
+        sort=sort,
+        direction=dir,
+        page=page,
+        limit=limit,
+    )
     grace_percent = resolve_grace_percent(db)  # one settings read for the whole list
     data = [_task_to_response(t, grace_percent) for t in tasks]
     return ListResponse(
         data=data,
-        pagination=PaginationResponse(total=len(data), page=1, limit=len(data) or 50),
-        empty=len(data) == 0,
+        pagination=PaginationResponse(total=total, page=page, limit=limit),
+        empty=total == 0,
     )
+
+
+def _split_multi(values: Optional[List[str]]) -> list[str]:
+    return [part.strip() for v in (values or []) for part in v.split(",") if part.strip()]
 
 
 @router.get("/scheduled-tasks/{task_id}", response_model=ScheduledTaskResponse)

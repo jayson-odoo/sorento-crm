@@ -154,7 +154,12 @@ def test_one_company_failing_does_not_stop_the_next(env):
         return fake_full(day, company_id)
 
     env.patch.setattr(town, "build_snapshot", flaky)
-    _tick(env, myt(DAY, 10, 0))  # must not raise
+    # SCHEDULED-TASKS-GRID: every company is still attempted, THEN the tick raises so the
+    # scheduled task records the failure as its last error (it used to be a log line only).
+    with pytest.raises(town.TownSnapshotFailed) as raised:
+        _tick(env, myt(DAY, 10, 0))
+    assert "1 of 2 companies" in str(raised.value)
+    assert "ZZT boom" in str(raised.value)
     assert sorted(attempted) == sorted([DEFAULT_COMPANY_ID, MOCHA_ID])
     assert _keys_for(MOCHA_ID) != []
     assert _keys_for(DEFAULT_COMPANY_ID) == []
@@ -255,3 +260,136 @@ def test_ac9_event_time_is_the_created_at_instant_in_malaysia_time(env):
     _tick(env, myt(DAY, 22, 0))
     (row,) = _town_days(env.db, DEFAULT_COMPANY_ID)
     assert [e["at"] for e in row.events] == ["10:15"]
+
+
+# --------------------------------------------------------------------------- SCHEDULED-TASKS-GRID
+# The Town job runs as a `scheduled_tasks` row like every other cron job, so it shows on
+# System Management > Scheduled Tasks with its last run, last error, next run and Run now.
+
+
+def test_the_tick_returns_a_summary_of_what_it_built(env):
+    _redis().delete("town:lock")
+    summary = env.town.run_town_snapshot_tick(now=myt(DAY, 10, 0))
+    assert summary == {"companies": 2, "built": 2, "failed": 0}
+
+
+def test_outside_the_window_the_summary_says_so(env):
+    _redis().delete("town:lock")
+    summary = env.town.run_town_snapshot_tick(now=myt(DAY, 23, 30))
+    assert summary == {"skipped": "outside 07:00-22:05 Malaysia time"}
+
+
+def test_a_held_lock_is_reported_in_the_summary(env):
+    _redis().set("town:lock", "someone-else", nx=True, ex=240)
+    summary = env.town.run_town_snapshot_tick(now=myt(DAY, 10, 0))
+    assert summary == {"skipped": "an earlier town run is still going"}
+
+
+def test_the_failure_names_the_company_not_its_id(env):
+    from app.models.company import Company
+
+    def flaky(session, company_id, day, *, now):
+        if company_id == MOCHA_ID:
+            raise RuntimeError("ZZT boom")
+        return fake_full(day, company_id)
+
+    env.patch.setattr(env.town, "build_snapshot", flaky)
+    with pytest.raises(env.town.TownSnapshotFailed) as raised:
+        _tick(env, myt(DAY, 10, 0))
+    mocha_name = env.db.get(Company, MOCHA_ID).name
+    assert f"{mocha_name}: ZZT boom" in str(raised.value)
+    assert MOCHA_ID not in str(raised.value)
+
+
+def test_town_snapshot_is_a_registered_scheduled_task_handler():
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services.scheduled_task_service import TASK_HANDLERS
+
+    register_task_handlers()
+    assert "town_snapshot" in TASK_HANDLERS
+
+
+def test_town_snapshot_is_no_longer_a_bare_apscheduler_job():
+    """One mechanism: a second APScheduler job would run the build twice every 3 minutes."""
+    import inspect
+
+    from app.scheduler import task_scheduler
+
+    source = inspect.getsource(task_scheduler.start_scheduler)
+    assert "_town_snapshot_tick" not in source
+    assert 'id="town_snapshot"' not in source
+
+
+def test_a_failed_company_surfaces_as_the_scheduled_tasks_last_error(env):
+    """Through the heartbeat itself: the row reads failed, with the company and the error."""
+    from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+    from app.scheduler.task_scheduler import register_task_handlers
+    from app.services.scheduled_task_service import run_due_tasks
+
+    register_task_handlers()
+    # The heartbeat calls the tick with the real clock; open the window all day for the test.
+    env.patch.setattr(env.town, "OPEN_MINUTE", 0)
+    env.patch.setattr(env.town, "CLOSE_MINUTE", 24 * 60)
+    env.patch.setattr(env.town, "NIGHT_MINUTE", 24 * 60 + 1)
+
+    def flaky(session, company_id, day, *, now):
+        if company_id == DEFAULT_COMPANY_ID:
+            raise RuntimeError("ZZT boom")
+        return fake_full(day, company_id)
+
+    env.patch.setattr(env.town, "build_snapshot", flaky)
+    db = env.db
+    db.execute(sa.text("DELETE FROM scheduled_tasks WHERE key = 'town_snapshot'"))
+    task = ScheduledTask(
+        key="town_snapshot", name="Sorento town snapshot", enabled=True,
+        interval_unit="minutes", interval_value=3, timezone="UTC",
+        next_run_at=datetime.utcnow() - timedelta(minutes=1),
+    )
+    db.add(task)
+    db.flush()
+    _redis().delete("town:lock")
+    run_due_tasks(db)
+    db.expire_all()
+    row = db.get(ScheduledTask, task.id)
+    assert row.last_status == "failed"
+    assert "1 of 2 companies" in row.last_error and "ZZT boom" in row.last_error
+    assert row.next_run_at is not None and row.last_run_at is not None
+    (run,) = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.task_id == task.id).all()
+    assert run.status == "failed" and "ZZT boom" in run.error
+
+
+def test_the_migration_seeds_the_town_snapshot_row():
+    """Runs the seed migration's own upgrade/downgrade against a blank schema (bootstrap_env
+    builds CI's DB from the models, so a migration's seed rows are never there to read)."""
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "town_0002_scheduled_task.py"
+    spec = importlib.util.spec_from_file_location("zzt_migration_town_0002", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert len(module.revision) <= 32
+
+    def run(db, direction):
+        context = MigrationContext.configure(connection=db.connection())
+        with Operations.context(context):
+            getattr(module, direction)()
+
+    def read(db):
+        return db.execute(sa.text(
+            "SELECT name, interval_unit, interval_value, enabled, next_run_at "
+            "FROM scheduled_tasks WHERE key = 'town_snapshot'"
+        )).mappings().all()
+
+    with blank_session() as db:
+        db.execute(sa.text("DELETE FROM scheduled_tasks WHERE key = 'town_snapshot'"))
+        run(db, "upgrade")
+        run(db, "upgrade")  # idempotent: a redeploy must not trip the unique key
+        (row,) = read(db)
+        assert row["name"] == "Sorento town snapshot"
+        assert (row["interval_unit"], row["interval_value"], row["enabled"]) == ("minutes", 3, True)
+        run(db, "downgrade")
+        assert read(db) == []

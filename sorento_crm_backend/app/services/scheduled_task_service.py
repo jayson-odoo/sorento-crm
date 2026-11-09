@@ -4,6 +4,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Any, Dict
 
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
 from pydantic import ValidationError
@@ -284,9 +285,70 @@ def get_task(db: Session, task_id: str) -> Optional[ScheduledTask]:
     return db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
 
 
-def list_tasks(db: Session) -> list[ScheduledTask]:
-    """List all scheduled tasks (for API)."""
-    return db.query(ScheduledTask).order_by(ScheduledTask.key).all()
+_INTERVAL_SECONDS = case(
+    (ScheduledTask.interval_unit == "seconds", 1),
+    (ScheduledTask.interval_unit == "minutes", 60),
+    (ScheduledTask.interval_unit == "hours", 3600),
+    (ScheduledTask.interval_unit == "days", 86400),
+    else_=0,
+) * ScheduledTask.interval_value
+
+# Every grid column sorts server-side (SCHEDULED-TASKS-GRID). `frequency` sorts by the real
+# length of the interval, so "every 30 sec" comes before "every 1 min".
+TASK_SORT_COLUMNS = {
+    "name": ScheduledTask.name,
+    "key": ScheduledTask.key,
+    "enabled": ScheduledTask.enabled,
+    "frequency": _INTERVAL_SECONDS,
+    "last_status": ScheduledTask.last_status,
+    "last_run_at": ScheduledTask.last_run_at,
+    "next_run_at": ScheduledTask.next_run_at,
+    "last_error": ScheduledTask.last_error,
+}
+
+
+def list_tasks(
+    db: Session,
+    *,
+    query: Optional[str] = None,
+    enabled: Optional[list[bool]] = None,
+    last_status: Optional[list[str]] = None,
+    interval_unit: Optional[list[str]] = None,
+    sort: Optional[str] = None,
+    direction: str = "asc",
+    page: int = 1,
+    limit: Optional[int] = None,
+) -> tuple[list[ScheduledTask], int]:
+    """Scheduled tasks for the grid: search, multi-value filters, sort, page.
+    Returns (rows, total). `last_status` value "never" matches a task that has not run."""
+    q = db.query(ScheduledTask)
+    if query and query.strip():
+        like = f"%{query.strip()}%"
+        q = q.filter(or_(
+            ScheduledTask.name.ilike(like),
+            ScheduledTask.key.ilike(like),
+            ScheduledTask.description.ilike(like),
+            ScheduledTask.last_error.ilike(like),
+        ))
+    if enabled:
+        q = q.filter(ScheduledTask.enabled.in_(enabled))
+    if last_status:
+        statuses = [s for s in last_status if s != "never"]
+        conds = []
+        if statuses:
+            conds.append(ScheduledTask.last_status.in_(statuses))
+        if "never" in last_status:
+            conds.append(ScheduledTask.last_status.is_(None))
+        q = q.filter(or_(*conds))
+    if interval_unit:
+        q = q.filter(ScheduledTask.interval_unit.in_(interval_unit))
+    total = q.count()
+    column = TASK_SORT_COLUMNS.get(sort or "", ScheduledTask.name)
+    ordered = column.desc().nulls_last() if direction == "desc" else column.asc().nulls_last()
+    q = q.order_by(ordered, ScheduledTask.key.asc())
+    if limit:
+        q = q.offset((max(page, 1) - 1) * limit).limit(limit)
+    return q.all(), total
 
 
 def list_runs(

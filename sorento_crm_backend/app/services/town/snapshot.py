@@ -481,25 +481,42 @@ def _run_company(redis: Any, company_id: str, day: date, now: datetime, night: b
         _freeze_day(company_id, day, full, events)
 
 
-def run_town_snapshot_tick(now: Optional[datetime] = None) -> None:
-    """Scheduler job: 07:00-22:05 MYT only; one run at a time (`town:lock`); a company that
-    fails is logged and the next one still runs. From 22:00 MYT the day is also frozen."""
+class TownSnapshotFailed(RuntimeError):
+    """One or more companies failed to build. Raised AFTER every company was attempted, so the
+    scheduled task records it as its last error (System Management > Scheduled Tasks)."""
+
+
+def run_town_snapshot_tick(now: Optional[datetime] = None) -> dict[str, Any]:
+    """Scheduled task `town_snapshot`: 07:00-22:05 MYT only; one run at a time (`town:lock`); a
+    company that fails is logged and the next one still runs, then the tick raises
+    `TownSnapshotFailed` naming each failed company. From 22:00 MYT the day is also frozen.
+    Returns the run summary the scheduled task stores."""
     from app.services.queue_service import redis_conn
 
     now = (now or datetime.now(MYT)).astimezone(MYT)
     minute = now.hour * 60 + now.minute
     if not OPEN_MINUTE <= minute <= CLOSE_MINUTE:
-        return
+        return {"skipped": "outside 07:00-22:05 Malaysia time"}
     token = uuid.uuid4().hex
     if not redis_conn.set(LOCK_KEY, token, nx=True, ex=LOCK_SECONDS):
-        return
+        return {"skipped": "an earlier town run is still going"}
+    failures: list[str] = []
     try:
         with scheduler_session("town_companies") as db:
-            company_ids = [str(c) for (c,) in db.query(Company.id).filter(Company.is_active.is_(True)).all()]
-        for company_id in company_ids:
+            companies = [
+                (str(c), name)
+                for (c, name) in db.query(Company.id, Company.name).filter(Company.is_active.is_(True)).all()
+            ]
+        for company_id, name in companies:
             try:
                 _run_company(redis_conn, company_id, now.date(), now, minute >= NIGHT_MINUTE)
-            except Exception:  # noqa: BLE001 - one company must not stop the next
+            except Exception as exc:  # noqa: BLE001 - one company must not stop the next
                 logger.error("town snapshot failed for company %s", company_id, exc_info=True)
+                failures.append(f"{name or 'Unnamed company'}: {exc}")
     finally:
         redis_conn.eval(_RELEASE, 1, LOCK_KEY, token)
+    if failures:
+        raise TownSnapshotFailed(
+            f"Town snapshot failed for {len(failures)} of {len(companies)} companies: " + "; ".join(failures)
+        )
+    return {"companies": len(companies), "built": len(companies), "failed": 0}
