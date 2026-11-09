@@ -2285,3 +2285,24 @@ def test_S7_a_single_row_pick_shows_the_account_list_like_a_table_pick(db, flow)
     for a in accounts:
         assert f"{a.customer_code} {a.customer_name}" in first.reply_text, first.reply_text
     assert stem in first.reply_text and phone in first.reply_text
+
+
+def test_F3_a_single_row_grant_from_a_closed_pick_is_refused_like_a_table_row(db):
+    """Crew short live check round 6 (run 3): the model re-sent a CLOSED pick's codes through the single-row grant
+    with 'all, Sorento' and it was proposed (create Ali, link every account). The single-row path runs the same guard
+    as the table: expiry first, then the typed name and company."""
+    from tests.chatbot.agent.test_agent_writes import answer_, round_of, tc
+
+    w = make_world(db)
+    phone = fake_phone()
+    stem, accounts = _pick_turn(db, w, phone)
+    _turn(db, w, [answer_("It is morning here.")], "what time is it")
+    # As live: the closed pick's codes only (no name), and the company typed, so nothing else refuses the row.
+    picked = row_(phone, role="employee", codes=[a.customer_code for a in accounts])
+
+    result = _turn(db, w, [round_of(tc(GRANT, picked, "g9")), answer_("ok")], "all, Sorento", dealer_access=True)
+
+    assert result.pending_action is None
+    assert "is from an earlier list that is closed now" in result.reply_text
+    assert "Say which company" not in result.reply_text
+    assert state(db, phone) is None

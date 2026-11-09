@@ -208,6 +208,26 @@ def _expired_code(
     return None
 
 
+def grant_row_guard(
+    args: dict, key: Any, n: int, *, current: list[dict] | None, earlier_typed: list[dict] | None,
+    expired: list[dict] | None, user_text: str,
+) -> tuple[dict, str | None]:
+    """The one check a grant row passes before it is planned, in a table or as a single row (crew short live check,
+    round 6): expiry first (UAC F3, a closed list says so), then the typed dealer name and company (A17, A18), where
+    what the immediately preceding pick verified for this row, ready, not changed or waiting, counts as typed.
+    Returns (args with the user's own name spans, the refusal or None)."""
+    from app.services.chatbot.agent import contact_grant
+
+    picked = _row_records(current, key, n)
+    earlier = _row_records(earlier_typed, key, n)
+    expired_reason = _expired_code(args, key, n, expired, user_text, current=current)
+    if expired_reason:
+        return args, expired_reason
+    written = [p.get("written") for p in picked] + [m for r in earlier for m in r.get("names") or []]
+    companies = [c for r in earlier for c in r.get("companies") or []]
+    return contact_grant.typed_names(args, user_text, written, companies)
+
+
 LEFT_OUT_REASON = "Not in this message; ask again with this person's phone to include them."
 
 
@@ -327,15 +347,11 @@ def propose_rows(
             )
             if unlisted is None and user_text is not None:
                 if write == contact_grant.GRANT:
-                    # What the last table verified for this row, ready, not changed or waiting, counts as typed.
                     picked = _row_records(previous_waiting, key, n)
-                    earlier = _row_records(previous_typed, key, n)
-                    written = [p.get("written") for p in picked] + [m for r in earlier for m in r.get("names") or []]
-                    companies = [c for r in earlier for c in r.get("companies") or []]
-                    # Expiry first (crew live x3 round 4): a closed list says so, not "which company".
-                    unlisted = _expired_code(args, key, n, expired_waiting, user_text, current=previous_waiting)
-                    if not unlisted:
-                        args, unlisted = contact_grant.typed_names(args, user_text, written, companies)
+                    args, unlisted = grant_row_guard(
+                        args, key, n, current=previous_waiting, earlier_typed=previous_typed,
+                        expired=expired_waiting, user_text=user_text,
+                    )
                     if not unlisted:
                         # `key` here too: a ready row's step carries none of its own.
                         typed = {

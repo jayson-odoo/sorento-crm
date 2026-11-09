@@ -876,11 +876,11 @@ def _propose(
         # The dealer name and company are the user's own words, never the model's re-search (UAC A17, A18), as in a
         # table row: what the immediately preceding pick verified for this person counts (review round S7).
         key = contact_grant._batch_key(args)
-        earlier = [r for r in [*(previous or {}).get("waiting", []), *(previous or {}).get("typed", [])]
-                   if key is not None and r.get("key") == key]
-        written = [r.get("written") for r in earlier] + [n for r in earlier for n in r.get("names") or []]
-        companies = [c for r in earlier for c in r.get("companies") or []]
-        args, problem = contact_grant.typed_names(args, user_text, written, companies)
+        # The same guard as a table row (crew short live check, round 6): a closed pick's codes are refused here too.
+        args, problem = batch.grant_row_guard(
+            args, key, 1, current=(previous or {}).get("waiting"), earlier_typed=(previous or {}).get("typed"),
+            expired=(previous or {}).get("expired"), user_text=user_text,
+        )
         if problem:
             return ToolResult("invalid", message=problem)
         typed = {"key": key, "names": list(args.get("customer_names") or []), "companies": list(args.get("companies") or [])}
