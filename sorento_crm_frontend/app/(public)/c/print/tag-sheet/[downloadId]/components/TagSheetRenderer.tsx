@@ -61,7 +61,7 @@ import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
-import { featureIconRow, featureIconsFor, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import { featureIconRow, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoriesOf,
   accessoryBoxLayout,
@@ -81,15 +81,17 @@ import {
   effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
+  cardIconLayout,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
+  drawableFeatureIcons,
   fitCardTextProps,
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
 import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
-import { subjectSpecs } from '@/lib/dealer-kit/product-block';
+import { layerFeatureIcons } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1310,7 +1312,7 @@ function renderFeatureIconsLayer(
   const props = layer.props;
   if (props.kind !== 'feature_icons') return null;
 
-  const icons = featureIconsFor(subjectSpecs(binding, layer), media.featureIcons ?? []).filter(
+  const icons = layerFeatureIcons(binding, layer, media.featureIcons).filter(
     (icon) => media.assets?.[icon.id],
   );
   const xs = featureIconRow(icons.length, props, layer.width_mm);
@@ -1598,6 +1600,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
   const props = layer.props;
   if (props.kind !== 'accessories' || !props.card) return null;
   const box = cardBoxLayout(items.length, props, layer.width_mm, layer.height_mm);
+  const cardIcons = drawableFeatureIcons(media.featureIcons, media.assets);
   if (box.shown === 0) return null;
   const font = props.fontFamily ? `'${props.fontFamily}', sans-serif` : undefined;
   const headerStyle = accessoryHeaderStyle(props);
@@ -1677,12 +1680,13 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             }}
             data-testid="accessories-card"
           >
-            {cardElementsFor(item, props.card!).map((element) => (
+            {cardElementsFor(item, props.card!, cardIcons).map((element) => (
               <CardElementView
                 key={element.id}
                 element={element}
                 factor={box.scale}
                 boxFont={props.fontFamily}
+                iconUrls={media.assets}
                 src={
                   element.kind === 'picture' && item.image
                     ? (media.images?.[item.image.attachment_id] ?? item.image.url)
@@ -1749,12 +1753,14 @@ function CardElementView({
   boxFont,
   src,
   alt,
+  iconUrls,
 }: {
   element: ResolvedCardElement;
   factor: number;
   boxFont?: string;
   src: string | null | undefined;
   alt: string;
+  iconUrls?: Record<string, string>;
 }) {
   const frame: CSSProperties = {
     position: 'absolute',
@@ -1775,6 +1781,30 @@ function CardElementView({
       ) : null;
     case 'text':
       return <CardTextBlock element={element} frame={frame} factor={factor} boxFont={boxFont} />;
+    case 'feature_icons': {
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
+      const icons = element.icons ?? [];
+      const row = cardIconLayout(element, icons.length, factor);
+      return (
+        <div style={{ ...frame, overflow: 'hidden' }} data-testid="accessories-icons">
+          {row.map((cell, i) => (
+            <img
+              key={`${icons[i].id}-${i}`}
+              src={iconUrls?.[icons[i].id]}
+              alt={icons[i].name}
+              style={{
+                position: 'absolute',
+                left: `${cell.x_mm}mm`,
+                top: `${cell.y_mm}mm`,
+                width: `${cell.size_mm}mm`,
+                height: `${cell.size_mm}mm`,
+                objectFit: 'contain',
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
     case 'colour_dots': {
       const colours = element.colours ?? [];
       const dots = colourDotLayout(element, colours.length, factor);

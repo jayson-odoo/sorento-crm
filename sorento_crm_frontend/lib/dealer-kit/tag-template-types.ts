@@ -52,6 +52,9 @@ export type SlotBinding =
   // PS-SPEC-SHEET: an image slot showing the subject's technical drawing (the quotation line's
   // frozen drawing, or a part's first "Technical Specifications" file). Empty when it has none.
   | 'drawing'
+  // PRICETAG-UPGRADE-VARIANTS S2: on an "Upgrade N" position, its top-up and the tag SP plus it.
+  | 'upgrade_topup'
+  | 'sell_price_with_upgrade'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -154,7 +157,10 @@ export type SubjectSlot =
   | { kind: 'main' }
   | { kind: 'fixed'; index: number }
   | { kind: 'pick'; group: number; index: number }
-  | { kind: 'upgrade'; index: number };
+  | { kind: 'upgrade'; index: number }
+  /** PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer on "All variants" (the subject and the
+   *  live members of its variant tree). The main product for anything else; never a combo position. */
+  | { kind: 'variants' };
 
 /** K2: where each product of a tag sits. */
 export interface TagSlots {
@@ -195,6 +201,9 @@ export interface TextLayerProps {
   /** Same meaning as `PriceBadgeLayerProps.showCurrency`, for a text layer bound to a price slot.
    *  Absent = the bare figure; true = `RM 849`, and nothing at all when there is no amount. */
   showCurrency?: boolean;
+  /** PRICETAG-UPGRADE-VARIANTS S2: printed before an `upgrade_topup` / `sell_price_with_upgrade`
+   *  figure ("TOPUP "), never when the figure is empty. Unused by every other slot. */
+  prefix?: string;
 }
 
 export interface ShapeLayerProps {
@@ -372,6 +381,9 @@ export interface AccessoryTextStyle {
 
 export interface AccessoriesLayerProps {
   kind: 'accessories';
+  /** PRICETAG-UPGRADE-VARIANTS S1: what the box lists. `upgrades` = the combo's upgrades on offer
+   *  (`upgradesOf`); absent / `free` = the free items, as every box saved before. */
+  list?: 'free' | 'upgrades';
   direction: 'vertical' | 'horizontal';
   /**
    * Owner hand test (6 Nov ~15:00): each card is a picture ABOVE its text (stacked, centred, the
@@ -447,11 +459,21 @@ export interface AccessoriesLayerProps {
 }
 
 /** What a text or picture element of a designed card reads from the accessory. */
-export type CardField = 'picture' | 'name' | 'code' | 'spec' | 'remark' | 'price' | 'colours';
+export type CardField =
+  | 'picture'
+  | 'name'
+  | 'code'
+  | 'spec'
+  | 'remark'
+  | 'price'
+  | 'colours'
+  // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's top-up, and the tag SP plus it.
+  | 'topup'
+  | 'price_with_upgrade';
 
 export interface CardElement {
   id: string;
-  kind: 'picture' | 'text' | 'colour_dots' | 'shape';
+  kind: 'picture' | 'text' | 'colour_dots' | 'shape' | 'feature_icons';
   /** Inside the card (or footer), millimetres. */
   x_mm: number;
   y_mm: number;
@@ -482,6 +504,11 @@ export interface CardElement {
   stroke?: string;
   strokeWidth_mm?: number;
   cornerRadius_mm?: number;
+  /** text with a field: printed before the value when there is one ("TOPUP "). */
+  prefix?: string;
+  /** feature_icons: the icon size and the space between icons (defaults 4.6 / 0.8). */
+  iconSize_mm?: number;
+  gap_mm?: number;
 }
 
 export interface CardLayout {
@@ -827,6 +854,15 @@ export interface ProductTagData {
   accessories?: TagAccessory[];
   /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
   accessory_box_style?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree. Absent = none. */
+  variants?: TagVariant[];
+}
+
+/** PRICETAG-UPGRADE-VARIANTS S3: one live member of the tag product's variant tree. */
+export interface TagVariant {
+  product_id: string;
+  code: string;
+  specs: TagSpecValue[];
 }
 
 export interface ProductSetMemberTagData {
@@ -898,7 +934,8 @@ export interface TagComboUpgrade {
  * 'product', owner 6 Nov ~10:45): `code`, its description as `name`, `list_price`, read live.
  */
 export interface TagAccessory {
-  kind?: 'accessory' | 'product';
+  /** `upgrade` (PRICETAG-UPGRADE-VARIANTS S1): a combo upgrade on offer, built by `upgradesOf`. */
+  kind?: 'accessory' | 'product' | 'upgrade';
   id: string;
   name: string;
   spec: string | null;
@@ -912,6 +949,11 @@ export interface TagAccessory {
   colours?: { name: string | null; hex: string }[];
   code?: string | null;
   list_price?: number | null;
+  /** An upgrade's top-up, and the tag's SP plus it (null when either is missing). */
+  topup_amount?: number | null;
+  price_with_upgrade?: number | null;
+  /** An upgrade's own specs, for its feature icons. */
+  specs?: TagSpecValue[];
 }
 
 /** A saved accessories template a product or combo names as its own "Accessories included" box style. */
@@ -980,6 +1022,8 @@ export interface TagPartData {
   accessories?: TagAccessory[];
   /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
   accessory_box_style?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-UPGRADE-VARIANTS S1: an upgrade position's top-up. Absent elsewhere and on older rows. */
+  topup_amount?: number | null;
 }
 
 /** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
@@ -1057,6 +1101,8 @@ export interface LineTagData {
   combo?: TagCombo | null;
   /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
   slots?: TagSlots | null;
+  /** PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members. Absent = none. */
+  variants?: TagVariant[];
   /** PS-SPEC-SHEET: present only on a spec sheet page's row. */
   brand?: string;
   drawing?: TagImage | null;

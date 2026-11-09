@@ -435,6 +435,21 @@ SPEC_ACRONYMS = frozenset({"pvc", "abs", "pp", "led", "uv", "ss", "sus"})
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 
 
+def numeric_value_text(value: Any) -> str | None:
+    """A stored number as the ONE text a feature icon is keyed on and a tag's ``raw`` carries:
+    150, 150.0 and "150" -> "150", 150.5 -> "150.5". None for a bool, a blank or anything that is
+    not a finite number (PRICETAG-UPGRADE-VARIANTS S4)."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return str(int(number)) if number.is_integer() else str(number)
+
+
 def display_spec_value(raw: Any, value_labels: dict | None = None, *, title_case: bool = False) -> str:
     """One stored spec value in the words a customer reads (round 4 R7 on PR #833, owner
     console test 27 Sep 2026: "why all the values are snake case? too technical").
