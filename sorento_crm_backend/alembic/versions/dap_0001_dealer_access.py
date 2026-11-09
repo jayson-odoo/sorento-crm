@@ -12,7 +12,7 @@ Downgrade removes the role grant, and each seeded tag only while it still carrie
 contact holds it.
 
 Revision ID: dap_0001_dealer_access
-Revises: lpcui_0001_list_price_changed
+Revises: npasla_0003_npa_responded
 Create Date: 2026-11-09
 """
 import json
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "dap_0001_dealer_access"
-down_revision = "lpcui_0001_list_price_changed"
+down_revision = "npasla_0003_npa_responded"
 branch_labels = None
 depends_on = None
 
