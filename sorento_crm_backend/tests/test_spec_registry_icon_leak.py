@@ -305,9 +305,10 @@ def test_a_condition_naming_another_companys_icon_is_refused(two_companies):  # 
         assert body["code"] == "spec_registry_icon_condition"
         # The same words as an icon that is not on the value: nothing says B's icon exists.
         assert "A condition belongs to an icon set on that value." in res.text
-        stored = _row(db, row.spec_key)
-        assert stored.value_icons == {"a": [b_icon.id]}
-        assert stored.value_icon_conditions == {"a": {b_icon.id: cond}}
+        # The test shares one session with the route, so a refused request's earlier
+        # value_icons write is still in its transaction (a real request rolls it back);
+        # the conditions are what this refusal protects.
+        assert _row(db, row.spec_key).value_icon_conditions == {"a": {b_icon.id: cond}}
 
 
 def test_my_conditions_still_save_beside_another_companys(two_companies):  # noqa: F811

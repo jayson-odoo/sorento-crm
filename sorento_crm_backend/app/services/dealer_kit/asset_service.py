@@ -879,7 +879,8 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
     """A ``value_icon_conditions`` save, validated, against ``row.value_icons`` (already cleaned).
 
     The payload replaces the conditions of icons the caller can see; another company's hidden icon
-    keeps its stored conditions. Refused (422): a pair not in ``value_icons``, a partner that is
+    keeps its stored conditions, and naming it is refused like a pair not in ``value_icons``
+    (SPEC-REGISTRY-ICON-LEAK). Refused (422): a pair not in ``value_icons``, a partner that is
     not an active registry key other than this one, a repeated partner, a value outside the
     partner's vocabulary (a number for a numeric partner, stored normalised), more than
     ``MAX_CONDITIONS_PER_ICON``.
@@ -889,12 +890,15 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
     icons = row.value_icons or {}
     partners = {r.spec_key: r for r in active_registry(db) if r.spec_key != row.spec_key}
     stored = row.value_icon_conditions or {}
+    _visible, hidden = _icon_status(db, {i for ids in icons.values() for i in ids})
     sent: dict[str, dict[str, list[dict]]] = {}
     for value, by_icon in (conditions or {}).items():
         value = str(value).strip()
         for icon_id, listed in (by_icon or {}).items():
             icon_id = _uuid_text(icon_id) or str(icon_id).strip()
-            if icon_id not in (icons.get(value) or []):
+            # Another company's icon reads exactly like one not on the value
+            # (SPEC-REGISTRY-ICON-LEAK): the caller cannot condition it, or learn it is there.
+            if icon_id not in (icons.get(value) or []) or icon_id in hidden:
                 raise _refuse_condition("A condition belongs to an icon set on that value.")
             if len(listed or []) > MAX_CONDITIONS_PER_ICON:
                 raise _refuse_condition(f"At most {MAX_CONDITIONS_PER_ICON} conditions per icon.")
@@ -934,7 +938,6 @@ def clean_value_icon_conditions(db: Session, row, conditions: Optional[dict]) ->
             if cleaned:
                 sent.setdefault(value, {})[icon_id] = cleaned
 
-    _visible, hidden = _icon_status(db, {i for ids in icons.values() for i in ids})
     out: dict = {}
     for value, ids in icons.items():
         for icon_id in ids:
