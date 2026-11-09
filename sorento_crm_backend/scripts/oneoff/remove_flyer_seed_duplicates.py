@@ -54,7 +54,19 @@ def clean(value) -> str:
     return _CONTROL.sub(" ", str(value or "")).replace(" | ", " / ").strip()
 
 
-def judge(db, dup: ProductCombo) -> tuple[bool, str]:
+def _person_made(db, owner: ProductCombo) -> bool:
+    if owner.created_by is not None:
+        return True
+    return (
+        db.query(AuditLog)
+        .filter(or_(AuditLog.entity_id == owner.id, AuditLog.root_entity_id == owner.id))
+        .filter(or_(AuditLog.job_id.is_(None), AuditLog.job_id != IMPORT_JOB_ID))
+        .count()
+        > 0
+    )
+
+
+def judge(db, dup: ProductCombo, owners: list) -> tuple[bool, str]:
     """(deletable, details) for one duplicate."""
     failed: list[str] = []
     if dup.created_by is not None:
@@ -67,15 +79,26 @@ def judge(db, dup: ProductCombo) -> tuple[bool, str]:
     if not any(r.job_id == IMPORT_JOB_ID and r.entity_id == dup.id and r.action in ("CREATE", "INSERT") for r in rows):
         failed.append("no audit row shows the importer created it")
     foreign = [r for r in rows if r.job_id != IMPORT_JOB_ID]
+    if dup.image_attachment_id is not None:
+        failed.append("has a picture")
     if foreign:
         failed.append(f"touched since: {len(foreign)} audit row(s) not from the importer (user or other job)")
     if db.query(ComboTagTemplate).filter(ComboTagTemplate.combo_id == dup.id).count():
         failed.append("template link: a tag template is linked")
     if db.query(PriceTagRequestLine).filter(PriceTagRequestLine.combo_id == dup.id).count():
         failed.append("price tag request: a request line points at it")
+    if not any(_person_made(db, o) for o in owners):
+        names = ", ".join(f'"{clean(o.name)}"' for o in owners)
+        failed.append(f"owner combo {names} not made or edited by a person")
     if failed:
         return False, "; ".join(failed)
-    return True, "made by the importer, untouched, unused"
+    made = next(
+        (r.changed_at for r in rows if r.job_id == IMPORT_JOB_ID and r.entity_id == dup.id
+         and r.action in ("CREATE", "INSERT")),
+        None,
+    )
+    when = made.strftime("%d/%m/%Y %H:%M") if made else "unknown"
+    return True, f"made by the importer on {when}, untouched, unused"
 
 
 def run(db, entries: list, company_id: str, apply: bool) -> list[tuple[str, str, str, str, str]]:
@@ -93,7 +116,8 @@ def run(db, entries: list, company_id: str, apply: bool) -> list[tuple[str, str,
         if host is None:
             rows.append(("NO OWNER COMBO", *lead, "-", "host not found"))
             continue
-        combos = db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).all()
+        query = db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id)
+        combos = query.with_for_update(of=ProductCombo).all() if apply else query.all()
         owners = [c for c in combos if (c.name or "").strip().lower() in akas]
         dup = next((c for c in combos if (c.name or "").strip().lower() == name.lower()), None)
         owner_text = clean(", ".join(c.name for c in owners)) or "-"
@@ -102,7 +126,7 @@ def run(db, entries: list, company_id: str, apply: bool) -> list[tuple[str, str,
         elif dup is None:
             rows.append(("NO DUPLICATE", *lead, owner_text, ""))
         else:
-            ok, details = judge(db, dup)
+            ok, details = judge(db, dup, owners)
             if ok and apply:
                 ProductComboService(db).delete(dup.id)
             rows.append(("DELETE" if ok else "KEEP", *lead, owner_text, details))
