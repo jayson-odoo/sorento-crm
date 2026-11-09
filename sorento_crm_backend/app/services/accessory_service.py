@@ -33,6 +33,7 @@ from app.models.product_combo import ProductCombo
 from app.models.resources import Attachment, AttachmentType
 from app.utils.tag_rich_text import sanitise_tag_html
 from app.services.error_handler import AppException, handle_not_found
+from app.services.image_thumbnailer import store_renditions, thumbnail_key_for
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -51,6 +52,16 @@ MAX_SPEC_CHARS = 4000
 MAX_REMARK_CHARS = 1000
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 STORAGE_PREFIX = "accessory_image"
+#: How long a list read waits for a picture's thumb to be made; one not ready by then shows the
+#: screen's placeholder and is there on the next read. Short, because a product page reads one list
+#: per combo and the request holds its connection meanwhile.
+THUMB_WAIT_SECONDS = 3.0
+
+
+def _delete_stored(provider: str, key: str) -> None:
+    """An original goes with its thumb (made at upload) and its medium (`delete_object_best_effort`)."""
+    delete_object_best_effort(provider, key)
+    delete_object_best_effort(provider, thumbnail_key_for(key))
 _IMAGE_MIME_BY_EXT = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 
 
@@ -318,9 +329,16 @@ class AccessoryService:
 
     # ------------------------------------------------------------------ library
 
-    def serialize(self, accessory: Accessory, counts: Optional[Dict[str, tuple]] = None, link=None) -> Dict[str, Any]:
+    def serialize(
+        self,
+        accessory: Accessory,
+        counts: Optional[Dict[str, tuple]] = None,
+        link=None,
+        with_thumbs: bool = True,
+    ) -> Dict[str, Any]:
         """The library row as the master data screen reads it (its OWN text; a list row's overrides
-        ride in `entry`, never merged in)."""
+        ride in `entry`, never merged in). A batch caller passes `with_thumbs=False` and runs
+        `_with_thumbs` once over all its rows."""
         if counts is None:
             counts = self._counts([accessory.id])
         product_count, combo_count = counts.get(accessory.id, (0, 0))
@@ -334,7 +352,30 @@ class AccessoryService:
         }
         if link is not None:
             out["entry"] = self._entry_of(link)
-        return out
+        return self._with_thumbs([out])[0] if with_thumbs else out
+
+    def _with_thumbs(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Each picture of these rows gains `thumb_url`, its 320 px rendition, from ONE call to the
+        rendition service (IMAGE-UNIFY: a small picture on a screen is never the original). None
+        while it is not ready: the screen shows its placeholder and the next read has it."""
+        from app.services import image_thumbnailer
+
+        ids = [picture["attachment_id"] for row in rows for picture in row.get("images") or []]
+        # `image` too: a legacy accessory keeps its only picture there, outside `images`.
+        ids += [row["image"]["attachment_id"] for row in rows if row.get("image")]
+        thumbs = (
+            image_thumbnailer.rendition_urls(self.db, ids, "thumb", wait_seconds=THUMB_WAIT_SECONDS)
+            if ids
+            else {}
+        )
+        for row in rows:
+            row["images"] = [
+                {**picture, "thumb_url": thumbs.get(picture["attachment_id"])}
+                for picture in row.get("images") or []
+            ]
+            if row.get("image"):
+                row["image"] = {**row["image"], "thumb_url": thumbs.get(row["image"]["attachment_id"])}
+        return rows
 
     @staticmethod
     def _entry_of(link) -> Dict[str, Any]:
@@ -359,7 +400,7 @@ class AccessoryService:
         )
         counts = self._counts([row.id for row in rows])
         return {
-            "data": [self.serialize(row, counts) for row in rows],
+            "data": self._with_thumbs([self.serialize(row, counts, with_thumbs=False) for row in rows]),
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -420,7 +461,7 @@ class AccessoryService:
         self.db.commit()
         for sweep in sweeps:
             if sweep:
-                delete_object_best_effort(*sweep)
+                _delete_stored(*sweep)
 
     # ------------------------------------------------------------------ pictures
 
@@ -442,9 +483,10 @@ class AccessoryService:
         # survive into a key that `extract_key` later decodes); it is kept as the display name only.
         key = f"{STORAGE_PREFIX}/{attachment_id}.{ext}"
         provider = default_provider()
-        stored_key, _url = get_backend(provider).upload_file(
-            file_content=content, file_path=key, content_type=mime
-        )
+        backend = get_backend(provider)
+        stored_key, _url = backend.upload_file(file_content=content, file_path=key, content_type=mime)
+        # Thumb + medium now, as every other upload path does, so a list never waits to make them.
+        thumbnail = store_renditions(backend, provider, stored_key, content, mime)
         try:
             self.db.add(
                 Attachment(
@@ -454,6 +496,7 @@ class AccessoryService:
                     stored_filename=safe_name,
                     file_path=cdn_base_url(provider, stored_key),
                     file_size_bytes=len(content),
+                    thumbnail_path=thumbnail,
                     mime_type=mime,
                     file_hash=hashlib.sha256(content).hexdigest(),
                     entity_type="general",
@@ -465,7 +508,7 @@ class AccessoryService:
             )
             self.db.flush()
         except Exception:
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         return attachment_id, provider, stored_key
 
@@ -525,7 +568,7 @@ class AccessoryService:
             self.db.commit()
         except Exception:
             self.db.rollback()
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         return self._image_out(image)
 
@@ -571,7 +614,7 @@ class AccessoryService:
         sweep = self._drop_attachment(attachment_id)
         self.db.commit()
         if sweep:
-            delete_object_best_effort(*sweep)
+            _delete_stored(*sweep)
 
     def picture_in_scope(self, image_id: str) -> Optional[AccessoryImage]:
         """The picture when its accessory is visible to the caller's company scope, else None."""
@@ -633,10 +676,10 @@ class AccessoryService:
             self.db.commit()
         except Exception:
             self.db.rollback()
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         if sweep:
-            delete_object_best_effort(*sweep)
+            _delete_stored(*sweep)
 
         image = image_of(self.db, attachment_id)
         if image is None:
@@ -778,8 +821,8 @@ class AccessoryService:
                         }
                     )
             elif link.accessory is not None:
-                out.append(self.serialize(link.accessory, counts, link))
-        return out
+                out.append(self.serialize(link.accessory, counts, link, with_thumbs=False))
+        return self._with_thumbs(out)
 
     def _resolve_items(
         self, items: List[Dict[str, Any]], company_id: Optional[str], *, refused: Dict[str, str]
