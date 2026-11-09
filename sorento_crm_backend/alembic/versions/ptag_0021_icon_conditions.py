@@ -5,14 +5,14 @@ SPEC-ICON-COMBINED (plan documentation/plans/dealer-kit/PLAN-spec-icon-combined-
 `{value: {icon_id: [{spec_key, value}]}}`. Idempotent (`IF NOT EXISTS`), additive only.
 
 Revision ID: ptag_0021_icon_conditions
-Revises: ptag_0020_variant_excl
+Revises: dap_0001_dealer_access
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "ptag_0021_icon_conditions"
-down_revision = "ptag_0020_variant_excl"
+down_revision = "dap_0001_dealer_access"
 branch_labels = None
 depends_on = None
 
