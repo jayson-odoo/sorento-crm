@@ -168,11 +168,6 @@ function DescriptionField({
   );
 }
 
-type RenameCallbacks = {
-  onSuccess: () => void;
-  onError: (error: Error & { status?: number }) => void;
-};
-
 /**
  * The combo's name, renamed in place (COMBO-RENAME): a pencil swaps the title for an input
  * with Save and Cancel, the same shape as the Family code edit on the Variants tab
@@ -186,7 +181,8 @@ function ComboNameField({
 }: {
   name: string;
   canEdit: boolean;
-  onRename: (next: string, callbacks: RenameCallbacks) => void;
+  /** Resolves once saved, rejects with the refusal (`status` set when the server answered). */
+  onRename: (next: string) => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -202,7 +198,7 @@ function ComboNameField({
     setEditing(false);
     setError(null);
   };
-  const save = () => {
+  const save = async () => {
     const next = draft.trim();
     if (!next) {
       setError('A combo needs a name');
@@ -214,20 +210,21 @@ function ComboNameField({
     }
     setError(null);
     setSaving(true);
-    onRename(next, {
-      onSuccess: () => {
-        setSaving(false);
-        setEditing(false);
-      },
-      onError: (caught) => {
-        setSaving(false);
-        setError(
-          caught.status === 409
-            ? 'Another combo on this product already has this name'
-            : caught.message || 'Failed to rename the combo',
-        );
-      },
-    });
+    // Awaited rather than per-call callbacks: the section shares one update mutation with the
+    // price and description edits, and a later `mutate` drops an earlier call's callbacks.
+    try {
+      await onRename(next);
+      setEditing(false);
+    } catch (caught) {
+      const failure = caught as Error & { status?: number };
+      setError(
+        failure.status === 409
+          ? 'Another combo on this product already has this name'
+          : failure.message || 'Failed to rename the combo',
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!editing) {
@@ -270,14 +267,14 @@ function ComboNameField({
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
-              save();
+              void save();
             } else if (event.key === 'Escape') {
               event.preventDefault();
               cancel();
             }
           }}
         />
-        <Button type="button" size="sm" onClick={save} disabled={saving}>
+        <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
           Save
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={saving}>
@@ -581,7 +578,7 @@ interface ComboBlockProps {
     revert?: () => void,
   ) => void;
   onComboWrite: (write: ProductComboUpdate, revert?: () => void) => void;
-  onRename: (name: string, callbacks: RenameCallbacks) => void;
+  onRename: (name: string) => Promise<unknown>;
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
@@ -863,8 +860,8 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 onComboWrite={(write, revert) =>
                   updateCombo.mutate({ comboId: combo.id, write }, { onError: revert })
                 }
-                onRename={(name, callbacks) =>
-                  updateCombo.mutate({ comboId: combo.id, write: { name } }, callbacks)
+                onRename={(name) =>
+                  updateCombo.mutateAsync({ comboId: combo.id, write: { name } })
                 }
                 onAddPart={handleAddPart}
                 addPartError={

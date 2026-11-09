@@ -79,9 +79,9 @@ export function useUpdateProductCombo(productId: string) {
       toast.success('Combo saved');
       return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
     },
-    onError: (error: Error & { status?: number }, input) => {
+    onError: (error: Error, input) => {
       // A refused rename is answered under the name input (COMBO-RENAME), not in a toast too.
-      if ('name' in input.write && (error.status === 409 || error.status === 422)) return;
+      if ('name' in input.write) return;
       toast.error(error.message || 'Failed to save the combo');
     },
   });

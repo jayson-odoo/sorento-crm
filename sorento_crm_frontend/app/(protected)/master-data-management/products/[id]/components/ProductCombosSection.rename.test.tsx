@@ -78,6 +78,7 @@ const combosQuery = vi.hoisted(() => ({
   },
 }));
 const updateComboMutate = vi.hoisted(() => vi.fn());
+const updateComboMutateAsync = vi.hoisted(() => vi.fn());
 const updatePartMutate = vi.hoisted(() => vi.fn());
 
 vi.mock('../../hooks/useProductCombos', () => ({
@@ -86,7 +87,11 @@ vi.mock('../../hooks/useProductCombos', () => ({
   useProductComboPartDelete: () => ({ run: vi.fn(), targetId: null, isPending: false }),
   useAddProductComboPart: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateProductComboPart: () => ({ mutate: updatePartMutate }),
-  useUpdateProductCombo: () => ({ mutate: updateComboMutate, isPending: false }),
+  useUpdateProductCombo: () => ({
+    mutate: updateComboMutate,
+    mutateAsync: updateComboMutateAsync,
+    isPending: false,
+  }),
 }));
 
 vi.mock('../../hooks/useProductComboImage', () => ({
@@ -146,26 +151,46 @@ describe('Combos card, rename (COMBO-RENAME)', () => {
     expect(within(block).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
-  it('AC-3: Enter saves the trimmed name and closes the editor on success', () => {
-    updateComboMutate.mockImplementation((_input, options) => options?.onSuccess?.());
+  it('AC-3: Enter saves the trimmed name and closes the editor once the save settles', async () => {
+    let resolve: (value: unknown) => void = () => undefined;
+    updateComboMutateAsync.mockImplementation(() => new Promise((r) => (resolve = r)));
     const block = renderCard();
     const input = openRename(block);
     fireEvent.change(input, { target: { value: '  WALL HUNG WC SET  ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(updateComboMutate).toHaveBeenCalledTimes(1);
-    expect(updateComboMutate.mock.calls[0][0]).toEqual({
+    expect(updateComboMutateAsync).toHaveBeenCalledTimes(1);
+    expect(updateComboMutateAsync.mock.calls[0][0]).toEqual({
       comboId: 'combo-3',
       write: { name: 'WALL HUNG WC SET' },
     });
+    // Through mutateAsync, never mutate: the section's one update mutation is shared with the
+    // price and description edits, and a later mutate() drops an earlier call's callbacks.
+    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(within(block).getByLabelText('Combo name')).toBeDisabled();
+
+    await act(async () => resolve({}));
     expect(within(block).queryByLabelText('Combo name')).toBeNull();
+  });
+
+  it('AC-3: a refused save re-enables the input', async () => {
+    updateComboMutateAsync.mockRejectedValue(
+      Object.assign(new Error('Server error. Try again or contact support.'), { status: 500 }),
+    );
+    const block = renderCard();
+    const input = openRename(block);
+    fireEvent.change(input, { target: { value: 'WALL HUNG WC SET' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await within(block).findByText('Server error. Try again or contact support.')).toBeInTheDocument();
+    expect(within(block).getByLabelText('Combo name')).not.toBeDisabled();
   });
 
   it('AC-3: Save with the name unchanged closes with no write', () => {
     const block = renderCard();
     openRename(block);
     fireEvent.click(within(block).getByRole('button', { name: 'Save' }));
-    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(updateComboMutateAsync).not.toHaveBeenCalled();
     expect(within(block).queryByLabelText('Combo name')).toBeNull();
   });
 
@@ -174,7 +199,7 @@ describe('Combos card, rename (COMBO-RENAME)', () => {
     const input = openRename(block);
     fireEvent.change(input, { target: { value: 'SOMETHING ELSE' } });
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(updateComboMutateAsync).not.toHaveBeenCalled();
     expect(within(block).queryByLabelText('Combo name')).toBeNull();
     expect(within(block).getByText('WALL HUNG WATER CLOSET COMBO')).toBeInTheDocument();
   });
@@ -184,7 +209,7 @@ describe('Combos card, rename (COMBO-RENAME)', () => {
     const input = openRename(block);
     fireEvent.change(input, { target: { value: 'SOMETHING ELSE' } });
     fireEvent.click(within(block).getByRole('button', { name: 'Cancel' }));
-    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(updateComboMutateAsync).not.toHaveBeenCalled();
     expect(within(block).queryByLabelText('Combo name')).toBeNull();
   });
 
@@ -193,26 +218,23 @@ describe('Combos card, rename (COMBO-RENAME)', () => {
     const input = openRename(block);
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(updateComboMutateAsync).not.toHaveBeenCalled();
     expect(within(block).getByText('A combo needs a name')).toBeInTheDocument();
     expect(within(block).getByLabelText('Combo name')).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('AC-5: a 409 reads as the taken-name message and the editor stays open', () => {
-    updateComboMutate.mockImplementation((_input, options) => {
-      const error = Object.assign(new Error('This product already has a combo called "3 in 1"'), {
-        status: 409,
-      });
-      act(() => options?.onError?.(error));
-    });
+  it('AC-5: a 409 reads as the taken-name message and the editor stays open', async () => {
+    updateComboMutateAsync.mockRejectedValue(
+      Object.assign(new Error('This product already has a combo called "3 in 1"'), { status: 409 }),
+    );
     const block = renderCard();
     const input = openRename(block);
     fireEvent.change(input, { target: { value: '3 in 1' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(updateComboMutate).toHaveBeenCalledTimes(1);
+    expect(updateComboMutateAsync).toHaveBeenCalledTimes(1);
     expect(
-      within(block).getByText('Another combo on this product already has this name'),
+      await within(block).findByText('Another combo on this product already has this name'),
     ).toBeInTheDocument();
     expect(within(block).getByLabelText('Combo name')).toHaveValue('3 in 1');
   });
