@@ -27,6 +27,38 @@ lag at the moment A dies (measured 0 bytes behind, under 2 ms).
 
 Tunnel addresses used below (private, safe to keep): A = `10.77.0.1`, B = `10.77.0.2`.
 
+## Manual `docker compose up` of an app service: always the running release's tag
+
+The image line of `backend_*`, `frontend_*`, `mcp_*`, `worker` and `worker_fast` in prod's compose file
+reads `IMAGE_TAG` and falls back to a default tag when it is unset (the file is on the nodes, not in
+this repo; read-only check: `grep -n 'image:.*IMAGE_TAG' docker-compose.yml`). The release passes it
+(`scripts/blue_green_deploy.sh:56-58`, `IMAGE_TAG` required and exported), and so does the role watcher
+(`infra/scripts/role-watcher.sh:124`). A bare manual `up` does NOT pass it: on 9 Nov a bare
+`up -d --no-deps backend_green` on B pulled and started `backend-1.0.1` next to frontend/mcp on the
+release SHA. Rule: prefer the release script; when a manual `up` is needed, read the tag from the
+RUNNING active colour first and pass it:
+
+```bash
+cd /opt/sorento-crm2; C=$(cat .active_color 2>/dev/null); echo "colour: ${C:-STOP-none}"
+# Tag of each running container of the active colour (default: all three; name services to narrow it).
+release_tags() { [ $# -gt 0 ] || set -- backend frontend mcp
+  for s in "$@"; do id=$(docker compose ps -q "${s}_$C"); [ -n "$id" ] && docker inspect --format '{{.Config.Image}}' "$id" || echo "MISSING ${s}_$C"; done |
+  sed -E 's/^.*:[a-z]+-([0-9a-f]{40})$/\1/'; }
+release_tags | sort | uniq -c
+#   Expected: exactly ONE line "3 <40-hex sha>". Two lines, a count other than 3, a MISSING line, or a
+#   full image name (e.g. ...:backend-1.0.1): the colour runs mixed images. STOP (repair below).
+T=$(release_tags | sort -u); case "$T" in ''|*[!0-9a-f]*) echo "STOP: mixed or unknown tag";; *) [ ${#T} -eq 40 ] && echo "TAG-OK $T" || echo "STOP: mixed or unknown tag";; esac
+#   Expected: TAG-OK <40-hex sha>. Only then:
+IMAGE_TAG="$T" docker compose --profile "$C" up -d --no-deps "backend_$C"     # the service(s) you need
+release_tags | sort | uniq -c                                                  # again: one line, count 3
+```
+
+**Repair a colour with one wrong image** (the 9 Nov case): take the tag from the two that are right,
+then recreate the wrong one with it:
+`T=$(release_tags frontend mcp | sort -u)`, the same `case` line (`TAG-OK`), then
+`IMAGE_TAG="$T" docker compose --profile "$C" up -d --no-deps backend_$C` and `release_tags | sort | uniq -c`
+(one line, count 3). `$C` empty or `TAG-OK` missing: STOP, never run the `up`.
+
 ## Progress log (owner runs, crew relays; newest last)
 
 | When (7 Nov, MYT) | Step | Result |
@@ -37,7 +69,12 @@ Tunnel addresses used below (private, safe to keep): A = `10.77.0.1`, B = `10.77
 | ~23:30 | S0 on A | DONE: owner key installed on both nodes (`ssh-copy-id`), drop-in applied, `CONFIG-OK`, key login OK, password login denied |
 | ~00:30 | S2.1 fix | B's `wg0.conf` had A's values (Address 10.77.0.1, AllowedIPs 10.77.0.2): B pinged itself. Fixed to 10.77.0.2 / 10.77.0.1; keys and handshake verified; ping about 0.8 ms both ways |
 | 8 Nov ~01:50 | S2.3 recreate | DONE: new replica container streams from 10.77.0.1 over wg0; `sorento_crm_replica_old` kept stopped. On the way: the replica authenticates with `passfile=/var/lib/postgresql/data/.pgpass`, whose line names A's PUBLIC address, so the new conninfo got `fe_sendauth: no password supplied`; fixed by a second `.pgpass` line for 10.77.0.1 (password never printed) |
-| next | A check (`client_addr = 10.77.0.2`), S0 on B, outside-in firewall check, S5, S6.0 drill | pending |
+| 9 Nov ~11:00 | S5.5 | B's compose `redis` published host 6379 (n8n's Redis has it): B-only `docker-compose.override.yml` with `redis: ports: !reset []` (A untouched; `redis ports: none`) |
+| 9 Nov ~11:30 | S5.2 | DONE on `sorento-crm2_sorento_network`; generator WARNINGS 3 = one LogConfig difference printed 3 times (generator bug); log driver/opts copied, `LOGCFG-SAME`; `POSTGRES_USER=sorento_crm` added |
+| 9 Nov ~11:45 | S5.8 first try | backend_green waited on `pgbouncer:5432`: S5.3 had not run. S5.3 then DONE (`--auto`, HA_*_2 for the frontend block) |
+| 9 Nov ~11:52 | S5.8 | DONE: green on the release SHA, health 200, role standby 503, no workers, no db |
+| 9 Nov ~12:10 | MCP URL | `AI_ASSISTANT_MCP_URL` named A's public address: B-only override entry `http://<B_PUBLIC_IP>:8765/mcp` (4 services), hairpin check 401. The manual `up` that applied it had no `IMAGE_TAG` and started `backend-1.0.1`; repaired with the release tag. New rule: "Manual docker compose up" section |
+| next | three-container tag check on B, S5.1 parity, S6.0 drill, S7 | pending |
 
 ## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
 
@@ -864,6 +901,8 @@ C=$(cat .active_color); P=8000; [ "$C" = green ] && P=8010
 curl -s -o /dev/null -w 'health %{http_code}\n' http://127.0.0.1:$P/api/v1/health        # health 200
 curl -s -w ' %{http_code}\n' http://127.0.0.1:$P/api/v1/health/role                      # {"status":"standby","role":"standby"} 503
 docker compose ps --format '{{.Service}} {{.State}}' | grep -E '^worker' || echo "no workers"  # no workers
+# Same image on all three containers of the colour (helper: "Manual docker compose up" above):
+release_tags | sort | uniq -c                                                          # ONE line: 3 <the <SHA> you deployed>
 ```
 
 **Rollback:** `docker compose stop backend_<colour> frontend_<colour> mcp_<colour>`: B is a
@@ -952,7 +991,10 @@ curl -s -w ' %{http_code}\n' http://127.0.0.1:$P/api/v1/health/role             
 
 ```bash
 # THIS CHANGES PROD (node B).
-IMAGE_TAG=<SHA> docker compose up -d --no-deps worker worker_fast
+# The tag B's app runs (helper and TAG-OK line: "Manual docker compose up" above); never the compose default.
+T=$(release_tags | sort -u); case "$T" in ''|*[!0-9a-f]*) echo "STOP: mixed or unknown tag";; *) echo "TAG-OK $T";; esac
+IMAGE_TAG="$T" docker compose up -d --no-deps worker worker_fast
+docker inspect --format '{{.Config.Image}}' $(docker compose ps -q worker worker_fast)   # both end in -$T
 docker compose logs --since 2m worker | grep -m1 "APScheduler started in worker process"
 ```
 
