@@ -54,9 +54,10 @@ export function ProductAccessoriesSection({ productId }: { productId: string }) 
           </>
         )}
       </CardContent>
-      {canEdit && entryCount > 0 ? (
+      {/* Mounted only while open: its product grid queries nothing until the button is pressed. */}
+      {copyOpen ? (
         <CopyAccessoriesDialog
-          open={copyOpen}
+          open
           onOpenChange={setCopyOpen}
           sourceProductId={productId}
           entryCount={entryCount}

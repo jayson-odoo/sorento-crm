@@ -359,6 +359,33 @@ def test_another_companys_target_is_404_and_nothing_is_written(db, monkeypatch):
     assert _keys(db, theirs.id) == []
 
 
+def test_an_all_company_caller_cannot_copy_onto_another_companys_product(db, monkeypatch):
+    """No session scope hides the other company's product here: only the service's own check does."""
+    _mocha(db)
+    client = _caller(db, {VIEW, EDIT}, monkeypatch, company_id=None)
+    source = _product(db, "ZZSRC")
+    _link(db, source, accessories=[_accessory(db, _name("PUMP"))])
+    ours = _product(db, "ZZOURS")
+    theirs = _product(db, "ZZTHEIRS", company_id=MOCHA)
+
+    response = _copy(client, source, [ours, theirs])
+    assert response.status_code == 404, response.text
+    assert _keys(db, ours.id) == []
+    assert _keys(db, theirs.id) == []
+
+
+def test_an_upper_case_id_is_the_same_product(db, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source = _product(db, "ZZSRC")
+    pump = _accessory(db, _name("PUMP"))
+    _link(db, source, accessories=[pump])
+    target = _product(db, "ZZTGT")
+    response = _copy(client, source, [target.id.upper(), source.id.upper()])
+    assert response.status_code == 200, response.text
+    assert response.json()["targets"] == 1
+    assert _keys(db, target.id) == [pump.id]
+
+
 def test_a_missing_target_is_404(db, monkeypatch):
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     source = _product(db, "ZZSRC")

@@ -1,6 +1,6 @@
 # PLAN: Copy a product's accessories list to other products (ACC-COPY-TO-PRODUCTS)
 
-Status: Build - owner answered the card 9 Nov 14:20, red tests in, implementation in progress. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
+Status: Review - built and reviewed (reviewer READY, security no blockers, findings fixed); browser pass and hand test next. Track: small fix track (no migration, existing permission), plus security review because it is a bulk write.
 
 ## Journey
 
@@ -28,13 +28,16 @@ Behaviour card: see the `crew-ask` comment on the PR; answers are recorded here 
    Category / Brand multi-select filters (the same hooks ProductsList uses:
    `useProductCategorySelectQuery`, `useBrandSelectQuery`), checkbox column from
    `buildSelectColumn` (shift-click range, drag), "Select all N" banner from
-   `DataGridListToolbar`. Active, non-discontinued by default. The source product is not offered.
+   `DataGridListToolbar` (capped at 500). Active products only; a discontinued product that is still
+   active is offered, since the list endpoint has no discontinued filter and it may still be on display.
+   The source product cannot be ticked. Every column sorts server-side (Category and Brand were added
+   to the product list's sort map for this, which fixes the Products list's own headers too).
    Grid-in-dialog already exists (ConvertToPackingListDialog.tsx), so no mock.
 3. **Mode.** Q2.
 4. **What copies.** Q3.
 5. **Confirm step.** "Copy 3 entries to 12 products. 4 already have a list: their entries stay,
    the missing ones are added at the end." Then one call.
-6. **Server.** `POST /api/v1/products/{id}/accessories/copy` `{target_product_ids: [...]}`
+6. **Server.** `POST /api/v1/master-data/products/{id}/accessories/copy` `{target_product_ids: [...]}`
    (max 500 targets). Edit permission; every target resolved in the caller's company scope (a
    missing or out-of-scope id = 404 for the whole call); one transaction, all or nothing; a target
    that would pass 100 entries refuses the call naming it. The source itself is ignored if picked.
@@ -58,3 +61,17 @@ should copy the whole set, box style also copy, product as target only".
 
 - Backend: `sorento_crm_backend/tests/test_accessory_copy_to_products.py`.
 - Frontend: the copy dialog's vitest beside it.
+
+## Review (9 Nov)
+
+- reviewer: READY; should-fixes taken: "Selecting..." stuck after a filter change, Category/Brand
+  sort (backend sort map), dialog mounted only while open, all-company caller test for the
+  company check, PUT locks the product row like the copy, plan corrections; nits: ids normalised,
+  dialog description, no lock on a dry run.
+- security-reviewer: no blockers; lock is FOR NO KEY UPDATE (no deadlock with the FK checks of
+  the inserted rows), none on a dry run. Accepted: worst case 500 x 100 rows in one request, editors only.
+
+## Assistant coverage (DoD 6-8)
+
+No new list screen. The copy is a picking task on a grid, so no ActionDef: a user would not
+name 500 products in words. No eval prompts for the same reason.

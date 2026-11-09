@@ -78,10 +78,14 @@ describe('Copy to other products button', () => {
     );
   }
 
-  it('shows for an editor once the list has an entry', async () => {
+  it('shows for an editor once the list has an entry; the grid loads only when pressed', async () => {
     service.listOwnerAccessories.mockResolvedValue([{ id: 'a1' }]);
     mountSection();
-    expect(await screen.findByRole('button', { name: /copy to other products/i })).toBeTruthy();
+    const button = await screen.findByRole('button', { name: /copy to other products/i });
+    expect(products.getProducts).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(await screen.findByText('ZZT-TUB-1')).toBeTruthy();
+    expect(screen.getByRole('dialog').textContent).toContain('Copy 1 entry to other products');
   });
 
   it('is hidden while the list is empty', async () => {
@@ -170,6 +174,27 @@ describe('CopyAccessoriesDialog', () => {
     expect(products.getProducts).toHaveBeenLastCalledWith(
       expect.objectContaining({ pageIndex: 0, pageSize: 501, status: 'active' }),
     );
+  });
+});
+
+describe('CopyAccessoriesDialog select all', () => {
+  it('a search typed while "Select all" is fetching does not leave it stuck on "Selecting..."', async () => {
+    let release: (v: unknown) => void = () => {};
+    products.getProducts.mockImplementation((params: { pageSize: number }) =>
+      params.pageSize > 25
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ data: PAGE, pagination: { total: 4, page: 1, limit: 25 } }),
+    );
+    mountDialog();
+    await screen.findByText('ZZT-TUB-1');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(await screen.findByRole('button', { name: /select all 4 records/i }));
+    expect(await screen.findByText('Selecting...')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Search products...'), { target: { value: 'TUB' } });
+    await waitFor(() => expect(screen.queryByText('Selecting...')).toBeNull(), { timeout: 2000 });
+    release({ data: [], pagination: { total: 0, page: 1, limit: 501 } });
   });
 });
 

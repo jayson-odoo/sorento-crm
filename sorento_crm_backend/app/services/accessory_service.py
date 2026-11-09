@@ -708,6 +708,8 @@ class AccessoryService:
         self, product_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
     ) -> List[Dict[str, Any]]:
         product = self._product_or_404(product_id)
+        # Same lock as `copy_product_list`, so a list save and a copy on one product take turns.
+        self.db.query(Product.id).filter(Product.id == product.id).with_for_update(key_share=True).first()
         style_id = self._resolve_box_style(box_style, product.company_id)
         resolved = self._resolve_items(items, product.company_id, refused={product.id: "A product cannot list itself"})
         self.db.query(ProductAccessory).filter(ProductAccessory.product_id == product_id).delete(
@@ -741,18 +743,18 @@ class AccessoryService:
         if not links:
             raise AppException(status_code=422, message="This product has no accessories to copy")
 
-        wanted = list(dict.fromkeys(str(value) for value in target_ids if str(value) != source.id))
-        # Locked so a second copy (or a list save) on the same product waits rather than racing
-        # into the unique constraint.
-        rows = (
-            self.db.query(Product)
-            .filter(Product.id.in_(wanted))
-            .order_by(Product.id)
-            .with_for_update(of=Product)
-            .all()
-            if wanted
-            else []
-        )
+        try:
+            normalised = [str(uuid.UUID(str(value))) for value in target_ids]
+        except ValueError:
+            raise AppException(status_code=422, message="Each target must be a product id")
+        wanted = list(dict.fromkeys(value for value in normalised if value != source.id))
+        query = self.db.query(Product).filter(Product.id.in_(wanted)).order_by(Product.id)
+        if not dry_run:
+            # A second copy or a list save (`set_product_list`) on the same product waits rather than
+            # racing into the unique constraint. NO KEY UPDATE, so the FK checks of the inserted rows
+            # (FOR KEY SHARE on target and item products) never deadlock against it.
+            query = query.with_for_update(of=Product, key_share=True)
+        rows = query.all() if wanted else []
         targets = {row.id: row for row in rows}
         for value in wanted:
             row = targets.get(value)

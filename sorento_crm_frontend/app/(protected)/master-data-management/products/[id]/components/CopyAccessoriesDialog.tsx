@@ -2,6 +2,7 @@
 
 /**
  * ACC-COPY-TO-PRODUCTS: copy this product's "Accessories included" list to hand-picked products.
+ * The parent mounts it only while open, so every open starts from a clean slate.
  *
  * Plan: documentation/plans/dealer-kit/PLAN-acc-copy-to-products-09nov.md. Two steps in one
  * modal: pick on the system product grid (search, Category / Brand filters, shift / drag ticks,
@@ -108,18 +109,6 @@ export function CopyAccessoriesDialog({
   const categories = useProductCategorySelectQuery();
   const brands = useBrandSelectQuery();
 
-  useEffect(() => {
-    if (!open) return;
-    search.reset('');
-    setCategoryIds([]);
-    setBrandIds([]);
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-    setRowSelection({});
-    setMatchingActive(false);
-    setSummary(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
   const params = useMemo(
     () => ({
       pageIndex: pagination.pageIndex,
@@ -138,11 +127,12 @@ export function CopyAccessoriesDialog({
   useEffect(() => {
     matchingSeq.current += 1;
     setMatchingActive(false);
+    setMatchingPending(false);
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
   }, [search.debouncedValue, categoryIds, brandIds]);
 
   const { data, isLoading, isFetching, isPlaceholderData } = useProducts(params);
-  const rows = useMemo(() => (open ? data?.data ?? [] : []), [open, data]);
+  const rows = useMemo(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
@@ -253,6 +243,7 @@ export function CopyAccessoriesDialog({
     } finally {
       if (matchingSeq.current === mine) setMatchingPending(false);
     }
+    // A superseded fetch leaves `pending` to the effect that superseded it, which clears it.
   };
 
   const goToConfirm = () => {
@@ -267,7 +258,10 @@ export function CopyAccessoriesDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
-      <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-5xl flex-col">
+      <DialogContent
+        className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-5xl flex-col"
+        aria-describedby={undefined}
+      >
         <DialogHeader>
           <DialogTitle>
             {summary ? 'Copy accessories' : `Copy ${plural(entryCount, 'entry')} to other products`}
