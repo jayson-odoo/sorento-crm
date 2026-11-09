@@ -47,6 +47,7 @@ def accounts(
     return dealer_access_screen.my_accounts(db, current_user["id"], company)
 
 
+# ai: not-for-assistant the salesperson's own dealer-access screen list; the assistant reads the same own-scope dealer contacts through its dealer-access tool crm_contacts_find (#2268)
 @router.get("/people")
 def people(
     page: int = Query(1, ge=1),
