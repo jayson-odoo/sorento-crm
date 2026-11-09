@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
 import {
-  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, sceneSelection, stackTags, tagLabel, townFrame,
+  SCENE_STALL_CAP, SCENE_TAG_CAP, boughtToday, compactCount, clampInView, sceneSelection, separateLabels, stackTags, tagLabel, townFrame,
 } from './townFormat';
 
 function shop(i: number, kind: 'shop' | 'stall', docs: number, amount?: string): TownShop {
@@ -180,5 +180,46 @@ describe('clampInView', () => {
 
   it('centres a box wider than the view', () => {
     expect(clampInView({ x: 7, y: 0, w: 100, h: 2 }, view).x).toBe(0);
+  });
+});
+
+describe('separateLabels', () => {
+  const view = { left: -30, right: 30, bottom: -20, top: 20 };
+  const board = { x: 0, y: 8, w: 16, h: 5 };
+  const hits = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
+    Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+
+  it('moves a label sitting on the scoreboard clear of it, and leaves one that is clear alone', () => {
+    const [onBoard, apart] = separateLabels(
+      [{ x: 2, y: 8, w: 10, h: 2 }, { x: 20, y: -5, w: 8, h: 2 }],
+      board,
+      view,
+    );
+    expect(hits({ ...onBoard, w: 10, h: 2 }, board)).toBe(false);
+    expect(apart).toEqual({ x: 20, y: -5 });
+  });
+
+  it('moves labels that sit on each other apart, and drops none', () => {
+    const labels = [0, 1, 2, 3].map(() => ({ x: 25, y: 0, w: 9, h: 2 }));
+    const spots = separateLabels(labels, board, view);
+    expect(spots).toHaveLength(4);
+    const boxes = spots.map((s, i) => ({ ...s, w: labels[i].w, h: labels[i].h }));
+    for (let i = 0; i < boxes.length; i++) {
+      expect(hits(boxes[i], board)).toBe(false);
+      for (let j = i + 1; j < boxes.length; j++) expect(hits(boxes[i], boxes[j])).toBe(false);
+    }
+  });
+
+  it('goes below the scoreboard when there is no room above it inside the view', () => {
+    const [spot] = separateLabels([{ x: 0, y: 17, w: 10, h: 2 }], { x: 0, y: 17, w: 16, h: 5 }, view);
+    expect(spot.y).toBeLessThan(17 - 2.5); // below the scoreboard
+    expect(spot.y + 1).toBeLessThanOrEqual(20);
+    expect(hits({ ...spot, w: 10, h: 2 }, { x: 0, y: 17, w: 16, h: 5 })).toBe(false);
+  });
+
+  it('keeps every label inside the view', () => {
+    const [spot] = separateLabels([{ x: 40, y: 30, w: 10, h: 2 }], board, view);
+    expect(spot.x + 5).toBeLessThanOrEqual(30);
+    expect(spot.y + 1).toBeLessThanOrEqual(20);
   });
 });

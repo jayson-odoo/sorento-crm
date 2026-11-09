@@ -81,9 +81,14 @@ beforeEach(() => {
   vi.stubGlobal('cancelAnimationFrame', () => undefined);
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
   setHidden(false);
+  // a real canvas size, so the scene lays its labels out in a real view
+  Object.defineProperty(HTMLCanvasElement.prototype, 'clientWidth', { configurable: true, get: () => 900 });
+  Object.defineProperty(HTMLCanvasElement.prototype, 'clientHeight', { configurable: true, get: () => 620 });
 });
 
 afterEach(() => {
+  delete (HTMLCanvasElement.prototype as unknown as Record<string, unknown>).clientWidth;
+  delete (HTMLCanvasElement.prototype as unknown as Record<string, unknown>).clientHeight;
   cleanup();
   vi.unstubAllGlobals();
   setHidden(false);
@@ -151,5 +156,39 @@ describe('TownScene keeps tags clear of every fixed label', () => {
     expect(obstacles).toHaveLength(5);
     const spots = new Set(obstacles.map((o) => `${o.x.toFixed(2)},${o.y.toFixed(2)}`));
     expect(spots.size).toBe(5); // five different places, not one repeated
+  });
+});
+
+describe('TownScene fixed labels never cover the scoreboard or each other, at any turn', () => {
+  const lit = {
+    ...SNAPSHOT,
+    today: { ...SNAPSHOT.today, dealer_customer_count: 9 },
+    shops: [{ key: 's1', kind: 'shop', account_label: null, today_docs: 2, rank: null }],
+    reorder: { below_count: 5, set_count: 9 },
+    deliveries: { to_deliver: 4 },
+    approvals: { total: 2, purchase_requests: 2, quotation_documents: 0 },
+  };
+  type Box = { x: number; y: number; w: number; h: number };
+  const hit = (a: Box, b: Box) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+
+  it('holds from 0 to 2 pi in steps of 0.1 rad', () => {
+    const { container } = render(<TownScene snapshot={lit as never} onSelect={() => undefined} />);
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+    canvas.dispatchEvent(new MouseEvent('pointerdown', { clientX: 0, bubbles: true }));
+    const bad: string[] = [];
+    for (let k = 0; k <= 63; k++) {
+      const yaw = k * 0.1;
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: (Math.PI / 4 - yaw) / 0.006 }));
+      const [board, ...labels] = stacked.calls[stacked.calls.length - 1].obstacles as unknown as Box[];
+      expect(labels).toHaveLength(4);
+      labels.forEach((label, i) => {
+        if (hit(label, board)) bad.push(`yaw ${yaw.toFixed(1)}: label ${i} covers the scoreboard`);
+        labels.slice(i + 1).forEach((other, j) => {
+          if (hit(label, other)) bad.push(`yaw ${yaw.toFixed(1)}: labels ${i} and ${i + 1 + j} overlap`);
+        });
+      });
+    }
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 0 }));
+    expect(bad).toEqual([]);
   });
 });

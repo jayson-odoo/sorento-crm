@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
-import { changePercent, count, rm0, clampInView, sceneSelection, stackTags, tagLabel, townFrame } from '../lib/townFormat';
+import { changePercent, count, rm0, sceneSelection, separateLabels, stackTags, tagLabel, townFrame } from '../lib/townFormat';
 import type { TownTarget } from './TownPanel';
 
 /**
@@ -111,18 +111,17 @@ function mountScene(
     if (!frameId && !disposed) frameId = requestAnimationFrame(frame);
   };
 
-  // name tags: re-stacked in screen space whenever the camera turns or the view resizes, so they never
-  // cover each other or any fixed label (the scoreboard, the "!" bubble, the depot sign, the approvals
-  // badge, the "+N more dealers" pill), and none is clipped at the top. They are in priority order
-  // (busiest first); the lowest priority is dropped before one is clipped. The pill is also kept
-  // inside the canvas after the town is turned.
+  // Labels are laid out in screen space whenever the camera turns or the view resizes. First the fixed
+  // ones (the "!" bubble, the depot sign, the approvals badge, the "+N more dealers" pill) are moved up or
+  // down the screen until they clear the scoreboard and each other, inside the canvas, never dropped
+  // (`separateLabels`). Then the name tags are stacked around the scoreboard and those moved labels, in
+  // priority order (busiest first); the lowest priority is dropped before one is clipped.
   const tagSprites: { sprite: THREE.Sprite; anchor: THREE.Vector3 }[] = [];
-  const fixedLabels: THREE.Sprite[] = [];
+  const fixedLabels: { sprite: THREE.Sprite; anchor: THREE.Vector3 }[] = [];
   const fixed = (sprite: THREE.Sprite) => {
-    fixedLabels.push(sprite);
+    fixedLabels.push({ sprite, anchor: sprite.position.clone() });
     return sprite;
   };
-  let pill: { sprite: THREE.Sprite; anchor: THREE.Vector3 } | null = null;
   const layoutTags = () => {
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
@@ -130,20 +129,21 @@ function mountScene(
       x: position.dot(right), y: position.dot(up), w: sprite.scale.x, h: sprite.scale.y,
     });
     const centreY = BOARD_LOOK_Y * up.y; // what the camera looks at, on screen
-    if (pill) {
-      const at = box(pill.anchor, pill.sprite);
-      const view = { left: cam.left, right: cam.right, bottom: centreY + cam.bottom, top: centreY + cam.top };
-      const spot = clampInView(at, view);
-      pill.sprite.position.copy(pill.anchor).addScaledVector(right, spot.x - at.x).addScaledVector(up, spot.y - at.y);
-    }
+    // the scoreboard: always facing the camera, 16.4 wide, 6.4 tall (foreshortened by the elevation), centred 9.2 up
+    const board = { x: 0, y: BOARD_Y * up.y, w: BOARD_W, h: BOARD_H * up.y };
+    const view = { left: cam.left, right: cam.right, bottom: centreY + cam.bottom, top: centreY + cam.top };
+    // the fixed labels first: clear of the scoreboard and of each other, inside the canvas, never dropped
+    const at = fixedLabels.map(({ sprite, anchor }) => box(anchor, sprite));
+    const spots = separateLabels(at, board, view);
+    fixedLabels.forEach(({ sprite, anchor }, i) => {
+      sprite.position.copy(anchor).addScaledVector(right, spots[i].x - at[i].x).addScaledVector(up, spots[i].y - at[i].y);
+    });
     if (!tagSprites.length) return;
-    const obstacles = [
-      // the scoreboard: always facing the camera, 16.4 wide, 6.4 tall (foreshortened by the elevation), centred 9.2 up
-      { x: 0, y: BOARD_Y * up.y, w: BOARD_W, h: BOARD_H * up.y },
-      ...fixedLabels.map((sprite) => box(sprite.position, sprite)),
-    ];
-    const top = centreY + cam.top - 0.3;
-    const raise = stackTags(tagSprites.map(({ sprite, anchor }) => box(anchor, sprite)), 0.3, { obstacles, top });
+    const obstacles = [board, ...fixedLabels.map(({ sprite }) => box(sprite.position, sprite))];
+    const raise = stackTags(tagSprites.map(({ sprite, anchor }) => box(anchor, sprite)), 0.3, {
+      obstacles,
+      top: view.top - 0.3,
+    });
     tagSprites.forEach(({ sprite, anchor }, i) => {
       const lift = raise[i];
       sprite.visible = lift !== null;
@@ -324,7 +324,6 @@ function mountScene(
   if (others) {
     const [x, z] = polar(24, 30);
     const sprite = label(`+${others} more dealers bought today`, x, 2.4, z, 'rgba(255,251,235,0.97)', '#92400e', 520, 0.95);
-    pill = { sprite, anchor: sprite.position.clone() };
     fixed(sprite);
   }
 

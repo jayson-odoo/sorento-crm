@@ -180,3 +180,44 @@ export function clampInView(
     y: clamp(box.y, view.bottom + box.h / 2 + margin, view.top - box.h / 2 - margin),
   };
 }
+
+const overlapsBox = (a: ScreenBox, b: ScreenBox, margin: number) =>
+  Math.abs(a.x - b.x) < (a.w + b.w) / 2 + margin && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + margin;
+
+/**
+ * Where the fixed labels (the "!" bubble, the depot sign, the approvals badge, the "+N" pill) sit on
+ * screen so that none covers the scoreboard or another one, whatever angle the town is turned to.
+ * Each label is first clamped inside the view, then moved only up or down the screen to the nearest
+ * spot (above or below any box already placed) that is clear of every placed box and inside the view.
+ * Labels are placed lowest first, the scoreboard first of all. A fixed label is never dropped: if no
+ * clear spot is inside the view it stays at its clamped position. Returns the centres, in input order.
+ */
+export function separateLabels(
+  labels: ScreenBox[],
+  board: ScreenBox,
+  view: { left: number; right: number; bottom: number; top: number },
+  margin = 0.3,
+): { x: number; y: number }[] {
+  const placed: ScreenBox[] = [board];
+  const out = new Array<{ x: number; y: number }>(labels.length);
+  const order = labels.map((_, index) => index).sort((a, b) => labels[a].y - labels[b].y);
+  const eps = 1e-6;
+  for (const index of order) {
+    const label = labels[index];
+    const base = clampInView(label, view, margin);
+    const at = (y: number): ScreenBox => ({ ...label, x: base.x, y });
+    const candidates = [base.y];
+    for (const other of placed) {
+      candidates.push(other.y + other.h / 2 + margin + label.h / 2 + eps);
+      candidates.push(other.y - other.h / 2 - margin - label.h / 2 - eps);
+    }
+    const clear = candidates
+      .filter((y) => y - label.h / 2 >= view.bottom + margin - eps && y + label.h / 2 <= view.top - margin + eps)
+      .filter((y) => placed.every((other) => !overlapsBox(at(y), other, margin - eps)))
+      .sort((a, b) => Math.abs(a - base.y) - Math.abs(b - base.y));
+    const y = clear.length ? clear[0] : base.y;
+    placed.push(at(y));
+    out[index] = { x: base.x, y };
+  }
+  return out;
+}
