@@ -123,6 +123,7 @@ export function ComboTagPreview({
       assets: preview.data.assets,
       images: preview.data.images,
       fonts: preview.data.fonts,
+      feature_icons: preview.data.feature_icons,
     });
   }, [preview.data, combo, description]);
 
