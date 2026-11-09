@@ -537,16 +537,12 @@ def test_p1_a_product_cannot_list_itself(db, monkeypatch):
     assert put.status_code == 422, put.text
 
 
-def test_p1_a_combo_part_cannot_also_be_its_free_item(db, monkeypatch):
-    from tests.test_product_combos import _part
-
+def test_p1_a_combo_host_cannot_be_its_free_item(db, monkeypatch):
+    """A part may be (COMBO-FREE-PART, tests/test_combo_free_part.py); the host never is."""
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     host = _product(db, "ZZACC")
-    tap = _product(db, "ZZTAP")
     combo = _combo(db, host, "ZZT 1 tap")
-    _part(db, combo, tap)
     url = COMBO_LIST.format(combo_id=combo.id)
-    assert client.put(url, json=_items(products=[(0, tap.id)])).status_code == 422
     assert client.put(url, json=_items(products=[(0, host.id)])).status_code == 422
 
 

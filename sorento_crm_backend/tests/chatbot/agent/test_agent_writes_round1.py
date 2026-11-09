@@ -101,6 +101,9 @@ class Prov:
         self.seen: list[dict] = []
 
     def chat(self, messages, *, tools=None, reasoning_effort=None, **kw):
+        if kw.get("json_schema") is not None:  # the dealer-access check (UAC F2): not a scripted round
+            return ChatResult(content='{"dealer_access": false}', prompt_tokens=10, completion_tokens=2,
+                              total_tokens=12, cached_tokens=0, tool_calls=[])
         snap = {"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools)}
         self.seen.append(snap)
         item = self.script.pop(0)
