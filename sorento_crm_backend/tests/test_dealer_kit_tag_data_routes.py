@@ -371,8 +371,11 @@ def test_product_tag_data_keeps_every_field(api):
         # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
         "accessories",
         "accessory_box_style",
+        # PRICETAG-UPGRADE-VARIANTS S3: the product's live variant members (an "All variants" icons layer).
+        "variants",
     }
     assert body["accessories"] == []
+    assert body["variants"] == []
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
     assert body["dimensions"] == "800 x 500 x 220 mm"
