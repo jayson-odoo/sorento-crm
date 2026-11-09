@@ -1,7 +1,25 @@
 # CARD: drag the accessories box header in the Tag Template designer (PRICETAG-HEADER-DRAG, 09/11/2026)
 
-Status: Plan, waiting on the owner's answers to Q1-Q5 (crew-ask on PR #2278). Track: small fix
-(expected diff under 300 lines, frontend only, no migration, no RBAC change).
+Status: Build (all five answered 9 Nov ~14:25-14:28). Track: small fix (expected diff under 300
+lines, frontend only, no migration, no RBAC change).
+
+## Owner rulings (9 Nov ~14:25, verbatim: "1a, 2 it should be up to my arrangement, 3 i don't need
+the setting la, 4 one per box, 5 ..."; Q5 (a) relayed by crew ~14:28). These win over H1-H8 below.
+
+- Q1 (a): anywhere inside the box outline, with snap guides.
+- Q2: **no automatic reflow.** Moving the header never moves the cards, the frame or the footer, and
+  frees or reserves no space by itself; the owner arranges. Cards keep the spot the box layout gives
+  them today (the default top band stays, so existing templates stay pixel-identical).
+- Q3 (b): a moved header is plain header text where dropped: no border break, no background. The
+  "Header on the border" setting and its "Behind the header" colour are hidden while the header has a
+  stored position; unmoved headers keep the setting exactly as today.
+- Q4 (a): one header per box.
+- Q5 (a): the header position is part of the linked saved accessories template's design, like the
+  header text. Moving it in one tag template updates the saved template and every tag template linked
+  to it; Detach keeps a one-off. In the request designer (detach mode) a move detaches the box first,
+  as any other design edit does there.
+- Clicking the header selects its box (the Header controls are in that box's inspector). No scroll
+  jump is added.
 
 Owner 9 Nov ~13:55 MYT, on an accessory card ("FREE" header, dark green rounded border, picture,
 SRTW5000, name, "LP: RM 68"): "I am okay with editing the FREE but I want to drag and place it at
