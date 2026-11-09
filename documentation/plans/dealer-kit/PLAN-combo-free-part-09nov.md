@@ -1,6 +1,6 @@
 # PLAN: a combo part can also be its free item (COMBO-FREE-PART)
 
-Status: Plan, behaviour card asked (crew-ask on the PR). Small fix track (no migration, no auth change).
+Status: Build done (red tests then fix), review next; behaviour card answers pending (built on the recommendations). Small fix track (no migration, no auth change).
 
 ## Journey
 
@@ -27,3 +27,20 @@ Gunmetal) as a part AND prints it in the FREE box.
 4. Seed import and copy-to-products carry it.
 
 The host product still cannot be its own free item.
+
+## Change
+
+- `accessory_service.py` `set_combo_list`: refuses only the host.
+- `scripts/import_product_combos.py`: loose mode links a part's code as the product; strict
+  `_free_resolve` no longer refuses parts and the "already a part" skip is gone.
+- Copy-to-products and the tag render needed no change; tests pin both.
+- UI: no change. The picker (`AccessoryListField.tsx:223`) already offers parts and hides the host.
+
+## Tests
+
+- `tests/test_combo_free_part.py`: API accepts a part, refuses the host; the tag shows the part in
+  `parts` and in `combo.accessories` with LP/SP unchanged; copy-to-products keeps it.
+- `tests/test_combo_free_part_import.py`: loose reseed links the product; strict create and strict
+  existing combo both link it.
+- Updated: `test_accessories.py::test_p1_a_combo_host_cannot_be_its_free_item`,
+  `test_import_product_combos_strict_round2.py::test_ac_15c_...loaded_as_that_product`.

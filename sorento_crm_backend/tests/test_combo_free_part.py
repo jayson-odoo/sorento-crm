@@ -55,11 +55,11 @@ def test_a_part_can_be_saved_as_the_combos_free_item(db, monkeypatch):
 
     put = client.put(COMBO_LIST.format(combo_id=combo.id), json=_items(products=[(0, tap.id)]))
     assert put.status_code == 200, put.text
-    (entry,) = put.json()
+    (entry,) = put.json()["data"]
     assert entry["kind"] == "product" and entry["id"] == tap.id
     assert _free_rows(db, combo.id) == [(tap.id, None)]
     got = client.get(COMBO_LIST.format(combo_id=combo.id))
-    assert [e["id"] for e in got.json()] == [tap.id]
+    assert [e["id"] for e in got.json()["data"]] == [tap.id]
 
 
 def test_the_host_is_still_never_its_own_free_item(db, monkeypatch):
