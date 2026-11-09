@@ -30,7 +30,7 @@ import { NewProductApplicationHeader } from '@/components/common/NewProductAppli
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
@@ -551,26 +551,16 @@ function StaffNewProductApplicationDetail({
         onTakeOver={handlingLock.takeOver}
       />
 
+      {/* The SI's way (FormDetailWithSLATabs): every tab body lives in its TabsContent INSIDE the
+          Tabs, so the SLA tab mounts in its own panel (crew pass 9 Nov: a body rendered outside the
+          Tabs froze the page when the SLA tab was clicked). */}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
           {canSeeSla && <TabsTrigger value="sla">SLA Tracking</TabsTrigger>}
         </TabsList>
-      </Tabs>
-
-      {tab === 'sla' && canSeeSla ? (
-        <FormSLATrackingTab
-          sourceEntityType="new_product_application"
-          sourceEntityId={r.id}
-        />
-      ) : tab === 'stock_inquiry' ? (
-        <NewProductApplicationStockInquiry
-          inquiry={r.stock_inquiry}
-          href={(id) => `/procurement-management/stock-inquiries/${id}`}
-        />
-      ) : (
-        <>
+        <TabsContent value="details" className="mt-6 space-y-6">
           <Card className="border-2 shadow-sm">
             <CardContent className="px-5 pb-8 pt-6 sm:px-10">
               <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -669,8 +659,22 @@ function StaffNewProductApplicationDetail({
               title="Audit Trail"
             />
           )}
-        </>
-      )}
+        </TabsContent>
+        <TabsContent value="stock_inquiry" className="mt-6">
+          <NewProductApplicationStockInquiry
+            inquiry={r.stock_inquiry}
+            href={(id) => `/procurement-management/stock-inquiries/${id}`}
+          />
+        </TabsContent>
+        {canSeeSla && (
+          <TabsContent value="sla" className="mt-6">
+            <FormSLATrackingTab
+              sourceEntityType="new_product_application"
+              sourceEntityId={r.id}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
 
       {dialog}
       {purchasingOpen && (
