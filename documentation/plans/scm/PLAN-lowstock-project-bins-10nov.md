@@ -34,6 +34,14 @@ One shared location filter stays: `report_warehouse_ids(run)`.
   project bins, so its scope is unchanged.
 - Every network-wide caller (warehouse_ids None) keeps the site-pool rule.
 
+## Risk: a run with no location ticked
+
+`reorder_run_service._resolve_warehouse_ids` (`reorder_run_service.py:286-293`) stamps EVERY
+active warehouse, project bins included, when no codes are given: a Start Plan with nothing
+ticked, or a scheduled low stock job with empty `warehouse_codes` (`task_scheduler.py:538`,
+"empty = all active"). Under the literal rule those bins are now selected, so they count.
+Raised to the owner as a crew-ask; the daily job is unchanged only if its config lists codes.
+
 ## Tests (red first, `tests/scm/test_lowstock_run_locations.py`)
 
 1. A BRW + BRW-IB run: a newer BRW-IB receipt wins Last in (SRTWCX7405-RL-S-PJ shape: BRW-IB

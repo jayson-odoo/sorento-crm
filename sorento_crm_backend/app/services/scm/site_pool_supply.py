@@ -7,8 +7,8 @@ PLAN-po-spo-site-pool-and-order-sheet-downloads.md, "Design - simplest thing tha
 own rule has one home a modal or the engine can read from too, instead of staying private to
 the sheet and getting re-derived by hand wherever else the same number is needed.
 
-Both apply `pool_predicate.active_site_pool_sql` - active, not `segment='project'` - and are
-PRODUCT-WIDE by default: every site-pool warehouse the product has supply at. The low stock
+Without `warehouse_ids` both apply `pool_predicate.active_site_pool_sql` - active, not
+`segment='project'` - and are PRODUCT-WIDE: every site-pool warehouse the product has supply at. The low stock
 sheet passes `warehouse_ids` (a run's own `summary_order_service.report_warehouse_ids`,
 LOWSTOCK-LASTIN-LOCATION) and then those locations REPLACE the site-pool rule: a project bin
 the planner ticked counts like any other ticked location (LOWSTOCK-PROJECT-BINS, owner ruling
