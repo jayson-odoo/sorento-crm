@@ -106,3 +106,12 @@ A P trap held at 150 mm would print "S trap 150mm" today; after, it prints only 
 4. Only one value present: no combined icon, no space, singles print as usual (rec).
 5. Specifications tab: show the combined icon on its host row only when the partner value is also
    held (rec), or on both rows, or not at all.
+
+## Security review (9 Nov) and ruling
+
+Security review S1 (audit History shows every company's `value_icons`, and now `value_icon_conditions`,
+since registry audit rows carry no company) and S2 (`clean_value_icons` accepts another company's
+icon id on save) both predate this lane. Crew ruling (b): this lane ships `value_icon_conditions` at
+the same exposure `value_icons` already has; a separate follow-up security lane covers audit
+redaction of both columns plus visible-only icon ids on save. Conditions on an icon the caller cannot
+see are never writable here (`asset_service.py:838-846`).
