@@ -118,7 +118,8 @@ export type SearchableSelectProps = {
   /** Forwarded to the trigger, for a caller that shows an error under it. */
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
-  placeholder?: string;
+  /** Shown while nothing is selected; text, or a node (a thumbnail beside the text, say). */
+  placeholder?: React.ReactNode;
   emptyMessage?: string;
   /**
    * The options query's `error` (NEVER-STUCK-UI S3, lever L5). Set, the menu says "no

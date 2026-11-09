@@ -8,6 +8,7 @@ import type {
   NewProductApplicationDetail,
   NewProductApplicationLine,
   NewProductApplicationPrefill,
+  NewProductApplicationSuggestion,
   NewProductApplicationWrite,
 } from '@/types/newProductApplication';
 import { numberFieldError } from '@/lib/number-field';
@@ -24,8 +25,9 @@ export interface DraftLine {
   material: string;
   thickness: string;
   packing: string;
-  brand_id: string;
-  brand_label: string;
+  /** Retired with the Brand column: never filled or sent. */
+  brand_id?: string;
+  brand_label?: string;
   /** Typed text; an emptied box is sent as null, never 0. */
   expected_qty: string;
   /** Purchasing feedback, shown and edited on the sheet but never part of the write body. */
@@ -43,8 +45,19 @@ export interface FormState {
   remark: string;
   /** Purchasing feedback, one per application; not part of the write body. */
   lead_time: string;
+  /** PRODUCT CODES (header): the catalogue codes this is based on, in picked order; none = brand-new item. */
+  current_products: { id: string; product_code: string }[];
+  /** What the inquiry's code field said when it was not one catalogue code; shown read-only. */
+  inquiry_code_hint: string;
+  /** Earlier codes made from exactly these product codes, read with the application. */
+  suggestions: NewProductApplicationSuggestion[];
+  /** The ids (comma list) `suggestions` answers; a different pick asks again. */
+  suggestions_for: string;
   lines: DraftLine[];
 }
+
+/** The ids of a pick as one comparable key. */
+export const currentIdsKey = (ids: string[]) => ids.join(',');
 
 export const EMPTY_FORM: FormState = {
   stock_inquiry_id: '',
@@ -55,6 +68,10 @@ export const EMPTY_FORM: FormState = {
   needed_by: '',
   remark: '',
   lead_time: '',
+  current_products: [],
+  inquiry_code_hint: '',
+  suggestions: [],
+  suggestions_for: '',
   lines: [],
 };
 
@@ -69,11 +86,20 @@ export const blankLine = (): DraftLine => ({
   material: '',
   thickness: '',
   packing: '',
-  brand_id: '',
-  brand_label: '',
   expected_qty: '',
   cost_price: '',
 });
+
+/** True when a row was never filled in (a fresh blank row). */
+export const isBlankLine = (l: DraftLine) =>
+  !l.id &&
+  !l.proposed_code.trim() &&
+  !l.description.trim() &&
+  !l.dimension.trim() &&
+  !l.material.trim() &&
+  !l.thickness.trim() &&
+  !l.packing.trim() &&
+  !l.expected_qty.trim();
 
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
 export const stockInquiryLabel = (
@@ -96,6 +122,7 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
     material: text(l.material),
     thickness: text(l.thickness),
     packing: text(l.packing),
+    // Retired with the Brand column: read into the draft only, never shown or sent.
     brand_id: text(l.brand_id),
     brand_label: text(l.brand_name),
     expected_qty: figure(l.expected_qty),
@@ -104,6 +131,10 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
 }
 
 export function stateFromDetail(d: NewProductApplicationDetail): FormState {
+  const current = (d.current_products ?? []).map((p) => ({
+    id: p.id,
+    product_code: p.product_code,
+  }));
   return {
     stock_inquiry_id: text(d.stock_inquiry_id),
     stock_inquiry_label: d.stock_inquiry_id
@@ -115,13 +146,18 @@ export function stateFromDetail(d: NewProductApplicationDetail): FormState {
     needed_by: text(d.needed_by),
     remark: text(d.remark),
     lead_time: text(d.lead_time),
+    current_products: current,
+    inquiry_code_hint: '',
+    suggestions: d.suggestions ?? [],
+    suggestions_for: currentIdsKey(current.map((p) => p.id)),
     lines: (d.lines ?? []).map(lineFromDetail),
   };
 }
 
 /**
- * The pre-fill copies TEXT only: the customer stays typed text with no debtor, and line 1
- * carries the inquiry's code field as written. Nothing is matched or split.
+ * The pre-fill copies the inquiry's text: the customer stays typed text with no debtor, and line 1
+ * carries the inquiry's code field as written. The header starts with the product code the server
+ * matched exactly (none otherwise; the text then shows read-only as the hint).
  */
 export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
   const first = p.lines?.[0];
@@ -136,14 +172,15 @@ export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
     project_name: text(p.project_name),
     needed_by: text(p.needed_by),
     remark: text(p.remark),
-    lines: [
-      {
-        ...blankLine(),
-        proposed_code: text(first?.proposed_code),
-        description: text(first?.description),
-        expected_qty: figure(first?.expected_qty),
-      },
-    ],
+    current_products: (p.current_products ?? []).map((c) => ({
+      id: c.id,
+      product_code: c.product_code,
+    })),
+    inquiry_code_hint: p.current_products?.length
+      ? ''
+      : text(first?.proposed_code).trim(),
+    // An application from an inquiry has no product rows: purchasing answers on the header.
+    lines: [],
   };
 }
 
@@ -155,6 +192,7 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
     project_name: clean(s.project_name),
     needed_by: s.needed_by || null,
     remark: clean(s.remark),
+    current_product_ids: s.current_products.map((p) => p.id),
     lines: s.lines.map((l) => ({
       ...(l.id ? { id: l.id } : {}),
       proposed_code: clean(l.proposed_code),
@@ -163,7 +201,6 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
       material: clean(l.material),
       thickness: clean(l.thickness),
       packing: clean(l.packing),
-      brand_id: l.brand_id || null,
       expected_qty: clean(l.expected_qty),
     })),
   };

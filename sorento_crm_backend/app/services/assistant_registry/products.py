@@ -45,6 +45,8 @@ register(
             "currency": FieldDef("Currency"),
             "is_active": FieldDef("Active"),
             "is_discontinued": FieldDef("Discontinued"),
+            # LIST-PRICE-CHANGE-UI: the products list's "List price changed at" column.
+            "list_price_changed_at": FieldDef("List price changed at", column="list_price_notified_at"),
             "created_at": FieldDef("Created at"),
         },
         relations={"brand": ("brand", "brand_id"), "category": ("category", "category_id")},
@@ -52,5 +54,6 @@ register(
         screen_path="/master-data-management/products/{id}",
         pages=("/master-data-management/products",),
         routes=("GET /api/v1/master-data/products/",),
+        hint="products with brand and category",
     ),
 )

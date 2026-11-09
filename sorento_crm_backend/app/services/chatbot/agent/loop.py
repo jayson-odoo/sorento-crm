@@ -25,8 +25,9 @@ from typing import Any, Callable
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
-from app.services.chatbot.agent import actions, memory, portal_writes, writes
+from app.services.chatbot.agent import actions, batch, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
+from app.services.chatbot.agent.query_tools import mixed_basis_refusal, money_basis
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
     ANSWER,
@@ -77,6 +78,104 @@ CATALOG_TTL_SECONDS = 300
 #: After a failed refresh, the last catalogue is served this long before the next try.
 CATALOG_RETRY_SECONDS = 30
 _CATALOG_LOCK = threading.Lock()
+
+
+#: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
+#: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
+QUERY_TOOLS = ("crm_query", "crm_describe")
+MAX_QUERY_CALLS = 3
+
+
+#: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
+#: resent all ~21k tokens of tool schemas (the MCP catalogue alone ~17k), which made 4 to 7 calls 107k to 173k.
+REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
+
+
+#: Kept beside the registry tools after a round that only named a sales agent: the report takes agent ids.
+AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
+
+
+def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict], *, plan_parts: int = 0) -> list[dict]:
+    """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
+    the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
+    other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
+    registry calls were all refused, leaves the schemas as they are.
+
+    Crew live x3 on 3c6924bf: the model resolved the agent's name with crm_resolve first, a round that resent every
+    schema (~20k). A round whose crm_resolve calls found only sales agents narrows the same way (plus the report,
+    which takes the agent's id): what follows is a figure for that agent."""
+    names = {str(c.get("name") or "") for c in calls}
+    if not names:
+        return schemas
+    # `plan` and `answer` are not in `done` (run.tool_calls): line up with this round's other calls only.
+    ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
+    answered = done[-ran:] if ran else []
+    if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
+        if plan_parts > 1:
+            # A question in several parts may need another tool after the agent's figure (review round 9).
+            return schemas
+        resolved = [c for c in answered if c.get("name") == "crm_resolve"]
+        if resolved and all(c.get("status") == "ok" and c.get("agents_only") for c in resolved):
+            return [s for s in schemas if s.get("function", {}).get("name") in AFTER_AGENT_RESOLVE]
+        return schemas
+    if not names <= REGISTRY_ROUND_TOOLS:
+        return schemas
+    if not any(c.get("name") in QUERY_TOOLS and c.get("status") == "ok" for c in answered):
+        return schemas
+    return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
+
+
+#: Said in crm_resolve's description when crm_query is offered too (crew live rerun on 53908030).
+RESOLVE_AGENT_LINE = (
+    " A sales agent's name or code needs no id and no crm_resolve: pass it as crm_query's `agent` (an agent's "
+    "customers, sales, targets, commission)."
+)
+
+
+def resolve_beside_query(schemas: list[dict]) -> list[dict]:
+    """crm_resolve's schema says that crm_query takes an agent by name, when both are offered."""
+    if not any(s.get("function", {}).get("name") == "crm_query" for s in schemas):
+        return schemas
+    out = []
+    for schema in schemas:
+        if schema.get("function", {}).get("name") == "crm_resolve":
+            schema = copy.deepcopy(schema)
+            schema["function"]["description"] = schema["function"]["description"].rstrip() + RESOLVE_AGENT_LINE
+        out.append(schema)
+    return out
+
+
+def found_agents(data) -> list[str]:
+    """The sales agents a `crm_resolve` result named, as "CODE - Name", when every term named one: found with only
+    sales agents, or among look-alikes (customers whose names contain it) a sales agent whose code or name IS the
+    term (crew live rerun on 53908030: "active customers of LONG I" resolved LONG I among customers and took a
+    third call). [] when any term names no agent."""
+    from app.services.assistant_registry.query import agent_exact
+
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        return []
+    labels: list[str] = []
+    for row in results:
+        matches = row.get("matches") if isinstance(row, dict) else None
+        if not isinstance(matches, list) or not matches:
+            return []
+        agents = []
+        for m in matches:
+            if not isinstance(m, dict) or m.get("kind") != "sales_agent":
+                continue
+            code, name = str(m.get("code") or "").strip(), str(m.get("name") or "").strip()
+            agents.append(f"{code} - {name}" if code and name else code or name)
+        only_agents = row.get("status") == "found" and len(agents) == len(matches)
+        exact = [label for label in agents if agent_exact(label, row.get("term"))]
+        if any(m.get("kind") != "sales_agent" and agent_exact(m.get("name"), row.get("term")) for m in matches
+               if isinstance(m, dict)):
+            exact = []  # a customer named exactly the same: the term may mean either (review round 10)
+        named = agents if only_agents else exact
+        if not named:
+            return []
+        labels.extend(named)
+    return [label for label in dict.fromkeys(labels) if label]
 
 
 @dataclass
@@ -489,6 +588,19 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
     if not entry:
         return False
     low = _fold_text(what)
+    if entry["name"] == batch.BATCH and isinstance(entry.get("data"), dict):
+        # Only a skipped row's "No customer ..." / "No tag named ..." part backs the claim, for the term it quotes: the claim is that
+        # term, quotes it, or repeats the whole part.
+        prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "', 'No tag named "',
+                    'No sales agent named "')
+        for item in entry["data"].get("skipped") or []:
+            for part in str(item.get("reason") or "").split("; "):
+                for prefix in prefixes:
+                    if part.startswith(prefix) and '"' in part[len(prefix):]:
+                        term = _fold_text(part[len(prefix):].split('"', 1)[0])
+                        if low == term or f'"{term}"' in low or _fold_text(part.rstrip(".")) in low:
+                            return True
+        return False
     if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
         for r in entry["data"].get("results") or []:
             term = _fold_text(str(r.get("term") or ""))
@@ -512,10 +624,48 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return entry["status"] == "empty" and bool(term) and (
             term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
         )
+    if entry["name"] == "crm_query" and entry["status"] == "ok" and isinstance(entry.get("data"), dict):
+        # A crm_query that matched no row backs "none" for the very term it named (crew live x3, 8 Nov: "commission
+        # payout to fullshun" was prefixed with a not-confirmed line after an empty query for "fullshun").
+        data = entry["data"]
+        if data.get("rows") != [] or data.get("total"):
+            return False
+        terms = _searched_names(entry.get("args") or {})
+        return terms is not None and any(
+            isinstance(t, str) and (term := _fold_text(t)) and (
+                term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+            )
+            for t in terms
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
     return False
+
+
+def _searched_names(args: dict) -> list | None:
+    """The names an empty crm_query searched for: its `agent` and its text filters on the entity's name or agent
+    fields. None when anything else narrowed it (a status, a kind, an amount: empty then says nothing about the
+    name), a date window aside (review round 2 on d8a47c7b)."""
+    from app.services.assistant_registry import ENTITIES
+
+    entity = ENTITIES.get(str(args.get("entity")))
+    if entity is None:
+        return None
+    names = [args.get("agent")]
+    for f in args.get("filters") or []:
+        if not isinstance(f, dict):
+            return None
+        field = entity.fields.get(str(f.get("field")))
+        if field is not None and field.kind == "date" or f.get("field") == entity.window_field:
+            continue
+        if field is not None and (f.get("field") in entity.name_by or field.agent_id) and f.get("op") in (
+            "eq", "contains", "starts_with"
+        ):
+            names.append(f.get("value"))
+            continue
+        return None
+    return names
 
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
@@ -525,7 +675,8 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     # of returned rows. The figures' citations are informational.
     backed: set[str] = set()
     for entry in ledger.values():
-        if entry["status"] == "ok":
+        # A batch result is built by code from the pasted rows (its row numbers and counts), whatever its status.
+        if entry["status"] == "ok" or (entry.get("name") == batch.BATCH and isinstance(entry.get("data"), dict)):
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
@@ -571,14 +722,15 @@ def open_parts(args: Any, plan: list[str], on_limit: bool) -> list[str]:
 
 def final_reply(
     args: Any, bad_numbers: list[str], bad_not_found: list[str], *, plan: list[str] | None = None,
-    on_limit: bool = False, ledger: dict[str, dict] | None = None,
+    on_limit: bool = False, ledger: dict[str, dict] | None = None, user_text: str | None = None,
 ) -> tuple[str, bool]:
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
         text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
-        text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
+        missing = "; ".join(bad_not_found)
+        text = f"I did not search for {missing}, so I cannot say it does not exist. {text}".strip()
     if not_checked:
         text = f"{text}\n\nNot checked: {'; '.join(not_checked)}.".strip()
     left = open_parts(args, plan or [], on_limit)
@@ -587,7 +739,7 @@ def final_reply(
     # Records by their label, the result's scope note, dates as dd/mm/yyyy: decided in code (`query_tools`).
     from app.services.chatbot.agent.query_tools import shape_reply
 
-    text = shape_reply(text, ledger)
+    text = shape_reply(text, ledger, user_text)
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
@@ -677,6 +829,8 @@ def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
     is_test: bool = True,
 ) -> ToolResult:
+    if any(s.get("batch") for s in steps):
+        return ToolResult("invalid", message="A table of changes is already proposed this turn; propose this after it is decided.")
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
     # An idea create carries what only the loop knows: the user's own message of this turn (I7: the transcript,
@@ -881,6 +1035,14 @@ def _fetch_catalog() -> dict:
     return catalog_cached(
         lambda: MCPRuntimeClient(url, timeout_seconds=10).list_tools_with_schema(), key=url
     )
+
+
+def agent_provider_name(db) -> str:
+    """The provider the agent will call (`gemini` unless an admin picked another), without its key."""
+    from app.services import ai_prompt_registry
+
+    name, _model = ai_prompt_registry.agent_model(db, PROMPT_KEY)
+    return name or DEFAULT_PROVIDER
 
 
 def _resolve_provider(db) -> tuple[Any, str, str, str | None]:
@@ -1096,8 +1258,13 @@ def run_agent_turn(
     is_test: bool = True,
     context_before: str = "",
     context_after: str = "",
+    images: list | None = None,
+    files: list[dict] | None = None,
+    file_text: str = "",
 ) -> AgentTurnResult:
-    """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
+    """`file_text` is the text read from the user's attached files: quoted data in a message of its own
+    before the user's, never part of `text`. `images` ride every model call of the turn but the history summary (the panel's pictures and
+    PDFs); `files` is what the turn read, recorded on its envelope. `is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
     operator behind it, its rate limit keys on the contact.
 
     `context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
@@ -1111,7 +1278,7 @@ def run_agent_turn(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
-            context_after=context_after,
+            context_after=context_after, images=images, files=files, file_text=file_text,
         )
 
 
@@ -1157,9 +1324,40 @@ def _channel(is_test: bool) -> str:
     return "console" if is_test else "whatsapp"
 
 
+def _batch_reply(steps: list[dict], skipped: list[dict], waiting: list[dict], confirm_notes: list[str]) -> str:
+    """A table turn's whole reply, built by code: the counts, then the tables (the model's own text is dropped)."""
+    reply = f"{batch.summary_line(steps, skipped, waiting)}\n\n{batch.preview_block(steps, skipped, waiting)}"
+    return f"{reply}\n\n" + "\n".join(confirm_notes) if confirm_notes else reply
+
+
+def _previous_waiting(db, conv, turn_id: str) -> dict:
+    """The newest EARLIER table turn of this conversation (a plain turn in between does not hide it), as
+    {"write", "waiting", "skipped"}: its `batch_write`, `batch_waiting` and `batch_skipped`. One query."""
+    earlier = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == conv.contact_respond_id,
+            ChatbotTurn.ingress == "agent",
+            ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
+            ChatbotTurn.response.has_key("batch_waiting"),
+            ChatbotTurn.id != turn_id,
+        )
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc())
+        .first()
+    )
+    if earlier is None:
+        return {"write": None, "waiting": [], "skipped": []}
+    got = earlier.response
+    return {
+        "write": got.get("batch_write"),
+        "waiting": got.get("batch_waiting") or [],
+        "skipped": got.get("batch_skipped") or [],
+    }
+
+
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    is_test=True, context_before="", context_after="",
+    is_test=True, context_before="", context_after="", images=None, files=None, file_text="",
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -1178,6 +1376,10 @@ def _run(
         envelope["operator_user_id"] = str(operator_user_id)
     if staff_principal.current() is not None:
         envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
+    if files:
+        envelope["files"] = list(files)  # what the turn read, for the audit
+    if file_text:
+        envelope["file_text"] = file_text  # history rebuilds the quoted message from it
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
@@ -1194,6 +1396,18 @@ def _run(
     conversation_id = str(conv.id)
 
     steps: list[dict] = []
+    # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
+    batch_skipped: list[dict] = []
+    batch_waiting: list[dict] = []
+    batch_called = False
+    previous_waiting: list[dict] | None = None
+    previous_table: dict | None = None  # the earlier table turn, for its not-changed rows (AGENT-BATCH-NOTCHANGED)
+    batch_write: str | None = None
+    closed_rows: dict | None = None  # the rows of this conversation's decided cards (AGENT-DECIDED-CARDS)
+
+    def batch_shown() -> bool:
+        # The turn's reply is the code-built summary and tables, so the model's own answer text is not shown or checked.
+        return batch_called and (any(s.get("batch") for s in steps) or bool(batch_skipped) or bool(batch_waiting))
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1218,8 +1432,9 @@ def _run(
             raise TimeoutError("the turn ran out of time")
         started = clock()
         try:
+            extra = {"images": images} if images and kind != "compaction" else {}
             result = send(
-                messages, tools=tools, model=model, timeout=timeout,
+                messages, tools=tools, model=model, timeout=timeout, **extra,
                 # The summary of older turns is a side call: it neither thinks nor shows thoughts.
                 reasoning_effort=None if kind == "compaction" else effort,
                 include_thoughts=kind != "compaction",
@@ -1295,10 +1510,11 @@ def _run(
         # -- memory: compaction (only with time to spare), then history
         def summarize(old: str | None, folded: list[ChatbotTurn]) -> str:
             lines = []
+            notes = memory.decision_notes(db, conv)  # a decided card stays decided once folded (AGENT-DECIDED-CARDS)
             for t in folded:
-                msgs = memory._turn_messages(t)
+                msgs = memory._turn_messages(t, notes.get(str(t.id)))
                 created = t.created_at.date().isoformat() if t.created_at else ""
-                lines.append(f"[{created}] User: {msgs[0]['content']}\nAssistant: {msgs[1]['content']}")
+                lines.append(f"[{created}] User: {msgs[-2]['content']}\nAssistant: {msgs[-1]['content']}")
             prompt = (
                 "Fold the earlier conversation into one running summary. Keep corrections the user made, "
                 "open questions, the entities involved and the figures already answered, each with the "
@@ -1323,8 +1539,11 @@ def _run(
         dealer = portal_writes.offered(db, ctx)
         reads += [portal_writes.PORTAL_READS[n] for n in dealer if n in portal_writes.PORTAL_READS]
         write_tools += [portal_writes.PORTAL_WRITES[n] for n in dealer if n in portal_writes.PORTAL_WRITES]
+        batch_schema = batch.batch_tool_schema(db, ctx)
         system = _system_prompt(
-            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
+            db, ctx.user_name,
+            {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools),
+             *((batch.BATCH,) if batch_schema else ())},
             principal=ctx.principal,
         )
         if waiting is not None:
@@ -1337,14 +1556,22 @@ def _run(
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
             messages.append({"role": "user", "content": context_after})
-        messages.append({"role": "user", "content": text})
+        if file_text:
+            messages.append(memory.files_message(file_text))
+        messages.append({"role": "user", "content": text or (memory.FILES_ONLY if file_text or images else "")})
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
+        if batch_schema is not None:
+            schemas.append(batch_schema)
+        schemas = resolve_beside_query(schemas)
         if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
             schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
+            if file_text or images:
+                # What the files say is not the user's yes: only their own message or the card's button confirms.
+                schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
         action_id = str(uuid.uuid4())
         id_names: dict[str, str] = {}
@@ -1387,14 +1614,16 @@ def _run(
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             nonlocal forced_args
             args = forced_args = answer_of(res)
-            bad_numbers, bad_nf = verify_answer(args, ledger, text)
-            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)
+            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger, user_text=text)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
             if named:
                 return reply_text
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
+        # The sales basis this answer's money totals are on (`query_tools.money_basis`); one per turn.
+        turn_basis: list[str] = []
         while True:
             if run.rounds >= 1:
                 # Confirming acts on the user's own message only: from the second round on, tool
@@ -1464,6 +1693,20 @@ def _run(
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
+                if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
+                    # Crew pass on d430fe3c (5 Nov): turns of 7 query calls ran to 161-173k prompt tokens.
+                    replies[idx] = ToolResult(
+                        "denied",
+                        message=f"At most {MAX_QUERY_CALLS} crm_query/crm_describe calls per question; answer with "
+                                "the results you have and say what is missing.",
+                    ).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
+                basis = money_basis(args, name)
+                if basis and turn_basis and basis != turn_basis[0]:
+                    replies[idx] = mixed_basis_refusal(turn_basis[0], basis).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
                 if tool_index >= budgets.calls_per_round:
                     # A Gemini continuation must be replayed with a reply for every call it
                     # contains, so each extra call gets one; the digest and trace carry one note.
@@ -1478,6 +1721,7 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
+                self_note = None
                 if ctx.principal == "contact" and not (
                     name in CONTACT_TOOLS or name == HANDOFF or name in dealer
                     or (name in (CONFIRM_ACTION, CANCEL_ACTION) and waiting is not None)
@@ -1485,25 +1729,56 @@ def _run(
                     # A contact has no user: no staff write or user read, and a confirm or cancel only of its own
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
+                elif name == batch.BATCH:
+                    batch_called = True
+                    if previous_waiting is None:
+                        previous_table = _previous_waiting(db, conv, turn_id)
+                        previous_waiting = previous_table["waiting"]
+                    if closed_rows is None:
+                        closed_rows = actions.closed_rows(db, contact_respond_id, conversation_id)
+                    out = batch.propose(
+                        db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
+                        waiting_out=batch_waiting, user_text=text, previous_waiting=previous_waiting,
+                        closed=closed_rows, previous=previous_table,
+                    )
+                    if isinstance(args, dict) and isinstance(args.get("write"), str):
+                        batch_write = args["write"]
+                    if out.status == "proposed":
+                        out.data = {**out.data, "action_id": action_id}
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
-                elif name == CONFIRM_ACTION and run.rounds > 1:
+                elif name == CONFIRM_ACTION and (run.rounds > 1 or file_text or images):
                     out = ToolResult(
                         "denied",
                         message="Not done: a change is confirmed only from the user's own message, "
-                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                        "before any tool runs this turn and never on a turn with attached files. "
+                        "Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
+                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
+                        from app.models.user import User
+                        from app.services.chatbot.agent.query_tools import strip_self_agent
+
+                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                        args, self_note = strip_self_agent(args, asker, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
                         catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
+                    )
+                if name == "crm_query" and self_note:
+                    out.message = f"{out.message} {self_note}".strip() if out.message else self_note
+                agents = found_agents(out.data) if name == "crm_resolve" and out.status == "ok" else []
+                if agents and any(sc.get("function", {}).get("name") == "crm_query" for sc in schemas):
+                    out.message = (
+                        "crm_query takes the agent by name, no id needed: "
+                        + "; ".join(f"agent={label!r}" for label in agents) + "."
                     )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)
@@ -1518,7 +1793,9 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
+                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, **({"agents_only": True} if agents else {})})
+                if basis and out.status == "ok" and not turn_basis:
+                    turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
                 trace.add(
                     "agent_tool",
@@ -1543,8 +1820,8 @@ def _run(
             if answer_idx is not None:
                 args = calls[answer_idx].get("arguments")
                 args = scrub(args if isinstance(args, dict) else {})
-                bad_numbers, bad_nf = verify_answer(args, ledger, text)
-                empty_text = not _answer_parts(args)[0]
+                bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)
+                empty_text = not _answer_parts(args)[0] and not batch_shown()
                 trace.add(
                     "agent_answer",
                     {"unbacked_numbers": bad_numbers, "unbacked_not_found": bad_nf, "repaired": repaired},
@@ -1566,6 +1843,7 @@ def _run(
                 )
             if accepted:
                 break
+            schemas = narrow_after_query(schemas, calls, run.tool_calls, plan_parts=len(plan_parts))
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"
@@ -1580,8 +1858,8 @@ def _run(
                 break
 
         if final_args is not None:
-            bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
-            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
+            bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(final_args, ledger, text)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger, user_text=text)
         gaps = no_tool_items(final_args if final_args is not None else forced_args)
         if gaps:
             # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
@@ -1668,6 +1946,16 @@ def _run(
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
+    if status != "failed" and not steps and (batch_skipped or batch_waiting):
+        # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
+        reply = _batch_reply([], batch_skipped, batch_waiting, confirm_notes)
+        try:
+            # The old confirm card no longer matches what the user was just shown.
+            actions.expire_previous(db, ctx, [], test=is_test)
+            db.commit()
+        except Exception:  # noqa: BLE001 - the turn still closes
+            logger.warning("agent: expiring the previous proposal failed", exc_info=True)
+            db.rollback()
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
         try:
@@ -1676,11 +1964,20 @@ def _run(
             )
             lines = actions.proposal_lines(stored)
             pending = actions.pending_dict(stored)
-            reply = f"{reply}\n\n{proposal_block(lines)}"
+            if all(s.get("batch") for s in stored.steps or []):
+                reply = _batch_reply(stored.steps, batch_skipped, batch_waiting, confirm_notes)
+            else:
+                reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()
-            reply = f"{reply}\n\nI could not store the proposed changes, so nothing will be changed."
+            failed = "I could not store the proposed changes, so nothing will be changed."
+            if batch_shown():
+                reply = f"{batch.summary_line(steps, batch_skipped, batch_waiting)}\n\n{failed}"
+                if confirm_notes:
+                    reply = f"{reply}\n\n" + "\n".join(confirm_notes)
+            else:
+                reply = f"{reply}\n\n{failed}"
 
     turn = db.get(ChatbotTurn, turn_id) or turn
     turn.status = "failed" if status == "failed" else "done"
@@ -1692,6 +1989,20 @@ def _run(
         "limit_hit": limit_hit,
         "rounds": run.rounds,
     }
+    if batch_called:
+        # The rows still waiting for a pick, read by the next table turn to check the codes it is given.
+        turn.response["batch_waiting"] = [
+            {"row": w["row"], "key": w.get("key"), "written": w["written"], "codes": [c["code"] for c in w["candidates"]],
+             "kept": list(w.get("kept") or []), "write": w.get("write"),
+             "noun": w.get("noun")}
+            for w in batch_waiting
+        ]
+        # The rows not changed, read by the pick follow-up so they stay listed when the model leaves them out.
+        turn.response["batch_skipped"] = [
+            {"row": s["row"], "key": s.get("key"), "reason": s["reason"], "cells": s.get("cells") or {}}
+            for s in batch_skipped
+        ]
+        turn.response["batch_write"] = batch_write
     # Only a real final answer can ask back; a forced final at a limit never does.
     if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
         turn.response["asked_back"] = True

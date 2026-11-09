@@ -37,6 +37,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = {
   sponsorship_form: 'Sponsorship Form',
   complaint: 'Complaint',
   ticket: 'Ticket',
+  new_product_application: 'New Product Application',
 };
 
 export default function FormSLATrackingList() {

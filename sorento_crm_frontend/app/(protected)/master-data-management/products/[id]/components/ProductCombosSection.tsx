@@ -568,8 +568,8 @@ function ComboBlock({
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
             />
           </div>
-          <div className="sm:col-span-2">
-            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit />
+          <div className="min-w-0 sm:col-span-2">
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit />
           </div>
         </div>
       ) : (
@@ -580,8 +580,8 @@ function ComboBlock({
             <p className="text-xs text-muted-foreground">Description</p>
             <RichTextView value={combo.description} />
           </div>
-          <div className="sm:col-span-2">
-            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit={false} />
+          <div className="min-w-0 sm:col-span-2">
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit={false} />
           </div>
         </div>
       )}

@@ -63,3 +63,28 @@ describe('PARAM_VARIABLES for ideation_status_update (#1355)', () => {
     expect(BUTTON_LINK_VARIABLES).toContain('track_url');
   });
 });
+
+describe('new_product_application_update (NPA-FROM-SI, owner 8 Nov)', () => {
+  it('lists the NPA update use case as "New Product Application", in the status update group', () => {
+    const entry = USE_CASES.find((u) => u.key === 'new_product_application_update');
+    expect(entry?.label).toBe('New Product Application');
+    expect(entry?.group).toBeUndefined();
+  });
+
+  it('offers the NPA variables any approved template can map', () => {
+    const keys = PARAM_VARIABLES.map((v) => v.key);
+    for (const key of [
+      'entity_number',
+      'inquiry_number',
+      'customer',
+      'project',
+      'product_code',
+      'new_product_code',
+      'lead_time',
+      'update',
+      'portal_url',
+    ]) {
+      expect(keys).toContain(key);
+    }
+  });
+});

@@ -23,6 +23,7 @@ from sqlalchemy import event
 
 from app.services.project_supply_service import LADDER_VERSION
 from app.services.error_handler import AppException
+from app.utils.date_format import fmt_date
 
 from ._pg_fixture import blank_session
 from .test_fulfilment_board import (  # noqa: F401  (helpers, not fixtures)
@@ -241,7 +242,7 @@ def test_water_arriving_after_the_required_date_is_named_with_its_date_and_never
         assert own_step["answer"] == "no"
         assert own_step["took"] == "0"
         assert "30 to " + own.warehouse_code in own_step["why"], own_step["why"]
-        assert f"arriving {arrives.day} " in own_step["why"], own_step["why"]
+        assert f"arriving {fmt_date(arrives)} " in own_step["why"], own_step["why"]
         assert "after the required date" in own_step["why"]
         assert [s["kind"] for s in contribution["sources"]] == ["buy"]
         assert contribution["qty_proposed_buy"] == "30"
@@ -758,4 +759,4 @@ def test_the_water_is_drawn_at_the_location_it_is_coming_to_not_at_the_lines_own
             in own_step["why"]
         ), own_step["why"]
         water_source = contribution["sources"][1]
-        assert f"arriving {arrives.day} " in water_source["reason"], water_source["reason"]
+        assert f"arriving {fmt_date(arrives)} " in water_source["reason"], water_source["reason"]

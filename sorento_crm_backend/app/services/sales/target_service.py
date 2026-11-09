@@ -35,6 +35,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Integer, cast, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
@@ -314,6 +315,61 @@ def save_point_ratio(db: Session, effective_from: date, rm_per_point: float) -> 
     row.rm_per_point = Decimal(str(rm_per_point)).quantize(Decimal("0.0001"))
     db.flush()
     return row
+
+
+def _point_ratio(db: Session, ratio_id: str) -> SalesPointRatio:
+    """One of the acting company's ratios by id, or a 404 (the read is company-scoped)."""
+    from app.services.error_handler import handle_not_found
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(ratio_id, resource="Point ratio")
+    row = db.query(SalesPointRatio).filter(SalesPointRatio.id == ratio_id).first()
+    if row is None:
+        raise handle_not_found("Point ratio", ratio_id)
+    return row
+
+
+def _ratio_clash_message(effective_from: date) -> str:
+    return f"A ratio from {effective_from.strftime('%d/%m/%Y')} already exists. Edit that one instead."
+
+
+def update_point_ratio(
+    db: Session, ratio_id: str, effective_from: date, rm_per_point: float
+) -> SalesPointRatio:
+    """Fix a ratio's value or date (lane POINT-RATIO-EDIT). Moving it onto a date another
+    ratio already holds is refused rather than merged: the reader picks which one goes."""
+    row = _point_ratio(db, ratio_id)
+    clash = (
+        db.query(SalesPointRatio.id)
+        .filter(SalesPointRatio.effective_from == effective_from, SalesPointRatio.id != row.id)
+        .first()
+    )
+    if clash is not None:
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from))
+    row.effective_from = effective_from
+    row.rm_per_point = Decimal(str(rm_per_point)).quantize(Decimal("0.0001"))
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Two edits racing onto one date pass the check above; the unique index answers.
+        if "uq_sales_point_ratios_company_from" not in str(exc.orig):
+            raise
+        raise AppException(status_code=409, message=_ratio_clash_message(effective_from)) from exc
+    return row
+
+
+def delete_point_ratio(db: Session, ratio_id: str) -> None:
+    """The parked `point_ratio.delete` handler, a hard delete (D7). The next older ratio then
+    applies from that date on; with none left, a points target reads as "ratio missing", the
+    state before the first ratio. Already gone is not an error (`delete_target_by_id`)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    validate_uuid_path(ratio_id, resource="Point ratio")
+    row = db.query(SalesPointRatio).filter(SalesPointRatio.id == ratio_id).first()
+    if row is None:
+        return
+    db.delete(row)
+    db.commit()
 
 
 #: One target's scope ids: (category ids, product ids, brand ids).
@@ -1653,6 +1709,21 @@ def list_all_targets(
         } if targets else {}
         labels = {team_id: team.name for team_id, team in teams.items()}
 
+    # Search before periods and achievement (TARGET-SEARCH-FAST): achievement is the slow part,
+    # so a search hitting 3 targets computes it for those 3 only. Same fields the row shows.
+    if query and query.strip():
+        needle = query.strip().lower()
+        label_key = {"dealer": "id", "agent": "sales_agent_id"}.get(subject, "sales_team_id")
+        targets = [
+            t
+            for t in targets
+            if any(
+                needle in (v or "").lower()
+                for v in (labels.get(getattr(t, label_key), ""), t.name, t.target_no)
+            )
+            or any(needle in (c.customer_code or "").lower() for c in accounts.get(t.id, []))
+        ]
+
     periods_by_target: Dict[str, List[SalesTargetPeriod]] = {}
     if targets:
         for period in db.query(SalesTargetPeriod).filter(
@@ -1747,14 +1818,6 @@ def list_all_targets(
             }
         )
 
-    if query and query.strip():
-        needle = query.strip().lower()
-        rows = [
-            r
-            for r in rows
-            if any(needle in (r.get(key) or "").lower() for key in ("subject_label", "name", "target_no"))
-            or any(needle in code.lower() for code in r.get("account_codes") or [])
-        ]
     # Newest range first, then by who and the number, so the current targets lead.
     rows.sort(key=lambda r: (r["subject_label"].lower(), r["target_no"]))
     rows.sort(key=lambda r: r["start_date"], reverse=True)
@@ -2340,6 +2403,86 @@ def _reached(rung: dict, achieved: Decimal, target: SalesTarget, period: SalesTa
         # The engine's own rule (commission_service.payout_for `reached`).
         return Decimal(rung["from_pct"]) <= Decimal("100")
     return achieved >= rung["threshold_rm"]
+
+
+def period_figures(
+    db: Session,
+    targets: List[SalesTarget],
+    *,
+    date_from: date,
+    date_to: date,
+) -> List[Tuple[SalesTarget, SalesTargetPeriod, dict]]:
+    """Each period of `targets` overlapping the window with the target page's own figures
+    (`target_detail.period_out`: target, achieved, %, tier reached, commission, bonus, the
+    "replaced by its dealer" zeroing), batched over many targets for the assistant's
+    `crm_query` (AI-TOOLS-WAVE2). The same calls as the page, in the same order:
+    `_achieved_by_account` (per company, dealers apart, as `period_progress` batches it),
+    `period_payout`, `_replacing_reached`. No figure is computed here that the page does not.
+    `tests/chatbot/agent/test_ai_tools_wave2.py` holds every figure equal to `target_detail`."""
+    if not targets:
+        return []
+    by_target: Dict[str, List[SalesTargetPeriod]] = {}
+    for period in (
+        db.query(SalesTargetPeriod)
+        .filter(
+            SalesTargetPeriod.target_id.in_([t.id for t in targets]),
+            SalesTargetPeriod.period_start <= date_to,
+            SalesTargetPeriod.period_end >= date_from,
+        )
+        .order_by(SalesTargetPeriod.period_start)
+    ):
+        by_target.setdefault(period.target_id, []).append(period)
+    pairs = [(t, p) for t in targets for p in by_target.get(t.id, [])]
+    if not pairs:
+        return []
+    by_account: Dict[str, Dict[Optional[str], Decimal]] = {}
+    for company_id in {t.company_id for t, _ in pairs}:
+        for dealer in (True, False):
+            chunk = [
+                (t, p)
+                for t, p in pairs
+                if t.company_id == company_id and (t.subject_kind == "dealer") == dealer
+            ]
+            if chunk:
+                by_account.update(_achieved_by_account(db, company_id, chunk))
+    tiers_by = _tiers_by_target(db, [t.id for t, _ in pairs])
+    rates = _tier_rates(db, [x.id for rows in tiers_by.values() for x in rows])
+    ratios = point_ratios(db) if any(t.threshold_unit == "points" for t, _ in pairs) else []
+    replacing_cache: dict = {}
+    replaced: Dict[str, bool] = {}
+    for target in {t.id: t for t, _ in pairs}.values():
+        replaced.update(_replacing_reached(db, target, by_target[target.id], replacing_cache))
+
+    out: List[Tuple[SalesTarget, SalesTargetPeriod, dict]] = []
+    for target, p in pairs:
+        tiers = tiers_by.get(target.id, [])
+        mine = [r for r in ratios if r.company_id == target.company_id]
+        payout = period_payout(
+            target, p, _engine_tiers(tiers, rates), [t.period_start for t in tiers],
+            by_account.get(p.id, {}), mine,
+        )
+        if replaced.get(p.id):
+            payout = _ZERO_PAYOUT
+        ratio = ratio_on(mine, p.period_end) if target.threshold_unit == "points" else None
+        value = sum(by_account.get(p.id, {}).values(), Decimal("0"))
+        figure = p.target_value * ratio if ratio is not None else p.target_value
+        out.append(
+            (
+                target,
+                p,
+                {
+                    "target_value": float(figure),
+                    "achieved_value": float(value),
+                    "achieved_pct": ach.achieved_pct(value, figure),
+                    "tier_reached": payout.tier_reached,
+                    "commission_earned": _num(payout.commission),
+                    "bonus_earned": _num(payout.bonus),
+                    "replaced": bool(replaced.get(p.id)),
+                    "ratio_missing": payout.ratio_missing,
+                },
+            )
+        )
+    return out
 
 
 def period_progress(

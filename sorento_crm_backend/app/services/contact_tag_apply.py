@@ -253,20 +253,21 @@ def _w_policy(db: Session, contact, items, actor_id) -> None:
             row.excluded_spec_keys = sorted(eff.excluded_spec_keys) if eff.excluded_spec_keys is not None else None
         db.add(row)
     want = {i["key"]: i["_raw"]["expected"] for i in items}
+    lists = (inc, exc)
     for key, value in want.items():
-        if key in ("warehouse_ids", "excluded_warehouse_ids", "spec_keys", "excluded_spec_keys"):
-            setattr(row, key, sorted(value))
+        if key in lists:
+            # "All" (TAG-UNION: a setting going back to its value before the tags) is no list at all.
+            setattr(row, key, None if isinstance(value, cts._AllSet) else sorted(value))
         elif key == "hide_zero_locations":
             row.hide_zero_locations = bool(value)
         else:
             row.mode = value
-    # One rule per row (CHECK): setting one list clears its sibling unless the tags set both.
-    if inc in want and exc in want:
+    # One rule per row (CHECK): a list that holds something clears its sibling.
+    held = [k for k in lists if k in want and not isinstance(want[k], cts._AllSet) and want[k]]
+    if len(held) == 2:
         raise ValueError("a contact row cannot hold both an include list and an exclude list")
-    if inc in want:
-        setattr(row, exc, None)
-    if exc in want:
-        setattr(row, inc, None)
+    for k in held:
+        setattr(row, exc if k == inc else inc, None)
     db.flush()
 
 
@@ -382,8 +383,13 @@ def apply_settings(
     from app.models.access import RespondContact
     from app.services.contact_access_copy_service import contact_label
 
+    from app.services import contact_tag_union
+
     ids = list(dict.fromkeys(str(c) for c in contact_ids))
     found = {str(c.id): c for c in db.query(RespondContact).filter(RespondContact.id.in_(ids)).all()}
+    # TAG-UNION: "Apply settings" resets the contact to its tags (drops own changes); the snapshot must
+    # exist first so the written value is recorded as the tags' value.
+    unseeded = contact_tag_union.seed_each(db, list(found.values()))
     # The same redaction as the tag-settings read: a section the actor cannot read keeps its generic label
     # and no values or names (conflict tags included).
     redact = cts.unreadable_sections(can, is_superadmin)
@@ -396,6 +402,9 @@ def apply_settings(
             results.append(_row(cid, None, "failed", error="Contact not found"))
             continue
         label = contact_label(contact)
+        if cid in unseeded:
+            results.append(_row(cid, label, "failed", error=SAVE_FAILED))
+            continue
         items = evaluated[cid]["items"]
         if not items:
             results.append(_row(cid, label, "skipped"))
@@ -436,7 +445,18 @@ def apply_settings(
                 )
         changes = [_change(cat, i) for i in todo]
         changes += _cleared_sibling_changes(db, contact, cat, items, todo)
+        # Reset to tags: every setting the actor may write now counts as the tags' value, written or not
+        # (a contact already holding it must not keep an own change hidden in an older snapshot).
+        resettable = [
+            i for i in items
+            if not i["conflict"] and not i.get("blocked_reason") and (i["section"], i["key"]) != ("chatbot", "llm")
+            and i["section"] not in held_back and _can_write(i["section"], can, is_superadmin)
+            and (i in todo or not i["differs"])
+        ]
         if not todo:
+            if not dry_run and resettable:
+                _record_reset(contact, resettable)
+                db.flush()
             results.append(_row(cid, label, "unchanged", conflicts=conflicts, not_applied=not_applied))
             continue
         if not dry_run:
@@ -447,6 +467,8 @@ def apply_settings(
                     if group:
                         _WRITERS[section](db, contact, group, actor_id)
                 _audit(db, cid, actor_id, todo)
+                _record_reset(contact, resettable)
+                db.flush()
                 savepoint.commit()
             except Exception as exc:  # noqa: BLE001 - every failure becomes that contact's row
                 savepoint.rollback()
@@ -460,6 +482,19 @@ def apply_settings(
         counts[r["status"]] += 1
     counts["conflicts"] = sum(len(r["conflicts"]) for r in results)
     return {"dry_run": dry_run, "results": results, "counts": counts}
+
+
+def _record_reset(contact, todo: list[dict]) -> None:
+    """The written value is now the tags' value: no own change is left on these settings."""
+    snapshot = dict(contact.tag_settings_snapshot or {})
+    for i in todo:
+        sk = cts.snap_key(i["section"], i["key"])
+        entry = dict(snapshot.get(sk) or {})
+        if not entry:
+            entry["base"] = cts.to_json(i["_raw"]["current"])
+        entry["v"] = cts.to_json(i["_raw"]["expected"])
+        snapshot[sk] = entry
+    contact.tag_settings_snapshot = snapshot
 
 
 def _audit(db: Session, contact_id: str, actor_id: Optional[str], todo: list[dict]) -> None:

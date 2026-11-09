@@ -6,6 +6,10 @@ all PASS 1 Nov); H2 pre-flight done 1 Nov (owner checks; facts in section 5); in
 every prod step goes to crew as owner commands. Track: L (cross-repo, prod infra), LEAD pattern;
 each CRM PR in section 4 is its own lane with its own track.
 
+**Section 5 and 5b SUPERSEDED 4 Nov 2026 by `PLAN-ha-cf-failover-04nov.md`** (no witness server;
+Cloudflare LB is the witness; Patroni/etcd steps H3, H4, H6 replaced by that plan's phases). The
+n8n retirement (sections 1-4, 6, 7) is unchanged.
+
 Owner, 1 Nov 2026: retire n8n now and make the n8n box serve as the HA standby.
 
 Builds on HA plan v2, `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md` (PR #1915), which

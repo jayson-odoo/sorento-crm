@@ -96,6 +96,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
+    # Product list price changed - batch notification to subscribed staff
+    # (PRODUCT-FIELD-CHANGE-NOTIFY). Map params to ``list_price_count`` +
+    # ``list_price_link`` (deep link to the product list filtered to that batch);
+    # ``today_date`` (DD/MM/YYYY) and ``message`` are also available.
+    "product_list_price_changed",
     # One closing message per resolved conversation ticket
     # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
     # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.
@@ -156,6 +161,16 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # A Utility template carrying the static Share Contact Info button; no params. Unmapped
     # -> no ask is sent and the chat is handed to staff once per 24h.
     "wa_phone_share",
+    # New Product Application update (PLAN-npa-from-si-07nov, owner 8 Nov). Purchasing's
+    # "Update & Reply" on an NPA raised from a stock inquiry, sent to the salesperson through
+    # the SI's conversation. Like ``stock_inquiry``: the admin maps whatever approved template
+    # to ``entity_number`` (NPA no) / ``inquiry_number`` / ``customer`` / ``project`` /
+    # ``product_code`` (current codes) / ``new_product_code`` / ``lead_time`` / ``update``
+    # (purchasing's text) / ``portal_url`` (the NPA's portal page). Unmapped: in-window text,
+    # out-of-window skipped and logged failed, exactly as an unmapped SI. The variables are
+    # computed in the request (new_product_application_service.template_vars) and logged on
+    # the SI's conversation, like the SI's own reply.
+    "new_product_application_update",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

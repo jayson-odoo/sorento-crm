@@ -308,6 +308,13 @@ _HANDOVER_COMMITTED_TX_KEY = "oi_handover_committed_tx"
 _UNDO_PENDING_KEY = "oi_undo_pending"
 _UNDO_COMMITTED_TX_KEY = "oi_undo_committed_tx"
 
+#: FP-EMAIL-ONE-TRIGGER (owner, 6 Nov 2026: "I only want the email to purchasing to have 1
+#: trigger, which is this button"): the ROOT transactions a purchasing email trigger ran in
+#: (`mark_purchasing_email_trigger`). The handover drain sends only for one of these, and
+#: `_dispatch_changed_with_links` queues only inside one, so no other path (AutoCount ingest,
+#: a script, a service call) can email purchasing whatever it records.
+_PURCHASING_TRIGGER_TX_KEY = "oi_purchasing_trigger_tx"
+
 #: `Session.info` key for the `order_inquiry_rejected` email + the raiser's in-app notice
 #: (`PLAN-oi-reject-notify-13oct.md`), one item per order inquiry a reject touched, queued
 #: by `_uncover_and_notify_rejection` and fired once the session actually commits.
@@ -337,6 +344,37 @@ def _transaction_chain(session) -> List[Any]:
         chain.append(current)
         current = getattr(current, "parent", None)
     return chain
+
+
+def mark_purchasing_email_trigger(session) -> None:
+    """Mark the ROOT transaction this session is in as one that may email purchasing
+    (FP-EMAIL-ONE-TRIGGER, owner 6 Nov 2026).
+
+    Two callers, both a person's press, and no others:
+    - the board Confirm (`fulfilment_planning._confirm_with_possible_rejects`, the seam both
+      Confirm routes share): THE trigger;
+    - Publish amendment (`projects/sales_orders.publish_amendment`): kept as it was by the
+      owner (Q4, "not used yet"), an exception named in
+      `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`.
+    A purchasing handover line any write queues is sent only when the root transaction it was
+    queued under carries this mark, and a changed-with-links notice is queued only inside one.
+    The mark ends with that transaction, committed or not (`_fire_pending_handover`)."""
+    session.connection()  # autobegin, so there is a root transaction to mark
+    root = _transaction_chain(session)[-1]
+    marked = session.info.setdefault(_PURCHASING_TRIGGER_TX_KEY, [])
+    if not any(tx is root for tx in marked):
+        marked.append(root)
+
+
+def _may_email_purchasing(session) -> bool:
+    """True when the session's current root transaction carries
+    `mark_purchasing_email_trigger`'s mark."""
+    marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
+    if not marked:
+        return False
+    chain = _transaction_chain(session)
+    return bool(chain) and any(tx is chain[-1] for tx in marked)
+
 
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
@@ -4635,6 +4673,9 @@ class ProjectOrderInquiryService:
         """
         if not had_link:
             return
+        if not _may_email_purchasing(self.db):
+            # FP-EMAIL-ONE-TRIGGER: only a marked trigger emails purchasing.
+            return
         try:
             from app.services.automation_triggers import build_order_inquiry_link
 
@@ -6455,21 +6496,16 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         reason: str = "Removed in AutoCount",
-        notify: bool = True,
     ) -> int:
         """AC-REMOVED-LINES (owner, 26 Oct 2026): a sales order line AutoCount REMOVED has its
-        order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them - the
-        calls `ProjectSupplyService.cancel_lines` makes after writing the core line (drafts
-        dropped, `retire_rows_for_cancelled_lines`, the purchasing handover) - but the core
-        line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
-        board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
-        share. Handover lines are queued only for lines whose rows actually retired. Call
-        before `flag_rows_for_cancelled_lines`, which then meets the rows still live on the line
-        (actioned ones) and runs them through `auto_confirm`.
+        order inquiry rows retired as CS's Transfer to Cancel SO retires them (drafts dropped,
+        `retire_rows_for_cancelled_lines`), but the core line gets no `cancelled_at` /
+        `cancelled_by_id` / `cancel_reason`: those mean the CS board.
 
-        `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
-        call queued for after the commit, the purchasing handover and the changed-with-links
-        notice, is dropped again, so it retires rows and sends nothing.
+        Only `scripts/release_removed_autocount_lines.py` calls this now: the ingest leaves a
+        removed line for the board (FP-EMAIL-ONE-TRIGGER Q1 (a)). It emails nobody: whatever it
+        queues for purchasing is dropped at the commit, which is not a board Confirm
+        (`mark_purchasing_email_trigger`).
         """
         from app.services import project_line_draft_service
 
@@ -6477,47 +6513,16 @@ class ProjectOrderInquiryService:
         if not lines:
             return 0
         core_ids = [str(line.id) for line in lines]
-        queue_keys = (_HANDOVER_PENDING_KEY, _CHANGED_WITH_LINKS_PENDING_KEY)
-        queued_before = {key: len(self.db.info.get(key) or []) for key in queue_keys}
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
             core_ids,
             company_id=str(lines[0].company_id) if lines[0].company_id else None,
         )
-        retired = self.retire_rows_for_cancelled_lines(
+        return self.retire_rows_for_cancelled_lines(
             [(cid, reason) for cid in core_ids],
             actor_user_id=actor_user_id,
             note_text=reason,
         )
-        if not notify:
-            for key in queue_keys:
-                if key in self.db.info:
-                    del self.db.info[key][queued_before[key]:]
-            return retired
-        queued = {
-            str(item.get("so_line_id"))
-            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])
-        }
-        if queued:
-            mirrors = (
-                self.db.query(ProjectSalesOrderLine)
-                .filter(
-                    ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids),
-                    ProjectSalesOrderLine.id.in_(list(queued)),
-                )
-                .all()
-            )
-            core_by_id = {str(line.id): line for line in lines}
-            by_pso: Dict[str, List[Tuple[ProjectSalesOrderLine, Any]]] = defaultdict(list)
-            for mirror in mirrors:
-                core = core_by_id.get(str(mirror.core_sales_order_line_id))
-                if core is not None:
-                    by_pso[str(mirror.project_sales_order_id)].append((mirror, core))
-            for pso_id, pairs in by_pso.items():
-                self.record_cancelled_lines(
-                    pso_id=pso_id, cancelled=pairs, actor_user_id=actor_user_id
-                )
-        return retired
 
     def retire_rows_for_cancelled_lines(
         self,
@@ -15811,6 +15816,17 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # (see `_mark_handover_transaction_committed`'s own guard), so there is
             # nothing to prune here.
             return
+        # FP-EMAIL-ONE-TRIGGER: was this root a purchasing email trigger? Its mark ends with
+        # it, whatever way it ended, so a later write on the same session is judged on its own.
+        marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
+        was_trigger = False
+        if marked:
+            still_marked = [tx for tx in marked if tx is not transaction]
+            was_trigger = len(still_marked) != len(marked)
+            if still_marked:
+                session.info[_PURCHASING_TRIGGER_TX_KEY] = still_marked
+            else:
+                session.info.pop(_PURCHASING_TRIGGER_TX_KEY, None)
         # Which saved lines a Confirm told (`record_saved_lines`) lives only as long as the
         # write it belongs to, so a later apply never forgets its own lines on its account.
         session.info.pop(_SAVED_TOLD_KEY, None)
@@ -15845,6 +15861,15 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             session.info[_HANDOVER_PENDING_KEY] = remaining
         else:
             session.info.pop(_HANDOVER_PENDING_KEY, None)
+        if not was_trigger:
+            # The ONE gate: purchasing is emailed from the board Confirm and nowhere else.
+            # The rows this write changed stand; nobody is emailed about them.
+            logger.info(
+                "order_inquiry_handover: %d line(s) not sent, the write was not a purchasing"
+                " trigger",
+                len(concluded),
+            )
+            return
 
         from app.database import SessionLocal
 

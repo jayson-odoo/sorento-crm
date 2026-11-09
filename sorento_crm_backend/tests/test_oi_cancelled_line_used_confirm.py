@@ -752,12 +752,10 @@ def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(en
         l for l in env.so_lines(header["id"]) if l["id"] == line_b["id"]
     )
     assert updated_line_b["line_status"] == "cancelled"
-    if row_state == INQUIRY_RAISED:
-        # AC-RL-20 / owner ruling 26 Oct 2026: a raised row on a line the push removes is
-        # retired like Transfer to Cancel SO, not flagged (supersedes the C1 flag here).
-        assert row.state == INQUIRY_CANCELLED
-    else:
-        assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
+    # FP-EMAIL-ONE-TRIGGER Q1 (a), owner 6 Nov 2026 (supersedes AC-RL-20's retire at ingest): the
+    # push retires nothing; the row stays in its state for CS's board Confirm to retire.
+    assert row.state == row_state
+    assert row.ack_state == ACK_ACKNOWLEDGED  # ruling (c): no live link, nothing to order, done
 
 
 def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):

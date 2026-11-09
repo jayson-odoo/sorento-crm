@@ -2,8 +2,8 @@
 
 Result md5 `d29c19830b22aa47403a88ddcb8e817d` (112,531 chars), 5 Nov, after crew's re-pass on v200 (md5
 `9ad88b43128b9135244f15395f8d0fc4`) found a bare "Sorento" given said_as "company" with no kind word (2 runs of 3).
-Saved unlabelled as v202 (id 05f55303) on sorento_prod_1020. Not published; only the owner moves the production label.
-Production today is v70, md5 57d7d412. Earlier candidates: v199 dc77a7ac (4 Nov, edits 1-8), v200 9ad88b43 (edits 9-11).
+Saved as v202 (id 05f55303) on sorento_prod_1020; the owner published it as production label v71 on 5 Nov (before that,
+production was v70, md5 57d7d412). Earlier candidates: v199 dc77a7ac (4 Nov, edits 1-8), v200 9ad88b43 (edits 9-11).
 
 The text is built from three parts:
 - Base: #2105's candidate, md5 `e4aa6d43fedd996579b8c1caa2c54556`.

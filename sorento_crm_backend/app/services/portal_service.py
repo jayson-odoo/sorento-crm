@@ -2195,7 +2195,13 @@ class PortalService:
         return self._contact_display_name(contact) if contact else None
 
     def _serialize_stock_inquiry_detail(self, row: StockInquiry) -> dict:
+        from app.services import new_product_application_service as npa_service
+        from app.services.portal_form_visibility_service import resolve_visible_form_types
+
         base = self._serialize_stock_inquiry_summary(row)
+        npa_visible = bool(row.contact_id) and "new_product_application" in resolve_visible_form_types(
+            self.db, str(row.contact_id)
+        )
         salesperson_contact_id = getattr(row, "salesperson_contact_id", None)
         base.update(
             {
@@ -2211,6 +2217,13 @@ class PortalService:
                 "purchasing_response": row.purchasing_response,
                 "salesperson_contact_id": salesperson_contact_id,
                 "salesperson_contact_name": self._resolve_contact_name_by_id(salesperson_contact_id),
+                # NPA-FROM-SI rules 1-2 + 7: purchasing's ask and the contact's own applications.
+                "npa_requested": bool(getattr(row, "npa_requested", False)),
+                # Whether this contact may raise one at all (the CTA and tab follow it).
+                "npa_form_visible": npa_visible,
+                "new_product_applications": (
+                    npa_service.portal_inquiry_applications(self.db, row) if npa_visible else []
+                ),
             }
         )
         return base

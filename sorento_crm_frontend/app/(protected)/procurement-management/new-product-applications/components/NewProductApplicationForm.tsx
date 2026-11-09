@@ -16,13 +16,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
-  blankLine,
-  numberErrors,
   payloadFromState,
   stateFromDetail,
   stateFromPrefill,
@@ -84,22 +83,16 @@ function StaffNewProductApplicationForm({
     applicationId ? null : (stockInquiryId ?? null),
   );
   const lookups = useNewProductApplicationLookups();
-  const [state, setState] = useState<FormState>({
-    ...EMPTY_FORM,
-    lines: [blankLine()],
-  });
+  // Owner hand test 9 Nov: no product rows on the form; an older draft keeps (and resends) its own.
+  const [state, setState] = useState<FormState>(EMPTY_FORM);
   const [hydrated, setHydrated] = useState(!applicationId && !stockInquiryId);
-  const [errors, setErrors] = useState<Record<string, string>>({});
   // A Submit the server refuses leaves the draft saved; the next press updates it.
   const [savedId, setSavedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (hydrated) return;
     if (applicationId && existing.data) {
-      const loaded = stateFromDetail(existing.data);
-      setState(
-        loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
-      );
+      setState(stateFromDetail(existing.data));
       setHydrated(true);
     } else if (!applicationId && prefill.data) {
       setState(stateFromPrefill(prefill.data));
@@ -153,14 +146,8 @@ function StaffNewProductApplicationForm({
     return created;
   };
 
-  const checkNumbers = () => {
-    const found = numberErrors(state);
-    setErrors(found);
-    return Object.keys(found).length === 0;
-  };
 
   const handleSaveDraft = async () => {
-    if (!checkNumbers()) return;
     try {
       const saved = await save();
       router.push(`${BASE_PATH}/${saved.id}`);
@@ -172,7 +159,6 @@ function StaffNewProductApplicationForm({
   // Save, then submit. The server's refusal names the line; the toast shows it and the
   // user stays here with the draft kept.
   const handleSubmit = async () => {
-    if (!checkNumbers()) return;
     try {
       const saved = await save();
       await submit.mutateAsync(saved.id);
@@ -248,6 +234,15 @@ function StaffNewProductApplicationForm({
                 }
               />
             }
+            productCodesField={
+              <NewProductApplicationProductCodes
+                value={state}
+                onChange={setState}
+                products={lookups.products}
+                reuse={lookups.reuse}
+              />
+            }
+            newCodeField={<NewProductApplicationNewCodeValue />}
             customerField={
               <>
                 <AsyncCombobox<CustomerLookupItem>
@@ -266,23 +261,9 @@ function StaffNewProductApplicationForm({
                   optionMeta={(o) => o.customer_code}
                   placeholder="Customer name"
                 />
-                {!state.customer_id && state.customer_name.trim() && (
-                  <Badge variant="secondary" className="mt-1.5">
-                    No debtor code
-                  </Badge>
-                )}
               </>
             }
           />
-          <div className="mt-6">
-            <NewProductApplicationLines
-              lines={state.lines}
-              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={lookups.brands}
-              errors={errors}
-            />
-          </div>
-
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"

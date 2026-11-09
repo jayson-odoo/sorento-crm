@@ -9,6 +9,7 @@ export type NewProductApplicationStatus =
   | 'submitted'
   | 'resubmitted'
   | 'approved'
+  | 'responded'
   | 'rejected'
   | 'completed'
   | 'cancelled';
@@ -39,12 +40,46 @@ export interface NewProductApplicationWrite {
   project_name?: string | null;
   needed_by?: string | null;
   remark?: string | null;
+  /** The PRODUCT CODES this application is based on (header): left out keeps, [] clears. */
+  current_product_ids?: string[];
   lines?: NewProductApplicationLineWrite[];
+}
+
+/** One current code on a line. */
+export interface NewProductApplicationCurrentProduct {
+  id: string;
+  product_code: string;
+  product_name?: string | null;
+  is_active?: boolean;
 }
 
 /** GET /prefill: a Write-shaped body copied as text, plus the inquiry's number. */
 export interface NewProductApplicationPrefill extends NewProductApplicationWrite {
   stock_inquiry_number: string | null;
+  /** The product codes the inquiry's code text matched exactly (none when it did not). */
+  current_products?: NewProductApplicationCurrentProduct[];
+}
+
+/** A code already created from exactly the same current codes (information only). */
+export interface NewProductApplicationSuggestion {
+  /** Null for a typed code AutoCount has not sent yet. */
+  product_id: string | null;
+  product_code: string;
+  product_name: string | null;
+  is_active: boolean;
+  /** The earlier line's PRODUCT TYPE text. */
+  description: string | null;
+  created_at: string | null;
+  /** Staff only: the portal drops both. */
+  application_id?: string | null;
+  application_no?: string | null;
+}
+
+/** A code made through an application, on the summary and the stock inquiry lists. */
+export interface NewProductApplicationCreatedCode {
+  product_code: string;
+  current_codes: string[];
+  created_at: string | null;
 }
 
 export interface NewProductApplicationSummary {
@@ -52,6 +87,8 @@ export interface NewProductApplicationSummary {
   application_no: string;
   status: NewProductApplicationStatus;
   status_label: string;
+  /** "rejected" for an older Not opening result (owner 8 Nov); otherwise the status. */
+  display_status?: string;
   source: string;
   applicant_id: string | null;
   applicant_name: string | null;
@@ -59,10 +96,14 @@ export interface NewProductApplicationSummary {
   stock_inquiry_number: string | null;
   customer_name: string | null;
   project_name: string | null;
-  first_line: string | null;
-  lines_total: number;
-  lines_done: number;
+  /** The stock inquiry list's columns (owner hand test 9 Nov). */
+  salesperson?: string | null;
+  revision_no?: number;
+  assigned_to_name?: string | null;
+  handled_by_name?: string | null;
+  print_count?: number;
   opened_codes: string[];
+  created_codes?: NewProductApplicationCreatedCode[];
   needed_by: string | null;
   submitted_at: string | null;
   created_at: string | null;
@@ -103,6 +144,17 @@ export interface NewProductApplicationLine extends NewProductApplicationLineWrit
   resolved_at: string | null;
 }
 
+/** The stock inquiry an application was raised from (detail only). */
+export interface NewProductApplicationStockInquiry {
+  id: string;
+  inquiry_number: string | null;
+  product_code: string | null;
+  status: string | null;
+  item_description: string | null;
+  purchasing_response: string | null;
+  quantity: string | number | null;
+}
+
 export interface NewProductApplicationDetail extends NewProductApplicationSummary {
   stock_inquiry_product_code: string | null;
   customer_id: string | null;
@@ -123,6 +175,34 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   completed_at: string | null;
   updated_at: string | null;
   lines: NewProductApplicationLine[];
+  stock_inquiry?: NewProductApplicationStockInquiry | null;
+  current_products?: NewProductApplicationCurrentProduct[];
+  suggestions?: NewProductApplicationSuggestion[];
+  /** The ONE new product code purchasing links (an older Not opening reason reads Rejected). */
+  new_product_id?: string | null;
+  /** Purchasing's written answer, like the stock inquiry's. */
+  purchasing_response?: string | null;
+  /** Update & Reply is offered (the inquiry's conversation exists and is writable). */
+  can_reply?: boolean;
+  /** Where Update & Reply goes (owner 9 Nov): the SI's WhatsApp chat, or the applicant's portal. */
+  reply_channel?: 'whatsapp' | 'portal' | null;
+  /** The code purchasing typed when it is not in the catalogue yet. */
+  new_code_text?: string | null;
+  /** COST (MYR) of an application with no product rows. */
+  cost_price?: string | number | null;
+  new_product_code?: string | null;
+  new_product_name?: string | null;
+  new_product_active?: boolean | null;
+  new_code_closed_reason?: string | null;
+  new_code_by_name?: string | null;
+  new_code_at?: string | null;
+  /** Read from the linked product; the portal gets the supplier only. */
+  new_product_facts?: {
+    opened_category_name?: string | null;
+    opened_base_uom_name?: string | null;
+    opened_list_price?: string | number | null;
+    opened_supplier_name?: string | null;
+  } | null;
 }
 
 export interface NewProductApplicationPage {
@@ -130,6 +210,18 @@ export interface NewProductApplicationPage {
   total: number;
   page: number;
   limit: number;
+}
+
+/** PUT /purchasing-response: purchasing's one save. A key left out is unchanged; */
+export interface NewProductApplicationPurchasingResponseWrite {
+  purchasing_response?: string;
+  outcome?: 'link' | 'new';
+  product_id?: string;
+  new_code?: string;
+  reason?: string;
+  lead_time?: string | null;
+  cost_price?: string | null;
+  lines?: { id: string; cost_price: string | null }[];
 }
 
 /** PUT /feedback: one lead time, one cost per product; null clears. */
@@ -146,13 +238,43 @@ export interface NewProductApplicationProductHit {
   brand_name: string | null;
 }
 
+/** One row of a product's lineage (GET /lineage). The last three are for NPA view-all only. */
+export interface NewProductApplicationLineageRow {
+  application_no: string | null;
+  /** Null for a typed code AutoCount has not sent yet. */
+  product_id: string | null;
+  product_code: string;
+  product_name: string | null;
+  is_active: boolean;
+  current_products: NewProductApplicationCurrentProduct[];
+  description: string | null;
+  expected_qty: string | number | null;
+  created_at: string | null;
+  application_id?: string | null;
+  customer_name?: string | null;
+  project_name?: string | null;
+}
+
+export interface NewProductApplicationLineage {
+  created_from: NewProductApplicationLineageRow[];
+  made_from_this: NewProductApplicationLineageRow[];
+}
+
 /** A refusal that names a field arrives as `{message, code, details: {field}}`. */
 export class NewProductApplicationError extends Error {
   readonly code: string | null;
   readonly field: string | null;
+  /** The HTTP status of the refusal, when it came from a response. */
+  readonly status: number | null;
 
-  constructor(message: string, code: string | null, field: string | null) {
+  constructor(
+    message: string,
+    code: string | null,
+    field: string | null,
+    status: number | null = null,
+  ) {
     super(message);
+    this.status = status;
     this.name = 'NewProductApplicationError';
     this.code = code;
     this.field = field;

@@ -481,6 +481,87 @@ def generate_quotation_issue_pdf(
         db.close()
 
 
+def generate_quotation_certificates_pdf(
+    download_id: str,
+    document_id: str,
+    issue_id: Optional[str],
+    user_id: str,
+    company_id: Optional[str] = None,
+) -> dict:
+    """Merge a quotation's certificates into one PDF with the boxes burned in (CERT-12).
+
+    With an issue it reads that issue's frozen list, else the live list. A certificate whose file
+    cannot be read is skipped and named in the result. Stored files are never modified.
+    """
+    db = SessionLocal()
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        import pymupdf
+
+        from app.models.projects import ProjectQuotationDocument, ProjectQuotationIssue
+        from app.models.resources import Attachment
+        from app.services import certificate_pdf_service as pdfs
+        from app.services import quotation_certificate_service as certs
+        from app.services.resources_service import AttachmentService
+
+        document = db.get(ProjectQuotationDocument, str(document_id))
+        if document is None:
+            raise ValueError("This quotation no longer exists, so its certificates cannot be exported.")
+        issue = db.get(ProjectQuotationIssue, str(issue_id)) if issue_id else None
+        entries = certs.export_entries(db, document, issue)
+
+        merged = pymupdf.open()
+        skipped = []
+        try:
+            for entry in entries:
+                label = f"{entry.get('scheme') or ''} {entry.get('certificate_number') or ''}".strip()
+                try:
+                    attachment = db.get(Attachment, entry["attachment_id"]) if entry.get("attachment_id") else None
+                    if attachment is None:
+                        raise ValueError("no file")
+                    data = AttachmentService(db).get_file_content_for(attachment)
+                    burned = pdfs.burn_boxes(data, entry.get("boxes") or [])
+                    part = pymupdf.open(stream=burned, filetype="pdf")
+                    try:
+                        merged.insert_pdf(part)
+                    finally:
+                        part.close()
+                except Exception:  # noqa: BLE001 - one bad file must not sink the rest
+                    logger.warning("certificate %s skipped in export", label, exc_info=True)
+                    skipped.append(entry.get("certificate_number") or label)
+            if len(merged) == 0:
+                raise ValueError("None of the certificate files could be read.")
+            pdf_bytes = merged.tobytes()
+        finally:
+            merged.close()
+
+        filename = certs.export_filename(document, issue)
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/quotation-certificates/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=key,
+            content_type="application/pdf",
+        )
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes), "skipped": skipped}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_quotation_certificates_pdf failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_quotation_certificates_pdf")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
 def generate_quotation_issue_xlsx(
     download_id: str, issue_id: str, user_id: str, company_id: Optional[str] = None
 ) -> dict:
@@ -1613,4 +1694,43 @@ def generate_commission_statement_xlsx(
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         set_company_scope(db, caller_scope)
+        db.close()
+
+
+def generate_new_product_application_xlsx(download_id: str, application_id: str, user_id: str) -> dict:
+    """The New Product Application's workbook (AC-NPA-77) through My Downloads, the stock inquiry
+    PDF's way (NPA-FORM-SLA, owner 9 Nov: the list's Print Count counts these rows). Any failure
+    marks the download failed with a fixed sentence rather than raising into RQ."""
+    db = SessionLocal()
+    # The route checked the requester may view it; the worker reads it system-wide, as the SI.
+    set_company_scope(db, None)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        from app.models.new_product_application import NewProductApplication
+        from app.services import npa_xlsx
+
+        app = db.get(NewProductApplication, application_id)
+        if app is None:
+            raise LookupError("new product application not found")
+        xlsx_bytes, filename = npa_xlsx.to_xlsx(db, app)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/new-product-application-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=xlsx_bytes,
+            file_path=key,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        svc.mark_ready(download_id, storage_provider=provider, storage_key=stored_key, filename=filename)
+        return {"download_id": download_id, "status": "ready", "bytes": len(xlsx_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_new_product_application_xlsx failed for download %s", download_id)
+        _record_failure(
+            db, svc, download_id, e, "generate_new_product_application_xlsx",
+            message=EXPORT_FAILURE_MESSAGE,
+        )
+        return {"download_id": download_id, "status": "failed", "error": EXPORT_FAILURE_MESSAGE}
+    finally:
         db.close()

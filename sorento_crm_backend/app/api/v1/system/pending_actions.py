@@ -44,6 +44,7 @@ from app.models.certificate import Certificate
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
 from app.models.country import Country
 from app.models.dealer_kit import (
+    AccessoryBoxPreset,
     Asset,
     Bundle,
     Collection,
@@ -65,7 +66,7 @@ from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
 from app.models.projects import ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
-from app.models.sales import SalesOpportunity, SalesTarget, SalesTeam, SetApartCustomer
+from app.models.sales import SalesOpportunity, SalesPointRatio, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
 from app.models.scm import (
     LoadingPlan,
@@ -200,6 +201,7 @@ _UUID_ENTITY_ACTIONS = (
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
+    "certificate_link.remove",
 )
 
 
@@ -276,6 +278,16 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_spec_sheet_page_resettable
 
         assert_spec_sheet_page_resettable(db, entity_id, (payload or {}).get("page_key"), actor_id)
+    elif action_key == "quotation_certificate.remove":
+        from app.services.record_actions import assert_quotation_certificate_removable
+
+        assert_quotation_certificate_removable(db, entity_id, actor_id)
+    elif action_key == "certificate_link.remove":
+        # CERT-LINK-CLEANUP: `certificate_products` has no company column; the link is
+        # visible only through its scoped certificate. 404 before anything is parked.
+        from app.services.certificate_link_report_service import assert_link_visible
+
+        assert_link_visible(db, entity_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -323,6 +335,13 @@ def _assert_entity_visible(
         validate_uuid_path(entity_id, resource="Tag")
         if price_tag_request_tag_in_scope(db, entity_id) is None:
             raise handle_not_found("Tag", entity_id)
+    elif action_key == "accessory_image.delete":
+        # A picture has no company column: it is scoped through its accessory.
+        from app.services.accessory_service import AccessoryService
+
+        validate_uuid_path(entity_id, resource="Picture")
+        if AccessoryService(db).picture_in_scope(entity_id) is None:
+            raise handle_not_found("Picture", entity_id)
     model = _PARK_SCOPED_MODELS.get(action_key)
     if model is not None:
         # Every other key on a company-owned record: read it under the caller's scope, so
@@ -359,6 +378,7 @@ _PARK_SCOPED_MODELS: dict = {
     "order.set_status": Order,
     "order_inquiry_reserve_request.cancel": OrderInquiryReserveRequest,
     "order_inquiry_row.unlink": OrderInquiryRow,
+    "point_ratio.delete": SalesPointRatio,
     "price_tag_request.void": PriceTagRequest,
     "product.delete": Product,
     "product_category.delete": ProductCategory,
@@ -381,6 +401,7 @@ _PARK_SCOPED_MODELS: dict = {
     "saved_view.delete": SavedView,
     "scm_sales_order.delete": SalesOrder,
     "supplier_code_alias.forget": SupplierProductCodeAlias,
+    "accessory_box_preset.delete": AccessoryBoxPreset,
     "tag_size_preset.delete": TagSizePreset,
     "tag_template.delete": TagTemplate,
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the template the products are
@@ -396,6 +417,8 @@ _PARK_SCOPED_MODELS: dict = {
 # Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "accessory_image.delete",
+    "certificate_link.remove",
     "combo.unlink_tag_templates",
     "contact_customer_link.unlink",
     "customer.remove_from_group",
@@ -410,6 +433,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_alternative.unlink",
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
+    "quotation_certificate.remove",
     "quotation_document.delete",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",

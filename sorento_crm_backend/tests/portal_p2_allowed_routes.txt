@@ -12,6 +12,7 @@ DELETE /fulfilment-planning/lines/{contribution_key}/draft
 DELETE /leads/{lead_id}
 DELETE /projects/{project_id}
 DELETE /projects/{project_id}/quotation-documents/{document_id}
+DELETE /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}/boxes
 DELETE /projects/{project_id}/stakeholders/{stakeholder_id}
 DELETE /projects/{project_id}/tasks/{task_id}
 DELETE /purchase-orders/{po_id}
@@ -85,6 +86,9 @@ GET /projects/{project_id}/purchase-orders
 GET /projects/{project_id}/quotation-documents
 GET /projects/{project_id}/quotation-documents/letter-templates
 GET /projects/{project_id}/quotation-documents/{document_id}
+GET /projects/{project_id}/quotation-documents/{document_id}/certificates
+GET /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}
+GET /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}/file
 GET /projects/{project_id}/quotation-documents/{document_id}/feedback
 GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
@@ -146,6 +150,7 @@ GET /stock-debt/{product_id}/cell
 PATCH /config/series/{series_id}/products/{product_id}
 PATCH /config/series/{series_id}/sets/{product_set_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}
+PATCH /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
@@ -199,11 +204,11 @@ POST /order-inquiries/{row_id}/reject
 POST /order-inquiry-rows/mark
 POST /order-inquiry-rows/{row_id}/place-on-po
 POST /order-inquiry-rows/{row_id}/unplace
-POST /planning-changes/{batch_id}/apply
 POST /projects/
 POST /projects/ai-extract
 POST /projects/clash-preview
 POST /projects/{project_id}/approve
+POST /projects/{project_id}/outcome
 POST /projects/{project_id}/parties/{party_id}/phone
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
@@ -212,6 +217,8 @@ POST /projects/{project_id}/quotation-documents/cover-preview
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-revise
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-status
 POST /projects/{project_id}/quotation-documents/{document_id}/approve
+POST /projects/{project_id}/quotation-documents/{document_id}/certificates
+POST /projects/{project_id}/quotation-documents/{document_id}/certificates/export
 POST /projects/{project_id}/quotation-documents/{document_id}/issue
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx
@@ -243,7 +250,6 @@ POST /purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge
 POST /quotation-versions/{version_id}/lines
 POST /quotation-versions/{version_id}/lines/{line_id}/media-escalation
 POST /quotation-versions/{version_id}/recompute
-POST /quotations/{quotation_id}/outcome
 POST /quotations/{quotation_id}/revise
 POST /sales-orders/{pso_id}/amendments
 POST /sales-orders/{pso_id}/amendments/preview
@@ -279,6 +285,7 @@ PUT /fulfilment-planning/lines/{contribution_key}/draft
 PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
+PUT /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}/boxes
 PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{page_key}/edit
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}

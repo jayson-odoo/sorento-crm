@@ -420,6 +420,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "path": "/master-data-management/certificates",
             "title": "Certificates",
           },
+          {
+            "path": "/master-data-management/certificates/links",
+            "title": "Certificate Links",
+          },
         ],
         "title": "Reference Data",
       },
@@ -482,6 +486,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/dealer-kit/tag-sizes",
             "title": "Tag Sizes",
+          },
+          {
+            "path": "/dealer-kit/accessory-templates",
+            "title": "Accessory Templates",
           },
         ],
         "title": "Room Designer",

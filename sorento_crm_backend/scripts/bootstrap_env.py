@@ -693,10 +693,20 @@ def seed_products_list_query_fields() -> None:
         module_disc = importlib.util.module_from_spec(spec_disc)
         spec_disc.loader.exec_module(module_disc)
         inserted_disc = module_disc.seed(conn)
+
+        spec_lp = importlib.util.spec_from_file_location(
+            "_products_flt_seed_list_price_changed_at",
+            versions / "lpcui_0001_list_price_changed.py",
+        )
+        module_lp = importlib.util.module_from_spec(spec_lp)
+        spec_lp.loader.exec_module(module_lp)
+        inserted_lp = module_lp.seed(conn)
     log.info(
-        "products list-query field catalog seeded -> exclude_from_planning: %s, discontinued_at: %s",
+        "products list-query field catalog seeded -> exclude_from_planning: %s, "
+        "discontinued_at: %s, list_price_changed_at: %s",
         "added" if inserted else "already present",
         "added" if inserted_disc else "already present",
+        "added" if inserted_lp else "already present",
     )
 
 

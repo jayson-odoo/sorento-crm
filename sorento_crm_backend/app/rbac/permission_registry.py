@@ -1064,6 +1064,12 @@ PERMISSION_REGISTRY.extend([
         "description": "See only the projects you own, collaborate on or registered from the portal, and everything under them. Ignored when View Projects is also held.",
     },
     {
+        # Seeded by `sales_0007_targets_view_own` (AI-TOOLS-WAVE2, owner ruling 5 Nov), granted to no role.
+        "slug": "sales.targets.view_own",
+        "name": "View Own Sales Targets",
+        "description": "See only the agent targets of your own sales agents, with their commission. Ignored when View Sales Targets is also held.",
+    },
+    {
         "slug": "sales.opportunities.view_own",
         "name": "View Own Sales Opportunities",
         "description": "See only the sales opportunities of your own sales agents. Ignored when View Sales Opportunities is also held.",

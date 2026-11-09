@@ -30,6 +30,16 @@
 #     so the two never overlap.
 # Tunables may be set on the box in .deploy.env next to docker-compose.yml (sourced below).
 # `blue_green_deploy.sh --preflight` checks all of it and changes nothing (runbook step 3).
+# `blue_green_deploy.sh --role` prints this node's role (single | primary | standby | unknown)
+# and changes nothing; the two-node release (scripts/ha_release.sh) deploys the primary first.
+# On the plain compose (no compose.ha.yml) it asks the plain db: a streaming replica is a
+# standby, anything that is not clearly primary or standby is single (today's release).
+#
+# HA standby mode (HA-CF-FAILOVER, documentation/plans/infra/PLAN-ha-cf-failover-04nov.md
+# section 2 row 1): on a node whose Postgres is a read-only standby the release runs with
+# SKIP_MIGRATIONS=1, takes no snapshot (the primary took it), WAITS until the replica holds the
+# new image's alembic heads (the primary's migration replicated), and never touches the workers
+# (they run only on the primary). It still records .ha-image-tag for a later promotion.
 
 set -euo pipefail
 
@@ -39,7 +49,8 @@ MODE=deploy
 case "${1:-}" in
   "") ;;
   --preflight) MODE=preflight ;;
-  *) echo "usage: $0 [--preflight]"; exit 2 ;;
+  --role) MODE=role ;;
+  *) echo "usage: $0 [--preflight|--role]"; exit 2 ;;
 esac
 
 cd "$(dirname "$0")/.."   # repo root containing docker-compose.yml
@@ -62,8 +73,8 @@ if [ -f .deploy.env ]; then
   if [ -n "${COMPOSE_FILE:-}" ]; then export COMPOSE_FILE; fi
 fi
 
-# HA mode: this node runs Patroni (compose.ha.yml replaces `db`). Patroni allows only local peer
-# auth, so admin commands run inside `db` as OS user postgres AND DB user postgres.
+# HA mode: this node runs the HA Postgres (compose.ha.yml replaces `db`). Admin commands run
+# inside `db` as OS user postgres AND DB user postgres (local peer auth).
 # Outside HA mode every command below is exactly what it was before.
 HA_MODE=0
 case "${COMPOSE_FILE:-}" in *compose.ha.yml*) HA_MODE=1 ;; esac
@@ -94,13 +105,79 @@ TICK_SECONDS=2
 DEPLOY_MIN_AVAILABLE_MB="${DEPLOY_MIN_AVAILABLE_MB:-4500}"
 MEMINFO_FILE="${MEMINFO_FILE:-/proc/meminfo}"
 DB_SERVICE="${DB_SERVICE:-db}"
+# A Postgres that is a standalone container, not a compose service (node B's replica,
+# PLAN-ha-b-replica-sync-07nov.md section 10). Set: every Postgres call is `docker exec` on it.
+DB_CONTAINER="${DB_CONTAINER:-}"
+if [ -n "$DB_CONTAINER" ]; then
+  if ! [[ "$DB_CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+    echo "ERROR: DB_CONTAINER must be a container name (letters, digits, _ . -). Nothing was changed."
+    exit 1
+  fi
+  if [ "$HA_MODE" = 1 ]; then
+    echo "ERROR: DB_CONTAINER is for the plain compose only; compose.ha.yml runs Postgres as the db service. Nothing was changed."
+    exit 1
+  fi
+fi
 # The database the APP uses. Empty: parsed from the active backend's DATABASE_URL.
 DEPLOY_DB_NAME="${DEPLOY_DB_NAME:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-backups/pre-migrate}"
 SNAPSHOT_KEEP_MINUTES="${SNAPSHOT_KEEP_MINUTES:-2880}"   # 48 h
 # Free space the dump may not eat into: Postgres PANICs when its own disk fills (lesson 95).
 SNAPSHOT_MIN_FREE_MB="${SNAPSHOT_MIN_FREE_MB:-10240}"
-NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB"
+# Standby release: how long to wait for the primary's migration to reach the replica.
+STANDBY_SCHEMA_WAIT_SECONDS="${STANDBY_SCHEMA_WAIT_SECONDS:-900}"
+NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB STANDBY_SCHEMA_WAIT_SECONDS"
+
+# Runs a command inside the app's Postgres container. Options first (-u USER, -e NAME=VALUE),
+# then the command. The compose db service, or DB_CONTAINER when set.
+db_exec() {
+  local opts=()
+  while [ $# -gt 0 ]; do
+    case "$1" in -u|-e) opts+=("$1" "$2"); shift 2 ;; *) break ;; esac
+  done
+  if [ -n "$DB_CONTAINER" ]; then
+    docker exec -i ${opts[@]+"${opts[@]}"} "$DB_CONTAINER" "$@"
+  else
+    docker compose exec -T ${opts[@]+"${opts[@]}"} "$DB_SERVICE" "$@"
+  fi
+}
+
+# Id of the running Postgres container (empty: none).
+db_cid() {
+  if [ -n "$DB_CONTAINER" ]; then
+    docker ps -q --filter "name=^${DB_CONTAINER}\$" 2>/dev/null || true
+  else
+    docker compose ps -q "$DB_SERVICE" 2>/dev/null || true
+  fi
+}
+DB_LABEL=${DB_CONTAINER:-$DB_SERVICE}
+
+# single (no HA) | primary | standby | unknown (HA, but the local Postgres did not answer).
+node_role() {
+  local r
+  if [ "$HA_MODE" = 0 ]; then
+    # Plain compose with a streaming replica (PLAN-ha-b-replica-sync-07nov.md 7a): the role
+    # comes from the plain db. Anything but a clear answer is "single" = today's release, EXCEPT
+    # with DB_CONTAINER: that names a replica node (B), where a fallback to the primary path would
+    # start the workers with the scheduler; there it is "unknown" and the release stops (8 Nov).
+    # shellcheck disable=SC2016
+    r=$(db_exec \
+          sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "select pg_is_in_recovery()"' 2>/dev/null || true)
+    case "$r" in
+      t) echo standby ;;
+      f) echo primary ;;
+      *) if [ -n "$DB_CONTAINER" ]; then echo unknown; else echo single; fi ;;
+    esac
+    return
+  fi
+  r=$(docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -Atc 'select pg_is_in_recovery()' 2>/dev/null || true)
+  case "$r" in t) echo standby ;; f) echo primary ;; *) echo unknown ;; esac
+}
+
+if [ "$MODE" = role ]; then
+  node_role
+  exit 0
+fi
 
 ACTIVE=$(cat .active_color 2>/dev/null || echo blue)
 if [ "$ACTIVE" = "blue" ]; then
@@ -170,10 +247,10 @@ resolve_db_name() {
 # Rows in public.alembic_version of the app's database (an empty answer: not reachable).
 alembic_rows() {
   if [ "$HA_MODE" = 1 ]; then
-    docker compose exec -T -u postgres -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+    db_exec -u postgres -e DUMP_DB="$DB_NAME" \
       sh -c "$ALEMBIC_CMD" 2>/dev/null || true
   else
-    docker compose exec -T -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+    db_exec -e DUMP_DB="$DB_NAME" \
       sh -c "$ALEMBIC_CMD" 2>/dev/null || true
   fi
 }
@@ -183,7 +260,7 @@ alembic_rows() {
 db_revisions() {
   local out as_user=()
   if [ "$HA_MODE" = 1 ]; then as_user=(-u postgres); fi
-  out=$(docker compose exec -T ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+  out=$(db_exec ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" \
           sh -c "$VERSIONS_CMD" 2>/dev/null) || return 1
   if grep -Eqv '^[0-9A-Za-z_]+$' <<< "$out"; then return 1; fi
   sort -u <<< "$out"
@@ -286,10 +363,10 @@ preflight() {
     while IFS= read -r line; do pf FAIL "${line%%|*}" "${line#*|}"; done <<< "$ha_msgs"
   fi
 
-  if [ -n "$(docker compose ps -q "$DB_SERVICE" 2>/dev/null || true)" ]; then
-    pf PASS "db service" "${DB_SERVICE} running"
+  if [ -n "$(db_cid)" ]; then
+    pf PASS "db service" "${DB_LABEL} running"
   else
-    pf FAIL "db service" "no running container for service '${DB_SERVICE}' (set DB_SERVICE)"
+    pf FAIL "db service" "no running container for '${DB_LABEL}' (set DB_SERVICE or DB_CONTAINER)"
   fi
 
   if resolve_db_name; then
@@ -400,24 +477,24 @@ db_state() {
 }
 
 record_postgres_baseline() {
-  DB_CID=$(docker compose ps -q "$DB_SERVICE" 2>/dev/null || true)
+  DB_CID=$(db_cid)
   if [ -z "$DB_CID" ]; then
-    echo "ERROR: Postgres container '${DB_SERVICE}' not found; set DB_SERVICE in .deploy.env"; exit 1
+    echo "ERROR: Postgres container '${DB_LABEL}' not found; set DB_SERVICE or DB_CONTAINER in .deploy.env"; exit 1
   fi
   DB_BASELINE=$(db_state "$DB_CID")
-  echo "    postgres baseline: ${DB_SERVICE} restarts/started=${DB_BASELINE}"
+  echo "    postgres baseline: ${DB_LABEL} restarts/started=${DB_BASELINE}"
 }
 
 # Fails (returns 1) when Postgres went down at any point since the deploy started.
 postgres_survived() {
   local cid now crash
-  cid=$(docker compose ps -q "$DB_SERVICE" 2>/dev/null || true)
+  cid=$(db_cid)
   if [ "$cid" != "$DB_CID" ]; then
-    echo "ERROR: Postgres container ${DB_SERVICE} was replaced during the deploy"; return 1
+    echo "ERROR: Postgres container ${DB_LABEL} was replaced during the deploy"; return 1
   fi
   now=$(db_state "$cid")
   if [ "$now" != "$DB_BASELINE" ]; then
-    echo "ERROR: Postgres container ${DB_SERVICE} restarted during the deploy (before: ${DB_BASELINE}, now: ${now})"
+    echo "ERROR: Postgres container ${DB_LABEL} restarted during the deploy (before: ${DB_BASELINE}, now: ${now})"
     return 1
   fi
   # A killed backend (the 10 Sep OOM) makes the postmaster terminate every session and
@@ -454,7 +531,7 @@ take_snapshot() {
 
   local as_user=()
   if [ "$HA_MODE" = 1 ]; then as_user=(-u postgres); fi
-  if ! ( umask 077; docker compose exec -T ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+  if ! ( umask 077; db_exec ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" \
            sh -c "$DUMP_CMD" > "${file}.partial" ) \
      || [ "$(head -c 5 "${file}.partial")" != "PGDMP" ]; then
     rm -f "${file}.partial"
@@ -465,7 +542,7 @@ take_snapshot() {
   # writes into a closed pipe and reports that as a failure. The grep reads a here-string,
   # not a pipe: under pipefail `printf | grep -q` fails once the TOC outgrows the pipe
   # buffer (a real one is ~240 KB), because grep exits early and printf gets SIGPIPE.
-  if ! toc=$(docker compose exec -T "$DB_SERVICE" \
+  if ! toc=$(db_exec \
                sh -c 'out=$(pg_restore -l); rc=$?; cat > /dev/null; printf "%s\n" "$out"; exit $rc' < "${file}.partial") \
      || ! grep -Eq '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA public alembic_version( |$)' <<< "$toc"; then
     rm -f "${file}.partial"
@@ -483,6 +560,17 @@ echo "==> Active=${ACTIVE} New=${NEW} IMAGE_TAG=${IMAGE_TAG}"
 if ! ha_msgs=$(ha_checks); then
   while IFS= read -r line; do echo "ERROR: ${line#*|}. Nothing was changed."; done <<< "$ha_msgs"
   exit 1
+fi
+
+ROLE=$(node_role)
+echo "==> Node role: ${ROLE}"
+if [ "$ROLE" = unknown ]; then
+  echo "ERROR: HA node (or DB_CONTAINER set), but the local Postgres did not say whether it is primary or standby. Nothing was changed."
+  exit 1
+fi
+if [ "$ROLE" = standby ]; then
+  # compose.ha.yml passes it to both colours: start.sh must not run alembic on a replica.
+  export SKIP_MIGRATIONS=1
 fi
 
 echo "==> Recording Postgres state"
@@ -516,11 +604,26 @@ check_memory
 #     with no new migration has nothing to protect, and the dump is the slowest step (10+
 #     minutes on 3 Nov), so it is skipped only when the database is provably at the new
 #     image's head; any doubt takes it exactly as before.
-echo "==> Pre-migration snapshot"
-if no_pending_migrations; then
-  echo "    no pending migrations: snapshot skipped"
+if [ "$ROLE" = standby ]; then
+  # The primary migrated (and snapshotted) first; wait until that reached this replica, so the
+  # new colour never starts against a schema older than its code.
+  echo "==> Standby: waiting up to ${STANDBY_SCHEMA_WAIT_SECONDS}s for the image's migrations to replicate"
+  waited=0
+  until no_pending_migrations; do
+    if [ "$waited" -ge "$STANDBY_SCHEMA_WAIT_SECONDS" ]; then
+      echo "ERROR: the replica never reached the new image's alembic head; deploy the primary first (scripts/ha_release.sh). Nothing was started."
+      exit 1
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
 else
-  take_snapshot
+  echo "==> Pre-migration snapshot"
+  if no_pending_migrations; then
+    echo "    no pending migrations: snapshot skipped"
+  else
+    take_snapshot
+  fi
 fi
 
 # 1d. Memory again, right before the overlap starts: the dump took time.
@@ -588,6 +691,9 @@ sudo nginx -s reload
 echo "==> Draining ${DRAIN_SECONDS}s"
 sleep "$DRAIN_SECONDS"
 
+if [ "$ROLE" = standby ]; then
+  echo "==> Standby: workers are not touched (they run only on the primary)"
+else
 # 6. Recreate worker + worker_fast on new image (small background-job blip;
 #    safe — RQ pulls atomically)
 echo "==> Recreating worker + worker_fast on new image"
@@ -663,6 +769,8 @@ if [ -z "$worker_fast_ok" ]; then
   echo "ERROR: worker_fast did not log its role startup line within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
   docker logs --tail=100 "$worker_fast_cid" || true
   exit 1
+fi
+
 fi
 
 # 7. Stop and remove old color (tolerate first-deploy where OLD doesn't exist)

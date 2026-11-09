@@ -1,6 +1,7 @@
 # PLAN: supplier as a bot entity + open POs / outstanding by supplier (SUPPLIER-ASK)
 
-Status: in review (owner-given design, SIZE S; red-first, kill test, reviewer + security-reviewer). Carries two
+Status: in review; #2066 merged, follow-up #2120 (party_side side rule, lone floor match asked) in review on 5 Nov
+(owner-given design, SIZE S; red-first, kill test, reviewer + security-reviewer). Carries two
 data-only migrations (`sask_0001_supplier_kind`, `sask_0002_span_supplier`), so not the small fix track.
 
 ## Journey

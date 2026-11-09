@@ -362,7 +362,9 @@ _declare(
     # snapshot must widen to whatever this particular payload touches, or an undo
     # restores the status while silently keeping the edited prices/remarks/contact.
     payload_columns=lambda p: list((p.get("inquiry_data") or {}).keys())
-    + ["respond_inbox_url", "contact_id", "space_id"],
+    + ["respond_inbox_url", "contact_id", "space_id"]
+    # NPA-FROM-SI: the server stamps who / when beside the flag, so an undo restores all three.
+    + (["npa_requested_by", "npa_requested_at"] if "npa_requested" in (p.get("inquiry_data") or {}) else []),
     runner=_si_respond_runner,
     resolve_event=lambda _p: "purchasing_respond",
     # The whole point of this action is the message to the contact. An undo restores the

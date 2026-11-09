@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.services.assistant_registry import ENTITIES
 from app.services.assistant_registry.types import EntityDef, FieldDef
+from app.utils.date_format import fmt_datetime_24h
 
 MAX_ROWS = 50
 MAX_GROUPS = 200
@@ -29,6 +30,9 @@ MAX_FILTERS = 20
 MAX_AGGREGATES = 8
 MAX_IN_VALUES = 100
 MAX_TEXT_CHARS = 200
+#: The most columns a row result carries besides the record's name (crew pass on 74b6b751: a below-target answer
+#: asked for 15). The rest are named in `columns_dropped`.
+MAX_COLUMNS = 8
 #: Naive timestamps are stored UTC; dates the user names are Malaysian dates.
 LOCAL_TZ = "Asia/Kuala_Lumpur"
 
@@ -37,11 +41,10 @@ OPS = (
 )
 BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
-SPEC_KEYS = ("entity", "fields", "filters", "group_by", "aggregates", "sort", "limit")
+SPEC_KEYS = ("entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit")
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
 _DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
-_MYT = dt.timezone(dt.timedelta(hours=8))
 #: Postgres `query_canceled`: the statement timeout fired.
 _QUERY_CANCELED = "57014"
 #: Postgres class 22, data exception: a value that does not fit its field ("abc" for a number).
@@ -58,13 +61,179 @@ class QueryRefused(Exception):
         self.message = message
 
 
+# ------------------------------------------------------------------ named date windows (crew pass on ffdd7f87)
+
+#: Window names a date filter may carry instead of a date: the model passed "last_month" or "2026-10" as the
+#: value and the call was refused ("needs a date"), a wasted round on every payout question.
+WINDOW_NAMES = (
+    "today", "yesterday", "this_week", "last_week", "this_month", "last_month",
+    "this_quarter", "last_quarter", "this_year", "last_year",
+)
+_YEAR_MONTH = re.compile(r"^(\d{4})-(\d{1,2})$")
+_MONTH_YEAR = re.compile(r"^(\d{1,2})/(\d{4})$")
+_YEAR = re.compile(r"^(\d{4})$")
+_QUARTER = re.compile(r"^(?:q([1-4])[\s_/-]*(\d{4})|(\d{4})[\s_/-]*q([1-4]))$")
+
+
+def local_today() -> dt.date:
+    """Today in Malaysia (the target service's own `_today`, so `USE_REMOTE_TIME` applies alike)."""
+    from app.services.sales.team_service import _today
+
+    return _today()
+
+
+def _month_end(year: int, month: int) -> dt.date:
+    first_next = dt.date(year + month // 12, month % 12 + 1, 1)
+    return first_next - dt.timedelta(days=1)
+
+
+def _quarter(year: int, quarter: int) -> tuple[dt.date, dt.date]:
+    first = 3 * (quarter - 1) + 1
+    return dt.date(year, first, 1), _month_end(year, first + 2)
+
+
+def named_window(value: Any, today: dt.date | None = None) -> tuple[dt.date, dt.date] | None:
+    """(first day, last day) of a window named by `value`: one of WINDOW_NAMES, a month ("2026-10", "10/2026"),
+    a quarter ("Q3 2026", "2026-Q3") or a year ("2026"); None for anything else (a plain date included)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 1900 <= value <= 2200:
+        return dt.date(value, 1, 1), dt.date(value, 12, 31)
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    words = re.sub(r"[\s-]+", "_", text)
+    today = today or local_today()
+    if words in WINDOW_NAMES:
+        if words == "today":
+            return today, today
+        if words == "yesterday":
+            day = today - dt.timedelta(days=1)
+            return day, day
+        if words in ("this_week", "last_week"):
+            monday = today - dt.timedelta(days=today.weekday() + (7 if words == "last_week" else 0))
+            return monday, monday + dt.timedelta(days=6)
+        if words in ("this_month", "last_month"):
+            first = today.replace(day=1)
+            if words == "last_month":
+                first = (first - dt.timedelta(days=1)).replace(day=1)
+            return first, _month_end(first.year, first.month)
+        if words in ("this_quarter", "last_quarter"):
+            year, quarter = today.year, (today.month - 1) // 3 + 1
+            if words == "last_quarter":
+                year, quarter = (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+            return _quarter(year, quarter)
+        year = today.year - (1 if words == "last_year" else 0)
+        return dt.date(year, 1, 1), dt.date(year, 12, 31)
+    found = _YEAR_MONTH.match(text) or _MONTH_YEAR.match(text)
+    if found:
+        year, month = (int(found.group(1)), int(found.group(2))) if found.re is _YEAR_MONTH else (
+            int(found.group(2)), int(found.group(1))
+        )
+        if 1 <= month <= 12:
+            return dt.date(year, month, 1), _month_end(year, month)
+        return None
+    found = _QUARTER.match(text)
+    if found:
+        quarter, year = (found.group(1), found.group(2)) if found.group(1) else (found.group(4), found.group(3))
+        return _quarter(int(year), int(quarter))
+    if _YEAR.match(text):
+        return dt.date(int(text), 1, 1), dt.date(int(text), 12, 31)
+    return None
+
+
+def expand_window(item: Any, today: dt.date | None = None) -> Any:
+    """A date filter whose value names a window, rewritten as dates: `eq last_month` is `between [first, last]`,
+    `gte 2026-07` is from the first of July, `lte Q3 2026` to its last day. Anything else comes back as it was."""
+    if not isinstance(item, dict):
+        return item
+    op, value = item.get("op"), item.get("value")
+    if op == "between" and isinstance(value, list) and len(value) == 2:
+        low, high = named_window(value[0], today), named_window(value[1], today)
+        if low is None and high is None:
+            return item
+        return {**item, "value": [
+            low[0].isoformat() if low else value[0], high[1].isoformat() if high else value[1],
+        ]}
+    window = named_window(value, today) if op in ("eq", "gte", "gt", "lte", "lt") else None
+    if window is None:
+        return item
+    first, last = window
+    if op == "eq":
+        return {**item, "op": "between", "value": [first.isoformat(), last.isoformat()]}
+    if op in ("gte", "lt"):
+        return {**item, "value": first.isoformat()}
+    return {**item, "op": "lte" if op == "lte" else "gt", "value": last.isoformat()}
+
+
+# ------------------------------------------------------------------ an agent named in a filter (crew pass on ffdd7f87)
+
+def _plain_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).lower()
+
+
+def agent_exact(label: Any, needle: Any) -> bool:
+    """Does `needle` name the agent printed as `label` ("CODE - Name") exactly: the code, the name or the label?
+    "Agent B" names "AB - Agent B" and not "AB4 - Agent B IV", which `contains` also matched."""
+    text, want = _plain_text(label), _plain_text(needle)
+    if not text or not want:
+        return False
+    code, _sep, name = text.partition(" - ")
+    return want in (text, code.strip(), name.strip())
+
+
+def match_agents(db, value: str, op: str) -> list:
+    """The sales agents a filter value names: exactly (code, name or "CODE - Name") when any agent is named
+    exactly, else every agent whose code or name contains it (starts with it, for `starts_with`). Agents of the
+    session's companies and the shared masters only, as `team_service._visible_agents` reads them."""
+    from sqlalchemy import or_ as any_of
+
+    from app.models.base import get_company_scope
+    from app.models.sales_agent import SalesAgent
+    from app.services.sales.team_service import agent_label
+
+    q = db.query(SalesAgent)
+    scope = get_company_scope(db)
+    if scope is not None:
+        companies = list(scope) if isinstance(scope, frozenset) else []
+        q = q.filter(any_of(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(companies)))
+    needle = _plain_text(value)
+    pattern = f"%{_like(value, 'agent')}%" if op != "starts_with" else f"{_like(value, 'agent')}%"
+    candidates = q.filter(
+        any_of(SalesAgent.sales_agent.ilike(pattern, escape="\\"), SalesAgent.description.ilike(pattern, escape="\\"),
+               (SalesAgent.sales_agent + " - " + func.coalesce(SalesAgent.description, "")).ilike(pattern, escape="\\"))
+    ).order_by(SalesAgent.sales_agent).all()
+    exact = [a for a in candidates if agent_exact(agent_label(a), needle)]
+    return exact if exact or op == "eq" else candidates
+
+
 # ------------------------------------------------------------------ access
 
 
+#: A field or aggregate gated by a reveal key, not a slug: `reveal:sales_orders.sales_report`.
+REVEAL = "reveal:"
+SALES_REPORT = REVEAL + "sales_orders.sales_report"
+OUTSTANDING = REVEAL + "sales_orders.outstanding"
+
+
 def _slugs(db, user_id: str) -> set[str]:
+    """The user's slugs, plus `reveal:<key>` for every reveal key their slugs answer (`staff_reveal_keys`, the
+    sales report route's staff gate, `api/v1/order_management/report_ask.py`)."""
+    from app.services.contact_field_reveal_service import staff_reveal_keys
     from app.services.user_service import UserPermissionService
 
-    return set(UserPermissionService(db).get_user_permission_slugs(str(user_id)))
+    held = set(UserPermissionService(db).get_user_permission_slugs(str(user_id)))
+    return held | {REVEAL + key for key in staff_reveal_keys(db, str(user_id))}
+
+
+def require_aggregate(entity: EntityDef, slugs: set[str], grouped: bool) -> None:
+    """Totals and rankings follow the sales report's gate (`EntityDef.aggregate_permission`)."""
+    if grouped and entity.aggregate_permission and entity.aggregate_permission not in slugs:
+        raise QueryRefused(
+            "restricted",
+            f"Totals of {entity.label.lower()} need the sales report, which is not enabled for this user; "
+            "list the records instead.",
+        )
 
 
 def _module_blocked(db, user_id: str, module: str) -> bool:
@@ -99,7 +268,17 @@ def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef,
         )
     if _module_blocked(db, user_id, entity.module):
         raise QueryRefused("module_disabled", f"The {entity.label} module is not enabled.")
+    if entity.brand_blind and _brand_scoped(db):
+        raise QueryRefused(
+            "restricted", f"{entity.label} cover every brand, so they are not shown for this contact's brands."
+        )
     return entity, reach == "own"
+
+
+def _brand_scoped(db) -> bool:
+    from app.models.base import get_brand_scope
+
+    return bool(get_brand_scope(db))
 
 
 # ------------------------------------------------------------------ fields and paths
@@ -152,6 +331,8 @@ class _Paths:
         self.brand_scoped = bool(get_brand_scope(db))
         self._aliases: dict[str, Any] = {}
         self.joins: list[tuple[Any, Any]] = []
+        #: Said with the result: which agents a filter named (`match_agents`).
+        self.notes: list[str] = []
 
     def _target(self, path: Any) -> tuple[EntityDef, Any, str]:
         if not isinstance(path, str) or not path.strip():
@@ -160,7 +341,10 @@ class _Paths:
         if len(parts) - 1 > MAX_HOPS:
             raise QueryRefused("too_deep", f"`{path}` goes through {len(parts) - 1} relations; at most {MAX_HOPS}.")
         entity, table, prefix = self.entity, self.entity.model.__table__, ""
+        self.lookup_only = False
         for name in parts[:-1]:
+            if self.lookup_only:
+                raise QueryRefused("restricted", f"`{path}` goes through {entity.label.lower()}, which this user may not list.")
             if name not in entity.relations:
                 raise QueryRefused(
                     "unknown_field",
@@ -180,6 +364,9 @@ class _Paths:
                 self._aliases[prefix] = alias
                 self.joins.append((alias, onclause))
             entity, table = target, self._aliases[prefix]
+            # A related record with a list screen of its own (customers) is a lookup to someone without that
+            # screen's slug: the fields it is named by, and nothing past it (security review, wave 2).
+            self.lookup_only = target.view_permission is not None and _readable(target, self.slugs) is None
         return entity, table, parts[-1]
 
     def resolve(self, path: Any) -> tuple[Any, FieldDef, str]:
@@ -192,10 +379,18 @@ class _Paths:
             )
         if field.permission and field.permission not in self.slugs:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
+        if self.lookup_only and name not in entity.name_by:
+            raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
         if field.whole_document and self.brand_scoped:
             raise QueryRefused(
                 "restricted", f"`{path}` covers lines of brands outside this contact's brands, so it is not shown here."
             )
+        if field.expr is not None:
+            if table is not entity.model.__table__:
+                # The service's expression correlates to the model itself, not to a join alias.
+                raise QueryRefused("invalid", f"`{path}` is read on {entity.label.lower()} itself, not through a relation.")
+            column = field.expr()
+            return column, field, _kind(column)
         column = table.c[field.column or name]
         return column, field, _kind(column)
 
@@ -252,7 +447,7 @@ def _filter(paths: _Paths, item: Any):
     if not isinstance(item, dict) or set(item) - {"field", "op", "value"}:
         raise QueryRefused("invalid", "Each filter is {field, op, value}.")
     path, op = item.get("field"), item.get("op")
-    column, _field, kind = paths.resolve(path)
+    column, field, kind = paths.resolve(path)
     if op not in OPS:
         raise QueryRefused("invalid", f"Unknown op {op!r}. Ops: {', '.join(OPS)}.")
     value = item.get("value")
@@ -260,6 +455,18 @@ def _filter(paths: _Paths, item: Any):
         return column.is_(None)
     if op == "is_not_null":
         return column.is_not(None)
+    if callable(field.agent_id) and op in ("eq", "contains", "starts_with") and isinstance(value, str) and value.strip():
+        # The agent the value names, by the record's own agent link (the agent's Customers tab is
+        # `Customer.sales_agent_id ==`): exactly when one is named exactly, so "Agent B" is not also "Agent B IV".
+        agents = match_agents(paths.db, value, op)
+        if agents:
+            from app.services.sales.team_service import agent_label
+
+            labels = [agent_label(a) for a in agents]
+            shown = ", ".join(labels[:5]) + (f" and {len(labels) - 5} more" if len(labels) > 5 else "")
+            paths.notes.append(f"Agent{'s' if len(labels) > 1 else ''}: {shown}.")
+            return field.agent_id().in_([a.id for a in agents])
+        # No agent master matches (a code as AutoCount sent it): the text itself, as before.
     if op in ("contains", "starts_with"):
         if kind != "text":
             raise QueryRefused("invalid", f"`{op}` works on text fields; `{path}` is {kind}.")
@@ -329,9 +536,7 @@ def _plain(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dt.datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=dt.timezone.utc)
-        return value.astimezone(_MYT).strftime("%d/%m/%Y %H:%M")
+        return fmt_datetime_24h(value)
     if isinstance(value, dt.date):
         return value.strftime("%d/%m/%Y")
     return value
@@ -360,13 +565,18 @@ def _execute(db, stmt):
 
 
 def _run(db, stmt) -> list:
-    """`stmt` under the statement timeout, inside a savepoint: a timeout rolls back to it (and with it the
-    `SET LOCAL`), so the caller's transaction stays usable."""
+    """`stmt` under the statement timeout (`timed`)."""
+    return timed(db, lambda: _execute(db, stmt))
+
+
+def timed(db, work):
+    """`work()` under the statement timeout, inside a savepoint: a timeout rolls back to it (and with it the
+    `SET LOCAL`), so the caller's transaction stays usable. Also wraps a computed entity's service call."""
     savepoint = db.begin_nested()
     try:
         previous = db.execute(text("SHOW statement_timeout")).scalar() or "0"
         db.execute(text(f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}"))
-        rows = _execute(db, stmt)
+        rows = work()
         db.execute(text("SELECT set_config('statement_timeout', :v, true)"), {"v": str(previous)})
     except DBAPIError as exc:
         savepoint.rollback()
@@ -429,8 +639,14 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    spec = shorthands(entity, spec)
+    if entity.compute is not None:
+        from app.services.assistant_registry.computed import run_computed
+
+        return run_computed(db, user_id, entity, own_only, slugs, spec)
     paths = _Paths(db, user_id, entity, slugs)
-    asked = _list(spec, "filters", MAX_FILTERS)
+    today = local_today()
+    asked = [_named_dates(paths, f, today) for f in _list(spec, "filters", MAX_FILTERS)]
     filters = [_filter(paths, f) for f in asked]
     named = {f.get("field") for f in asked if isinstance(f, dict)}
     notes = []
@@ -444,6 +660,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
     period = _period_display(paths, asked)
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    require_aggregate(entity, slugs, bool(group_by or aggregates))
     if group_by or aggregates:
         if _list(spec, "fields"):
             raise QueryRefused("invalid", "`fields` lists rows; with group_by or aggregates leave it out.")
@@ -452,6 +669,9 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         out = _rows(db, user_id, entity, own_only, paths, filters, spec)
     # Display facts decided here, not by the model (crew pass, 5 Nov): the period in dd/mm/yyyy and what the
     # result leaves out. `loop.final_reply` puts the scope note in the reply when the model does not.
+    if (group_by or aggregates) and entity.aggregate_note:
+        notes.insert(0, entity.aggregate_note)
+    notes = [*paths.notes, *notes]
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
     return out
@@ -462,6 +682,57 @@ def _display_date(value: Any, kind: str) -> str:
     if isinstance(iso, str) and _DATE_ONLY.match(iso):
         return dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
     return str(value)
+
+
+def shorthands(entity: EntityDef, spec: dict) -> dict:
+    """`agent` and `period` as their filters (crew live x3 on 3c6924bf: the model resolved the agent's name with
+    crm_resolve first and read crm_describe for the window, one or two extra model calls of ~20k tokens each).
+
+    `agent`: the agent as the user named it, on the entity's agent field (`FieldDef.agent_id`), matched exactly
+    first (`match_agents`, `computed._exact_agents`), so no id and no resolve round. `period`: a window name
+    (last_month, this_quarter, 2026-10, Q3 2026, 2026) or [from, to] (either end may be a name or "today"), on the
+    entity's own date (`window_field`, else `date_field`)."""
+    if "agent" not in spec and "period" not in spec:
+        return spec
+    spec = dict(spec)
+    filters = list(_list(spec, "filters", MAX_FILTERS))
+    agent = spec.pop("agent", None)
+    if agent is not None:
+        field = next((key for key, f in entity.fields.items() if f.agent_id), None)
+        if field is None:
+            raise QueryRefused("invalid", f"`agent` does not apply to {entity.label.lower()}; use filters.")
+        if not isinstance(agent, str) or not agent.strip():
+            raise QueryRefused("invalid", "`agent` is the agent's code or name as text.")
+        # A computed field holds teams and dealers too (`target_list.subject`): exactly that agent, or nothing and
+        # the values that do exist (`computed._no_match`), never a team whose name contains it (review round 9).
+        op = "contains" if callable(entity.fields[field].agent_id) else "eq"
+        filters.append({"field": field, "op": op, "value": agent.strip()})
+    period = spec.pop("period", None)
+    if period is not None:
+        field = entity.window_field or entity.date_field
+        if field is None:
+            raise QueryRefused("invalid", f"`period` does not apply to {entity.label.lower()}; use filters.")
+        if isinstance(period, list) and len(period) == 2:
+            filters.append({"field": field, "op": "between", "value": period})
+        elif isinstance(period, (str, int)) and not isinstance(period, bool):
+            filters.append({"field": field, "op": "eq", "value": period})
+        else:
+            raise QueryRefused("invalid", "`period` is a window name (last_month, 2026-10, Q3 2026) or [from, to].")
+    if len(filters) > MAX_FILTERS:
+        raise QueryRefused("invalid", f"`filters` takes at most {MAX_FILTERS} items.")
+    spec["filters"] = filters
+    return spec
+
+
+def _named_dates(paths: _Paths, item: Any, today: dt.date) -> Any:
+    """A filter on a date field whose value names a window (`named_window`) as dates; anything else as it was."""
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        return item
+    expanded = expand_window(item, today)
+    if expanded is item:
+        return item
+    _column, _field, kind = paths.resolve(item["field"])
+    return expanded if kind in ("date", "datetime") else item
 
 
 def _period_display(paths: _Paths, asked: list) -> str | None:
@@ -499,7 +770,9 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     asked = _list(spec, "fields", 30)
     if any(not isinstance(f, str) for f in asked):
         raise QueryRefused("invalid", "`fields` is a list of field names.")
-    wanted = list(dict.fromkeys([*entity.name_by, *(asked or list(entity.fields))]))
+    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    dropped = picked[MAX_COLUMNS:] if asked else []
+    wanted = list(dict.fromkeys([*entity.name_by, *(picked[:MAX_COLUMNS] if asked else picked)]))
     shown = [f for f in wanted if paths.allowed(f)]
     restricted = [f for f in wanted if f not in shown]
     root = entity.model
@@ -536,10 +809,13 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
         {"key": f, "label": paths.resolve(f)[1].label} for f in shown if f not in entity.name_by
     ]
-    return {
+    out = {
         "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
         "restricted": restricted, "columns": columns,
     }
+    if dropped:
+        out["columns_dropped"] = dropped
+    return out
 
 
 def _group_key(paths: _Paths, item: Any) -> tuple[str, Any, str]:
@@ -640,7 +916,13 @@ def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[
     columns = sa_inspect(entity.model).columns
     out = []
     for key, field in entity.fields.items():
-        row = {"field": key, "label": field.label, "type": _kind(columns[field.column or key])}
+        if field.kind:
+            kind = field.kind
+        elif field.expr is not None:
+            kind = _kind(field.expr())
+        else:
+            kind = _kind(columns[field.column or key])
+        row = {"field": key, "label": field.label, "type": kind}
         if field.note:
             row["note"] = field.note
         if (field.permission and field.permission not in slugs) or (field.whole_document and brand_scoped):
@@ -658,6 +940,7 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
             for e in ENTITIES.values()
             if _readable(e, slugs) == "all" or (_readable(e, slugs) == "own" and e.own_clause is not None)
             if not _module_blocked(db, user_id, e.module)
+            if not (e.brand_blind and _brand_scoped(db))
         ]
         return {"entities": listed}
     from app.models.base import get_brand_scope
@@ -669,10 +952,15 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
         target = ENTITIES[target_key]
         if _module_blocked(db, user_id, target.module):
             continue
+        if target.view_permission is not None and _readable(target, slugs) is None:
+            # A lookup to this user: the fields it is named by, nothing past it (`_Paths._target`).
+            fields = [r for r in _field_rows(target, slugs, brand_scoped) if r["field"] in target.name_by]
+            relations[name] = {"label": target.label, "fields": fields, "relations": []}
+            continue
         relations[name] = {
             "label": target.label, "fields": _field_rows(target, slugs, brand_scoped), "relations": list(target.relations),
         }
-    return {
+    out = {
         "entity": found.key,
         "label": found.label,
         "only_own_rows": own_only,
@@ -683,3 +971,9 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
         "aggregates": list(FNS),
         "limits": {"rows": MAX_ROWS, "groups": MAX_GROUPS, "group_by_fields": MAX_GROUP_FIELDS, "relation_hops": MAX_HOPS},
     }
+    if found.window_field:
+        out["window"] = (
+            f"`{found.window_field}` picks the periods read: between [from, to] keeps every period overlapping it, "
+            f"eq a date the period containing it; without it, the periods containing today."
+        )
+    return out

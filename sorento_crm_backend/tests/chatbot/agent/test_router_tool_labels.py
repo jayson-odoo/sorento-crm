@@ -50,6 +50,12 @@ EXPECTED_LABELS = [
     "close a complaint",
     "cancel an order",
     "raise an IT support ticket",
+    # AGENT-BULK-ACTIONS: the row write a pasted table is proposed through.
+    "grant a dealer contact access",
+    # AGENT-BULK-W2-TAGS: the tag row write.
+    "add or remove contact tags",
+    # AGENT-BULK-W3-AGENTS: the customer agent row write.
+    "assign sales agents to customers",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
