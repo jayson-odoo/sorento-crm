@@ -20,8 +20,9 @@ if (!window.matchMedia) {
   });
 }
 
+const routerPush = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push: routerPush, prefetch: vi.fn() }),
   usePathname: () => '/system-management/scheduled-tasks',
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -138,7 +139,9 @@ describe('ScheduledTasksList', () => {
 
   it('opens the detail page from the row', () => {
     renderList();
-    const link = screen.getAllByRole('link').find((a) => a.getAttribute('href') === '/system-management/scheduled-tasks/t-1');
-    expect(link).toBeTruthy();
+    routerPush.mockClear();
+    fireEvent.click(screen.getByText('Every 3 mins'));
+    expect(routerPush).toHaveBeenCalledTimes(1);
+    expect(String(routerPush.mock.calls[0][0]).startsWith('/system-management/scheduled-tasks/t-1')).toBe(true);
   });
 });
