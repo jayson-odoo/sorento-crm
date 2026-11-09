@@ -202,6 +202,11 @@ function FormBody({
                   onChange={(v) => setRole((v || 'employee') as DealerAccessRole)}
                   options={ACCESS_OPTIONS}
                 />
+                {formError ? (
+                  <Alert variant="destructive" appearance="light" size="sm">
+                    <AlertDescription>{formError}</AlertDescription>
+                  </Alert>
+                ) : null}
               </div>
             ) : null}
           </CardContent>
@@ -281,11 +286,6 @@ function FormBody({
           </Card>
         ) : null}
 
-        {formError ? (
-          <Alert variant="destructive" appearance="light" size="sm">
-            <AlertDescription>{formError}</AlertDescription>
-          </Alert>
-        ) : null}
       </DialogBody>
       <DialogFooter className="gap-2">
         <Button type="button" variant="outline" onClick={onClose}>

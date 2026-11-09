@@ -41,16 +41,18 @@ const rowKey = (row: DealerAccessRow) => `${row.contact_id}:${row.company}`;
 function AccessCell({ row }: { row: DealerAccessRow }) {
   const label = row.access === 'owner' ? (row.owner_tag ?? 'Business Owner') : 'Employee';
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1">
+    <span className="flex min-w-0 flex-col items-start gap-0.5">
       {row.access === 'owner' ? (
-        <Badge variant="primary" appearance="light" className="truncate" title={label}>
+        <Badge variant="primary" appearance="light" className="max-w-full truncate" title={label}>
           {label}
         </Badge>
       ) : (
         <span>{label}</span>
       )}
       {row.other_account ? (
-        <span className="text-xs text-muted-foreground">also another account</span>
+        <span className="max-w-full truncate text-xs text-muted-foreground" title="also another account">
+          also another account
+        </span>
       ) : null}
     </span>
   );
@@ -127,7 +129,7 @@ export default function DealerAccessView() {
       {
         id: 'name',
         header: 'Person',
-        size: 200,
+        size: 180,
         cell: ({ row }) => (
           <span className="block truncate font-medium" title={row.original.name}>
             {row.original.name}
@@ -138,7 +140,7 @@ export default function DealerAccessView() {
       {
         id: 'phone',
         header: 'Phone',
-        size: 150,
+        size: 140,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.phone}>
             {row.original.phone}
@@ -149,7 +151,7 @@ export default function DealerAccessView() {
       {
         id: 'company',
         header: 'Company',
-        size: 130,
+        size: 100,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.company_name}>
             {row.original.company_name}
@@ -167,14 +169,14 @@ export default function DealerAccessView() {
       {
         id: 'access',
         header: 'Access',
-        size: 230,
+        size: 200,
         cell: ({ row }) => <AccessCell row={row.original} />,
         meta: { headerTitle: 'Access', skeleton: <Skeleton className="h-5 w-24" /> },
       },
       {
         id: 'actions',
         header: '',
-        size: 56,
+        size: 48,
         enableResizing: false,
         cell: ({ row }) => (
           <RowActionsMenu actions={actionsFor(row.original)} ariaLabel={row.original.name} />

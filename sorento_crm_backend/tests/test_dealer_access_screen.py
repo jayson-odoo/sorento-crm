@@ -108,10 +108,10 @@ def respond_jobs(calls) -> list:
     return [c for c in calls if getattr(c.func, "__name__", "") == "ensure_respond_contact"]
 
 
-@pytest.fixture()
-def api(db):
-    """`api.as_user(uid)` -> a TestClient authenticated as that user. Permissions are the real ones (the user holds
-    exactly the slugs it was seeded with); the audit actor is stamped the way `get_current_user` does."""
+def _api_client(db, *, active_only: bool):
+    """`as_user(uid)` -> a TestClient authenticated as that user. Permissions are the real ones (the user holds
+    exactly the slugs it was seeded with); the audit actor is stamped the way `get_current_user` does. The request's
+    company scope is every granted company, or (`active_only`) the user's ACTIVE company alone, as a real request."""
     who = {"uid": None}
 
     def _override_db():
@@ -124,7 +124,14 @@ def api(db):
         return user
 
     async def _override_scope():
-        scope = frozenset(resolve_user_grant_ids(db, who["uid"]))
+        if active_only:
+            from app.models.user import User
+
+            with company_scope(db, None):
+                active = db.query(User.last_active_company_id).filter(User.id == who["uid"]).scalar()
+            scope = frozenset({str(active)})
+        else:
+            scope = frozenset(resolve_user_grant_ids(db, who["uid"]))
         set_company_scope(db, scope)
         return scope
 
@@ -138,8 +145,22 @@ def api(db):
         who["uid"] = uid
         return http
 
+    return SimpleNamespace(as_user=as_user)
+
+
+@pytest.fixture()
+def api(db):
     try:
-        yield SimpleNamespace(as_user=as_user)
+        yield _api_client(db, active_only=False)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def api_active(db):
+    """Like `api`, but the request scope is the user's active company only (what a real request carries)."""
+    try:
+        yield _api_client(db, active_only=True)
     finally:
         app.dependency_overrides.clear()
 
@@ -1203,7 +1224,7 @@ def both_companies_person(db, o, name, types=("end_user",)):
     return dealer(db, o.w, types=types, customers=(o.w.cust_a, o.w.cust_b), companies=(o.w.srt, o.w.mch), name=name)
 
 
-def test_S8_with_sorento_active_a_person_linked_only_to_my_mocha_account_can_be_edited_and_unlinked(db, api):
+def test_S8_with_sorento_active_a_person_linked_only_to_my_mocha_account_can_be_edited_and_unlinked(db, api_active):
     o = two_sales(db)
     w = o.w
     set_active(db, o.s1, w.srt)
@@ -1214,7 +1235,7 @@ def test_S8_with_sorento_active_a_person_linked_only_to_my_mocha_account_can_be_
     service().update(db, o.s1, str(person.id), "MCH", "owner", ids_of(w.cust_b))
     assert MCH_TAG in tags_of(db, person.id)
 
-    client = api.as_user(o.s1)
+    client = api_active.as_user(o.s1)
     outcome = commit(client, db, park(client, link.id), link.id)
 
     assert outcome["last_outcome"]["status"] == "committed", outcome
@@ -1271,3 +1292,29 @@ def test_S5_promoting_on_the_sorento_row_adds_only_the_sorento_tag(db):
 
     assert tags_of(db, person.id) == [SRT_TAG]
     assert "mocha_dealer" not in state(db, person.phone_number)["types"]
+
+
+def test_S8_update_unlinking_my_mocha_account_with_a_sorento_only_request_scope(db):
+    o = two_sales(db)
+    w = o.w
+    set_active(db, o.s1, w.srt)
+    extra = add_customer(db, w, unique_code("ZZT Extra Mocha"), company=w.mch)
+    person = dealer(db, w, customers=(w.cust_b, extra), companies=(w.mch,), name="ZZT Two Mocha Accounts")
+    set_company_scope(db, frozenset({w.srt}))
+
+    service().update(db, o.s1, str(person.id), "MCH", "employee", ids_of(extra))
+
+    assert links_of(db, person.id) == {str(extra.id)}
+
+
+def test_S8_grant_for_mocha_with_a_sorento_only_request_scope(db):
+    o = two_sales(db)
+    w = o.w
+    set_active(db, o.s1, w.srt)
+    phone = fake_phone()
+    set_company_scope(db, frozenset({w.srt}))
+
+    out = service().grant(db, o.s1, "MCH", ids_of(w.cust_b), [person_of(phone, name="ZZT Mocha New")])
+
+    assert out["rows"][0]["created"] is True
+    assert state(db, phone)["links"] == [str(w.cust_b.id)]

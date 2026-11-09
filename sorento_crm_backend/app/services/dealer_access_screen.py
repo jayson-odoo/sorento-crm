@@ -228,7 +228,8 @@ def grant(db: Session, user_id: str, company: str, account_ids: list[str], peopl
         raise _refuse("Some people cannot be added.", details={"rows": errors})
     out = []
     for index, args in enumerate(calls):
-        done = contact_grant._execute(db, user, args)
+        with grants_scope(db, user_id):
+            done = contact_grant._execute(db, user, args)
         notes = [ALSO] if ALSO in (plans[index] or {}).get("lines", []) else []
         out.append({
             "index": index, "contact_id": str(done["id"]), "created": bool(done["after"]["created"]), "notes": notes,
@@ -296,10 +297,11 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
         if has_change:
             writes._contact_plan(db, user, change)
     result: dict = {"id": str(contact_id)}
-    if add:
-        contact_grant._execute(db, user, grant_args)
-    if has_change:
-        result = writes._contact_execute(db, user, change)
+    with grants_scope(db, user_id):
+        if add:
+            contact_grant._execute(db, user, grant_args)
+        if has_change:
+            result = writes._contact_execute(db, user, change)
     return result
 
 
@@ -325,8 +327,13 @@ def own_link(db: Session, user_id: str, link_id: str):
 def unlink(db: Session, user_id: str, link_id: str) -> dict:
     """S6: the deferred action's body, run as the requester. Re-checks the link is still mine; C4 (the last link
     turns AI replies off) is the access update's own."""
+    from app.services.company_scope_resolver import grants_scope
+
     link = own_link(db, user_id, link_id)
-    return writes._contact_execute(
-        db, _user(db, user_id),
-        {"contact_id": str(link.contact_id), "unlink_customer_ids": [str(link.customer_id)]},
-    )
+    # Every granted company, not the request's (or the deferred commit's stored) active one: the link row's company
+    # scoped query must see an account of my other company (S8).
+    with grants_scope(db, user_id):
+        return writes._contact_execute(
+            db, _user(db, user_id),
+            {"contact_id": str(link.contact_id), "unlink_customer_ids": [str(link.customer_id)]},
+        )
