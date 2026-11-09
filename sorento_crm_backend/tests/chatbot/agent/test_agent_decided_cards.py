@@ -8,6 +8,8 @@ real grant write. Postgres only (blank schema); phones, names and codes are inve
 """
 from __future__ import annotations
 
+import json
+
 from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures are used by name)
     BATCH,
     GRANT,
@@ -256,8 +258,11 @@ def test_a_row_that_failed_on_a_confirmed_card_stays_open(db):
     second, provider = _batch_turn(db, w, _rows(w, a, d, c), f"now {c.name} as well")
 
     lines = _lines(second)
-    assert d.phone_number in lines and c.phone_number in lines
-    assert a.phone_number not in lines
+    # UAC F4: "now ZZT Chong as well" names only Chong, so the failed row D is left out (returned in left_out).
+    assert c.phone_number in lines
+    assert d.phone_number not in lines and a.phone_number not in lines
+    results = [json.loads(m["content"]) for m in provider.seen[1]["messages"] if m.get("role") == "tool"]
+    assert d.phone_number in [x["phone"] for r in results for x in (r.get("data") or {}).get("left_out") or []]
     assert "(failed" in _history_text(provider)
 
 

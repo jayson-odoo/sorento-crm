@@ -763,8 +763,9 @@ def test_12_a_plain_turn_between_two_table_turns_does_not_hide_the_earlier_waiti
     codes = [a.customer_code for a in h]
     result = say(db, w, [tag(row_(ph.phone_number, companies=["MCH"], codes=codes), 2)], "row 2 all")
 
-    assert len(result.pending_action["lines"]) == 1
-    assert "was not in the list" not in result.reply_text
+    # UAC F3: a plain turn in between expires the grant pick, so its codes are refused, never linked.
+    assert result.pending_action is None
+    assert "is from an earlier list that is closed now" in result.reply_text
 
 
 # ------------------------------------------------------------------ picker fix round (P1 to P3)

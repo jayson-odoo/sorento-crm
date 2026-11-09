@@ -238,6 +238,7 @@ def propose_rows(
     previous_waiting: list[dict] | None = None, closed: dict | None = None,
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
+    previous_card: list[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -245,9 +246,10 @@ def propose_rows(
     for a caller outside a turn); a grant row's customer names and companies must be in it, or verified for that row
     by the last table (`previous_waiting`, `previous_typed`: UAC A17, A18), and an older, expired pick's codes are
     refused (`expired_waiting`, F3). Each entry of a checked grant row carries `typed`, what was verified. UAC F4: a
-    grant row this message does not name (its phone in any format, or its person's name, as `_asked_again` reads it)
-    is left out (`left_out`, never shown), unless this call answers the last table's pick, when every row of that
-    table may come back."""
+    message that names a person (a phone in any format, or a row's person by name, as `_asked_again` reads it) holds
+    only the rows it names, plus every row of the last table when this call answers its pick; a message naming nobody
+    is a follow-up about the immediately preceding card (`previous_card`), whose rows may come back. Any other row is
+    left out (`left_out`, never shown)."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -273,6 +275,14 @@ def propose_rows(
                 r.get("key") for r in [*(previous_waiting or []), *(previous_typed or []), *(previous_skipped or [])]
                 if r.get("key") is not None
             }
+        from app.services.contact_setup_engine import normalise_phone
+
+        names_someone = any(normalise_phone(run) for run in _PHONE_RUN.findall(str(user_text or ""))) or any(
+            _asked_again(a, key_of(a), user_text) for _, a in numbered
+        )
+        if not names_someone:
+            # A follow-up naming nobody ("give them Mocha too") is about the immediately preceding card (UAC F4).
+            table_keys |= set(previous_card or [])
     for position, args in enumerate(rows, 1):
         n = position
         if isinstance(args, dict):
@@ -428,7 +438,7 @@ def propose(
     new_steps, skipped, waiting = propose_rows(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
-        previous_skipped=(previous or {}).get("skipped"), left_out=left,
+        previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
     )
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting). A left-out row
     # was not sent as far as this card goes (UAC F4).

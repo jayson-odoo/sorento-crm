@@ -159,10 +159,12 @@ F3. A pick answers only the table of the IMMEDIATELY preceding agent turn, and o
     older table with waiting rows is expired, and a table with no waiting rows is never the pick. A single grant row
     that waits for a pick is a pick too. This immediacy is the grant's only: the tag and customer-agent tables keep
     answering the newest earlier table.
-F4. Rows of this message only (grant): a row may be in the card only when this turn's message names the person (the
-    phone in any format, 012-345 6789, +60 12..., 6012..., or the person's name), or when the turn answers the last
-    table's pick (a row with codes that table listed for it, or the user typed), and then every row of that last table
-    may come back. A row of a decided card keeps its own reason, and codes of an expired pick get the F3 refusal. Any
-    other row the model re-sends is left out of the card, the preview and the not-changed list, and returned to the
-    model as `left_out` with `Not in this message; ask again with this person's phone to include them.` (live x3: an
-    earlier waiting person re-sent into a new request was linked to the older pick).
+F4. Rows of this message only (grant). When this turn's message names at least one person (a phone in any format,
+    012-345 6789, +60 12..., 6012..., or a person's name), the card holds only the rows it names, plus the rows of
+    the last table when the turn answers that table's pick (a row with codes the table listed for it, or the user
+    typed). When the message names no person, it is a follow-up about the immediately preceding card, decided or
+    waiting, so that card's rows may be re-sent ("give them Mocha too", "do the same two with Mocha instead"). A row
+    of a decided card keeps its own reason, and codes of an expired pick get the F3 refusal. Any other row the model
+    re-sends is left out of the card, the preview and the not-changed list, and returned to the model as `left_out`
+    with `Not in this message; ask again with this person's phone to include them.` (live x3: an earlier waiting
+    person re-sent into a new request was linked to the older pick).

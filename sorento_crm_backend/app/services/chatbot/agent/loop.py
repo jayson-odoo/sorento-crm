@@ -1486,6 +1486,7 @@ def _decided_reply(ledger: dict[str, dict]) -> str:
 def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict:
     """The table a pick may answer, as {"write", "waiting", "skipped", "typed", "reply", "expired"}.
 
+    `card`: the phones of the immediately preceding turn's table, decided or waiting (UAC F4).
     `immediate` (the grant, UAC F3): only the IMMEDIATELY preceding agent turn of this conversation that did not fail
     (a retried message after a provider failure still answers the pick), and only when it ended with rows waiting
     for a pick; any newer request expires an older pick. `typed`: what that table verified as typed for each of its
@@ -1513,17 +1514,23 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
             "reply": got.get("reply_text") or "", "expired": [],
         }
 
-    empty = {"write": None, "waiting": [], "skipped": [], "typed": [], "reply": "", "expired": []}
+    empty = {"write": None, "waiting": [], "skipped": [], "typed": [], "reply": "", "expired": [], "card": []}
     if not immediate:
         newest = tables.first()
-        return record(newest) if newest is not None else empty
+        return {**record(newest), "card": []} if newest is not None else empty
     last = base.first()
     current = record(last) if last is not None and (last.response or {}).get("batch_waiting") else None
     older = [
         w for t in tables.limit(MAX_EXPIRED_TABLES).all()
         if current is None or str(t.id) != str(last.id) for w in (t.response or {}).get("batch_waiting") or []
     ]
-    return {**(current or empty), "expired": older}
+    # The phones of the immediately preceding card, decided or waiting: a follow-up naming nobody is about it (F4).
+    got = (last.response or {}) if last is not None else {}
+    card = list(dict.fromkeys(
+        r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped") for r in got.get(k) or []
+        if isinstance(r, dict) and r.get("key")
+    ))
+    return {**(current or empty), "expired": older, "card": card}
 
 
 def _run(

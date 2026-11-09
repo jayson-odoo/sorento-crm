@@ -2161,3 +2161,21 @@ def test_A17_suffix_words_and_curly_quotes_do_not_make_a_typed_name_untyped(db, 
 
     assert all("is not in your message" not in s["reason"] for s in skipped), skipped
     assert all(x["written"] == typed for x in waiting)
+
+
+def test_F4_a_follow_up_naming_nobody_may_re_send_the_previous_cards_rows(db):
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    a, b = dealer(db, w, name="ZZT Ahmad"), dealer(db, w, name="ZZT Devi")
+    first = [row_(p.phone_number, name=p.name, role="employee", codes=[w.cust_a.customer_code]) for p in (a, b)]
+    one = _turn(db, w, [_batch_call(first), answer_("ok")], f"Sorento {a.phone_number} {b.phone_number}")
+    assert one.pending_action is not None and len(one.pending_action["lines"]) == 2
+
+    more = [row_(p.phone_number, name=p.name, role="employee", companies=["MCH"], codes=[w.cust_b.customer_code])
+            for p in (a, b)]
+    two = _turn(db, w, [_batch_call(more, "b2"), answer_("ok")], "give them Mocha too")
+
+    assert two.pending_action is not None, two.reply_text
+    lines = two.pending_action["lines"]
+    assert len(lines) == 2 and any(a.phone_number in x for x in lines) and any(b.phone_number in x for x in lines)
