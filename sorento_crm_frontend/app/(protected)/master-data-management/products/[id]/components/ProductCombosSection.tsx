@@ -650,9 +650,16 @@ function ComboBlock({
         {canEdit ? (
           <div className="flex shrink-0 items-center gap-1">
             {/* COMBO-COPY-TO-PRODUCTS: this combo, as it is, onto hand-picked products. */}
-            <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onCopy}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={onCopy}
+              aria-label={`Copy combo ${combo.name} to other products`}
+            >
               <Copy className="size-4" />
-              Copy to other products
+              <span className="hidden sm:inline">Copy to other products</span>
             </Button>
             <Button
               type="button"

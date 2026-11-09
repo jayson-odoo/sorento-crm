@@ -12,7 +12,6 @@ three different path roots (`/products/{id}/...`, `/product-combos/...`,
 """
 from __future__ import annotations
 
-import uuid
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
@@ -32,7 +31,6 @@ from app.schemas.product_combo import (
     ProductComboUpdate,
     ProductSoldWithListOut,
 )
-from app.services.error_handler import AppException
 from app.services.product_combo_service import ProductComboService
 from app.services.user_service import holds_permission
 from app.services.uuid_path_param import validate_uuid_path
@@ -103,11 +101,6 @@ def copy_product_combo(
     """COMBO-COPY-TO-PRODUCTS: copy this combo to hand-picked products, one transaction.
     Signed-in only (a bulk write), like the accessories copy."""
     validate_uuid_path(combo_id, resource="Combo")
-    for value in [*payload.target_product_ids, *payload.overwrite_product_ids]:
-        try:
-            uuid.UUID(value)
-        except ValueError:
-            raise AppException(status_code=422, message="Each target must be a product id")
     return ProductComboService(db).copy_to_products(
         combo_id,
         payload.target_product_ids,

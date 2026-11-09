@@ -43,6 +43,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
 from app.services.accessory_service import AccessoryService
+from app.services.dependent_probe import is_referenced, referrers_of
 from app.services.error_handler import AppException, handle_not_found
 from app.services.tag_description import clean_description
 from app.services.storage_router import (
@@ -370,7 +371,12 @@ class ProductComboService:
             "overwritten": 0,
             "skipped": [],
             "conflicts": [],
-            "template_links_copied": bool(copy_template_links),
+            # Nothing withheld counts as copied: False only when the source has links that
+            # this caller may not copy.
+            "template_links_copied": bool(copy_template_links)
+            or not self.db.query(ComboTagTemplate.id)
+            .filter(ComboTagTemplate.combo_id == source.id)
+            .first(),
         }
         plan: List[tuple] = []
         for value in wanted:
@@ -405,10 +411,12 @@ class ProductComboService:
             else []
         )
         sweeps: List[tuple] = []
+        referrers = referrers_of(self.db, "attachments")
         for target, clash in plan:
             sweep = self._copy_onto(
                 source, target, clash, free_items, links,
                 copy_template_links=copy_template_links, created_by=created_by,
+                referrers=referrers,
             )
             if sweep:
                 sweeps.append(sweep)
@@ -428,6 +436,7 @@ class ProductComboService:
         *,
         copy_template_links: bool,
         created_by: Optional[str],
+        referrers: Optional[List[tuple]] = None,
     ) -> Optional[tuple]:
         """Write the source's contents into `combo` (an overwrite) or a new combo on `target`.
         Returns the storage sweep of a picture the overwrite dropped, for after the commit."""
@@ -525,7 +534,7 @@ class ProductComboService:
         self.db.flush()
 
         if previous_picture and previous_picture != combo.image_attachment_id:
-            return self._unlink_combo_image(combo, previous_picture)
+            return self._unlink_combo_image(combo, previous_picture, referrers)
         return None
 
     # ------------------------------------------------------------------ image
@@ -678,7 +687,10 @@ class ProductComboService:
         return row
 
     def _unlink_combo_image(
-        self, combo: ProductCombo, attachment_id: str
+        self,
+        combo: ProductCombo,
+        attachment_id: str,
+        referrers: Optional[List[tuple]] = None,
     ) -> Optional[tuple]:
         """AC-S5-12: drop the combo's OWN link to `attachment_id` (its host
         product's `product_attachments` row) and, only when no OTHER
@@ -718,13 +730,9 @@ class ProductComboService:
             ).delete(synchronize_session=False)
             self.db.flush()
 
-        still_linked = (
-            self.db.query(ProductAttachment.id)
-            .filter(ProductAttachment.attachment_id == attachment_id)
-            .first()
-            is not None
-        )
-        if still_linked or other_combo_shows():
+        # The combo's own pointer and the host's gallery link are already gone and flushed, so
+        # the probe sees only what else still shows the picture (any FK referrer of attachments).
+        if is_referenced(self.db, "attachments", attachment_id, referrers=referrers):
             return None
 
         attachment = self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
