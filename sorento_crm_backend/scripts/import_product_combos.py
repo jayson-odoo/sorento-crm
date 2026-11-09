@@ -84,7 +84,7 @@ from app.services.audit_service import register_audit_listeners  # noqa: E402
 from app.services.dealer_kit.pricing import _no_selling_price_product_ids  # noqa: E402
 from app.services.dealer_kit.product_tag_template_service import NON_PRICE_TAG_FAMILY_PREFIX  # noqa: E402
 from app.services.dealer_kit.template_needs import combo_shape, fit_reason, template_needs  # noqa: E402
-from app.utils.tag_rich_text import plain_text  # noqa: E402
+from app.utils.tag_rich_text import is_rich, plain_text  # noqa: E402
 from app.services.error_handler import AppException  # noqa: E402
 from app.services.product_combo_service import ProductComboService  # noqa: E402
 
@@ -641,10 +641,18 @@ def process_entry_strict(
                 fill[field] = target
             elif seed_value is not None and current is not None and current != seed_value:
                 kept.append(f"{label} {current} (flyer {seed_value})")
+        on_file = (existing.description or "").strip()
         if "description" in fill:
             fields.append("description")
-        elif description and (existing.description or "").strip() != description:
-            kept.append("description")
+        elif description and on_file != description and not is_rich(on_file):
+            # A plain-text description with the flyer's own words gets the flyer's bold; no word changes.
+            if " ".join(plain_text(on_file).split()) == " ".join(plain_text(description).split()):
+                fill["description"] = description
+                fields.append("description bold")
+            else:
+                kept.append("description differs from flyer")
+        elif description and on_file != description:
+            kept.append("description differs from flyer")
         fields += [label for label, field in (("list price", "list_price"), ("selling price", "sell_price")) if field in fill]
         want_free = bool(free_keys) and not _has_free_list(db, existing.id)
         if want_free:
