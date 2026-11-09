@@ -45,13 +45,14 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     'aria-label'?: string;
     renderOption?: (o: Opt) => React.ReactNode;
     renderTriggerLabel?: (o: Opt) => React.ReactNode;
+    placeholder?: React.ReactNode;
   }) => {
     const opts = props.options ?? [];
     const selected = opts.find((o) => o.value === props.value);
     return (
       <div>
         <div data-testid={`${props['aria-label']} trigger`}>
-          {selected ? (props.renderTriggerLabel ? props.renderTriggerLabel(selected) : selected.label) : null}
+          {selected ? (props.renderTriggerLabel ? props.renderTriggerLabel(selected) : selected.label) : props.placeholder}
         </div>
         <ul data-testid={`${props['aria-label']} options`}>
           {opts.map((o) => (
@@ -134,6 +135,18 @@ describe('Picture choice thumbnails', () => {
     const trigger = within(dialog).getByTestId('Picture choice trigger');
     expect(trigger).toHaveTextContent('Picture 2');
     expect(trigger.querySelector('img')).toHaveAttribute('src', P2.thumb_url);
+  });
+});
+
+describe('no picture chosen', () => {
+  it('"First picture" shows the first picture thumbnail too', async () => {
+    mount();
+    await screen.findByText('COLANDER');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit for this list' }));
+    const dialog = await screen.findByRole('dialog');
+    const trigger = within(dialog).getByTestId('Picture choice trigger');
+    expect(trigger).toHaveTextContent('First picture');
+    expect(trigger.querySelector('img')).toHaveAttribute('src', P1.thumb_url);
   });
 });
 
