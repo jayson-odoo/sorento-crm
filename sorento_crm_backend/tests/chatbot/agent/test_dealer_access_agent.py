@@ -1368,3 +1368,23 @@ def test_L2_an_edit_own_console_operator_for_an_edit_user_grants_only_the_additi
     assert outcome.status == "executed", outcome.steps
     assert state(db, person.phone_number)["links"] == sorted([str(w.cust_a.id), str(op_shop.id)])
     assert _settings_of(db, person.id) == kept
+
+
+def test_D2_an_edit_own_salesperson_without_agent_access_gets_the_normal_refusal(db):
+    """Owner (9 Nov ~10:45): edit_own alone does not turn the agent on. Without the panel rollout slug the panel
+    stays on its old path, and with the contact's agent switch off the WhatsApp agent refuses as `switch_off`
+    (the usual "not enabled" handling), no crash."""
+    from app.services.chatbot import panel_service
+    from app.services.chatbot.agent.access import AgentRefused, build_context
+
+    o = own_world(db)
+    w = o.w
+    assert panel_service.on_the_brain(db, w.user_id) is False
+    with company_scope(db, None):
+        row = db.query(RespondContact).filter(RespondContact.respond_io_id == w.respond_id).one()
+        row.chatbot_allowed = True
+        row.chatbot_agent_enabled = False
+    db.flush()
+    with pytest.raises(AgentRefused) as exc:
+        build_context(db, w.respond_id)
+    assert exc.value.reason == "switch_off"

@@ -124,3 +124,24 @@ def test_D1_upgrade_on_a_schema_with_no_owner_tags_seeds_both_with_their_access_
     assert sorento[0][0] == SRT_TAG and mocha[0][0] == MCH_TAG
     assert sorted(sorento[0][1]["access_types"]) == ["cabana_dealer", "dealer"]
     assert mocha[0][1]["access_types"] == ["mocha_dealer"]
+
+
+def test_D2_upgrade_grants_the_salesperson_role_no_ai_assistant_or_agent_permission(db):
+    """Owner (9 Nov ~10:45): who gets the AI agent for dealer access is the owner's switch, never the migration's."""
+    module = _migration()
+    role_id, perm_id = _seed_role_and_permission(db)
+    for slug in ("system.ai_assistant_chat.use", "system.ai_assistant_chat.agent"):
+        if db.query(UserPermission).filter(UserPermission.slug == slug).first() is None:
+            db.add(UserPermission(id=str(uuid.uuid4()), slug=slug, name=f"ZZT {slug}"))
+    db.flush()
+
+    _upgrade(db, module)
+
+    granted = db.execute(
+        text(
+            "SELECT p.slug FROM user_role_permissions rp JOIN user_permissions p ON p.id = rp.permission_id "
+            "WHERE rp.role_id = :r"
+        ),
+        {"r": role_id},
+    ).scalars().all()
+    assert granted == [EDIT_OWN]

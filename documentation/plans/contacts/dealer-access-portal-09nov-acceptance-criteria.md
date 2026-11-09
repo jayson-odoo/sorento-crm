@@ -86,6 +86,11 @@ C5. Own scope, no leak in the update tool either: the preview, the stored action
 D1. Migration grants `user_management.contacts.edit_own` to role `salesperson` (idempotent) and seeds the two owner
     tags when no tag of that name (case-insensitive) exists; an existing tag of that name is left untouched.
 
+D2. No migration or seed grants the AI assistant or agent to salespeople (owner 9 Nov ~10:45: "dealer access this one
+    you let me control"): the owner switches it on per salesperson (`system.ai_assistant_chat.use` / `.agent`, the
+    contact's agent switch). An edit_own salesperson without it gets the normal refusal (`switch_off` on WhatsApp, the
+    old panel path in the CRM), no crash.
+
 ## E. Not changed
 
 E1. `.edit` holders: grant, find and update behave as before except A5 (no facet is skipped any more), A6/C1/C2 (the
