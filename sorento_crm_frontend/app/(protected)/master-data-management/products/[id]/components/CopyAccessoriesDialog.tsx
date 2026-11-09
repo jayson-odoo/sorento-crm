@@ -67,7 +67,7 @@ export function copySummaryLines(summary: AccessoryCopySummary): string[] {
   }
   if (summary.targets_with_a_list > 0) {
     lines.push(
-      `${plural(summary.targets_with_a_list, 'product')} already ${summary.targets_with_a_list === 1 ? 'has' : 'have'} a list: their entries stay, the missing ones are added at the end.`,
+      `${plural(summary.targets_with_a_list, 'product')} already ${summary.targets_with_a_list === 1 ? 'has a list: its' : 'have a list: their'} entries stay, the missing ones are added at the end.`,
     );
   }
   lines.push(
@@ -175,11 +175,14 @@ export function CopyAccessoriesDialog({
         accessorKey: 'category_name',
         id: 'category_name',
         header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
-        cell: ({ row }) => (
-          <div className="truncate text-sm" title={row.original.category_name ?? ''}>
-            {row.original.category_name || ' - '}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const name = row.original.category_name || row.original.category?.category_name || '';
+          return (
+            <div className="truncate text-sm" title={name}>
+              {name || ' - '}
+            </div>
+          );
+        },
         size: 160,
         meta: { headerTitle: 'Category' },
         enableSorting: true,
@@ -188,11 +191,14 @@ export function CopyAccessoriesDialog({
         accessorKey: 'brand_name',
         id: 'brand_name',
         header: ({ column }) => <DataGridColumnHeader title="Brand" column={column} />,
-        cell: ({ row }) => (
-          <div className="truncate text-sm" title={row.original.brand_name ?? ''}>
-            {row.original.brand_name || ' - '}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const name = row.original.brand_name || row.original.brand?.brand_name || '';
+          return (
+            <div className="truncate text-sm" title={name}>
+              {name || ' - '}
+            </div>
+          );
+        },
         size: 140,
         meta: { headerTitle: 'Brand' },
         enableSorting: true,

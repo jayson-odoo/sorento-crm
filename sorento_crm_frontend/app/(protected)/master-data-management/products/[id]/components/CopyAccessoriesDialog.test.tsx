@@ -139,7 +139,7 @@ describe('CopyAccessoriesDialog', () => {
       expect(service.copyProductAccessories).toHaveBeenCalledWith(SOURCE, ['p1', 'p2'], true),
     );
     const summary = await screen.findByTestId('copy-accessories-summary');
-    expect(within(summary).getByText(/1 product already has a list/)).toBeTruthy();
+    expect(within(summary).getByText(/1 product already has a list: its entries stay/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     await waitFor(() => expect(service.copyProductAccessories).toHaveBeenLastCalledWith(SOURCE, ['p1', 'p2']));
@@ -174,6 +174,18 @@ describe('CopyAccessoriesDialog', () => {
     expect(products.getProducts).toHaveBeenLastCalledWith(
       expect.objectContaining({ pageIndex: 0, pageSize: 501, status: 'active' }),
     );
+  });
+});
+
+describe('CopyAccessoriesDialog columns', () => {
+  it('reads Category and Brand from the nested objects the list endpoint sends', async () => {
+    products.getProducts.mockResolvedValue({
+      data: [{ id: 'p9', product_code: 'ZZT-NEST', product_name: 'ZZT nest', category: { category_name: 'ZZ Tubs' }, brand: { brand_name: 'ZZ Make' } }],
+      pagination: { total: 1, page: 1, limit: 25 },
+    });
+    mountDialog();
+    expect(await screen.findByText('ZZ Tubs')).toBeTruthy();
+    expect(screen.getByText('ZZ Make')).toBeTruthy();
   });
 });
 
