@@ -72,3 +72,36 @@ def test_list_pictures_carry_the_thumb_rendition(db, monkeypatch, storage):
     assert pictures[0]["url"] == first["url"], "the original stays as it was"
     assert rows[1]["images"][0]["thumb_url"].endswith(".thumb.jpg")
     assert len(asked) == 1 and asked[0][1] == "thumb", "one rendition call for the whole list"
+
+
+def _png(colour: str) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), colour).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_an_upload_makes_its_thumb_and_a_delete_takes_it(db, monkeypatch, storage):
+    """Renditions are made at upload, as on every other upload path, so a list never waits; the
+    thumb goes with its original when the picture is removed."""
+    from app.models.resources import Attachment
+    from app.services.accessory_service import AccessoryService
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    colander = _accessory(db, _name("COLANDER"))
+    response = client.post(
+        f"/api/v1/master-data/accessories/{colander.id}/images",
+        files={"file": ("blue.png", _png("#1d4ed8"), "image/png")},
+    )
+    assert response.status_code == 201, response.text
+    picture = response.json()
+    attachment = db.query(Attachment).filter(Attachment.id == picture["attachment_id"]).one()
+    assert attachment.thumbnail_path, "the thumb is recorded on the attachment"
+    thumbs = [key for key in storage.objects if key.endswith(".thumb.jpg")]
+    assert len(thumbs) == 1 and any(key.endswith(".medium.jpg") for key in storage.objects)
+
+    AccessoryService(db).delete_picture(colander.id, picture["id"])
+    assert not [key for key in storage.objects if key.endswith(".thumb.jpg")], "the thumb went too"

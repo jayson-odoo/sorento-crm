@@ -166,3 +166,18 @@ describe('the row follows the chosen picture', () => {
     expect(service.listOwnerAccessories).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the row goes back to the accessory own picture', () => {
+  it("Use the accessory's own + Save shows the first picture again", async () => {
+    service.listOwnerAccessories.mockResolvedValue([colander('i2')]);
+    service.replaceOwnerAccessories.mockReturnValue(new Promise(() => {}));
+    mount();
+    await screen.findByText('COLANDER');
+    expect(rowImage()).toHaveAttribute('src', P2.thumb_url);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit for this list' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: "Use the accessory's own" }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(rowImage()).toHaveAttribute('src', P1.thumb_url));
+  });
+});

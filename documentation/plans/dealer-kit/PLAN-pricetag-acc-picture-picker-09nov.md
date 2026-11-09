@@ -34,12 +34,15 @@ choose, and after i save it is not immediately reflected here"
 - FE: the row thumbnail resolves `entry.image_id` against `images` (falls back to `image`). The
   existing optimistic write already carries `entry`, so the row changes on Save with no refetch.
 - BE: the master-data serializer adds `thumb_url` to each picture through the ONE rendition
-  service (`image_thumbnailer.rendition_urls`, size `thumb`); `AccessoryImageOut` declares it.
-  Tag/PDF payloads (`_picture_rows` for `tag_accessory`) are untouched.
+  service (`image_thumbnailer.rendition_urls`, size `thumb`, one call per list over every row,
+  product entries included, waiting at most `THUMB_WAIT_SECONDS`); `AccessoryImageOut` declares
+  it. Accessory uploads now make their renditions at upload (`store_renditions`, as every other
+  upload path) and a removed picture takes its thumb with it. Tag/PDF payloads (`_picture_rows`
+  for `tag_accessory`) are untouched.
 - FE image component: IMAGE-UNIFY P3's `components/common/AttachmentImage.tsx` does not exist on
   main yet (`PLAN-image-unify-03nov.md` "Frontend"). This lane adds it in the plan's shape
-  (`thumbUrl`, `url`, lazy, `decoding="async"`, falls back to the original then a placeholder,
-  never builds a URL) and uses it for the option, the selected value and the row thumbnail.
+  (`thumbUrl`, `mediumUrl`, `url`, lazy, `decoding="async"`, steps DOWN a size on a missing or
+  failed URL, never up to the original, then a placeholder; never builds a URL) and uses it for the option, the selected value and the row thumbnail.
 
 ## Tests (red first)
 
