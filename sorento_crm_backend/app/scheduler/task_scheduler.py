@@ -645,15 +645,14 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
-def _town_snapshot_tick():
-    """APScheduler tick: rebuild every active company's town snapshot (SORENTO-TOWN).
-    Does nothing outside 07:00-22:05 Malaysia time; best-effort and never raises."""
-    try:
-        from app.services.town.snapshot import run_town_snapshot_tick
+def _handler_town_snapshot(db, task):
+    """Scheduled task `town_snapshot` (SORENTO-TOWN): rebuild every active company's town
+    snapshot. The build opens its own sessions; outside 07:00-22:05 Malaysia time it does
+    nothing. A failed company raises after the rest are built, so it lands as the task's
+    last error rather than a log line."""
+    from app.services.town.snapshot import run_town_snapshot_tick
 
-        run_town_snapshot_tick()
-    except Exception as e:
-        logger.error("Town snapshot tick failed: %s", e, exc_info=True)
+    return run_town_snapshot_tick()
 
 
 def _panel_draft_purge_tick():
@@ -877,6 +876,10 @@ def register_task_handlers():
     register_handler("project_staleness_sweep", _handler_project_staleness_sweep)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
+    # SORENTO-TOWN: a `scheduled_tasks` row (town_0002), every 3 minutes; the job itself keeps
+    # to 07:00-22:05 MYT. It was a bare APScheduler job, invisible on Scheduled Tasks. Off the
+    # heartbeat thread: a build takes seconds (ranking capped at 30s) every 3 minutes.
+    register_handler("town_snapshot", _handler_town_snapshot, background=True)
 
 
 def start_scheduler():
@@ -930,15 +933,6 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=24),
         id="ai_trace_sweep",
         name="AI assistant trace retention sweep",
-        replace_existing=True,
-    )
-
-    # SORENTO-TOWN: rebuild the town snapshots every 3 minutes (the job itself keeps to 07:00-22:05 MYT).
-    scheduler.add_job(
-        _town_snapshot_tick,
-        trigger=IntervalTrigger(minutes=3),
-        id="town_snapshot",
-        name="Sorento town snapshot",
         replace_existing=True,
     )
 

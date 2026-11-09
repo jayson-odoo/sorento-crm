@@ -137,7 +137,8 @@ const COLUMNS: Array<{
   { key: 'soDate', label: 'SO date', width: 80, className: DESKTOP_ONLY },
   { key: 'soNo', label: 'S/O no', width: 76, className: DESKTOP_ONLY },
   { key: 'item', label: 'Item code', width: 112, className: ITEM_STICKY },
-  { key: 'location', label: 'Location', width: 64, className: DESKTOP_ONLY },
+  // SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): shown at 375px too, beside NEW LOCATION.
+  { key: 'location', label: 'Location', width: 64 },
   { key: 'qty', label: 'Qty', width: 52 },
   { key: 'newQty', label: 'New qty', width: 56 },
   { key: 'date', label: 'Delivery date', width: 96 },
@@ -174,6 +175,17 @@ const withNewItemCode = (columns: typeof COLUMNS) =>
   columns.flatMap((column) =>
     column.key === 'item'
       ? [column, { key: 'newItem', label: 'New item code', width: 112 }]
+      : [column],
+  );
+/**
+ * SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): as the purchasing email and its Excel print a line
+ * AutoCount moved, LOCATION the old location and NEW LOCATION the new one beside it, the column
+ * there only when a line on the sheet moved.
+ */
+const withNewLocation = (columns: typeof COLUMNS) =>
+  columns.flatMap((column) =>
+    column.key === 'location'
+      ? [column, { key: 'newLocation', label: 'New location', width: 72 }]
       : [column],
   );
 const COLUMNS_NEW_ITEM = withNewItemCode(COLUMNS);
@@ -486,8 +498,8 @@ interface LineBlockProps {
   extraStale: boolean;
   soNumber: string;
   soDate: string;
-  /** More than one location on the SO: the phone shows it under the item code. */
-  multiLocation: boolean;
+  /** A line on the sheet moved to another location: the New location column shows. */
+  newLocationColumn: boolean;
   /** A line on the sheet was swapped to another product: the New item code column shows. */
   newItemColumn: boolean;
   open: boolean;
@@ -508,7 +520,7 @@ const LineBlock = React.memo(function LineBlock({
   extraStale,
   soNumber,
   soDate,
-  multiLocation,
+  newLocationColumn,
   newItemColumn,
   open,
   itemTop,
@@ -581,11 +593,6 @@ const LineBlock = React.memo(function LineBlock({
             Mockup
           </Badge>
         ) : null}
-        {multiLocation ? (
-          <span className="block text-2xs text-muted-foreground md:hidden">
-            {line.location}
-          </span>
-        ) : null}
       </TableCell>
       {newItemColumn ? (
         <TableCell
@@ -596,9 +603,14 @@ const LineBlock = React.memo(function LineBlock({
           {line.wasItemCode ? line.itemCode : ''}
         </TableCell>
       ) : null}
-      <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
-        {line.location}
+      <TableCell rowSpan={span} data-testid={`location-${no}`} className={baseCell}>
+        {line.wasLocation || line.location}
       </TableCell>
+      {newLocationColumn ? (
+        <TableCell rowSpan={span} data-testid={`new-location-${no}`} className={baseCell}>
+          {line.wasLocation ? line.location : ''}
+        </TableCell>
+      ) : null}
       <TableCell rowSpan={span} className={cn(baseCell, 'tabular-nums')}>
         {delivered ? (line.deliveredQty ?? 0) : added ? 0 : line.baseQty}
       </TableCell>
@@ -1260,15 +1272,15 @@ export function LineSplitSheet({
     }
     return stale;
   }, [allLines, savedLines, incomingRows]);
-  const multiLocation = React.useMemo(
-    () => new Set(allLines.map((line) => line.location)).size > 1,
+  const newLocationColumn = React.useMemo(
+    () => allLines.some((line) => Boolean(line.wasLocation)),
     [allLines],
   );
   const newItemColumn = React.useMemo(
     () => allLines.some((line) => Boolean(line.wasItemCode)),
     [allLines],
   );
-  const columns = newItemColumn
+  const baseColumns = newItemColumn
     ? readOnly
       ? READ_ONLY_COLUMNS_NEW_ITEM
       : canDrag
@@ -1279,6 +1291,10 @@ export function LineSplitSheet({
       : canDrag
         ? COLUMNS
         : NO_DRAG_COLUMNS;
+  const columns = React.useMemo(
+    () => (newLocationColumn ? withNewLocation(baseColumns) : baseColumns),
+    [baseColumns, newLocationColumn],
+  );
   // OI-SPLIT-CONFIRM-POLISH: columns resize by dragging a header's edge, through TanStack's
   // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
   // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
@@ -1304,6 +1320,9 @@ export function LineSplitSheet({
   // Once a column is dragged the sheet is at least as wide as its columns, so a wider column
   // never squeezes REMARK below its minimum; a phone leaves out the columns it hides.
   const resized = Object.keys(sizing.getState().columnSizing).length > 0;
+  // The New location column has no fixed-width variant: the sheet takes its columns' own
+  // widths, as a resized sheet does.
+  const sized = resized || newLocationColumn;
   const total = sizing.getTotalSize();
   const phoneTotal =
     total -
@@ -1325,7 +1344,7 @@ export function LineSplitSheet({
       data-read-only={readOnly ? 'true' : undefined}
       onKeyDown={readOnly ? undefined : onKeyDown}
       style={
-        resized
+        sized
           ? ({
               '--sheet-min': `${total}px`,
               '--sheet-min-phone': `${phoneTotal}px`,
@@ -1334,16 +1353,16 @@ export function LineSplitSheet({
       }
       className={cn(
         'table-fixed border-separate border-spacing-0 text-xs',
-        resized
+        sized
           ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
           : // The New item code column (112px) widens the sheet rather than squeeze REMARK.
             newItemColumn
             ? readOnly
-              ? 'min-w-[1142px] max-md:min-w-[962px]'
-              : 'min-w-[1292px] max-md:min-w-[1112px]'
+              ? 'min-w-[1142px] max-md:min-w-[1026px]'
+              : 'min-w-[1292px] max-md:min-w-[1176px]'
             : readOnly
-              ? 'min-w-[1030px] max-md:min-w-[850px]'
-              : 'min-w-[1180px] max-md:min-w-[1000px]',
+              ? 'min-w-[1030px] max-md:min-w-[914px]'
+              : 'min-w-[1180px] max-md:min-w-[1064px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">
@@ -1391,7 +1410,7 @@ export function LineSplitSheet({
               extraStale={staleExtra.has(line.lineId)}
               soNumber={soNumber}
               soDate={soDate}
-              multiLocation={multiLocation}
+              newLocationColumn={newLocationColumn}
               newItemColumn={newItemColumn}
               open={openLineIds.has(line.lineId)}
               itemTop={!prev || prev.itemCode !== line.itemCode}

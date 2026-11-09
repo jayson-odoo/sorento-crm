@@ -121,6 +121,7 @@ from app.services.scm.outstanding_diff import (
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
     PRODUCT_CHANGED,
+    LOCATION_CHANGED,
     QTY_CHANGED,
     Diff,
     states_settled,
@@ -805,6 +806,8 @@ def _map_kind(c) -> str:
         return "added"
     if c.kind == PRODUCT_CHANGED:
         return "product_changed"
+    if c.kind == LOCATION_CHANGED:
+        return "location_changed"
     if c.kind == QTY_CHANGED:
         return "qty_up" if c.qty_delta > 0 else "qty_down"
     days = c.days_moved or 0
@@ -819,6 +822,12 @@ def _map_kind(c) -> str:
 def _from_to(c) -> Tuple[dict, dict]:
     before = c.before
     after = c.after
+    # SPLIT-SHEET-LOCATION: the old and new AutoCount line location, whenever it moved on a
+    # line still open (any kind, so a move riding on a qty / date change is carried too);
+    # `None` otherwise, like `item_code`.
+    moved = bool(
+        before and after and c.kind != CLOSED and before.location != after.location
+    )
     from_ = {
         "required_date": before.required_date.isoformat()
         if before and before.required_date
@@ -828,9 +837,13 @@ def _from_to(c) -> Tuple[dict, dict]:
         # The OLD product, on a `product_changed` row only - `None` everywhere else, same
         # as the fields above (Slice A rule 5, "carrying the old and the new product").
         "item_code": before.item_code if (before and c.kind == PRODUCT_CHANGED) else None,
+        "location": before.location if moved else None,
     }
     if c.kind == CLOSED:
-        to_ = {"required_date": None, "qty": None, "status": "closed", "item_code": None}
+        to_ = {
+            "required_date": None, "qty": None, "status": "closed", "item_code": None,
+            "location": None,
+        }
     else:
         to_ = {
             "required_date": after.required_date.isoformat()
@@ -839,8 +852,39 @@ def _from_to(c) -> Tuple[dict, dict]:
             "qty": qty_text(_dec(after.qty)) if after else None,
             "status": "open" if after else None,
             "item_code": after.item_code if (after and c.kind == PRODUCT_CHANGED) else None,
+            "location": after.location if moved else None,
         }
     return from_, to_
+
+
+def _carry_location(
+    older_from: Optional[dict], own_from: Optional[dict], to_json: Optional[dict], c
+) -> Tuple[Optional[dict], Optional[dict]]:
+    """SPLIT-SHEET-LOCATION: a replacement row reads "from" off the row it replaces
+    (`older_from`). The location the line was planned at is that row's `from.location` when
+    it was itself a move, else this change's own before location (`own_from`, the older row
+    never moved it). "To" is where the line is now. A line back where it was planned carries
+    no location on either side. Returns `(from_json, to_json)`."""
+    planned = (older_from or {}).get("location") or (own_from or {}).get("location")
+    if not planned or to_json is None or c.after is None:
+        return older_from, to_json
+    now = c.after.location
+    moved = now != planned
+    return (
+        {**(older_from or {}), "location": planned if moved else None},
+        {**to_json, "location": now if moved else None},
+    )
+
+
+def _nets_to_nothing(row: PlanningChangeRow) -> bool:
+    """A `location_changed` replacement whose line is back where it was planned, with nothing
+    else moved: there is no change left for CS to decide (review S2)."""
+    if row.kind != "location_changed":
+        return False
+    before, after = row.from_json or {}, row.to_json or {}
+    if after.get("location"):
+        return False
+    return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
 
 
 def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
@@ -855,6 +899,8 @@ def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
     if c.kind == PRODUCT_CHANGED:
         return True
     if to_json.get("item_code") != old_to.get("item_code"):
+        return True
+    if to_json.get("location") and to_json.get("location") != old_to.get("location"):
         return True
     return any(to_json.get(key) != old_to.get(key) for key in ("qty", "required_date", "status"))
 
@@ -1193,7 +1239,14 @@ def build_batch(
                     # already carries that forward correctly, whether `older` itself is
                     # the original held state or an earlier replacement that already
                     # chained it through.
-                    row.from_json = older.from_json
+                    row.from_json, row.to_json = _carry_location(
+                        older.from_json, row.from_json, row.to_json, e["change"]
+                    )
+                    if _nets_to_nothing(row):
+                        # Moved back where it was planned, nothing else changed: the
+                        # older row retires and no replacement is raised.
+                        older.applied_reason = "Line moved back to its planned location"
+                        continue
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
                 orders_appended.add(pso_id)
@@ -2432,8 +2485,8 @@ def _ddmmyyyy(value) -> str:
 
 
 def change_text(row: PlanningChangeRow) -> Optional[str]:
-    """What the book did to a row's line, in one phrase: qty, then product, then date; the
-    first that differs. An `added` row reads `New, qty N`. PLANNING-WHY AC-W2."""
+    """What the book did to a row's line, in one phrase: qty, then product, then date, then
+    location; the first that differs. An `added` row reads `New, qty N`. PLANNING-WHY AC-W2."""
     before = row.from_json or {}
     after = row.to_json or {}
     if row.kind == "added":
@@ -2447,6 +2500,8 @@ def change_text(row: PlanningChangeRow) -> Optional[str]:
             f"Date {_ddmmyyyy(before.get('required_date'))} -> "
             f"{_ddmmyyyy(after.get('required_date'))}"
         )
+    if after.get("location") and before.get("location") != after.get("location"):
+        return f"Location {before.get('location')} -> {after.get('location')}"
     return None
 
 
