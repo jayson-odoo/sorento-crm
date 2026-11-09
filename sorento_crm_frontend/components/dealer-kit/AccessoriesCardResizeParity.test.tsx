@@ -186,6 +186,13 @@ describe('card Text style and fields (owner 22:30 / 22:35)', () => {
     expect(print[1]?.texts ?? []).toHaveLength(0);
   });
 
+  it('padding wider than the element: print keeps a valid padding (each side clamped at 0)', () => {
+    const layer = boxLayer(60, 80, { padding: { top: 0, right: 0, bottom: 0, left: 40 } });
+    const print = printCards(layer, row(LIST));
+    // A negative side would make CSS drop the whole declaration (empty string).
+    expect(print[0].texts[0].padding).toBe('0mm 0mm 0mm 40mm');
+  });
+
   it('no stored style: no background on either surface (existing cards unchanged)', async () => {
     const layer = boxLayer(60, 80);
     const data = row(LIST);

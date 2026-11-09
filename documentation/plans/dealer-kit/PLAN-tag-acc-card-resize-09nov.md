@@ -1,6 +1,6 @@
 # PLAN: accessories box preview vanishes when small; resizable cards; card text fields and style (TAG-ACC-CARD-RESIZE)
 
-Status: Build complete, in review. Track: standard (diff over 300 lines, no migration, no auth/RBAC, no new ingest).
+Status: Built, reviewer READY, awaiting owner hand test (not merged). Track: standard (diff over 300 lines, no migration, no auth/RBAC, no new ingest).
 
 ## Journey
 Owner, Dealer Kit > Tag Templates designer (template BF_SP, tag size BF_LP 98x140 mm, combo template):
