@@ -41,10 +41,11 @@ SRTWT, SRTMCB, SRTMR), basins p24-27, kitchen sinks p55-69 (SRTKS, SRTKT, SRTWF,
 
 ## Deliverables (order fixed by the brief)
 
-1. `combo-seed-flyer.json`: every combo, host code, name, LP, SP, description HTML, parts (fixed / choice with
-   options), free items (accessory vs product), flyer page. UNMATCHED list separate.
-2. Owner review page `documentation/mockups/COMBO-SEED-FLYER/index.html` (static, self-contained), filed via
-   `crew report --ask` with at most 5 questions.
+1. `sorento_crm_backend/scripts/data/combo_seed_flyer_2026.json`: every combo, host code, name, LP, SP,
+   description HTML, parts (fixed / choice with options / upgrades), free items (accessory vs product), flyer page.
+   UNMATCHED list on the review page. Built by `combo-seed-flyer-tools/` (spans reader, seed builder, page maker).
+2. Owner review page `documentation/plans/dealer-kit/combo-seed-flyer-review.html` (static, self-contained), filed
+   via `crew report --ask` with 5 questions (answered 9 Nov: all recommendations).
 3. Script: one command, `--dry-run` default, `--apply` one transaction per host, re-run is a no-op.
 4. Red-first tests, kill tests, reviewer, security-reviewer.
 5. Apply on a throwaway copy of the dev DB, browser check 3 combos per family.
@@ -92,3 +93,38 @@ the owner can name the right codes later (then the seed gets exactly those codes
 (d) Bathtub combos: SRTWT51012 a free item; the 4 colour mixers RM 150 upgrades.
 (e) Load every family: bathtub, WC, urinal, bathroom furniture, basin, shower fitting package (host = the
 concealed mixer valve), kitchen sink. SRTSCBD291 (p12) left out: one product with its fittings.
+
+## Prod run (owner, on server A, the primary; never run by a lane)
+
+Precondition: PR #2282 merged AND released (the seed ships in the image as
+`scripts/data/combo_seed_flyer_2026.json`). Check first:
+
+```
+cd /opt/sorento-crm2
+C=$(cat .active_color); echo "colour: $C"
+docker compose exec -T backend_$C ls -l scripts/data/combo_seed_flyer_2026.json
+```
+
+1. Dry run (writes nothing; prints one line per combo, then counts):
+
+```
+docker compose exec -T backend_$C python scripts/import_product_combos.py --strict \
+  --file scripts/data/combo_seed_flyer_2026.json --report /tmp/combo-seed-dryrun.csv \
+  > ~/combo-seed-dryrun.txt 2>&1; tail -n 7 ~/combo-seed-dryrun.txt
+```
+
+   Paste back: `grep -v '^SKIP' ~/combo-seed-dryrun.txt` (every CREATE / UPDATE / UNMATCHED / FAILED line and the
+   counts). Look at CREATE lines that end `host also has: "..."`: when one of those names is a combo you made by
+   hand for the same flyer package, say "old name -> flyer name" and the lane adds it as `aka` (no duplicate).
+2. Apply, only after the dry run has been read:
+
+```
+docker compose exec -T backend_$C python scripts/import_product_combos.py --strict --apply \
+  --file scripts/data/combo_seed_flyer_2026.json --report /tmp/combo-seed-apply.csv \
+  > ~/combo-seed-apply.txt 2>&1; tail -n 7 ~/combo-seed-apply.txt
+```
+
+3. Re-run step 1: every loaded combo now reads SKIP (the UNMATCHED ones stay UNMATCHED until their codes are named).
+
+Never add `--update` (it overwrites and prunes). Expected on the 4 Nov dev copy: CREATE 110, UPDATE 41
+(`fills: description bold`), SKIP 61, UNMATCHED 31; prod differs by the combos made after 4 Nov.

@@ -4,8 +4,8 @@ Plan: `PLAN-combo-seed-flyer-09nov.md`. Script: `sorento_crm_backend/scripts/imp
 (extended, not a sibling). Seed: `sorento_crm_backend/scripts/data/combo_seed_flyer_2026.json` (product codes,
 prices and flyer text only; no customer data).
 
-Owner answers pending on Q(a)-(e) of the review page; the rows marked [default] follow the recommendation and
-change if the owner answers otherwise.
+Owner answers (review page, 9 Nov 15:12 MYT): all recommendations accepted; the rows marked [default] are now
+the owner's answers.
 
 ## Command
 
@@ -62,6 +62,12 @@ change if the owner answers otherwise.
 - AC-15 A combo whose host, any part, or any free item is unmatched is not written at all; its line reads
   `UNMATCHED (<every missing code or name>)`. The rest of the seed loads.
 
+- AC-15b A discontinued part (`products.is_discontinued`) is not loaded and is named on the line (`not loaded
+  (discontinued): <code>`), never dropped silently (combo card 4 Nov, `CARD-pricetag-combo-render-04nov.md:109-110`);
+  the rest of the combo loads. A discontinued host is named too (`host discontinued`); its combo still loads.
+- AC-15c A free product that is already a part of the combo on file is left off the free list and named
+  (`already a part: <code>`); it never fails the host.
+
 ## Description
 
 - AC-16 The seed's `combo_description` is the app's rich text HTML (one `<p>` per flyer line, `<strong>` for
@@ -70,6 +76,9 @@ change if the owner answers otherwise.
 - AC-17 A description up to the app's limit (5000 characters) loads; the seed check no longer cuts at 1000.
 
 ## Safety
+
+- AC-18b Names read from the database are printed with control characters removed, so one verdict line is always
+  one line. The script exits non-zero when any combo is FAILED.
 
 - AC-18 The script never deletes a combo, never removes a part or free item, and never overwrites a set value
   unless `--update` is given (and `--update` is not part of the owner's prod commands).
