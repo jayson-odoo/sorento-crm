@@ -11,12 +11,16 @@ Under one company (default SRT) it makes, matched on code or name so a re-run ch
   seat_material.
 * Spec registry rows for those keys, and icon assets mapped on trap_length 150/200/250/300, trap_type
   p_trap, seat_material uf, steel_grade 304 and mixer_type pull_out.
+* A portal contact "Hand Test Dealer" in a market segment that may file price tag requests, tagged
+  into the company, so the portal's lines table can be walked (CRM > Contacts > Impersonate).
 * Two published templates: "Combo + Upgrade" (free items box, Upgrades box, main feature icons) and
   "WC family" (feature icons on All variants), linked to the combo and to SRTWC8354-SH.
 
 Icon and photo bytes: the sandbox has no object storage, so the PNGs are drawn into --asset-dir and
-the attachment rows point at --asset-base-url (serve the folder with a CORS-enabled static server,
-`python -m http.server` is enough for img tags; Konva needs the CORS header).
+the attachment rows point at --asset-base-url with provider --storage-provider. Serve the folder
+with a CORS-enabled static server. With provider r2 the backend (started with dummy R2_* env and
+R2_CDN_DOMAIN set to the static server's host:port) signs a presigned URL offline, always https, so
+the static server must speak https (self-signed is fine with a browser that ignores cert errors).
 
 Refuses to run unless the database host is local, unless `--yes`. Dry run by default; `--apply` writes.
 
@@ -24,7 +28,7 @@ USAGE
 -----
     cd sorento_crm_backend
     SORENTO_ENV_FILE=.env.ci-tests venv/bin/python scripts/seed_pricetag_upgrade_variants_handtest.py --apply \
-        --asset-dir /path/to/dir --asset-base-url http://localhost:8099
+        --asset-dir /path/to/dir --asset-base-url https://localhost:8099
 """
 from __future__ import annotations
 
@@ -90,8 +94,8 @@ def _png(label: str, colour: tuple[int, int, int], size: tuple[int, int]) -> byt
 
 
 class Seeder:
-    def __init__(self, db, company_id: str, asset_dir: str, base_url: str, out: TextIO):
-        self.db, self.company_id, self.out = db, company_id, out
+    def __init__(self, db, company_id: str, asset_dir: str, base_url: str, provider: str, out: TextIO):
+        self.db, self.company_id, self.out, self.provider = db, company_id, out, provider
         self.asset_dir, self.base_url = asset_dir, base_url.rstrip("/")
         os.makedirs(asset_dir, exist_ok=True)
 
@@ -105,25 +109,26 @@ class Seeder:
         with open(os.path.join(self.asset_dir, filename), "wb") as handle:
             handle.write(content)
         url = f"{self.base_url}/{filename}"
-        row = self.db.query(Attachment).filter(Attachment.file_path.like(f"{url}%")).first()
+        row = self.db.query(Attachment).filter(Attachment.stored_filename == filename, Attachment.company_id == self.company_id).first()
         if row is None:
-            # A query string that looks signed makes the storage router hand the URL back as is.
             row = Attachment(
                 id=str(uuid.uuid4()), original_filename=filename, stored_filename=filename,
-                file_path=f"{url}?Policy=handtest&Key-Pair-Id=handtest", mime_type="image/png",
-                storage_provider="s3", company_id=self.company_id, is_deleted=False,
+                file_path=url, mime_type="image/png", storage_provider=self.provider,
+                company_id=self.company_id, is_deleted=False,
             )
             self.db.add(row)
-            self.db.flush()
+        row.file_path, row.storage_provider = url, self.provider
+        self.db.flush()
         return row
 
     def asset(self, name: str, colour: tuple[int, int, int]):
         from app.models.dealer_kit import Asset
 
+        slug = "".join(c if c.isalnum() else "-" for c in name.lower())
+        attachment = self._attachment(f"icon-{slug}.png", _png(name.split()[0], colour, (96, 96)))
         row = self.db.query(Asset).filter(Asset.name == name, Asset.company_id == self.company_id).first()
         if row is not None:
             return row
-        attachment = self._attachment(f"icon-{uuid.uuid4().hex[:8]}.png", _png(name.split()[0], colour, (96, 96)))
         row = Asset(id=str(uuid.uuid4()), attachment_id=attachment.id, name=name, kind="icon", company_id=self.company_id)
         self.db.add(row)
         self.db.flush()
@@ -171,9 +176,9 @@ class Seeder:
     def _photo(self, product) -> None:
         from app.models.product import ProductAttachment
 
+        attachment = self._attachment(f"photo-{product.product_code}.png", _png(product.product_code[3:], (31, 77, 54), (240, 160)))
         if self.db.query(ProductAttachment).filter(ProductAttachment.product_id == product.id).first():
             return
-        attachment = self._attachment(f"photo-{product.product_code}.png", _png(product.product_code[3:], (31, 77, 54), (240, 160)))
         self.db.add(
             ProductAttachment(
                 product_id=product.id, attachment_id=attachment.id, is_primary=True, sort_order=0,
@@ -245,6 +250,37 @@ class Seeder:
         self.db.commit()
         return row
 
+    # --------------------------------------------------------------- portal
+    def portal_contact(self) -> None:
+        from app.models.access import RespondContact
+        from app.models.company import RespondContactCompany
+        from app.models.access import MarketSegment, respond_contact_market_segments
+
+        code = "handtest-ptag"
+        if self.db.query(MarketSegment).filter(MarketSegment.code == code).first() is None:
+            self.db.add(MarketSegment(code=code, name="Hand test price tags", is_active=True, portal_form_types=["price_tag_request"]))
+            self.db.flush()
+        from app.models.respond_workspace import RespondWorkspace
+
+        workspace = self.db.query(RespondWorkspace).filter(RespondWorkspace.space_id == "handtest").first()
+        if workspace is None:  # impersonation resolves the portal space through the contact's workspace
+            workspace = RespondWorkspace(
+                id=str(uuid.uuid4()), space_id="handtest", name="Hand test", api_key_ciphertext="unused", is_active=True,
+            )
+            self.db.add(workspace)
+            self.db.flush()
+        contact = self.db.query(RespondContact).filter(RespondContact.name == "Hand Test Dealer").first()
+        if contact is None:
+            contact = RespondContact(
+                id=str(uuid.uuid4()), phone_number="+60123450001", name="Hand Test Dealer", workspace_id=workspace.id,
+            )
+            self.db.add(contact)
+            self.db.flush()
+            self.db.execute(respond_contact_market_segments.insert().values(contact_id=contact.id, segment_code=code))
+            self.db.add(RespondContactCompany(respond_contact_id=contact.id, company_id=self.company_id))
+            self.db.flush()
+            self.say("portal contact Hand Test Dealer")
+
     # ------------------------------------------------------------ templates
     @staticmethod
     def _layer(layer_id, kind, x, y, w, h, z, props, slot=None):
@@ -298,9 +334,13 @@ class Seeder:
         from app.services.dealer_kit import tag_template_service
 
         row = self.db.query(TagTemplate).filter(TagTemplate.name == name, TagTemplate.archived_at.is_(None)).first()
-        if row is not None:
-            return row
         doc = {"width_mm": 95, "height_mm": 130, "layers": layers}
+        if row is not None:
+            if row.doc != doc:  # the layout changed: republish it as the next version
+                row.doc = doc
+                tag_template_service.publish(self.db, row, note="hand-test seed")
+                self.say(f"template {name} republished")
+            return row
         row = tag_template_service.create_and_publish(
             self.db, name=name, family=family, doc=doc, print_size={"width_mm": 95, "height_mm": 130}
         )
@@ -314,11 +354,11 @@ class Seeder:
 
         L, T = self._layer, self._text
         combo_layers = [
-            L("name", "text", 4, 4, 87, 8, 0, T(14, 700), "name"),
+            L("name", "text", 4, 4, 87, 8, 0, T(14, 700), "combo_name"),
             L("sp", "text", 4, 14, 87, 8, 1, T(16, 700, showCurrency=True), "sell_price"),
-            L("free", "accessories", 4, 28, 87, 30, 2, self._box("FREE")),
-            L("upg", "accessories", 4, 62, 87, 28, 3, self._box("UPGRADE", list="upgrades", card=self._upgrade_card())),
-            L("icons", "feature_icons", 4, 95, 87, 10, 4,
+            L("free", "accessories", 4, 26, 87, 40, 2, self._box("FREE", direction="horizontal")),
+            L("upg", "accessories", 4, 74, 87, 28, 3, self._box("UPGRADE", list="upgrades", card=self._upgrade_card())),
+            L("icons", "feature_icons", 4, 106, 87, 10, 4,
               {"kind": "feature_icons", "iconSize_mm": 8, "gap_mm": 1.5, "align": "left"}),
         ]
         family_layers = [
@@ -351,7 +391,8 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     parser.add_argument("--yes", action="store_true", help="allow a non-local database host")
     parser.add_argument("--asset-dir", default=os.path.join(os.environ.get("TMPDIR", "/tmp"), "ptag-handtest-assets"))
-    parser.add_argument("--asset-base-url", default="http://localhost:8099")
+    parser.add_argument("--asset-base-url", default="https://localhost:8099")
+    parser.add_argument("--storage-provider", default="r2", choices=["s3", "r2"])
     args = parser.parse_args(list(argv) if argv is not None else None)
     out = out or sys.stdout
 
@@ -382,7 +423,7 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         stamp_actor(AuditActor(actor_type="system", job_id=JOB_ID), db=db)
         try:
             with company_scope(db, frozenset({company_id})):
-                seeder = Seeder(db, company_id, args.asset_dir, args.asset_base_url, out)
+                seeder = Seeder(db, company_id, args.asset_dir, args.asset_base_url, args.storage_provider, out)
                 seeder.registry()
                 sink = seeder.product(HOST_CODE, "1150.00")
                 fixed = seeder.product(FIXED_CODE, "285.00")
@@ -399,6 +440,8 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
                     seeder.specs(members[code], **values)
                 db.commit()
                 seeder.templates(combo, members[BASE])
+                seeder.portal_contact()
+                db.commit()
         finally:
             clear_actor(db)
         out.write("done\n")
