@@ -1890,7 +1890,10 @@ export function TagCanvasEditor({
     // Under edit the box's OWN design is what is edited, never a previewed owner's override.
     return {
       ...display,
-      accessories: accessoryEditItems(display?.accessories),
+      accessories: accessoryEditItems(
+        display?.accessories,
+        layer.props.kind === 'accessories' ? layer.props.list : undefined,
+      ),
       accessoryEditing: true,
       accessoryBoxStyle: null,
     };

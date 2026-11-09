@@ -21,7 +21,13 @@ import {
   itemLayoutOf,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardBoxLayout, cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
+import {
+  cardBoxLayout,
+  cardDropped,
+  cardFromLegacy,
+  colourDotLayout,
+  defaultUpgradeCard,
+} from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -63,7 +69,7 @@ import type {
   TagSlots,
   SubjectSlot,
 } from '@/lib/dealer-kit/tag-template-types';
-import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { defaultAccessoriesProps, imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
@@ -89,6 +95,9 @@ const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
   { value: 'combo_description', label: 'Combo Description', group: 'Combo' },
   { value: 'combo_choices', label: 'Combo Choices', group: 'Combo' },
   { value: 'combo_topups', label: 'Combo Top-ups', group: 'Combo' },
+  // PRICETAG-UPGRADE-VARIANTS S2: read on an "Upgrade N" position (Product select).
+  { value: 'upgrade_topup', label: 'Upgrade top-up', group: 'Combo' },
+  { value: 'sell_price_with_upgrade', label: 'SP with upgrade', group: 'Combo' },
   { value: '__none__', label: '(None)' },
   { value: 'product_image', label: 'Product Image' },
   // PS-SPEC-SHEET: the technical drawing (quotation line's frozen drawing on a spec sheet).
@@ -395,8 +404,9 @@ export function InspectorPanel({
     layer.slot_binding != null;
   const isSubjectAwareKind = carriesSubjectPart && readsProductData;
   // The template editor has no line, so no parts: it picks a POSITION in the combo instead.
+  const upgradesBox = layer.props.kind === 'accessories' && layer.props.list === 'upgrades';
   const showSubjectPicker =
-    isSubjectAwareKind && (subjectParts ? subjectParts.length > 0 : !specSheet);
+    isSubjectAwareKind && !upgradesBox && (subjectParts ? subjectParts.length > 0 : !specSheet);
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
   // canvas side (S5): a polygon shape, or a price badge whose box IS its
@@ -530,9 +540,14 @@ export function InspectorPanel({
             </h4>
             <SearchableSelect
               value={layer.slot_binding ?? '__none__'}
-              onChange={(v: string) =>
-                update({ slot_binding: (v === '__none__' ? null : v) as SlotBinding })
-              }
+              onChange={(v: string) => {
+                update({ slot_binding: (v === '__none__' ? null : v) as SlotBinding });
+                // The upgrade figures start with the words the card prints before them.
+                const prefix = UPGRADE_SLOT_PREFIX[v];
+                if (prefix && layer.props.kind === 'text' && layer.props.prefix === undefined) {
+                  updateProps({ ...layer.props, prefix });
+                }
+              }}
               options={SLOT_BINDING_OPTIONS}
             />
           </section>
@@ -676,6 +691,12 @@ export function InspectorPanel({
 // ---------------------------------------------------------------------------
 
 const PRICE_SLOTS: string[] = ['list_price', 'sell_price', 'price'];
+
+/** PRICETAG-UPGRADE-VARIANTS S2: the two upgrade figures and the text each starts with. */
+const UPGRADE_SLOT_PREFIX: Record<string, string> = {
+  upgrade_topup: 'TOPUP ',
+  sell_price_with_upgrade: 'SP with upgrade ',
+};
 
 function TextInspector({
   layer,
@@ -836,6 +857,9 @@ function TextInspector({
             Show currency
           </label>
         )}
+        {layer.slot_binding != null && layer.slot_binding in UPGRADE_SLOT_PREFIX && (
+          <UpgradeFigureControls props={props} onChange={onChange} />
+        )}
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,
@@ -875,6 +899,50 @@ const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
  * row a price badge shows above it (S3b, AC-6) - the same four fields either
  * way, only which `LayerPadding` they read and write differs.
  */
+/** The upgrade figures' own controls: the words before the figure, the currency (on unless turned
+ *  off, like the card's Top-up), and what a layer on "Upgrade N" asks of a combo (mock state H). */
+function UpgradeFigureControls({
+  props,
+  onChange,
+}: {
+  props: Extract<TagLayerProps, { kind: 'text' }>;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+}) {
+  const prefixId = useId();
+  const slot = props.subjectSlot;
+  return (
+    <>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={prefixId} className="text-xs text-muted-foreground">
+          Text before the figure
+        </Label>
+        <Input
+          id={prefixId}
+          className="h-7 px-2 text-xs"
+          value={props.prefix ?? ''}
+          onChange={(e) => onChange({ ...props, prefix: e.target.value })}
+        />
+      </div>
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.showCurrency !== false}
+          onCheckedChange={(v) => onChange({ ...props, showCurrency: !!v })}
+        />
+        Show currency
+      </label>
+      {slot?.kind === 'upgrade' && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {slot.index === 0
+              ? 'A layer on "Upgrade 1" makes this template need 1 upgrade: it is not offered for a combo with none. Keep the top-up inside the Upgrades box for a template that fits every combo.'
+              : `A layer on "Upgrade ${slot.index + 1}" makes this template need ${slot.index + 1} upgrades: it is not offered for a combo with fewer. Keep the top-up inside the Upgrades box for a template that fits every combo.`}
+          </AlertDescription>
+        </Alert>
+      )}
+    </>
+  );
+}
+
 function SidesInput({
   value,
   onChange,
@@ -1719,6 +1787,9 @@ function SubjectInspector({
   // this tag's own candidate says so. A row without roles - a fixed part, or
   // a row pinned before r10 - renders the same flat list it always did.
   const grouped = (parts ?? []).some((part) => Boolean(part.role));
+  // PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer may read the whole variant family.
+  const variantsOption: SearchableSelectOption[] =
+    props.kind === 'feature_icons' ? [{ value: 'slot:variants', label: 'All variants' }] : [];
   const options: SearchableSelectOption[] = parts
     ? [
         ...(defaultLabel ? [{ value: 'default', label: defaultLabel }] : []),
@@ -1728,6 +1799,7 @@ function SubjectInspector({
           label: `${listOf(part.code || part.name)}${part.chosen ? ' (this tag)' : ''}`,
           ...(grouped && part.role ? { group: part.role } : {}),
         })),
+        ...variantsOption,
       ]
     : [
         // A layer saved with a part number keeps showing it, so it stays visible and replaceable.
@@ -1735,9 +1807,12 @@ function SubjectInspector({
           ? [{ value: String(subjectPart), label: listOf(`Part ${subjectPart + 1}`) }]
           : []),
         ...slotOptions(slots, defaultLabel, listOf),
+        ...variantsOption,
       ];
   const value = parts
-    ? subjectPart === undefined
+    ? subjectSlot?.kind === 'variants'
+      ? 'slot:variants'
+      : subjectPart === undefined
       ? defaultLabel
         ? 'default'
         : '-1'
@@ -2096,11 +2171,51 @@ function AccessoriesInspector({
     </section>
   );
 
+  const listsUpgrades = props.list === 'upgrades';
+  /** PRICETAG-UPGRADE-VARIANTS S1: Free items | Upgrades, one change (one undo step). A box with no
+   *  card of its own starts from the upgrade card, and a default header becomes "UPGRADE". */
+  const chooseList = (next: 'free' | 'upgrades') => {
+    if (next === 'free') {
+      onChange({ list: 'free' });
+      return;
+    }
+    onChange({
+      list: 'upgrades',
+      ...(props.card ? {} : { card: defaultUpgradeCard() }),
+      ...(props.headerText === defaultAccessoriesProps().headerText ? { headerText: 'UPGRADE' } : {}),
+    });
+  };
+
   return (
     <section className="flex flex-col gap-3">
       <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Accessories
       </h4>
+
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">List</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={listsUpgrades ? 'upgrades' : 'free'}
+          onValueChange={(next: string) => {
+            if (next) chooseList(next as 'free' | 'upgrades');
+          }}
+        >
+          <ToggleGroupItem value="free" className="flex-1 text-xs">
+            Free items
+          </ToggleGroupItem>
+          <ToggleGroupItem value="upgrades" className="flex-1 text-xs">
+            Upgrades
+          </ToggleGroupItem>
+        </ToggleGroup>
+        {listsUpgrades && (
+          <p className="text-xs text-muted-foreground">
+            Source: this combo&apos;s upgrade parts (product page &gt; Combos)
+          </p>
+        )}
+      </div>
 
       {/* Card design */}
       {(onEditCard || onEditFooter) && (
@@ -2461,7 +2576,16 @@ const TEXT_FIELD_OPTIONS = [
   { value: 'spec', label: 'Spec lines' },
   { value: 'remark', label: 'Remark' },
   { value: 'price', label: 'Price' },
+  // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's figures; empty on a free item, so they hide there.
+  { value: 'topup', label: 'Top-up' },
+  { value: 'price_with_upgrade', label: 'SP with upgrade' },
 ];
+
+/** The words a card field starts with when it is chosen. */
+const CARD_FIELD_PREFIX: Partial<Record<string, string>> = {
+  topup: 'TOPUP ',
+  price_with_upgrade: 'SP with upgrade ',
+};
 
 const COLUMN_OPTIONS = [
   { value: 'auto', label: 'Auto' },
@@ -2491,6 +2615,7 @@ function AccessoryElementInspector({
   const elements = edit.target === 'card' ? props.card?.elements : props.footer?.elements;
   const element = elements?.find((candidate) => candidate.id === edit.elementId);
   const textId = useId();
+  const prefixId = useId();
   if (!element) return null;
   const patch = (changes: Partial<CardElement>) => onUpdate(element.id, changes);
   const inCard = edit.target === 'card';
@@ -2501,7 +2626,9 @@ function AccessoryElementInspector({
         ? 'Picture'
         : element.kind === 'shape'
           ? 'Shape'
-          : 'Text';
+          : element.kind === 'feature_icons'
+            ? 'Feature icons'
+            : 'Text';
   const showsOptions =
     element.kind === 'picture'
       ? [{ value: 'picture', label: 'Picture' }]
@@ -2525,7 +2652,7 @@ function AccessoryElementInspector({
         </Button>
       </div>
 
-      {(inCard ? element.kind !== 'shape' : element.kind === 'colour_dots') && (
+      {(inCard ? element.kind !== 'shape' && element.kind !== 'feature_icons' : element.kind === 'colour_dots') && (
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Shows</Label>
           <SearchableSelect
@@ -2534,11 +2661,64 @@ function AccessoryElementInspector({
             options={showsOptions}
             clearable={element.kind === 'text'}
             placeholder="Fixed text"
-            onChange={(value: string) =>
-              patch({ field: (value || null) as CardElement['field'] })
-            }
+            onChange={(value: string) => {
+              const prefix = CARD_FIELD_PREFIX[value];
+              patch({ field: (value || null) as CardElement['field'], ...(prefix ? { prefix } : {}) });
+            }}
           />
         </div>
+      )}
+
+      {element.kind === 'text' && element.field && element.field in CARD_FIELD_PREFIX && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={prefixId} className="text-xs text-muted-foreground">
+            Text before the figure
+          </Label>
+          <Input
+            id={prefixId}
+            className="h-7 px-2 text-xs"
+            value={element.prefix ?? ''}
+            onChange={(e) => patch({ prefix: e.target.value })}
+          />
+        </div>
+      )}
+
+      {element.kind === 'feature_icons' && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <AccessoryNumberField
+              label="Icon size (mm)"
+              value={element.iconSize_mm ?? 4.6}
+              onChange={(value) => patch({ iconSize_mm: value })}
+              step={0.2}
+              min={0.5}
+              max={50}
+            />
+            <AccessoryNumberField
+              label="Spacing (mm)"
+              value={element.gap_mm ?? 0.8}
+              onChange={(value) => patch({ gap_mm: value })}
+              step={0.1}
+              min={0}
+              max={20}
+            />
+          </div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={element.align ?? 'left'}
+            onValueChange={(next: string) => {
+              if (next) patch({ align: next as 'left' | 'center' | 'right' });
+            }}
+          >
+            {FEATURE_ICON_ALIGNS.map((a) => (
+              <ToggleGroupItem key={a.value} value={a.value} className="flex-1 text-xs">
+                {a.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </>
       )}
 
       {element.kind === 'text' && !element.field && (
