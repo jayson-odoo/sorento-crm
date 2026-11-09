@@ -44,7 +44,7 @@ def _uuid_str() -> str:
     return str(uuid.uuid4())
 
 
-STATUSES = ("draft", "submitted", "resubmitted", "approved", "rejected", "completed", "cancelled")
+STATUSES = ("draft", "submitted", "resubmitted", "approved", "responded", "rejected", "completed", "cancelled")
 SOURCES = ("staff", "portal")
 
 
@@ -86,6 +86,9 @@ class NewProductApplication(Base, CompanyScopedMixin):
     reject_reason = Column(Text, nullable=True)
     #: The latest "What changed, and why?" (the audit trail keeps every earlier one).
     revise_reason = Column(Text, nullable=True)
+    #: How many times it was revised (NPA-FORM-SLA, owner 9 Nov: the list's Rev column, like the
+    #: stock inquiry's). 0 = never; each Revise adds one.
+    revision_no = Column(Integer, nullable=False, default=0, server_default="0")
     cancelled_at = Column(DateTime(timezone=False), nullable=True)
     cancel_reason = Column(Text, nullable=True)
     completed_at = Column(DateTime(timezone=False), nullable=True)
@@ -131,7 +134,7 @@ class NewProductApplication(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint("company_id", "application_no", name="uq_new_product_application_no"),
         CheckConstraint(
-            "status IN ('draft','submitted','resubmitted','approved','rejected','completed','cancelled')",
+            "status IN ('draft','submitted','resubmitted','approved','responded','rejected','completed','cancelled')",
             name="ck_new_product_applications_status",
         ),
         CheckConstraint("source IN ('staff','portal')", name="ck_new_product_applications_source"),

@@ -68,7 +68,9 @@ def test_the_models_carry_the_new_columns():
 # NPA-FROM-SI (#2233, migration npasi_0001_lineage) added the purchasing new-code columns to the
 # header table after this revision. A column counts as covered by it only when its DDL adds that
 # column to that same table.
-LATER_MIGRATIONS = ("npasi_0001_lineage",)
+# NPA-FORM-SLA (#2261, migration npasla_0002_npa_revision_no) added revision_no to the header
+# table the same way.
+LATER_MIGRATIONS = ("npasi_0001_lineage", "npasla_0002_npa_revision_no")
 
 
 def _added_by_later_migrations(table: str) -> set[str]:

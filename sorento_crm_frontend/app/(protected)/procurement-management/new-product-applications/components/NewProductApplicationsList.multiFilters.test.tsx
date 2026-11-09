@@ -73,7 +73,7 @@ import NewProductApplicationsList from './NewProductApplicationsList';
 const ROW = {
   id: 'npa-1', application_no: 'ZZT-NPA-001', status: 'draft', status_label: 'Draft', source: 'staff', applicant_id: 'u-1',
   applicant_name: 'ZZT Alice', stock_inquiry_id: null, stock_inquiry_number: null, customer_name: 'ZZT Customer',
-  project_name: null, first_line: 'ZZT item', lines_total: 1, lines_done: 0, opened_codes: [], needed_by: null,
+  project_name: null, opened_codes: [], needed_by: null,
   submitted_at: null, created_at: '2026-01-01T00:00:00',
 };
 const lastParams = () => useQ.mock.calls[useQ.mock.calls.length - 1][0] as Record<string, unknown>;

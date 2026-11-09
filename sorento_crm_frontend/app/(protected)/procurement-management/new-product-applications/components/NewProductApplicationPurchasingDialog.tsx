@@ -135,6 +135,12 @@ export default function NewProductApplicationPurchasingDialog({
       onSave={() => void send(false)}
       onReply={() => void send(true)}
       canReply={Boolean(r.can_reply)}
+      noReplyReason="No reply: this application was not raised from a stock inquiry conversation or in the portal."
+      replySentence={
+        r.reply_channel === 'portal'
+          ? 'Update & Reply saves your text and notifies the applicant in the portal.'
+          : undefined
+      }
       saving={purchasingResponse.isPending}
       replying={purchasingReply.isPending}
       saveDisabled={purchasingReply.isPending}

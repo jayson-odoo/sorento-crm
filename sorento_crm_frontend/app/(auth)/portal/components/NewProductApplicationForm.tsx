@@ -39,11 +39,8 @@ import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import {
   EMPTY_FORM,
-  blankLine,
-  numberErrors,
   payloadFromState,
   stateFromDetail,
   stateFromPrefill,
@@ -168,11 +165,8 @@ export default function NewProductApplicationForm({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(Boolean(applicationId));
   const [notFound, setNotFound] = useState(false);
-  const [state, setState] = useState<FormState>({
-    ...EMPTY_FORM,
-    lines: [blankLine()],
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  // Owner hand test 9 Nov: no product rows on the form; an older draft keeps (and resends) its own.
+  const [state, setState] = useState<FormState>(EMPTY_FORM);
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState<'revise' | 'cancel' | null>(null);
@@ -191,12 +185,7 @@ export default function NewProductApplicationForm({
   const load = useCallback((d: NewProductApplicationDetail) => {
     setApplication(d);
     setAttachments((d.attachments ?? []) as PortalAttachment[]);
-    const loaded = stateFromDetail(d);
-    setState(
-      loaded.lines.length || loaded.stock_inquiry_id
-        ? loaded
-        : { ...loaded, lines: [blankLine()] },
-    );
+    setState(stateFromDetail(d));
   }, []);
 
   useEffect(() => {
@@ -233,7 +222,7 @@ export default function NewProductApplicationForm({
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
   const readOnly = !editable;
-  const locked = isAwaitingReview(status) || status === 'approved';
+  const locked = isAwaitingReview(status) || status === 'approved' || status === 'responded';
   const anyResolved = Boolean(
     application?.new_product_id ||
       application?.new_code_closed_reason ||
@@ -302,15 +291,9 @@ export default function NewProductApplicationForm({
     toast.error(message);
   };
 
-  const checkNumbers = () => {
-    const found = numberErrors(state);
-    setErrors(found);
-    return Object.keys(found).length === 0;
-  };
 
   const handleSaveDraft = async () => {
     setServerMessage(null);
-    if (!checkNumbers()) return;
     setSaving(true);
     try {
       const saved = await save();
@@ -332,7 +315,6 @@ export default function NewProductApplicationForm({
   // Save, then submit. A refusal names the line; the user stays here with the draft kept.
   const handleSubmit = async () => {
     setServerMessage(null);
-    if (!checkNumbers()) return;
     setSaving(true);
     try {
       const saved = await save();
@@ -377,7 +359,6 @@ export default function NewProductApplicationForm({
       setState(
         stateFromPrefill(await service().getNewProductApplicationPrefill(inquiryId)),
       );
-      setErrors({});
     } catch (e) {
       toast.error(
         e instanceof Error ? e.message : 'Failed to load the stock inquiry',
@@ -589,7 +570,7 @@ export default function NewProductApplicationForm({
               ) : undefined
             }
             costField={
-              application && application.lines.length === 0 ? (
+              application ? (
                 <InquiryReadValue>
                   {application.cost_price == null || application.cost_price === ''
                     ? ''
@@ -616,49 +597,9 @@ export default function NewProductApplicationForm({
                     placeholder="Customer name"
                   />
                 )}
-                {!state.customer_id && state.customer_name.trim() && (
-                  <Badge variant="secondary" className="mt-1.5">
-                    No debtor code
-                  </Badge>
-                )}
               </>
             }
           />
-          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
-          {(!state.stock_inquiry_id || state.lines.length > 0) && (
-          <div className="mt-6">
-            <NewProductApplicationLines
-              lines={state.lines}
-              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              errors={errors}
-              readOnly={readOnly || Boolean(state.stock_inquiry_id && application)}
-              showCost={Boolean(application)}
-              renderOpenedAs={
-                application?.lines.some(
-                  (l) => l.opened_product_id || l.closed_reason,
-                )
-                  ? (draftLine) => {
-                      const l = application.lines.find(
-                        (x) => x.id === draftLine.id,
-                      );
-                      if (!l) return null;
-                      return l.opened_product_id ? (
-                        <span className="break-words font-medium">
-                          {l.opened_product_code}
-                        </span>
-                      ) : l.closed_reason ? (
-                        <span className="break-words">
-                          Rejected: {l.closed_reason}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      );
-                    }
-                  : undefined
-              }
-            />
-          </div>
-          )}
           <div className="mt-6">
             <AttachmentDropzone
               kind="new_product_application"

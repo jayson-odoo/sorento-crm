@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# HA health checks + cheap self-healing (HA-TIER1-N8N-BOX). Cron every 5 minutes on both CRM
-# nodes (witness: ETCD_ONLY=1). Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md
-# section 8b.
+# HA health checks + cheap self-healing (HA-CF-FAILOVER). Cron every 5 minutes on both CRM
+# nodes. Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md (sections 2 and 3).
 #
 # Pings HC_URL (Healthchecks.io) on success, HC_URL/fail with the reasons otherwise, so alerts
 # come from outside our servers. Unset HC_URL = print only.
 #
-# Checks: disk use (and prune of old pre-migrate dumps past PRUNE_AT_PCT), etcd members healthy,
-# exactly one Patroni leader in the cluster, and on the leader: a replica streaming, its byte
-# lag, WAL archiving fresh and not failing, pg_wal size, newest WAL-G base backup age.
-# EXPECT_REPLICAS=0 while the leader runs alone (phase A of PLAN-n8n-decom-ha-01nov.md, before node B
-# joins; run it with ETCD_MEMBERS=2 then): the "no replica streaming" alert is off, the rest stays.
+# Checks: disk use (and prune of old pre-migrate dumps past PRUNE_AT_PCT); the two nodes' roles
+# (exactly one primary; read with `ha-pg.sh observe`, which also reads the peer over the link);
+# clock NTP-synced (the controller's windows are wall-clock seconds); the shared config files
+# identical on both nodes (hashes only, never contents); and on the primary: the standby
+# streaming, its byte lag, WAL archiving fresh and not failing, pg_wal size, newest WAL-G base
+# backup age. EXPECT_REPLICAS=0 while node A runs alone (before node B exists).
 # Cron runs from $HOME, so it cd's to PROJECT_DIR first (compose files are relative).
 set -uo pipefail
 
@@ -20,19 +20,21 @@ ALERT_AT_PCT="${ALERT_AT_PCT:-80}"
 PRUNE_AT_PCT="${PRUNE_AT_PCT:-85}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/opt/sorento-crm2/backups/pre-migrate}"
 SNAPSHOT_KEEP="${SNAPSHOT_KEEP:-2}"
-ETCD_MEMBERS="${ETCD_MEMBERS:-3}"
-ETCD_ONLY="${ETCD_ONLY:-0}"
 EXPECT_REPLICAS="${EXPECT_REPLICAS:-1}"
-MAX_LAG_BYTES="${MAX_LAG_BYTES:-8388608}"          # half of maximum_lag_on_failover
+MAX_LAG_BYTES="${MAX_LAG_BYTES:-8388608}"          # half of the controller's MAX_LAG
 MAX_ARCHIVE_AGE_S="${MAX_ARCHIVE_AGE_S:-600}"
 MAX_WAL_BYTES="${MAX_WAL_BYTES:-10737418240}"      # 10 GB
 MAX_BACKUP_AGE_S="${MAX_BACKUP_AGE_S:-93600}"      # 26 h
-PATRONI_URL="${PATRONI_URL:-http://127.0.0.1:8008/primary}"
-PATRONI_CLUSTER_URL="${PATRONI_CLUSTER_URL:-http://127.0.0.1:8008/cluster}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/sorento-crm2}"
-ETCD_SERVICE="${ETCD_SERVICE:-etcd}"
 COMPOSE_FILES="${COMPOSE_FILES:--f docker-compose.yml -f compose.ha.yml}"
 DB_SERVICE="${DB_SERVICE:-db}"
+OBSERVE_CMD="${OBSERVE_CMD:-$(cd "$(dirname "$0")" && pwd)/ha-pg.sh observe}"
+CLOCK_CMD="${CLOCK_CMD:-timedatectl show -p NTPSynchronized --value}"
+# Files that must be byte-identical on both nodes (per-node values live in ha-pg.env only).
+SHARED_FILES="${SHARED_FILES:-.env .deploy.env docker-compose.yml compose.ha.yml}"
+# Prints `sha256sum` lines for SHARED_FILES on the peer (e.g. ssh over the private link with a
+# key whose forced command is that sha256sum). Unset = the comparison is skipped.
+PEER_HASH_CMD="${PEER_HASH_CMD:-}"
 
 cd "$PROJECT_DIR" || { echo "ha-checks: cannot cd to $PROJECT_DIR" >&2; exit 2; }
 
@@ -58,51 +60,55 @@ if [ -n "$pct" ] && [ "$pct" -ge "$PRUNE_AT_PCT" ] && [ -d "$SNAPSHOT_DIR" ]; th
 fi
 if [ -z "$pct" ]; then note "disk: df failed"; elif [ "$pct" -ge "$ALERT_AT_PCT" ]; then note "disk ${pct}% used"; fi
 
-# 2. etcd quorum members, and auth must be on. The official etcd image has no shell, so etcdctl
-# is exec'd directly; it reads ETCDCTL_USER (the role-less `healthcheck` user) from the
-# container env. On the witness: PROJECT_DIR=<witness compose dir> COMPOSE_FILES="-f
-# docker-compose.yml" ETCD_ONLY=1.
+# 2. Roles: exactly one primary across the two nodes.
 # shellcheck disable=SC2086
-healthy=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl endpoint health --cluster 2>&1 | grep -c "is healthy" || true)
-if [ "$healthy" -lt "$ETCD_MEMBERS" ]; then note "etcd ${healthy}/${ETCD_MEMBERS} members healthy"; fi
-# With auth on, etcd refuses `auth status` to the role-less healthcheck user ("etcdserver:
-# permission denied", found in the H4a rehearsal), which itself proves auth is on. Match etcd's own
-# error only, so a Docker socket "permission denied" still alerts.
+obs=$($OBSERVE_CMD 2>/dev/null)
+get() { printf '%s\n' "$obs" | sed -n "s/^$1=//p" | head -1; }
+self_pg=$(get self_pg); peer_pg=$(get peer_pg); streaming=$(get self_streaming)
+case "$self_pg/$peer_pg" in
+  primary/primary) note "TWO PRIMARIES" ;;
+  standby/standby) note "no primary: both nodes are standby" ;;
+  standby/unreachable) note "peer unreachable from the standby" ;;
+  down/*) note "local postgres down" ;;
+  /*) note "role unreadable" ;;
+esac
+
+# 3. Clock: the failover windows are wall-clock seconds.
 # shellcheck disable=SC2086
-auth_out=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl auth status 2>&1)
-if ! printf '%s' "$auth_out" | grep -q -E "Authentication Status: true|etcdserver: permission denied"; then
-  note "etcd auth not enabled"
+[ "$($CLOCK_CMD 2>/dev/null)" = "yes" ] || note "clock not NTP-synced"
+
+# 4. Shared config identical on both nodes (names only in the alert, never contents).
+if [ -n "$PEER_HASH_CMD" ]; then
+  # shellcheck disable=SC2086
+  mine=$(sha256sum $SHARED_FILES 2>/dev/null)
+  # shellcheck disable=SC2086
+  if theirs=$($PEER_HASH_CMD 2>/dev/null) && [ -n "$theirs" ]; then
+    differ=""
+    for f in $SHARED_FILES; do
+      a=$(printf '%s\n' "$mine" | awk -v f="$f" '$2 == f { print $1 }')
+      b=$(printf '%s\n' "$theirs" | awk -v f="$f" '$2 == f { print $1 }')
+      [ -n "$a" ] && [ "$a" = "$b" ] || differ="$differ $f"
+    done
+    [ -n "$differ" ] && note "config differs between nodes:$differ"
+  else
+    note "peer config hashes unreadable"
+  fi
 fi
 
-# 3. Exactly one leader in the Patroni cluster (both nodes as replicas would otherwise look fine).
-if [ "$ETCD_ONLY" != "1" ]; then
-  leaders=$(curl -s -m 3 "$PATRONI_CLUSTER_URL" 2>/dev/null | python3 -c 'import json,sys
-try:
-    m = json.load(sys.stdin).get("members", [])
-    print(sum(1 for x in m if x.get("role") in ("leader", "standby_leader")))
-except Exception:
-    print(-1)' 2>/dev/null)
-  if [ "${leaders:--1}" = "-1" ]; then note "patroni cluster state unreadable"
-  elif [ "$leaders" != "1" ]; then note "patroni cluster has ${leaders} leaders"; fi
-fi
-
-# 4. Leader-only Postgres checks.
-if [ "$ETCD_ONLY" != "1" ]; then
-  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$PATRONI_URL" 2>/dev/null) || code=000
-  if [ "$code" = "200" ]; then
-    replicas=$(sql "SELECT count(*) FROM pg_stat_replication WHERE state = 'streaming'")
-    if [ "$EXPECT_REPLICAS" != "0" ] && [ "${replicas:-0}" -lt 1 ]; then note "no replica streaming"; fi
-    lag=$(sql "SELECT coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)), 0)::bigint FROM pg_stat_replication")
-    if [ -n "$lag" ] && [ "$lag" -gt "$MAX_LAG_BYTES" ]; then note "replica lag ${lag} bytes"; fi
-    arch=$(sql "SELECT coalesce(extract(epoch FROM now() - last_archived_time)::bigint, -1) || ' ' || (coalesce(last_failed_time, 'epoch') > coalesce(last_archived_time, 'epoch'))::int FROM pg_stat_archiver")
-    read -r arch_age arch_failing <<<"${arch:-"-1 0"}"
-    if [ "$arch_age" -lt 0 ] || [ "$arch_age" -gt "$MAX_ARCHIVE_AGE_S" ]; then note "WAL archive stale (${arch_age}s)"; fi
-    if [ "${arch_failing:-0}" = "1" ]; then note "WAL archive failing"; fi
-    wal=$(sql "SELECT coalesce(sum(size), 0)::bigint FROM pg_ls_waldir()")
-    if [ -n "$wal" ] && [ "$wal" -gt "$MAX_WAL_BYTES" ]; then note "pg_wal ${wal} bytes"; fi
-    # shellcheck disable=SC2086
-    newest=$(docker compose $COMPOSE_FILES exec -T "$DB_SERVICE" wal-g backup-list --json 2>/dev/null \
-      | python3 -c 'import json, re, sys, datetime as d
+# 5. Primary-only Postgres checks.
+if [ "$self_pg" = "primary" ]; then
+  if [ "$EXPECT_REPLICAS" != "0" ] && [ "$streaming" != "t" ]; then note "no replica streaming"; fi
+  lag=$(sql "SELECT coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)), 0)::bigint FROM pg_stat_replication")
+  if [ -n "$lag" ] && [ "$lag" -gt "$MAX_LAG_BYTES" ]; then note "replica lag ${lag} bytes"; fi
+  arch=$(sql "SELECT coalesce(extract(epoch FROM now() - last_archived_time)::bigint, -1) || ' ' || (coalesce(last_failed_time, 'epoch') > coalesce(last_archived_time, 'epoch'))::int FROM pg_stat_archiver")
+  read -r arch_age arch_failing <<<"${arch:-"-1 0"}"
+  if [ "$arch_age" -lt 0 ] || [ "$arch_age" -gt "$MAX_ARCHIVE_AGE_S" ]; then note "WAL archive stale (${arch_age}s)"; fi
+  if [ "${arch_failing:-0}" = "1" ]; then note "WAL archive failing"; fi
+  wal=$(sql "SELECT coalesce(sum(size), 0)::bigint FROM pg_ls_waldir()")
+  if [ -n "$wal" ] && [ "$wal" -gt "$MAX_WAL_BYTES" ]; then note "pg_wal ${wal} bytes"; fi
+  # shellcheck disable=SC2086
+  newest=$(docker compose $COMPOSE_FILES exec -T "$DB_SERVICE" wal-g backup-list --json 2>/dev/null \
+    | python3 -c 'import json, re, sys, datetime as d
 b = json.load(sys.stdin) or []
 ages = []
 for x in b:
@@ -110,10 +116,7 @@ for x in b:
     t = re.sub(r"(\.\d{1,6})\d*", r"\1", x["time"]).replace("Z", "+00:00")
     ages.append((d.datetime.now(d.timezone.utc) - d.datetime.fromisoformat(t)).total_seconds())
 print(int(min(ages)) if ages else -1)' 2>/dev/null)
-    if [ -z "$newest" ] || [ "$newest" -lt 0 ] || [ "$newest" -gt "$MAX_BACKUP_AGE_S" ]; then note "base backup age ${newest:-unknown}s"; fi
-  elif [ "$code" = "000" ]; then
-    note "patroni not answering"
-  fi
+  if [ -z "$newest" ] || [ "$newest" -lt 0 ] || [ "$newest" -gt "$MAX_BACKUP_AGE_S" ]; then note "base backup age ${newest:-unknown}s"; fi
 fi
 
 if [ "${#problems[@]}" -eq 0 ]; then
