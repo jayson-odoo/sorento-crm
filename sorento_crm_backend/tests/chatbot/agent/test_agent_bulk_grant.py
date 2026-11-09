@@ -21,13 +21,14 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 import app.main  # noqa: F401  register every model and the app's listeners
 from app.audit_context import clear_actor
 from app.models.access import (
     AccessAgent,
     ContactAccessType,
+    ContactTag,
     MarketSegment,
     RespondContact,
     RespondContactCustomer,
@@ -101,9 +102,37 @@ def _company(db, code: str, name: str) -> str:
         return str(row.id)
 
 
+OWNER_TAGS = {"Sorento Business Owner": ["dealer", "cabana_dealer"], "Mocha Business Owner": ["mocha_dealer"]}
+
+
+def ensure_owner_tags(db) -> None:
+    """The two Business owner tags `dap_0001_dealer_access` seeds (UAC A6), when no tag of that name exists."""
+    for name, types in OWNER_TAGS.items():
+        if db.query(ContactTag).filter(func.lower(ContactTag.name) == name.lower()).first() is None:
+            db.add(ContactTag(id=str(uuid.uuid4()), name=name, is_active=True, settings={"access_types": list(types)}))
+    db.flush()
+
+
+def typed_phones(text_: str, rows) -> str:
+    """UAC F4: a pasted table carries each person's phone, so the message names the rows it sends."""
+    phones = [str(r.get("phone")) for r in rows if isinstance(r, dict) and r.get("phone")]
+    return "\n".join([text_, *phones]) if phones else text_
+
+
+def typed_companies(text_: str, rows) -> str:
+    """UAC A18: a real message names each row's company ("Sorento", "Mocha", the first word of the TEMPLATE name)."""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    word_of = {code: name.split()[0] for name, code in TEMPLATE["companies"].items()}
+    words = dict.fromkeys(
+        word_of[c] for r in rows if isinstance(r, dict) for c in (r.get("companies") or []) if c in word_of
+    )
+    return "\n".join([text_, *words]) if words else text_
+
+
 def ensure_template_world(db) -> tuple[str, str]:
     """What the 26 Oct template needs: SRT, MCH, their stock locations, the three enquiry agents, the retail
-    segment and the access types. Returns (srt id, mch id)."""
+    segment, the access types and the owner tags. Returns (srt id, mch id)."""
     srt = _company(db, "SRT", "ZZT Sorento Co")
     mch = _company(db, "MCH", "ZZT Mocha Co")
     with company_scope(db, None):
@@ -122,6 +151,7 @@ def ensure_template_world(db) -> tuple[str, str]:
             if db.get(ContactAccessType, code) is None:
                 db.add(ContactAccessType(code=code, name=f"ZZT {code}", is_active=True, sort_order=1))
         db.flush()
+    ensure_owner_tags(db)
     return srt, mch
 
 
@@ -273,7 +303,7 @@ def test_01_the_row_write_is_registered_and_batchable_and_the_batch_tool_exists(
 
     grant = writes.WRITES[GRANT]
     assert grant.batchable is True
-    assert grant.user_permission == EDIT
+    assert grant.user_permission == writes.CONTACT_SLUGS  # UAC A1 (DEALER-ACCESS-PORTAL): edit_own may grant too
     props = grant.schema["function"]["parameters"]["properties"]
     assert {"phone", "name", "role", "companies", "customer_codes", "customer_names"} <= set(props)
     assert batch.BATCH == BATCH
@@ -297,14 +327,18 @@ def test_01_the_batch_tool_is_offered_only_with_the_contacts_edit_slug_and_its_a
         if spec.get("type") == "array":
             assert "items" in spec  # Gemini refuses an array without items
 
+    # UAC A1 (DEALER-ACCESS-PORTAL): an edit_own holder is offered the grant too; neither slug, no batch tool.
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
+    assert GRANT in batch.batch_tool_schema(db, ctx_of(db, own))["function"]["parameters"]["properties"]["write"]["enum"]
+    neither = make_world(db, slugs=("sales.customer_asks.view",), superadmin=False)
+    assert batch.batch_tool_schema(db, ctx_of(db, neither)) is None
 
 
 def test_01_a_batch_call_without_the_slug_is_denied_and_proposes_nothing(db):
     from app.services.chatbot.agent import batch
 
-    w = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
+    # UAC A1 (DEALER-ACCESS-PORTAL): edit_own is allowed now, so the denied user holds neither contacts slug.
+    w = make_world(db, slugs=("sales.customer_asks.view",), superadmin=False)
     steps, out = [], None
     out = batch.propose(db, ctx_of(db, w), {"write": GRANT, "rows": [row_(fake_phone())]}, steps, seen_ids=set())
     assert out.status == "denied"
@@ -587,20 +621,22 @@ def test_04_more_than_fifty_rows_is_invalid_and_proposes_nothing(db):
 # ------------------------------------------------------------------ 5. permissions beyond the slug
 
 
-def test_05_a_user_who_cannot_set_companies_on_screen_gets_the_row_without_the_company(db):
+def test_05_a_user_who_cannot_set_companies_on_screen_still_gets_the_whole_template_company_included(db):
+    # UAC A5 / Q2 a (DEALER-ACCESS-PORTAL): no facet is skipped any more; the whole template is written, company
+    # included. Employee row: the owner tag is A6's subject, not this test's.
     w = make_world(db, slugs=(EDIT,), superadmin=False)
     person = dealer(db, w, companies=())
 
-    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, codes=[w.cust_a.customer_code])])
+    steps, skipped, _ = propose_rows(db, w, [row_(person.phone_number, role="employee", codes=[w.cust_a.customer_code])])
 
     assert skipped == []
-    assert "not applied" in steps[0]["summary"].lower()
+    assert "not applied" not in steps[0]["summary"].lower()
     from app.services.chatbot.agent import actions
 
     outcome = actions.confirm(db, w.respond_id, str(store(db, w, steps).id), via="console")
     assert outcome.status == "executed", outcome.steps
     after = state(db, person.phone_number)
-    assert after["companies"] == []
+    assert after["companies"] == [w.srt]
     assert after["links"] == [str(w.cust_a.id)]
 
 
@@ -618,7 +654,8 @@ def test_06_a_turn_with_a_pasted_table_shows_one_preview_table_and_writes_nothin
     ]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Here is what I will change.")]
 
-    result, provider = run_turn(db, w, script, text_="please grant access to these people")
+    # UAC A17: a pasted table carries its dealer names in the user's text.
+    result, provider = run_turn(db, w, script, text_=typed_phones(typed_companies("please grant access to these people\nZZT No Such Shop", rows), rows))
 
     assert BATCH in tool_names(provider)
     assert result.pending_action is not None
@@ -642,7 +679,7 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
         answer_("Corrected."),
     ]
 
-    result, _ = run_turn(db, w, script, text_="grant access")
+    result, _ = run_turn(db, w, script, text_=typed_phones(typed_companies("grant access", first + second), first + second))
 
     assert len(result.pending_action["lines"]) == 1
     assert b.phone_number in result.pending_action["lines"][0]
@@ -651,8 +688,9 @@ def test_06_a_second_batch_call_in_the_turn_replaces_the_first(db):
 # ------------------------------------------------------------------ 7. security review round 1
 
 
-def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
-    """B1: a superadmin linked user, an operator holding only the contacts slug: no company, stock or agents."""
+def test_07_a_console_operator_with_only_the_contacts_slug_still_grants_the_whole_template(db):
+    """B1: a superadmin linked user, an operator holding only the contacts slug. UAC A5 / Q2 a (DEALER-ACCESS-PORTAL):
+    the whole template is written now, company, stock and enquiry agents included."""
     import dataclasses
 
     from app.models.access import ContactAgentAccess, StockVisibilityPolicy
@@ -666,18 +704,19 @@ def test_07_a_console_operator_grants_only_the_facets_both_people_may_set(db):
     person = dealer(db, w, companies=())
     ctx = dataclasses.replace(ctx_of(db, w), operator_user_id=operator)
 
-    steps, skipped, _ = batch.propose_rows(db, ctx, GRANT, [row_(person.phone_number, codes=[w.cust_a.customer_code])], seen_ids=set())
-    assert skipped == [] and "not applied" in steps[0]["summary"].lower()
+    row = row_(person.phone_number, role="employee", codes=[w.cust_a.customer_code])
+    steps, skipped, _ = batch.propose_rows(db, ctx, GRANT, [row], seen_ids=set())
+    assert skipped == [] and "not applied" not in steps[0]["summary"].lower()
     action = store(db, w, steps)
     outcome = actions.confirm(db, w.respond_id, str(action.id), via="console", operator_user_id=operator)
 
     assert outcome.status == "executed", outcome.steps
     after = state(db, person.phone_number)
-    assert after["companies"] == []
+    assert after["companies"] == [w.srt]
     assert after["links"] == [str(w.cust_a.id)]
     with company_scope(db, None):
-        assert db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == person.id).count() == 0
-        assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == person.id).count() == 0
+        assert db.query(StockVisibilityPolicy).filter(StockVisibilityPolicy.contact_id == person.id).count() == 1
+        assert db.query(ContactAgentAccess).filter(ContactAgentAccess.respond_contact_id == person.id).count() == 3
 
 
 def test_07_more_than_ten_customers_on_a_row_is_refused(db):
@@ -755,10 +794,12 @@ def test_08_a_single_change_after_a_batch_and_a_batch_after_a_single_change_are_
     batch_call = tc(BATCH, {"write": GRANT, "rows": [row_(a.phone_number, codes=[w.cust_a.customer_code])]}, "b1")
     single = tc(GRANT, row_(b.phone_number, codes=[w.cust_a.customer_code]), "s1")
 
-    result, _ = run_turn(db, w, [round_of(batch_call), round_of(single), answer_("ok")], text_="grant access")
+    # UAC A18, F4: the message names the company and the people.
+    said = typed_phones(typed_companies("grant access", [row_(a.phone_number)]), [row_(a.phone_number), row_(b.phone_number)])
+    result, _ = run_turn(db, w, [round_of(batch_call), round_of(single), answer_("ok")], text_=said)
     assert len(result.pending_action["lines"]) == 1 and a.phone_number in result.pending_action["lines"][0]
 
-    result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_="grant access")
+    result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_=said)
     assert len(result.pending_action["lines"]) == 1 and b.phone_number in result.pending_action["lines"][0]
 
 
@@ -789,7 +830,7 @@ def test_09_a_live_shaped_turn_lists_the_unknown_access_row_and_proposes_the_res
     ]
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Row 1 will change; row 2 is skipped.")]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=typed_phones(typed_companies("grant access to these people", rows), rows))
 
     assert len(result.pending_action["lines"]) == 1
     assert "Unknown access: Manager" in result.reply_text
@@ -805,7 +846,7 @@ def test_09_row_numbers_and_counts_the_batch_produced_are_not_flagged_as_unverif
     text_ = "I will change rows 1 and 2 (2 rows) and skip row 3 (1 row) because its customer was not found."
     script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(text_)]
 
-    result, _ = run_turn(db, w, script, text_="grant access to these people")
+    result, _ = run_turn(db, w, script, text_=typed_phones(typed_companies("grant access to these people", rows), rows))
 
     assert "not verified" not in result.reply_text
     assert result.reply_text.startswith("Rows from your table: 2 ready to confirm, 1 not changed.")

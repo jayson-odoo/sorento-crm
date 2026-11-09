@@ -1,9 +1,11 @@
 """Service for scheduled task execution and run logging."""
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Callable, Optional, Any, Dict
 
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
 from pydantic import ValidationError
@@ -25,6 +27,12 @@ TaskHandler = Callable[[Session, ScheduledTask], dict[str, Any]]
 
 # Registry of task key -> handler. Populated when handlers are registered.
 TASK_HANDLERS: dict[str, TaskHandler] = {}
+
+# Keys whose scheduled runs leave the heartbeat thread (SCHEDULED-TASKS-GRID, crew ruling Q4):
+# the heartbeat runs handlers one after another, so a slow handler would make every 15s task
+# (form_action_commit, ...) slip by its duration. These dispatch on Run now's own thread path
+# (`_dispatch_run_in_thread`), which writes the run row and the task's last status/error.
+BACKGROUND_TASK_KEYS: set[str] = set()
 
 
 def _task_schedule_args(task: ScheduledTask) -> tuple[str, int, str, Optional[datetime]]:
@@ -78,9 +86,14 @@ def task_company_scope(task: ScheduledTask):
     return frozenset(ids) if ids else None
 
 
-def register_handler(key: str, handler: TaskHandler) -> None:
-    """Register a handler for a scheduled task key."""
+def register_handler(key: str, handler: TaskHandler, *, background: bool = False) -> None:
+    """Register a handler for a scheduled task key. `background=True` runs each scheduled run
+    off the heartbeat thread, the way Run now always does."""
     TASK_HANDLERS[key] = handler
+    if background:
+        BACKGROUND_TASK_KEYS.add(key)
+    else:
+        BACKGROUND_TASK_KEYS.discard(key)
 
 
 def _handler_cost_price_daily_tick(db: Session, task: ScheduledTask) -> dict[str, Any]:
@@ -132,10 +145,63 @@ def compute_next_run(
     return from_time + delta
 
 
+def _active_window(task: ScheduledTask) -> Optional[tuple[time, time, ZoneInfo]]:
+    """`metadata.active_window` = {"start": "HH:MM", "end": "HH:MM", "timezone": "<IANA>"}:
+    the local hours a task may run in (start <= local time <= end, same day). Outside them the
+    task is not due, writes no run row and is not overdue. Absent or malformed = always on."""
+    meta = getattr(task, "metadata_", None)
+    window = meta.get("active_window") if isinstance(meta, dict) else None
+    if not isinstance(window, dict):
+        return None
+    try:
+        start = time.fromisoformat(str(window["start"]))
+        end = time.fromisoformat(str(window["end"]))
+        tz = ZoneInfo(str(window.get("timezone") or "UTC"))
+    except (KeyError, ValueError, ZoneInfoNotFoundError):
+        logger.warning("Scheduled task %s has a malformed active_window %r; ignoring it", _task_key(task), window)
+        return None
+    if start >= end:
+        logger.warning("Scheduled task %s active_window must start before it ends; ignoring it", _task_key(task))
+        return None
+    return start, end, tz
+
+
+def in_active_window(task: ScheduledTask, when: datetime) -> bool:
+    """Whether `when` (naive UTC, like every scheduler timestamp) is inside the task's window."""
+    window = _active_window(task)
+    if window is None:
+        return True
+    start, end, tz = window
+    local = when.replace(tzinfo=_UTC).astimezone(tz).time()
+    return start <= local <= end
+
+
+def _shift_into_window(task: ScheduledTask, when: Optional[datetime]) -> Optional[datetime]:
+    """`when` itself if it is inside the task's window, else the window's next opening (naive UTC)."""
+    window = _active_window(task)
+    if when is None or window is None or in_active_window(task, when):
+        return when
+    start, _end, tz = window
+    local = when.replace(tzinfo=_UTC).astimezone(tz)
+    opening = local.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    if opening <= local:
+        opening = (local + timedelta(days=1)).replace(
+            hour=start.hour, minute=start.minute, second=0, microsecond=0
+        )
+    return opening.astimezone(_UTC).replace(tzinfo=None)
+
+
+def next_run_for(task: ScheduledTask, from_time: datetime) -> datetime:
+    """`compute_next_run` for this task, moved to its window's opening when it lands outside."""
+    return _shift_into_window(task, compute_next_run(*_task_schedule_args(task), from_time))
+
+
 def _is_task_due(task: ScheduledTask, now: datetime) -> bool:
-    """Frequency-driven: task fires if start_at has passed AND
-    (never ran OR `now - last_run >= interval`).
+    """Frequency-driven: task fires if start_at has passed AND it is inside its
+    `active_window` (if any) AND (never ran OR `now - last_run >= interval`).
     """
+    if not in_active_window(task, now):
+        return False
     start_at = getattr(task, "start_at", None)
     if isinstance(start_at, datetime) and start_at > now:
         return False
@@ -186,7 +252,23 @@ class OverdueTask:
         return f"<OverdueTask {_task_key(self.task)} late_by={self.late_by}>"
 
 
-def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
+def _clamp_to_window(task: ScheduledTask, due: Optional[datetime], now: Optional[datetime]) -> Optional[datetime]:
+    """A task with an active_window is not owed a run while the window is shut: while `now` is
+    outside it, the run is owed at the next opening; inside it, never before today's opening.
+    Judging by `now`, not only by `due`, matters: a run owed at 22:04:55 that the 10s heartbeat
+    only reaches after 22:05 would otherwise read overdue all night (review B1)."""
+    if due is None or _active_window(task) is None:
+        return due
+    now = now or datetime.utcnow()
+    if not in_active_window(task, now):
+        return _shift_into_window(task, now)
+    start, _end, tz = _active_window(task)
+    local_now = now.replace(tzinfo=_UTC).astimezone(tz)
+    opening = local_now.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    return max(due, opening.astimezone(_UTC).replace(tzinfo=None))
+
+
+def compute_due_at(task: ScheduledTask, now: Optional[datetime] = None) -> Optional[datetime]:
     """When this task's next run was owed, on the scheduler's own terms.
 
     Mirrors `_is_task_due`: a task is owed a run at `last_run_at + interval`, or
@@ -202,13 +284,13 @@ def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
         # fallback so a task seeded without `start_at` still has an honest
         # baseline rather than being skipped (the old watchdog dropped these).
         created_at = getattr(task, "created_at", None)
-        return start_at or (created_at if isinstance(created_at, datetime) else None)
+        return _clamp_to_window(task, start_at or (created_at if isinstance(created_at, datetime) else None), now)
 
     delta = _interval_delta(
         str(getattr(task, "interval_unit")),
         int(getattr(task, "interval_value")),
     )
-    return last_run + delta
+    return _clamp_to_window(task, last_run + delta, now)
 
 
 def compute_grace(task: ScheduledTask, grace_percent: Optional[int] = None) -> timedelta:
@@ -267,7 +349,7 @@ def get_overdue_tasks(
         if isinstance(start_at, datetime) and start_at > now:
             continue  # not expected to have run yet
 
-        due_at = compute_due_at(task)
+        due_at = compute_due_at(task, now)
         if due_at is None:
             continue
 
@@ -284,9 +366,70 @@ def get_task(db: Session, task_id: str) -> Optional[ScheduledTask]:
     return db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
 
 
-def list_tasks(db: Session) -> list[ScheduledTask]:
-    """List all scheduled tasks (for API)."""
-    return db.query(ScheduledTask).order_by(ScheduledTask.key).all()
+_INTERVAL_SECONDS = case(
+    (ScheduledTask.interval_unit == "seconds", 1),
+    (ScheduledTask.interval_unit == "minutes", 60),
+    (ScheduledTask.interval_unit == "hours", 3600),
+    (ScheduledTask.interval_unit == "days", 86400),
+    else_=0,
+) * ScheduledTask.interval_value
+
+# Every grid column sorts server-side (SCHEDULED-TASKS-GRID). `frequency` sorts by the real
+# length of the interval, so "every 30 sec" comes before "every 1 min".
+TASK_SORT_COLUMNS = {
+    "name": ScheduledTask.name,
+    "key": ScheduledTask.key,
+    "enabled": ScheduledTask.enabled,
+    "frequency": _INTERVAL_SECONDS,
+    "last_status": ScheduledTask.last_status,
+    "last_run_at": ScheduledTask.last_run_at,
+    "next_run_at": ScheduledTask.next_run_at,
+    "last_error": ScheduledTask.last_error,
+}
+
+
+def list_tasks(
+    db: Session,
+    *,
+    query: Optional[str] = None,
+    enabled: Optional[list[bool]] = None,
+    last_status: Optional[list[str]] = None,
+    interval_unit: Optional[list[str]] = None,
+    sort: Optional[str] = None,
+    direction: str = "asc",
+    page: int = 1,
+    limit: Optional[int] = None,
+) -> tuple[list[ScheduledTask], int]:
+    """Scheduled tasks for the grid: search, multi-value filters, sort, page.
+    Returns (rows, total). `last_status` value "never" matches a task that has not run."""
+    q = db.query(ScheduledTask)
+    if query and query.strip():
+        like = f"%{query.strip()}%"
+        q = q.filter(or_(
+            ScheduledTask.name.ilike(like),
+            ScheduledTask.key.ilike(like),
+            ScheduledTask.description.ilike(like),
+            ScheduledTask.last_error.ilike(like),
+        ))
+    if enabled:
+        q = q.filter(ScheduledTask.enabled.in_(enabled))
+    if last_status:
+        statuses = [s for s in last_status if s != "never"]
+        conds = []
+        if statuses:
+            conds.append(ScheduledTask.last_status.in_(statuses))
+        if "never" in last_status:
+            conds.append(ScheduledTask.last_status.is_(None))
+        q = q.filter(or_(*conds))
+    if interval_unit:
+        q = q.filter(ScheduledTask.interval_unit.in_(interval_unit))
+    total = q.count()
+    column = TASK_SORT_COLUMNS.get(sort or "", ScheduledTask.name)
+    ordered = column.desc().nulls_last() if direction == "desc" else column.asc().nulls_last()
+    q = q.order_by(ordered, ScheduledTask.key.asc())
+    if limit:
+        q = q.offset((max(page, 1) - 1) * limit).limit(limit)
+    return q.all(), total
 
 
 def list_runs(
@@ -379,13 +522,13 @@ def update_task(
         else now
     )
     interval_unit_value, interval_value_value, timezone_value, task_start_at = _task_schedule_args(task)
-    setattr(task, "next_run_at", compute_next_run(
+    setattr(task, "next_run_at", _shift_into_window(task, compute_next_run(
         interval_unit_value,
         interval_value_value,
         timezone_value,
         task_start_at,
         base_time,
-    ))
+    )))
     setattr(task, "updated_at", now)
     db.commit()
     db.refresh(task)
@@ -421,7 +564,7 @@ def _execute_task_run(
                 duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
                 summary={"reason": "no handler registered"},
             )
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 bg_db, _task_id(task), "skipped", None,
                 {"reason": "no handler registered"}, next_run,
@@ -436,7 +579,7 @@ def _execute_task_run(
             summary = handler(bg_db, task)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(bg_db, run_id, status="success", duration_ms=duration_ms, summary=summary or {})
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(bg_db, _task_id(task), "success", None, summary, next_run)
         except Exception as e:
             logger.exception("Scheduled task %s failed in background", task_key)
@@ -447,7 +590,7 @@ def _execute_task_run(
             except Exception:
                 pass
             finish_run(bg_db, run_id, status="failed", duration_ms=duration_ms, error=err_msg)
-            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(bg_db, _task_id(task), "failed", err_msg, None, next_run)
     finally:
         try:
@@ -456,17 +599,18 @@ def _execute_task_run(
             pass
 
 
-def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
-    """
-    Trigger a manual run asynchronously. Creates the run record synchronously
-    (so the caller gets a run_id), then dispatches the handler in a background
-    thread. Returns immediately with status="started"; clients should poll
-    /scheduled-tasks/{task_id}/runs for completion.
-    """
-    task = get_task(db, task_id)
-    if not task:
-        return None
+def _start_thread(target, args, name: str) -> None:
+    """Seam for tests: the run thread opens its own session, which a rolled-back test
+    transaction cannot share."""
+    threading.Thread(target=target, args=args, name=name, daemon=True).start()
 
+
+def _dispatch_run_in_thread(
+    db: Session, task: ScheduledTask, requested_by_user_id: Optional[str] = None
+) -> str:
+    """Open the run row now (status started) and run the handler on its own thread, which
+    records the outcome on the run and the task (`_execute_task_run`). Run now and the
+    background scheduled tasks both come through here. Returns the run id."""
     run = create_run(db, _task_id(task), status="started")
     run_id = _run_id(run)
     task_key = _task_key(task)
@@ -487,14 +631,26 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
         ), audit_context_scope(correlation_id=run_id):
             _execute_task_run(*args)
 
-    thread = threading.Thread(
-        target=_run_as_requester,
-        args=(task_id_str, run_id, task_key, requested_by_user_id),
-        name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
-        daemon=True,
+    _start_thread(
+        _run_as_requester,
+        (task_id_str, run_id, task_key, requested_by_user_id),
+        f"scheduled-task-run-{task_key}-{run_id[:8]}",
     )
-    thread.start()
+    return run_id
 
+
+def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
+    """
+    Trigger a manual run asynchronously. Creates the run record synchronously
+    (so the caller gets a run_id), then dispatches the handler in a background
+    thread. Returns immediately with status="started"; clients should poll
+    /scheduled-tasks/{task_id}/runs for completion.
+    """
+    task = get_task(db, task_id)
+    if not task:
+        return None
+
+    run_id = _dispatch_run_in_thread(db, task, requested_by_user_id)
     return {
         "run_id": run_id,
         "status": "started",
@@ -618,6 +774,18 @@ def run_due_tasks(db: Session) -> None:
                         _task_key(task),
                     )
                 continue
+            if _task_key(task) in BACKGROUND_TASK_KEYS:
+                # Claim the tick on THIS thread (last_run_at drives `_is_task_due`), so the next
+                # heartbeat does not dispatch it again while the run is still going; the run
+                # thread stamps the outcome when it finishes.
+                now = datetime.utcnow()
+                setattr(task, "last_run_at", now)
+                setattr(task, "last_status", "started")
+                setattr(task, "last_error", None)
+                setattr(task, "next_run_at", next_run_for(task, now))
+                db.commit()
+                _dispatch_run_in_thread(db, task)
+                continue
             run = create_run(db, _task_id(task), status="started")
             from app.audit_context import AuditActor, actor_scope
 
@@ -633,10 +801,7 @@ def run_due_tasks(db: Session) -> None:
                 set_company_scope(db, None)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
-            next_run = compute_next_run(
-                *_task_schedule_args(task),
-                datetime.utcnow(),
-            )
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 db, _task_id(task), last_status="success", last_error=None, summary=summary, next_run_at=next_run
             )
@@ -652,10 +817,7 @@ def run_due_tasks(db: Session) -> None:
                     duration_ms=duration_ms,
                     error=err_msg,
                 )
-            next_run = compute_next_run(
-                *_task_schedule_args(task),
-                datetime.utcnow(),
-            )
+            next_run = next_run_for(task, datetime.utcnow())
             update_task_after_run(
                 db, _task_id(task), last_status="failed", last_error=err_msg, summary=None, next_run_at=next_run
             )

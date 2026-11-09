@@ -173,14 +173,26 @@ def answer_(text_, cid="ans-1"):
 
 
 class Provider:
-    """Returns scripted `ChatResult`s; an item that is callable receives the messages of this call."""
+    """Returns scripted `ChatResult`s; an item that is callable receives the messages of this call. The dealer-access
+    recognition side call (a `json_schema` call, UAC F2) is answered from `dealer_access` without using the script;
+    it is recorded in `side`, not in `seen`."""
 
-    def __init__(self, script):
+    def __init__(self, script, dealer_access: bool = False):
         self.script = list(script)
         self.seen: list[dict] = []
+        self.side: list[dict] = []
+        self.dealer_access = dealer_access
 
     def chat(self, messages, *, tools=None, reasoning_effort=None, **kw):
-        self.seen.append({"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools)})
+        if kw.get("json_schema") is not None:
+            self.side.append({"messages": copy.deepcopy(messages), "schema": kw["json_schema"]})
+            return ChatResult(
+                content=json.dumps({"dealer_access": self.dealer_access}), prompt_tokens=10, completion_tokens=2,
+                total_tokens=12, cached_tokens=0, tool_calls=[],
+            )
+        self.seen.append(
+            {"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools), "tool_choice": kw.get("tool_choice")}
+        )
         item = self.script.pop(0)
         return item(self.seen[-1]["messages"]) if callable(item) else item
 
@@ -193,10 +205,10 @@ def tool_names(provider: Provider, call_index: int = 0) -> set[str]:
     return {t["function"]["name"] for t in (provider.seen[call_index]["tools"] or [])}
 
 
-def run_turn(db, world: World, script, text_="please update my customer asks"):
+def run_turn(db, world: World, script, text_="please update my customer asks", dealer_access: bool = False):
     from app.services.chatbot.agent.loop import run_agent_turn
 
-    provider = Provider(script)
+    provider = Provider(script, dealer_access=dealer_access)
     result = run_agent_turn(
         db, contact_respond_id=world.respond_id, text=text_, provider=provider, mcp_call=_no_mcp, catalog={}
     )

@@ -46,8 +46,9 @@ def test_ac1_planning_change_carries_from_and_to_on_the_wire(api):
     assert change["kind"] == row.kind
     assert change["applied_state"] == row.applied_state
     assert "result" in change
-    assert set(change["from"]) == {"qty", "required_date", "status", "item_code"}, change
-    assert set(change["to"]) == {"qty", "required_date", "status", "item_code"}, change
+    # SPLIT-SHEET-LOCATION: `location` joins the shape (null unless the line moved).
+    assert set(change["from"]) == {"qty", "required_date", "status", "item_code", "location"}, change
+    assert set(change["to"]) == {"qty", "required_date", "status", "item_code", "location"}, change
     assert change["from"]["qty"] == "182"
     assert change["from"]["required_date"] == "2026-06-01"
     assert change["to"]["qty"] == "280"

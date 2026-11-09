@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Copy, ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
@@ -34,7 +35,9 @@ import type {
   ProductComboRow,
   ProductComboUpdate,
 } from '../../types/productCombo.types';
+import { COMBO_NAME_MAX } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
+import { CopyComboDialog } from './CopyComboDialog';
 import { ComboTagPreview } from './ComboTagPreview';
 import { ComboTemplatesField } from './ComboTemplatesField';
 import { AccessoryListField } from './AccessoryListField';
@@ -162,6 +165,125 @@ function DescriptionField({
       <div className="min-w-0">
         <ComboTagPreview combo={combo} description={draft.trim() === '' ? null : draft} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The combo's name, renamed in place (COMBO-RENAME): a pencil swaps the title for an input
+ * with Save and Cancel, the same shape as the Family code edit on the Variants tab
+ * (`ProductVariantsTab.tsx`). Enter saves, Escape cancels. The refusals are answered under the
+ * input, where the name that has to change is.
+ */
+function ComboNameField({
+  name,
+  canEdit,
+  onRename,
+}: {
+  name: string;
+  canEdit: boolean;
+  /** Resolves once saved, rejects with the refusal (`status` set when the server answered). */
+  onRename: (next: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const start = () => {
+    setDraft(name);
+    setError(null);
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setError(null);
+  };
+  const save = async () => {
+    const next = draft.trim();
+    if (!next) {
+      setError('A combo needs a name');
+      return;
+    }
+    if (next === name) {
+      cancel();
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    // Awaited rather than per-call callbacks: the section shares one update mutation with the
+    // price and description edits, and a later `mutate` drops an earlier call's callbacks.
+    try {
+      await onRename(next);
+      setEditing(false);
+    } catch (caught) {
+      const failure = caught as Error & { status?: number };
+      setError(
+        failure.status === 409
+          ? 'Another combo on this product already has this name'
+          : failure.message || 'Failed to rename the combo',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <p className="min-w-0 truncate font-medium" title={name}>
+          {name}
+        </p>
+        {canEdit ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={start}
+            aria-label={`Rename combo ${name}`}
+          >
+            <Pencil className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          aria-label="Combo name"
+          // Its own full row on a phone, so the name is readable while it is typed (375px).
+          className="min-w-0 basis-full sm:max-w-md sm:flex-1 sm:basis-auto"
+          value={draft}
+          maxLength={COMBO_NAME_MAX}
+          autoFocus
+          disabled={saving}
+          aria-invalid={error ? true : undefined}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (error) setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void save();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+        />
+        <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
+          Save
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -450,6 +572,7 @@ interface ComboBlockProps {
   isDeleting: boolean;
   removingPartId: string | null;
   onDelete: () => void;
+  onCopy: () => void;
   onRemovePart: (part: ProductComboPartRow) => void;
   onChoiceGroup: (part: ProductComboPartRow, label: string | null) => void;
   onPartWrite: (
@@ -458,6 +581,7 @@ interface ComboBlockProps {
     revert?: () => void,
   ) => void;
   onComboWrite: (write: ProductComboUpdate, revert?: () => void) => void;
+  onRename: (name: string) => Promise<unknown>;
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
@@ -469,10 +593,12 @@ function ComboBlock({
   isDeleting,
   removingPartId,
   onDelete,
+  onCopy,
   onRemovePart,
   onChoiceGroup,
   onPartWrite,
   onComboWrite,
+  onRename,
   onAddPart,
   addPartError,
   isAddingPart,
@@ -519,26 +645,37 @@ function ComboBlock({
 
   return (
     <div className="rounded-lg border" data-combo-id={combo.id} data-testid="combo-block">
-      <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="min-w-0 truncate font-medium" title={combo.name}>
-          {combo.name}
-        </p>
+      <div className="flex items-start justify-between gap-2 border-b p-3">
+        <ComboNameField name={combo.name} canEdit={canEdit} onRename={onRename} />
         {canEdit ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0 justify-self-start"
-            onClick={onDelete}
-            disabled={isDeleting}
-            aria-label={`Delete combo ${combo.name}`}
-          >
-            {isDeleting ? (
-              <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : (
-              <Trash2 className="size-4 text-destructive" />
-            )}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {/* COMBO-COPY-TO-PRODUCTS: this combo, as it is, onto hand-picked products. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={onCopy}
+              aria-label={`Copy combo ${combo.name} to other products`}
+            >
+              <Copy className="size-4" />
+              <span className="hidden sm:inline">Copy to other products</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              disabled={isDeleting}
+              aria-label={`Delete combo ${combo.name}`}
+            >
+              {isDeleting ? (
+                <LoaderCircleIcon className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4 text-destructive" />
+              )}
+            </Button>
+          </div>
         ) : null}
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
@@ -568,7 +705,7 @@ function ComboBlock({
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
             />
           </div>
-          <div className="sm:col-span-2">
+          <div className="min-w-0 sm:col-span-2">
             <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit />
           </div>
         </div>
@@ -580,7 +717,7 @@ function ComboBlock({
             <p className="text-xs text-muted-foreground">Description</p>
             <RichTextView value={combo.description} />
           </div>
-          <div className="sm:col-span-2">
+          <div className="min-w-0 sm:col-span-2">
             <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit={false} />
           </div>
         </div>
@@ -651,6 +788,7 @@ function ComboBlock({
  */
 export function ProductCombosSection({ productId }: { productId: string }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [copying, setCopying] = useState<ProductComboRow | null>(null);
   const [addPartError, setAddPartError] = useState<{ comboId: string; message: string } | null>(
     null,
   );
@@ -728,6 +866,7 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 isDeleting={comboDeletion.targetId === combo.id && comboDeletion.isPending}
                 removingPartId={partDeletion.isPending ? partDeletion.targetId : null}
                 onDelete={() => comboDeletion.run({ id: combo.id, subject: combo.name })}
+                onCopy={() => setCopying(combo)}
                 onRemovePart={(part) =>
                   partDeletion.run({ id: part.id, subject: `${part.code} from ${combo.name}` })
                 }
@@ -740,6 +879,9 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 onComboWrite={(write, revert) =>
                   updateCombo.mutate({ comboId: combo.id, write }, { onError: revert })
                 }
+                onRename={(name) =>
+                  updateCombo.mutateAsync({ comboId: combo.id, write: { name } })
+                }
                 onAddPart={handleAddPart}
                 addPartError={
                   addPartError?.comboId === combo.id ? addPartError.message : null
@@ -750,6 +892,16 @@ export function ProductCombosSection({ productId }: { productId: string }) {
           </div>
         )}
       </CardContent>
+      {/* Mounted only while open: its product grid queries nothing until the button is pressed. */}
+      {canEdit && copying ? (
+        <CopyComboDialog
+          open
+          onOpenChange={(next) => !next && setCopying(null)}
+          sourceProductId={productId}
+          comboId={copying.id}
+          comboName={copying.name}
+        />
+      ) : null}
       {canEdit ? (
         <AddComboModal
           open={addOpen}

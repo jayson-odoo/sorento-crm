@@ -645,14 +645,24 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
+def _handler_town_snapshot(db, task):
+    """Scheduled task `town_snapshot` (SORENTO-TOWN): rebuild every active company's town
+    snapshot. The build opens its own sessions; outside 07:00-22:05 Malaysia time it does
+    nothing. A failed company raises after the rest are built, so it lands as the task's
+    last error rather than a log line."""
+    from app.services.town.snapshot import run_town_snapshot_tick
+
+    return run_town_snapshot_tick()
+
+
 def _panel_draft_purge_tick():
     """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
     Owns its own DB session; best-effort and never raises."""
     try:
-        from app.services.chatbot.panel_files import purge_drafts
+        from app.tasks.chat_turns import purge_panel_drafts
 
         with scheduler_session("panel_draft_purge") as db:
-            purge_drafts(db)
+            purge_panel_drafts(db)
     except Exception as e:
         logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
 
@@ -866,6 +876,10 @@ def register_task_handlers():
     register_handler("project_staleness_sweep", _handler_project_staleness_sweep)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
+    # SORENTO-TOWN: a `scheduled_tasks` row (town_0002), every 3 minutes; the job itself keeps
+    # to 07:00-22:05 MYT. It was a bare APScheduler job, invisible on Scheduled Tasks. Off the
+    # heartbeat thread: a build takes seconds (ranking capped at 30s) every 3 minutes.
+    register_handler("town_snapshot", _handler_town_snapshot, background=True)
 
 
 def start_scheduler():

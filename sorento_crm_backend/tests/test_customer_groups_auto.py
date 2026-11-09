@@ -2,7 +2,7 @@
 
 Owner, 5 Oct 2026: "I need script to set automatically, not sheet". Restores the name rule the
 dev seed used (ec2dd5b79 `plan_groups`): per company, a family of 2+ ledgers sharing
-`trading_name_key(name)` with at least one numbered account, CASH / SHOPEE / LAZADA left out.
+`ledger_family_key(name)` with at least one numbered account, CASH / SHOPEE / LAZADA left out.
 It only fills ledgers with no group, reuses a same-named group, and never splits a debtor code
 across two groups (PR #1475 treats that as a merge conflict). Fixtures only, no real data.
 """

@@ -431,7 +431,20 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
         converted["tag_template_id"] = clean.get("tag_template_id")
     if "price_type" in raw:
         converted["price_type"] = clean.get("price_type")
+    # PRICETAG-UPGRADE-VARIANTS S3: same rule, absent carries the old line's unticked members.
+    if "excluded_variant_ids" in raw:
+        converted["excluded_variant_ids"] = clean.get("excluded_variant_ids") or []
     return converted
+
+
+def _current_members(db: Session, product_id, ids: list) -> list:
+    """`ids` narrowed to the members the product's variant tree holds today, order kept."""
+    if not ids:
+        return []
+    from app.services.dealer_kit.variant_service import variant_members
+
+    members = {m["product_id"] for m in variant_members(db, product_id)}
+    return [i for i in ids if i in members]
 
 
 def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
@@ -537,6 +550,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 old.manual_sell_price,
                 old.tag_template_id,
                 old.price_type,
+                list(old.excluded_variant_ids or []),
             )
             for old in row.lines
         }
@@ -551,6 +565,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                     manual_sell_price,
                     tag_template_id,
                     price_type,
+                    excluded_variant_ids,
                 ) = old_by_key[key]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
@@ -574,6 +589,13 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 line.setdefault("manual_sell_price", manual_sell_price)
                 line.setdefault("tag_template_id", tag_template_id)
                 line.setdefault("price_type", price_type)
+                # PRICETAG-UPGRADE-VARIANTS: a carried list keeps only today's members, so an id
+                # whose product left the family since (re-parented, re-coded) never blocks the
+                # revision; only ids the client sent itself are refused (NOT_A_VARIANT).
+                if "excluded_variant_ids" not in line:
+                    line["excluded_variant_ids"] = _current_members(
+                        db, line.get("product_id"), excluded_variant_ids
+                    )
         # Security review (this round): a revision is a PORTAL CONTACT
         # writing, exactly like create/update - `replace_lines` with no
         # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),

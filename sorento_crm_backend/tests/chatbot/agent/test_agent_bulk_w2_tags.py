@@ -144,8 +144,13 @@ def test_01_the_batch_tool_offers_both_writes_with_the_slug_and_neither_without(
     # this pins membership, not the whole enum (MAIN-RED-4).
     assert GRANT in enum and TAGS in enum
 
+    # UAC A1 (DEALER-ACCESS-PORTAL): an edit_own holder gets the batch tool for the grant, not for the tags write;
+    # neither contacts slug, no batch tool at all.
     own = make_world(db, slugs=(EDIT_OWN,), superadmin=False)
-    assert batch.batch_tool_schema(db, ctx_of(db, own)) is None
+    own_enum = batch.batch_tool_schema(db, ctx_of(db, own))["function"]["parameters"]["properties"]["write"]["enum"]
+    assert GRANT in own_enum and TAGS not in own_enum
+    neither = make_world(db, slugs=("sales.customer_asks.view",), superadmin=False)
+    assert batch.batch_tool_schema(db, ctx_of(db, neither)) is None
     steps = []
     out = batch.propose(db, ctx_of(db, own), {"write": TAGS, "rows": [row_(fake_phone(), add=["x"])]}, steps,
                         seen_ids=set())

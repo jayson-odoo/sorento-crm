@@ -65,6 +65,7 @@ const ENTITY_ROUTES: Record<string, string> = {
   sponsorship_form: '/procurement-management/purchase-requests',
   product_drawing: '/master-data-management/products',
   product_photo: '/master-data-management/products',
+  new_product_application: '/procurement-management/new-product-applications',
 };
 
 function taskHref(t: KpiTaskRow): string {

@@ -18,7 +18,9 @@ ADDED_BY_NPA_0002 = {
 # NPA-FROM-SI (#2233, migration npasi_0001_lineage) added the purchasing new-code columns to the
 # header table. Read from that migration's own DDL, table-qualified, so a column is only excused
 # here when the later migration really adds it to new_product_applications.
-LATER_MIGRATIONS = ("npasi_0001_lineage",)
+# NPA-FORM-SLA (#2261, migration npasla_0002_npa_revision_no) added revision_no to the header
+# table the same way.
+LATER_MIGRATIONS = ("npasi_0001_lineage", "npasla_0002_npa_revision_no")
 
 
 def _added_by_later_migrations(table: str) -> set[str]:

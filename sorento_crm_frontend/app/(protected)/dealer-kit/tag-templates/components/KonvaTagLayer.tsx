@@ -52,7 +52,7 @@ import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-tex
 import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
-import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
+import { featureIconRow, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoryBoxLayout,
   accessoryCardInner,
@@ -63,14 +63,17 @@ import {
   fitLinePt,
   ptToMm,
   sampleAccessories,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
+  accessoryDesignSamples,
   boxColours,
   effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardElementsForDesign,
+  cardIconLayout,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -435,6 +438,9 @@ function LayerContent({
           accessories={display?.accessories}
           editing={display?.accessoryEditing}
           boxStyle={display?.accessoryBoxStyle}
+          cardIcons={display?.cardIcons}
+          iconUrls={display?.iconUrls}
+          headerHidden={display?.accessoryHeaderHidden}
         />
       );
 
@@ -1179,6 +1185,9 @@ function AccessoriesContent({
   accessories,
   editing,
   boxStyle,
+  cardIcons,
+  iconUrls,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1189,6 +1198,9 @@ function AccessoriesContent({
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
   boxStyle?: TagAccessoryBoxStyle | null;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
 }) {
   // The previewed product / combo may name its own box style: it replaces the design, not the place.
   const props = effectiveBoxProps(ownProps, boxStyle);
@@ -1204,6 +1216,9 @@ function AccessoriesContent({
         props={props}
         accessories={accessories}
         editing={editing}
+        cardIcons={cardIcons}
+        iconUrls={iconUrls}
+        headerHidden={headerHidden}
       />
     );
   }
@@ -1240,7 +1255,10 @@ function AccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
   return (
     <>
       {box.frame && (
@@ -1254,34 +1272,7 @@ function AccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
-        // Breaks the border behind a header that sits on it (legend style).
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
-        />
-      )}
-      {box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
@@ -1332,6 +1323,7 @@ function AccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
           <>
@@ -1374,6 +1366,9 @@ function DesignedAccessoriesContent({
   props,
   accessories,
   editing,
+  cardIcons,
+  iconUrls,
+  headerHidden,
 }: {
   w: number;
   h: number;
@@ -1383,8 +1378,12 @@ function DesignedAccessoriesContent({
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
 }) {
-  const items = accessories ?? sampleAccessories();
+  // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
+  const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
   if (box.shown === 0) {
     return (
@@ -1403,8 +1402,11 @@ function DesignedAccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
   const shownItems = items.slice(0, box.shown);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
   return (
     <>
       {box.frame && (
@@ -1418,33 +1420,7 @@ function DesignedAccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
-        />
-      )}
-      {box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1462,8 +1438,8 @@ function DesignedAccessoriesContent({
               cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
             />
             {(editing && i === 0
-              ? cardElementsForDesign(item, props.card!)
-              : cardElementsFor(item, props.card!)
+              ? cardElementsForDesign(item, props.card!, cardIcons)
+              : cardElementsFor(item, props.card!, cardIcons)
             ).map((element) => (
               <CardElementNode
                 key={element.id}
@@ -1471,11 +1447,13 @@ function DesignedAccessoriesContent({
                 factor={box.scale}
                 scale={scale}
                 boxFont={props.fontFamily}
+                iconUrls={iconUrls}
               />
             ))}
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <Group x={px(box.footer.x_mm)} y={px(box.footer.y_mm)}>
           {footerElementsFor(boxColours(shownItems), props.footer).map((element) => (
@@ -1520,11 +1498,13 @@ function CardElementNode({
   factor,
   scale,
   boxFont,
+  iconUrls,
 }: {
   element: ResolvedCardElement;
   factor: number;
   scale: number;
   boxFont?: string;
+  iconUrls?: Record<string, string>;
 }) {
   const px = (mm: number) => mm2px(mm * factor, scale);
   const x = px(element.x_mm);
@@ -1572,6 +1552,41 @@ function CardElementNode({
           />
         </Group>
       );
+    case 'feature_icons': {
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
+      const icons = element.icons ?? [];
+      const row = cardIconLayout(element, icons.length, factor);
+      if (row.length === 0) {
+        // Designer only (no icon to sample): where the icons go.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            stroke="#3b82f6"
+            strokeWidth={1}
+            dash={[3, 3]}
+            listening={false}
+          />
+        );
+      }
+      return (
+        <Group x={x} y={y}>
+          {row.map((cell, i) => (
+            <Group key={`${icons[i].id}-${i}`} x={mm2px(cell.x_mm, scale)} y={mm2px(cell.y_mm, scale)}>
+              <ImageContent
+                w={mm2px(cell.size_mm, scale)}
+                h={mm2px(cell.size_mm, scale)}
+                url={iconUrls?.[icons[i].id] ?? null}
+                fit="contain"
+                maskShape="none"
+              />
+            </Group>
+          ))}
+        </Group>
+      );
+    }
     case 'colour_dots': {
       const colours = element.colours ?? [];
       const dots = colourDotLayout(element, colours.length, factor);
@@ -1679,6 +1694,63 @@ function CardTextNode({
   }
   return (
     <TextContent props={props} w={w} h={h} widthMm={widthMm} heightMm={heightMm} scale={scale} text={text} />
+  );
+}
+
+
+/**
+ * PRICETAG-HEADER-DRAG: the accessories box header as the canvas draws it, from the shared layout's
+ * `header`: the band's background (or the legend break on the border) and its text, padded, one
+ * line or wrapping. Exported so the header drag handle draws the very same nodes while dragged.
+ * `origin`: draw relative to the band's own corner (the drag handle) instead of the box's.
+ */
+export function AccessoryHeaderNodes({
+  header: band,
+  props,
+  scale,
+  origin = 'box',
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  props: AccessoriesLayerProps;
+  scale: number;
+  origin?: 'box' | 'band';
+}) {
+  const px = (mm: number) => mm2px(mm, scale);
+  const style = accessoryHeaderStyle(props);
+  const x = origin === 'band' ? 0 : band.x_mm;
+  const y = origin === 'band' ? 0 : band.y_mm;
+  return (
+    <>
+      {band.fill && (
+        <Rect
+          x={px(x)}
+          y={px(y)}
+          width={px(band.width_mm)}
+          height={px(band.height_mm)}
+          fill={band.fill}
+          cornerRadius={px(band.radius_mm)}
+          listening={origin === 'box' ? undefined : false}
+        />
+      )}
+      <Text
+        x={px(x + band.padding.left)}
+        y={px(y + band.padding.top)}
+        width={px(Math.max(0, band.width_mm - band.padding.left - band.padding.right))}
+        height={px(Math.max(0, band.height_mm - band.padding.top - band.padding.bottom))}
+        text={props.headerText}
+        align={band.onBorder || (band.moved && !band.wrap) ? 'center' : style.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(style)}
+        textDecoration={konvaDecoration(style)}
+        fontFamily={style.fontFamily ?? undefined}
+        letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(band.fontSize_pt))}
+        fill={style.color}
+        wrap={band.wrap ? 'word' : 'none'}
+        lineHeight={band.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+        listening={origin === 'box' ? undefined : false}
+      />
+    </>
   );
 }
 

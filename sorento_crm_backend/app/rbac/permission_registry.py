@@ -1131,10 +1131,11 @@ PERMISSION_REGISTRY.extend([
 ])
 
 # AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
-# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO
-# role there. Holding `user_management.contacts.edit` allows the same for any contact.
+# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`; granted to role
+# `salesperson` by `dap_0001_dealer_access` (DEALER-ACCESS-PORTAL, which also lets it grant access).
+# Holding `user_management.contacts.edit` allows the same for any contact.
 PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.edit_own",
     "name": "Edit Own Dealer Contacts' Access",
-    "description": "Change the role or end the access of dealer contacts linked to customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
+    "description": "Give, change or end the access of dealer contacts on customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
 })

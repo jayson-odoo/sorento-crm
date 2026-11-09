@@ -197,6 +197,10 @@ export function useNewProductApplicationMutations() {
     void queryClient.invalidateQueries({
       queryKey: ['new-product-application'],
     });
+    // Every move can start, answer, resolve or void a Form SLA stage: re-read the SLA tab and the
+    // handling lock, as the stock inquiry page does after its response actions (owner re-test 9 Nov).
+    void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers'] });
+    void queryClient.invalidateQueries({ queryKey: ['form-handling-tracker'] });
   };
   const fail = (fallback: string) => (error: Error) =>
     toast.error(error.message || fallback);

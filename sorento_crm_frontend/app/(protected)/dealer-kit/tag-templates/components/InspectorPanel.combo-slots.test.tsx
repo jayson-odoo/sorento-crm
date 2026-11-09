@@ -69,6 +69,9 @@ const COMBO_SLOTS = [
   'combo_description',
   'combo_choices',
   'combo_topups',
+  // PRICETAG-UPGRADE-VARIANTS S2: the free top-up layer's two slots, in the Combo group.
+  'upgrade_topup',
+  'sell_price_with_upgrade',
 ];
 
 const EXISTING = [
@@ -93,7 +96,7 @@ const EXISTING = [
 ];
 
 describe('Inspector Field list, Combo group (AC-4.1)', () => {
-  it('offers the five combo slots in a Combo group', () => {
+  it('offers the combo slots in a Combo group', () => {
     const options = fieldOptions();
     const combo = options.filter((option) => COMBO_SLOTS.includes(option.value));
     expect(combo.map((option) => option.value)).toEqual(COMBO_SLOTS);
