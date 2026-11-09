@@ -553,3 +553,65 @@ def test_clearing_a_picture_keeps_the_gallery_link_while_a_sibling_combo_shows_i
         ProductAttachment.product_id == target.id,
         ProductAttachment.attachment_id == second.image_attachment_id,
     ).count() == 1, "the sibling combo still shows it in this product's gallery"
+
+
+def test_a_picture_shared_by_copies_survives_while_any_combo_still_shows_it(db, monkeypatch, storage):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source, _ = _bathtub_combo(db)
+    target = _product(db, "ZZBT1835")
+    assert _copy(client, source, [target]).status_code == 200
+    [copy] = _combos_on(db, target)
+    picture = source.image_attachment_id
+    # The target's gallery link goes away by hand; only the copied combo still shows the picture.
+    db.query(ProductAttachment).filter(
+        ProductAttachment.product_id == target.id, ProductAttachment.attachment_id == picture
+    ).delete(synchronize_session=False)
+    db.flush()
+
+    assert client.delete(f"/api/v1/master-data/product-combos/{source.id}/image").status_code == 204
+    db.expire_all()
+    assert db.query(Attachment).filter(Attachment.id == picture).first() is not None
+    assert db.get(ProductCombo, copy.id).image_attachment_id == picture
+
+
+def test_overwrite_keeps_an_old_picture_something_else_still_points_at(db, monkeypatch, storage):
+    from app.models.accessory import Accessory
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source, _ = _bathtub_combo(db)
+    clash = _product(db, "ZZBT1835")
+    old = _existing(db, clash)
+    uploaded = client.post(
+        f"/api/v1/master-data/product-combos/{old.id}/image",
+        files={"file": ("old.jpg", bytes.fromhex("ffd8ffe000104a4649460001") + b"\x00" * 32 + bytes.fromhex("ffd9"), "image/jpeg")},
+    )
+    assert uploaded.status_code in (200, 201), uploaded.text
+    db.expire_all()
+    p_old = db.get(ProductCombo, old.id).image_attachment_id
+    assert p_old is not None
+    accessory = _accessory(db, _name("KEEPPIC"))
+    accessory.image_attachment_id = p_old
+    db.flush()
+    deleted: list[str] = []
+    real_delete = storage.delete_file
+
+    def spy(key):
+        deleted.append(key)
+        return real_delete(key)
+
+    monkeypatch.setattr(storage, "delete_file", spy)
+
+    assert _copy(client, source, [clash], overwrite_product_ids=[clash.id]).status_code == 200
+    db.expire_all()
+    assert db.query(Attachment).filter(Attachment.id == p_old).first() is not None
+    assert db.get(Accessory, accessory.id).image_attachment_id == p_old
+    assert deleted == [], f"storage delete issued for a picture still in use: {deleted}"
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_no_template_permission_but_nothing_to_withhold_reports_links_copied(db, monkeypatch, dry_run):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    source, _ = _bathtub_combo(db)
+    response = _copy(client, source, [_product(db, "ZZBT1835")], dry_run=dry_run)
+    assert response.status_code == 200, response.text
+    assert response.json()["template_links_copied"] is True

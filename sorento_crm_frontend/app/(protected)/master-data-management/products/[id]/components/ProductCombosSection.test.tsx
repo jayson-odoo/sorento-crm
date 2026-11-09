@@ -459,16 +459,27 @@ describe('ProductCombosSection copy to other products', () => {
     expect(blocks).toHaveLength(2);
     expect(screen.queryByTestId('copy-combo-dialog')).toBeNull();
 
-    fireEvent.click(within(blocks[1]).getByRole('button', { name: 'Copy to other products' }));
+    fireEvent.click(within(blocks[1]).getByRole('button', { name: 'Copy combo 4 in 1 to other products' }));
     const dialog = screen.getByTestId('copy-combo-dialog');
     expect(dialog.getAttribute('data-combo')).toBe('combo-4');
     expect(dialog.textContent).toBe('4 in 1');
+  });
+
+  it('keeps the copy button from eating the combo name at 375px: icon only below sm, full accessible name', () => {
+    combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
+    render(<ProductCombosSection productId={PRODUCT_ID} />);
+    const button = screen.getByRole('button', { name: 'Copy combo 3 in 1 to other products' });
+    const label = within(button).getByText('Copy to other products');
+    expect(label.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(label.className).toMatch(/(^|\s)sm:inline(\s|$)/);
+    fireEvent.click(button);
+    expect(screen.getByTestId('copy-combo-dialog').getAttribute('data-combo')).toBe('combo-3');
   });
 
   it('is hidden from someone who cannot edit products', () => {
     perms.canEdit = false;
     combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
     render(<ProductCombosSection productId={PRODUCT_ID} />);
-    expect(screen.queryByRole('button', { name: 'Copy to other products' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Copy combo .* to other products$/ })).toBeNull();
   });
 });
