@@ -280,7 +280,7 @@ def person_rows(db, uid, **kw) -> list[dict]:
         ("get", f"{BASE}/accounts?company=SRT", None),
         ("get", f"{BASE}/people", None),
         ("post", f"{BASE}/grant", {"company": "SRT", "account_ids": ["x"], "people": []}),
-        ("put", f"{BASE}/people/{uuid.uuid4()}", {"company": "SRT", "role": "employee", "account_ids": ["x"]}),
+        ("put", f"{BASE}/people/00000000-0000-4000-8000-000000000001", {"company": "SRT", "role": "employee", "account_ids": ["x"]}),
     ],
 )
 def test_S1_every_route_is_403_without_edit_own(db, api, method, path, body):

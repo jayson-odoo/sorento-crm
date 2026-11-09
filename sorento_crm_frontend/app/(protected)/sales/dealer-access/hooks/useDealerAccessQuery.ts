@@ -1,4 +1,5 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getAccounts,
   getPeople,
@@ -11,9 +12,9 @@ const ACCOUNTS_KEY = 'dealer-access-accounts';
 /** The people who hold access to my accounts, one row per (person, company). */
 export function useDealerAccessPeopleQuery(params: DealerAccessPeopleParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...DEALER_ACCESS_KEY, params],
     queryFn: () => getPeople(params),
-    placeholderData: keepPreviousData,
   });
 }
 

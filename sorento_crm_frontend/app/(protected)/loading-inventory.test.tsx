@@ -329,7 +329,9 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // segment with its own `loading.tsx` (ListPageSkeleton). Total: 173.
     // CERT-LINK-CLEANUP (#2249): `master-data-management/certificates/links` is a new DataGrid list
     // segment with its own `loading.tsx` (ListPageSkeleton). Total: 174.
-    expect(requiredSegmentNames.length).toBe(174);
+    // DEALER-ACCESS-SCREEN (#2294): `sales/dealer-access` is a new DataGrid list segment with its own
+    // `loading.tsx` (ListPageSkeleton). Total: 175.
+    expect(requiredSegmentNames.length).toBe(175);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);
