@@ -1318,3 +1318,79 @@ def test_S8_grant_for_mocha_with_a_sorento_only_request_scope(db):
 
     assert out["rows"][0]["created"] is True
     assert state(db, phone)["links"] == [str(w.cust_b.id)]
+
+
+# ================================================================== S5 the level is the owner TAG
+
+
+NOTHING = "Nothing to change"
+LEGACY_TYPES = ("end_user", "dealer", "cabana_dealer")
+
+
+def legacy_dealer(db, o, *, customers, name="ZZT Legacy Dealer"):
+    """Dealer types but no owner tag: the 33 of 44 real rows the crew found."""
+    owner_tag(db, SRT_TAG)
+    return dealer(db, o.w, types=LEGACY_TYPES, customers=customers, name=name)
+
+
+def test_S5_tag_a_contact_with_dealer_types_but_no_owner_tag_lists_as_employee_and_promote_adds_the_tag(db):
+    o = two_sales(db)
+    w = o.w
+    person = legacy_dealer(db, o, customers=(w.cust_a,))
+
+    assert [r["access"] for r in person_rows(db, o.s1)] == ["employee"]
+    service().update(db, o.s1, str(person.id), "SRT", "owner", ids_of(w.cust_a))
+
+    assert SRT_TAG in tags_of(db, person.id)
+    assert [r["access"] for r in person_rows(db, o.s1)] == ["owner"]
+
+
+def test_S5_tag_demoting_that_contact_removes_the_dealer_types_and_keeps_end_user(db):
+    o = two_sales(db)
+    w = o.w
+    person = legacy_dealer(db, o, customers=(w.cust_a,))
+
+    out = service().update(db, o.s1, str(person.id), "SRT", "employee", ids_of(w.cust_a))
+
+    assert out["id"] == str(person.id)
+    assert state(db, person.phone_number)["types"] == ["end_user"]
+
+
+def test_S5_tag_the_agent_demote_of_that_contact_removes_the_dealer_types(db):
+    from app.services.chatbot.agent import writes
+
+    o = two_sales(db)
+    w = o.w
+    person = legacy_dealer(db, o, customers=(w.cust_a,))
+    user = _load_user_dict_from_db(db, o.s1)
+
+    out = writes._contact_execute(db, user, {"contact_id": str(person.id), "role": "employee"})
+
+    assert out["id"] == str(person.id)
+    assert state(db, person.phone_number)["types"] == ["end_user"]
+
+
+def test_S5_tag_promoting_that_contact_when_another_salesperson_also_has_it_is_refused(db):
+    o = two_sales(db)
+    w = o.w
+    person = legacy_dealer(db, o, customers=(w.cust_a, o.theirs))
+
+    with pytest.raises(AppException) as err:
+        service().update(db, o.s1, str(person.id), "SRT", "owner", ids_of(w.cust_a))
+
+    assert err.value.status_code == 422 and err.value.message == DEMOTE_REFUSED
+    assert SRT_TAG not in tags_of(db, person.id)
+
+
+def test_S5_tag_a_contact_that_already_holds_the_tag_has_nothing_to_promote(db):
+    from app.services.chatbot.agent import writes
+
+    o = two_sales(db)
+    w = o.w
+    person = owner_dealer(db, w, customers=(w.cust_a,), name="ZZT Already Owner")
+    user = _load_user_dict_from_db(db, o.s1)
+
+    with pytest.raises(AppException) as err:
+        writes._contact_execute(db, user, {"contact_id": str(person.id), "role": "owner"})
+
+    assert NOTHING in err.value.message

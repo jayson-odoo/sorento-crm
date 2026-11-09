@@ -35,6 +35,22 @@ def tags_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[d
     return out
 
 
+def owner_codes_by_contact(db: Session, contact_ids: Iterable[str], company_codes: Iterable[str]) -> dict[str, set[str]]:
+    """`{contact_id: company codes whose STANDARD Business owner tag the contact holds}`: the one test of the owner
+    level (owner ruling 9 Nov: levels are contact tags, not access types), for the Dealer access list and the access
+    write path alike so they cannot drift."""
+    ids = [str(i) for i in contact_ids]
+    tags = {code: owner_tag(db, code) for code in set(company_codes)}
+    held = tags_by_contact(db, ids)
+    return {
+        cid: {
+            code for code, tag in tags.items()
+            if tag is not None and any(t["id"] == str(tag.id) for t in held.get(cid, []))
+        }
+        for cid in ids
+    }
+
+
 def is_standard_owner_tag(tag: ContactTag, company_code: str) -> bool:
     """Does the tag set exactly the company's template owner types and nothing else (UAC A15, order aside)?"""
     from app.services.contact_access_sheet_service import TEMPLATE

@@ -112,7 +112,7 @@ def list_people(
     from app.models.access import RespondContact, RespondContactCustomer
     from app.models.company import Company
     from app.models.user import User
-    from app.services.contact_tag_service import owner_tag, tags_by_contact
+    from app.services.contact_tag_service import owner_codes_by_contact, owner_tag
 
     mine = _own_customers(db, user_id)
     if not mine:
@@ -144,8 +144,8 @@ def list_people(
             for r in db.query(RespondContact.id, RespondContact.name, RespondContact.phone_number)
             .filter(RespondContact.id.in_(contact_ids))
         }
-        held = tags_by_contact(db, contact_ids)
         tag_for = {code: owner_tag(db, code) for code in set(code_of.values())}
+        owner_of = owner_codes_by_contact(db, contact_ids, set(code_of.values()))
     company_name = {code: name_of[cid] for cid, code in code_of.items()}
 
     wanted_companies = {str(c).strip().upper() for c in companies or [] if str(c).strip()}
@@ -157,7 +157,7 @@ def list_people(
         if contact is None or (wanted_companies and code not in wanted_companies):
             continue
         tag = tag_for.get(code)
-        is_owner = tag is not None and any(t["id"] == str(tag.id) for t in held.get(contact_id, []))
+        is_owner = code in owner_of.get(contact_id, set())
         level = "owner" if is_owner else "employee"
         if access and access != level:
             continue
@@ -255,7 +255,7 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
     company)."""
     from app.models.access import RespondContact, RespondContactCustomer
     from app.services.company_scope_resolver import grants_scope
-    from app.services.contact_tag_service import owner_tag, tags_by_contact
+    from app.services.contact_tag_service import owner_codes_by_contact
 
     _editable(db, user_id, contact_id)
     row = _company_row(db, user_id, company)
@@ -274,9 +274,8 @@ def update(db: Session, user_id: str, contact_id: str, company: str, role: str, 
             str(c) for (c,) in db.query(RespondContactCustomer.customer_id)
             .filter(RespondContactCustomer.contact_id == str(contact_id))
         }
-        tag = owner_tag(db, code)
-        tags = tags_by_contact(db, [str(contact_id)]).get(str(contact_id), [])
-    current = "owner" if tag is not None and any(t["id"] == str(tag.id) for t in tags) else "employee"
+        owned = owner_codes_by_contact(db, [str(contact_id)], [code]).get(str(contact_id), set())
+    current = "owner" if code in owned else "employee"
     add = [c for c in picked if str(c.id) not in held]
     picked_ids = {str(c.id) for c in picked}
     change: dict = {"contact_id": str(contact_id), "unlink_customer_ids": sorted((held & mine) - picked_ids)}
