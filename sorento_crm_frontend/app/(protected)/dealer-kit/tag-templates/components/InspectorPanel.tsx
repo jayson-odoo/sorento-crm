@@ -543,11 +543,13 @@ export function InspectorPanel({
               onChange={(v: string) => {
                 // The upgrade figures start with the words the card prints before them: binding and
                 // prefix go in ONE update, so one undo takes both back.
-                const prefix = UPGRADE_SLOT_PREFIX[v];
-                const seedPrefix = prefix && layer.props.kind === 'text' && layer.props.prefix === undefined;
+                const next =
+                  layer.props.kind === 'text'
+                    ? switchedPrefix(layer.props.prefix, layer.slot_binding, v, UPGRADE_SLOT_PREFIX)
+                    : null;
                 update({
                   slot_binding: (v === '__none__' ? null : v) as SlotBinding,
-                  ...(seedPrefix ? { props: { ...layer.props, prefix } as TagLayerProps } : {}),
+                  ...(next ? { props: { ...layer.props, prefix: next.prefix } as TagLayerProps } : {}),
                 });
               }}
               options={SLOT_BINDING_OPTIONS}
@@ -699,6 +701,23 @@ const UPGRADE_SLOT_PREFIX: Record<string, string> = {
   upgrade_topup: 'TOPUP ',
   sell_price_with_upgrade: 'SP with upgrade ',
 };
+
+/**
+ * The text before the figure after the field changes (crew browser pass: a top-up printed "SP with
+ * upgrade RM 150"). An empty prefix, or one still the OLD field's default, becomes the NEW field's
+ * default (none when it has none); a prefix the designer typed is kept. Null = leave it alone.
+ */
+function switchedPrefix(
+  current: string | undefined,
+  oldField: string | null | undefined,
+  newField: string,
+  defaults: Partial<Record<string, string>>,
+): { prefix: string | undefined } | null {
+  const isDefault = current === undefined || current === '' || current === defaults[oldField ?? ''];
+  if (!isDefault) return null;
+  const prefix = defaults[newField];
+  return prefix === current ? null : { prefix };
+}
 
 function TextInspector({
   layer,
@@ -2664,8 +2683,8 @@ function AccessoryElementInspector({
             clearable={element.kind === 'text'}
             placeholder="Fixed text"
             onChange={(value: string) => {
-              const prefix = CARD_FIELD_PREFIX[value];
-              patch({ field: (value || null) as CardElement['field'], ...(prefix ? { prefix } : {}) });
+              const next = switchedPrefix(element.prefix, element.field, value, CARD_FIELD_PREFIX);
+              patch({ field: (value || null) as CardElement['field'], ...(next ? { prefix: next.prefix } : {}) });
             }}
           />
         </div>
