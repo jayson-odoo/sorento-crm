@@ -1,6 +1,6 @@
 # PLAN: price tag request screen, customer first (multi), one price tag section, notes collapsible, preview before approve
 
-Status: Waiting on owner (mock v1 at `documentation/mockups/pricetag-request-layout/index.html`, 5 behaviour questions in it). Track: full (a migration: a list of customers per request).
+Status: Waiting on owner (mock v2 at `documentation/mockups/pricetag-request-layout/index.html`; v1 feedback applied, the 5 recommendations taken as answers). Track: full (a migration: a list of customers per request).
 
 Lane: PRICETAG-REQUEST-LAYOUT. UAC: `pricetag-request-layout-acceptance-criteria.md` (written after the mock is approved).
 
@@ -45,13 +45,22 @@ Unchanged: salespeople cannot create templates; custom selling price for items w
   The preview popup already exists (`components/dealer-kit/PriceTagLivePreview.tsx:242`, `popup`
   mode on `DesignLightbox`) and opens from the Preview button only.
 
-## Proposed change (pending owner answers)
+## Owner rulings
+
+- 10 Nov, mock v1 feedback: Preview is the page's ONE call to action; it opens the preview popup,
+  whose main button is Approve (with Back to edit). No Approve button on the page itself.
+- Behaviour answers (recommendations, owner did not object): one request holds N customers; Qty is
+  the total typed, not per customer; Preferred default stays List price / Selling price with the
+  per-line flip; lists show the first customer "+N" and search matches any.
+
+## Proposed change
 
 1. Customers: `SearchableMultiSelect`; new nullable JSONB column `price_tag_requests.customers`
    (`[{code, name}]`); `debtor_code` / `debtor_name` keep the FIRST customer so list, search, SLA and
    every existing reader keep working unchanged. Submit requires at least one customer.
 2. Merge Price into "Price tags": toggle, dropzone and table in one section; Preview button moves to
-   the action row, left of Approve.
+   the action row as its primary button, and the page's Approve button goes.
 3. Additional information starts folded.
-4. Approve opens the preview popup with Back to edit + Approve; the popup's Approve runs the existing
+4. Preview runs the checks Approve runs today (`readyToFinish('approve')`), then opens the preview
+   popup with Back to edit + Approve (primary); the popup's Approve runs the existing
    `handleFinish({kind:'approve'})`.

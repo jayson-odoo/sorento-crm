@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Price tag request layout mock v1</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Price tag request layout mock v2</title>
 <style>
 :root{--fg:#18181b;--mut:#71717a;--line:#e4e4e7;--soft:#f4f4f5;--pri:#1b84ff;--new:#b45309;--newbg:#fffbeb;--err:#dc2626;--r:8px}
 *{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
@@ -33,7 +33,7 @@ ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);
 ol.q li b{display:block}
 @media(max-width:640px){.wrap{padding:16px}.acts .btn{flex:1 1 100%}.acts .sp{display:none}.ph .btn{display:none}}
 </style></head><body><div class="wrap">
-<p class="note">Mock v1 for PRICETAG-REQUEST-LAYOUT. Made-up item codes, masked customer names, no photos (the cloud sandbox cannot reach the dev database; the rows follow the shape of a real request: one combo line on SP with a promotion, one plain item on LP, one item with a typed selling price). <span class="new">NEW</span> marks what this lane changes; everything else exists today. Click section headers to fold, and try Preview and Approve.</p>
+<p class="note">Mock v2 for PRICETAG-REQUEST-LAYOUT (owner, 10 Nov: Preview is the page's one call to action; Approve lives only inside the preview). Made-up item codes, masked customer names, no photos (the cloud sandbox cannot reach the dev database; the rows follow the shape of a real request: one combo line on SP with a promotion, one plain item on LP, one item with a typed selling price). <span class="new">NEW</span> marks what this lane changes; everything else exists today. Click section headers to fold, then click Preview and approve from the popup.</p>
 
 <h2>1. Salesperson: New Price Tag Request</h2>
 <div class="ph"><h1>New Price Tag Request</h1><button class="btn">Back to price tag requests</button></div>
@@ -62,7 +62,7 @@ ol.q li b{display:block}
 <div class="sec closed" id="s-notes"><div class="sh" onclick="fold('s-notes')"><span class="chev">&#9662;</span><b>Additional information</b><span class="new">NEW folded</span><span class="sum">Optional notes for marketing</span></div>
 <div class="sb"><div><label class="lbl">Notes</label><textarea class="in" rows="3" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:6px;padding:6px" placeholder="Any additional notes..."></textarea></div></div></div>
 
-<div class="acts"><button class="btn" style="color:var(--err)">Delete Draft</button><span class="sp"></span><button class="btn">Save Draft</button><button class="btn">Escalate to marketing</button><button class="btn" onclick="openPv(false)">Preview<span class="new">NEW moved here</span></button><button class="btn p" onclick="openPv(true)">&#10003; Approve</button></div>
+<div class="acts"><button class="btn" style="color:var(--err)">Delete Draft</button><span class="sp"></span><button class="btn">Save Draft</button><button class="btn">Escalate to marketing</button><button class="btn p" onclick="openPv()">Preview<span class="new">NEW main button</span></button></div>
 
 <div class="ov" id="ov" onclick="if(event.target===this)closePv()"><div class="lb">
 <div class="lbh"><b id="pvt">Preview</b><button class="btn gh" onclick="closePv()">&#10005;</button></div>
@@ -78,20 +78,20 @@ ol.q li b{display:block}
 <li>Preferred default: <code>components/dealer-kit/PriceModeToggle.tsx</code>, moved from its own Price section (<code>:2253</code>) into Price tags</li>
 <li>Sales order upload + extract: <code>AttachmentDropzone</code> with per-file Extract into <code>AIExtractDialog</code> (<code>:2304</code>, <code>:2425</code>), unchanged, now in the same step as the table</li>
 <li>Items table (per-line LP/SP, promotion, typed selling price, template, eye preview): <code>components/dealer-kit/PriceTagLinesTable.tsx</code>, unchanged</li>
-<li>Preview button <span class="new">NEW</span>: moves from above the table (<code>PriceTagRequestForm.tsx:2324</code>) to the action row, directly left of Approve</li>
-<li>Preview popup:<code>components/dealer-kit/PriceTagLivePreview.tsx:242</code> (<code>popup</code> mode, <code>DesignLightbox</code>); <span class="new">NEW</span> footer with Back to edit + Approve when opened from Approve</li>
-<li>Approve: <code>handleFinish({kind:'approve'})</code> at <code>PriceTagRequestForm.tsx:1477</code>, now called from the popup's Approve instead of the page button</li>
+<li>Preview button <span class="new">NEW</span>: moves from above the table (<code>PriceTagRequestForm.tsx:2324</code>) to the action row and becomes its primary button; the page's own Approve button (<code>:2524</code>) is removed</li>
+<li>Preview popup:<code>components/dealer-kit/PriceTagLivePreview.tsx:242</code> (<code>popup</code> mode, <code>DesignLightbox</code>); <span class="new">NEW</span> footer with Back to edit + Approve (primary); the row eye icon keeps its plain one-tag lightbox</li>
+<li>Approve: <code>handleFinish({kind:'approve'})</code> at <code>PriceTagRequestForm.tsx:1477</code>, now called only from the popup's Approve; the checks that stop Approve today (<code>readyToFinish</code>) run on Preview, so a problem shows on the line before the popup opens</li>
 <li>Notes: Textarea at <code>:2413</code>, section now starts folded</li>
 <li>Storage <span class="new">NEW</span>: <code>price_tag_requests</code> has one <code>debtor_code</code> / <code>debtor_name</code> (<code>sorento_crm_backend/app/models/price_tag.py:97</code>); a list of customers needs a new column (question 1)</li>
 </ul>
 
-<h2>3. Behaviour questions (recommendation first)</h2>
+<h2>3. Behaviour answers (crew took the recommendations; owner did not object)</h2>
 <ol class="q">
-<li><b>Several customers: one request with N customers, or N requests?</b>(a) one request holding N customers, one doc number, one approval, one PDF. (b) Approve splits it into N requests. Recommend (a): the tags do not print the customer name, so N requests would be N identical sheets to approve.</li>
-<li><b>Does the printed quantity multiply by the number of customers?</b>(a) no, Qty (tags) is the total the salesperson types. (b) the sheet repeats once per customer. Recommend (a): the salesperson already types how many tags they need.</li>
-<li><b>Preferred default: LP / SP only, or a third "LP &amp; SP" choice?</b>(a) keep two (List price, Selling price); each line can still flip LP/SP, and LP &amp; SP stays a template type marketing sets. (b) add a third header choice. Recommend (a): a mixed request already works line by line.</li>
-<li><b>Preview button vs Approve: same popup?</b>(a) Preview opens it with Close only; Approve opens the same popup with Back to edit + Approve. (b) both show Approve. Recommend (a): Preview stays a safe look.</li>
-<li><b>Requests list and marketing's detail page with N customers.</b>(a) list shows the first customer + "+2", search matches any of them; marketing's page lists all. (b) one row per customer. Recommend (a): lists stay one line per row.</li>
+<li><b>Several customers: one request with N customers, or N requests?</b>(a) one request holding N customers, one doc number, one approval, one PDF. (b) Approve splits it into N requests. Answer (a): the tags do not print the customer name, so N requests would be N identical sheets to approve.</li>
+<li><b>Does the printed quantity multiply by the number of customers?</b>(a) no, Qty (tags) is the total the salesperson types. (b) the sheet repeats once per customer. Answer (a): the salesperson already types how many tags they need.</li>
+<li><b>Preferred default: LP / SP only, or a third "LP &amp; SP" choice?</b>(a) keep two (List price, Selling price); each line can still flip LP/SP, and LP &amp; SP stays a template type marketing sets. (b) add a third header choice. Answer (a): a mixed request already works line by line.</li>
+<li><b>Preview then approve (owner, mock v1 feedback).</b>One main button on the page, Preview. It opens the preview popup, whose main button is Approve, next to Back to edit. No Approve on the page itself.</li>
+<li><b>Requests list and marketing's detail page with N customers.</b>(a) list shows the first customer + "+2", search matches any of them; marketing's page lists all. (b) one row per customer. Answer (a): lists stay one line per row.</li>
 </ol>
 </div>
 <script>
@@ -102,10 +102,10 @@ drawMs();
 function fold(id){$(id).classList.toggle('closed')}
 document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b))});
 const T=[['ZZTKS900 + ZZTKT703','RM 800','RM 650',2],['ZZTWB501',null,'RM 320',1],['ZZTMR200','RM 450','RM 399',3]];
-function openPv(approve){
+function openPv(){
 $('tags').innerHTML=T.flatMap(([c,lp,p,n])=>Array.from({length:n},()=>`<div class="tg"><div class="im">photo</div><b>${c}</b>${lp?`<span class="lp">${lp}</span><span class="sp">${p}</span>`:`<span class="lponly">${p}</span>`}</div>`)).join('');
-$('pvt').textContent=approve?'Check the tags, then approve':'Preview';
-$('pvf').innerHTML=approve?`<span class="hint">6 tags for ${cust.length} customer${cust.length===1?'':'s'}</span><button class="btn" onclick="closePv()">Back to edit</button><button class="btn p" onclick="closePv();alert('Tag approved (mock)')">&#10003; Approve</button>`:'<button class="btn" onclick="closePv()">Close</button>';
+$('pvt').textContent='Check the tags, then approve';
+$('pvf').innerHTML=`<span class="hint">6 tags for ${cust.length} customer${cust.length===1?'':'s'}</span><button class="btn" onclick="closePv()">Back to edit</button><button class="btn p" onclick="closePv();alert('Tag approved (mock)')">&#10003; Approve</button>`;
 $('ov').classList.add('on')}
 function closePv(){$('ov').classList.remove('on')}
 </script>
