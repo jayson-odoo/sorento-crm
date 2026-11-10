@@ -620,7 +620,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
             {/* Tab: Combos (COMBO-SETTINGS-UX) */}
             <TabsContent value="combos">
-              <ProductCombosSection productId={productId} />
+              <ProductCombosSection productId={productId} productCode={product.product_code} />
             </TabsContent>
 
             {/* Tab: Stock */}

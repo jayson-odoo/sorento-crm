@@ -137,10 +137,13 @@ function defaultTag(link: ProductTagTemplateItem): string | null {
 export function ComboTagPreview({
   combo,
   description,
+  partsLine,
 }: {
   combo: ProductComboRow;
   /** The description as it stands in the editor. */
   description: string | null;
+  /** "Each part prints as" as it stands in its editor; absent = the saved one. */
+  partsLine?: string | null;
 }) {
   const links = useComboTagTemplates(combo.id);
   const ordered = useMemo(() => orderedLinks(links.data ?? []), [links.data]);
@@ -208,6 +211,7 @@ export function ComboTagPreview({
         upgrades: [],
         ...(row.combo ?? {}),
         description,
+        ...(partsLine !== undefined ? { parts_line: partsLine } : {}),
       },
     };
     return designPayloadFromResponse({
@@ -217,7 +221,7 @@ export function ComboTagPreview({
       images: preview.data.images,
       fonts: preview.data.fonts,
     });
-  }, [preview.data, combo, description]);
+  }, [preview.data, combo, description, partsLine]);
 
   // The switcher (item 4), shown only when there is a choice to make. "Open" in the viewer opens
   // whatever is drawn, so it opens the selected template.

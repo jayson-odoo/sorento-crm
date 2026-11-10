@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Copy, ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Braces, Copy, ImagePlus, LoaderCircleIcon, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import type { Editor } from '@tiptap/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +10,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import { DEFAULT_PARTS_LINE, PART_FIELDS } from '@/lib/dealer-kit/combo-parts';
+import type { MergeFieldGroup } from '@/lib/dealer-kit/merge-fields';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { RichTextView } from '@/components/dealer-kit/RichTextView';
 import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
@@ -35,7 +46,7 @@ import type {
   ProductComboRow,
   ProductComboUpdate,
 } from '../../types/productCombo.types';
-import { COMBO_NAME_MAX } from '../../types/productCombo.types';
+import { COMBO_LABEL_MAX, COMBO_NAME_MAX } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
 import { CopyComboDialog } from './CopyComboDialog';
 import { ComboTagPreview } from './ComboTagPreview';
@@ -130,24 +141,109 @@ function MoneyField({
   );
 }
 
+/** The fields the combo Description offers: the combo's own, and its positions (rule 3). */
+const DESCRIPTION_FIELD_GROUPS: MergeFieldGroup[] = ['Combo', 'Combo positions'];
+
+/**
+ * "Each part prints as" (COMBO-SETTINGS-UX rule 3): the combo's own part line, the rich template
+ * `{{combo.parts}}` repeats per part, in the same editor, in a popover. It opens on the saved line
+ * (else the default) and saves on close when it changed.
+ */
+function PartsLineField({
+  combo,
+  draft,
+  onDraft,
+  onSave,
+}: {
+  combo: ProductComboRow;
+  draft: string;
+  onDraft: (next: string) => void;
+  onSave: (next: string | null, revert: () => void) => void;
+}) {
+  const saved = combo.parts_line?.trim() ? combo.parts_line : DEFAULT_PARTS_LINE;
+  const [open, setOpen] = useState(false);
+  const editorRef = useRef<Editor | null>(null);
+  const labelId = `${combo.id}-parts-line-label`;
+  const close = () => {
+    setOpen(false);
+    if (draft !== saved) onSave(draft === DEFAULT_PARTS_LINE ? null : draft, () => onDraft(saved));
+  };
+  return (
+    <Popover open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          Each part prints as
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(32rem,calc(100vw-2rem))] space-y-2">
+        <Label id={labelId}>Each part prints as</Label>
+        <RichTextEditor
+          aria-labelledby={labelId}
+          value={toEditorHtml(draft)}
+          onChange={onDraft}
+          onEditorReady={(editor) => {
+            editorRef.current = editor;
+          }}
+          minHeight={80}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" size="sm">
+                <Braces className="size-4" />
+                Insert part field
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {PART_FIELDS.map((field) => (
+                <DropdownMenuItem
+                  key={field.path}
+                  onSelect={() => editorRef.current?.chain().focus().insertContent(`{{${field.path}}}`).run()}
+                >
+                  {field.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button type="button" size="sm" onClick={close}>
+            Done
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /**
  * The combo description in the shared rich text editor, with the tag it prints on drawn beside it.
  * Saves on blur (when focus leaves the editor, toolbar included) and only when the text changed; a
- * refused save puts the saved text back. Empty saves null. The preview follows the draft.
+ * refused save puts the saved text back. Empty saves null. The preview follows the draft, and the
+ * draft part line. "Insert field" puts a combo field in at the caret (COMBO-SETTINGS-UX rule 3).
  */
 function DescriptionField({
   combo,
   onSave,
+  onSavePartsLine,
 }: {
   combo: ProductComboRow;
   onSave: (next: string | null, revert: () => void) => void;
+  onSavePartsLine: (next: string | null, revert: () => void) => void;
 }) {
   const saved = combo.description ?? '';
   const [draft, setDraft] = useState(saved);
+  const [partsLine, setPartsLine] = useState(
+    combo.parts_line?.trim() ? combo.parts_line : DEFAULT_PARTS_LINE,
+  );
+  const [insertOpen, setInsertOpen] = useState(false);
+  const editorRef = useRef<Editor | null>(null);
   const labelId = `${combo.id}-description-label`;
   const commit = (event: React.FocusEvent<HTMLElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
+  };
+  const insertAtCaret = (content: string) => {
+    if (content) editorRef.current?.chain().focus().insertContent(content).run();
+    setInsertOpen(false);
   };
   return (
     <div className="grid gap-3 lg:grid-cols-2">
@@ -158,14 +254,74 @@ function DescriptionField({
             aria-labelledby={labelId}
             value={toEditorHtml(draft)}
             onChange={setDraft}
+            onEditorReady={(editor) => {
+              editorRef.current = editor;
+            }}
             minHeight={140}
           />
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setInsertOpen(true)}>
+            <Braces className="size-4" />
+            Insert field
+          </Button>
+          <PartsLineField
+            combo={combo}
+            draft={partsLine}
+            onDraft={setPartsLine}
+            onSave={onSavePartsLine}
+          />
+        </div>
+        <InsertFieldDialog
+          open={insertOpen}
+          value=""
+          data={null}
+          specKeys={[]}
+          groups={DESCRIPTION_FIELD_GROUPS}
+          onCancel={() => setInsertOpen(false)}
+          onDone={insertAtCaret}
+        />
       </div>
       <div className="min-w-0">
-        <ComboTagPreview combo={combo} description={draft.trim() === '' ? null : draft} />
+        <ComboTagPreview
+          combo={combo}
+          description={draft.trim() === '' ? null : draft}
+          partsLine={partsLine}
+        />
       </div>
     </div>
+  );
+}
+
+/**
+ * A combo part's label, or the main product's (COMBO-SETTINGS-UX): what the combo calls it,
+ * printed by `{{part.label}}`. Saves on blur when changed; blank saves null.
+ */
+function LabelField({
+  ariaLabel,
+  value,
+  onSave,
+}: {
+  ariaLabel: string;
+  value: string | null | undefined;
+  onSave: (next: string | null, revert: () => void) => void;
+}) {
+  const saved = value ?? '';
+  const [draft, setDraft] = useState(saved);
+  return (
+    <Input
+      aria-label={ariaLabel}
+      placeholder="Label"
+      className="h-8 w-full sm:w-56"
+      maxLength={COMBO_LABEL_MAX}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next === saved.trim()) return;
+        onSave(next === '' ? null : next, () => setDraft(saved));
+      }}
+    />
   );
 }
 
@@ -330,6 +486,19 @@ function PartRow({
           </p>
         ) : null}
         <p className="truncate text-xs text-muted-foreground">{part.dimensions || '-'}</p>
+        {canEdit ? (
+          <div className="pt-1">
+            <LabelField
+              ariaLabel={`Label for ${part.code}`}
+              value={part.label}
+              onSave={(next, revert) => onWrite({ label: next }, revert)}
+            />
+          </div>
+        ) : part.label ? (
+          <p className="truncate text-xs" title={part.label}>
+            {part.label}
+          </p>
+        ) : null}
       </div>
       {canEdit ? (
         <SearchableSelect
@@ -568,6 +737,8 @@ function ComboImageControl({
 
 interface ComboBlockProps {
   combo: ProductComboRow;
+  /** The host's own code, for the main product's label row. */
+  productCode?: string;
   canEdit: boolean;
   isDeleting: boolean;
   removingPartId: string | null;
@@ -589,6 +760,7 @@ interface ComboBlockProps {
 
 function ComboBlock({
   combo,
+  productCode,
   canEdit,
   isDeleting,
   removingPartId,
@@ -703,6 +875,7 @@ function ComboBlock({
             <DescriptionField
               combo={combo}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
+              onSavePartsLine={(next, revert) => onComboWrite({ parts_line: next }, revert)}
             />
           </div>
           <div className="min-w-0 sm:col-span-2">
@@ -730,6 +903,28 @@ function ComboBlock({
             parts and the page must not have to grow by a screen to hold one
             card. The Add part picker below stays put outside it. */}
         <div className="max-h-[22rem] space-y-3 overflow-y-auto">
+          {/* The main product's own label (COMBO-SETTINGS-UX): it leads `{{combo.parts}}`. */}
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
+            <div className="min-w-0">
+              <p className="truncate font-medium" title={productCode}>
+                {productCode || 'Main product'}
+              </p>
+              <p className="text-xs text-muted-foreground">Main product</p>
+              {canEdit ? (
+                <div className="pt-1">
+                  <LabelField
+                    ariaLabel={`Label for ${productCode || 'the main product'} (main product)`}
+                    value={combo.main_label}
+                    onSave={(next, revert) => onComboWrite({ main_label: next }, revert)}
+                  />
+                </div>
+              ) : combo.main_label ? (
+                <p className="truncate text-xs" title={combo.main_label}>
+                  {combo.main_label}
+                </p>
+              ) : null}
+            </div>
+          </div>
           {fixedParts.length > 0 ? (
             <div className="space-y-3">{fixedParts.map(partRow)}</div>
           ) : null}
@@ -786,7 +981,14 @@ function ComboBlock({
  * bundling rules). A part reads the mirror of this on its own page, read-only, as
  * "Sold with" (`ProductSoldWithSection`).
  */
-export function ProductCombosSection({ productId }: { productId: string }) {
+export function ProductCombosSection({
+  productId,
+  productCode,
+}: {
+  productId: string;
+  /** The host's own code, shown on each combo's main product row. */
+  productCode?: string;
+}) {
   const [addOpen, setAddOpen] = useState(false);
   const [copying, setCopying] = useState<ProductComboRow | null>(null);
   const [addPartError, setAddPartError] = useState<{ comboId: string; message: string } | null>(
@@ -862,6 +1064,7 @@ export function ProductCombosSection({ productId }: { productId: string }) {
               <ComboBlock
                 key={combo.id}
                 combo={combo}
+                productCode={productCode}
                 canEdit={canEdit}
                 isDeleting={comboDeletion.targetId === combo.id && comboDeletion.isPending}
                 removingPartId={partDeletion.isPending ? partDeletion.targetId : null}
