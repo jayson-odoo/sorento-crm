@@ -1,6 +1,6 @@
 # PLAN: Product costing - Purchasing vs Pricing tabs + party costing (Bath Plus, dealers)
 
-Status: Plan v5 as amended by the owner 11 Nov 00:3x (QA a, no import, QD a); QB / QE working answers until the owner confirms; red-first test list final (section 10). Build after the owner confirms QB / QE. Track: full (migration + new permission + cost gating).
+Status: Build (owner answered every question 11 Nov; build ordered). Track: full (migration + new permission + cost gating).
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
 owner's workbook Internal_Costing_Formula.xls (numbers are the owner's draft). Depends on
@@ -49,9 +49,15 @@ Owner answers on mock v5 (11 Nov 00:3x):
   changed values; a failed save keeps the edit open, `:700-730`).
 - Route and menu: `/master-data-management/costing`, a "Costing" child of the Products menu
   (`sorento_crm_frontend/config/menu.config.tsx:583`) with `permission: 'products.cost.view'`.
-- Working answers until the owner confirms (crew is explaining): QB (a) Company standard view
-  read-only (achieved mark-up vs AutoCount selling); QE all active products with the "Has cost"
-  filter ON by default, so the page opens on the costed products.
+- Owner final (11 Nov): QB (a) read-only company view; "we should not send anything to AutoCount;
+  AutoCount only has LIST PRICE": the selling column is labelled "List price (AutoCount)" and is
+  never written. QE: list ALL products, no default or hard-coded filter ("we should not have some
+  hard-coded filter to exclude something"); "Has cost" exists, OFF by default. BUILD ordered.
+- #2319 is still an open draft at build start, so the lane uses option (a): routes gate on the
+  existing `require_permission("products.cost.view")` (`app/dependencies.py:473`, admin bypass
+  included) with no import from #2319; the migration chains from main's head. Merge #2319 first so
+  the permission row and its role grants exist; masking `markup_pct` in the generic History
+  (`COST_AUDIT_KEYS`) is a one-line follow-up once #2319 is on main.
 
 ## 1. What exists today (measured, file:line)
 
@@ -336,7 +342,7 @@ x1.07, Kitchen sinks x1.10; product CGB9032B (WB 245, list price 79.00) with lin
 | B4 | `tests/test_costing_landing.py` (pure) | AC-LC-01 five figures at full precision; display rounding half-up only (31.71875 -> 31.72, 212.355 -> 212.36, 238.815 -> 238.82); ADD after SST; no rule -> +0 + flag (ST-03); product override beats category rule (ST-02) |
 | B5 | `tests/test_costing_methods.py` | in-force cost by date, `standard` packaging first else cheapest named (LC-02); primary / no primary; selected supplier / link removed; average 40.014583 with D skipped and named; last PO at the PO-date rate 31.425926 (LC-03); precedence product > party > company with source named (LC-04); no fallback (LC-05); selected supplier refused on a party and as company default (LC-06) |
 | B6 | `tests/test_costing_settings.py` | SST + default method defaults 1.10 / primary, writes audited (ST-01); category rule CRUD, mode in (add, multiply), value > 0 (ST-02) |
-| B7 | `tests/test_costing_page_rows.py` | Company standard: every active product, achieved mark-up 149.06, Final = Selling, no margin field (CG-03); `has_cost=true` returns only costed rows, `has_cost=false` adds the gaps with their reasons (CG-07, QE); party 304-R017: only its products, WB 245 34.25625 / 130.61, a row mark-up of 10% on the Jacuzzi row -> 1861.6125 / 114.81 and a row marker (CG-04, QA); reasons never 0 (CG-05); supplier expand rows A 130.61 / B 114.35 / L 34.96 (CG-06); category / brand / method / search filters; `as_of` 31 Oct uses 1.62 (CG-07) |
+| B7 | `tests/test_costing_page_rows.py` | Company standard: every product (no exclusion, inactive included), achieved mark-up 149.06, Final = list price labelled List price (AutoCount), no margin field (CG-03); no `has_cost` param = every product incl. costless rows with reasons; `has_cost=true` = costed rows only (CG-07, QE); party 304-R017: only its products, WB 245 34.25625 / 130.61, a row mark-up of 10% on the Jacuzzi row -> 1861.6125 / 114.81 and a row marker (CG-04, QA); reasons never 0 (CG-05); supplier expand rows A 130.61 / B 114.35 / L 34.96 (CG-06); category / brand / method / search filters; `as_of` 31 Oct uses 1.62 (CG-07) |
 | B8 | `tests/test_costing_page_save.py` | one batch: only changed cells written, one audit row per cell with old -> new (CG-08); clearing a row mark-up / transport / method restores the inherited value; a mark-up cell in Company standard -> 422; cost / rate / SST fields -> 422; one invalid cell -> nothing written (atomic); manage permission required, view alone -> 403 (CG-08); `products.list_price` unchanged and no AutoCount client called (monkeypatched to fail) (CG-14) |
 | B9 | `tests/test_costing_export.py` | list-query export of the filtered set read back with openpyxl: Sheet1 column order, numbers are numbers, header names the view and the "as of" date, no-cost row blank + reason (CG-09) |
 | B10 | `tests/test_party_costing_profiles.py` | one profile per customer, mark-up >= 0, method enum without selected (PC-01, LC-06); add twice = no-op, 501 ids -> 422, one product on two parties (PC-02, CG-12); unlink via the deferred-action registry; header profile edit needs manage (CG-12); profile / row mark-up / link changes audited, mark-up masked in History for a reader without cost view (PC-09) |
@@ -348,13 +354,13 @@ Frontend: vitest (jsdom), next to the component.
 
 | # | File | Tests (AC) |
 |---|---|---|
-| F1 | `app/(protected)/master-data-management/costing/components/CostingView.test.tsx` | no menu item / no page without cost view (CG-01); Sheet1 column order, explicit `size`, fixed resizable layout, `listingKey` (CG-01); party picker empty = Company standard, picked party in the URL (CG-02); standard view: achieved mark-up, Final = Selling, no Margin column (CG-03); party view Final / Margin, header chips, row marker (CG-04); reason pills, never "0.00" for unknown (CG-05); row expand supplier columns (CG-06); "Has cost" ON on first open, off shows gaps, both in the URL (CG-07); export config kind listQuery, no Import action anywhere (CG-09, CG-10) |
+| F1 | `app/(protected)/master-data-management/costing/components/CostingView.test.tsx` | no menu item / no page without cost view (CG-01); Sheet1 column order, explicit `size`, fixed resizable layout, `listingKey` (CG-01); party picker empty = Company standard, picked party in the URL (CG-02); standard view: achieved mark-up, Final = Selling, no Margin column (CG-03); party view Final / Margin, header chips, row marker (CG-04); reason pills, never "0.00" for unknown (CG-05); row expand supplier columns (CG-06); no filter on at first open, all products incl. costless; "Has cost" narrows; filters in the URL (CG-07); export config kind listQuery, no Import action anywhere (CG-09, CG-10) |
 | F2 | `app/(protected)/master-data-management/costing/components/CostingView.edit.test.tsx` | Edit is the one primary button and hidden without manage; Edit swaps Mark-up / Transport / Method cells for inputs in the same columns, other cells stay text; Mark-up input absent in Company standard; Cancel discards; Final and Margin recompute while typing; Save sends ONE request with only the changed cells; a failed Save keeps the edit open with what was typed; "applies to every party" on transport / method (CG-08) |
 | F3 | `app/(protected)/master-data-management/costing/components/CostingSettingsDialog.test.tsx` | three line tabs; dated rates with Scheduled / In force / Past and both directions; units-per-MYR entry converts; delete is a deferred action, no confirm (CG-13, ER-06, ER-07) |
 | F4 | `app/(protected)/master-data-management/products/[id]/components/ProductTargetPicker.noSource.test.tsx` | the hook works with no source product and marks already-added ids (CG-12) |
 
 Browser pass (agent-browser, cloud): sidebar from `/` to Products > Costing; Company standard
-opens with Has cost on; turn it off to see gaps; pick 304-R017; add WB 245 via the picker; Edit,
+opens on every product; turn Has cost on, then off; pick 304-R017; add WB 245 via the picker; Edit,
 set the Jacuzzi row to 10% and a transport override, Save once, open that row's History; Export;
 Settings: add a 1 Dec RMB rate; a user without cost view sees no menu item and gets 403 on the
 route; 375 px and 1280 px.
@@ -362,7 +368,7 @@ route; 375 px and 1280 px.
 Kill tests (reviewer; each must turn at least one test red): ADD before SST; average counting a
 skipped link as 0; last PO at today's rate; rate lookup `<` instead of `<=`; precedence party >
 product; the row mark-up ignored (Jacuzzi 1827.77 instead of 1861.61); Save sending every row
-instead of the changed cells; "Has cost" default off; `require_cost_view` removed from one route;
+instead of the changed cells; a hard-coded / default-on cost filter; the cost gate removed from one route;
 mark-up dropped from History masking.
 
 ## Status log
@@ -376,3 +382,4 @@ mark-up dropped from History masking.
 - 11 Nov: Q8 (a), Q9 (a) answered (Bath Plus = 304-R017); plan final, UAC file, red-first test list (section 10). Waiting on owner approval of mock v4.
 - 11 Nov 00:2x: owner reshaped the lane to one costing page (Sales > Targets pattern); plan v5 (section 0), UAC section CG, mock v5, questions QA-QE.
 - 11 Nov 00:3x: owner QA (a), no import, QD (a); QB / QE working answers; UAC + test list final for v5.
+- 11 Nov: owner final QB (a), QE all products no default filter; build started (option a for #2319).

@@ -2,8 +2,9 @@
 
 Plan: `PLAN-product-costing-10nov.md`. Mock v5 (as amended 11 Nov 00:3x): `mockups/product-costing-10nov-mockup.html`.
 Owner 00:3x: QA (a) row mark-up per party; QC no Excel import (Export stays); QD (a) page Edit then
-one Save, as Sales > Targets. Working answers until the owner confirms: QB (a), QE (a) with "Has
-cost" on by default.
+one Save, as Sales > Targets. Owner final (11 Nov): QB (a) read-only company view; "we should not send anything to AutoCount;
+AutoCount only has LIST PRICE", so the selling column is "List price (AutoCount)", never written.
+QE: ALL products listed, no default or hard-coded filter; "Has cost" exists but is OFF by default.
 Answers: owner 10 Nov 23:3x / 23:4x / 23:5x; crew 23:5x+ (Q6 a, Q7 a, Q8 a, Q9 a, vetoable calls accepted).
 Cost permission `products.cost.view` comes from SUPPLIER-COST-ACCESS (PR #2319,
 `app/services/cost_access.py`: `COST_VIEW_PERM`, `require_cost_view`, `COST_AUDIT_KEYS`).
@@ -68,16 +69,16 @@ a reason, never 0.
 - AC-CG-01 Products > Costing is one DataGrid page, visible only with `products.cost.view`
   (menu item absent, route 403 otherwise). Columns in Sheet1 order: Category, Code, Name,
   Supplier, Cost (currency + amount), Rate (units per MYR 1, as the workbook writes it), SST,
-  Transport (mode + value), Landing (RM), Cost method, Mark-up, Final (RM), Selling (RM), Margin.
+  Transport (mode + value), Landing (RM), Cost method, Mark-up, Final (RM), List price (AutoCount) (RM), Margin.
   Fixed layout, resizable, explicit sizes, saved column choices (`listingKey`).
 - AC-CG-02 A party picker sits above the grid: empty = "Company standard" (default); a customer
   (e.g. 304-R017 RELATED - BATHPLUS SDN BHD) = that party's view. The picked party and filters
   live in the URL.
-- AC-CG-03 Company standard view (QB a, working answer): every active product (QE); Mark-up =
-  achieved = (selling - landing) / landing; Final = Selling = AutoCount `list_price`; read-only
-  except Transport and Cost method in Edit; no Margin column. WB 245: 149.06%.
+- AC-CG-03 Company standard view (QB a): every product (QE: no hard-coded exclusion); Mark-up =
+  achieved = (list price - landing) / landing; Final = List price (AutoCount); read-only except
+  Transport and Cost method in Edit; no Margin column. WB 245: 149.06%.
 - AC-CG-04 Party view: the party's products only; Mark-up = the row's mark-up, else the party's;
-  Final = landing x (1 + mark-up); Margin = (selling - final) / final. WB 245 at 8%: 34.25625 ->
+  Final = landing x (1 + mark-up); Margin = (list price - final) / final. WB 245 at 8%: 34.25625 ->
   34.26, 130.61%. Jacuzzi row at 10%: 1692.375 -> 1861.6125, 114.81%. Header chips: party
   mark-up, party cost method, "as of" date, product count.
 - AC-CG-05 Unknown values are blank with a reason pill ("No cost", "No rate for EUR on <date>",
@@ -86,9 +87,9 @@ a reason, never 0.
 - AC-CG-06 A row opens to its suppliers: supplier, primary, lead time, cost, landing, final at
   this view's mark-up, margin if bought there (WB 245, Bath Plus: A 130.61%, B 114.35%, L 34.96%).
 - AC-CG-07 Filters: Category, Brand, Cost method, Has cost; search by code / name; "As of" date
-  (default today) changes which supplier cost and rate are used. "Has cost" is ON when the page
-  opens (QE working answer), so the page opens on the costed products; turning it off shows the
-  gaps; the filter state lives in the URL like the others.
+  (default today) changes which supplier cost and rate are used. No filter is on when the page
+  opens and none is hard-coded (QE): every product shows, the costless ones with their reason;
+  "Has cost" narrows to costed rows only when the user turns it on. Filter state lives in the URL.
 - AC-CG-08 Edit / Save in place, exactly as Sales > Targets (QD a): press Edit on the page, the
   same grid and columns turn editable, one Save writes everything (Cancel discards). Editable: Mark-up (party view only, per row, like
   the Excel (QA a); clearing returns to the party's), Transport (the product's override; clearing returns to
