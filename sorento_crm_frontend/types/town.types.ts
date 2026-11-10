@@ -32,12 +32,20 @@ export interface TownSnapshot {
   shops: TownShop[];
   warehouses: { pool: string; on_hand: number; available: number; locations: number }[];
   reorder: { below_count: number; set_count: number };
-  /** `customers`: up to 6 destinations for the lorries, earliest due first: the key of a shop in
-   * `shops`, or null when that customer has no shop in the town (TOWN-V2 Q6). */
-  deliveries?: { to_deliver: number; customers?: (string | null)[] };
+  /** `customers`: up to 6 destinations for the lorries, earliest due first (TOWN-V2 Q6). */
+  deliveries?: { to_deliver: number; customers?: TownDueCustomer[] };
   approvals: { total: number; purchase_requests: number; quotation_documents: number };
   /** Open shipments from overseas suppliers (TOWN-V2). Absent on a snapshot built before it existed. */
   incoming?: TownIncoming;
+}
+
+/** A customer with sales orders due today or overdue. `key` is its shop in `shops`; null when it has
+ * no shop in the town (its lorry drives out of town), and then `name` names it on the personal view
+ * only (absent on the redacted and wallboard variants). */
+export interface TownDueCustomer {
+  key: string | null;
+  name?: string | null;
+  orders: number;
 }
 
 /** One open shipment. `supplier` is absent on the redacted and wallboard variants. */

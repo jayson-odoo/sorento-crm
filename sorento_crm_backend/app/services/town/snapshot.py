@@ -118,8 +118,8 @@ LORRY_CUSTOMERS = 6
 
 def _deliveries(db: Session, company_id: str, day: date) -> dict:
     """Sales orders still owing goods that are due today or overdue: the count, and the customers of
-    up to 6 of them, earliest due first (TOWN-V2 Q6: lorries drive to real customers). Customer ids
-    here are raw; `build_snapshot` keeps only those with a shop in the town."""
+    up to 6 of them, earliest due first (TOWN-V2 Q6: lorries drive to real customers). Keys here are
+    raw customer ids; `build_snapshot` keeps a key only when the customer has a shop in the town."""
     due = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.requested_delivery_date)
     owing = (
         SalesOrder.company_id == company_id,
@@ -135,15 +135,23 @@ def _deliveries(db: Session, company_id: str, day: date) -> dict:
     ).scalar_one()
     first_due = sa.func.min(due)
     customers = db.execute(
-        sa.select(SalesOrder.customer_id)
+        sa.select(
+            SalesOrder.customer_id,
+            sa.func.max(Customer.customer_name),
+            sa.func.count(sa.distinct(SalesOrder.id)),
+        )
         .select_from(SalesOrderLine)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .join(Customer, Customer.id == SalesOrder.customer_id, isouter=True)
         .where(*owing, SalesOrder.customer_id.is_not(None))
         .group_by(SalesOrder.customer_id)
         .order_by(first_due, SalesOrder.customer_id)
         .limit(LORRY_CUSTOMERS)
-    ).scalars().all()
-    return {"to_deliver": int(count), "customers": [str(c) for c in customers]}
+    ).all()
+    return {
+        "to_deliver": int(count),
+        "customers": [{"key": str(c), "name": name, "orders": int(orders)} for c, name, orders in customers],
+    }
 
 
 def _dealer_rows(db: Session, company_id: str, since: date, until: date, *, today: Optional[date]) -> list:
@@ -407,9 +415,14 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
     today, compare = _today_and_compare(db, company_id, day)
     shops = _shops(db, company_id, day)
     deliveries = _deliveries(db, company_id, day)
-    # Only customers the town already shows: a lorry heading anywhere else drives out of town (None).
+    # A customer with a shop in the town is named by that shop; any other keeps its name and no key
+    # (its lorry drives out of town). No customer id the town does not already show.
     shop_keys = {shop["key"] for shop in shops}
-    deliveries["customers"] = [key if key in shop_keys else None for key in deliveries["customers"]]
+    deliveries["customers"] = [
+        {"key": c["key"], "name": None, "orders": c["orders"]} if c["key"] in shop_keys
+        else {"key": None, "name": c["name"], "orders": c["orders"]}
+        for c in deliveries["customers"]
+    ]
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -461,8 +474,9 @@ def _opaque_keys(out: dict) -> None:
     for index, shop in enumerate(out.get("shops", []), start=1):
         renamed[shop["key"]] = shop["key"] = f"s{index}"
     deliveries = out.get("deliveries")
-    if deliveries and "customers" in deliveries:
-        deliveries["customers"] = [renamed.get(key) for key in deliveries["customers"]]
+    for customer in (deliveries or {}).get("customers", []):
+        customer["key"] = renamed.get(customer["key"])
+        customer.pop("name", None)  # names stay on the personal full view
 
 
 def _drop_suppliers(out: dict) -> None:
