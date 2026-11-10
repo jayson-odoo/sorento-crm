@@ -240,7 +240,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const selectedIds = useMemo(() => selectedLines.map((l) => l.id), [selectedLines]);
   // AC-ND-12: the sales order lines ticked. Review S2: a line whose only waiting rows are
   // used ticks those used rows, so "anything ticked" reads the lines, not `selectedIds`
-  // (live rows only) - else one such tick would widen Auto link to the OI.
+  // (live rows only) - else one such tick would widen Unconfirm and Auto link to the OI.
   const tickedLineKeys = useMemo(
     () => new Set(lines.filter((l) => rowSelection[l.id]).map(foldKeyOf)),
     [lines, rowSelection],
@@ -275,13 +275,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [selectedLines],
   );
-  // STANDARD-HISTORY A (owner ruling 10 Nov 2026, supersedes the coordinator's W ruling):
-  // Unconfirm reads the TICKED lines only, like the worklist's own Unconfirm (N) and this
-  // page's Link / Unlink / Reject selected. Nothing ticked used to mean every confirmed
-  // line of the whole OI, and one stray press on OI-2611-0019 sent all 9 rows back to
-  // "To order". To unconfirm many, tick them (the header checkbox ticks every line on
-  // the page) first.
-  const unconfirmScope = selectedUnconfirmable;
+  // W (coordinator's ruling): nothing ticked means every confirmed line of the WHOLE
+  // OI, the same ticked/whole-OI symmetry Confirm and Auto link already have - not just
+  // "nothing to unconfirm". `activeLines` already holds every non-cancelled line of this
+  // header (`useOrderInquiryHeaderLines` reads every page of the worklist's own
+  // `inquiry_id` filter), so no extra fetch is needed for the "all" scope.
+  const allUnconfirmable = useMemo(
+    () =>
+      activeLines.filter((l) => {
+        const state = ackStateOf(l);
+        return state === 'acknowledged' || state === 'changed';
+      }),
+    [activeLines],
+  );
+  const unconfirmScope = anyTicked ? selectedUnconfirmable : allUnconfirmable;
   const selectedRejectable = useMemo(
     () =>
       selectedLines.filter(
