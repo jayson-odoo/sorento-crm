@@ -1,6 +1,6 @@
 # PLAN: Product costing - Purchasing vs Pricing tabs + B Plus costing view
 
-Status: Plan, waiting on owner (behaviour card on PR #2321, mock next). Build only after approval.
+Status: Plan, waiting on owner (behaviour card + mock `mockups/product-costing-10nov-mockup.html` on PR #2321). Build only after approval.
 Track: full (migration + cost permission gating).
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
@@ -95,3 +95,4 @@ landing RM 34.13 (34.125) -> mark-up 131.50%. Selling price stays RM 79.00 on bo
 ## Status log
 
 - 10 Nov: lane opened, data mapped (section 1), behaviour card posted on PR #2321.
+- 10 Nov: mock written (4 frames + element map), checked at 375 and 1280 px, no horizontal scroll.
