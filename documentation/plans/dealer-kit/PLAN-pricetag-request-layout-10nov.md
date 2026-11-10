@@ -1,6 +1,6 @@
 # PLAN: price tag request screen, customer first (multi), one price tag section, notes collapsible, preview before approve
 
-Status: Plan (mapping the current screen; mock first, build only after the owner approves the mock). Track: TBD after mapping.
+Status: Waiting on owner (mock v1 at `documentation/mockups/pricetag-request-layout/index.html`, 5 behaviour questions in it). Track: full (a migration: a list of customers per request).
 
 Lane: PRICETAG-REQUEST-LAYOUT. UAC: `pricetag-request-layout-acceptance-criteria.md` (written after the mock is approved).
 
@@ -16,6 +16,42 @@ Owner + management meeting 9 Nov (relayed 10 Nov). Salesperson's "request price 
 
 Unchanged: salespeople cannot create templates; custom selling price for items without promotion stays.
 
-## Current screen map
+## Current screen map (measured, main 03be747b)
 
-(in progress)
+- The salesperson's screen, CRM page and portal alike, is ONE component:
+  `sorento_crm_frontend/app/(auth)/portal/components/PriceTagRequestForm.tsx` (2675 lines). The CRM
+  route `/dealer-kit/price-tag-requests/new` renders it through `PortalPriceTagRequest`
+  (`app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestPage.tsx:23`); a user
+  with only `view_own` sees it for an existing request too (`:15`). Marketing's page is
+  `PriceTagRequestDetail.tsx` (not the salesperson's screen).
+- Sections today, in order, each a `components/common/FormSection.tsx` card:
+  Customer (`PriceTagRequestForm.tsx:2214`), Price (`:2253`, the `PriceModeToggle` "Preferred
+  Default"), Sales Order & Lines (`:2290`: `AttachmentDropzone` + per-file AI Extract, then the
+  `PriceTagLinesTable`, Add line, and a Preview button at `:2324`), Additional Information
+  (`:2386`, Notes). Opening is progressive (`openSectionOnce`, `:538`).
+- Customer is a single `SearchableSelect` over the debtor lookup (`:2234`); the payload sends one
+  `debtor_code` + `debtor_name` (`:1492`).
+- Backend: `price_tag_requests.debtor_code` / `debtor_name` are single columns
+  (`sorento_crm_backend/app/models/price_tag.py:97`, `:101`); submit requires `debtor_name`
+  (`app/services/price_tag_request_service.py:1657`); list search and sort read `debtor_name`
+  (`:2875`, `:2886`). **One request supports exactly one customer today.**
+- The printed tag carries no customer: nothing under `lib/dealer-kit`, `components/dealer-kit` or
+  the print renderer reads a debtor.
+- Price mode is request-level `list` | `selling` (`price_tag.py:107`), each line can flip LP/SP
+  (PRICETAG-LPSP); "LP & SP" is a TEMPLATE type (`lib/dealer-kit/template-price-type.ts:6`), not a
+  header choice.
+- Approve today: the page button calls `handleFinish({kind:'approve'})` (`:2526` -> `:1477`), which
+  saves, builds the sheet from the saved request and calls `submitAndApprove` with no preview step.
+  The preview popup already exists (`components/dealer-kit/PriceTagLivePreview.tsx:242`, `popup`
+  mode on `DesignLightbox`) and opens from the Preview button only.
+
+## Proposed change (pending owner answers)
+
+1. Customers: `SearchableMultiSelect`; new nullable JSONB column `price_tag_requests.customers`
+   (`[{code, name}]`); `debtor_code` / `debtor_name` keep the FIRST customer so list, search, SLA and
+   every existing reader keep working unchanged. Submit requires at least one customer.
+2. Merge Price into "Price tags": toggle, dropzone and table in one section; Preview button moves to
+   the action row, left of Approve.
+3. Additional information starts folded.
+4. Approve opens the preview popup with Back to edit + Approve; the popup's Approve runs the existing
+   `handleFinish({kind:'approve'})`.
