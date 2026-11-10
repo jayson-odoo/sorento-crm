@@ -47,8 +47,9 @@ a reason, never 0.
   Workbook row: RMB 34.50, rate 0.625, SST 1.1, ADD 8 -> 31.71875 (shows 31.72).
   RMB 120, MULTIPLY 1.07 -> 88.275. RMB 260, MULTIPLY 1.1 -> 196.625. USD 20 at 4.40, x1.07 ->
   103.576. MYR 42, ADD 8 -> 54.20 (rate 1, SST still applied).
-- AC-LC-02 Supplier cost used for a link = the cost row in force on D (`price_in_force`), the
-  `standard` packaging row first, else the cheapest packaging row (named).
+- AC-LC-02 Supplier cost used for a link = the existing `current_cost` reader on the date
+  (`supplier_cost_service.py:49`: the `standard` packaging row in force, else the only packaging's
+  row, else none); a link with no cost rows at all uses its `product_suppliers.unit_cost`.
 - AC-LC-03 Methods:
   - Primary supplier: the primary link's cost. No primary -> "Set a primary supplier".
   - Selected supplier: the product override's supplier. Link removed -> "Selected supplier no
