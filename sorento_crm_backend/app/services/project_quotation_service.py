@@ -523,6 +523,7 @@ def _recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
         .filter(
             ProjectQuotationLine.version_id == version.id,
             ProjectQuotationLine.is_rate_only.is_(False),
+            ProjectQuotationLine.is_section.is_(False),
         )
         .scalar()
     )
@@ -717,6 +718,10 @@ def _apply_guardrails(
     version so the category walk and the product read happen once rather than per line.
     ``series_pricing`` is its twin for the money (T5) and is passed for the same reason.
     """
+    if line.is_section:
+        # A heading row is never priced, so never flagged (PROPOSAL-FORM-COLLAPSE).
+        line.is_non_standard = line.is_below_floor = line.is_discounted = False
+        return None
     was_below = bool(line.is_below_floor)
 
     # A product outside the series is non-standard; a set is judged by its own series row.
@@ -1271,6 +1276,9 @@ def set_columns(
     }
     lines = list_lines(db, version.id)
     for line in lines:
+        # A heading row holds no quantity, before or after columns (PROPOSAL-FORM-COLLAPSE).
+        if line.is_section:
+            continue
         if not new:
             line.qty_cells = None
         elif not old:
@@ -1340,7 +1348,8 @@ def recompute_version(
     """
     assert_editable(db, version)
     quotation = _quotation_of(db, version)
-    lines = list_lines(db, version.id)
+    # Heading rows are not priced lines: no guardrail, no count (PROPOSAL-FORM-COLLAPSE).
+    lines = [line for line in list_lines(db, version.id) if not line.is_section]
 
     products: Dict[str, Product] = {}
     product_ids = {line.product_id for line in lines if line.product_id}
@@ -1516,7 +1525,11 @@ def serialize_quotations(
             func.sum(func.cast(ProjectQuotationLine.is_non_standard, Integer)),
             func.count(ProjectQuotationLine.id),
         )
-        .filter(ProjectQuotationLine.version_id.in_(current_ids))
+        .filter(
+            ProjectQuotationLine.version_id.in_(current_ids),
+            # Heading rows are not lines to count or flag (PROPOSAL-FORM-COLLAPSE).
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .group_by(ProjectQuotationLine.version_id)
         .all()
         if current_ids

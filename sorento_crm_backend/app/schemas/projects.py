@@ -2491,6 +2491,8 @@ class QuotationSignScopeLine(BaseModel):
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
+    # A heading row: draw band_label as the band, nothing else (PROPOSAL-FORM-COLLAPSE).
+    is_section: bool = False
     is_rate_only: bool = False
     amount: Optional[Decimal] = None
     qty_cells: Dict[str, Any] = Field(default_factory=dict)

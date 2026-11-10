@@ -1108,6 +1108,9 @@ def _quotation_items(
     # (product id or None, what a person would recognise the line by)
     wanted: List[tuple] = []
     for line in quote_lines:
+        if line.is_section:
+            # A heading row is not an item to sample (PROPOSAL-FORM-COLLAPSE).
+            continue
         if line.product_id:
             wanted.append((str(line.product_id), line.product_code_snapshot))
         elif line.set_parts_snapshot:
