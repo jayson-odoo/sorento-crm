@@ -46,11 +46,15 @@ function isUnit(value: unknown): value is ValidityUnit {
 export function QuoteTermsFields({
   values,
   onChange,
+  onValidityChange,
   projectId,
   idPrefix,
 }: {
   values: QuoteTermsValues;
   onChange: (patch: QuoteTermsPatch) => void;
+  /** Told whether the Validity on screen can be saved; the screen refuses Save while it is
+   *  false, so what is shown is always what is sent. */
+  onValidityChange?: (valid: boolean) => void;
   /** The quotation form's project; absent in the terms template dialog. */
   projectId?: string;
   idPrefix: string;
@@ -100,6 +104,11 @@ export function QuoteTermsFields({
       : value && !unit
         ? 'Pick a unit.'
         : undefined;
+
+  const validityOk = !validityError;
+  React.useEffect(() => {
+    onValidityChange?.(validityOk);
+  }, [validityOk, onValidityChange]);
 
   function emitValidity(nextValue: string, nextUnit: string) {
     const number = Number(nextValue);

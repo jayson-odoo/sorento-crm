@@ -154,6 +154,7 @@ export function QuotationTermsPanel({
   validityUnit = null,
   projectId,
   onFieldChange,
+  onValidityChange,
 }: {
   html: string | null;
   onChange?: (html: string) => void;
@@ -167,6 +168,7 @@ export function QuotationTermsPanel({
   projectId?: string;
   /** Set only in an edit session, with `onChange`. */
   onFieldChange?: (patch: QuoteTermsPatch) => void;
+  onValidityChange?: (valid: boolean) => void;
 }) {
   const fields = [
     { key: 'payment_terms', label: 'Payment Terms', value: paymentTerms },
@@ -189,6 +191,7 @@ export function QuotationTermsPanel({
                 validity,
               }}
               onChange={onFieldChange}
+              onValidityChange={onValidityChange}
             />
           </CardContent>
         </Card>

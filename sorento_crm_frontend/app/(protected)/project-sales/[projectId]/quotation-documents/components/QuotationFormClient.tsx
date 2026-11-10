@@ -283,6 +283,9 @@ export function QuotationFormClient({
    */
   const [termsPicks, setTermsPicks] = React.useState<QuoteTermsPatch>({});
   const [termsPatch, setTermsPatch] = React.useState<QuoteTermsPatch>({});
+  /** False while the Validity on screen cannot be saved; Save refuses, so what is shown is
+   *  always what is sent (crew pass 538d14b7). */
+  const [validityOk, setValidityOk] = React.useState(true);
 
   // Everything on this page lives only in the browser until Save, so a refresh or a closed tab
   // would lose it silently. Warn while there is something to lose.
@@ -531,6 +534,11 @@ export function QuotationFormClient({
   }
 
   async function save() {
+    if (!validityOk) {
+      setError('Validity needs a whole number from 1 to 999 and a unit.');
+      setTab('terms');
+      return;
+    }
     const problem = validate();
     setError(problem);
     // Every refusal is about a scope or a line, so show the tab it is on.
@@ -813,6 +821,7 @@ export function QuotationFormClient({
                 validityValue={termsPicks.validity_value ?? null}
                 validityUnit={termsPicks.validity_unit ?? null}
                 projectId={projectId}
+                onValidityChange={setValidityOk}
                 onFieldChange={(patch) => {
                   setDirty(true);
                   const { payment_terms, validity, ...picks } = patch;

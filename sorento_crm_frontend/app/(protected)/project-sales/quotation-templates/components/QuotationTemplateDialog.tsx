@@ -41,6 +41,8 @@ export function QuotationTemplateDialog({
     validity: template?.validity ?? null,
   });
   const [termsPatch, setTermsPatch] = React.useState<QuoteTermsPatch>({});
+  // An invalid Validity on screen is never saved as the last valid one (crew pass 538d14b7).
+  const [validityOk, setValidityOk] = React.useState(true);
   const pending = create.isPending || update.isPending;
 
   return (
@@ -90,6 +92,7 @@ export function QuotationTemplateDialog({
                 setTerms((previous) => ({ ...previous, ...patch }));
                 setTermsPatch((previous) => ({ ...previous, ...patch }));
               }}
+              onValidityChange={setValidityOk}
             />
             <div className="space-y-1.5">
               <Label>
@@ -103,7 +106,10 @@ export function QuotationTemplateDialog({
             <Button type="button" variant="outline" onClick={onDone}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || !bodyHtml.trim() || pending}>
+            <Button
+              type="submit"
+              disabled={!name.trim() || !bodyHtml.trim() || !validityOk || pending}
+            >
               {template ? 'Save changes' : 'Add template'}
             </Button>
           </DialogFooter>
