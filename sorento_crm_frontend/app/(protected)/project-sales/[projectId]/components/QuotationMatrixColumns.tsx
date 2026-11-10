@@ -650,7 +650,12 @@ const EDIT_LEAF_MAX_WIDTH = 220;
  * and an x, so the column grows with the label, never under `EDIT_LEAF_MIN_WIDTH`.
  */
 export function leafColumnWidth(label: string, editable: boolean, rowSpanHeader = false): number {
-  if (!editable) return rowSpanHeader ? 96 : 72;
+  // Read: a number fits 72px, but the label must fit too (BALCONY ran into the next column on
+  // the view page, owner 10 Nov): its characters plus the cell padding and the resize handle.
+  if (!editable) {
+    const base = rowSpanHeader ? 96 : 72;
+    return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(base, label.trim().length * EDIT_LABEL_CHAR_PX + 24));
+  }
   // A header with no columns is edited in its own leaf cell, with a Duplicate icon as well.
   const extra = rowSpanHeader ? EDIT_DUPLICATE_PX : 0;
   const fit = EDIT_LABEL_CHROME_PX + extra + label.trim().length * EDIT_LABEL_CHAR_PX;

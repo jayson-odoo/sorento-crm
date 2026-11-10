@@ -542,9 +542,13 @@ describe('readable column labels in edit mode (browser pass finding)', () => {
     expect(EDIT_LABEL_CHAR_PX).toBeGreaterThanOrEqual(8);
   });
 
-  it('leaves the read widths as they were', () => {
-    expect(leafColumnWidth('Balcony', false)).toBe(72);
-    expect(leafColumnWidth('Break tank', false, true)).toBe(96);
+  it('reads a short label at the old widths, a long one wide enough never to overlap', () => {
+    expect(leafColumnWidth('BH', false)).toBe(72);
+    expect(leafColumnWidth('Tank', false, true)).toBe(96);
+    // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov view page): BALCONY ran into the next column.
+    for (const label of ['BALCONY', 'KITCHEN', 'Break tank']) {
+      expect(leafColumnWidth(label, false)).toBeGreaterThanOrEqual(label.length * EDIT_LABEL_CHAR_PX + 16);
+    }
     expect(leafColumnWidth('BA', true)).toBe(EDIT_LEAF_MIN_WIDTH);
     expect(leafColumnWidth('x'.repeat(60), true)).toBe(220);
   });
