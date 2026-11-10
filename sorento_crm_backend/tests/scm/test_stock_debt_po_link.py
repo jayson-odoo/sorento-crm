@@ -1196,6 +1196,7 @@ def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss
     monkeypatch.setattr(idem, "attempt_store", lambda: None)
     w = _world(scm_app, fake_ss)
     w["po_line"].qty_ordered = Decimal("120")
+    w["po_line"].moq_snapshot = Decimal("40")  # the planner's own: the merge must keep it
     w["db"].flush()
     details = [(12303, 120, w["mwh"], w["so_line"].source_ref, 80)]
     fake_ss.answers["/api/v1/autocount/po-links"] = _sends(w, "po-links", details, [(12009, 12303)], "ingest_first")
@@ -1208,6 +1209,8 @@ def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss
         {"id": w["po_line"].id},
     ).scalars().all()
     assert str(w["po_line"].id) in {str(c) for c in claims if c}, claims
+    (kept,) = _lines_of(w)
+    assert kept.moq_snapshot == Decimal("40")
     # Degraded path (no hint): ingest already released the old line as removed, its OI links go.
 
 

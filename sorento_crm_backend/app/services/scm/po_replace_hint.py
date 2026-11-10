@@ -58,6 +58,7 @@ def forget(old_ref: Optional[str]) -> None:
     try:
         store.delete(f"{_PREFIX}{old_ref.strip()}")
     except Exception:  # noqa: BLE001
+        logger.warning("po link: could not drop the replace hint")
         idem.store_failed()
 
 
