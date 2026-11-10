@@ -1,6 +1,6 @@
 # PLAN: Product costing - Purchasing vs Pricing tabs + party costing (Bath Plus, dealers)
 
-Status: Build (owner answered every question 11 Nov; build ordered). Track: full (migration + new permission + cost gating).
+Status: Built, review fixes in, hand test ready (PR #2321). Waiting on owner hand test + CI (billing hold). Merge #2319 first. Track: full.
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
 owner's workbook Internal_Costing_Formula.xls (numbers are the owner's draft). Depends on
@@ -409,3 +409,4 @@ No dev copy is reachable from the cloud, so the check ran on a main-shaped copy:
   filter cost rows to `effective_from <= as_of` in SQL and cache the costed set per request.
 - Native `type="date"` inputs ("As of", "Effective from") display in the browser's locale, like the
   55 existing date inputs in the app; the values the page itself prints are dd/mm/yyyy.
+- 10 Nov: fix rounds 1-2 done (reviewer, security, browser); hand test written (HANDTEST-product-costing.md); crew-done posted.
