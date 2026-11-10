@@ -125,6 +125,37 @@ def test_product_list_shows_cost_with_permission(env):
     assert Decimal(str(r.json()["data"][0]["cost_price"])) == Decimal("123.45")
 
 
+# --------------------------------------------------------------------------- B1 writes
+
+
+def _put(e: _Env, user: dict, product, body: dict):
+    return e.client.put(f"{PRODUCTS_URL}/{product.id}", headers=e.bearer(user), json=body)
+
+
+def test_product_edit_without_permission_keeps_the_cost(env):
+    """The form sends `cost_price` on every save; a reader who saw it as null must not wipe it."""
+    p = _costed_product(env)
+    editor = env.user(PRODUCTS_VIEW, "master_data.products.edit")
+    r = _put(env, editor, p, {"product_name": "Renamed by sales", "cost_price": None})
+    assert r.status_code == 200, r.text
+    r = _put(env, editor, p, {"cost_price": "1.00"})
+    assert r.status_code == 200, r.text
+    env.db.expire_all()
+    env.db.refresh(p)
+    assert p.product_name == "Renamed by sales"
+    assert p.cost_price == Decimal("123.45")
+
+
+def test_product_edit_with_permission_changes_the_cost(env):
+    p = _costed_product(env)
+    buyer = env.user(PRODUCTS_VIEW, "master_data.products.edit", COST_PERM)
+    r = _put(env, buyer, p, {"cost_price": "130.00"})
+    assert r.status_code == 200, r.text
+    env.db.expire_all()
+    env.db.refresh(p)
+    assert p.cost_price == Decimal("130.00")
+
+
 # --------------------------------------------------------------------------- B1 list-query
 
 

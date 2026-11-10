@@ -16,7 +16,7 @@ from app.dependencies import (
 )
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
-from app.services.cost_access import require_cost_view
+from app.services.cost_access import can_view_cost, require_cost_view
 from app.services import product_list_price_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
@@ -368,6 +368,9 @@ def create_product(
 ):
     """Create a new product."""
     try:
+        if not can_view_cost(db, current_user["id"]):
+            # SUPPLIER-COST-ACCESS: who cannot see cost cannot set it either.
+            product_data.cost_price = None
         guard_chatbot_limits_edit(
             db, current_user["id"], NULL_LIMITS, product_data.model_dump(exclude_unset=True)
         )
@@ -408,6 +411,11 @@ def update_product(
 ):
     """Update a product."""
     try:
+        if not can_view_cost(db, current_user["id"]):
+            # SUPPLIER-COST-ACCESS: the reader saw `cost_price` as null, so a save that sends it
+            # back must not wipe (or set) the real cost. Treated as not sent.
+            product_data.cost_price = None
+            product_data.model_fields_set.discard("cost_price")
         service = ProductService(db)
         existing = service.get_product(product_id)
         guard_chatbot_limits_edit(
