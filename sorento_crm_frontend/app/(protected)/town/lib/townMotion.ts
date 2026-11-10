@@ -40,8 +40,11 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x:
   };
 }
 
-/** `--ease-standard`. */
-export const EASE = cubicBezier(0.2, 0, 0, 1);
+/** `--ease-standard` (css/config.reui.css). The three.js clock needs the curve as numbers, so they are
+ * written here once; `townMotion.test.ts` reads the token and fails if the two ever drift apart. CSS and
+ * WAAPI motion read the token itself (`easeToken` in townWorld.ts). */
+export const EASE_STANDARD = [0.2, 0, 0, 1] as const;
+export const EASE = cubicBezier(...EASE_STANDARD);
 
 export interface Trapezoid {
   /** Total time and distance. */
@@ -115,6 +118,9 @@ export interface SaleBeat {
 export function newSales(prev: TownSnapshot | null | undefined, next: TownSnapshot): SaleBeat | null {
   if (!prev || prev === next || prev.day !== next.day || prev.company_id !== next.company_id) return null;
   const before = new Map(prev.shops.map((shop) => [shop.key, shop]));
+  // two snapshots with no shop key in common are two different views (the Wallboard's opaque keys
+  // against the personal view's ids): every lit shop would look new, so they are not compared
+  if (!next.shops.some((shop) => before.has(shop.key))) return null;
   const shops: SaleShop[] = [];
   for (const shop of next.shops) {
     const old = before.get(shop.key);

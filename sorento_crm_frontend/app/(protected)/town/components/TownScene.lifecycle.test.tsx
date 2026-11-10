@@ -201,6 +201,21 @@ describe('TownScene motion guard rails', () => {
     expect(queue).toHaveLength(0);
   });
 
+  it('toggling personal -> Wallboard -> personal plays no beat, though the keys and counts change', () => {
+    stubReducedMotion(true);
+    const personal = { ...SNAPSHOT, today: { ...SNAPSHOT.today, amount: '1000.00' }, shops: [{ ...SNAPSHOT.shops[0], name: 'ZZT One', today_amount: '1000.00' }] };
+    const wallboard = { ...SNAPSHOT, shops: [{ key: 's0a1b2c3d4e5f', kind: 'shop', account_label: null, today_docs: 4, rank: 1 }] };
+    const back = { ...personal, today: { ...personal.today, invoice_count: 9 }, shops: [{ ...personal.shops[0], today_docs: 3 }] };
+    const { container, rerender } = render(<TownScene snapshot={personal as never} onSelect={() => undefined} />);
+    settle(0, 3);
+    rerender(<TownScene snapshot={wallboard as never} mode="wallboard" onSelect={() => undefined} />);
+    expect(settle(1000)).toBe(1); // drawn once: no beat
+    rerender(<TownScene snapshot={back as never} onSelect={() => undefined} />);
+    expect(settle(2000)).toBe(1);
+    expect(queue).toHaveLength(0);
+    expect(container.textContent).not.toMatch(/\+RM|\+\d+ invoice/);
+  });
+
   it('a poll with the same invoices plays no beat', () => {
     stubReducedMotion(true);
     const { rerender } = render(<TownScene snapshot={SNAPSHOT as never} onSelect={() => undefined} />);

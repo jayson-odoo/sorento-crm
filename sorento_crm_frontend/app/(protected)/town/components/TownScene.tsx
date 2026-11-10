@@ -43,9 +43,12 @@ const LEGEND = [
 
 export function TownScene({
   snapshot,
+  mode,
   onSelect,
 }: {
   snapshot: TownSnapshot;
+  /** Which variant the snapshot is (`useTownSnapshot`'s mode): a change of view is never a sale. */
+  mode?: 'wallboard';
   onSelect: (target: TownTarget) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -56,12 +59,33 @@ export function TownScene({
   const engine = useRef<{
     renderer: WebGLRenderer | null;
     shown: TownSnapshot | null;
+    mode: 'wallboard' | undefined;
+    reduced: boolean | null;
     view: { current: TownView };
     clock: { current: number };
-  }>({ renderer: null, shown: null, view: { current: DEFAULT_VIEW }, clock: { current: 0 } });
-  const [reduced] = useState(prefersReduced);
+  }>({ renderer: null, shown: null, mode: undefined, reduced: null, view: { current: DEFAULT_VIEW }, clock: { current: 0 } });
+  const [reduced, setReduced] = useState(prefersReduced);
   const [motion, setMotion] = useState(() => !reduced && localStore.getItem(MOTION_KEY) !== 'off');
   const motionRef = useRef(motion);
+
+  // the viewer can turn reduced motion on or off while the town is open
+  useEffect(() => {
+    let query: MediaQueryList | undefined;
+    try {
+      query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    } catch {
+      query = undefined;
+    }
+    if (!query?.addEventListener) return;
+    const onChange = (event: MediaQueryListEvent) => {
+      const on = !event.matches && localStore.getItem(MOTION_KEY) !== 'off';
+      motionRef.current = on;
+      setMotion(on);
+      setReduced(event.matches);
+    };
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
   const [tip, setTip] = useState<TownTipState | null>(null);
   const [tipLeft, setTipLeft] = useState(0);
   const selectRef = useRef(onSelect);
@@ -97,7 +121,14 @@ export function TownScene({
     state.renderer ??= createTownRenderer(canvas);
     const prev = state.shown;
     // the first snapshot flies in; a remount of the same one (React strict mode) does too
-    const intro = !prev || prev === snapshot;
+    // a reduced-motion switch rebuilds the same snapshot: no fly-in for that
+    const reducedSwitched = state.reduced !== null && state.reduced !== reduced;
+    state.reduced = reduced;
+    const intro = (!prev || prev === snapshot) && !reducedSwitched;
+    // toggling the Wallboard swaps in the other variant (its own cache, its own shop keys): keep the
+    // view, but start a new baseline, so the swap never plays as a sale
+    const sameView = state.mode === mode;
+    state.mode = mode;
     state.shown = snapshot;
     const world = mountWorld({
       canvas,
@@ -105,8 +136,8 @@ export function TownScene({
       labelLayer,
       renderer: state.renderer,
       snapshot,
-      prev,
-      beat: intro ? null : newSales(prev, snapshot),
+      prev: sameView ? prev : null,
+      beat: intro || !sameView ? null : newSales(prev, snapshot),
       intro,
       reduced,
       motion: motionRef,
@@ -125,7 +156,7 @@ export function TownScene({
       setTip(null);
       world.dispose();
     };
-  }, [snapshot, reduced]);
+  }, [snapshot, reduced, mode]);
 
   // keep the tooltip inside the stage at 375 px
   useLayoutEffect(() => {

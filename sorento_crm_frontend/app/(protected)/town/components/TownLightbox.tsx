@@ -45,9 +45,23 @@ function Rows({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
-function Shipments({ title, rows, total, late }: { title: string; rows: TownShipment[]; total: number; late?: boolean }) {
-  if (!total) return null;
-  const supplier = rows.some((row) => row.supplier);
+/** One section of the port lightbox. Both sections always show, with a short hint at zero; whether
+ * the Supplier column shows is decided once for both, so the two tables keep the same columns. */
+function Shipments({
+  title,
+  rows,
+  total,
+  supplier,
+  empty,
+  late,
+}: {
+  title: string;
+  rows: TownShipment[];
+  total: number;
+  supplier: boolean;
+  empty: string;
+  late?: boolean;
+}) {
   return (
     <section className="mt-4 first:mt-0">
       <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -56,36 +70,40 @@ function Shipments({ title, rows, total, late }: { title: string; rows: TownShip
           {count(total)}
         </Badge>
       </h3>
-      <div className="mt-1.5 overflow-x-auto">
-        <table className="w-full text-xs sm:text-sm">
-          <thead>
-            <tr className="border-b border-border text-xs text-muted-foreground">
-              <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">Shipment</th>
-              <th className="hidden py-1.5 pe-2 sm:pe-3 text-start font-medium sm:table-cell">Container</th>
-              {supplier ? <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">Supplier</th> : null}
-              <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">ETA</th>
-              <th className="hidden py-1.5 pe-2 sm:pe-3 text-end font-medium sm:table-cell">Products</th>
-              <th className="py-1.5 text-end font-medium">Qty</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={`${row.shipment_number ?? ''}-${index}`} className="border-b border-border last:border-0">
-                <td className="whitespace-nowrap py-1.5 pe-2 sm:pe-3">{row.shipment_number ?? '-'}</td>
-                <td className="hidden whitespace-nowrap py-1.5 pe-2 sm:pe-3 sm:table-cell">{row.container ?? '-'}</td>
-                {supplier ? (
-                  <td className="max-w-24 truncate py-1.5 sm:max-w-40 pe-2 sm:pe-3" title={row.supplier ?? undefined}>
-                    {row.supplier ?? '-'}
-                  </td>
-                ) : null}
-                <td className="whitespace-nowrap py-1.5 pe-2 sm:pe-3">{row.eta ? formatDateInMalaysia(row.eta) : 'No ETA'}</td>
-                <td className="hidden py-1.5 pe-2 sm:pe-3 text-end tabular-nums sm:table-cell">{count(row.products)}</td>
-                <td className="py-1.5 text-end tabular-nums">{count(row.quantity)}</td>
+      {total ? (
+        <div className="mt-1.5 overflow-x-auto">
+          <table className="w-full text-xs sm:text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs text-muted-foreground">
+                <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">Shipment</th>
+                <th className="hidden py-1.5 pe-2 sm:pe-3 text-start font-medium sm:table-cell">Container</th>
+                {supplier ? <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">Supplier</th> : null}
+                <th className="py-1.5 pe-2 sm:pe-3 text-start font-medium">ETA</th>
+                <th className="hidden py-1.5 pe-2 sm:pe-3 text-end font-medium sm:table-cell">Products</th>
+                <th className="py-1.5 text-end font-medium">Qty</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={`${row.shipment_number ?? ''}-${index}`} className="border-b border-border last:border-0">
+                  <td className="whitespace-nowrap py-1.5 pe-2 sm:pe-3">{row.shipment_number ?? '-'}</td>
+                  <td className="hidden whitespace-nowrap py-1.5 pe-2 sm:pe-3 sm:table-cell">{row.container ?? '-'}</td>
+                  {supplier ? (
+                    <td className="max-w-24 truncate py-1.5 sm:max-w-40 pe-2 sm:pe-3" title={row.supplier ?? undefined}>
+                      {row.supplier ?? '-'}
+                    </td>
+                  ) : null}
+                  <td className="whitespace-nowrap py-1.5 pe-2 sm:pe-3">{row.eta ? formatDateInMalaysia(row.eta) : 'No ETA'}</td>
+                  <td className="hidden py-1.5 pe-2 sm:pe-3 text-end tabular-nums sm:table-cell">{count(row.products)}</td>
+                  <td className="py-1.5 text-end tabular-nums">{count(row.quantity)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="mt-1.5 text-sm text-muted-foreground">{empty}</p>
+      )}
       {total > rows.length ? (
         <p className="mt-1.5 text-sm text-muted-foreground">+ {count(total - rows.length)} more</p>
       ) : null}
@@ -193,9 +211,10 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
     case 'port': {
       const incoming = snapshot.incoming;
       const total = incoming ? incoming.incoming + incoming.late : 0;
+      const supplier = !!incoming?.shipments.some((row) => row.supplier);
       return {
         title: 'Incoming shipments',
-        meta: total ? 'Open shipments from overseas suppliers' : '',
+        meta: '',
         content: (
           <>
             {incoming && total ? (
@@ -204,11 +223,15 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
                   title="Incoming"
                   rows={incoming.shipments.filter((row) => !row.late)}
                   total={incoming.incoming}
+                  supplier={supplier}
+                  empty="None on the way"
                 />
                 <Shipments
                   title="Late"
                   rows={incoming.shipments.filter((row) => row.late)}
                   total={incoming.late}
+                  supplier={supplier}
+                  empty="None late"
                   late
                 />
               </>

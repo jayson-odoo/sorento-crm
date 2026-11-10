@@ -66,6 +66,16 @@ const TGT = new THREE.Vector3(-2.5, 0, -2.5);
 const INTRO_FROM: TownView = { yaw: DEFAULT_VIEW.yaw - 62 * DEG, tilt: 68 * DEG, zoom: 0.5 };
 const INTRO_S = 2.4;
 
+/** The repo's one motion curve, read from the `--ease-standard` token (css/config.reui.css) so the
+ * chip's WAAPI animation never carries its own copy; `ease-out` only where no stylesheet is loaded. */
+function easeToken(): string {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue('--ease-standard').trim() || 'ease-out';
+  } catch {
+    return 'ease-out';
+  }
+}
+
 /** One renderer per mounted scene (kept across snapshot rebuilds, disposed on unmount). */
 export function createTownRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -1197,7 +1207,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     chipEl?.remove();
     const el = document.createElement('div');
     el.className =
-      'pointer-events-none absolute left-0 top-0 z-[2] whitespace-nowrap rounded-full border border-amber-200 bg-amber-100 px-2.5 py-0.5 text-xs font-bold tabular-nums text-amber-800 shadow-sm';
+      'pointer-events-none absolute left-0 top-0 z-[2] whitespace-nowrap rounded-full border border-transparent bg-warning px-2.5 py-0.5 text-xs font-bold tabular-nums text-warning-foreground shadow-sm';
     el.textContent = beat.amount != null ? `+${rm0(String(beat.amount))}` : `+${count(beat.invoices)} invoice${beat.invoices === 1 ? '' : 's'}`;
     labelLayer.appendChild(el);
     chipEl = el;
@@ -1211,7 +1221,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
         calm
           ? [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.75 }, { opacity: 0 }]
           : [{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0', offset: 0.18 }, { opacity: 1, translate: '0 -6px', offset: 0.7 }, { opacity: 0, translate: '0 -16px' }],
-        { duration: 1700, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'forwards' },
+        { duration: 1700, easing: easeToken(), fill: 'forwards' },
       );
       a.onfinish = done;
     } else timers.push(window.setTimeout(done, 1700));
@@ -1332,8 +1342,15 @@ export function mountWorld(o: WorldOptions): WorldHandle {
 
   /* ======== DOM labels: pills projected from 3D anchors; fixed ones never dropped, tags culled on collision ======== */
   let labels: Label[] = [];
+  /** A pill that is not shown (during the fly-in, or culled) takes no pointer and no keyboard focus. */
+  const setLabelState = (el: HTMLButtonElement, state: 'hidden' | 'shown' | 'culled') => {
+    el.dataset.state = state;
+    el.tabIndex = state === 'shown' ? 0 : -1;
+    if (state === 'shown') el.removeAttribute('aria-hidden');
+    else el.setAttribute('aria-hidden', 'true');
+  };
   const PILL =
-    'pointer-events-auto inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-2xs font-semibold leading-[18px] tabular-nums shadow-sm opacity-0 translate-y-1 motion-reduce:translate-y-0 transition-[opacity,translate,background-color] duration-(--duration-base) ease-(--ease-standard) active:scale-[0.97] data-[state=shown]:translate-y-0 data-[state=shown]:opacity-100 data-[state=culled]:pointer-events-none data-[state=culled]:opacity-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-xs';
+    'pointer-events-auto inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-2xs font-semibold leading-[18px] tabular-nums shadow-sm opacity-0 translate-y-1 motion-reduce:translate-y-0 transition-[opacity,translate,background-color] duration-(--duration-base) ease-(--ease-standard) active:scale-[0.97] data-[state=shown]:translate-y-0 data-[state=shown]:opacity-100 data-[state=hidden]:pointer-events-none data-[state=culled]:pointer-events-none data-[state=culled]:opacity-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-xs';
   const TONE = {
     plain: 'border-border bg-background/90 text-foreground hover:bg-background',
     red: 'border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90',
@@ -1348,7 +1365,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     const el = document.createElement('button');
     el.type = 'button';
     el.className = `absolute left-0 top-0 will-change-transform ${PILL} ${TONE[parts.tone ?? 'plain']}`;
-    el.dataset.state = 'hidden';
+    setLabelState(el, 'hidden');
     el.dataset.townLabel = fixed ? 'fixed' : 'tag';
     if (parts.title) el.setAttribute('aria-label', parts.title);
     if (parts.dot) {
@@ -1441,7 +1458,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     const tagSpots = placeTags(tagL.map(box), placed, stageView);
     const put = (L: Label, at: { x: number; y: number } | null) => {
       if (at) L.el.style.transform = `translate3d(${Math.round(at.x - L.w / 2)}px, ${Math.round(at.y - L.h / 2)}px, 0)`;
-      if (L.el.dataset.state !== 'hidden') L.el.dataset.state = at ? 'shown' : 'culled';
+      if (L.el.dataset.state !== 'hidden') setLabelState(L.el, at ? 'shown' : 'culled');
     };
     fixedL.forEach((L, i) => put(L, spots[i]));
     tagL.forEach((L, i) => put(L, tagSpots[i]));
@@ -1455,7 +1472,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     // a 40 ms stagger as a transition delay, so it runs on the same clock as everything else
     labels.forEach((L, k) => {
       L.el.style.transitionDelay = o.intro && !reduced ? `${k * 40}ms` : '0ms';
-      L.el.dataset.state = 'shown';
+      setLabelState(L.el, 'shown');
     });
     labelsDirty = true;
     timers.push(window.setTimeout(() => labels.forEach((L) => { L.el.style.transitionDelay = ''; }), 1500));

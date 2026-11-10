@@ -36,6 +36,17 @@ describe('TownCards, incoming shipments', () => {
     expect(screen.getByText('Nothing on the way')).toBeTruthy();
   });
 
+  it('adds no explanation line: "No ETA yet" when nothing has an ETA, nothing at zero', () => {
+    const noEta = { ...BASE, incoming: { incoming: 2, late: 0, next_eta: null, shipments: [] } };
+    const { container, unmount } = render(<TownCards snapshot={noEta as never} />);
+    expect(screen.getByText('No ETA yet')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/overseas/);
+    unmount();
+    const none = { ...BASE, incoming: { incoming: 0, late: 0, next_eta: null, shipments: [] } };
+    const empty = render(<TownCards snapshot={none as never} />);
+    expect(empty.container.textContent).not.toMatch(/overseas|No ETA yet/);
+  });
+
   it('has no sixth card on a snapshot built before shipments existed', () => {
     render(<TownCards snapshot={BASE as never} />);
     expect(screen.queryByText('What is coming in?')).toBeNull();

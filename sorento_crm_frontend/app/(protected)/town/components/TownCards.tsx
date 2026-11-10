@@ -172,7 +172,7 @@ export function TownCards({
             ) : null}
             {incoming.late && incoming.next_eta ? ' · ' : null}
             {incoming.next_eta ? `next ETA ${formatDateInMalaysia(incoming.next_eta)}` : null}
-            {!incoming.late && !incoming.next_eta ? 'from overseas suppliers' : null}
+            {incoming.incoming && !incoming.late && !incoming.next_eta ? 'No ETA yet' : null}
           </span>
         </Card>
       ) : null}

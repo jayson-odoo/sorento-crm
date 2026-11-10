@@ -1,6 +1,8 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TownShop, TownSnapshot } from '@/types/town.types';
-import { EASE, newSales, trapezoid } from './townMotion';
+import { EASE, EASE_STANDARD, newSales, trapezoid } from './townMotion';
 
 const shop = (key: string, docs: number, amount?: string): TownShop => ({
   key, kind: 'shop', account_label: null, today_docs: docs, today_amount: amount,
@@ -69,6 +71,12 @@ describe('newSales', () => {
     expect(beat?.amount).toBeNull();
   });
 
+  it('plays nothing between two views with no shop key in common (personal ids against Wallboard keys)', () => {
+    const wallboard = snapshot([shop('s0a1b2c3d4e5f', 2), shop('s9f8e7d6c5b4a', 3)]);
+    expect(newSales(before, wallboard)).toBeNull();
+    expect(newSales(wallboard, before)).toBeNull();
+  });
+
   it('plays nothing across a new day or another company', () => {
     const after = snapshot([shop('a', 5, '999.00')], '999.00');
     expect(newSales(before, { ...after, day: '2026-01-06' })).toBeNull();
@@ -77,6 +85,14 @@ describe('newSales', () => {
 });
 
 describe('motion vocabulary', () => {
+  it('solves the same curve as the --ease-standard token in css/config.reui.css', () => {
+    const css = fs.readFileSync(path.resolve(__dirname, '../../../../css/config.reui.css'), 'utf8');
+    const tokens = [...css.matchAll(/--ease-standard:\s*cubic-bezier\(([^)]*)\)/g)].map((m) => m[1].split(',').map(Number));
+    expect(tokens.length).toBeGreaterThan(0);
+    tokens.forEach((numbers) => expect(numbers).toEqual([0.2, 0, 0, 1]));
+    expect([...EASE_STANDARD]).toEqual([0.2, 0, 0, 1]);
+  });
+
   it('eases on --ease-standard: 0 to 1, monotonic, fast out of the start', () => {
     expect(EASE(0)).toBe(0);
     expect(EASE(1)).toBe(1);
