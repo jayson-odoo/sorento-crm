@@ -60,3 +60,29 @@ Existing work this builds on, not around: `documentation/plans/audit/PLAN-audit-
 (the append-only `audit_logs` backbone), `PLAN-audit-trail-diff-27oct.md` and
 `PLAN-audit-trail-resubmitted-28oct.md` (`components/audit/AuditTrail.tsx`, the per-record trail
 already shown on several detail pages).
+
+## Mock data: OI-2611-0019 (crew, 10 Nov 2026, from the owner's prod read-only query)
+
+Q4 answered by crew: use the real item codes and times; person names stay masked in the repo
+("J*** (Purchasing)"). The mock is built only after the owner answers Q1 to Q3.
+
+- Header: OI-2611-0019, SO428916. Raised 02/11/2026 17:31 by A*** (CS).
+- 09/11/2026 17:15:45 MYT, J*** (Purchasing): Confirm, 1 row marked Done by hand (SRTSP131).
+- 09/11/2026 17:15:53 MYT, J*** (Purchasing): Unconfirm, 9 rows back to To confirm (one batch
+  entry, one line per row):
+
+| Item | Qty | Link at the time |
+|---|---|---|
+| CKS1050 | order back 4 | PO 202609-S0107 |
+| CKSW015 | order back 4 | no link |
+| SRT61-CR | 10 | PO 202610-S0015 |
+| SRTHD122 | 3 | PO 202609-S0013 |
+| SRTSH22512-N | 1 | PO 202608-S0015 |
+| SRTWC286-SH-NEW | order back 7 | PO 202609-S0032 (closed) + SPO |
+| SRTWT167 | 14 | PO 202610-S0041 |
+| SRTWT2219 | 4 | PO 202610-S0015 |
+| SRTSP131 | | Done by hand 8 s earlier |
+
+- 10/11/2026 10:52 MYT: PO 202611-S0027 linked to SRTSP131, which went Done automatically.
+- Untouched by the Unconfirm: SRT320-CR (10), SRT5674-N, SRT5732, SRTWB246 (raised, request to
+  reserve).
