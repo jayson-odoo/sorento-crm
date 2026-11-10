@@ -1528,42 +1528,6 @@ def set_critical(project: Project, critical: bool) -> None:
     project.is_critical = critical
 
 
-def project_has_live_document(db: Session, project: Project) -> bool:
-    """True when the Documents tab would list at least one file: a non-deleted attachment
-    carrying entity_type 'project' and this project's id (any attachment type). The session's
-    company-scope listener applies to Attachment exactly as it does to the list."""
-    from app.models.resources import Attachment
-
-    return (
-        db.query(Attachment.id)
-        .filter(
-            Attachment.entity_type == "project",
-            Attachment.entity_id == str(project.id),
-            Attachment.is_deleted.is_(False),
-        )
-        .first()
-        is not None
-    )
-
-
-def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: str) -> None:
-    """Registered -> Spec In needs a requirements document on the project."""
-    rows = {
-        str(s.id): s.key
-        for s in db.query(Status).filter(Status.id.in_([project.status_id, to_status_id])).all()
-    }
-    if (
-        rows.get(str(project.status_id)) == "registered"
-        and rows.get(str(to_status_id)) == "specified"
-        and not project_has_live_document(db, project)
-    ):
-        raise AppException(
-            status_code=422,
-            message="Upload the requirements document before moving this project to Spec In.",
-            code="project_requirements_missing",
-        )
-
-
 # A project on one of these rungs has been decided by a person, and that decision is its
 # outcome (PROJECT-CLASH-LOST): the list, board, forecast and clash check never read "Won" for
 # a project on the Lost stage. Keyed on the rung's stable key (project_seed_service.DEFAULT_FUNNEL).
@@ -1639,7 +1603,6 @@ def change_status(
         status_service.assert_transition_allowed(
             db, entity_type, project.status_id, to_status_id, scope_id=scope_id
         )
-        _assert_requirements_uploaded(db, project, to_status_id)
 
     # Checked before anything is written, so a refused Lost move leaves the project as it was.
     target_key = db.query(Status.key).filter(Status.id == to_status_id).scalar()

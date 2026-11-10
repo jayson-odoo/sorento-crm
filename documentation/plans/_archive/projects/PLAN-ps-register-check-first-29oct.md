@@ -1,8 +1,7 @@
 # PLAN: PS-REGISTER-CHECK-FIRST (29 Oct 2026)
 
-Status: Build. Mock v4 approved 30 Oct 10:27 (Spec In hidden at 0 documents), V1-V3 = (a); red tests being amended
-to the final UAC; crew said build now (30 Oct), so merge origin/main and resolve once #1953 (PORTAL-P4-REQUESTS)
-lands (it edits ProjectForm.tsx, projects.py, project_service.py). Track M (feature track, local lane; no schema).
+Status: shipped (#1991). The document gate on Registered -> Spec In (UAC AC-G2..G10) is superseded by
+RFQ-GATE-REMOVE (owner, 10 Nov 2026, `projects/PLAN-rfq-gate-remove-10nov.md`); Check first stays.
 
 Card: `CARD-ps-register-check-first-29oct.md`. UAC: `ps-register-check-first-acceptance-criteria.md` (written after
 the owner answers the card). Mock: `documentation/mockups/PS-REGISTER-CHECK-FIRST/index.html`.

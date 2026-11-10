@@ -7,7 +7,7 @@ Status: in progress (small fix track: under 300 lines, no migration, no auth/RBA
 Owner, 10 Nov 2026: "remove upload requirement gate", and earlier: "don't need upload requirement
 step already, I thought we reusing the status graph?". This reverses the 29 Oct meeting rule
 "RFQ upload mandatory" that PS-REGISTER-CHECK-FIRST (#1991, `PLAN-ps-register-check-first-29oct.md`)
-built. The status graph (`statuses` / `status_transitions`, admin at /system-management/status-graphs)
+built (now `_archive/projects/`). The status graph (`statuses` / `status_transitions`, admin at /system-management/status-graphs)
 already drives every other header button through `ProjectStatusAction`; this rung goes back to it.
 
 ## Change
