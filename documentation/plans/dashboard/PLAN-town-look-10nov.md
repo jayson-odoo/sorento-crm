@@ -1,6 +1,7 @@
 # PLAN: Town look v6 (lighting, materials, motion with intent)
 
-Status: Build (mock). Design-only scout lane, no product code. Track: M scout (mock + notes only, no
+Status: Mock v6 filed for the owner (10 Nov): `documentation/mockups/TOWN-LOOK/` (index.html, NOTES.md,
+town-v6.mp4, screens/); waits on the owner's look approval, then TOWN-V2 builds it. Design-only scout lane, no product code. Track: M scout (mock + notes only, no
 migration, no auth/RBAC change, no ingest surface). UAC: `town-look-acceptance-criteria.md`.
 Feeds lane TOWN-V2 (PR #2310), which builds whatever look the owner approves.
 
