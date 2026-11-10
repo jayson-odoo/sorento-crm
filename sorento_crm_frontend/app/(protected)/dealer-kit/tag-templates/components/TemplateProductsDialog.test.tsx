@@ -57,8 +57,12 @@ const row = (id: string, code: string) => ({
 });
 const PAGE = [row('p1', 'SRTKS-7040-WH'), row('p2', 'SRTKS-7848-SS'), row('p3', 'SRTKS-8050-BK')];
 
-function mount(onOpenChange = vi.fn()) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+function mount(onOpenChange = vi.fn(), warm?: string[]) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000 }, mutations: { retry: false } },
+  });
+  // The designer page already holds this query; `warm` stands in for that fresh cache.
+  if (warm) client.setQueryData(['tag-template-product-ids', T], warm);
   render(
     <QueryClientProvider client={client}>
       <TemplateProductsDialog open onOpenChange={onOpenChange} templateId={T} templateName="Kitchen sink A6" />
@@ -234,5 +238,12 @@ describe('TemplateProductsDialog', () => {
     await box('SRTKS-7040-WH');
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('seeds from a fresh fetch even when the page has the list cached and fresh', async () => {
+    mount(vi.fn(), ['p1', 'p2']);
+    await waitFor(() => expect(links.listTemplateProductIds).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText('2 use this template')).toBeTruthy());
+    expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true);
   });
 });
