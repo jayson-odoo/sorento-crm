@@ -326,6 +326,10 @@ def get_audit_logs(
         limit=limit,
         include_children=include_children,
     )
+    # Admins too: the registry is shared, the icons are per company (SPEC-REGISTRY-ICON-LEAK).
+    from app.services.dealer_kit.asset_service import redact_foreign_icon_ids
+
+    redact_foreign_icon_ids(db, items)
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
         | {str(it.real_user_id) for it in items if getattr(it, "real_user_id", None) is not None}
