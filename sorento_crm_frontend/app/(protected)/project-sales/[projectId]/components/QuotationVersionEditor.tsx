@@ -48,7 +48,9 @@ import {
   completeSetText,
   draftCells,
   lineErrors,
+  isSectionDraft,
   serverToDraft,
+  splitCarriedHeadings,
   toBody,
   totalFromDrafts,
   type LineDraft,
@@ -71,7 +73,11 @@ export function unfinishedStagedLines(lines: StagedQuotationLine[]): number {
  */
 export function stagedLinesToBody(lines: StagedQuotationLine[]): QuotationLineBulkItem[] {
   return lines
-    .filter((line) => !line.removed)
+    // A heading row left without a name is not sent (the server would refuse it).
+    .filter(
+      (line) =>
+        !line.removed && !(isSectionDraft(line.draft) && !(line.draft.band_label ?? '').trim()),
+    )
     .map((line) =>
       line.id ? { id: line.id, ...toBody(line.draft, line.line) } : toBody(line.draft, line.line),
     );
@@ -464,13 +470,17 @@ export function QuotationVersionEditor({
     if (!selected || lines.isLoading || lines.isFetching) return;
     seedScope(
       selected.id,
-      sortedLines.map((line) => ({
-        id: line.id,
-        key: line.id,
-        line,
-        draft: serverToDraft(line, withCells),
-        removed: false,
-      })),
+      // A heading still carried by a line is seeded as its own row (PROPOSAL-FORM-COLLAPSE), so
+      // the session's baseline is already split and an untouched scope stays clean.
+      splitCarriedHeadings(
+        sortedLines.map((line) => ({
+          id: line.id,
+          key: line.id,
+          line,
+          draft: serverToDraft(line, withCells),
+          removed: false,
+        })),
+      ),
     );
   }, [
     withCells,
@@ -494,13 +504,15 @@ export function QuotationVersionEditor({
     () =>
       gridEditing && staged
         ? staged
-        : sortedLines.map((line) => ({
-            id: line.id,
-            key: line.id,
-            line,
-            draft: serverToDraft(line, withCells),
-            removed: false,
-          })),
+        : splitCarriedHeadings(
+            sortedLines.map((line) => ({
+              id: line.id,
+              key: line.id,
+              line,
+              draft: serverToDraft(line, withCells),
+              removed: false,
+            })),
+          ),
     [gridEditing, sortedLines, staged, withCells],
   );
 

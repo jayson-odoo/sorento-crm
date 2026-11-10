@@ -553,8 +553,20 @@ def _write_scope(
     first_data_row = row
 
     current_band: Optional[str] = None
-    for position, line in enumerate(lines, start=1):
+    position = 0
+    for line in lines:
         band = _text(line.band_label)
+        if line.is_section:
+            # A heading row is the band and nothing else: no cells, no item number, nothing
+            # summed (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            _put(sheet, row, 1, band, font=_BOLD, fill=_BAND_FILL, alignment=_WRAP_LEFT)
+            sheet.merge_cells(
+                start_row=row, start_column=1, end_row=row, end_column=money_column
+            )
+            row += 1
+            continue
+        position += 1
         # Once, above the line that opens the band. Repeated down every row it is noise a QS reads
         # past; in the item row's own cells it cannot be told apart from a description.
         if band and band != current_band:
@@ -686,11 +698,11 @@ def _write_scope(
             )
         row += 1
 
-    if not lines:
+    if not position:
         _put(sheet, row, 1, "No items priced in this scope.", font=_ITALIC)
         row += 1
 
-    if grid and lines:
+    if grid and position:
         row = _write_grid_footer(
             sheet, row, first_data_row, counted_rows, positions, leaf_col, pair_col, summary["footer"]
         )

@@ -109,6 +109,8 @@ export type QuotationSignLine = {
   unit_price: string;
   complete_set: string | null;
   band_label: string | null;
+  /** A heading row: its band_label is the band, nothing else (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
   is_rate_only: boolean;
   /** Null on a rate-only line: the money column prints the words instead of a zero. */
   amount: string | null;

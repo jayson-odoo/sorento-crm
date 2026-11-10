@@ -75,6 +75,7 @@ LINE_FIELDS = (
     "complete_set",
     "band_label",
     "is_rate_only",
+    "is_section",
 )
 
 _NUMERIC_LINE_FIELDS = ("unit_price", "quantity")
@@ -447,6 +448,7 @@ def copy_line(
         complete_set=line.complete_set,
         band_label=line.band_label,
         is_rate_only=line.is_rate_only,
+        is_section=bool(line.is_section),
         unit_price=line.unit_price,
         quantity=line.quantity,
         qty_cells=line.qty_cells,
@@ -528,6 +530,7 @@ def _recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
         .filter(
             ProjectQuotationLine.version_id == version.id,
             ProjectQuotationLine.is_rate_only.is_(False),
+            ProjectQuotationLine.is_section.is_(False),
         )
         .scalar()
     )
@@ -723,6 +726,10 @@ def _apply_guardrails(
     version so the category walk and the product read happen once rather than per line.
     ``series_pricing`` is its twin for the money (T5) and is passed for the same reason.
     """
+    if line.is_section:
+        # A heading row is never priced, so never flagged (PROPOSAL-FORM-COLLAPSE).
+        line.is_non_standard = line.is_below_floor = line.is_discounted = False
+        return None
     was_below = bool(line.is_below_floor)
 
     # A product outside the series is non-standard; a set is judged by its own series row.
@@ -902,6 +909,17 @@ def _write_line(
     same coercion, snapshotting and guardrails and then recompute the total ONCE. Both
     callers share this body, so the two ways of saving a line cannot drift apart.
     """
+    # None means "not sent" (review should-fix 5): it never turns a heading into a line.
+    section = (
+        bool(payload["is_section"])
+        if payload.get("is_section") is not None
+        else bool(line is not None and line.is_section)
+    )
+    if section:
+        return _write_section(db, version=version, quotation=quotation, payload=payload, line=line)
+    if "is_section" in payload and payload["is_section"] is None:
+        payload = {key: value for key, value in payload.items() if key != "is_section"}
+
     # A different product's photo or drawing cannot be this one's: a product change that does
     # not send picks of its own clears the stored ones, in every path that writes a line.
     if payload.get("product_id") and payload.get("product_set_id"):
@@ -1083,6 +1101,74 @@ def _write_line(
     return line
 
 
+def _write_section(
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    quotation: ProjectQuotation,
+    payload: Dict[str, Any],
+    line: Optional[ProjectQuotationLine] = None,
+) -> ProjectQuotationLine:
+    """A section heading row (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026).
+
+    Its own row, so moving or deleting a line never moves or drops it. It carries the heading
+    text and its position only: whatever product, set, price or quantity arrives with it is
+    dropped, so it adds nothing to any total and no guardrail or approval ever sees it.
+    """
+    # A null name is no name (review should-fix 1): never the text "None".
+    raw = payload.get("band_label") if "band_label" in payload else (line.band_label if line else None)
+    label = (raw or "").strip()
+    if not label:
+        raise AppException(
+            status_code=422,
+            message="A section heading needs a name.",
+            code="quotation_section_label_required",
+        )
+    if line is None:
+        line = ProjectQuotationLine(
+            company_id=quotation.company_id,
+            version_id=version.id,
+            sort_order=_next_sort_order(db, version.id),
+        )
+        db.add(line)
+    if "sort_order" in payload and payload["sort_order"] is not None:
+        line.sort_order = payload["sort_order"]
+    if "notes" in payload:
+        line.notes = payload["notes"]
+    line.is_section = True
+    line.band_label = label[:150]
+    for field in (
+        "product_id",
+        "product_set_id",
+        "set_parts_snapshot",
+        "product_code_snapshot",
+        "description_snapshot",
+        "list_price_snapshot",
+        "image_attachment_id",
+        "drawing_attachment_id",
+        "item_label",
+        "brand_snapshot",
+        "technical_spec",
+        "complete_set",
+        "qty_cells",
+        "uom",
+        "unit_type",
+        "floor_value_applied",
+        "floor_level_applied",
+    ):
+        setattr(line, field, None)
+    line.unit_price = Decimal("0.00")
+    line.quantity = Decimal("0.00")
+    line.line_total = Decimal("0.00")
+    line.is_rate_only = False
+    line.is_non_standard = False
+    line.is_below_floor = False
+    line.is_discounted = False
+    setattr(line, _BREACH_ATTR, [])
+    db.flush()
+    return line
+
+
 def upsert_line(
     db: Session,
     *,
@@ -1208,6 +1294,9 @@ def set_columns(
     }
     lines = list_lines(db, version.id)
     for line in lines:
+        # A heading row holds no quantity, before or after columns (PROPOSAL-FORM-COLLAPSE).
+        if line.is_section:
+            continue
         if not new:
             line.qty_cells = None
         elif not old:
@@ -1277,7 +1366,8 @@ def recompute_version(
     """
     assert_editable(db, version)
     quotation = _quotation_of(db, version)
-    lines = list_lines(db, version.id)
+    # Heading rows are not priced lines: no guardrail, no count (PROPOSAL-FORM-COLLAPSE).
+    lines = [line for line in list_lines(db, version.id) if not line.is_section]
 
     products: Dict[str, Product] = {}
     product_ids = {line.product_id for line in lines if line.product_id}
@@ -1453,7 +1543,11 @@ def serialize_quotations(
             func.sum(func.cast(ProjectQuotationLine.is_non_standard, Integer)),
             func.count(ProjectQuotationLine.id),
         )
-        .filter(ProjectQuotationLine.version_id.in_(current_ids))
+        .filter(
+            ProjectQuotationLine.version_id.in_(current_ids),
+            # Heading rows are not lines to count or flag (PROPOSAL-FORM-COLLAPSE).
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .group_by(ProjectQuotationLine.version_id)
         .all()
         if current_ids
@@ -1634,6 +1728,7 @@ def serialize_lines(
             "technical_spec": line.technical_spec,
             "complete_set": line.complete_set,
             "band_label": line.band_label,
+            "is_section": bool(line.is_section),
             "is_non_standard": line.is_non_standard,
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,

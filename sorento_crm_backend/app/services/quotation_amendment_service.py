@@ -97,7 +97,12 @@ def _issued_lines(
         return {}
     lines = (
         db.query(ProjectQuotationLine)
-        .filter(ProjectQuotationLine.version_id.in_(list(by_version)))
+        .filter(
+            ProjectQuotationLine.version_id.in_(list(by_version)),
+            # A heading row is never a line a customer can suggest a change on: its id reads as
+            # unknown (PROPOSAL-FORM-COLLAPSE).
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .all()
     )
     return {str(line.id): (line, by_version[str(line.version_id)]) for line in lines}

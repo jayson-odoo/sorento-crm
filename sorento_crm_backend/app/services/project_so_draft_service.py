@@ -1105,7 +1105,9 @@ class ProjectSODraftService:
         parent_qty = _dec(parent.quantity)
         run = [parent]
         for line in lines[parent_index + 1 :]:
-            if _dec(line.unit_price) > _ZERO:
+            # A heading row is priced at 0 too, but it ends the run rather than joining it
+            # as a product-less component (PROPOSAL-FORM-COLLAPSE).
+            if line.is_section or _dec(line.unit_price) > _ZERO:
                 break
             run.append(line)
         if len(run) == 1:
@@ -1336,7 +1338,8 @@ class ProjectSODraftService:
         if quotation_version is None:
             return None
         query = self.db.query(ProjectQuotationLine).filter(
-            ProjectQuotationLine.version_id == quotation_version.id
+            ProjectQuotationLine.version_id == quotation_version.id,
+            ProjectQuotationLine.is_section.is_(False),
         )
         if source.product_id:
             return query.filter(ProjectQuotationLine.product_id == source.product_id).first()

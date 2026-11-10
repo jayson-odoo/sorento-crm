@@ -773,7 +773,9 @@ def issue(
 
 def line_key(line: ProjectQuotationLine) -> Optional[str]:
     """What makes two lines "the same product" across revisions and documents: the product, else
-    the set, else the code the line printed."""
+    the set, else the code the line printed. A heading row is never a product."""
+    if line.is_section:
+        return None
     if line.product_id:
         return str(line.product_id)
     if line.product_set_id:
@@ -1084,7 +1086,11 @@ def _scope_summary(db: Session, scope: ProjectQuotation) -> Dict[str, Any]:
     if version is not None:
         line_count = (
             db.query(func.count(ProjectQuotationLine.id))
-            .filter(ProjectQuotationLine.version_id == version.id)
+            .filter(
+                ProjectQuotationLine.version_id == version.id,
+                # Heading rows are not lines (PROPOSAL-FORM-COLLAPSE).
+                ProjectQuotationLine.is_section.is_(False),
+            )
             .scalar()
             or 0
         )
@@ -2085,7 +2091,25 @@ def serialize_sign_page(
         columns = quotation_columns.for_lines(lines)
         shown = {key for key, _label in columns}
         rows: List[Dict[str, Any]] = []
-        for position, line in enumerate(lines, start=1):
+        position = 0
+        for line in lines:
+            if line.is_section:
+                # A heading row: the band the page draws, never an item, a number or a target
+                # for a suggested change (PROPOSAL-FORM-COLLAPSE).
+                rows.append(
+                    {
+                        "id": str(line.id),
+                        "is_section": True,
+                        "item_label": None,
+                        "band_label": line.band_label,
+                        "quantity": Decimal(0),
+                        "unit_price": Decimal(0),
+                        "amount": None,
+                        "qty_cells": {},
+                    }
+                )
+                continue
+            position += 1
             row: Dict[str, Any] = {
                 # The handle a suggested change names. Only lines of this issue are
                 # accepted back, so the id gives nothing beyond the page itself.
