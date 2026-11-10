@@ -184,7 +184,7 @@ _ANY_OF_PERMISSIONS: dict = {
 #: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
 #: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
 #: The commit runs after the request, so the admin is stored with the action, server-side.
-_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink")
+_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink", "dealer_access_link.unlink")
 
 
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
@@ -254,6 +254,10 @@ def _assert_entity_visible(
 
         if get_link_by_id(db, entity_id) is None:
             raise handle_not_found("Customer link", entity_id)
+    elif action_key == "dealer_access_link.unlink":
+        from app.services import dealer_access_screen
+
+        dealer_access_screen.own_link(db, str(actor_id or ""), entity_id)  # 404 unless one of the requester's own
     elif action_key == "customer_group.delete":
         from app.services.customer_group_service import CustomerGroupService
 
@@ -424,6 +428,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "customer.remove_from_group",
     "customer.unassign_sales_agent",
     "customer_group.delete",
+    "dealer_access_link.unlink",
     "form_comment.delete",
     "my_request.delete",
     "my_request_attachment.unlink",

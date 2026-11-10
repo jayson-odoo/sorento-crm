@@ -2306,3 +2306,90 @@ def test_F3_a_single_row_grant_from_a_closed_pick_is_refused_like_a_table_row(db
     assert "is from an earlier list that is closed now" in result.reply_text
     assert "Say which company" not in result.reply_text
     assert state(db, phone) is None
+
+
+# ------------------------------------------------------------------ DEALER-ACCESS-SCREEN: #2268 last live check minor
+
+
+def test_A18_a_ready_row_of_the_new_request_re_sent_on_all_is_not_asked_which_company(db):
+    """#2268 last short live check: a new-request row (company typed, customer resolved, so READY on an undecided
+    card) re-sent by the model when the user answers with `all` was refused with "Say which company...". The
+    immediately preceding turn verified that row's company even though that turn left no row waiting, so it counts
+    (UAC A17/A18: every row of the last table counts, ready rows included). Never ask when the customer is resolved."""
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    chin, chin_accounts = _shop(db, w, "ZZT Chin Choy")
+    ali, firdaus = fake_phone(), fake_phone()
+    ali_row = row_(ali, name="ZZT Ali", role="employee", names=[chin])
+    firdaus_row = row_(firdaus, name="ZZT Firdaus", role="employee", codes=[w.cust_a.customer_code])
+
+    _turn(db, w, [_batch_call([ali_row]), answer_("Which account?")], f"Sorento: ZZT Ali {ali} employee at {chin}")
+    b = _turn(db, w, [_batch_call([firdaus_row], "b2"), answer_("ok")],
+              f"Sorento: ZZT Firdaus {firdaus} employee, {w.cust_a.customer_code}")
+    assert b.pending_action is not None, b.reply_text
+
+    chin_codes = [a.customer_code for a in chin_accounts]
+    c = _turn(
+        db, w, [_batch_call([firdaus_row, {**ali_row, "customer_codes": chin_codes}], "b3"), answer_("ok")], "all",
+    )
+
+    assert WHICH_COMPANY not in c.reply_text
+    assert c.pending_action is not None, c.reply_text
+    assert any(firdaus in line for line in c.pending_action["lines"])
+    assert state(db, ali) is None
+
+
+def test_M1_a_decided_card_carries_nothing_to_the_next_turn(db):
+    """UAC M1: a row READY on the preceding card (its customer name typed in that message) is carried to the next
+    turn only while that card is undecided. Once the card is cancelled the user's `all` does not type the name, so
+    the re-sent row gets the A17 refusal: never proposed as verified by the old card."""
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent import actions
+    from tests.chatbot.agent.test_agent_writes import answer_
+
+    w = make_world(db)
+    name = w.cust_a.customer_name
+    phone = fake_phone()
+    row = row_(phone, name="ZZT Firdaus", role="employee", names=[name])
+
+    b = _turn(db, w, [_batch_call([row]), answer_("ok")], f"Sorento: ZZT Firdaus {phone} employee at {name}")
+    assert b.pending_action is not None, b.reply_text
+    card = db.query(AgentAction).filter(AgentAction.status == "proposed").order_by(AgentAction.created_at.desc()).first()
+    actions.cancel(db, w.respond_id, str(card.id))
+
+    # The user asks for the number again without typing the dealer name: the cancelled card vouches for nothing.
+    c = _turn(db, w, [_batch_call([row], "b2"), answer_("ok")], f"Sorento: {phone} employee, try again")
+
+    assert c.pending_action is None, c.reply_text
+    assert NOT_TYPED.format(name=name) in c.reply_text
+    assert state(db, phone) is None
+
+
+def test_S8_with_sorento_active_an_owner_grant_for_a_contact_linked_to_my_own_mocha_account_is_not_another_account(db):
+    from app.models.user import User
+
+    o = own_world(db)
+    w = o.w
+    with company_scope(db, None):
+        db.query(User).filter(User.id == w.user_id).update({"last_active_company_id": w.srt})
+    db.commit()
+    person = dealer(db, w, customers=(w.cust_b,), companies=(w.srt, w.mch))
+
+    steps, skipped, _ = propose(db, w, [row_(person.phone_number, role="owner", codes=[w.cust_a.customer_code])])
+
+    assert steps and skipped == []
+
+
+def test_TAG_the_level_is_the_owner_tag_dealer_types_without_it_promote_by_adding_the_tag(db):
+    owner_tags(db)
+    o = own_world(db)
+    w = o.w
+    person = dealer(db, w, types=("end_user", "dealer", "cabana_dealer"), customers=(w.cust_a,))
+
+    res, step = update_step(db, w, {"contact_id": person.id, "role": "owner"}, seen={person.id})
+
+    assert res.status == "proposed", f"{res.status}: {res.message}"
+    outcome = confirm(db, w, store(db, w, [step]))
+    assert outcome.status == "executed", outcome.steps
+    assert SRT_TAG in tags_of(db, person.id)

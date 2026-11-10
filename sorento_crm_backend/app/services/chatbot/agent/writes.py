@@ -938,11 +938,13 @@ def _own_agent_ids(db, user_id: str) -> list[str]:
 
 @contextmanager
 def _users_scope(db, user_id: str):
-    """The user's company scope for the body, whatever scope the session carries (restored after)."""
+    """EVERY company the user is granted for the body, whatever scope the session carries (restored after).
+    Own accounts, "another account" and the contact facts are read over all the user's companies, never only
+    the active one (DEALER-ACCESS-SCREEN S8)."""
     from app.models.base import company_scope
     from app.services import company_scope_resolver
 
-    with company_scope(db, company_scope_resolver._scope_for_user(db, user_id, None)):
+    with company_scope(db, frozenset(company_scope_resolver.resolve_user_grant_ids(db, user_id))):
         yield
 
 
@@ -1028,7 +1030,11 @@ def _contact_facts(db, contact, user_id: str) -> dict:
         .filter(RespondContactCompany.respond_contact_id == contact.id)
     )
     template_codes = [c for c in codes if c in TEMPLATE["owner_types"]]
-    owner_codes = [c for c in template_codes if types & _owner_types([c])]
+    # The owner level is the company's standard owner TAG, never the owner access types alone (owner ruling 9 Nov).
+    from app.services.contact_tag_service import owner_codes_by_contact
+
+    held_tags = owner_codes_by_contact(db, [str(contact.id)], template_codes).get(str(contact.id), set())
+    owner_codes = [c for c in template_codes if c in held_tags]
     role = "owner" if owner_codes else ("employee" if TEMPLATE["base_type"] in types else "none")
     with _users_scope(db, user_id):
         links = sorted(
@@ -1193,6 +1199,9 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     remove_tags: list = []
     lines: list[str] = []
     template_codes = facts["template_codes"]
+    if args.get("role_companies"):
+        # The Dealer access screen changes the level of ONE company's row: only ever narrows (S5).
+        template_codes = [c for c in template_codes if c in set(args["role_companies"])]
     if role == "owner" and not template_codes:
         raise AppException(
             status_code=422,
@@ -1204,7 +1213,10 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         )
     if role is not None:
         lacking = [c for c in template_codes if c not in facts["owner_codes"]]
-        changes = bool(lacking) if role == "owner" else role != facts["role"]
+        # Employee means no dealer prices: a held owner tag OR a held owner type (a legacy contact) is taken off.
+        legacy_types = bool(facts["types"] & _owner_types(template_codes))
+        owned = [c for c in template_codes if c in facts["owner_codes"]]
+        changes = bool(lacking) if role == "owner" else bool(owned or legacy_types or facts["role"] == "none")
         if changes:
             if not facts["codes"]:
                 raise AppException(
@@ -1253,7 +1265,10 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                         )
                 add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
                 new_label = _role_label("employee", [])
-            lines.append(f"{_role_label(facts['role'], facts['owner_codes'])} -> {new_label}")
+            was = _role_label(facts["role"], facts["owner_codes"]) if facts["owner_codes"] else (
+                "Employee with dealer prices" if legacy_types else _role_label(facts["role"], [])
+            )
+            lines.append(f"{was} -> {new_label}")
         elif not facts["codes"] and role != facts["role"]:
             raise AppException(
                 status_code=422, message="This contact has no company, so its role cannot be set.", code="VALIDATION_ERROR"

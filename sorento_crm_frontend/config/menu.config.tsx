@@ -1564,6 +1564,13 @@ export const MENU_SIDEBAR: MenuConfig = [
     permission: 'sales.customer_asks.view',
     audience: 'salesperson',
   },
+  {
+    title: 'Dealer access',
+    icon: UserCheck,
+    path: '/sales/dealer-access',
+    permission: 'user_management.contacts.edit_own',
+    audience: 'salesperson',
+  },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
   ...MY_REQUEST_ITEMS,
 ];
