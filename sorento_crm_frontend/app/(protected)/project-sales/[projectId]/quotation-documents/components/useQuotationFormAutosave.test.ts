@@ -118,6 +118,29 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
+  // INSERT-SECTION-FIX B1: an edit taken back to the saved state (an empty heading inserted, then
+  // dropped on blur) leaves the form clean again. That change must reach the draft too, or the
+  // draft keeps the undone edit and the form reopens with it.
+  it('an edit undone back to the saved state is saved too, so the draft no longer holds it', async () => {
+    const { rerender } = setup({ state: state('Opened'), isDirty: false });
+    rerender({ state: state('Opened, empty heading added'), isDirty: true });
+    await tick();
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    rerender({ state: state('Opened'), isDirty: false });
+    await tick();
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft.mock.calls[1][2].header.subject_title).toBe('Opened');
+  });
+
+  it('an edit undone inside the debounce sends the undone state, not the edit', async () => {
+    const { rerender } = setup({ state: state('Opened'), isDirty: false });
+    rerender({ state: state('Opened, empty heading added'), isDirty: true });
+    rerender({ state: state('Opened'), isDirty: false });
+    await tick(AUTOSAVE_DEBOUNCE_MS * 3);
+    expect(saveDraft).toHaveBeenCalled();
+    expect(saveDraft.mock.calls.at(-1)?.[2].header.subject_title).toBe('Opened');
+  });
+
   it('a different total alone is not an edit (opening a saved scope re-sums it)', async () => {
     const { rerender } = setup({ state: state('Opened', '100'), isDirty: true });
     rerender({ state: state('Opened', '100.00'), isDirty: true });
