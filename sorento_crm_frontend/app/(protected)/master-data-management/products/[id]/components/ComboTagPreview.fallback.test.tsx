@@ -189,4 +189,21 @@ describe('the description always shows with this combo\'s real values', () => {
     await waitFor(() => expect(screen.getByTestId('design-viewer')).toBeInTheDocument());
     expect(screen.queryByText(/has no field that prints/)).toBeNull();
   });
+
+  it('unlinking the template takes the drawn tag away at once, without a reload (crew pass D1)', async () => {
+    state.links = [link({})];
+    answerWith([{ id: 'd', type: 'text', slot_binding: null, props: { kind: 'text', text: '{{combo.description}}' } }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <ComboTagPreview combo={combo as never} description={DESCRIPTION} />
+      </QueryClientProvider>
+    );
+    const view = render(tree());
+    await waitFor(() => expect(screen.getByTestId('design-viewer')).toBeInTheDocument());
+    state.links = [];
+    view.rerender(tree());
+    expect(await screen.findByText('No price tag template linked')).toBeInTheDocument();
+    expect(screen.queryByTestId('design-viewer')).toBeNull();
+  });
 });

@@ -534,7 +534,7 @@ function PartRow({
   const isOption = !!part.choice_group && !part.is_upgrade && isChoice;
   const alone = !!part.choice_group && !part.is_upgrade && !isChoice;
   return (
-    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
+    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] lg:grid-cols-[minmax(0,1fr)_20rem_auto] sm:items-center">
       <div className="min-w-0">
         <p className="truncate font-medium" title={part.code}>
           {part.code}
@@ -565,9 +565,10 @@ function PartRow({
         ) : null}
       </div>
       {canEdit ? (
+        // 20rem from lg up fits "Choice group (only for pick-one parts)" (254px of text) whole;
+        // narrower, the trigger wraps it rather than cutting it (crew pass D2).
         <SearchableSelect
           clearable
-          truncateTriggerLabel
           aria-label={`Choice group for ${part.code}`}
           value={part.choice_group ?? ''}
           onChange={(value) => onChoiceGroup(value || null)}
@@ -975,7 +976,7 @@ function ComboBlock({
             card. The Add part picker below stays put outside it. */}
         <div className="max-h-[22rem] space-y-3 overflow-y-auto">
           {/* The main product's own label (COMBO-SETTINGS-UX): it leads `{{combo.parts}}`. */}
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] lg:grid-cols-[minmax(0,1fr)_20rem_auto] sm:items-center">
             <div className="min-w-0">
               {productCode ? (
                 <p className="truncate font-medium" title={productCode}>

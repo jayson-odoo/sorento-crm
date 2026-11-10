@@ -270,10 +270,13 @@ export function ComboTagPreview({
   const binding = withDrafts(real, description, partsLine);
   const asPrinted = <DescriptionAsPrinted binding={binding} description={description} />;
 
+  // Drawn only while a published template is linked: the query keeps its last answer (and the
+  // previous data while a new pick redraws), which must not outlive an unlink (crew pass D1).
+  const drawable = !!link?.published;
   const payload = useMemo<TagSheetDesignPayload | null>(() => {
     const row = preview.data?.lines[0];
     const template = preview.data?.templates[KEY];
-    if (!preview.data || !row || !template) return null;
+    if (!drawable || !preview.data || !row || !template) return null;
     const tagId = row.tag_id ?? row.line_id ?? KEY;
     const doc = buildSingleTagSheet(
       {
@@ -312,7 +315,7 @@ export function ComboTagPreview({
       images: preview.data.images,
       fonts: preview.data.fonts,
     });
-  }, [preview.data, combo, description, partsLine]);
+  }, [drawable, preview.data, combo, description, partsLine]);
 
   // The switcher (item 4), shown only when there is a choice to make. "Open" in the viewer opens
   // whatever is drawn, so it opens the selected template.
