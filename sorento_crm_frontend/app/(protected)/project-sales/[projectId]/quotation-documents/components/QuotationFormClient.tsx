@@ -812,13 +812,14 @@ export function QuotationFormClient({
       // after it (a refetch re-seeding the form while the page leaves) may write the draft back.
       autosave.setPaused(true);
       autosave.forgetLocalCopy();
+      // `isSaving` stays on: the form stays locked until the page has left, so nothing is typed
+      // into a form that no longer saves, and Save cannot be sent twice.
       router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
     } catch {
+      setIsSaving(false);
       // The mutation toasted the server's reason; the draft keeps everything that was typed. A
       // refusal may be the draft moving to another tab: ask now rather than at the next poll.
       void autosave.checkNow();
-    } finally {
-      setIsSaving(false);
     }
   }
 
