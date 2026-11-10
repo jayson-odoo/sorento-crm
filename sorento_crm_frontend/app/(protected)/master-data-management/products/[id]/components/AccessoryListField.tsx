@@ -238,6 +238,8 @@ export function AccessoryListField({
           value: `product:${p.id}`,
           label: codeWithName(p.product_code, p.product_name),
           searchText: `${p.product_code} ${p.product_name}`,
+          // Still pickable, with the grey hint the other combo pickers use (owner 7 Nov).
+          description: p.is_discontinued ? 'Discontinued' : undefined,
           group: 'Products',
         };
       });

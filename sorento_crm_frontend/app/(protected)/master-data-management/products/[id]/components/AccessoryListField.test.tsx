@@ -154,6 +154,21 @@ describe('AccessoryListField', () => {
     expect(page2.map((o) => o.value)).toEqual(['product:p8']);
   });
 
+  it('a discontinued product stays pickable with a grey "Discontinued" hint (owner 7 Nov)', async () => {
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [
+        { id: 'p7', product_code: 'SRT-TAP', product_name: 'Basin tap', is_discontinued: false },
+        { id: 'p8', product_code: 'AP8650B', product_name: 'Old basket', is_discontinued: true },
+      ],
+    } as never);
+    renderField();
+    await screen.findByText('Tap');
+    const options = await pickerFetch.current!('', 0);
+    const old = options.find((o) => o.value === 'product:p8') as { description?: string } | undefined;
+    expect(old?.description).toBe('Discontinued');
+    expect((options.find((o) => o.value === 'product:p7') as { description?: string }).description).toBeUndefined();
+  });
+
   it('add saves the list with the picked id appended', async () => {
     service.replaceOwnerAccessories.mockResolvedValue([TAP, WASTE, TRAP]);
     renderField();

@@ -295,6 +295,8 @@ function DescriptionField({
     if (html !== saved) onSave(html, () => setDraft(saved));
   };
   const positions = useMemo(() => positionsBinding(combo, productCode), [combo, productCode]);
+  // This combo's real tag data once the preview has read it, so Insert field previews real values.
+  const [real, setReal] = useState<TagBindingData | null>(null);
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <div className="min-w-0 space-y-1.5">
@@ -325,7 +327,7 @@ function DescriptionField({
         <InsertFieldDialog
           open={insertOpen}
           value=""
-          data={positions}
+          data={real ?? positions}
           specKeys={[]}
           groups={DESCRIPTION_FIELD_GROUPS}
           omitPaths={DESCRIPTION_OMITS}
@@ -338,6 +340,7 @@ function DescriptionField({
           combo={combo}
           description={draft.trim() === '' ? null : draft}
           partsLine={partsLine}
+          onBinding={setReal}
         />
       </div>
     </div>

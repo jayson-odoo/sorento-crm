@@ -219,12 +219,12 @@ describe('comboShape, one-part groups (COMBO-SETTINGS-UX owner round 1)', () => 
   it('counts a group with one part as a fixed part; a choice is 2+ parts', async () => {
     expect(
       (await mod()).comboShape([
-        { choice_group: null },
-        { choice_group: 'Test' },
-        { choice_group: 'TAP' },
-        { choice_group: 'TAP' },
-        { choice_group: 'Kitchen tap' },
-        { choice_group: 'Kitchen tap', is_upgrade: true },
+        p('A', null),
+        p('B', 'Test'),
+        p('C', 'TAP'),
+        p('D', 'TAP'),
+        p('E', 'Kitchen tap'),
+        p('F', 'Kitchen tap', { is_upgrade: true }),
       ]),
     ).toEqual({ fixed: 3, groups: [{ role: 'TAP', size: 2 }], upgrades: 1 });
   });

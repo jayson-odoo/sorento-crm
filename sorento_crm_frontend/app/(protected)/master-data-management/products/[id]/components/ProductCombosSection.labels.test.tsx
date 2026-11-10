@@ -242,6 +242,16 @@ describe('description fields', () => {
     expect(data.product.slots.fixed.map((p) => p.code)).toEqual(['SRTWB2380', 'SRTW2600']);
   });
 
+  it('once the preview has this combo\'s real tag data, Insert field previews against it (owner round 1)', () => {
+    show();
+    const real = { kind: 'product', product: { code: 'SRTBF11829', combo: { main_label: 'CABINET' }, slots: null } };
+    act(() => {
+      (previewProps.last?.onBinding as (b: unknown) => void)(real);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    expect(insertDialog.props?.data).toEqual(real);
+  });
+
   it('an inserted field is saved at once, not only on a later blur (review S4)', () => {
     show({ ...COMBO, description: '<p>Intro</p>' } as ProductComboRow);
     fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));

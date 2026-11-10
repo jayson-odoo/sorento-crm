@@ -7,6 +7,12 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { RichTextView } from '@/components/dealer-kit/RichTextView';
+import { getProductTagData } from '@/app/(protected)/dealer-kit/services/tagDataService';
+import { renderMergeFields } from '@/lib/dealer-kit/merge-fields';
+import { richBlocksWithFields } from '@/lib/dealer-kit/product-block';
+import type { TagBindingData, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
@@ -136,16 +142,93 @@ function defaultTag(link: ProductTagTemplateItem): string | null {
   return null;
 }
 
+/**
+ * This combo's own tag data (its host with the combo, its parts, labels and part line), the same
+ * the template designer previews a combo with. Works with no template at all, so the description can
+ * always be shown with real values (owner round 1). Re-read when the combo or a part changes.
+ */
+export function useComboTagBinding(combo: ProductComboRow): TagBindingData | null {
+  const query = useQuery({
+    queryKey: [
+      'combo-tag-data',
+      combo.host_product_id,
+      combo.id,
+      combo.updated_at,
+      combo.main_label ?? '',
+      combo.parts.map((part) => `${part.id}:${part.label ?? ''}:${part.choice_group ?? ''}`).join('|'),
+    ],
+    queryFn: () => getProductTagData(combo.host_product_id, null, combo.id),
+  });
+  return useMemo(
+    () => (query.data ? ({ kind: 'product', product: query.data } as TagBindingData) : null),
+    [query.data],
+  );
+}
+
+/** `binding` with the editor's drafts in place of the saved description and part line. */
+export function withDrafts(
+  binding: TagBindingData | null,
+  description: string | null,
+  partsLine: string | null | undefined,
+): TagBindingData | null {
+  if (!binding || binding.kind !== 'product' || !binding.product.combo) return binding;
+  return {
+    ...binding,
+    product: {
+      ...binding.product,
+      combo: {
+        ...binding.product.combo,
+        description,
+        ...(partsLine !== undefined ? { parts_line: partsLine } : {}),
+      },
+    },
+  } as TagBindingData;
+}
+
+/** A layer stand-in, so a rich description splices `{{combo.parts}}` with its formatting. */
+const DESCRIPTION_LAYER = { props: { kind: 'text', text: '' } } as unknown as Pick<TagLayer, 'props'>;
+
+/** The description as the tag prints it, against this combo's real data. */
+function DescriptionAsPrinted({ binding, description }: { binding: TagBindingData | null; description: string | null }) {
+  if (!description || !binding) return null;
+  const blocks = richBlocksWithFields(description, binding, 'print', DESCRIPTION_LAYER);
+  return (
+    <div className="space-y-1 rounded-md border bg-muted/30 p-3" data-testid="description-as-printed">
+      <p className="text-xs text-muted-foreground">The description prints as:</p>
+      {blocks ? (
+        <RichTextView blocks={blocks} />
+      ) : (
+        <p className="whitespace-pre-line break-words text-sm">
+          {renderMergeFields(description, binding, 'print')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Whether a template prints the combo description anywhere (a field or a bound slot). */
+function printsDescription(layers: TagLayer[] | undefined): boolean {
+  const reads = /\{\{\s*(combo\.description|combo\.parts|product\.price_tag_description)\s*\}\}/;
+  return (layers ?? []).some((layer) => {
+    if (layer.slot_binding === 'combo_description' || layer.slot_binding === 'price_tag_description') return true;
+    const props = layer.props as { kind?: string; text?: string };
+    return props?.kind === 'text' && reads.test(`${layer.text_override ?? ''} ${props.text ?? ''}`);
+  });
+}
+
 export function ComboTagPreview({
   combo,
   description,
   partsLine,
+  onBinding,
 }: {
   combo: ProductComboRow;
   /** The description as it stands in the editor. */
   description: string | null;
   /** "Each part prints as" as it stands in its editor; absent = the saved one. */
   partsLine?: string | null;
+  /** Hands this combo's real tag data up (the description's Insert field previews against it). */
+  onBinding?: (binding: TagBindingData | null) => void;
 }) {
   const links = useComboTagTemplates(combo.id);
   const ordered = useMemo(() => orderedLinks(links.data ?? []), [links.data]);
@@ -180,6 +263,12 @@ export function ComboTagPreview({
   // The server draws the line (slots, parts, photos, prices) exactly as the request preview and
   // the PDF do; only a published default can be drawn.
   const preview = useTagPreview(line, !!link && link.published);
+  const real = useComboTagBinding(combo);
+  useEffect(() => {
+    onBinding?.(real);
+  }, [real, onBinding]);
+  const binding = withDrafts(real, description, partsLine);
+  const asPrinted = <DescriptionAsPrinted binding={binding} description={description} />;
 
   const payload = useMemo<TagSheetDesignPayload | null>(() => {
     const row = preview.data?.lines[0];
@@ -324,16 +413,29 @@ export function ComboTagPreview({
                 : 'No price tag template linked'}
             </p>
           </div>
+          {asPrinted}
         </div>
       );
     }
+    const template = preview.data?.templates[KEY] as { doc?: { layers?: TagLayer[] } } | undefined;
+    const missing = !printsDescription(template?.doc?.layers);
     return (
-      <DesignViewer
-        title="Tag preview"
-        docNumber={link ? `${combo.name} - ${link.name}` : combo.name}
-        payload={payload}
-        headerActions={switcher}
-      />
+      <div className="space-y-2">
+        <DesignViewer
+          title="Tag preview"
+          docNumber={link ? `${combo.name} - ${link.name}` : combo.name}
+          payload={payload}
+          headerActions={switcher}
+        />
+        {missing ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              &quot;{link?.name}&quot; has no field that prints the combo description.
+            </p>
+            {asPrinted}
+          </>
+        ) : null}
+      </div>
     );
   }
 }
