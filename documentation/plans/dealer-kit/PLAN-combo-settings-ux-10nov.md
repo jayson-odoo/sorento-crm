@@ -1,9 +1,9 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Plan, behaviour card + mock v1 filed for owner approval (no build yet). Track: LEAD, size M,
+Status: Plan, mock v2 filed; Q1 and Q5 answered, Q2/Q3/Q4 open (no build yet). Track: LEAD, size M,
 frontend only (no migration, no backend change, no auth/RBAC change; expected diff ~400 lines incl.
 tests).
-Lane: COMBO-SETTINGS-UX. Mock: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`.
+Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
 
 Owner ask (10 Nov ~15:45 MYT, on SRTKS7061-BL's Combos tab): three controls per accessories block
 is too much; the tag preview cannot be seen with a choice made; the combo Description should take
@@ -118,3 +118,22 @@ tokens and one plain-text gap. No backend change is needed.
   saves; preview sends the right `parts` for no pick / pick / upgrade; `combo.fixed_parts` and
   `slot.*.dimensions` resolve; plain combo description resolves tokens and cannot include itself.
 - Reviewer, cloud browser pass at 375 and 1280, hand-test script.
+
+## Owner answers and dev data (10 Nov)
+
+- Placement: stays in the existing Combos card on the product page, no new tab (owner asked; answered (a)).
+- Q1 (a): with nothing picked the preview shows all options. Q5 yes: Upgrade picker in the preview.
+- Q2, Q4: owner asked "wdym", crew explaining. Q3: owner asked "why we need box style"; answered with
+  (a) remove entirely / (b) designer only, rec (a) pending the dev usage count.
+- Dev rows (sorento_prod_1104): SRTKS7061-BL combo LP 880, no sell price; TAP options sell 899 / 899 /
+  929 / 929 / 1099, no price tag description, no dimensions, no upgrades. With no pick the tag prints
+  LP and each option's own price, no single sell figure (`pricing.py:694`, AC-2.5); a pick prints that
+  option's price. SRTBF11829 combo "SRTBF11829 + SRTMCB8083-BL", LP 2715 SP 2099, description typed by
+  hand part by part; 4 fixed parts, only SRTWT6203-GM and SRTW2600 have a price tag description (multi
+  line), only SRTMCB8083-BL has dimensions, SRTWB2380 has neither.
+- Consequences for the card: the parts list token includes the main product first (the flyer and the
+  typed description both list SRTBF11829), so it is `{{combo.parts}}`, not `combo.fixed_parts`; an
+  empty description prints no "( )", an empty dimension prints no line, a multi-line description is
+  joined onto one line. Dimensions print in the shared tag format `800 x 130 x 700 mm`
+  (`tag_data_service.py:98` `format_dimensions_mm`), not the flyer's `L800xW130xH700mm`: one format
+  for every tag, by that function's own rule.
