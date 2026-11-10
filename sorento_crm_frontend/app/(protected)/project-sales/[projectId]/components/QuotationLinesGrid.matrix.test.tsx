@@ -707,3 +707,35 @@ describe('+ Column header in the header row on a scope with no columns', () => {
     expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
   });
 });
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): duplicate a column-header group with its columns so
+ * the column names are not retyped. Quantities stay blank (fresh keys); the copy's name takes
+ * the caret, selected, for a rename.
+ */
+describe('duplicating a column header', () => {
+  it('copies the group and its column names right after it, named "(copy)"', () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Type A - 1 BH' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as MatrixHeader[];
+    expect(next.map((header) => header.label)).toEqual([
+      'Type A - 1 BH',
+      'Type A - 1 BH (copy)',
+      'Type B - 2 BH',
+      'Type C - 3 BH',
+    ]);
+    expect(next[1].cols.map((item) => item.label)).toEqual(['1 BH', 'Balcony']);
+    expect(next[1].key).not.toBe('a');
+  });
+
+  it('is offered on headers only, and only while the columns can be edited', () => {
+    const { unmount } = renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
+    expect(screen.getAllByRole('button', { name: /^Duplicate / })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: 'Duplicate 1 BH' })).toBeNull();
+    unmount();
+    renderGrid({ lines: [staged(TRAP, true)], matrix: { columns: UNIT, onChange: vi.fn() } });
+    expect(screen.queryByRole('button', { name: /^Duplicate / })).toBeNull();
+  });
+});

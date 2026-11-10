@@ -55,6 +55,7 @@ import type {
 import {
   addCol as addMatrixCol,
   addHeader as addMatrixHeader,
+  duplicateHeader as duplicateMatrixHeader,
   appendCopy as appendMatrixCopy,
   cellsUnder,
   hasColumns,
@@ -1575,6 +1576,16 @@ export function QuotationLinesGrid({
       ),
     [changeAndFocus],
   );
+  const duplicateHeader = React.useCallback(
+    (headerKey: string) => {
+      const header = headersRef.current.find((row) => row.key === headerKey);
+      if (!header) return;
+      changeAndFocus(
+        duplicateMatrixHeader(headersRef.current, headerKey, `${header.label} (copy)`),
+      );
+    },
+    [changeAndFocus],
+  );
   const startRemoval = React.useCallback((key: string) => {
     const all = headersRef.current.flatMap((header) => [
       { key: header.key, label: header.label },
@@ -1713,6 +1724,7 @@ export function QuotationLinesGrid({
       change,
       addCol,
       addHeader,
+      duplicateHeader,
       pending,
       startRemoval,
       undoRemoval: () => setPending(null),
@@ -1730,6 +1742,7 @@ export function QuotationLinesGrid({
       cellNotes,
       change,
       columnsEditable,
+      duplicateHeader,
       editing,
       focusKey,
       headers,
