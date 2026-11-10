@@ -451,41 +451,42 @@ const UserList = () => {
     }
   };
 
+  const selectedUsers = `${selectedRowIds.length} ${selectedRowIds.length === 1 ? 'user' : 'users'}`;
   const bulkConfirmConfig =
     bulkConfirmAction === 'delete'
       ? {
-          title: `Trash ${selectedRowIds.length} user(s)?`,
-          description: `${selectedRowIds.length} user(s) move to trash. They can be restored from the Trashed filter.`,
+          title: `Trash ${selectedUsers}?`,
+          description: 'They move to trash and can be restored from the Trashed filter.',
           cancelLabel: 'Keep users',
           actionLabel: 'Trash users',
         }
       : bulkConfirmAction === 'resend_invite'
         ? {
-            title: `Send invitations to ${selectedRowIds.length} user(s)?`,
-            description: `Each of the ${selectedRowIds.length} user(s) gets a new invitation link.`,
+            title: `Send invitations to ${selectedUsers}?`,
+            description: 'Each one gets a new invitation link by email.',
             cancelLabel: 'Not now',
             actionLabel: 'Send invitations',
           }
       : bulkConfirmAction === 'permanent_delete'
         ? {
-            title: `Delete ${selectedRowIds.length} trashed user(s)?`,
-            description: `${selectedRowIds.length} trashed user(s) are deleted for good. This cannot be undone.`,
+            title: `Delete ${selectedUsers} for good?`,
+            description: 'They are deleted for good. This cannot be undone.',
             cancelLabel: 'Keep users',
             actionLabel: 'Delete users',
           }
         : bulkConfirmAction === 'activate'
           ? {
-              title: `Activate ${selectedRowIds.length} user(s)?`,
-              description: `${selectedRowIds.length} user(s) can sign in again.`,
-              cancelLabel: 'Keep users',
-              actionLabel: 'Activate',
+              title: `Activate ${selectedUsers}?`,
+              description: 'They can sign in again.',
+              cancelLabel: 'Keep inactive',
+              actionLabel: 'Activate users',
             }
           : bulkConfirmAction === 'deactivate'
             ? {
-                title: `Deactivate ${selectedRowIds.length} user(s)?`,
-                description: `${selectedRowIds.length} user(s) can no longer sign in.`,
-                cancelLabel: 'Keep users',
-                actionLabel: 'Deactivate',
+                title: `Deactivate ${selectedUsers}?`,
+                description: 'They can no longer sign in.',
+                cancelLabel: 'Keep active',
+                actionLabel: 'Deactivate users',
               }
             : { title: '', description: '', cancelLabel: '', actionLabel: '' };
 
