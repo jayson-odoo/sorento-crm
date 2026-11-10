@@ -70,4 +70,4 @@ SPO stays VENDOR_UNSUPPORTED. Owner wants LINKING results by morning. Resume not
   `foundryx_service_acdb3`. Fixtures: `crew/state/files/AC-E2E-DB3/reseed.sh <TAG>`; read-back `ac_read.py` there.
 - Linking cases: L1 link an existing whole row, L2 change link, L3 unlink, L4 split + relocate regression, L5 SPO
   refused, P pull-back; each: AutoCount read-back, SO qty before/after, SS `ac_api_call_log` rows, screenshot.
-- Progress (update as it lands): stack rebuild [x] (CRM cf5250c6 = main f6413b84 + #2223 2b9b0502; SS main 4193fdc4; fixtures PO-L 12294, SO-L 12297, SO-L2 12300), L1 [x] L1b [x] L2 [x] L3 [x] L4 [x] L5 [x] PASS, P partial (B12 on #2223), docs [x]; QT/SO Q1-Q3 wait for #2173 (AC-QTSO-CRM-2).
+- Progress (update as it lands): stack rebuild [x] (CRM cf5250c6 = main f6413b84 + #2223 2b9b0502; SS main 4193fdc4; fixtures PO-L 12294, SO-L 12297, SO-L2 12300), L1 [x] L1b [x] L2 [x] L3 [x] L4 [x] L5 [x] PASS, P partial (B12 on #2223), docs [x]; rerun on #2223 3d5cbdb6: B12 fixed, B13 found [x]; B13 recheck on #2223 588e4ddd + SS #231 09b0702d: UI unlink and push/pull path PASS [x] (Phase 2c); QT/SO Q1-Q3 wait for #2173 (AC-QTSO-CRM-2).

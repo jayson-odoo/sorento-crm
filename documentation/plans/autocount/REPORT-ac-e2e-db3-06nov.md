@@ -155,3 +155,27 @@ AutoCount's DtlKeys; replaced rows keep their CRM line id. SO quantities unchang
 SO line uncovered). Documents: FXT-1111-PO-M 12311, FXT-1111-SO-M 12314, FXT-1111-SO-M2 12317, FXT-HT-PO-B 12319,
 FXT-HT-SO-B 12321. Evidence: crew/state/files/AC-E2E-DB3/v3/ (private). CI could not run (GitHub Actions billing
 block); this db3 run is the proof.
+
+### Phase 2c: B13 recheck, UI unlink and the push / pull path (11 Nov 2026)
+
+Stack: #2223 head 588e4ddd (B13 fix: `FromSODtlKey` 0 clears the link in `stock_debt_po_link_service` and in the PO
+ingest; contains main f6413b84), SS main 4193fdc4 for C1/C2, then SS #231 head 09b0702d (SS-PO-LINK-NULL: an unlinked
+PO row pushes an explicit `from_so_line_ref: null`; key 0 never mints a ref) for S1/S2. Fresh pair C via `reseed.sh C`.
+
+| ID | Operation | AutoCount after | CRM PO lines |
+| --- | --- | --- | --- |
+| C1 | Stock Debt UI: link FXT-HT-SO-C line 16 (HQ 3) to FXT-HT-PO-C, qty 3 | 12334 10 -> 7 + new 12339 3 @ HQ FromSO 12336 | PASS |
+| C2 | Stock Debt UI: unlink the same line | 12339 -> 12340 3 @ HQ FromSO 0; price 3.00, date 27/11 kept; total 30.0 | PASS: same line id, re-keyed to 12340, `from_so_line_ref` NULL (B13 fixed) |
+| S1 | Unlink outside the CRM (direct SS `po-links/unlink`, FXT-1111-PO-M row 12329), SS on #231 | 12329 -> 12341 FromSO 0 | PASS: the read-back push (explicit null) cleared the stale R3 link on line `DB3:12311:12330`; new row 12341 open, NULL |
+| S2 | SS day pull (`pull_docs`, 10-11 Nov, SO + PO), SS on #231 | n/a (36 docs seen, 24 pushed) | PASS: every open test PO line matches AutoCount (linked rows keep their link, unlinked rows NULL); no `:0` refs; no duplicate open refs |
+
+The #231 payload, rendered from SS's staged canonical, carries `"from_so_line_ref": null` with the key present on all
+four unlinked rows of FXT-1111-PO-M / FXT-HT-PO-C. S2 did not re-push those two (SS skips a document whose raw
+equals its last push), so S1 shows the null arriving and S2 shows it staying.
+
+Observation (not B13): a row replaced OUTSIDE the CRM (S1) leaves the old CRM line cancelled with its old link and adds a
+new line, because the CRM has no `replaces_line_ref` handling and SS sends that field only from contract 2.12. Inside
+the CRM flow `_apply` re-keys (B12). Stock Debt supply reads open PO lines only, so likely no coverage effect
+(unverified). Test-harness note: on this staging DB (11,970 products) the Stock Debt grid with "Only products in debt"
+off and no search kept the browser busy for 12+ minutes; search first. Documents: FXT-HT-PO-C 12333, FXT-HT-SO-C
+12335 (plus FXT-1111-PO-M 12311 for S1). Evidence: crew/state/files/AC-E2E-DB3/v4/ (private).
