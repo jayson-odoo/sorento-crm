@@ -2,15 +2,7 @@
 
 Plan: `PLAN-standard-history-10nov.md`.
 
-## Part A: OI detail Unconfirm
-
-- AC-SH-A1: On an OI detail page with confirmed lines and nothing ticked, the gear's Unconfirm item
-  is disabled, and pressing it sends nothing.
-- AC-SH-A2: With one line ticked, Unconfirm sends only that line's live confirmed rows: never a
-  cancelled row, never a used row, never another line's row.
-- AC-SH-A3: Ticking several lines (the header checkbox ticks every line on the page) then pressing
-  Unconfirm unconfirms every ticked confirmed line, as before.
-- AC-SH-A4: Confirm and Auto link with nothing ticked keep their whole-OI scope (unchanged).
+Part A (an Unconfirm guard) was dropped by the owner on 10 Nov ~12:50; it has no criteria.
 
 ## Part B, wave 1: OI detail History tab + "All events" in the OI line dialog
 
