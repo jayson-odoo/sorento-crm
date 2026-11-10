@@ -1830,3 +1830,76 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     expect(screen.queryByTestId('record-header-card')).toBeNull();
   });
 });
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): "I want to make the header and lines section to be
+ * collapsible". Both open by default; a collapsed one shows a one-line summary and keeps its
+ * fields mounted (hidden), so nothing typed is lost; Cover letter and Terms are untouched.
+ */
+describe('QuotationFormClient: collapsible Header and Lines (PROPOSAL-FORM-COLLAPSE)', () => {
+  function toggle(name: RegExp) {
+    return screen.getByRole('button', { name });
+  }
+
+  it('opens both sections by default, on New and on Edit', async () => {
+    renderForm();
+    await openLines();
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle(/^Lines/)).toHaveAttribute('aria-expanded', 'true');
+    cleanup();
+
+    renderForm('d1');
+    await openLines('Townhouse');
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle(/^Lines/)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('a collapsed Header hides its fields and reads To, Subject, Date and Total on one line', async () => {
+    renderForm('d1');
+    await openLines('Townhouse');
+    const name = screen.getByRole('textbox', { name: 'Name' });
+    expect(name).toBeVisible();
+
+    fireEvent.click(toggle(/^Header/));
+    const collapsed = toggle(/^Header/);
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false');
+    expect(collapsed).toHaveTextContent(
+      /Nadi Cergas Sdn Bhd.*Menara Test.*28\/09\/2026.*RM [\d,]+\.\d\d/,
+    );
+    // Hidden, not unmounted: the typed value survives a collapse.
+    expect(screen.getByDisplayValue('Nadi Cergas Sdn Bhd')).not.toBeVisible();
+    // The lines stay open.
+    expect(within(scopeCard('Townhouse')).getByRole('button', { name: 'Add a line' })).toBeVisible();
+
+    fireEvent.click(collapsed);
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeVisible();
+  });
+
+  it('a collapsed Lines section reads the scope count and total, and keeps staged lines', async () => {
+    renderForm();
+    const card = await openLines();
+    const description = await addLine(card, 1);
+    fireEvent.change(description, { target: { value: 'Kept while folded' } });
+
+    fireEvent.click(toggle(/^Lines/));
+    const collapsed = toggle(/^Lines/);
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false');
+    expect(collapsed).toHaveTextContent(/1 scope.*RM [\d,]+\.\d\d/);
+    expect(screen.getByDisplayValue('Kept while folded')).not.toBeVisible();
+    // The Header stays open.
+    expect(screen.getByRole('textbox', { name: 'Your Ref' })).toBeVisible();
+
+    fireEvent.click(collapsed);
+    expect(screen.getByDisplayValue('Kept while folded')).toBeVisible();
+  });
+
+  it('leaves the Cover letter and Terms tabs without section toggles', async () => {
+    renderForm();
+    await openLines();
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
+    await openTab('Terms');
+    const terms = screen.getByRole('tabpanel', { name: 'Terms' });
+    expect(within(terms).queryByRole('button', { name: /^(Header|Lines)/ })).toBeNull();
+  });
+});

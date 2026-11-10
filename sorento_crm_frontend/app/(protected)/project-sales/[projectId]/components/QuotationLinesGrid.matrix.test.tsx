@@ -664,3 +664,46 @@ describe('fix round 3: a new name is there to type into at once (M2a)', () => {
     expect(screen.queryByRole('textbox', { name: 'Column Column 3' })).toBeNull();
   });
 });
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov: "the column header supposed to be here", arrow at the
+ * end of the header row): on a scope with no column headers, + Column header sits in the
+ * column-header row right after Total (RM), not in the bar under the table.
+ */
+describe('+ Column header in the header row on a scope with no columns', () => {
+  function headerCells(): HTMLElement[] {
+    return screen.getAllByRole('columnheader');
+  }
+
+  it('sits in the column-header cell right after Total (RM), and nowhere else', () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [], onChange } });
+    const button = screen.getByRole('button', { name: 'Column header' });
+    const cells = headerCells();
+    const owner = cells.findIndex((cell) => cell.contains(button));
+    expect(owner).toBeGreaterThan(-1);
+    expect((cells[owner - 1].textContent ?? '').trim()).toBe('Total (RM)');
+    // Only one: the bar under the table keeps Add a line and Add a section alone.
+    expect(screen.getAllByRole('button', { name: 'Column header' })).toHaveLength(1);
+    const bar = screen.getByRole('button', { name: 'Add a line' }).parentElement as HTMLElement;
+    expect(within(bar).queryByRole('button', { name: 'Column header' })).toBeNull();
+  });
+
+  it('still starts the grid from there', () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [], onChange } });
+    fireEvent.click(screen.getByRole('button', { name: 'Column header' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual([
+      { key: expect.any(String), label: 'Header 1', cols: [] },
+    ]);
+  });
+
+  it('is not offered on a read, or where the columns cannot be edited', () => {
+    const { unmount } = renderGrid({ lines: [staged(TRAP, false)], matrix: { columns: [], onChange: vi.fn() } });
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
+    unmount();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [] } });
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
+  });
+});
