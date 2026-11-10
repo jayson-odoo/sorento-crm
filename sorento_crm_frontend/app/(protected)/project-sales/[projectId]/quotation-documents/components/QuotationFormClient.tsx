@@ -91,6 +91,7 @@ import {
   QuotationCoverLetterPanel,
   QuotationTermsPanel,
 } from '../[documentId]/components/QuotationLetterPanels';
+import type { QuoteTermsPatch } from '../../../_shared/components/QuoteTermsFields';
 
 /**
  * One scope as the form holds it until Save: its name, series and notes. Its LINES are not held
@@ -360,6 +361,15 @@ export function QuotationFormClient({
   );
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
+  /**
+   * QUOTE-TERMS-SELECT: the picked term and validity, and what changed since the page opened.
+   * Only the changes are sent, so a legacy free text nobody picked over keeps printing.
+   */
+  const [termsPicks, setTermsPicks] = React.useState<QuoteTermsPatch>({});
+  const [termsPatch, setTermsPatch] = React.useState<QuoteTermsPatch>({});
+  /** False while the Validity on screen cannot be saved; Save refuses, so what is shown is
+   *  always what is sent (crew pass 538d14b7). */
+  const [validityOk, setValidityOk] = React.useState(true);
 
   // QUOTE-AUTOSAVE replaces the old "you have unsaved changes" warning: every edit is saved to
   // the draft as it is made, so leaving loses nothing and there is nothing to warn about.
@@ -408,6 +418,15 @@ export function QuotationFormClient({
       }),
     );
     setRemovedIds([...(state.removedIds ?? [])]);
+    // QUOTE-TERMS-SELECT: the picks ride in the draft; a draft from before the lane has none, so
+    // the saved record's picks stand and nothing is pending.
+    if (state.terms) {
+      setTermsPicks({ ...state.terms.picks });
+      setTermsPatch({ ...state.terms.patch });
+    } else {
+      setTermsPicks(savedTermsPicks(saved.data));
+      setTermsPatch({});
+    }
     edit.hydrate({ ...stagedFromRecordLines(state), ...((state.staged ?? {}) as Record<string, StagedScope>) });
     // The create form's one-off defaults must not overwrite what the state already holds.
     setLetterSeeded(true);
@@ -450,6 +469,7 @@ export function QuotationFormClient({
     }
     if (isEdit && routeDocumentId && saved.data && quotations.data) {
       const document = saved.data;
+      setTermsPicks(savedTermsPicks(document));
       // Open on the draft when there is one (card rule 3), or on this browser's newer unsent copy.
       const start = pickStart(routeDocumentId, opened.data);
       if (start) {
@@ -503,6 +523,16 @@ export function QuotationFormClient({
       payment_terms: letterTemplates.data?.payment_terms ?? '',
       validity: letterTemplates.data?.validity ?? '',
     }));
+    // The template's picks ride with the create, so the new quotation keeps them.
+    const defaults: QuoteTermsPatch = {};
+    if (letterTemplates.data?.payment_term_id)
+      defaults.payment_term_id = letterTemplates.data.payment_term_id;
+    if (letterTemplates.data?.validity_value != null && letterTemplates.data?.validity_unit) {
+      defaults.validity_value = letterTemplates.data.validity_value;
+      defaults.validity_unit = letterTemplates.data.validity_unit;
+    }
+    setTermsPicks(defaults);
+    setTermsPatch(defaults);
     setTermsDefaulted(true);
   }, [isEdit, termsDefaulted, letterSeeded, header, letterTemplates.data]);
 
@@ -568,8 +598,9 @@ export function QuotationFormClient({
       ),
       removedIds,
       total: liveTotal ?? '0',
+      terms: { picks: termsPicks, patch: termsPatch },
     };
-  }, [header, letter, scopes, stagedScopes, changedKeys, removedIds, liveTotal]);
+  }, [header, letter, scopes, stagedScopes, changedKeys, removedIds, liveTotal, termsPicks, termsPatch]);
 
   // An approval holds the document: the server refuses its draft too (card rule 6).
   const lockedForApproval = ['pending_approval', 'resubmitted', 'approved'].includes(
@@ -664,11 +695,12 @@ export function QuotationFormClient({
       recipient_email_snapshot: h.recipient_email_snapshot ?? null,
       payment_terms: h.payment_terms ?? null,
       validity: h.validity ?? null,
+      ...termsPatch,
       terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,
       cover_letter_html: letter.cover_letter_html ?? saved.data?.cover_letter_html ?? null,
       cover_closing_html: letter.cover_closing_html ?? saved.data?.cover_closing_html ?? null,
     };
-  }, [documentId, header, letter, saved.data]);
+  }, [documentId, header, letter, saved.data, termsPatch]);
   const coverPreview = useQuotationCoverPreview(
     projectId,
     coverPreviewBody,
@@ -746,6 +778,11 @@ export function QuotationFormClient({
    * commit. A new proposal nothing was typed into yet is created first, then saved.
    */
   async function save() {
+    if (!validityOk) {
+      setError('Validity needs a whole number from 1 to 999 and a unit.');
+      setTab('terms');
+      return;
+    }
     const problem = validate();
     setError(problem);
     // Every refusal is about a scope or a line, so show the tab it is on.
@@ -764,6 +801,7 @@ export function QuotationFormClient({
           id: documentId,
           body: {
             ...headerBody(),
+            ...termsPatch,
             ...letter,
             scopes: scopesBody(),
             ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
@@ -775,6 +813,7 @@ export function QuotationFormClient({
         // The first Save numbers a new proposal (Q2): today's one POST, plus the form's state.
         const created = await mutations.create.mutateAsync({
           ...headerBody(),
+          ...termsPatch,
           ...createLetterBodyOf(letter),
           scopes: scopesBody(),
           form_state: formState,
@@ -1184,9 +1223,21 @@ export function QuotationFormClient({
                 html={letter.terms_html ?? saved.data?.terms_html ?? ''}
                 paymentTerms={header?.payment_terms ?? ''}
                 validity={header?.validity ?? ''}
+                paymentTermId={termsPicks.payment_term_id ?? null}
+                validityValue={termsPicks.validity_value ?? null}
+                validityUnit={termsPicks.validity_unit ?? null}
+                projectId={projectId}
+                onValidityChange={setValidityOk}
                 onFieldChange={(patch) => {
                   setDirty(true);
-                  setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                  const { payment_terms, validity, ...picks } = patch;
+                  setHeader((previous) => ({
+                    ...(previous ?? {}),
+                    ...('payment_terms' in patch ? { payment_terms: payment_terms ?? '' } : {}),
+                    ...('validity' in patch ? { validity: validity ?? '' } : {}),
+                  }));
+                  setTermsPicks((previous) => ({ ...previous, ...picks }));
+                  setTermsPatch((previous) => ({ ...previous, ...picks }));
                 }}
                 onChange={(html) => {
                   setDirty(true);
@@ -1202,6 +1253,15 @@ export function QuotationFormClient({
       )}
     </div>
   );
+}
+
+/** The record's own term picks, as the form holds them (QUOTE-TERMS-SELECT). */
+function savedTermsPicks(document: QuotationDocument | undefined): QuoteTermsPatch {
+  return {
+    payment_term_id: document?.payment_term_id ?? null,
+    validity_value: document?.validity_value ?? null,
+    validity_unit: document?.validity_unit ?? null,
+  };
 }
 
 /** The folded Header's one line: To, Subject, Date, Total; blanks are left out. */

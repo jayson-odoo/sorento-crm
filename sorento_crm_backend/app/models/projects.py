@@ -304,6 +304,10 @@ class Project(Base, CompanyScopedMixin):
     # Comparison key for the registration lock. Minimal normalisation (casefold +
     # whitespace collapse) so "Phase 3A" and "Phase 3B" stay distinct.
     normalised_title = Column(Text, nullable=False)
+    # The short name people call the development (PROJECT-NAME, owner 10 Nov): shown in the
+    # header and pickers so the legal title stops bloating them. Optional, never unique and never
+    # part of the registration lock; a blank name shows the title instead (`project_display_name`).
+    name = Column(String(80), nullable=True)
 
     developer_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), nullable=True
@@ -822,6 +826,8 @@ class ProjectLead(Base, CompanyScopedMixin):
     )
 
     title = Column(Text, nullable=False)
+    # Short name, carried onto the project it qualifies into (PROJECT-NAME Q5).
+    name = Column(String(80), nullable=True)
     # Kept for the informational near-duplicate hint on the list (AC-O3). Same
     # normalisation as `projects.normalised_title` so a lead can be compared against
     # registered projects with the one shared helper, NOT to enforce anything.
@@ -1199,6 +1205,13 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     quotation_purpose = Column(Text, nullable=True)
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # QUOTE-TERMS-SELECT: what was picked; ``payment_terms`` / ``validity`` above stay the
+    # printed text (set from these on save, or legacy free text nobody has picked over yet).
+    payment_term_id = Column(
+        UUID(as_uuid=False), ForeignKey("payment_terms.id", ondelete="SET NULL"), nullable=True
+    )
+    validity_value = Column(Integer, nullable=True)
+    validity_unit = Column(String(8), nullable=True)
     subject_title = Column(Text, nullable=True)
 
     # The document's OWN editable copy, rendered from the company template at create. Editing it
@@ -1435,6 +1448,12 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     # Defaults beside the terms template, copied onto a new quotation (kind terms only).
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # QUOTE-TERMS-SELECT: the picked term and validity behind the two texts above.
+    payment_term_id = Column(
+        UUID(as_uuid=False), ForeignKey("payment_terms.id", ondelete="SET NULL"), nullable=True
+    )
+    validity_value = Column(Integer, nullable=True)
+    validity_unit = Column(String(8), nullable=True)
     # kind cover_page only: {show_letterhead, title, rows: [{key, shown, label}], closing_html}.
     design = Column(JSONB, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)

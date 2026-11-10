@@ -1137,6 +1137,7 @@ export interface ProjectLookupItem {
   id: string;
   project_code: string;
   title: string;
+  name?: string | null;
   company_name?: string | null;
 }
 

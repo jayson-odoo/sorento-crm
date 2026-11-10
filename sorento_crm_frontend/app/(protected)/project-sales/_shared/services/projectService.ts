@@ -71,6 +71,7 @@ import type {
   TaskStatusChangeBody,
 } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
+import { projectDisplayName } from '../lib/projectName';
 
 const BASE = '/api/v1/project-sales';
 
@@ -163,7 +164,7 @@ export async function listEditableProjectOptions(query: string) {
     .filter((project) => project.can_edit)
     .map((project) => ({
       value: project.id,
-      label: project.title,
+      label: projectDisplayName(project),
       description: [projectCodeLabel(project), project.developer_name].filter(Boolean).join(' · '),
     }));
 }
@@ -230,9 +231,10 @@ export type ProjectExtractFieldKey =
   | 'state'
   | 'mukim'
   | 'title'
+  | 'name'
   | 'customer';
 
-/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+/** The backend sends title, name and mukim as plain strings, the rest as proposal objects. */
 export type ProjectExtractResult = Partial<
   Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
 >;

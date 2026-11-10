@@ -201,6 +201,8 @@ export interface Project {
   /** Null until a portal registration is approved: render it with `projectCodeLabel`. */
   project_code: string | null;
   title: string;
+  /** Short name (PROJECT-NAME); null shows the title through `projectDisplayName`. */
+  name?: string | null;
   outcome: ProjectOutcome;
   loss_reason?: string | null;
   /** Project sales admin's filing reference, e.g. PS26-0143. Not an identity: it is
@@ -298,6 +300,7 @@ export interface Project {
 
 export interface ProjectRegisterBody {
   title: string;
+  name?: string | null;
   developer_party_id?: string | null;
   type_id?: string | null;
   template_id?: string | null;
@@ -345,6 +348,7 @@ export interface ClashCandidate {
   project_id: string;
   project_code: string;
   title: string;
+  name?: string | null;
   outcome?: ProjectOutcome;
   status_label?: string | null;
   owner_user_id?: string | null;
@@ -452,6 +456,8 @@ export interface ProjectTask {
   project_id: string;
   project_code?: string | null;
   project_title?: string | null;
+  /** The project's short name (PROJECT-NAME); null shows `project_title`. */
+  project_name?: string | null;
 
   name: string;
   description?: string | null;
@@ -571,6 +577,8 @@ export interface ProjectLead {
   id: string;
   lead_code: string;
   title: string;
+  /** Short name (PROJECT-NAME Q5); carried onto the project it qualifies into. */
+  name?: string | null;
 
   customer_id: string;
   customer_name?: string | null;
@@ -605,6 +613,7 @@ export interface ProjectLead {
 
 export interface ProjectLeadBody {
   title: string;
+  name?: string | null;
   customer_id?: string | null;
   developer_party_id?: string | null;
   source?: LeadSource | null;

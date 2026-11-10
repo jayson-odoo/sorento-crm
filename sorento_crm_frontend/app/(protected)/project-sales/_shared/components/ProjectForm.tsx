@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
 import { WizardSteps } from '@/components/common/WizardSteps';
+import { PROJECT_NAME_MAX_LENGTH } from '../lib/projectName';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
@@ -121,6 +122,8 @@ export function ProjectForm(props: ProjectFormProps) {
   const { create: createPartyMutation } = usePartyMutations();
 
   const [title, setTitle] = React.useState(project?.title ?? '');
+  // The short name the header shows (PROJECT-NAME); optional, filled by the AI extract or by hand.
+  const [name, setName] = React.useState(project?.name ?? '');
   const [developerId, setDeveloperId] = React.useState(project?.developer_party_id ?? '');
   const [developerOption, setDeveloperOption] = React.useState<PickOption | null>(
     project?.developer_party_id
@@ -393,6 +396,7 @@ export function ProjectForm(props: ProjectFormProps) {
       party_links: partyLinks,
       ...(contactIds.length ? { contact_ids: contactIds } : {}),
       title: title.trim(),
+      name: name.trim() || null,
       developer_party_id: developerId || null,
       type_id: typeId || null,
       template_id: templateId || null,
@@ -416,6 +420,8 @@ export function ProjectForm(props: ProjectFormProps) {
   /** Pre-fills the form from a confirmed AI extract; the typed title is never overwritten. */
   function applyExtract(fill: ProjectExtractFill) {
     if (fill.title && !title.trim()) setTitle(fill.title);
+    // Same rule for the name: a typed one is never overwritten.
+    if (fill.name && !name.trim()) setName(fill.name);
     clearCheck();
     if (fill.developer) {
       setDeveloperId(fill.developer.id);
@@ -600,6 +606,25 @@ export function ProjectForm(props: ProjectFormProps) {
     />
   );
 
+  const nameField = (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor="project-name">Project name</Label>
+        <span className="text-xs text-muted-foreground">
+          {name.length} / {PROJECT_NAME_MAX_LENGTH}
+        </span>
+      </div>
+      <Input
+        id="project-name"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        maxLength={PROJECT_NAME_MAX_LENGTH}
+        placeholder="Optional"
+        autoComplete="off"
+      />
+    </div>
+  );
+
   function handleCancel() {
     router.push(mode === 'create' ? '/project-sales/pipeline' : `/project-sales/${project!.id}`);
   }
@@ -671,7 +696,7 @@ export function ProjectForm(props: ProjectFormProps) {
         {(!wizard || step === 'details') && (
           <FormSection
             title="Who and what"
-            summary={title.trim() || null}
+            summary={name.trim() || title.trim() || null}
             open={sectionOpen.who}
             onOpenChange={(next) => toggleSection('who', next)}
           >
@@ -705,6 +730,8 @@ export function ProjectForm(props: ProjectFormProps) {
                   </div>
                   {checkResult}
                 </div>
+
+                {nameField}
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
@@ -744,7 +771,10 @@ export function ProjectForm(props: ProjectFormProps) {
               </>
             )}
             {wizard && (
-              <div className="space-y-1.5">{typeField}</div>
+              <>
+                {nameField}
+                <div className="space-y-1.5">{typeField}</div>
+              </>
             )}
 
             {typeId && templateField}

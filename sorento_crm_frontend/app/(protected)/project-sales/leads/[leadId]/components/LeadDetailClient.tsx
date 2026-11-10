@@ -56,6 +56,7 @@ import { EditLeadInformantDialog } from './EditLeadInformantDialog';
 import { LeadTimelinePanel } from './LeadTimelinePanel';
 import { QualifyLeadDialog } from './QualifyLeadDialog';
 import { projectCodeLabel } from '../../../_shared/lib/projectCode';
+import { projectDisplayName } from '../../../_shared/lib/projectName';
 
 /**
  * One recorded sighting: who told us, what we heard, and what it became.
@@ -245,7 +246,11 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
           <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={lead.title} lines={2} dialogTitle="Lead title" />
+            <TruncatedTextCell
+              text={projectDisplayName(lead)}
+              lines={2}
+              dialogTitle={lead.name?.trim() ? 'Lead name' : 'Lead title'}
+            />
           </h2>
           <p className="text-sm text-muted-foreground">
             {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}
@@ -455,6 +460,7 @@ function HeardCard({ lead }: { lead: LeadWithAcceptance }) {
       </CardHeader>
       <CardContent>
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <Fact label="Title" value={lead.title} />
           <Fact label="Developer" value={lead.developer_name} />
           <Fact label="Location" value={lead.location} />
           <Fact
@@ -611,7 +617,7 @@ function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
         header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
         cell: ({ row }) => (
           <span className="truncate text-sm" title={row.original.title}>
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </span>
         ),
         size: 320,
@@ -693,7 +699,7 @@ function AccountPanel({
         header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
         cell: ({ row }) => (
           <span className="truncate text-sm" title={row.original.title}>
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </span>
         ),
         size: 320,
@@ -731,7 +737,7 @@ function AccountPanel({
         header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
         cell: ({ row }) => (
           <span className="truncate text-sm" title={row.original.title}>
-            {row.original.title}
+            {projectDisplayName(row.original)}
           </span>
         ),
         size: 320,

@@ -60,6 +60,7 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { PARTY_ROLE_DEVELOPER } from '../../_shared/lib/partyRoles';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
@@ -317,8 +318,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
+          {/* The short name (PROJECT-NAME); the full title sits in "The development". With no
+              name yet the title stands in, clamped as before. */}
           <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            {project.name?.trim() ? (
+              <span className="break-words">{project.name}</span>
+            ) : (
+              <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            )}
           </h2>
         </div>
 
@@ -501,6 +508,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               it carries its own actions and notes and reads badly squeezed into a column. */}
           <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
             <Section title="The development">
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="text-xs text-muted-foreground">Project title</dt>
+                <dd className="text-sm">
+                  <TruncatedTextCell text={project.title} lines={3} dialogTitle="Project title" />
+                </dd>
+              </div>
               <Fact label="Developer" value={project.developer_name} />
               <Fact label="Registered company / SPV" value={project.registered_company_name} />
               <Fact label="Location" value={project.location} />
@@ -630,7 +643,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Confirm delete"
-        description={`Delete ${projectCodeLabel(project)} "${project.title}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
+        description={`Delete ${projectCodeLabel(project)} "${projectDisplayName(project)}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}

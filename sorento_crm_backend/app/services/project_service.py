@@ -55,6 +55,36 @@ REJECTED_LABEL = "Rejected"
 RESUBMITTED_LABEL = APPEALED_LABEL
 
 
+#: PROJECT-NAME: the short name's cap, the same as the column.
+PROJECT_NAME_MAX_LEN = 80
+
+
+def clean_project_name(value: Any) -> Optional[str]:
+    """A typed or extracted name as stored: whitespace collapsed, blank as null."""
+    # NUL is refused by Postgres (a 500), and split() keeps it.
+    text = " ".join(str(value or "").replace("\x00", "").split())
+    return text or None
+
+
+def checked_project_name(value: Any) -> Optional[str]:
+    """`clean_project_name`, refusing a name longer than the column with a 422 rather than
+    letting the database answer a 500 (a free-form `details` dict reaches here unvalidated)."""
+    name = clean_project_name(value)
+    if name and len(name) > PROJECT_NAME_MAX_LEN:
+        raise AppException(
+            status_code=422,
+            message=f"Project name is too long (at most {PROJECT_NAME_MAX_LEN} characters).",
+            code="project_name_too_long",
+        )
+    return name
+
+
+def project_display_name(project) -> str:
+    """What a person recognises the project by: its short name, else its title (PROJECT-NAME
+    rule 7). Notifications and labels use this; documents keep the full title."""
+    return clean_project_name(getattr(project, "name", None)) or (getattr(project, "title", None) or "")
+
+
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
     "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
@@ -829,6 +859,7 @@ def serialize_projects(
                 "id": project.id,
                 "project_code": project.project_code,
                 "title": project.title,
+                "name": project.name,
                 "outcome": project.outcome,
                 "loss_reason": project.loss_reason,
                 "admin_ref": project.admin_ref,
@@ -1120,6 +1151,7 @@ def list_projects(
         query = query.filter(
             or_(
                 func.lower(Project.title).like(needle),
+                func.lower(Project.name).like(needle),
                 func.lower(Project.project_code).like(needle),
             )
         )
@@ -1290,6 +1322,7 @@ _PROFILE_FIELDS = (
 )
 
 _PROJECT_FIELDS = (
+    "name",
     "type_id",
     "template_id",
     "loss_reason",
@@ -1319,7 +1352,8 @@ def apply_sales_details(
 
     for key in _PROJECT_FIELDS:
         if key in payload:
-            setattr(project, key, payload[key])
+            value = checked_project_name(payload[key]) if key == "name" else payload[key]
+            setattr(project, key, value)
 
     db.flush()
 
@@ -1825,6 +1859,7 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "project_id": candidate.project_id,
                 "project_code": candidate.project_code,
                 "title": candidate.title,
+                "name": row.get("name"),
                 "outcome": candidate.outcome,
                 "status_label": row.get("status_label"),
                 "owner_user_id": candidate.owner_user_id,
