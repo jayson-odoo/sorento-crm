@@ -240,7 +240,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const selectedIds = useMemo(() => selectedLines.map((l) => l.id), [selectedLines]);
   // AC-ND-12: the sales order lines ticked. Review S2: a line whose only waiting rows are
   // used ticks those used rows, so "anything ticked" reads the lines, not `selectedIds`
-  // (live rows only) - else one such tick would widen Unconfirm and Auto link to the OI.
+  // (live rows only) - else one such tick would widen Auto link to the OI.
   const tickedLineKeys = useMemo(
     () => new Set(lines.filter((l) => rowSelection[l.id]).map(foldKeyOf)),
     [lines, rowSelection],
@@ -279,7 +279,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // Unconfirm reads the TICKED lines only, like the worklist's own Unconfirm (N) and this
   // page's Link / Unlink / Reject selected. Nothing ticked used to mean every confirmed
   // line of the whole OI, and one stray press on OI-2611-0019 sent all 9 rows back to
-  // "To order". To unconfirm everything, tick the header checkbox first.
+  // "To order". To unconfirm many, tick them (the header checkbox ticks every line on
+  // the page) first.
   const unconfirmScope = selectedUnconfirmable;
   const selectedRejectable = useMemo(
     () =>

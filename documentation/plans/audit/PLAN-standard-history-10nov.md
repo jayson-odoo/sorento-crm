@@ -31,7 +31,8 @@ Decision: **disable until lines are ticked**, not an "Unconfirm all N lines?" di
   (`OrderInquiriesClient.tsx:1910-1928`, disabled with "Tick rows purchasing has already
   confirmed."), and this page's `Link selected` / `Unlink selected` / `Reject selected`.
 - `PRINCIPLES.md` design mandates and `ADR-PRODUCT-STANDARDS.md` rule out confirmation dialogs.
-- Unconfirming the whole OI is still two clicks: tick the header checkbox, press Unconfirm.
+- Unconfirming many lines is still two clicks: tick the header checkbox (every line on the page),
+  press Unconfirm.
 
 This supersedes the coordinator's "W" ruling (nothing ticked = every confirmed line of the OI).
 Confirm and Auto link keep their whole-OI fallback: they move rows forward, and nobody asked to

@@ -571,6 +571,20 @@ describe('STANDARD-HISTORY A: Unconfirm never widens to the whole OI', () => {
       'row-live',
     ]);
   });
+  it('with two lines ticked, Unconfirm sends both lines\' live confirmed rows (AC-SH-A3)', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce(confirmedLines());
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-A'));
+    fireEvent.click(await screen.findByLabelText('Select ZZT-B'));
+
+    fireEvent.click(await openGear());
+
+    await waitFor(() => expect(unacknowledgeSpy).toHaveBeenCalledTimes(1));
+    expect(
+      [...((unacknowledgeSpy.mock.calls[0] as unknown[])[0] as string[])].sort(),
+    ).toEqual(['row-b', 'row-live']);
+  });
 });
 
 describe('Unlink selected is a server-deferred pending action, not a confirm dialog (AC-DP-06, UL)', () => {
