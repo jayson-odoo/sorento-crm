@@ -61,7 +61,8 @@ PROJECT_NAME_MAX_LEN = 80
 
 def clean_project_name(value: Any) -> Optional[str]:
     """A typed or extracted name as stored: whitespace collapsed, blank as null."""
-    text = " ".join(str(value or "").split())
+    # NUL is refused by Postgres (a 500), and split() keeps it.
+    text = " ".join(str(value or "").replace("\x00", "").split())
     return text or None
 
 

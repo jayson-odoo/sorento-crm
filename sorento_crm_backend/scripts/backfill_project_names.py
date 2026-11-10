@@ -28,6 +28,7 @@ import argparse
 import csv
 import os
 import sys
+import uuid
 from typing import Callable, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,7 +39,22 @@ from app.models.projects import Project  # noqa: E402
 
 FORM_KEY = "portal.project_registration"
 NAME_MAX_LEN = 80
-COLUMNS = ("project_code", "title", "proposed_name")
+# `project_id` is the key apply writes by: a code is unique per company only
+# (`uq_projects_company_code`) and this script runs across every company.
+COLUMNS = ("project_id", "project_code", "title", "proposed_name")
+#: A spreadsheet runs a cell starting with one of these as a formula (CSV injection): the title
+#: came from a portal form and the name from a model reading it, so both are untrusted.
+_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value: str) -> str:
+    return f"'{value}" if value and value.startswith(_FORMULA_LEADS) else value
+
+
+def _unsafe_cell(value: Optional[str]) -> str:
+    """Undo `_safe_cell` on a value read back from the reviewed CSV."""
+    text = value or ""
+    return text[1:] if text.startswith("'") and text[1:2] in {lead[:1] for lead in _FORMULA_LEADS} else text
 
 
 def unnamed(db, limit: Optional[int] = None) -> List[Project]:
@@ -71,17 +87,19 @@ def ai_proposer(db) -> Callable[[str], Optional[str]]:
     return propose
 
 
-def dry_run(db, propose: Callable[[str], Optional[str]], limit: Optional[int] = None) -> List[Tuple[str, str, str]]:
-    """One `(code, title, proposed_name)` per unnamed project. Writes nothing; a proposal that
+def dry_run(
+    db, propose: Callable[[str], Optional[str]], limit: Optional[int] = None
+) -> List[Tuple[str, str, str, str]]:
+    """One `(project_id, code, title, proposed_name)` per unnamed project. Writes nothing; a proposal that
     fails is listed blank, so one provider hiccup does not lose the rest of the list."""
-    rows: List[Tuple[str, str, str]] = []
+    rows: List[Tuple[str, str, str, str]] = []
     for project in unnamed(db, limit):
         try:
             name = propose(project.title) or ""
         except Exception as exc:  # noqa: BLE001  one bad row must not stop the list
             print(f"{project.project_code}: no proposal ({type(exc).__name__})", file=sys.stderr)
             name = ""
-        rows.append((project.project_code, " ".join(project.title.split()), name))
+        rows.append((str(project.id), project.project_code, " ".join(project.title.split()), name))
     db.rollback()
     return rows
 
@@ -92,12 +110,15 @@ def apply(db, rows: Iterable[dict]) -> dict:
 
     written = skipped = 0
     for row in rows:
-        key = (row.get("project_code") or "").strip()
-        name = clean_project_name(row.get("proposed_name"))
+        key = (row.get("project_id") or "").strip()
+        name = clean_project_name(_unsafe_cell(row.get("proposed_name")))
         if not key or not name or len(name) > NAME_MAX_LEN:
             skipped += 1
             continue
-        project = db.query(Project).filter(Project.project_code == key).first()
+        try:
+            project = db.get(Project, str(uuid.UUID(key)))
+        except ValueError:
+            project = None
         if project is None or (project.name or "").strip():
             skipped += 1
             continue
@@ -132,7 +153,7 @@ def main() -> int:
         with open(args.out, "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(COLUMNS)
-            writer.writerows(rows)
+            writer.writerows([[_safe_cell(str(cell)) for cell in row] for row in rows])
         print(f"[dry-run] {len(rows)} project(s) listed in {args.out}. No database writes.")
         return 0
     finally:

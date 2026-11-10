@@ -637,6 +637,7 @@ def register_profile_routes(router: APIRouter, token_dependency: Callable[..., A
                 id=str(row["id"]),
                 project_code=row["project_code"],
                 title=row["title"],
+                name=row.get("name"),
                 company_name=row["company_name"],
             )
             for row in rows

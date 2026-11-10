@@ -494,7 +494,8 @@ def _cleaned(db: Session, company_id: str, contact_id: str, payload: Dict[str, A
             out[key] = _check_customer(db, company_id, contact_id, payload[key])
             continue
         value = payload[key]
-        value = (str(value).strip() or None) if value is not None else None
+        # NUL is refused by Postgres (a 500 instead of a save), and strip() keeps it.
+        value = (str(value).replace("\x00", "").strip() or None) if value is not None else None
         if key != "title":
             value = " ".join(value.split()) if value else None
         out[key] = value
