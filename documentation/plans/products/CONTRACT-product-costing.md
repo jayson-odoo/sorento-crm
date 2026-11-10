@@ -7,6 +7,10 @@ wins and the UAC is corrected.
 
 ## 1. Enums and number rules
 
+- Dates shown to a person (reason texts, rates list, chips, history, the Excel title) are dd/mm/yyyy
+  through the shared helpers in `lib/helpers.ts` (owner ruling 4 Nov 2026,
+  `lib/date-format.guard.test.ts`).
+
 - `cost_method`: `primary` | `selected` | `average` | `last_po`. Labels: "Primary supplier",
   "Selected supplier", "Average of supplier prices", "Last PO price". `selected` is valid ONLY on a
   product override (never on a party profile or the company default) (AC-LC-06).
@@ -72,7 +76,7 @@ Per product, on date `as_of` (default: today in Malaysia, `app/services/sales/ag
   (`"category"`, no parent walk) > none (`null`, + 0, reason `no_transport_rule`).
 
 Reason codes: `no_cost`, `no_rate`, `no_primary`, `selected_not_linked`, `no_po_price`,
-`no_transport_rule`. UI text: "No cost", "No rate for {CUR} on {d MMM yyyy}", "Set a primary
+`no_transport_rule`. UI text: "No cost", "No rate for {CUR} on {dd/mm/yyyy}", "Set a primary
 supplier", "Selected supplier no longer linked", "No PO price", "No transport rule".
 
 ## 4. API (`/api/v1/master-data/costing`, router `app/api/v1/master_data/costing.py`)
@@ -105,6 +109,8 @@ that party's `customer_costing_products`.
 
 `Row`:
 `product_id, product_code, product_name, category_id, category_name, brand_id, brand_name,
+category_transport_mode, category_transport_value (the product's own category rule, null when none, so the
+edit view can recompute after an override is cleared),
 list_price, supplier_id, supplier_code, currency, unit_cost, rate_to_base, units_per_base,
 rate_effective_from, sst_factor, transport_mode, transport_value, transport_source, landing,
 cost_method, cost_method_source, cost_method_supplier_id, markup_pct, markup_source
@@ -147,7 +153,7 @@ Nothing from other rows.
 
 ### 4.5 `GET /export` (same query as 4.1 minus paging)
 
-`.xlsx`. Row 1: `Costing - <Company standard | CODE NAME> - as of <d MMM yyyy>`. Row 2 headers, in
+`.xlsx`. Row 1: `Costing - <Company standard | CODE NAME> - as of <dd/mm/yyyy>`. Row 2 headers, in
 this order: Category, Code, Name, Supplier, Currency, Cost, Rate (per MYR), SST, Transport mode,
 Transport value, Landing (RM), Cost method, Mark-up %, Final (RM), List price (AutoCount), Margin %,
 Note. Numeric cells are numbers; unknown = empty cell; Note = the reason texts joined by "; ".
