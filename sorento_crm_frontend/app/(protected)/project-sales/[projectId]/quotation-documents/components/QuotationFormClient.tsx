@@ -71,9 +71,8 @@ import {
 } from '../[documentId]/components/useQuotationEditSession';
 import { QuotationHistorySheet } from '../[documentId]/components/QuotationHistorySheet';
 import {
-  clearMirror,
   mirrorPrefix,
-  readMirrors,
+  pickLocalCopy,
   useQuotationFormAutosave,
 } from './useQuotationFormAutosave';
 import { serverToDraft } from '../../components/quotationLineDraft';
@@ -376,30 +375,12 @@ export function QuotationFormClient({
     docId: string | null,
     claim: QuotationFormDraftOpened | undefined,
   ): QuotationFormState | null {
-    const copies = readMirrors(mirrorPrefix(projectId, docId));
-    // The newest copy made on the version the server still has is reopened (oldest first, so the
-    // last match wins). Every other copy, a second tab's included, is sent under its own lapsed
-    // claim so the server keeps it as History (review 6), and is dropped only once the server
-    // has answered for it: a failed send (offline, a locked document) keeps it for next time.
-    let resumeKey: string | null = null;
-    copies.forEach(({ key, value }) => {
-      if ((value.baseAt ?? null) === (claim?.updated_at ?? null)) resumeKey = key;
-    });
-    let resume: QuotationFormState | null = null;
-    for (const { key, value } of copies) {
-      if (key === resumeKey) {
-        resume = value.doc;
-        clearMirror(key);
-      } else if (value.token && value.token !== claim?.token) {
-        saveQuotationFormDraft(projectId, docId, value.doc, value.token)
-          .then(() => clearMirror(key))
-          .catch((error) => {
-            if (error instanceof DraftNotHolderError) clearMirror(key);
-          });
-      } else {
-        clearMirror(key);
-      }
-    }
+    const resume = pickLocalCopy(
+      mirrorPrefix(projectId, docId),
+      claim?.updated_at ?? null,
+      claim?.token ?? null,
+      (doc, token) => saveQuotationFormDraft(projectId, docId, doc, token),
+    );
     if (resume) {
       resumeRef.current = resume;
       return resume;

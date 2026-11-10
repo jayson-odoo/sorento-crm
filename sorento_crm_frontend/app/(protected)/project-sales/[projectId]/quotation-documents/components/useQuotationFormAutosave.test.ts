@@ -31,6 +31,7 @@ import {
   HOLDER_POLL_MS,
   mirrorKey,
   mirrorPrefix,
+  pickLocalCopy,
   readMirror,
   readMirrors,
   useQuotationFormAutosave,
@@ -317,5 +318,52 @@ describe('local mirror', () => {
     ).not.toThrow();
     getSpy.mockRestore();
     setSpy.mockRestore();
+  });
+});
+
+describe('pickLocalCopy: what a reopened form takes from this browser', () => {
+  const prefix = mirrorPrefix(PROJECT, DOC);
+  const put = (token: string, baseAt: string | null, subject: string, at: string) =>
+    writeMirror(mirrorKey(PROJECT, DOC, token), { token, baseAt, doc: state(subject), at });
+
+  beforeEach(() => window.localStorage.clear());
+
+  it('reopens the newest copy made on the version the server still has, and sends the rest as History', async () => {
+    put('tok-old-tab', '2026-11-10T06:00:00', 'older tab', '2026-11-10T06:01:00Z');
+    put('tok-new-tab', '2026-11-10T06:00:00', 'newer tab', '2026-11-10T06:02:00Z');
+    put('tok-stale', '2026-11-10T05:00:00', 'server moved past it', '2026-11-10T05:30:00Z');
+    const send = vi.fn(async (doc: QuotationFormState, token: string) => ({ doc, token }));
+    const doc = pickLocalCopy(prefix, '2026-11-10T06:00:00', 'tok-now', send);
+    expect(doc?.header.subject_title).toBe('newer tab');
+    expect(send.mock.calls.map(([doc, token]) => [doc.header.subject_title, token]).sort()).toEqual([
+      ['older tab', 'tok-old-tab'],
+      ['server moved past it', 'tok-stale'],
+    ]);
+    await act(async () => undefined);
+    expect(readMirrors(prefix)).toEqual([]);
+  });
+
+  it('keeps a copy whose send failed (offline, a locked document) for the next open', async () => {
+    put('tok-stale', '2026-11-10T05:00:00', 'not delivered', '2026-11-10T05:30:00Z');
+    const send = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    expect(pickLocalCopy(prefix, '2026-11-10T06:00:00', 'tok-now', send)).toBeNull();
+    await act(async () => undefined);
+    expect(readMirrors(prefix).map((m) => m.value.doc.header.subject_title)).toEqual(['not delivered']);
+  });
+
+  it('drops a copy once the server kept it (409, a conflict History entry)', async () => {
+    put('tok-stale', '2026-11-10T05:00:00', 'kept as History', '2026-11-10T05:30:00Z');
+    const send = vi.fn(async () => {
+      throw new DraftNotHolderError('kept', {});
+    });
+    pickLocalCopy(prefix, '2026-11-10T06:00:00', 'tok-now', send);
+    await act(async () => undefined);
+    expect(readMirrors(prefix)).toEqual([]);
+  });
+
+  it('nothing local: the server draft opens', () => {
+    expect(pickLocalCopy(prefix, null, 'tok-now', vi.fn())).toBeNull();
   });
 });

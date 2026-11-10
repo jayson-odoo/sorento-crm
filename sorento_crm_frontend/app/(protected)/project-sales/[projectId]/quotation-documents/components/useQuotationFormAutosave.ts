@@ -100,6 +100,43 @@ export function clearMirror(key: string): void {
   }
 }
 
+/**
+ * What to reopen from this browser's local copies of one draft, given the server's answer to
+ * opening it (`claimAt`, `claimToken`). The newest copy made on the version the server still has
+ * is returned (and dropped: the caller re-sends it). Every other copy, a second tab's included,
+ * is sent under its own lapsed claim so the server keeps it as History, and is dropped only once
+ * the server has answered for it (a 2xx, or the 409 that kept it): a send that fails (offline, a
+ * locked document) keeps the copy for the next open.
+ */
+export function pickLocalCopy(
+  prefix: string,
+  claimAt: string | null,
+  claimToken: string | null,
+  send: (doc: QuotationFormState, token: string) => Promise<unknown>,
+): QuotationFormState | null {
+  const copies = readMirrors(prefix);
+  let resumeKey: string | null = null;
+  copies.forEach(({ key, value }) => {
+    if ((value.baseAt ?? null) === (claimAt ?? null)) resumeKey = key; // oldest first: newest wins
+  });
+  let resume: QuotationFormState | null = null;
+  for (const { key, value } of copies) {
+    if (key === resumeKey) {
+      resume = value.doc;
+      clearMirror(key);
+    } else if (value.token && value.token !== claimToken) {
+      send(value.doc, value.token)
+        .then(() => clearMirror(key))
+        .catch((error) => {
+          if (error instanceof DraftNotHolderError) clearMirror(key);
+        });
+    } else {
+      clearMirror(key);
+    }
+  }
+  return resume;
+}
+
 export type DraftViewOnly = { holderName: string | null; holderAt: string | null };
 
 export type UseQuotationFormAutosave = {
