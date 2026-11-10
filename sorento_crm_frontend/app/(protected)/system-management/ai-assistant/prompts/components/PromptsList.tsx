@@ -8,6 +8,7 @@
  * select, and the whole row opens the prompt with the list state in its URL (Back + pager).
  */
 
+import AccessDenied from '@/app/components/common/AccessDenied';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -248,9 +249,7 @@ export function PromptsList() {
 
   if (!hasPermission) {
     return (
-      <div className="rounded-md border p-6 text-sm text-muted-foreground">
-        Forbidden - you don&apos;t have permission to view AI assistant prompts.
-      </div>
+      <AccessDenied description="Only people whose role includes AI assistant settings can open this. Ask an administrator if you need it." />
     );
   }
 

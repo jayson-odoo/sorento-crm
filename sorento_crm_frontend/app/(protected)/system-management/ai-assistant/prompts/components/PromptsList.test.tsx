@@ -151,10 +151,12 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('PromptsList (standard DataGrid)', () => {
-  it('shows forbidden when the user lacks permission', () => {
+  it('shows the shared no-access state when the user lacks permission', () => {
     useHasPermission.mockReturnValue(false);
     renderList();
-    expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
+    // UIUX-QUICK-WINS item 7: the shared no-access state, naming who can open it.
+    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.getByText(/role includes AI assistant settings/)).toBeInTheDocument();
   });
 
   it('renders every prompt, active and dormant, as grid rows', () => {

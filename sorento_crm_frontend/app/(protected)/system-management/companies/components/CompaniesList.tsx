@@ -1,5 +1,6 @@
 'use client';
 
+import AccessDenied from '@/app/components/common/AccessDenied';
 import { useMemo, useState } from 'react';
 import {
   RowSelectionState,
@@ -107,9 +108,7 @@ export default function CompaniesList() {
 
   if (denied) {
     return (
-      <div className="rounded-md border p-6 text-sm text-muted-foreground">
-        Forbidden - you don&apos;t have permission to manage companies.
-      </div>
+      <AccessDenied description="Only superadmins can manage companies." />
     );
   }
 
