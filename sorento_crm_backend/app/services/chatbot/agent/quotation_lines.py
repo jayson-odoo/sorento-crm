@@ -29,7 +29,7 @@ def _line(row: Any) -> dict[str, Any]:
     above = round(float((unit - listed) / listed * 100), 2) if listed and unit > listed else None
     return {
         "code": row.product_code_snapshot,
-        "description": row.description_snapshot,
+        "description": svc.line_text(row),  # plain text, never the stored rich-text markup
         "qty": _num(row.quantity),
         "uom": row.uom,
         "list_price": _num(listed),

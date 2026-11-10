@@ -24,8 +24,9 @@ the proposal view page, with the crew rulings on the behaviour card (Q1 to Q4) a
    right after it, named "<group> (copy)" and selected for rename, same sub-column names with fresh
    keys, blank quantities. No icon (owner: keep the UI minimum).
 5. **Quotation Purpose removed.** Off the form and the header card, not sent on save, and never
-   printed (cover rows on the PDF, sign page and both previews skip it in
-   `quotation_cover_service.rows_for_design`). Column kept, stored values just stop showing.
+   printed on a new revision or a preview (layout 4 sources carry none). Column kept. A revision
+   that already went out (layout 2 / 3) still reprints its Purpose row as sent (QCF D1;
+   RELEASE-FIX-QUOTE, 11 Nov 2026, dropped the `rows_for_design` skip that rewrote them).
 6. **Section headings are their own rows (Q4 a + "a heading shouldnt be tied to line").**
    `projects.quotation_lines.is_section` (additive, default false). A heading row carries
    `band_label` only, has its own `sort_order`, adds nothing anywhere. FE: a full-width row with the
