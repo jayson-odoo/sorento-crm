@@ -320,6 +320,7 @@ export function LeadWizardDialog({
                 <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                   <Fact label="Customer" value={customerName || null} />
                   <Fact label="Development" value={title.trim()} />
+                  <Fact label="Project name" value={name.trim() || null} />
                   <Fact
                     label="Developer"
                     value={

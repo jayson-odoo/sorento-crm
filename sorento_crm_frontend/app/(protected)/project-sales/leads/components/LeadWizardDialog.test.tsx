@@ -363,6 +363,30 @@ describe('LeadWizardDialog', () => {
     expect(screen.getByText('Referral')).toBeInTheDocument();
   });
 
+  it('shows the Project name on the Assign and confirm step (crew pass, PROJECT-NAME)', async () => {
+    renderWizard();
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
+      target: { value: 'Tower behind the showroom' },
+    });
+    fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Setia Tower' } });
+    next();
+    await screen.findByLabelText('Their reference');
+    next();
+
+    const label = await screen.findByText('Project name');
+    expect(label.closest('div')).toHaveTextContent('Setia Tower');
+    expect(screen.getByText('Tower behind the showroom')).toBeInTheDocument();
+  });
+
+  it('shows a dash for the Project name on the last step when none was typed', async () => {
+    renderWizard();
+    await walkToConfirm();
+    const label = await screen.findByText('Project name');
+    expect(label.closest('div')).toHaveTextContent('-');
+  });
+
   it('is titled Create lead and carries no explanatory prose (owner, 13 Oct)', () => {
     renderWizard();
     expect(screen.getByRole('heading', { name: 'Create lead' })).toBeInTheDocument();

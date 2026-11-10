@@ -425,3 +425,43 @@ def test_the_portal_collapses_whitespace_inside_the_name(world):
 
     draft = create_draft(world, name="Residensi  \t Contoh   Phase 2")
     assert registration(world, draft["id"]).name == NAME
+
+
+# ------------------------------------------------------------------ lead notifications (crew pass)
+
+
+def _lead_row(**over):
+    base = dict(
+        id="l1", lead_code="LEAD-000001", name=NAME, title="CADANGAN MEMBINA BLOK A",
+        developer_party_id=None, location=None, estimated_value=None, owner_user_id="u1",
+        assigned_at=None, declined_at=None, declined_reason="Too far",
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+@pytest.fixture
+def lead_sent(monkeypatch):
+    from app.services import project_lead_service as leads
+
+    sent = {}
+    monkeypatch.setattr(leads, "_notify_users", lambda db, **kw: sent.update(kw) or 1)
+    monkeypatch.setattr(leads, "_party_name", lambda db, pid: None)
+    monkeypatch.setattr(leads, "_user_label", lambda db, uid: "Sales A")
+    monkeypatch.setattr(leads, "_decline_recipients", lambda db, lead: ["u2"])
+    return leads, sent
+
+
+@pytest.mark.parametrize("which", ["assigned", "declined"])
+def test_a_lead_notification_names_the_lead(lead_sent, which):
+    leads, sent = lead_sent
+    getattr(leads, f"notify_lead_{which}")(None, lead=_lead_row())
+    assert sent["body"].startswith(NAME)
+    assert "CADANGAN" not in sent["body"]
+
+
+@pytest.mark.parametrize("which", ["assigned", "declined"])
+def test_a_lead_notification_falls_back_to_the_title(lead_sent, which):
+    leads, sent = lead_sent
+    getattr(leads, f"notify_lead_{which}")(None, lead=_lead_row(name=None))
+    assert sent["body"].startswith("CADANGAN MEMBINA BLOK A")

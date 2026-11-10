@@ -109,6 +109,13 @@ MANAGE_PERMISSION = "projects.projects.manage"
 # --------------------------------------------------------------- validation
 
 
+def project_display_name(lead) -> str:
+    """The lead's short name, else its title (one rule with the project's)."""
+    from app.services.project_service import project_display_name as display
+
+    return display(lead)
+
+
 def _clean_name(value: Any) -> Optional[str]:
     """The short name as stored (PROJECT-NAME): one rule with the project's."""
     from app.services.project_service import checked_project_name
@@ -808,7 +815,8 @@ def notify_lead_assigned(
         developer = _party_name(db, lead.developer_party_id)
         value = f"RM {lead.estimated_value}" if lead.estimated_value is not None else None
         facts = " | ".join(str(part) for part in (developer, lead.location, value) if part)
-        body = f"{lead.title}"
+        # The short name, else the title (PROJECT-NAME rule 7).
+        body = project_display_name(lead)
         if facts:
             body += f"\n{facts}"
         if note:
@@ -828,6 +836,7 @@ def notify_lead_assigned(
                 "lead_id": str(lead.id),
                 "lead_code": lead.lead_code,
                 "title": lead.title,
+                "name": lead.name,
                 "developer_name": developer,
                 "estimated_value": (
                     str(lead.estimated_value)
@@ -870,7 +879,8 @@ def notify_lead_declined(
     """
     try:
         decliner = _user_label(db, actor_user_id)
-        body = f"{lead.title}"
+        # The short name, else the title (PROJECT-NAME rule 7).
+        body = project_display_name(lead)
         if decliner:
             body += f"\n{decliner} declined it: {lead.declined_reason}"
         else:
