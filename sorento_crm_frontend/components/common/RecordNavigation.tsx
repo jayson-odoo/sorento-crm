@@ -1,5 +1,6 @@
 'use client';
 
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -70,16 +71,21 @@ export default function RecordNavigation({
       className={['flex items-center gap-2', className].filter(Boolean).join(' ')}
       aria-label={`${ariaLabel} navigation`}
     >
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        aria-label={`Previous ${ariaLabel}`}
-        disabled={disabled || !hasPrevious}
-        onClick={onPrevious}
-      >
-        <ChevronLeft className="size-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label={`Previous ${ariaLabel}`}
+            disabled={disabled || !hasPrevious}
+            onClick={onPrevious}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{`Previous ${ariaLabel}`}</TooltipContent>
+      </Tooltip>
       {counterLabel != null && (
         <span
           className="min-w-[3rem] text-center text-sm text-muted-foreground tabular-nums"
@@ -92,16 +98,21 @@ export default function RecordNavigation({
           {counterLabel}
         </span>
       )}
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        aria-label={`Next ${ariaLabel}`}
-        disabled={disabled || !hasNext}
-        onClick={onNext}
-      >
-        <ChevronRight className="size-4" />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label={`Next ${ariaLabel}`}
+            disabled={disabled || !hasNext}
+            onClick={onNext}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{`Next ${ariaLabel}`}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
