@@ -48,6 +48,7 @@ import type { Product } from '../../types/product.types';
 export const MAX_COPY_TARGETS = 500;
 
 const SOURCE_REASON = 'This is the product being copied from';
+const ADDED_REASON = 'Already added';
 
 export function plural(count: number, noun: string): string {
   const many = noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`;
@@ -64,13 +65,28 @@ export function CopyCapNote() {
   );
 }
 
-export function useProductTargetPicker(sourceProductId: string): {
+/**
+ * `sourceProductId` is the product a copy dialog copies FROM (its row cannot be ticked). It is
+ * optional: the Costing page's "Add products" has no source. `alreadyAddedIds` are products the
+ * caller already holds (a party's list): their rows get a disabled tick box, they can never end up
+ * in `picked`, and "Select all N records" skips them.
+ */
+export function useProductTargetPicker(
+  sourceProductId?: string,
+  options?: { alreadyAddedIds?: string[] },
+): {
   picked: string[];
   overCap: boolean;
   cappedFrom: number | null;
   grid: ReactNode;
 } {
   const search = useDebouncedSearch('');
+  const addedKey = (options?.alreadyAddedIds ?? []).join(',');
+  const blocked = useMemo(() => {
+    const ids = new Set(addedKey ? addedKey.split(',') : []);
+    if (sourceProductId) ids.add(sourceProductId);
+    return ids;
+  }, [addedKey, sourceProductId]);
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [brandIds, setBrandIds] = useState<string[]>([]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -119,9 +135,13 @@ export function useProductTargetPicker(sourceProductId: string): {
   const columns = useMemo<ColumnDef<Product>[]>(
     () => [
       buildSelectColumn<Product>({
-        enableRow: (row) => row.original.id !== sourceProductId,
+        enableRow: (row) => !blocked.has(row.original.id),
         disabledReason: (row) =>
-          row.original.id === sourceProductId ? SOURCE_REASON : undefined,
+          row.original.id === sourceProductId
+            ? SOURCE_REASON
+            : blocked.has(row.original.id)
+              ? ADDED_REASON
+              : undefined,
         rowLabel: (row) => `Select ${row.original.product_code}`,
       }),
       {
@@ -207,7 +227,7 @@ export function useProductTargetPicker(sourceProductId: string): {
         enableSorting: true,
       },
     ],
-    [sourceProductId],
+    [blocked, sourceProductId],
   );
 
   const table = useReactTable({
@@ -227,16 +247,16 @@ export function useProductTargetPicker(sourceProductId: string): {
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
-    enableRowSelection: (row) => row.original.id !== sourceProductId,
+    enableRowSelection: (row) => !blocked.has(row.original.id),
   });
 
   // Ticks survive paging and filtering, so the picked set is the selection state, not the page.
   const picked = useMemo(
     () =>
       Object.keys(rowSelection).filter(
-        (id) => rowSelection[id] && id !== sourceProductId,
+        (id) => rowSelection[id] && !blocked.has(id),
       ),
-    [rowSelection, sourceProductId],
+    [rowSelection, blocked],
   );
   const overCap = picked.length > MAX_COPY_TARGETS;
 
@@ -252,7 +272,7 @@ export function useProductTargetPicker(sourceProductId: string): {
       if (matchingSeq.current !== mine) return;
       const eligible = res.data
         .map((p) => p.id)
-        .filter((id) => id !== sourceProductId);
+        .filter((id) => !blocked.has(id));
       const ids = eligible.slice(0, MAX_COPY_TARGETS);
       setMatchingTotal(
         eligible.length > MAX_COPY_TARGETS ? res.pagination.total : null,

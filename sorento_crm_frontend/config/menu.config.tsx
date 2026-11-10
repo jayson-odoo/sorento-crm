@@ -602,6 +602,12 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/master-data-management/product-sets',
             permission: 'master_data.product_sets.view',
           },
+          {
+            // PRODUCT-COSTING: landing cost, mark-ups and party prices.
+            title: 'Costing',
+            path: '/master-data-management/costing',
+            permission: 'products.cost.view',
+          },
         ],
       },
       {
