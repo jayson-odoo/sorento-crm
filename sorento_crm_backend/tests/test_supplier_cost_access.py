@@ -34,6 +34,8 @@ MIGRATION = "sca_0001_products_cost_view.py"
 
 
 class _Env(CostPriceEnv):
+    auto_cost_view = False  # this suite tests the cost permission itself
+
     def bearer(self, user: dict) -> dict:
         from app.services.user_session_service import mint_session
 

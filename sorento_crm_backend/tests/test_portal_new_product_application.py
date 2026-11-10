@@ -314,8 +314,10 @@ def _staff_fill(p, aid, *, cost="12.50", lead="3 weeks", link=None):
     p.db.commit()
 
 
-def test_portal_detail_shows_cost_leadtime_and_the_linked_supplier_read_only(portal):
-    """AC-NPA-78 (PQ1): cost, lead time and supplier are shown; group, UOM and list price never."""
+def test_portal_detail_shows_leadtime_and_the_linked_supplier_but_never_cost(portal):
+    """AC-NPA-78 (PQ1): lead time and supplier are shown; group, UOM and list price never. Cost
+    price is never shown to a dealer (SUPPLIER-COST-ACCESS, management 9 Nov 2026), even once
+    purchasing has filled it."""
     from app.models.base import company_scope
     from app.models.procurement import ProductSupplier, Supplier
 
@@ -333,18 +335,20 @@ def test_portal_detail_shows_cost_leadtime_and_the_linked_supplier_read_only(por
     got = _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()
     assert got["lead_time"] == "3 weeks"
     line = got["lines"][0]
-    assert line["cost_price"] == "12.50"
+    assert "cost_price" not in line and "cost_price" not in got
+    assert "12.50" not in str(got)
     assert line["opened_supplier_name"] == "Example Supplier Sdn Bhd"
     for key in ("opened_category_name", "opened_base_uom_name", "opened_list_price", "selling_price",
                 "supplier_item_code", "category_id", "base_uom_id"):
         assert key not in line, key
 
 
-def test_portal_detail_carries_the_cost_keys_even_before_purchasing_fills_them(portal):
+def test_portal_detail_carries_the_purchasing_keys_but_no_cost_before_purchasing_fills_them(portal):
     d = _create(portal)
     got = _as(portal, portal.granted).get(f"{BASE}/{d['id']}").json()
     assert "lead_time" in got and got["lead_time"] is None
-    assert "cost_price" in got["lines"][0] and got["lines"][0]["cost_price"] is None
+    # SUPPLIER-COST-ACCESS: cost is never a portal key, filled or not.
+    assert "cost_price" not in got["lines"][0] and "cost_price" not in got
     assert "opened_supplier_name" in got["lines"][0]
 
 
