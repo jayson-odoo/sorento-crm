@@ -1,6 +1,6 @@
 # PLAN: low stock report, a ticked inactive location counts nowhere (#2296 regression)
 
-Status: in progress (small fix track: under 300 lines, no migration, no auth/RBAC change)
+Status: in review, PR #2309, reviewer READY (small fix track: under 300 lines, no migration, no auth/RBAC change)
 
 Lane: LOWSTOCK-BINS-REGRESS. Release blocker on main a4af6565 (#2296, LOWSTOCK-PROJECT-BINS,
 `PLAN-lowstock-project-bins-10nov.md`). UAC: `lowstock-bins-regress-acceptance-criteria.md`.
@@ -32,6 +32,9 @@ pins sheet 136/442 vs grid 40/42).
 1. `report_warehouse_ids`: always keep `Warehouse.is_active`; only the project-bin leg yields
    to ticking. Nothing ticked still reads the full active site pool. No other reader changes:
    they read the set they are handed.
+1b. Reviewer should-fix (same seam): only the ACTIVE ticked ids feed the "nothing ticked"
+   count (`reorder_run_service._covers_every_warehouse`, ticked ids >= active warehouses).
+   A ticked inactive id lifted the count to "All" and dropped a project bin ticked beside it.
 2. Test 1 amended per crew (a), comment cites `PLAN-lowstock-project-bins-10nov.md:9-13`.
 3. Separate commit: `app/services/town/snapshot.py:74-75` hand-rolled weekday/month tables go
    through a new `app/utils/date_format.fmt_day_label` (`Tue 27 Oct`, text unchanged), which
@@ -41,7 +44,8 @@ pins sheet 136/442 vs grid 40/42).
 
 - `tests/scm/test_lowstock_run_locations.py`: a ticked inactive project bin counts in no column
   (Last in, on hand, PO, incoming) and drops out of the shared set; a ticked inactive site-pool
-  warehouse drops out of the shared set.
+  warehouse drops out of the shared set; a ticked inactive id does not make a ticked bin read as
+  nothing ticked.
 - `tests/scm/test_site_pool_supply.py`: the two sweep failures green; test 1 amended.
 - `tests/test_date_format.py`: `fmt_day_label` unit test; the guard test green.
 - `tests/town/test_town_snapshot_v3.py`: the label text unchanged (`Tue 27 Oct`, `Wed 2 Dec`).

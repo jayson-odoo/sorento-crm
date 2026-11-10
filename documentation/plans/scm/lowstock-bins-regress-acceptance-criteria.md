@@ -6,7 +6,8 @@ Plan: `PLAN-lowstock-bins-regress-10nov.md`.
   project bin): the inactive one adds nothing to Last in, BRW on hand, BRW PO qty or BRW
   incoming qty, and is not in `report_warehouse_ids`.
 - AC-2: A run that ticks an active project bin: it still counts in every per-location column
-  (#2296 behaviour unchanged).
+  (#2296 behaviour unchanged), even when an inactive warehouse is ticked beside it and the
+  ticked count reaches the number of active warehouses.
 - AC-3: A run with nothing ticked: active site pool only (unchanged).
 - AC-4: A run ticking only the site-pool head: the sheet's incoming SPO and PO equal the grid
   cells (AC-13 parity). A run ticking the head and its project bin: sheet 136 / 442, grid
