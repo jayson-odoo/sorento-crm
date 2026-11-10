@@ -523,6 +523,19 @@ def restore_tag_template_version(
 # ---------------------------------------------------------------------------
 
 
+@router.get("/{template_id}/product-ids", response_model=list[str])
+def list_template_product_ids(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """PRICETAG-TEMPLATE-PRODUCTS: the products that use this template, which the designer's
+    Products dialog ticks on open. Manage only: it exists for that dialog."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.linked_product_ids(db, template_id)
+
+
 @router.post("/{template_id}/assign/preview", response_model=TemplateAssignPreviewOut)
 def preview_template_assignment(
     template_id: str,

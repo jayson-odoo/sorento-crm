@@ -202,6 +202,10 @@ def get_products(
             "not ask. Distinct from `include_specifications` (see that field)."
         ),
     ),
+    tag_template_id: Optional[str] = Query(
+        None,
+        description="Only products that use this price tag template (the template designer's picker).",
+    ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -219,6 +223,10 @@ def get_products(
         status,
         item_type,
     )
+    # 400 on a non-uuid, like every other id filter here.
+    tag_template_ids = parse_uuid_list(
+        [tag_template_id] if tag_template_id else None, param_name="tag_template_id"
+    )
     try:
         service = ProductService(db)
         result = service.list_products(
@@ -227,6 +235,7 @@ def get_products(
             query=query,
             entities=_normalize_entities(entities),
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            tag_template_id=tag_template_ids[0] if tag_template_ids else None,
             category_id=",".join(multi_values(category_id) or []) or None,
             brand_id=",".join(multi_values(brand_id) or []) or None,
             status=status,

@@ -8,6 +8,11 @@
  *
  * A hook, not a component: the dialog swaps the grid for its confirm step and back, and the ticks,
  * search and filters must survive that round trip, so the state lives with the dialog.
+ *
+ * PRICETAG-TEMPLATE-PRODUCTS reuses it for the tag template designer's Products dialog, where a
+ * tick means "uses this template": the ticks start from `initialSelection`, an extra filter rides in
+ * the same popover, and "Select all" adds to the ticks (`mergeSelectAll`) instead of replacing them,
+ * so a search can never untick what is already linked.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -41,7 +46,7 @@ import { toast } from '@/lib/toast';
 import { useProductCategorySelectQuery } from '../../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../../shared/hooks/use-brand-select-query';
 import { useProducts } from '../../hooks/useProducts';
-import { getProducts } from '../../services/productService';
+import { getProducts, type GetProductsParams } from '../../services/productService';
 import type { Product } from '../../types/product.types';
 
 /** The server's cap on one copy (target_product_ids max_length on both copy endpoints). */
@@ -64,12 +69,30 @@ export function CopyCapNote() {
   );
 }
 
-export function useProductTargetPicker(sourceProductId: string): {
+export interface ProductTargetPickerOptions {
+  /** A product that can never be ticked (the copy source). */
+  excludeProductId?: string;
+  /** Ticks to start from, applied once, the first time it is defined. */
+  initialSelection?: string[];
+  /** Extra products-list params, e.g. `tag_template_id`. A change is a new result set. */
+  extraParams?: Partial<GetProductsParams>;
+  /** One more control for the Filters popover, owned by the caller. */
+  extraFilter?: { content: ReactNode; activeCount: number };
+  /** "Select all" adds the matching products to the ticks, and Clear goes back to before it. */
+  mergeSelectAll?: boolean;
+}
+
+export function useProductTargetPicker(source: string | ProductTargetPickerOptions): {
   picked: string[];
   overCap: boolean;
   cappedFrom: number | null;
   grid: ReactNode;
 } {
+  const options: ProductTargetPickerOptions =
+    typeof source === 'string' ? { excludeProductId: source } : source;
+  const sourceProductId = options.excludeProductId ?? '';
+  const { initialSelection, extraParams, extraFilter, mergeSelectAll = false } = options;
+  const extraKey = JSON.stringify(extraParams ?? {});
   const search = useDebouncedSearch('');
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [brandIds, setBrandIds] = useState<string[]>([]);
@@ -81,6 +104,14 @@ export function useProductTargetPicker(sourceProductId: string): {
     { id: 'product_code', desc: false },
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // The ticks just before a merging "Select all", which its Clear goes back to.
+  const beforeMatching = useRef<RowSelectionState>({});
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || !initialSelection) return;
+    seeded.current = true;
+    setRowSelection(Object.fromEntries(initialSelection.map((id) => [id, true])));
+  }, [initialSelection]);
   const [matchingActive, setMatchingActive] = useState(false);
   const [matchingTotal, setMatchingTotal] = useState<number | null>(null);
   const [matchingPending, setMatchingPending] = useState(false);
@@ -98,8 +129,9 @@ export function useProductTargetPicker(sourceProductId: string): {
       category_id: joinMulti(categoryIds) || undefined,
       brand_id: joinMulti(brandIds) || undefined,
       status: 'active' as const,
+      ...(JSON.parse(extraKey) as Partial<GetProductsParams>),
     }),
-    [pagination, sorting, search.debouncedValue, categoryIds, brandIds],
+    [pagination, sorting, search.debouncedValue, categoryIds, brandIds, extraKey],
   );
 
   // A new search or filter is a new result set: a "Select all" made on the old one no longer
@@ -109,7 +141,7 @@ export function useProductTargetPicker(sourceProductId: string): {
     setMatchingActive(false);
     setMatchingPending(false);
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [search.debouncedValue, categoryIds, brandIds]);
+  }, [search.debouncedValue, categoryIds, brandIds, extraKey]);
 
   const { data, isLoading, isFetching, isPlaceholderData } =
     useProducts(params);
@@ -257,7 +289,15 @@ export function useProductTargetPicker(sourceProductId: string): {
       setMatchingTotal(
         eligible.length > MAX_COPY_TARGETS ? res.pagination.total : null,
       );
-      setRowSelection(Object.fromEntries(ids.map((id) => [id, true])));
+      const matching = Object.fromEntries(ids.map((id) => [id, true]));
+      if (mergeSelectAll) {
+        setRowSelection((current) => {
+          beforeMatching.current = current;
+          return { ...current, ...matching };
+        });
+      } else {
+        setRowSelection(matching);
+      }
       setMatchingActive(true);
     } catch (err) {
       if (matchingSeq.current !== mine) return;
@@ -301,11 +341,15 @@ export function useProductTargetPicker(sourceProductId: string): {
           }
           filters={{
             kind: 'custom',
-            active: categoryIds.length + brandIds.length > 0,
+            active:
+              categoryIds.length + brandIds.length + (extraFilter?.activeCount ?? 0) > 0,
             activeCount:
-              (categoryIds.length ? 1 : 0) + (brandIds.length ? 1 : 0),
+              (categoryIds.length ? 1 : 0) +
+              (brandIds.length ? 1 : 0) +
+              (extraFilter?.activeCount ?? 0),
             content: (
               <div className="space-y-3">
+                {extraFilter?.content}
                 <SearchableMultiSelect
                   value={categoryIds}
                   onChange={setCategoryIds}
@@ -362,7 +406,7 @@ export function useProductTargetPicker(sourceProductId: string): {
             onSelectAll: () => void selectAllMatching(),
             onClear: () => {
               setMatchingActive(false);
-              setRowSelection({});
+              setRowSelection(mergeSelectAll ? beforeMatching.current : {});
             },
           }}
         />

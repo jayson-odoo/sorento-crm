@@ -1924,6 +1924,8 @@ class TemplateAssignFilter(BaseModel):
     category_ids: list[str] = Field(default_factory=list, max_length=500)
     item_class_ids: list[str] = Field(default_factory=list, max_length=500)
     family_codes: list[str] = Field(default_factory=list, max_length=500)
+    # PRICETAG-TEMPLATE-PRODUCTS: the designer's picked products; ANDed with the kinds above.
+    product_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class TemplateAssignIn(TemplateAssignFilter):

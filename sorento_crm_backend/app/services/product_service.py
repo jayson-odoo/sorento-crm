@@ -370,6 +370,7 @@ class ProductService:
         discontinued_to: Optional[date] = None,
         list_price_changed_from: Optional[date] = None,
         list_price_changed_to: Optional[date] = None,
+        tag_template_id: Optional[str] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -387,6 +388,18 @@ class ProductService:
         filters = []
         if product_ids:
             filters.append(Product.id.in_(product_ids))
+        if tag_template_id:
+            # PRICETAG-TEMPLATE-PRODUCTS: "Show: Uses this template" in the designer's picker.
+            from app.models.dealer_kit import ProductTagTemplate
+
+            filters.append(
+                self.db.query(ProductTagTemplate.id)
+                .filter(
+                    ProductTagTemplate.product_id == Product.id,
+                    ProductTagTemplate.template_id == tag_template_id,
+                )
+                .exists()
+            )
         if entity_buckets is not None:
             if not getattr(entity_buckets, "product_codes", None):
                 return self._EMPTY_RESULT
@@ -589,6 +602,7 @@ class ProductService:
         discontinued_to: Optional[date] = None,
         list_price_changed_from: Optional[date] = None,
         list_price_changed_to: Optional[date] = None,
+        tag_template_id: Optional[str] = None,
     ):
         """List products with filtering and pagination.
 
@@ -651,6 +665,7 @@ class ProductService:
             discontinued_to=discontinued_to,
             list_price_changed_from=list_price_changed_from,
             list_price_changed_to=list_price_changed_to,
+            tag_template_id=tag_template_id,
         )
         if q is self._EMPTY_RESULT:
             payload = {

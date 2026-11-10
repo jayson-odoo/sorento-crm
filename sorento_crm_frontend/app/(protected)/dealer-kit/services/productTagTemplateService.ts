@@ -169,6 +169,29 @@ export async function assignTemplate(
   );
 }
 
+/** PRICETAG-TEMPLATE-PRODUCTS: the products that use the template (the designer's ticks). */
+export async function listTemplateProductIds(templateId: string): Promise<string[]> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/product-ids`),
+    'Failed to load the products that use this template',
+  );
+}
+
+/** PRICETAG-TEMPLATE-PRODUCTS: link the template to these products (at most 500). */
+export async function assignTemplateToProducts(
+  templateId: string,
+  productIds: string[],
+): Promise<{ changed: number }> {
+  return unwrap(
+    await apiFetch(`${DK}/tag-templates/${encodeURIComponent(templateId)}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_ids: productIds, action: 'add' }),
+    }),
+    'Failed to link the products',
+  );
+}
+
 /** Model families (`products.family_code`) for the bulk filter. */
 export async function listFamilyCodes(query: string): Promise<string[]> {
   const qs = new URLSearchParams();

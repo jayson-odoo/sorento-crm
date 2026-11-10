@@ -35,7 +35,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable, Optional
 
-from sqlalchemy import and_, func
+from sqlalchemy import and_, false, func
 from sqlalchemy.orm import Query, Session
 
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
@@ -645,13 +645,19 @@ def _bulk_products_query(db: Session, filters: dict) -> Query:
     category_ids = _clean_ids(filters.get("category_ids"))
     item_class_ids = _clean_ids(filters.get("item_class_ids"))
     family_codes = _clean_codes(filters.get("family_codes"))
-    if not (brand_ids or category_ids or item_class_ids or family_codes):
+    # PRICETAG-TEMPLATE-PRODUCTS: picked ids; junk ids are dropped here, foreign ones by `_scoped`.
+    raw_product_ids = [v for v in (filters.get("product_ids") or []) if v]
+    product_ids = _clean_ids(raw_product_ids)
+    if not (brand_ids or category_ids or item_class_ids or family_codes or raw_product_ids):
         raise AppException(
             status_code=422,
             message="Pick at least one brand, category, item class or model family.",
             code="FILTER_REQUIRED",
         )
     conditions = []
+    if raw_product_ids:
+        # Ids were sent, so they narrow even when none of them is a valid id.
+        conditions.append(Product.id.in_(product_ids) if product_ids else false())
     if brand_ids:
         conditions.append(Product.brand_id.in_(brand_ids))
     if category_ids:
@@ -688,6 +694,21 @@ def family_codes(db: Session, query: Optional[str], limit: int = 50) -> list[str
         .all()
     )
     return [row[0] for row in rows if row[0]]
+
+
+def linked_product_ids(db: Session, template_id: str) -> list[str]:
+    """Ids of this company's products that use the template (PRICETAG-TEMPLATE-PRODUCTS: the
+    designer's Products dialog ticks them on open). A link from a product outside the session's
+    scope is never listed."""
+    template = _template_or_404(db, template_id)
+    rows = (
+        _scoped(db, Product)
+        .join(ProductTagTemplate, ProductTagTemplate.product_id == Product.id)
+        .filter(ProductTagTemplate.template_id == template.id)
+        .with_entities(Product.id)
+        .all()
+    )
+    return [row.id for row in rows]
 
 
 def bulk_preview(db: Session, template_id: str, filters: dict) -> dict:

@@ -9,7 +9,9 @@ import { toast } from '@/lib/toast';
 import { listTemplates } from '../services/tagTemplateService';
 import {
   assignTemplate,
+  assignTemplateToProducts,
   isPriceTagFamily,
+  listTemplateProductIds,
   listComboTagTemplates,
   listProductTagTemplates,
   previewTemplateAssignment,
@@ -107,5 +109,30 @@ export function usePriceTagTemplateOptions(enabled: boolean) {
         .filter((t) => isPriceTagFamily(t.family))
         .sort((a, b) => a.family.localeCompare(b.family) || a.name.localeCompare(b.name)),
     enabled,
+  });
+}
+
+/** PRICETAG-TEMPLATE-PRODUCTS: the products that use a template (the designer's ticks). */
+export const templateProductIdsKey = (templateId: string) =>
+  ['tag-template-product-ids', templateId] as const;
+
+export function useTemplateProductIds(templateId: string, enabled = true) {
+  return useQuery({
+    queryKey: templateProductIdsKey(templateId),
+    queryFn: () => listTemplateProductIds(templateId),
+    enabled: enabled && !!templateId,
+  });
+}
+
+/** Link the template to the picked products; the toast is the caller's, after the whole Save. */
+export function useLinkTemplateProducts(templateId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (productIds: string[]) => assignTemplateToProducts(templateId, productIds),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['product-tag-templates'] });
+      void queryClient.invalidateQueries({ queryKey: templateProductIdsKey(templateId) });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }
