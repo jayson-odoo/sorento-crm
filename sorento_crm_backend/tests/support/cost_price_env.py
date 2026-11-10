@@ -63,9 +63,10 @@ def _u() -> str:
     return str(uuid.uuid4())
 
 
-#: SUPPLIER-COST-ACCESS: every product-supplier route also needs `products.cost.view`. A user
-#: given a `procurement.product_suppliers.*` slug here gets it too, so these suites keep testing
-#: the link routes; `tests/test_supplier_cost_access.py` turns this off to test the refusal.
+#: SUPPLIER-COST-ACCESS: every product-supplier and cost-price-change route also needs
+#: `products.cost.view`. A user given a `procurement.product_suppliers.*` or
+#: `procurement.cost_price_changes.*` slug here gets it too, so these suites keep testing
+#: those routes; `tests/test_supplier_cost_access.py` turns this off to test the refusal.
 COST_VIEW_PERM = "products.cost.view"
 
 
@@ -75,7 +76,8 @@ class CostPriceEnv:
     auto_cost_view = True
 
     def _with_cost_view(self, perm_slugs: tuple[str, ...]) -> tuple[str, ...]:
-        if self.auto_cost_view and any(s.startswith("procurement.product_suppliers.") for s in perm_slugs):
+        cost_routes = ("procurement.product_suppliers.", "procurement.cost_price_changes.")
+        if self.auto_cost_view and any(s.startswith(cost_routes) for s in perm_slugs):
             return (*perm_slugs, COST_VIEW_PERM)
         return perm_slugs
 

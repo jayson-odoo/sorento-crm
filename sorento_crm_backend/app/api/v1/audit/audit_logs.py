@@ -359,12 +359,12 @@ def get_audit_logs(
         record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     # SUPPLIER-COST-ACCESS: a product's History shows THAT cost changed, who and when, with
     # the values hidden from a reader without `products.cost.view` (admins hold it by bypass).
-    from app.services.cost_access import can_view_cost, mask_audit_values
+    from app.services.cost_access import holds_cost_view, mask_audit_values
 
     mask_cost = (
         not is_audit_admin
         and single_type in _COST_MASKED_ENTITY_TYPES
-        and not can_view_cost(db, str(current_user["id"]))
+        and not holds_cost_view(db, current_user)
     )
     data = []
     for it in items:

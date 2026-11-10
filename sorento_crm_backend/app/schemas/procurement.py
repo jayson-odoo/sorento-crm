@@ -1,5 +1,5 @@
 """Procurement schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
@@ -269,6 +269,13 @@ class InboundShipmentLineCreate(InboundShipmentLineBase):
 
 class InboundShipmentLineResponse(InboundShipmentLineBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     shipment_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -631,6 +638,13 @@ class LinkedGRNSimple(BaseModel):
 
 class SPOAllocationResponse(SPOAllocationBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     # The document half, since the SPO itself lives in this table (migration 420). Declared
     # here or `response_model` drops them on the way out however faithfully the service
     # reads them.
@@ -869,6 +883,13 @@ class PickingLineCreate(PickingLineBase):
 
 class PickingLineResponse(PickingLineBase):
     id: str
+
+    @field_serializer("unit_cost")
+    def _cost_for_reader(self, value):
+        """SUPPLIER-COST-ACCESS: PO / supplier unit cost, null without `products.cost.view`."""
+        from app.services.cost_access import cost_for_reader
+
+        return cost_for_reader(value)
     picking_header_id: str
     quantity_discrepancy: int = 0  # from DB generated column
     created_at: datetime

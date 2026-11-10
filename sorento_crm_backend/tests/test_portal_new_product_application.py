@@ -500,7 +500,7 @@ def _portal_xlsx_app(p):
     return d
 
 
-def test_portal_download_has_the_paper_sheet_with_cost_filled(portal):
+def test_portal_download_has_the_paper_sheet_with_cost_blank(portal):
     d = _portal_xlsx_app(portal)
     res = _as(portal, portal.granted).get(f"{BASE}/{d['id']}/download")
     assert res.status_code == 200, res.text
@@ -509,7 +509,10 @@ def test_portal_download_has_the_paper_sheet_with_cost_filled(portal):
     for ws in wb.worksheets:
         assert [label for label, _row in label_rows(ws)] == SHEET_LABELS
     one = sheet_values(wb["Product 1"])
-    assert float(text_of(one["COST:"])) == 12.5  # PQ1: cost is filled on the portal copy too
+    # SUPPLIER-COST-ACCESS (management, 9 Nov 2026) replaces PQ1: the dealer's copy never
+    # carries cost, though purchasing filled it (12.50).
+    assert not text_of(one["COST:"])
+    assert "12.5" not in "".join(str(c.value) for ws in wb.worksheets for r in ws.iter_rows() for c in r)
     assert text_of(one["LEADTIME:"]) == "3 weeks"
     assert text_of(one["PRODUCT CODE:"]) == "XY-1234-MB"
     assert text_of(one["DATE:"]) == "17/01/2028"

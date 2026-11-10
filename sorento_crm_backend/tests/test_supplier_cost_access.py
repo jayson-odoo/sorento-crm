@@ -436,3 +436,123 @@ def test_permission_is_in_the_registry():
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     assert COST_PERM in {p["slug"] for p in PERMISSION_REGISTRY}
+
+
+# --------------------------------------------------------------------------- security review round
+
+
+def test_cost_price_change_screens_refused_without_cost_permission(env):
+    """CS / marketing hold `procurement.cost_price_changes.view` today; the screens are supplier
+    unit costs."""
+    url = "/api/v1/procurement/cost-price-changes"
+    cs = env.user("procurement.cost_price_changes.view")
+    assert env.get(cs, url).status_code == 403
+    buyer = env.user("procurement.cost_price_changes.view", COST_PERM)
+    r = env.get(buyer, url)
+    assert r.status_code == 200, r.text
+
+
+def test_procurement_line_schemas_null_unit_cost_when_hidden():
+    from app.schemas.procurement import (
+        InboundShipmentLineResponse,
+        PickingLineResponse,
+        SPOAllocationResponse,
+    )
+    from app.services import cost_access
+
+    for schema in (InboundShipmentLineResponse, PickingLineResponse, SPOAllocationResponse):
+        assert "unit_cost" in schema.model_fields, schema
+        ser = schema.__pydantic_decorators__.field_serializers
+        assert any("unit_cost" in d.info.fields for d in ser.values()), schema
+    token = cost_access._COST_HIDDEN.set(True)
+    try:
+        assert cost_access.cost_for_reader(Decimal("9.99")) is None
+    finally:
+        cost_access._COST_HIDDEN.reset(token)
+    assert cost_access.cost_for_reader(Decimal("9.99")) == Decimal("9.99")
+
+
+def test_oi_po_candidates_null_unit_cost_without_permission(env, monkeypatch):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    monkeypatch.setattr(
+        ProjectOrderInquiryService, "po_candidates_for_row",
+        lambda self, row_id: [{
+            "po_number": "PO-1", "supplier_name": "S", "unit_cost": "9.99", "currency": "MYR",
+            "qty_ordered": "5", "qty_received": "0", "already_tagged": "0", "remaining": "5",
+            "covers": True,
+        }],
+    )
+    monkeypatch.setattr(ProjectOrderInquiryService, "still_to_link_for_row", lambda self, row_id: "5")
+    monkeypatch.setattr(ProjectOrderInquiryService, "linkable_qty_for_row", lambda self, row_id: "5")
+    url = f"/api/v1/project-sales/order-inquiry-rows/{uuid.uuid4()}/po-candidates"
+    cs = env.user("projects.order_inquiry.action")
+    buyer = env.user("projects.order_inquiry.action", COST_PERM)
+    r_cs = env.get(cs, url)
+    r_buyer = env.get(buyer, url)
+    if r_cs.status_code == 500 or r_buyer.status_code == 500:
+        pytest.fail(r_cs.text + r_buyer.text)
+    assert r_cs.status_code == 200, r_cs.text
+    assert "9.99" not in r_cs.text
+    assert r_buyer.status_code == 200, r_buyer.text
+    assert "9.99" in r_buyer.text
+
+
+def test_plain_product_list_cannot_be_ordered_by_cost_without_permission(env):
+    cheap = _costed_product(env, cost="1.00")
+    dear = _costed_product(env, cost="999.00")
+    ids = f"{cheap.id},{dear.id}"
+    sales = env.user(PRODUCTS_VIEW)
+    buyer = env.user(PRODUCTS_VIEW, COST_PERM)
+
+    def order(user, **params):
+        r = env.get(user, f"{PRODUCTS_URL}/", product_ids=ids, **params)
+        assert r.status_code == 200, r.text
+        return [row["id"] for row in r.json()["data"]]
+
+    default = order(sales)
+    assert order(sales, sort="cost_price", dir="desc") == order(sales, sort="created_at", dir="desc")
+    assert order(buyer, sort="cost_price", dir="desc") == [str(dear.id), str(cheap.id)]
+    assert order(buyer, sort="cost_price", dir="asc") == [str(cheap.id), str(dear.id)]
+    assert len(default) == 2
+
+
+def test_identity_read_needs_both_users_to_hold_cost(env):
+    from app.services.cost_access import holds_cost_view
+
+    holder = env.user(COST_PERM)
+    other = env.user(PRODUCTS_VIEW)
+    assert holds_cost_view(env.db, {"id": holder["id"]})
+    assert not holds_cost_view(env.db, {"id": other["id"]})
+    # A key naming a staff member who holds it, acting as a user who does not: refused.
+    assert not holds_cost_view(env.db, {"id": holder["id"], "key_user_id": other["id"]})
+    assert not holds_cost_view(env.db, {"id": other["id"], "key_user_id": holder["id"]})
+    assert holds_cost_view(env.db, {"id": holder["id"], "key_user_id": holder["id"]})
+
+
+def test_two_requests_on_one_client_do_not_share_visibility(env):
+    p = _costed_product(env)
+    buyer = env.user(PRODUCTS_VIEW, COST_PERM)
+    sales = env.user(PRODUCTS_VIEW)
+    url = f"{PRODUCTS_URL}/{p.id}"
+    assert Decimal(str(env.get(buyer, url).json()["cost_price"])) == Decimal("123.45")
+    assert env.get(sales, url).json()["cost_price"] is None
+    assert Decimal(str(env.get(buyer, url).json()["cost_price"])) == Decimal("123.45")
+
+
+def test_po_cost_reveals_answer_to_the_cost_permission():
+    from app.services.chatbot.agent import tools
+    from app.services.contact_field_reveal_service import _STAFF_REVEAL_SLUGS
+
+    assert _STAFF_REVEAL_SLUGS["purchase_orders.cost"] == COST_PERM
+    assert tools.REGISTRY["crm_procurement_po_last_cost_list"].user_permission == COST_PERM
+
+
+def test_parked_cost_row_delete_refused_without_cost_permission(env):
+    from app.services.error_handler import AppException
+    from app.services.record_actions import _delete_product_supplier_cost
+
+    editor = env.user(PS_VIEW_PERM, "procurement.product_suppliers.edit")
+    with pytest.raises(AppException) as err:
+        _delete_product_supplier_cost(env.db, {"requested_by_id": editor["id"], "entity_id": str(uuid.uuid4())})
+    assert err.value.status_code == 403

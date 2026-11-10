@@ -16,7 +16,7 @@ from app.dependencies import (
 )
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
-from app.services.cost_access import can_view_cost, require_cost_view
+from app.services.cost_access import holds_cost_view, require_cost_view
 from app.services import product_list_price_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
@@ -221,6 +221,9 @@ def get_products(
         item_type,
     )
     try:
+        if (sort or "").strip().lower() == "cost_price" and not holds_cost_view(db, current_user):
+            # SUPPLIER-COST-ACCESS: an order by cost would read the hidden value back.
+            sort = "created_at"
         service = ProductService(db)
         result = service.list_products(
             page=page,
@@ -368,7 +371,7 @@ def create_product(
 ):
     """Create a new product."""
     try:
-        if not can_view_cost(db, current_user["id"]):
+        if not holds_cost_view(db, current_user):
             # SUPPLIER-COST-ACCESS: who cannot see cost cannot set it either.
             product_data.cost_price = None
         guard_chatbot_limits_edit(
@@ -411,7 +414,7 @@ def update_product(
 ):
     """Update a product."""
     try:
-        if not can_view_cost(db, current_user["id"]):
+        if not holds_cost_view(db, current_user):
             # SUPPLIER-COST-ACCESS: the reader saw `cost_price` as null, so a save that sends it
             # back must not wipe (or set) the real cost. Treated as not sent.
             product_data.cost_price = None

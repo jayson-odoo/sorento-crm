@@ -419,9 +419,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
                   <div>
                     <h3 className="font-semibold mb-2">Pricing Summary</h3>
-                    <div
-                      className={`grid grid-cols-1 gap-x-6 gap-y-4 text-sm ${canViewCost ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}
-                    >
+                    <div className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
                       <div>
                         <p className="text-muted-foreground">List Price</p>
                         <p className="font-medium text-lg">

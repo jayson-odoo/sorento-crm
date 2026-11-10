@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key, require_staff_read_permission
 from app.api.v1.order_management.orders import _parse_flex_date  # shared flexible date parser
-from app.services.cost_access import COST_VIEW_PERM, can_view_cost
+from app.services.cost_access import COST_VIEW_PERM, holds_cost_view
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.po_last_cost_service import last_cost_rows
 from app.services.purchase_order_service import (
@@ -38,7 +38,7 @@ def _cost_reader(
     member) needs `products.cost.view` for PO costs. A plain integration key keeps its own
     gate: the contact chatbot's per-contact field reveal (`purchase_orders.cost`)."""
     plain_key = bool(current_user.get("integration_id")) and not current_user.get("key_user_id")
-    if not plain_key and not can_view_cost(db, current_user.get("id")):
+    if not plain_key and not holds_cost_view(db, current_user):
         raise HTTPException(status_code=403, detail=f"Permission required: {COST_VIEW_PERM}")
     return current_user
 

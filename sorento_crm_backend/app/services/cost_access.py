@@ -53,13 +53,30 @@ def can_view_cost(db: Session, user_id: Optional[str]) -> bool:
     return UserPermissionService(db).check_user_has_permission(str(user_id), COST_VIEW_PERM)
 
 
+def holds_cost_view(db: Session, current_user: Optional[dict]) -> bool:
+    """For a request's `current_user`: on an identity read (a key naming a staff member) BOTH the
+    staff member and the key's act-as user must hold it (`user_service.gate_user_ids`), so naming
+    a stronger user gains nothing."""
+    if not current_user or not current_user.get("id"):
+        return False
+    from app.services.user_service import holds_permission
+
+    return holds_permission(db, current_user, COST_VIEW_PERM)
+
+
 def stamp_cost_visibility(db: Session, user: Optional[dict]) -> None:
     """Called by the staff auth dependencies with the EFFECTIVE user (after impersonation)."""
-    _COST_HIDDEN.set(not can_view_cost(db, (user or {}).get("id")))
+    _COST_HIDDEN.set(not holds_cost_view(db, user))
 
 
 def cost_hidden() -> bool:
     return _COST_HIDDEN.get()
+
+
+def cost_for_reader(value: Any) -> Any:
+    """A response schema's `field_serializer` body for a cost field: null unless this request's
+    user holds the permission."""
+    return None if cost_hidden() else value
 
 
 def require_cost_view(user_dep):
@@ -67,7 +84,7 @@ def require_cost_view(user_dep):
     from app.database import get_db
 
     def _require(current_user: dict = Depends(user_dep), db: Session = Depends(get_db)) -> dict:
-        if not can_view_cost(db, current_user.get("id")):
+        if not holds_cost_view(db, current_user):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {COST_VIEW_PERM}",
