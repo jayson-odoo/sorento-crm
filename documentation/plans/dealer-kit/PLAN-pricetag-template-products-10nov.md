@@ -1,18 +1,18 @@
 # PLAN: pick eligible products inside the Tag Template designer (bulk link)
 
-Status: Plan, waiting on owner (mock v2 + card Q1-Q3 filed as crew-ask; v1 answered 10 Nov: reuse the existing picker). Track: standard lane (no
+Status: Plan, waiting on owner (mock v3 + card Q1-Q3 filed as crew-ask; owner 10 Nov: reuse the existing picker (v1), one view no tabs (v2)). Track: standard lane (no
 migration, no permission change, expected diff over 300 lines; security-reviewer joins because the
 client now sends product/combo ids that must be company-scoped).
 Lane: PRICETAG-TEMPLATE-PRODUCTS. Requested: owner + management meeting 9 Nov, relayed 10 Nov.
-Mock: `pricetag-template-products-mock-v2.html` (same folder; v1 `pricetag-template-products-mock.html`).
+Mock: `pricetag-template-products-mock-v3.html` (same folder; v1, v2 kept).
 
 ## Journey
 
-Marketing opens a price tag template in the Tag Template designer, clicks Products, searches by code
-("SRTKS" for kitchen sinks), narrows by type / brand / category, ticks many rows (or "all matching")
-and links them in one click. The Linked tab shows what prints with the template today, with each
-row's Default LP / SP, and removes with the standard countdown. Salespeople are unchanged: they pick
-from what marketing linked. The template's definition and variation matrix stay marketing-owned.
+Marketing opens a price tag template in the Tag Template designer and clicks Products. One view
+opens: the product grid with the template's current products already ticked. They search by code
+("SRTKS" for kitchen sinks), narrow by category / brand, tick many rows (or "all matching"), untick any
+that should not print with it, and Save once. Salespeople are unchanged: they pick from what marketing
+linked. The template's definition and variation matrix stay marketing-owned.
 
 ## What exists today (measured, 10 Nov, main 03be747b)
 
@@ -52,40 +52,43 @@ Frontend:
 So the gap is not storage or defaults; it is that the template direction has no visible list, no code
 search, no per-row pick, no combos, and it sits on the list row instead of in the designer.
 
-## Design v2 (owner 10 Nov 23:3x: reuse the existing picker)
+## Design v3 (owner 10 Nov 23:4x: one view, no Linked / Add tabs)
 
-Mock v2: `pricetag-template-products-mock-v2.html` (v1 kept for the record). The picker is the shared
-"Copy to other products" picker, not a new component:
+Mock v3: `pricetag-template-products-mock-v3.html` (v1, v2 kept for the record). ONE view: the shared
+product grid where a tick means "uses this template", opened with the current products ticked; search
+and filters find more to tick, unticking takes one off, one Save applies both. Same model as the
+product page link field (`ProductTagTemplatesSection.tsx:119`, value = the linked set) on the same grid
+as Copy to other products.
+
+The picker is reused, not new:
 `sorento_crm_frontend/app/(protected)/master-data-management/products/[id]/components/ProductTargetPicker.tsx`
-(`useProductTargetPicker` :67; used by `CopyAccessoriesDialog.tsx` and `CopyComboDialog.tsx` :84). It already
-has server search (products list `query`, contains on code / name / description), Category + Brand
-multi-select filters, shift/drag ticks, "Select all N matching" capped at 500, pagination, the
-discontinued grey hint (owner 7 Nov) and the footer count.
+(`useProductTargetPicker` :67; used by `CopyAccessoriesDialog.tsx` and `CopyComboDialog.tsx` :84): server
+search (contains on code / name / description), Category + Brand filters, shift/drag ticks, "Select all
+N matching" capped at 500, paging, discontinued grey hint (owner 7 Nov), footer count.
 
-Other pickers checked and not chosen: `dealer-kit/components/ProductPickerDialog.tsx` (collection
-pins + rule, card grid, built for a handful of products), `dealer-kit/tag-templates/components/
-ProductPickDialog.tsx` (single question, SearchableMultiSelect only), `project-sales/.../
-DeliveryScheduleProductPicker.tsx` (single select), `AssignTemplateDialog.tsx` (filter only, no rows).
+Other pickers checked and not chosen: `dealer-kit/components/ProductPickerDialog.tsx` (collection pins
++ rule, card grid), `dealer-kit/tag-templates/components/ProductPickDialog.tsx` (one block's product),
+`DeliveryScheduleProductPicker.tsx` (single select), `AssignTemplateDialog.tsx` (filter only, no rows).
 
 Backend (no migration):
-1. Products list `GET /master-data/products` gains `tag_template_id` (only products linked to it) and
-   `without_tag_template_id` (only products not linked), one EXISTS each, inside the existing company
-   scope (`app/api/v1/master_data/products.py:116`, `product_service._build_list_query` :343).
-2. `POST /dealer-kit/tag-templates/{id}/assign` (`tag_templates.py:542`) accepts `product_ids` (max 500)
-   as an alternative to the filter. Ids outside the company scope are ignored, never linked. Defaults:
-   today's `bulk_assign` rule (:709).
-3. Pending action `tag_template.unassign_products` (`record_actions.py:1822`) accepts `product_ids`.
+1. `GET /dealer-kit/tag-templates/{id}/product-ids`: ids of the products linked to it (scoped), seeds
+   the ticks.
+2. Products list `GET /master-data/products` (`products.py:116`, `product_service._build_list_query`
+   :343) gains `tag_template_id` (the "Show: Uses this template" filter), one EXISTS, same scope.
+3. `POST /dealer-kit/tag-templates/{id}/assign` (`tag_templates.py:542`) accepts `product_ids` (max
+   500). Foreign ids are ignored, never linked. Defaults: today's `bulk_assign` rule (:709).
+4. Pending action `tag_template.unassign_products` (`record_actions.py:1822`) accepts `product_ids`.
 
 Frontend:
-4. `useProductTargetPicker` takes an options object `{ excludeProductId?, extraParams? }` (the old
-   string argument keeps working for the two copy dialogs).
-5. NEW `tag-templates/components/TemplateProductsDialog.tsx`: CopyComboDialog's modal shell (:129) with
-   line tabs "Uses this template (N)" (picker with `tag_template_id`, Remove N via `useDeferredAction`)
-   and "Add products" (picker with `without_tag_template_id`, Link N). Opened by a "Products" toolbar
-   action in the designer (`[id]/page.tsx:592`), manage permission only. Invalidates the product-page
-   link query and the template usage count.
+5. `useProductTargetPicker` takes an options object `{ excludeProductId?, initialSelection?,
+   extraParams? }`; the old string argument keeps working for the two copy dialogs.
+6. NEW `tag-templates/components/TemplateProductsDialog.tsx`: CopyComboDialog's modal shell (:129), no
+   tabs, the picker seeded from (1), a "Show" SearchableSelect in its Filters popover, footer
+   "N use this template after Save: +a, -r", Save = assign adds, then `useDeferredAction` countdown for
+   removals. Opened by a "Products (N)" toolbar action in the designer (`[id]/page.tsx:592`), manage
+   permission only.
 
-## Card questions (v2, in the crew-ask)
+## Card questions (v3, in the crew-ask)
 
 Q1 combos: (a) products only here; combos keep their per-combo template field in AddComboModal (rec:
    the reused picker is a product grid; a combo grid would be a second picker, the thing the owner
@@ -100,8 +103,8 @@ discontinued pickable with a grey hint, owner 7 Nov).
 
 ## Tests (red first, after approval)
 
-pytest: products list tag_template_id / without_tag_template_id (foreign company never listed);
+pytest: product-ids seed + products list tag_template_id (foreign company never listed);
 assign by product_ids, foreign ids ignored, over-500 refused, defaults rule (0, 1, 2+ links, existing
 default untouched); unassign by product_ids.
-vitest: Products action hidden without manage; tabs pass the right list filter; copy dialogs
+vitest: Products action hidden without manage; ticks seeded from product-ids; Save diff (+a, -r); copy dialogs
 unchanged with the old argument; Link sends the picked ids; Remove countdown.
