@@ -89,7 +89,11 @@ export function PartiesClient() {
   const total = parties.data?.pagination?.total ?? rows.length;
   const filtered = Boolean(debounced || typeFilter);
 
+  // Read through a ref: the columns must not be rebuilt when the role list arrives, which would
+  // reset the grid's server-side sort.
   const roleLabel = usePartyRoleLabel();
+  const roleLabelRef = React.useRef(roleLabel);
+  roleLabelRef.current = roleLabel;
   const typeOptions = usePartyTypeOptions();
   const columns = React.useMemo<ColumnDef<ProjectParty>[]>(
     () => [
@@ -128,7 +132,7 @@ export function PartiesClient() {
         size: 160,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
-          const label = roleLabel(row.original.party_type);
+          const label = roleLabelRef.current(row.original.party_type);
           return (
             <Badge variant="secondary" className="truncate" title={label}>
               {label}
@@ -259,7 +263,7 @@ export function PartiesClient() {
         ),
       },
     ],
-    [roleLabel],
+    [],
   );
 
   const table = useReactTable({
