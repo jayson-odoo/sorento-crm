@@ -509,13 +509,13 @@ def test_a_failure_while_building_context_marks_the_row_failed_not_processing(db
     assert _row(db, result).status == "failed"
 
 
-def test_usage_rows_of_a_failed_turn_are_not_answered(db, contact):
-    from app.models.ai_assistant import AIAssistantUsageLog
-
+def test_a_read_then_two_provider_failures_is_limited_and_names_what_was_read(db, contact):
+    """AGENT-QUOTE-COMPARE AC-D2: was `failed` with the bare text; a turn that read data says what it read."""
     result = run(db, contact, Prov([asks(call()), RuntimeError("a"), RuntimeError("b")]))
-    assert result.status == "failed"
-    rows = db.query(AIAssistantUsageLog).filter(AIAssistantUsageLog.chatbot_turn_id == result.turn_id).all()
-    assert rows and all(r.was_answered is False for r in rows)
+    assert result.status == "limited", (result.status, result.reply_text)
+    assert result.reply_text.startswith("I could not finish the answer"), result.reply_text
+    assert "What I read:" in result.reply_text and "stock on hand" in result.reply_text
+    assert "could not answer: the model provider failed" not in result.reply_text
 
 
 def test_the_operator_is_recorded_on_the_turn(db, contact):
@@ -538,6 +538,7 @@ def test_only_the_resolver_and_grn_are_not_render_tools():
     # AGENTIC-UNIFY PR 4: the ported reads are plain routes with no presenter; `crm_find` alone renders.
     assert {n for n, d in REGISTRY.items() if not d.render} == {
         "crm_resolve", "crm_products_find", GRN, "crm_knowledge_search", "user_guides_read",
+        "crm_project_quotation_lines",  # AGENT-QUOTE-COMPARE
         *(n for n in AC1_NAMES if n != "crm_find"),
     }
 
