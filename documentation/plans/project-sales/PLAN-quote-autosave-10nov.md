@@ -1,7 +1,7 @@
 # PLAN: Proposal / quotation autosave with history (QUOTE-AUTOSAVE)
 
-Status: Review (built to the owner's answers below; reviewer + security review running). Track:
-full (size L, migration). UAC: `quote-autosave-10nov-acceptance-criteria.md`.
+Status: Merge-ready pending CI (reviewer READY after 3 rounds, security review: no IDOR or bypass,
+its should-fix done or answered; cloud browser pass done). Track: full (size L, migration). UAC: `quote-autosave-10nov-acceptance-criteria.md`.
 
 ## Owner answers (10 Nov 2026 ~15:10 MYT, via crew). These supersede the card where they differ.
 
@@ -204,3 +204,28 @@ draft strip on the read page.
    flush on unmount / pagehide / online, local mirror, 409 handling), History sheet, draft strip,
    Discard draft. Vitest first, kill tests for the lost-edit scenarios.
 3. Review, security review, browser pass, hand-test script.
+
+## Review rounds (10 Nov)
+
+- Round 1 (reviewer NOT READY): Restore left stale line ids on the same version (B1); History
+  entries held only changed scopes (B2: entries now carry every scope's stored lines,
+  `record_lines`, and a Save's entry is rebuilt from the record); a Discard kill-test gap (B3);
+  typing during a Save; local copies reviving a discarded draft, shared between tabs, or reopened
+  unreconciled; refused Save/Restore not locking. All fixed with tests.
+- Round 2: restored lines of an issued scope were re-sent (N1, fixed: an issued version is never
+  staged); three local-copy loss cases (fixed; `pickLocalCopy` is a tested pure function).
+- Security: one conflict entry per lost claim (updated in place), History list without the JSON,
+  holder token in a header, History view reads stored JSON defensively. Not done, with reason:
+  a pre-parse body cap for these routes; nginx already caps every request at 50 MB
+  (`sorento_crm_frontend/nginx.conf:29`), the bound every existing JSON route relies on.
+
+## Browser pass (cloud sandbox, seeded empty DB, 10 Nov)
+
+Sidebar from `/`: Project Sales > Projects > project > Proposals > Add a proposal. Typed Your Ref
+and Subject: "Saved 6:54 AM", Discard draft, no Cancel, "Numbered on save". Typed and clicked
+Projects in the sidebar within the debounce: the private draft held the value; reopening Add a
+proposal showed it. Save numbered it BP/Q/0001 (History Version 1). Second user opened the same
+edit page: the first tab locked ("Opened in another tab / by Ben Test at ..."), Save off, Reload;
+the reverse direction kept the locked tab's text as History Version 2 ("Not saved: opened in
+another tab"). The read page showed "Unsaved draft, last edited ... by Aina Test." with Continue
+editing. The second user's edit page was opened by URL (a second tab of the same link).
