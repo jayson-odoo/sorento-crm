@@ -159,11 +159,6 @@ describe('Order inquiry documents - multi filters', () => {
     expect(setOf(lastParams().agent)).toEqual(['ZZT Agent One', 'ZZT Agent Two']);
   });
 
-  it('Reserve stays a single select', async () => {
-    renderList();
-    await waitFor(() => expect(listSpy).toHaveBeenCalled());
-    openFilters();
-    const el = (await screen.findAllByLabelText('Reserve'))[0] as HTMLSelectElement;
-    expect(el.hasAttribute('multiple')).toBe(false);
-  });
+  // Reserve became multi-select too (UIUX-QUICK-WINS item 2, owner rule: every dropdown
+  // filter is multi-select); covered in OrderInquiryHeadersList.reserveStatus.test.tsx.
 });

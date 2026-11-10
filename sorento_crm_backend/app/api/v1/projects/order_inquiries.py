@@ -1964,6 +1964,7 @@ HeaderListSort = Literal[
     "agent",
     "so_date",
     "status",
+    "reserve_status",
 ]
 _MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 
@@ -1999,8 +2000,13 @@ def list_order_inquiry_headers(
     # `Project` row), so a uuid-pattern filter never matched anything. Same shape
     # `order_inquiry_worklist_service.py`'s own `project` filter already uses.
     project: Optional[list[str]] = Query(None, description="Exact match on the Project column's text; several are OR-ed."),
-    reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(
-        None, description="OIs with a reserve request row in this status (AC-SN-30)."
+    reserve: Optional[list[str]] = Query(
+        None,
+        description=(
+            "OIs with a reserve request row in this status (AC-SN-30): parked, "
+            "needs_reserve, notice_parked or reserved; comma-separated or repeated, several "
+            "are OR-ed (UIUX-QUICK-WINS item 2)."
+        ),
     ),
     inquiry_no: Optional[list[str]] = Query(
         None,

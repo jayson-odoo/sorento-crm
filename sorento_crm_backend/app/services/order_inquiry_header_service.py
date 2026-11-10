@@ -131,6 +131,7 @@ HeaderSort = Literal[
     "agent",
     "so_date",
     "status",
+    "reserve_status",
 ]
 HeaderState = Literal["outstanding", "completed", "all"]
 
@@ -296,7 +297,8 @@ class OrderInquiryHeaderService:
         self,
         *,
         agg,
-        reserve: Optional[str] = None,
+        ragg=None,
+        reserve: Optional[str | List[str]] = None,
         query: Optional[str] = None,
         raised_by: Optional[str | List[str]] = None,
         agent: Optional[str | List[str]] = None,
@@ -314,7 +316,8 @@ class OrderInquiryHeaderService:
         lines_to_confirm = func.coalesce(agg.c.lines_to_confirm, 0)
         qty_total = func.coalesce(agg.c.qty_total, 0)
         status_expr = case((lines_to_confirm > 0, "outstanding"), else_="completed")
-        ragg = self._reserve_agg()
+        # `list()` passes its own instance so its ORDER BY names the same joined subquery.
+        ragg = ragg if ragg is not None else self._reserve_agg()
         requester_user = aliased(User)
         parker_user = aliased(User)
         reserve_status = case(
@@ -359,20 +362,26 @@ class OrderInquiryHeaderService:
             )
         )
 
-        if reserve is not None:
-            flag = {
-                "parked": ragg.c.has_parked,
-                "needs_reserve": ragg.c.has_needs,
-                "notice_parked": ragg.c.has_notice,
-                "reserved": ragg.c.has_reserved,
-            }.get(reserve)
-            if flag is None:
-                raise AppException(
-                    422,
-                    f"'{reserve}' is not a reserve status.",
-                    code="invalid_reserve_filter",
-                )
-            base = base.filter(flag.is_(True))
+        # UIUX-QUICK-WINS item 2: several reserve statuses are OR-ed (every dropdown filter
+        # is multi-select), repeated or comma-joined like the other header filters.
+        reserve_values = multi_values(reserve, "reserve")
+        if reserve_values:
+            flags = []
+            for value in reserve_values:
+                flag = {
+                    "parked": ragg.c.has_parked,
+                    "needs_reserve": ragg.c.has_needs,
+                    "notice_parked": ragg.c.has_notice,
+                    "reserved": ragg.c.has_reserved,
+                }.get(value)
+                if flag is None:
+                    raise AppException(
+                        422,
+                        f"'{value}' is not a reserve status.",
+                        code="invalid_reserve_filter",
+                    )
+                flags.append(flag.is_(True))
+            base = base.filter(or_(*flags))
 
         if state == "outstanding":
             base = base.filter(lines_to_confirm > 0)
@@ -471,7 +480,7 @@ class OrderInquiryHeaderService:
         raised_by: Optional[str | List[str]] = None,
         agent: Optional[str | List[str]] = None,
         project: Optional[str | List[str]] = None,
-        reserve: Optional[str] = None,
+        reserve: Optional[str | List[str]] = None,
         inquiry_no: Optional[str | List[str]] = None,
         sort: Optional[str] = None,
         direction: Optional[str] = "asc",
@@ -496,6 +505,7 @@ class OrderInquiryHeaderService:
         # FROM clause, and the sort columns below have to name that SAME object, or
         # Postgres refuses an ORDER BY naming a subquery it never joined.
         agg = self._rows_agg()
+        ragg = self._reserve_agg()
         sort_columns = {
             "raised_at": OrderInquiry.raised_at,
             "inquiry_no": OrderInquiry.inquiry_no,
@@ -511,10 +521,19 @@ class OrderInquiryHeaderService:
                 (func.coalesce(agg.c.lines_to_confirm, 0) > 0, "outstanding"),
                 else_="completed",
             ),
+            # UIUX-QUICK-WINS item 2: the order the Reserve cell's own status takes (the
+            # same precedence `_base` uses); no reserve status is NULL, so it sorts last.
+            "reserve_status": case(
+                (ragg.c.has_parked.is_(True), 1),
+                (ragg.c.has_needs.is_(True), 2),
+                (ragg.c.has_notice.is_(True), 3),
+                (ragg.c.has_reserved.is_(True), 4),
+                else_=None,
+            ),
         }
 
         base = self._base(
-            agg=agg, state=state, query=query, raised_by=raised_by, agent=agent,
+            agg=agg, ragg=ragg, state=state, query=query, raised_by=raised_by, agent=agent,
             project=project, reserve=reserve, inquiry_no=inquiry_no,
         )
         total = int(
