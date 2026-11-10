@@ -18,6 +18,7 @@ import type { QuotationDocumentBody } from '../../../_shared/services/quotationD
 import { PARTY_ROLE_DEVELOPER } from '../../../_shared/lib/partyRoles';
 import { PartyContactsDialog } from '../../../_shared/components/PartyContactsDialog';
 import type { PartyContact } from '../../../_shared/types/project.types';
+import { formatPhone } from '../../../_shared/lib/phoneDisplay';
 
 /** What the picker knows about a party it offered, to autoload the TO block from it. */
 type KnownParty = {
@@ -148,7 +149,7 @@ export function QuotationRecipientPicker({
       recipient_role: role,
       recipient_name_snapshot: party.name,
       recipient_address_snapshot: party.detailed ? party.address || siteAddress || null : null,
-      recipient_phone_snapshot: party.detailed ? party.phone || null : null,
+      recipient_phone_snapshot: party.detailed ? formatPhone(party.phone) || null : null,
       recipient_email_snapshot: party.detailed ? party.email || null : null,
       recipient_fax_snapshot: party.detailed ? party.fax || null : null,
       attn_name: null,
@@ -322,7 +323,7 @@ export function QuotationAttnChooser({
       attn_name: rows.map((c) => c.name).join(' & ') || null,
       // A contact without one keeps the party's own, which the pick loaded into the block.
       recipient_phone_snapshot:
-        first?.phone || partyPhone || partyFallback.current.phone || null,
+        formatPhone(first?.phone || partyPhone || partyFallback.current.phone) || null,
       recipient_email_snapshot:
         first?.email || partyEmail || partyFallback.current.email || null,
     });

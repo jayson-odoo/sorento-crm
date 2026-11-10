@@ -31,6 +31,7 @@ import { usePartyRoleLabel, usePartyTypeOptions } from './partyTypes';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { formatPhone } from '../../_shared/lib/phoneDisplay';
 
 /**
  * The organisation master, as the same list every other screen in the product uses.
@@ -196,7 +197,7 @@ export function PartiesClient() {
         enableSorting: false,
         meta: { headerTitle: 'Contact', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) => {
-          const contact = [row.original.phone, row.original.email]
+          const contact = [formatPhone(row.original.phone), row.original.email]
             .filter(Boolean)
             .join(' · ');
           return contact ? (

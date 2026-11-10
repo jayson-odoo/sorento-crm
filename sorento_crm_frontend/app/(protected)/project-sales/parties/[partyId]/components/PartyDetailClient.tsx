@@ -14,6 +14,7 @@ import type { ProjectParty } from '../../../_shared/types/project.types';
 import { PartyFormDialog } from '../../components/PartyFormDialog';
 import { usePartyRoleLabel } from '../../components/partyTypes';
 import { PartyContactsPanel } from './PartyContactsPanel';
+import { formatPhone } from '../../../_shared/lib/phoneDisplay';
 
 /**
  * One organisation, read in full.
@@ -147,7 +148,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
           <CardContent className="space-y-3">
             <Field
               label="Phone"
-              value={party.phone}
+              value={formatPhone(party.phone) || null}
             />
             <Field label="Fax" value={party.fax} />
             <Field label="Email" value={party.email} />

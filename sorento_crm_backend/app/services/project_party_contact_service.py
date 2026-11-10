@@ -105,6 +105,28 @@ def clean_phone(value: Any) -> Optional[str]:
     return f"+{digits}"
 
 
+def display_phone(value: Any) -> Optional[str]:
+    """A number as the letter prints it: one local format ("012-987 6543") whether it was stored
+    as E.164 or typed by hand (owner hand test, 10 Nov). Not a Malaysian number it can read: as
+    stored."""
+    import re
+
+    from app.services.phone_utils import normalize_msisdn
+
+    text = _clean(value)
+    if not text or re.search(r"[A-Za-z]", text):
+        return text
+    digits = normalize_msisdn(text) or ""
+    if not digits.startswith("60") or not 10 <= len(digits) <= 12:
+        return text
+    national = "0" + digits[2:]
+    # Mobiles (01x) and East Malaysia (08x) have a three-digit prefix, the rest two.
+    head = 3 if national[:2] in ("01", "08") else 2
+    rest = national[head:]
+    split = 3 if len(rest) == 6 else len(rest) - 4
+    return f"{national[:head]}-{rest[:split]} {rest[split:]}"
+
+
 def list_contacts(db: Session, party: ProjectParty, *, include_inactive: bool = False) -> List[ProjectPartyContact]:
     query = db.query(ProjectPartyContact).filter(ProjectPartyContact.party_id == party.id)
     if not include_inactive:

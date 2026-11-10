@@ -247,10 +247,16 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
         "recipient_party_id": party.id,
         "recipient_name_snapshot": party.name,
         "recipient_address_snapshot": party.address or _site_address(db, project),
-        "recipient_phone_snapshot": party.phone,
+        "recipient_phone_snapshot": _display_phone(party.phone),
         "recipient_email_snapshot": party.email,
         "recipient_fax_snapshot": party.fax,
     }
+
+
+def _display_phone(value: Any) -> Optional[str]:
+    from app.services.project_party_contact_service import display_phone
+
+    return display_phone(value)
 
 
 def apply_recipient_pick(
@@ -336,14 +342,14 @@ def apply_recipient_pick(
             recipient_party_id=party.id,
             recipient_name_snapshot=party.name,
             recipient_address_snapshot=party.address or _site_address(db, project),
-            recipient_phone_snapshot=party.phone,
+            recipient_phone_snapshot=_display_phone(party.phone),
             recipient_email_snapshot=party.email,
             recipient_fax_snapshot=party.fax,
         )
     if contacts:
         loaded.update(
             attn_name=" & ".join(c.name for c in contacts),
-            recipient_phone_snapshot=(first.phone or party.phone),
+            recipient_phone_snapshot=_display_phone(first.phone or party.phone),
             recipient_email_snapshot=(first.email or party.email),
         )
     for field, value in loaded.items():

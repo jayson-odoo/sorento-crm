@@ -267,7 +267,8 @@ def test_ac15_two_attn_contacts_fill_attn_phone_email_and_become_stakeholders():
         iiyana = _contact(db, pgb, "MS IIYANA CONTOH")
         doc = _create(w, recipient_party_id=pgb.id, recipient_role="main_contractor", attn_contact_ids=[anne.id, iiyana.id])
         assert doc.attn_name == "MS. ANNE CONTOH & MS IIYANA CONTOH"
-        assert doc.recipient_phone_snapshot == "012-0000001"
+        # One local format on the letter, however it was stored (owner hand test, 10 Nov).
+        assert doc.recipient_phone_snapshot == "012-000 0001"
         assert doc.recipient_email_snapshot == "anne@pgb.example"
         people = {s.party_contact_id for s in db.query(ProjectStakeholder).filter(ProjectStakeholder.project_id == w.project.id)}
         assert people == {anne.id, iiyana.id}
@@ -404,3 +405,14 @@ def test_rv_clearing_the_party_on_a_draft_saves_no_party():
         assert doc.recipient_party_id is None
         # The typed block stays: clearing the party is not blanking the letter.
         assert doc.recipient_name_snapshot == w.developer.name
+
+
+@pytest.mark.parametrize(
+    "stored, shown",
+    [("+60129876543", "012-987 6543"), ("0320000002", "03-2000 0002"), ("+601112345678", "011-1234 5678"),
+     ("082-123 456", "082-123 456"), ("03-1111", "03-1111")],
+)
+def test_ht_the_letter_prints_one_local_phone_format(stored, shown):
+    from app.services.project_party_contact_service import display_phone
+
+    assert display_phone(stored) == shown

@@ -36,6 +36,7 @@ import type {
   QuotationDocument,
   QuotationIssue,
 } from '../../../../_shared/services/quotationDocumentService';
+import { formatPhone } from '../../../../_shared/lib/phoneDisplay';
 
 /**
  * The prompt that hands a sent quotation to the salesperson's own WhatsApp.
@@ -220,7 +221,7 @@ function WhatsAppBody({
             options={recipients.map((r) => ({
               value: r.key,
               label: r.label,
-              description: r.phone ?? 'No number on file',
+              description: r.phone ? formatPhone(r.phone) : 'No number on file',
             }))}
             placeholder="Pick a party of this project"
             emptyMessage="No parties on this project yet"

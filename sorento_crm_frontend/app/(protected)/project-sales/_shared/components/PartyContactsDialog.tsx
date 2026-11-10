@@ -18,6 +18,7 @@ import { PhoneInput } from '@/components/common/PhoneInput';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePartyContactMutations, usePartyContacts } from '../hooks/useProjects';
 import type { PartyContact } from '../types/project.types';
+import { formatPhone } from '../lib/phoneDisplay';
 
 export interface ContactsDialogParty {
   partyId: string;
@@ -185,7 +186,7 @@ function PartyContactRows({
         const isFixed = fixed.includes(contact.id);
         const checked = isFixed || picked.includes(contact.id);
         const boxId = `party-contact-${contact.id}`;
-        const detail = [contact.job_title, contact.phone].filter(Boolean).join(', ');
+        const detail = [contact.job_title, formatPhone(contact.phone)].filter(Boolean).join(', ');
         return (
           <div key={contact.id} className="flex flex-wrap items-center gap-3 py-2.5">
             <Checkbox
