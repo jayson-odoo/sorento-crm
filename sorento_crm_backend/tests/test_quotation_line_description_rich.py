@@ -296,3 +296,28 @@ def test_the_document_service_reads_raw_only_for_the_sign_page():
     source = (root / "app/services/project_quotation_document_service.py").read_text()
     raw = [t.strip() for t in source.splitlines() if "description_snapshot" in t and "line_text(" not in t]
     assert raw == ['"description": line.description_snapshot,']
+
+
+def test_plain_text_keeps_a_list_marker_on_the_same_line_as_its_item():
+    """Crew pass on 7ea1d6efc: the editor wraps each list item's text in a <p>, and the plain
+    reading (Excel, WhatsApp, notifications) put the marker alone on a line ("• \\nbullet one")."""
+    from app.utils.tag_rich_text import plain_text
+
+    html = (
+        "<p>Intro</p><ul><li><p>bullet one</p></li><li><p>bullet two</p></li></ul>"
+        "<ol><li><p>num one</p></li><li><p>num two</p><ul><li><p>nested</p></li></ul></li></ol>"
+    )
+    assert plain_text(html) == (
+        "Intro\n• bullet one\n• bullet two\n1. num one\n2. num two\n  • nested"
+    )
+    # A list item without the inner paragraph reads the same.
+    assert plain_text("<ul><li>bare item</li></ul>") == "• bare item"
+
+
+def test_line_text_of_a_styled_list_reads_one_item_per_line():
+    from app.services import project_quotation_service as quotes
+
+    value = '<ul><li><p><strong>WC</strong> c/w seat</p></li><li><p>angle valve</p></li></ul>'
+    assert quotes.line_text(SimpleNamespace(description_snapshot=value)) == (
+        "• WC c/w seat\n• angle valve"
+    )

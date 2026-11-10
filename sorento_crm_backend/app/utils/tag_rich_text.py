@@ -226,6 +226,8 @@ class _PlainText(HTMLParser):
         self.buf = ""
         self._lists: List[List] = []  # [kind, counter]
         self._dropping = 0
+        #: The marker just written for a list item, while no text has followed it yet.
+        self._marker = ""
 
     def _flush(self, *, always: bool = False) -> None:
         if always or self.buf:
@@ -251,8 +253,13 @@ class _PlainText(HTMLParser):
             current[1] += 1
             marker = "• " if current[0] == "ul" else f"{current[1]}. "
             self.buf = "  " * (len(self._lists) - 1) + marker
+            self._marker = self.buf
         elif tag in ("p", "h1", "h2", "h3", "blockquote"):
-            self._flush()
+            # The editor wraps each list item's text in a <p>: it continues the marker's line
+            # ("• bullet one"), it does not start a new one.
+            if not (self._marker and self.buf == self._marker):
+                self._flush()
+            self._marker = ""
 
     def handle_endtag(self, tag):
         if tag in _DROP_WITH_CONTENT:
