@@ -105,6 +105,8 @@ def upgrade() -> None:
     # Owner Q3: AutoCount Debtor.DisplayTerm on the customer feed again (contract 2.14), the
     # default payment term of a new quotation for that customer.
     op.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_terms_code VARCHAR(100)")
+    # A database that took the earlier 50-wide column by hand (crew test copies) is widened too.
+    op.execute("ALTER TABLE customers ALTER COLUMN payment_terms_code TYPE VARCHAR(100)")
     apply_grants(op.get_bind())
 
 
