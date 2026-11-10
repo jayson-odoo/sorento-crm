@@ -238,7 +238,10 @@ function StaffPriceTagRequestsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Status" column={column} />
         ),
-        size: 140,
+        // Fits the widest status pill on one line: "Changes Requested" measures 152px, plus the
+        // cell's 32px padding and the header's ~13px overhead. 140 clipped "Design Ready"
+        // (crew pass, 10 Nov).
+        size: 210,
         cell: ({ row }) => {
           const status = displayStatus(row.original);
           if (!status) return '-';
