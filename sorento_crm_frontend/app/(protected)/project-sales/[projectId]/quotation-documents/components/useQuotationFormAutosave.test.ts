@@ -10,20 +10,25 @@ import { act, renderHook } from '@testing-library/react';
 import { AUTOSAVE_DEBOUNCE_MS } from '@/hooks/useAutosave';
 
 const saveDraft = vi.fn();
+const getHolder = vi.fn();
 vi.mock('../../../_shared/services/quotationDocumentService', async () => {
   const actual = await vi.importActual<
     typeof import('../../../_shared/services/quotationDocumentService')
   >('../../../_shared/services/quotationDocumentService');
-  return { ...actual, saveQuotationFormDraft: (...args: unknown[]) => saveDraft(...args) };
+  return {
+    ...actual,
+    saveQuotationFormDraft: (...args: unknown[]) => saveDraft(...args),
+    getQuotationDraftHolder: (...args: unknown[]) => getHolder(...args),
+  };
 });
 
 import {
-  StaleDraftError,
-  type QuotationDocument,
+  DraftNotHolderError,
   type QuotationFormState,
 } from '../../../_shared/services/quotationDocumentService';
 import {
   clearMirror,
+  HOLDER_POLL_MS,
   mirrorKey,
   readMirror,
   useQuotationFormAutosave,
@@ -32,6 +37,7 @@ import {
 
 const PROJECT = 'p-1';
 const DOC = 'd-1';
+const TOKEN = 'tok-tab-a';
 
 function state(subject: string, total = '0'): QuotationFormState {
   return {
@@ -45,30 +51,18 @@ function state(subject: string, total = '0'): QuotationFormState {
   };
 }
 
-type Props = {
-  state: QuotationFormState | null;
-  isDirty: boolean;
-  documentId?: string | null;
-  rev?: number | null;
-  create?: (s: QuotationFormState) => Promise<QuotationDocument>;
-  onCreated?: (d: QuotationDocument) => void;
-};
+type Props = { state: QuotationFormState | null; isDirty: boolean };
 
-function setup(initial: Props) {
-  const create = initial.create ?? vi.fn();
-  const onCreated = initial.onCreated ?? vi.fn();
+function setup(initial: Props, documentId: string | null = DOC) {
   return renderHook(
     (props: Props) =>
       useQuotationFormAutosave({
         projectId: PROJECT,
-        initialDocumentId: initial.documentId === undefined ? DOC : initial.documentId,
-        initialRev: initial.rev === undefined ? 3 : initial.rev,
-        initialHasDraft: false,
+        documentId,
+        token: TOKEN,
         state: props.state,
         isDirty: props.isDirty,
         ready: true,
-        create,
-        onCreated,
       }),
     { initialProps: initial },
   );
@@ -84,10 +78,9 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     saveDraft.mockReset();
-    saveDraft.mockImplementation(async (_p, _d, _doc, baseRev: number) => ({
-      rev: baseRev + 1,
-      updated_at: '2026-11-10T06:14:00',
-    }));
+    saveDraft.mockResolvedValue({ updated_at: '2026-11-10T06:14:00' });
+    getHolder.mockReset();
+    getHolder.mockResolvedValue({ is_holder: true });
     window.localStorage.clear();
   });
 
@@ -95,23 +88,27 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     vi.useRealTimers();
   });
 
-  it('saves a typed edit to the DRAFT about a second later, on the revision it opened on', async () => {
+  it("saves a typed edit to the DRAFT about a second later, with this tab's claim", async () => {
     const { rerender, result } = setup({ state: state('Opened'), isDirty: false });
     rerender({ state: state('Typed'), isDirty: true });
     expect(saveDraft).not.toHaveBeenCalled();
     await tick();
     expect(saveDraft).toHaveBeenCalledTimes(1);
-    expect(saveDraft.mock.calls[0][1]).toBe(DOC);
-    expect(saveDraft.mock.calls[0][2].header.subject_title).toBe('Typed');
-    expect(saveDraft.mock.calls[0][3]).toBe(3);
-    expect(result.current.rev.current).toBe(4);
+    const [project, doc, value, token] = saveDraft.mock.calls[0];
+    expect([project, doc, value.header.subject_title, token]).toEqual([PROJECT, DOC, 'Typed', TOKEN]);
     expect(result.current.status).toBe('saved');
-    expect(result.current.hasDraft).toBe(true);
+  });
+
+  it("a new proposal saves the person's own private draft (no document)", async () => {
+    const { rerender } = setup({ state: state(''), isDirty: false }, null);
+    rerender({ state: state('First word'), isDirty: true });
+    await tick();
+    expect(saveDraft.mock.calls[0][1]).toBeNull();
+    expect(saveDraft.mock.calls[0][2].header.subject_title).toBe('First word');
   });
 
   it('never saves the starting point, nor a change made before anything was typed', async () => {
     const { rerender } = setup({ state: state('Opened'), isDirty: false });
-    // A template default landing late: not an edit.
     rerender({ state: state('Default from template'), isDirty: false });
     await tick(AUTOSAVE_DEBOUNCE_MS * 3);
     expect(saveDraft).not.toHaveBeenCalled();
@@ -157,7 +154,7 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     // The unsent copy survives even a closed tab.
     const mirror = readMirror(mirrorKey(PROJECT, DOC));
     expect(mirror?.doc.header.subject_title).toBe('Typed offline');
-    expect(mirror?.baseRev).toBe(3);
+    expect(mirror?.token).toBe(TOKEN);
 
     act(() => {
       window.dispatchEvent(new Event('online'));
@@ -169,55 +166,62 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     expect(readMirror(mirrorKey(PROJECT, DOC))).toBeNull();
   });
 
-  it('two tabs: a stale save stops this tab and reports who wrote, and saves nothing more', async () => {
+  it('two tabs: a refused write locks this tab view-only, naming who opened it, and saves no more', async () => {
     saveDraft.mockRejectedValueOnce(
-      new StaleDraftError('stale', {
-        rev: 7,
-        updated_at: '2026-11-10T06:30:00',
-        updated_by_name: 'Ben',
+      new DraftNotHolderError('opened elsewhere', {
+        holder_name: 'Ben',
+        holder_at: '2026-11-10T06:30:00',
       }),
     );
     const { rerender, result } = setup({ state: state('Opened'), isDirty: false });
-    rerender({ state: state('Tab B'), isDirty: true });
+    rerender({ state: state('Older tab'), isDirty: true });
     await tick();
-    expect(result.current.conflict).toEqual({
-      updatedByName: 'Ben',
-      updatedAt: '2026-11-10T06:30:00',
-    });
-    // The server kept tab B's state as History, so the local copy is not needed.
+    expect(result.current.viewOnly).toEqual({ holderName: 'Ben', holderAt: '2026-11-10T06:30:00' });
+    // The server kept this tab's state as History, so the local copy is not needed.
     expect(readMirror(mirrorKey(PROJECT, DOC))).toBeNull();
 
-    rerender({ state: state('Tab B again'), isDirty: true });
+    rerender({ state: state('Older tab again'), isDirty: true });
     await tick(AUTOSAVE_DEBOUNCE_MS * 3);
     expect(saveDraft).toHaveBeenCalledTimes(1);
   });
 
-  it('a new proposal: the first edit creates the record, later edits save its draft', async () => {
-    const create = vi.fn(
-      async (draft: QuotationFormState) => ({ id: 'new-doc', subject_title: draft.header.subject_title }) as QuotationDocument,
-    );
-    const onCreated = vi.fn();
-    const { rerender, result } = setup({
-      state: state(''),
-      isDirty: false,
-      documentId: null,
-      rev: 0,
-      create,
-      onCreated,
+  it('two tabs: the check lands mid-debounce: what is pending is sent (kept as History), then it locks', async () => {
+    getHolder.mockResolvedValue({
+      is_holder: false,
+      holder_name: 'Aina',
+      holder_at: '2026-11-10T07:00:00',
     });
-    rerender({ state: state('First word'), isDirty: true });
-    await tick();
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0][0].header.subject_title).toBe('First word');
-    expect(onCreated).toHaveBeenCalledWith({ id: 'new-doc', subject_title: 'First word' });
-    expect(saveDraft).not.toHaveBeenCalled();
-    expect(result.current.documentId).toBe('new-doc');
-
-    rerender({ state: state('Second word'), isDirty: true });
-    await tick();
+    saveDraft.mockRejectedValueOnce(new DraftNotHolderError('x', { holder_name: 'Aina' }));
+    const { rerender, result } = setup({ state: state('Opened'), isDirty: false });
+    await tick(HOLDER_POLL_MS - 300);
+    // Typed 300 ms before the check: still inside the debounce when the check fires.
+    rerender({ state: state('Typed just before'), isDirty: true });
+    await tick(300);
+    expect(getHolder).toHaveBeenCalledWith(PROJECT, DOC, TOKEN);
     expect(saveDraft).toHaveBeenCalledTimes(1);
-    expect(saveDraft.mock.calls[0][1]).toBe('new-doc');
-    expect(saveDraft.mock.calls[0][3]).toBe(1);
+    expect(saveDraft.mock.calls[0][2].header.subject_title).toBe('Typed just before');
+    expect(result.current.viewOnly?.holderName).toBe('Aina');
+  });
+
+  it('two tabs: an idle tab with nothing pending still locks when another tab opened the draft', async () => {
+    getHolder.mockResolvedValue({ is_holder: false, holder_name: 'Aina', holder_at: null });
+    const { result } = setup({ state: state('Opened'), isDirty: false });
+    expect(result.current.viewOnly).toBeNull();
+    await tick(HOLDER_POLL_MS);
+    expect(result.current.viewOnly).toEqual({ holderName: 'Aina', holderAt: null });
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('Discard draft pauses saving: nothing typed during the countdown revives the draft', async () => {
+    const { rerender, result, unmount } = setup({ state: state('Opened'), isDirty: false });
+    act(() => {
+      result.current.setPaused(true);
+    });
+    rerender({ state: state('During countdown'), isDirty: true });
+    await tick(AUTOSAVE_DEBOUNCE_MS * 2);
+    unmount(); // the navigation after the commit
+    await tick(0);
+    expect(saveDraft).not.toHaveBeenCalled();
   });
 
   it('resume() sends a state the page reopened on that the server never received', async () => {
@@ -235,20 +239,20 @@ describe('local mirror', () => {
   it('reads, writes and clears, and never throws when storage is blocked', () => {
     const key = mirrorKey(PROJECT, null);
     expect(key).toBe(`quotation-form-draft:new:${PROJECT}`);
-    writeMirror(key, { baseRev: 0, doc: state('x'), at: 'now' });
+    writeMirror(key, { token: TOKEN, doc: state('x'), at: 'now' });
     expect(readMirror(key)?.doc.header.subject_title).toBe('x');
     clearMirror(key);
     expect(readMirror(key)).toBeNull();
 
-    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    const getSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('blocked');
     });
     const setSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
     expect(readMirror(key)).toBeNull();
-    expect(() => writeMirror(key, { baseRev: 0, doc: state('x'), at: 'now' })).not.toThrow();
-    spy.mockRestore();
+    expect(() => writeMirror(key, { token: TOKEN, doc: state('x'), at: 'now' })).not.toThrow();
+    getSpy.mockRestore();
     setSpy.mockRestore();
   });
 });
