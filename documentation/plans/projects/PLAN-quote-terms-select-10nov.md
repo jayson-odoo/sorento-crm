@@ -1,7 +1,9 @@
 # PLAN: Quote payment terms from an AutoCount-synced select, validity as number + interval
 
-Status: Plan (behaviour card posted, awaiting owner answers). Track: L (new master table + migration +
-ESB ingest entity; the push side lives in foundryx-shared-service).
+Status: Build (BE + FE written; crew answered Q1 = ESB ingest entity, Q5 = keep legacy text; Q2-Q4
+on the recommendations until the owner answers). Track: L (new master table + migration + ESB
+ingest entity; the push side is the shared-service lane SS-PAYMENT-TERMS). UAC:
+`quote-terms-select-10nov-acceptance-criteria.md`.
 
 Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templates > Terms >
 "Edit Default".
@@ -46,6 +48,24 @@ Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templa
    code or description; validity text matching `^\s*(\d+)\s*(day|week|month|year)s?\s*$`.
    Everything else stays as visible legacy text.
 
-## Open questions
+## Decisions
 
-Posted as `crew-ask` on the PR.
+- Q1 (crew): ESB ingest entity `payment_terms`, contract 2.14, pushed by foundryx-shared-service
+  (lane SS-PAYMENT-TERMS). Contract posted on PR #2305.
+- Q2 (recommended, owner pending): a term prints its AutoCount Description, else its code.
+- Q3 (recommended, owner pending): default from the Terms template only. Follow-up trigger: the
+  owner wants the customer's AutoCount debtor terms as the default, which needs
+  `Debtor.DisplayTerm` back on the customer feed.
+- Q4 (recommended, owner pending): `1 WEEK` / `2 WEEKS`, upper-case, 1..999.
+- Q5 (crew): unmatched legacy text is kept and printed, shown as `Current: ...`.
+
+## Build notes
+
+- Picks: `quote_terms_service.resolve/apply` (`sorento_crm_backend/app/services/quote_terms_service.py`)
+  is the one rule for template create/update, quotation create/update and the cover preview.
+- Select routes: `GET /project-sales/config/quotation-templates/payment-terms` (projects.types.view)
+  and `GET /project-sales/projects/{id}/quotation-documents/payment-terms` (the form's own gate).
+- Migration `qts_0001_quote_terms_select`: table, three columns on both projects tables,
+  validity backfill, `master_data.payment_terms.*` grants mirrored from item classes.
+- FE: one `QuoteTermsFields` component (`project-sales/_shared/components`) in the template dialog
+  and the quotation Terms tab; only changed picks are sent.
