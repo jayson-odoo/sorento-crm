@@ -117,8 +117,9 @@ def test_the_template_select_lists_this_companys_active_terms_only(api):
     response = client.get(f"{TEMPLATES}/payment-terms")
     assert response.status_code == 200, response.text
     rows = response.json()["data"]
-    # Plain DisplayTerms first, AutoCount's asterisk variants after them.
-    assert [row["id"] for row in rows] == [str(cbd.id), str(net.id), str(star.id)]
+    # Owner, 10 Nov: "*"-prefixed AutoCount terms are never offered.
+    assert [row["id"] for row in rows] == [str(cbd.id), str(net.id)]
+    assert str(star.id) not in {row["id"] for row in rows}
     assert rows[0] == {
         "id": str(cbd.id),
         "code": "CASH BEFORE DELIVERY",
@@ -478,3 +479,36 @@ def test_the_legacy_link_skips_a_quotation_that_is_with_a_manager_or_approved(ap
     }
     assert str(rows[open_doc["id"]].payment_term_id) == str(term.id)
     assert rows[locked_doc["id"]].payment_term_id is None
+
+
+
+# ------------------------------------------------------------------------------ asterisk terms
+# Owner, 10 Nov ~16:10: "we shouldnt show the star prefixed autocount terms". One rule: a
+# DisplayTerm starting with "*" is never offered for a new pick; one already carried still prints.
+
+
+def test_a_star_term_cannot_be_newly_picked(api):
+    client, db, company_id, *_ = api
+    star = _term(db, company_id, "STAR", "*Net 60 days", rule="Net 60 days")
+    db.commit()
+    created = _terms_template(client)
+    response = client.put(f"{TEMPLATES}/{created['id']}", json={"payment_term_id": str(star.id)})
+    assert response.status_code == 422, response.text
+    assert response.json().get("code") == "payment_term_unknown"
+
+
+def test_a_star_debtor_default_prints_as_text_not_as_a_pick(api):
+    client, db, company_id, _user, project, _party = api
+    template_term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    _term(db, company_id, "STAR", "*Net 60 days", rule="Net 60 days")
+    db.commit()
+    _terms_template(client, payment_term_id=str(template_term.id))
+    _customer_on(db, project, company_id, "*Net 60 days")
+
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] is None
+    assert got["payment_terms"] == "*Net 60 days"
+    # As the form sends it, the create keeps the text and prints it.
+    created = _create_document(client, project.id, payment_terms=got["payment_terms"])
+    assert created["payment_terms"] == "*Net 60 days"
+    assert created["payment_term_id"] is None

@@ -516,7 +516,8 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
         customer_id=quote_terms.project_customer_id(db, project),
     )
     if term is not None:
-        out["payment_term_id"] = str(term.id)
+        # A "*" term is never a new pick: it is handed on as text, printed and shown read-only.
+        out["payment_term_id"] = str(term.id) if quote_terms.is_offered(term) else None
         out["payment_terms"] = quote_terms.term_label(term)
     return out
 

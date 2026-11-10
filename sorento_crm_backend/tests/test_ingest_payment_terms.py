@@ -180,3 +180,15 @@ def test_a_push_never_links_legacy_text_to_an_inactive_term(env):
     env.db.refresh(template)
     assert template.payment_term_id is None
 
+
+
+
+def test_the_customer_feed_takes_a_100_character_display_term(env):
+    """SS-PAYMENT-TERMS: a DisplayTerm is up to 100 characters on both feeds."""
+    code = _code()
+    long_term = "N" * 100
+    customers = "/api/v1/external/ingest/customers"
+    record = {"source_ref": _ref(), "code": code, "name": f"{MARKER} debtor", "payment_terms_code": long_term}
+    pushed = env.post(customers, [record])
+    assert pushed.json()["records"][0]["outcome"] == "created", pushed.text
+    assert _customer_terms(env, code) == long_term

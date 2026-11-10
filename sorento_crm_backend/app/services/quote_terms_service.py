@@ -47,6 +47,16 @@ def parse_validity(text: Optional[str]) -> Optional[Tuple[int, str]]:
     return value, match.group(2).lower()
 
 
+#: Which terms may be picked (offered in the select, accepted by `resolve`, handed on as a
+#: default): active ones whose DisplayTerm does not start with "*". Owner, 10 Nov 2026: "we
+#: shouldnt show the star prefixed autocount terms". One already carried still prints.
+_OFFERED = (PaymentTerm.is_active.is_(True), ~PaymentTerm.term_code.startswith("*"))
+
+
+def is_offered(term: Any) -> bool:
+    return bool(term.is_active) and not (term.term_code or "").strip().startswith("*")
+
+
 def term_label(term: Any) -> str:
     """What prints: AutoCount's DisplayTerm, as AutoCount spells it (owner Q2)."""
     return (term.term_code or "").strip()
@@ -62,7 +72,7 @@ def list_terms(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
     """The select's options: this company's active terms, by label."""
     rows = (
         db.query(PaymentTerm)
-        .filter(PaymentTerm.company_id == company_id, PaymentTerm.is_active.is_(True))
+        .filter(PaymentTerm.company_id == company_id, *_OFFERED)
         .all()
     )
     out = [
@@ -74,9 +84,7 @@ def list_terms(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
         }
         for row in rows
     ]
-    # Asterisk-prefixed DisplayTerms ("*Net 60 days") are AutoCount's own variants: listed after
-    # the plain ones (owner question pending on whether to show them at all).
-    return sorted(out, key=lambda row: (row["label"].startswith("*"), row["label"].lower()))
+    return sorted(out, key=lambda row: row["label"].lower())
 
 
 def project_customer_id(db: Session, project: Any) -> Optional[str]:
@@ -155,7 +163,7 @@ def resolve(db: Session, *, company_id: str, payload: Dict[str, Any]) -> Dict[st
                 .filter(
                     PaymentTerm.id == str(term_id),
                     PaymentTerm.company_id == company_id,
-                    PaymentTerm.is_active.is_(True),
+                    *_OFFERED,
                 )
                 .first()
             )
@@ -211,7 +219,7 @@ def active_term_id(db: Session, *, company_id: str, term_id: Optional[str]) -> O
         .filter(
             PaymentTerm.id == str(term_id),
             PaymentTerm.company_id == company_id,
-            PaymentTerm.is_active.is_(True),
+            *_OFFERED,
         )
         .scalar()
     )
@@ -231,7 +239,7 @@ def link_legacy_terms(db: Session, *, company_id: str) -> int:
     by_text: Dict[str, str] = {}
     terms = (
         db.query(PaymentTerm)
-        .filter(PaymentTerm.company_id == company_id, PaymentTerm.is_active.is_(True))
+        .filter(PaymentTerm.company_id == company_id, *_OFFERED)
         .order_by(PaymentTerm.term_code)
         .all()
     )

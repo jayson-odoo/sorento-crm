@@ -191,7 +191,7 @@ class Customer(Base, CompanyScopedMixin):
     # AutoCount `Debtor.DisplayTerm` as the customers push sends it (`payment_terms_code`,
     # contract 2.14). A CODE, resolved against `payment_terms` when a new quotation for this
     # customer takes its default (QUOTE-TERMS-SELECT Q3), so the two feeds need no order.
-    payment_terms_code = Column(String(50), nullable=True)
+    payment_terms_code = Column(String(100), nullable=True)
     # The group this ledger belongs to (see `CustomerGroup`). NULL = ungrouped.
     customer_group_id = Column(
         UUID(as_uuid=False),

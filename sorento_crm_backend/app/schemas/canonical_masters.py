@@ -190,7 +190,7 @@ class CanonicalCustomer(_Canonical):
     # AutoCount `Debtor.DisplayTerm` (contract 2.14, QUOTE-TERMS-SELECT; back after D15 removed
     # the old never-stored field of the same name). Absent = untouched, blank = cleared; stored
     # as sent and matched to a `payment_terms` code when a new quotation takes its default.
-    payment_terms_code: Optional[str] = Field(None, max_length=50)
+    payment_terms_code: Optional[str] = Field(None, max_length=100)
 
 
 class CanonicalSalesAgent(_Canonical):
