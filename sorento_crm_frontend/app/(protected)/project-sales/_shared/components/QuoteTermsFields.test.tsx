@@ -52,9 +52,17 @@ beforeEach(() => {
   lastProjectId = undefined;
 });
 
+const onValidityChange = vi.fn();
+
 function renderFields(values: React.ComponentProps<typeof QuoteTermsFields>['values'], projectId?: string) {
   return render(
-    <QuoteTermsFields idPrefix="t" values={values} onChange={onChange} projectId={projectId} />,
+    <QuoteTermsFields
+      idPrefix="t"
+      values={values}
+      onChange={onChange}
+      onValidityChange={onValidityChange}
+      projectId={projectId}
+    />,
   );
 }
 
@@ -156,6 +164,21 @@ describe('QuoteTermsFields', () => {
     renderFields({ payment_term_id: 'pt-gone', payment_terms: null });
     const select = screen.getByLabelText('Payment Terms') as HTMLSelectElement;
     expect(select.options[select.selectedIndex].textContent).toBe('Retired term');
+  });
+
+  // Crew pass on 538d14b7: what is on screen must be what saves, so an invalid validity is
+  // reported to the screen (which refuses Save) instead of silently keeping the last valid one.
+  it('reports an invalid validity to the screen, and valid again once fixed', () => {
+    renderFields({ validity_value: 2, validity_unit: 'week', validity: '2 WEEKS' });
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '0' } });
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '3' } });
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    fireEvent.change(screen.getByLabelText('Validity unit'), { target: { value: '' } });
+    expect(onValidityChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText('Validity unit'), { target: { value: 'day' } });
+    expect(onValidityChange).toHaveBeenLastCalledWith(true);
   });
 
   it('asks the project for its terms on the quotation form', () => {

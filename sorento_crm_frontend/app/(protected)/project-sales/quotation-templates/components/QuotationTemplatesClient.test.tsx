@@ -154,6 +154,18 @@ describe('QuotationTemplatesClient payment terms and validity', () => {
     expect(call.body).not.toHaveProperty('validity_value');
   });
 
+  it('an invalid validity on screen blocks Save (crew pass 538d14b7)', async () => {
+    render(<QuotationTemplatesClient />);
+    fireEvent.click(screen.getByText('Standard 2026'));
+    fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '0' } });
+    expect(screen.getByText('Enter a whole number from 1 to 999.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '3' } });
+    expect(screen.getByText('Pick a unit.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(updateAsync).not.toHaveBeenCalled();
+  });
+
   it('save sends a validity as a number and a unit', async () => {
     render(<QuotationTemplatesClient />);
     fireEvent.click(screen.getByText('Standard 2026'));

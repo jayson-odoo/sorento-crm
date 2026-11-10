@@ -201,10 +201,12 @@ vi.mock('../../../_shared/components/QuoteTermsFields', () => ({
   QuoteTermsFields: ({
     values,
     onChange,
+    onValidityChange,
     projectId,
   }: {
     values: Record<string, unknown>;
     onChange: (patch: Record<string, unknown>) => void;
+    onValidityChange?: (valid: boolean) => void;
     projectId?: string;
   }) => (
     <div>
@@ -221,6 +223,9 @@ vi.mock('../../../_shared/components/QuoteTermsFields', () => ({
         onClick={() => onChange({ validity_value: 90, validity_unit: 'day', validity: '90 DAYS' })}
       >
         Pick 90 days
+      </button>
+      <button type="button" onClick={() => onValidityChange?.(false)}>
+        Type an invalid validity
       </button>
     </div>
   ),
@@ -1443,6 +1448,22 @@ describe('QuotationFormClient cover page fields', () => {
       validity_value: 90,
       validity_unit: 'day',
     });
+  });
+
+  it('an invalid validity on screen blocks Save and shows the Terms tab (crew pass 538d14b7)', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await openTab('Terms');
+    fireEvent.click(await screen.findByRole('button', { name: 'Type an invalid validity' }));
+    await openTab('Header');
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    expect(
+      await screen.findByText('Validity needs a whole number from 1 to 999 and a unit.'),
+    ).toBeInTheDocument();
+    expect(createQuotationDocument).not.toHaveBeenCalled();
+    expect(screen.getByRole('tab', { name: /Terms/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('with no active template the terms start empty and Save sends no picks', async () => {
