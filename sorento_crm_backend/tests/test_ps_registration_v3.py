@@ -476,6 +476,30 @@ def test_parties_list_sorts_by_name_desc_and_pages_after_sorting(v2):
     assert [r["name"] for r in page] == ["CONTOH C", "CONTOH B"]
 
 
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_parties_list_sorts_by_registration_no_on_the_server(v2, direction):
+    """PARTIES-LIST-ONE-LINE: Registration no. is its own column, so it sorts the whole master."""
+    blank = _party(v2, "consultant", name="CONTOH A blank")
+    late = _party(v2, "consultant", name="CONTOH B late")
+    early = _party(v2, "consultant", name="CONTOH C early")
+    late.registration_no = "SP/A 95"
+    early.registration_no = "P/A 119"
+    v2.db.flush()
+    ids = [r["id"] for r in _parties_listed(v2, sort="registration_no", dir=direction)]
+    order = [blank.id, early.id, late.id]
+    assert ids == (order if direction == "asc" else order[::-1])
+
+
+def test_parties_search_matches_the_registration_no(v2):
+    hit = _party(v2, "consultant", name="CONTOH Reg hit")
+    miss = _party(v2, "consultant", name="CONTOH Reg miss")
+    hit.registration_no = "SP/A 9512"
+    miss.registration_no = "P/A 1"
+    v2.db.flush()
+    ids = [r["id"] for r in _parties_listed(v2, query="sp/a 951")]
+    assert ids == [hit.id]
+
+
 def test_parties_project_count_includes_party_links(v2):
     sub = _party(v2, "subcontractor")
     _register(v2, party_links=[{"role": "subcontractor", "party_id": sub.id}])
