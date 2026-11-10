@@ -870,12 +870,13 @@ def _cover_section_html(section: Dict[str, Any]) -> str:
             if style == "signature"
             else f'<div class="cover-band">{label}</div>'
         )
-    width = 100 / max(section["columns"], 1)
+    # Short percentages ("50", "33.3"): a bare "0.00" anywhere reads as a printed zero price.
+    width = round(100 / max(section["columns"], 1), 1)
     columns: List[str] = []
     start = 1
     for cells in section["cells"]:
         columns.append(
-            f'<td class="cover-col" style="width:{width:.2f}%">'
+            f'<td class="cover-col" style="width:{width:g}%">'
             f"{_cover_column_html(style, cells, start)}</td>"
         )
         start += len(cells)
