@@ -1,6 +1,6 @@
 # CARD: configurable project party roles + proposal "To" picker (lane PROJECT-PARTY-ROLES)
 
-Status: behaviour card, waiting on the owner (5 questions at the bottom). No code yet.
+Status: behaviour card v2 (owner addition 10 Nov ~13:40: contacts in the same step), waiting on the owner. No code yet.
 
 ## What is true today (origin/main a4af6565, read in this lane)
 
@@ -91,6 +91,31 @@ Status: behaviour card, waiting on the owner (5 questions at the bottom). No cod
 - Lookup sets are tenant-wide, parties are per company: every company in the tenant shares one role list
   (same as lead source today).
 - dd/mm/yyyy everywhere a date shows (no new dates in this lane).
+
+## Owner addition, 10 Nov ~13:40: pick a party's contacts in the same step (PR 1)
+
+Today: the Parties section picks one party per role, then a SEPARATE "Contacts at <party>" box per picked
+party is rendered below the whole grid (`ProjectForm.tsx:1057-1072`), and only on create (`mode === 'create'`,
+`:417`; `contact_ids` is accepted on create only, `schemas/projects.py:231-232`,
+`project_party_contact_service.py:266-321`). The contact create-inline exists (`PartyContactsPicker.tsx`
+createOption -> `PartyContactDialog.tsx`, name the only required field) but sits far from the party.
+
+10. **Party and contacts, one field.** Picking a party opens its contacts picker directly under it, inside
+    the same role field. Many-party roles get one contacts row per picked party, captioned with the party
+    name. The separate "Contacts at X" boxes are removed.
+11. **Create on the spot.** A contact not found is added from the picker ("+ Add contact \"Mr Wong\""): typed
+    name prefilled, phone optional (2 Nov B4), created on the party and picked in one go. A party not found
+    is created on the spot as today (28 Oct), and its contacts row opens straight after.
+12. **Missing number on the spot.** A picked contact without a phone shows one inline number input; saving
+    writes it to the contact on the party.
+13. **Edit too, not only create.** The same picker works on edit. Picks become the project's stakeholders as
+    today. On edit the picker shows the stakeholders already linked from that party (Q6).
+14. Permission unchanged: creating a party or contact needs `projects.parties.edit`; without it the picker
+    only picks.
+
+Q6. On edit, un-picking a contact under a party. (a) removes that person's stakeholder row from the project
+    (the contact stays on the party); (b) only adds, removal stays on the Stakeholders tab.
+    **Recommend (a)**: the picker then shows the truth both ways; a picker that ignores un-picks reads as a bug.
 
 ## Questions (at most 5, each with a recommendation)
 

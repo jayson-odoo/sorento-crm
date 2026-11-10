@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project party roles</title>
+<!-- PROJECT-PARTY-ROLES Lavish mock v1. Annotated mockup, not shipped code. Plain inline CSS so it
+     opens from a file. Card: documentation/plans/project-sales/CARD-project-party-roles-10nov.md
+     Data: project PPF2611003 (dev copy). Party names are placeholders until the crew-data-request
+     rows come back; v2 swaps in the real names. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
+  --green:#15803d; --green-soft:#f0fdf4; --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.content{padding:20px 28px 28px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.phrow h1{font-size:20px;margin:0}
+.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.section{border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px}
+.section>.hd{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600}
+.section>.bd{padding:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.m375 .grid2{grid-template-columns:1fr}
+.field label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
+.sel{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px;border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:#fff;font-size:13px}
+.sel .ph{color:var(--muted)}
+.sel .chev{margin-left:auto;color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--grey-soft);border-radius:4px;padding:1px 6px;font-size:12px}
+.menu{border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);background:#fff;margin-top:4px;font-size:13px}
+.menu div{padding:7px 10px;display:flex;justify-content:space-between;gap:12px}
+.menu div.on{background:var(--primary-soft)}
+.menu .role{color:var(--muted);font-size:12px}
+.menu .grp{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);padding:6px 10px 2px}
+.ro dt{font-size:12px;color:var(--muted)}
+.ro dd{margin:0 0 10px;font-size:14px}
+.card{border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.input{border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;background:#fff;min-height:34px}
+.ef{margin-bottom:10px}
+.ef label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafafa}
+td{padding:9px 10px;border-bottom:1px solid var(--line)}
+.sw{display:inline-block;width:30px;height:17px;border-radius:999px;background:#d1d5db;position:relative;vertical-align:middle}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on{background:var(--primary)}.sw.on::after{left:15px}
+.m375 .content{padding:14px 16px}
+.abs{position:absolute}
+.pc{margin:6px 0 0 14px;padding-left:10px;border-left:2px solid var(--line)}
+.pc .pn{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+.fill{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--amber);margin-top:6px}
+.input.sm{min-height:28px;padding:4px 8px;color:var(--muted)}
+.gone{font-size:12px;color:var(--muted);text-decoration:line-through;margin:14px 0 0}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Project party roles + proposal "To" (PROJECT-PARTY-ROLES)</h1>
+<p class="sub">Mock v2 (owner 13:40: pick a party’s contacts in the same step, create on the spot, no separate "Contacts at X" boxes). Four screens: the registration Parties section drawn from the role list, the same section
+read-only on the project page, the one new column on the existing Lookup sets screen, and the proposal header
+with the "To" picker. Project PPF2611003. Party names are placeholders until the dev rows come back.
+Callouts map each element to the component it changes.</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="ft">1. Register / edit project, Parties and contacts (1280): party and its contacts in ONE step</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Edit project</h1><div class="crumbs">Project sales / PPF2611003</div></div>
+    <div><span class="btn">Cancel</span> <span class="btn primary">Save</span></div></div>
+  <div class="section"><div class="hd">Parties and contacts <span class="co">1</span></div><div class="bd">
+    <div class="grid2">
+      <div class="field"><label>Architect</label><div class="sel">Architect A Sdn Bhd <span class="chev">&#x2715; &#x25BE;</span></div>
+        <div class="pc"><div class="sel"><span class="chip">Ar. Lim, 012-345 6789 &#x2715;</span><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div> <span class="co">2</span></div></div>
+      <div class="field"><label>Main contractor</label><div class="sel">Main Con B Sdn Bhd <span class="chev">&#x2715; &#x25BE;</span></div>
+        <div class="pc"><div class="sel"><span class="chip">Mr. Tan &#x2715;</span><span class="ph">mr wong</span><span class="chev">&#x25BE;</span></div>
+          <div class="menu"><div class="on">+ Add contact "Mr Wong" <span class="co">3</span></div></div>
+          <div class="fill">Mr. Tan has no number <span class="input sm">01x-xxx xxxx</span> <span class="btn">Save number</span> <span class="co">4</span></div></div></div>
+      <div class="field"><label>Trading houses <span class="co">5</span></label><div class="sel"><span class="chip">Trading C &#x2715;</span><span class="chip">Trading D &#x2715;</span><span class="chev">&#x25BE;</span></div>
+        <div class="pc"><span class="pn">Trading C</span><div class="sel"><span class="chip">Ms. Ng &#x2715;</span><span class="chev">&#x25BE;</span></div></div>
+        <div class="pc"><span class="pn">Trading D</span><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
+      <div class="field"><label>Subcontractors</label><div class="sel"><span class="chip">Subcon E &#x2715;</span><span class="chev">&#x25BE;</span></div>
+        <div class="pc"><span class="pn">Subcon E</span><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
+      <div class="field"><label>Tender parties</label><div class="sel"><span class="ph">tender co</span><span class="chev">&#x25BE;</span></div>
+        <div class="menu"><div class="on">+ Add "Tender Co" as a tender party <span class="co">6</span></div></div></div>
+      <div class="field"><label>Consultant</label><div class="sel"><span class="ph">Search consultants</span><span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><label>Interior designer <span class="pill">Inactive</span> <span class="co">7</span></label><div class="sel">ID Studio F <span class="chev">&#x2715;</span></div>
+        <div class="pc"><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
+      <div class="field"><label>Quantity surveyor <span class="co">8</span></label><div class="sel"><span class="ph">Search quantity surveyors</span><span class="chev">&#x25BE;</span></div></div>
+    </div>
+    <p class="gone">Removed: the 8 separate "Contacts at &lt;party&gt; - Pick contacts" boxes that sat below this grid. <span class="co">9</span></p>
+  </div></div>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">1</span><div><b>One picker per active role, in the list's order</b>Developer is not here (page 1). Architect and main contractor are now ordinary roles, same picker as the rest.<span class="ref">ProjectForm.tsx:935-1075 (FormSection "Parties and contacts"); LINK_ROLES :66-73 and the per-role fetchers :205-219 go; the role list comes from useLookupSetOptions('project_party_role') as lead source does (:221)</span></div></li>
+<li><span class="co">2</span><div><b>Contacts sit right under the party, same field</b>Appears the moment a party is picked, on create AND edit (today: create only, far below). Each chip shows name + number. Picks become the project's stakeholders, as today.<span class="ref">_shared/components/PartyContactsPicker.tsx (moves inside the role field; "Contacts at X" label dropped, party name kept as a small caption for many-party roles); components/common/SearchableMultiSelect</span></div></li>
+<li><span class="co">3</span><div><b>Contact not found: create it on the spot</b>Typed name prefilled; name is the only required field, phone optional (2 Nov B4). Created on the party and picked in one go.<span class="ref">createOption on SearchableMultiSelect -> _shared/components/PartyContactDialog.tsx (initialName, onCreated), unchanged</span></div></li>
+<li><span class="co">4</span><div><b>Missing number filled on the spot</b>A picked contact without a phone gets one inline input; saving writes the number to the contact on the party.<span class="ref">components/ui/input + the existing party-contact update the dialog already calls</span></div></li>
+<li><span class="co">5</span><div><b>"Many parties" roles get the multi picker; one contacts row per picked party</b><span class="ref">components/common/SearchableMultiSelect; single roles keep components/common/SearchableSelect (clearable)</span></div></li>
+<li><span class="co">6</span><div><b>Party not found: create it on the spot</b>As the 28 Oct ruling; its contacts row opens straight after.<span class="ref">partyCreateOption in ProjectForm.tsx (unchanged, takes the role key)</span></div></li>
+<li><span class="co">7</span><div><b>Deactivated role still on this project</b>Grey Inactive pill, kept on save, no search (only clear). Its contacts stay editable.<span class="ref">components/ui/badge</span></div></li>
+<li><span class="co">8</span><div><b>A role an admin added</b>Example only (not seeded).</div></li>
+<li><span class="co">9</span><div><b>The separate contacts block goes</b><span class="ref">ProjectForm.tsx:1057-1072 (pickedParties.map -> PartyContactsPicker) removed</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">1b. Same section at 375</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="content">
+  <div class="section"><div class="hd">Parties and contacts</div><div class="bd">
+    <div class="grid2">
+      <div class="field"><label>Architect</label><div class="sel">Architect A Sdn Bhd <span class="chev">&#x25BE;</span></div>
+        <div class="pc"><div class="sel"><span class="chip">Ar. Lim, 012-345 6789 &#x2715;</span></div></div></div>
+      <div class="field"><label>Main contractor</label><div class="sel">Main Con B Sdn Bhd <span class="chev">&#x25BE;</span></div>
+        <div class="pc"><div class="sel"><span class="chip">Mr. Tan &#x2715;</span></div>
+          <div class="fill">Mr. Tan has no number <span class="input sm">01x-xxx xxxx</span> <span class="btn">Save number</span></div></div></div>
+      <div class="field"><label>Trading houses</label><div class="sel"><span class="chip">Trading C &#x2715;</span><span class="chip">Trading D &#x2715;</span></div>
+        <div class="pc"><span class="pn">Trading C</span><div class="sel"><span class="chip">Ms. Ng &#x2715;</span></div></div>
+        <div class="pc"><span class="pn">Trading D</span><div class="sel"><span class="ph">Pick or add contacts</span></div></div></div>
+      <div class="field"><label>Interior designer <span class="pill">Inactive</span></label><div class="sel">ID Studio F</div></div>
+    </div>
+  </div></div>
+</div></div>
+</div>
+
+<!-- ============================================================ 2 -->
+<h2 class="ft">2. Project page, Parties (read-only, 1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>PPF2611003</h1><div class="crumbs">Project sales / PPF2611003</div></div><span class="btn primary">Edit</span></div>
+  <div class="section"><div class="hd">Parties <span class="co">6</span></div><div class="bd">
+    <dl class="ro grid2">
+      <div><dt>Developer</dt><dd>Developer G Bhd</dd></div>
+      <div><dt>Architect</dt><dd>Architect A Sdn Bhd</dd></div>
+      <div><dt>Main contractor</dt><dd>Main Con B Sdn Bhd</dd></div>
+      <div><dt>Trading houses</dt><dd>Trading C, Trading D</dd></div>
+      <div><dt>Subcontractors</dt><dd>Subcon E</dd></div>
+      <div><dt>Interior designer <span class="pill">Inactive</span></dt><dd>ID Studio F</dd></div>
+    </dl>
+  </div></div>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">6</span><div><b>Same order and labels as the form</b>View = Edit layout. Roles with no party on this project are left out, as today.<span class="ref">[projectId]/components/ProjectDetailClient.tsx:890-896 (LINKED_ROLES goes; same lookup set)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 class="ft">3. Master data, Lookup sets, "Project - Party role" options (existing screen, one new column)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Project - Party role</h1><div class="crumbs">Master data / Lookup sets</div></div><span class="btn primary">Add option</span></div>
+  <table>
+    <tr><th>Label</th><th>Value</th><th>Order</th><th>Many parties <span class="co">7</span></th><th>Active</th></tr>
+    <tr><td>Developer</td><td>developer</td><td>10</td><td><span class="sw"></span></td><td><span class="pill green">Active</span> <span class="co">8</span></td></tr>
+    <tr><td>Architect</td><td>architect</td><td>20</td><td><span class="sw"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Main contractor</td><td>main_contractor</td><td>30</td><td><span class="sw"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Trading house</td><td>trading_house</td><td>40</td><td><span class="sw on"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Subcontractor</td><td>subcontractor</td><td>50</td><td><span class="sw on"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Tender party</td><td>tender_party</td><td>60</td><td><span class="sw on"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Consultant</td><td>consultant</td><td>70</td><td><span class="sw"></span></td><td><span class="pill green">Active</span></td></tr>
+    <tr><td>Interior designer</td><td>interior_designer</td><td>80</td><td><span class="sw"></span></td><td><span class="pill">Inactive</span></td></tr>
+  </table>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">7</span><div><b>The only addition to the admin screen</b>Shown for this set only (Q1 a). Everything else is the screen as it is.<span class="ref">master-data-management/lookup-sets/components/OptionsSection.tsx; lookup_options.allows_many (new boolean, default false)</span></div></li>
+<li><span class="co">8</span><div><b>Developer cannot be deactivated or deleted</b>The server refuses; label rename allowed. A role in use cannot be deleted either ("in use, deactivate it instead").<span class="ref">app/services/lookup_option_service (guard for set project_party_role)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 4 -->
+<h2 class="ft">4. Proposal PRJQ draft, header with the "To" picker (1280), PR 2</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal Q-2026-0012 <span class="pill blue">Draft</span></h1><div class="crumbs">Project sales / PPF2611003 / Proposals</div></div><span class="btn primary">Issue</span></div>
+  <div class="card"><div class="grid2">
+    <div>
+      <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);margin-bottom:6px">To</div>
+      <div class="ef"><label>Party <span class="co">9</span></label><div class="sel">Main Con B Sdn Bhd <span class="pill">Main contractor</span><span class="chev">&#x25BE;</span></div>
+        <div class="menu">
+          <div><span>Developer G Bhd</span><span class="role">Developer</span></div>
+          <div><span>Architect A Sdn Bhd</span><span class="role">Architect</span></div>
+          <div class="on"><span>Main Con B Sdn Bhd</span><span class="role">Main contractor</span></div>
+          <div><span>Trading C</span><span class="role">Trading house</span></div>
+          <div><span>Trading D</span><span class="role">Trading house</span></div>
+          <div><span>Subcon E</span><span class="role">Subcontractor</span></div>
+          <div><span>ID Studio F</span><span class="role">Interior designer</span></div>
+        </div></div>
+      <div class="ef"><label>Name <span class="co">10</span></label><div class="input">Main Con B Sdn Bhd</div></div>
+      <div class="ef"><label>Address</label><div class="input">12 Jalan Contoh 3/1<br>47301 Petaling Jaya<br>Selangor</div></div>
+      <div class="ef"><label>Phone</label><div class="input">03-7800 0000</div></div>
+      <div class="ef"><label>Email</label><div class="input">tender@maincon-b.example</div></div>
+      <div class="ef"><label>Attn</label><div class="input">Mr. Tan (Project manager)</div></div>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Reference</div>
+      <div class="ef"><label>Date</label><div class="input">10/11/2026</div></div>
+      <div class="ef"><label>Your ref</label><div class="input"></div></div>
+    </div>
+  </div></div>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">9</span><div><b>"To" picks from this project's parties</b>Developer first, then every party on the project with its role caption. Default on create is the developer, as today. Changeable while draft (Q5 a).<span class="ref">quotation-documents/[documentId]/components/QuotationDocumentHeader.tsx:200-251; components/common/SearchableSelect; new GET /projects/{id}/parties (developer + party_links, one list reused later by the WhatsApp send)</span></div></li>
+<li><span class="co">10</span><div><b>Picking fills the block, every field stays editable</b>Name / address / phone from the party, email + Attn from the party's first contact on this project. Saved on the document as recipient_party_id + the snapshots.<span class="ref">project_quotation_document_service.py:214-237 (_recipient_from_project takes the picked party); schemas/projects.py:1959-1974 gains recipient_party_id</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">4b. Issued proposal at 375: "To" is fixed</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="content">
+  <div class="phrow"><div><h1 style="font-size:17px">Q-2026-0012-A <span class="pill green">Issued</span></h1></div></div>
+  <div class="card">
+    <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);margin-bottom:6px">To <span class="co">11</span></div>
+    <div><b>Main Con B Sdn Bhd</b> <span class="pill">Main contractor</span></div>
+    <div style="color:var(--muted);font-size:13px">12 Jalan Contoh 3/1<br>47301 Petaling Jaya, Selangor<br>03-7800 0000<br>Attn: Mr. Tan</div>
+  </div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">11</span><div><b>Locked once revision A is issued</b>A different party gets its own proposal (2 Nov rule: one proposal per party). Depends on Q5.<span class="ref">QuotationDocumentHeader.tsx read-only branch</span></div></li>
+</ol></div>
+</div>
+
+</div>
+</body>
+</html>
