@@ -699,6 +699,11 @@ export function QuotationFormClient({
                   value={header ?? {}}
                   partyName={header?.recipient_name_snapshot ?? ''}
                   locked={recipientLocked}
+                  // A party just picked (or a new proposal): its only contact becomes the Attn.
+                  autoPick={
+                    !isEdit ||
+                    (header?.recipient_party_id ?? null) !== (saved.data?.recipient_party_id ?? null)
+                  }
                   onChange={(patch) => {
                     setDirty(true);
                     setHeader((previous) => ({ ...(previous ?? {}), ...patch }));

@@ -150,6 +150,31 @@ describe('Parties section from the role list', () => {
   });
 });
 
+describe('owner hand test 10 Nov: one line per option, one contact preselected', () => {
+  it('party options carry no role subtitle', async () => {
+    listParties.mockResolvedValue({ data: [{ id: 'p1', party_type: 'architect', name: 'ARKITEK CONTOH', is_active: true }] });
+    renderSection();
+    const rows = await selectProps['project-party-architect'].fetchOptions!('ark');
+    expect(rows).toEqual([{ value: 'p1', label: 'ARKITEK CONTOH' }]);
+  });
+
+  it('a newly picked party with exactly one contact has it ticked without opening the popup', async () => {
+    listPartyContacts.mockResolvedValue([CONTACTS[1]]);
+    const onContactPicksChange = vi.fn();
+    renderSection({ picks: { main_contractor: [MC] }, newPartyIds: ['p-mc'], onContactPicksChange });
+    await waitFor(() => expect(onContactPicksChange).toHaveBeenCalledWith({ 'p-mc': ['c-2'] }));
+  });
+
+  it('a party with several contacts, or one already on the project, is not preselected', async () => {
+    listPartyContacts.mockResolvedValue(CONTACTS);
+    const onContactPicksChange = vi.fn();
+    renderSection({ picks: { main_contractor: [MC] }, newPartyIds: ['p-mc'], onContactPicksChange });
+    await screen.findByText('Main con');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onContactPicksChange).not.toHaveBeenCalled();
+  });
+});
+
 describe('inactive roles and create on the spot', () => {
   it('an inactive role still on the project offers no search and no create', async () => {
     renderSection({ picks: { interior_designer: [{ value: 'p-id', label: 'CONTOH ID' }] } });
@@ -222,12 +247,45 @@ describe('contacts popup', () => {
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Add number' }));
     fireEvent.change(within(dialog).getByLabelText('Phone for MR. CONTOH SATU'), {
-      target: { value: '0120000000' },
+      target: { value: '012-345 6789' },
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    // Stored normalised, the app's PhoneInput form (E.164).
     await waitFor(() =>
-      expect(updatePartyContact).toHaveBeenCalledWith('p-mc', 'c-1', { phone: '0120000000' }),
+      expect(updatePartyContact).toHaveBeenCalledWith('p-mc', 'c-1', { phone: '+60123456789' }),
     );
+  });
+
+  it('a number with letters or too few digits cannot be saved, and says why (owner hand test)', async () => {
+    listPartyContacts.mockResolvedValue(CONTACTS);
+    renderSection({ picks: { main_contractor: [MC] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Add number' }));
+    const box = within(dialog).getByLabelText('Phone for MR. CONTOH SATU');
+    for (const bad of ['01234', '13245t']) {
+      fireEvent.change(box, { target: { value: bad } });
+      fireEvent.blur(box);
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(/valid phone number/i);
+    }
+    expect(updatePartyContact).not.toHaveBeenCalled();
+  });
+
+  it('a new contact needs a name and a valid number when one is typed', async () => {
+    listPartyContacts.mockResolvedValue([]);
+    renderSection({ picks: { main_contractor: [MC] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByRole('button', { name: '+ Add contact' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add contact' }));
+    expect(within(dialog).getByText('Enter a name.')).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText(/^Name/), { target: { value: 'MS. BARU' } });
+    const phone = within(dialog).getByLabelText('Phone');
+    fireEvent.change(phone, { target: { value: '13245t' } });
+    fireEvent.blur(phone);
+    expect(within(dialog).getByRole('button', { name: 'Add contact' })).toBeDisabled();
+    expect(createPartyContact).not.toHaveBeenCalled();
   });
 
   it('creates a missing contact with only a name and ticks it', async () => {

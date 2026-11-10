@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useFetchPartyOptions } from '../hooks/useProjects';
+import { useFetchPartyOptions, usePartyContacts } from '../hooks/useProjects';
 import { PARTY_ROLE_DEVELOPER } from '../lib/partyRoles';
 import type { PartyRole } from '../types/project.types';
 import { PartyContactsDialog } from './PartyContactsDialog';
@@ -30,6 +30,7 @@ export function ProjectPartiesSection({
   canCreateParty,
   createParty,
   typedByRole,
+  newPartyIds,
 }: {
   roles: PartyRole[];
   /** The developer picked on page 1: shown read-only here so its contacts can be picked too. */
@@ -47,8 +48,18 @@ export function ProjectPartiesSection({
   createParty: (role: string, name: string) => Promise<PartyPick | null>;
   /** What a portal registration typed for a role, shown until a party is picked. */
   typedByRole?: Record<string, string | null | undefined>;
+  /** Parties picked in this session: one with a single contact gets it ticked (owner, 10 Nov). */
+  newPartyIds?: string[];
 }) {
   const [contactsRole, setContactsRole] = React.useState<string | null>(null);
+  // The latest picks, for the single-contact preselect that lands after a fetch.
+  const latestPicks = React.useRef(contactPicks);
+  latestPicks.current = contactPicks;
+  const pickedIds = new Set([
+    ...(developer ? [developer.value] : []),
+    ...Object.values(picks).flatMap((rows) => rows.map((p) => p.value)),
+  ]);
+  const autoIds = (newPartyIds ?? []).filter((id) => pickedIds.has(id));
   const shown = roles.filter(
     (role) =>
       role.value !== PARTY_ROLE_DEVELOPER && (role.is_active || (picks[role.value] ?? []).length > 0),
@@ -97,6 +108,18 @@ export function ProjectPartiesSection({
           />
         ))}
       </div>
+      {autoIds.map((partyId) => (
+        <SingleContactPreselect
+          key={partyId}
+          partyId={partyId}
+          blocked={
+            (latestPicks.current[partyId] ?? []).length > 0 || (fixedContacts?.[partyId] ?? []).length > 0
+          }
+          onPick={(contactId) =>
+            onContactPicksChange({ ...latestPicks.current, [partyId]: [contactId] })
+          }
+        />
+      ))}
       {dialogParties.length > 0 && (
         <PartyContactsDialog
           parties={dialogParties.map((p) => ({ partyId: p.value, name: p.label }))}
@@ -122,6 +145,32 @@ function countContacts(
     for (const id of contactPicks[party.value] ?? []) ids.add(id);
   }
   return ids.size;
+}
+
+/**
+ * Owner hand test 10 Nov: "if only got 1 contact then should just default to it". A party just
+ * picked whose only active contact is not on the project yet gets that contact ticked, once; the
+ * user can still untick it in the popup.
+ */
+function SingleContactPreselect({
+  partyId,
+  blocked,
+  onPick,
+}: {
+  partyId: string;
+  blocked: boolean;
+  onPick: (contactId: string) => void;
+}) {
+  const contacts = usePartyContacts(partyId);
+  const done = React.useRef(false);
+  const active = (contacts.data ?? []).filter((c) => c.is_active !== false);
+  const only = contacts.isSuccess && active.length === 1 ? active[0].id : null;
+  React.useEffect(() => {
+    if (done.current || blocked || !only) return;
+    done.current = true;
+    onPick(only);
+  }, [only, blocked, onPick]);
+  return null;
 }
 
 /** "2 contacts" / "Add contacts" next to a role's label: opens that role's contacts popup. */

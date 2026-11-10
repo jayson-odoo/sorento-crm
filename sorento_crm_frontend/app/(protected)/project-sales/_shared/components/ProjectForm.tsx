@@ -366,6 +366,15 @@ export function ProjectForm(props: ProjectFormProps) {
     void handleCheck();
   }
 
+  // The parties the project already had when the form opened: a party picked since is "new", and
+  // a new one with a single contact gets it ticked (owner hand test, 10 Nov).
+  const initialPartyIds = React.useRef(
+    new Set([
+      ...(project?.developer_party_id ? [project.developer_party_id] : []),
+      ...(project?.party_links ?? []).map((link) => link.party_id),
+    ]),
+  );
+
   /** Every party picked on the form, the developer included, for the contacts it may carry. */
   const pickedPartyIds = new Set([
     ...(developerId ? [developerId] : []),
@@ -932,6 +941,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 architect: typed?.architect_name,
                 main_contractor: typed?.main_contractor_name,
               }}
+              newPartyIds={[...pickedPartyIds].filter((id) => !initialPartyIds.current.has(id))}
             />
           </FormSection>
         )}

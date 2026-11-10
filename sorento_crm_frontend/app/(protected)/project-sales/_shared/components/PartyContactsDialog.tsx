@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PhoneInput } from '@/components/common/PhoneInput';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePartyContactMutations, usePartyContacts } from '../hooks/useProjects';
 import type { PartyContact } from '../types/project.types';
@@ -67,7 +68,7 @@ export function PartyContactsDialog({
         <DialogBody className="space-y-3">
           {parties.length > 1 && (
             <Tabs value={party.partyId} onValueChange={setActive}>
-              <TabsList variant="line" className="w-full overflow-x-auto">
+              <TabsList variant="line" className="w-full">
                 {parties.map((p) => (
                   <TabsTrigger key={p.partyId} value={p.partyId} className="max-w-[12rem] truncate" title={p.name}>
                     {p.name}
@@ -120,11 +121,13 @@ function PartyContactRows({
   const contacts = usePartyContacts(partyId);
   const { create, update } = usePartyContactMutations(partyId);
   const [numberFor, setNumberFor] = React.useState<string | null>(null);
-  const [number, setNumber] = React.useState('');
+  // Numbers are E.164 from the app's PhoneInput (libphonenumber); `valid` is a complete number.
+  const [number, setNumber] = React.useState({ e164: '', valid: false });
   const [adding, setAdding] = React.useState(false);
   const [name, setName] = React.useState('');
+  const [nameTried, setNameTried] = React.useState(false);
   const [jobTitle, setJobTitle] = React.useState('');
-  const [phone, setPhone] = React.useState('');
+  const [phone, setPhone] = React.useState({ e164: '', valid: true });
   const rows = (contacts.data ?? []).filter((c) => c.is_active !== false);
 
   function toggle(id: string, on: boolean) {
@@ -132,29 +135,31 @@ function PartyContactRows({
   }
 
   async function saveNumber(contact: PartyContact) {
-    if (!number.trim()) return;
+    if (!number.valid) return;
     try {
-      await update.mutateAsync({ id: contact.id, body: { phone: number.trim() } });
+      await update.mutateAsync({ id: contact.id, body: { phone: number.e164 } });
       setNumberFor(null);
-      setNumber('');
+      setNumber({ e164: '', valid: false });
     } catch {
       // toasted by the mutation
     }
   }
 
   async function addContact() {
-    if (!name.trim()) return;
+    setNameTried(true);
+    if (!name.trim() || !phone.valid) return;
     try {
       const row = await create.mutateAsync({
         name: name.trim(),
         job_title: jobTitle.trim() || null,
-        phone: phone.trim() || null,
+        phone: phone.e164 || null,
       });
       onChange([...picked, row.id]);
       setAdding(false);
       setName('');
+      setNameTried(false);
       setJobTitle('');
-      setPhone('');
+      setPhone({ e164: '', valid: true });
     } catch {
       // toasted by the mutation; the typed values stay
     }
@@ -204,28 +209,27 @@ function PartyContactRows({
                 className="h-auto p-0"
                 onClick={() => {
                   setNumberFor(contact.id);
-                  setNumber('');
+                  setNumber({ e164: '', valid: false });
                 }}
               >
                 Add number
               </Button>
             )}
             {numberFor === contact.id && (
-              <div className="flex w-full items-center gap-2 sm:w-auto">
-                <Input
+              <div className="flex w-full items-start gap-2">
+                <PhoneInput
                   aria-label={`Phone for ${contact.name}`}
-                  type="tel"
-                  inputMode="tel"
-                  maxLength={50}
-                  value={number}
+                  id={`contact-number-${contact.id}`}
+                  value={number.e164}
                   autoFocus
-                  onChange={(event) => setNumber(event.target.value)}
-                  className="h-8 sm:w-40"
+                  errorMessage="Enter a valid phone number, e.g. 12-345 6789."
+                  onChange={(e164, meta) => setNumber({ e164, valid: meta.valid })}
+                  className="min-w-0 flex-1"
                 />
                 <Button
                   type="button"
                   size="sm"
-                  disabled={!number.trim() || update.isPending}
+                  disabled={!number.valid || update.isPending}
                   onClick={() => void saveNumber(contact)}
                 >
                   Save
@@ -243,7 +247,7 @@ function PartyContactRows({
         </div>
       )}
       {adding && (
-        <div className="grid gap-3 py-3 sm:grid-cols-3">
+        <div className="grid gap-3 py-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor={`new-contact-name-${partyId}`}>
               Name <span className="text-destructive">*</span>
@@ -253,8 +257,10 @@ function PartyContactRows({
               value={name}
               maxLength={255}
               autoFocus
+              aria-invalid={nameTried && !name.trim() ? true : undefined}
               onChange={(event) => setName(event.target.value)}
             />
+            {nameTried && !name.trim() && <p className="text-xs text-destructive">Enter a name.</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor={`new-contact-job-${partyId}`}>Job title</Label>
@@ -265,19 +271,18 @@ function PartyContactRows({
               onChange={(event) => setJobTitle(event.target.value)}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor={`new-contact-phone-${partyId}`}>Phone</Label>
-            <Input
+            <PhoneInput
               id={`new-contact-phone-${partyId}`}
-              type="tel"
-              inputMode="tel"
-              value={phone}
-              maxLength={50}
-              onChange={(event) => setPhone(event.target.value)}
+              value={phone.e164}
+              errorMessage="Enter a valid phone number, e.g. 12-345 6789."
+              // Optional: blank is fine, a number must be a complete one.
+              onChange={(e164, meta) => setPhone({ e164, valid: !e164 || meta.valid })}
             />
           </div>
-          <div className="flex gap-2 sm:col-span-3">
-            <Button type="button" size="sm" disabled={!name.trim() || create.isPending} onClick={() => void addContact()}>
+          <div className="flex gap-2 sm:col-span-2">
+            <Button type="button" size="sm" disabled={!phone.valid || create.isPending} onClick={() => void addContact()}>
               Add contact
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setAdding(false)}>

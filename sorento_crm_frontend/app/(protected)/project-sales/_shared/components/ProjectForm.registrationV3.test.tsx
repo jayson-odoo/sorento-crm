@@ -464,11 +464,12 @@ describe('PS-REGISTRATION-V3 party links (Q5 b)', () => {
 });
 
 describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
-  it('lists the picked party\'s contacts and sends the picks as contact_ids', async () => {
+  it('a picked party with one contact has it ticked and sent as contact_ids (owner, 10 Nov)', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
     await pickParty('Architect', 'Arch', 'Archico');
-    await tickContact('Ar. Example One');
+    // Its only contact is ticked without opening the popup.
+    await screen.findByRole('button', { name: '1 contact' });
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
     expect(lastBody()!.contact_ids).toEqual(['k1']);
@@ -478,7 +479,7 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
     renderForm({ mode: 'create' });
     await toDetails();
     await pickMany('Subcontractor', 'Sub One');
-    await tickContact('Site Example');
+    await screen.findByRole('button', { name: '1 contact' });
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
     expect(lastBody()!.contact_ids).toEqual(['k2']);

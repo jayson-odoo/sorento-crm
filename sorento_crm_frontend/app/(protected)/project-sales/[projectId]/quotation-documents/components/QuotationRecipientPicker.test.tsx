@@ -137,10 +137,11 @@ describe('the To party picker', () => {
     const list = await screen.findByTestId('quotation-recipient-party');
     await waitFor(() => expect(within(list).getAllByRole('button')).toHaveLength(3));
     const labels = within(list).getAllByRole('button').map((b) => b.textContent);
+    // One line per option (owner hand test 10 Nov): no role subtitle.
     expect(labels).toEqual([
-      'On this project: PARAGON CONTOH SDN BHD (Developer)',
-      'On this project: ARKITEK CONTOH (Architect)',
-      'Other parties: PGB CONTOH SDN BHD (Main contractor)',
+      'On this project: PARAGON CONTOH SDN BHD',
+      'On this project: ARKITEK CONTOH',
+      'Other parties: PGB CONTOH SDN BHD',
     ]);
     expect(listParties).toHaveBeenCalledWith({ query: undefined, limit: 20 });
   });
@@ -296,6 +297,32 @@ describe('Attn from the contacts popup', () => {
         }),
       ),
     );
+  });
+
+  it('a party with exactly one contact fills Attn with it straight away', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: '012-0001', email: 'anne@pgb.example', is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser value={{ recipient_party_id: 'p-pgb' }} partyName="PGB" locked={false} autoPick onChange={onChange} />,
+    );
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ attn_contact_ids: ['c1'], attn_name: 'MS. ANNE CONTOH' }),
+      ),
+    );
+  });
+
+  it('no automatic Attn on a saved proposal whose party did not change', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: null, is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(<QuotationAttnChooser value={{ recipient_party_id: 'p-pgb' }} partyName="PGB" locked={false} onChange={onChange} />);
+    await screen.findByRole('button', { name: 'Choose contacts' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('is not offered before a party is picked, nor once issued', () => {

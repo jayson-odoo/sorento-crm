@@ -853,10 +853,9 @@ export function usePartyRoleLabel() {
 /**
  * Async options for a party picker. Any party can fill any role (PROJECT-PARTY-ROLES Q4 b), so the
  * search covers every party; `preferredType` only orders the parties usually in that role first.
- * The caption is the party's usual role.
+ * One line per option (owner hand test 10 Nov): the name only, no role subtitle.
  */
 export function useFetchPartyOptions(preferredType?: PartyType) {
-  const roleLabel = usePartyRoleLabel();
   return React.useCallback(
     async (query: string) => {
       const result = await listParties({ query: query || undefined, limit: 20 });
@@ -865,13 +864,9 @@ export function useFetchPartyOptions(preferredType?: PartyType) {
             (a, b) => Number(b.party_type === preferredType) - Number(a.party_type === preferredType),
           )
         : result.data;
-      return rows.map((party) => ({
-        value: party.id,
-        label: party.name,
-        description: roleLabel(party.party_type) || undefined,
-      }));
+      return rows.map((party) => ({ value: party.id, label: party.name }));
     },
-    [preferredType, roleLabel],
+    [preferredType],
   );
 }
 

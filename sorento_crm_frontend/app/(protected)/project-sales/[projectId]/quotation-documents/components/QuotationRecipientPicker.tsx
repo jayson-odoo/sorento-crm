@@ -97,12 +97,8 @@ export function QuotationRecipientPicker({
       const mine = onProjectRows
         .filter((row) => !q || row.name.toLowerCase().includes(q))
         .filter((row, i, all) => all.findIndex((r) => r.party_id === row.party_id) === i)
-        .map((row) => ({
-          value: row.party_id,
-          label: row.name,
-          description: roleLabel(row.role),
-          group: 'On this project',
-        }));
+        // One line per option (owner hand test 10 Nov): the group says where it is, no subtitle.
+        .map((row) => ({ value: row.party_id, label: row.name, group: 'On this project' }));
       const result = await listParties({ query: query || undefined, limit: 20 });
       const ids = new Set(onProjectRows.map((row) => row.party_id));
       for (const party of result.data) {
@@ -120,15 +116,10 @@ export function QuotationRecipientPicker({
       }
       const others = result.data
         .filter((party) => !ids.has(party.id))
-        .map((party) => ({
-          value: party.id,
-          label: party.name,
-          description: roleLabel(party.party_type),
-          group: 'Other parties',
-        }));
+        .map((party) => ({ value: party.id, label: party.name, group: 'Other parties' }));
       return [...mine, ...others];
     },
-    [onProjectRows, roleLabel],
+    [onProjectRows],
   );
 
   /** Every role a party not on the project may be added in: active, developer excepted, and a
@@ -196,7 +187,6 @@ export function QuotationRecipientPicker({
             ? {
                 value: partyId,
                 label: picked?.name ?? value.recipient_name_snapshot ?? '',
-                description: pickedRole ? roleLabel(pickedRole) : undefined,
               }
             : undefined
         }
@@ -270,6 +260,7 @@ export function QuotationAttnChooser({
   partyPhone,
   partyEmail,
   locked,
+  autoPick = false,
   onChange,
 }: {
   value: QuotationDocumentBody;
@@ -277,6 +268,8 @@ export function QuotationAttnChooser({
   partyPhone?: string | null;
   partyEmail?: string | null;
   locked: boolean;
+  /** A party just picked: its only contact becomes the Attn without opening the popup. */
+  autoPick?: boolean;
   onChange: (patch: QuotationDocumentBody) => void;
 }) {
   const partyId = value.recipient_party_id ?? '';
@@ -294,6 +287,24 @@ export function QuotationAttnChooser({
       email: value.recipient_email_snapshot,
     };
   }
+  // Owner hand test 10 Nov: "if only got 1 contact then should just default to it". Once per party.
+  const autoDone = React.useRef<string | null>(null);
+  const only = (contacts.data ?? []).filter((c) => c.is_active !== false);
+  const shouldAuto =
+    autoPick &&
+    !locked &&
+    Boolean(partyId) &&
+    autoDone.current !== partyId &&
+    contacts.isSuccess &&
+    only.length === 1 &&
+    (value.attn_contact_ids ?? []).length === 0 &&
+    !value.attn_name;
+  React.useEffect(() => {
+    if (!shouldAuto) return;
+    autoDone.current = partyId;
+    void apply([only[0].id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldAuto]);
   if (!partyId || locked) return null;
 
   async function apply(ids: string[]) {
