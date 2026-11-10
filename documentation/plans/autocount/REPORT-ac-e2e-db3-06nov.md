@@ -105,3 +105,32 @@ warehouse, no migration-body seeds (replayed every migration's INSERTs), custome
 (no agent link -> no derived location), agent refs must be `agent:<code>` (the SS sink's key), a project needs
 a developer party (quotation recipient) and the customer PO an issuing party (SO debtor), and a project PO's
 lines/delivery schedule only come from an AI read of a PDF (seeded by SQL here).
+
+## Phase 2: linking on SS write API v2 (11 Nov 2026)
+
+SS #230 (SS main 4193fdc4) turned on, for PO: link an existing whole row, change link, unlink, delete line, cancel
+(DELETE by DocNo); QT/SO: delete line, cancel. SPO stays `VENDOR_UNSUPPORTED`. The 6 Nov refusals R1 (cancel), R2
+(whole-row link), R3 (unlink / move) and R5 ("no delete door") are therefore no longer expected; they were true on
+6 Nov against SS #224/#225. Stack: CRM main f6413b84 + #2223 2b9b0502 (local, never pushed), SS main 4193fdc4,
+DBs `sorento_staging_acdb3` / `foundryx_service_acdb3`. Every write from the Stock Debt UI, read back with hapi;
+SS `ac_api_call_log` shows 9 PUTs for the 5 writes, all 200.
+
+| ID | Operation | Result | AutoCount read-back after | CRM side |
+| --- | --- | --- | --- | --- |
+| L1 | Link an existing WHOLE row: FXT-1111-PO-L row 12295 (3 @ HQ) -> FXT-1111-SO-L row 12298 | PASS ("Linked. FXT-1111-SO-L line 16 now covered by PO FXT-1111-PO-L (3).") | row replaced: new 12303 3 @ HQ FromSODtlKey 12298; 12296 untouched; Total 28.0 | open line linked `DB3:12297:12298` (B12 copy) |
+| L1b | Whole row + relocate: row 12296 (4 @ HQ) -> SO-L row 12299 (BRW-AM) | PASS | new 12305 4 @ BRW-AM FromSO 12299; price 4.00, date 26/11 kept | as L1 |
+| L2 | Change link: the L1 row -> FXT-1111-SO-L2 row 12301 ("Move PO to another sales order...") | PASS ("Moved. FXT-1111-SO-L2 line 16 now covered by PO FXT-1111-PO-L (3).") | new 12307 3 @ HQ FromSO 12301 | open line `DB3:12294:12307` linked to `DB3:12300:12301` |
+| L3 | Unlink the L1b row | PASS ("Unlinked. FXT-1111-SO-L line 32 is no longer covered by PO FXT-1111-PO-L (4).") | new 12308 4 @ BRW-AM FromSO 0; qty, price, date kept; location stays BRW-AM | open line, no link |
+| L4 | Split regression: FXT-HT-PO-A row 12172 (10 @ HQ) -> FXT-HT-SO-A row 12174, qty 3 | PASS | 12172 7 @ HQ + new 12310 3 @ HQ FromSO 12174; price 3.00, date 27/11 on both; Total 30.0 | 2 open lines matching |
+| L5 | SPO actions | PASS (none offered; SS capability `VENDOR_UNSUPPORTED`) | n/a | Decide menu: Link / Unlink / Move only |
+| P | Pull back into the CRM | PARTIAL: each AutoCount row has exactly one OPEN CRM line with the right qty, location, link; but see B12 | n/a | 4 extra cancelled "removed in AutoCount" lines on PO-L, two of them carrying the live refs 12307 / 12308 |
+
+**B12 (CRM, #2223 service + ingest order):** during the link call SS pushes the read-back to the CRM ingest, which
+retires the old line (its DtlKey is gone) and creates a new line for the new DtlKey; then
+`stock_debt_po_link_service._apply` (`:391-395`) applies `replacedLines` and renames the retired line to the new
+DtlKey. Each link / move / unlink therefore shows a line "removed in AutoCount", the CRM line id changes every time,
+and a live ref can sit on an open and a cancelled line at once. Posted with fix options on #2223.
+
+db3 documents written in phase 2: FXT-1111-PO-L (12294), FXT-1111-SO-L (12297), FXT-1111-SO-L2 (12300),
+FXT-HT-PO-A (12171) and FXT-HT-SO-A (12173) via `reseed.sh A`. Evidence (screens, JSON, call log, CRM selects):
+crew/state/files/AC-E2E-DB3/v2/ (private).

@@ -37,3 +37,18 @@ checked against AutoCount's own read API (hapi db3), not CRM state alone.
 
 Doc numbers, screenshot, hapi GET read-back (before/after), CRM state. PASS/FAIL table in
 `documentation/integrations/autocount/test-report-2026-11-06-e2e-db3.md`.
+
+## Phase 2 (SS write API v2, 11 Nov 2026)
+
+SS now offers whole-row link, change link and unlink for PO rows, and cancel / delete line for QT, SO and PO. Rows
+R1, R2, R3 and R5 above move to "must work"; only SPO operations (R4) stay refused (`VENDOR_UNSUPPORTED`).
+
+| ID | Operation | Pass when |
+| --- | --- | --- |
+| L1 | Link an existing whole PO row to an SO row (Stock Debt > Link to PO, qty = the row's qty) | AutoCount row carries FromSODtlKey of the SO row (DtlKey may change); other rows untouched; price/date kept |
+| L1b | Same, SO row at another location | the linked row sits at the SO row's location |
+| L2 | Change link (Move PO to another sales order) | the PO row's FromSODtlKey is the new SO row |
+| L3 | Unlink | the PO row has FromSODtlKey 0 and keeps qty, price, date |
+| L4 | Split link (regression) | as E1/E2, price and date kept on the new row |
+| P2 | Pull back | one open CRM line per AutoCount row, link refs right, no line wrongly marked removed |
+| Q1-Q3 | QT/SO cancel, remove line (incl. the last line), edit + add rows | after #2173 is updated (lane AC-QTSO-CRM-2) |
