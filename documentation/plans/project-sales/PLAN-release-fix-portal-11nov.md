@@ -1,6 +1,6 @@
 # PLAN: RELEASE-FIX-PORTAL - own-scope guard learns the quotation autosave / history / payment-terms routes
 
-Status: in progress (crew size S, security; security-reviewer required). Release blocker for the 11 Nov CRM release.
+Status: PR #2327 open, reviewer READY + security-reviewer CLEAN; awaiting CI and merge (crew size S, security). Release blocker for the 11 Nov CRM release.
 UAC: `release-fix-portal-11nov-acceptance-criteria.md` (alongside).
 
 ## Problem (measured on main 6e6657e261)
