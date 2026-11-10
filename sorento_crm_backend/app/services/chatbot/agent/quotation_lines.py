@@ -26,6 +26,7 @@ def _line(row: Any) -> dict[str, Any]:
     unit = Decimal(row.unit_price or 0)
     # Below list only: a line priced above list is not a discount (a negative one cannot be verified in an answer).
     discount = round(float((listed - unit) / listed * 100), 2) if listed and unit <= listed else None
+    above = round(float((unit - listed) / listed * 100), 2) if listed and unit > listed else None
     return {
         "code": row.product_code_snapshot,
         "description": row.description_snapshot,
@@ -34,6 +35,7 @@ def _line(row: Any) -> dict[str, Any]:
         "list_price": _num(listed),
         "unit_price": _num(unit),
         "discount_pct": discount,
+        "above_list_pct": above,
         "line_total": _num(row.line_total),
         "rate_only": bool(row.is_rate_only),
     }
@@ -59,7 +61,7 @@ def _fill(db: Session, scopes: list[dict]) -> None:
         for row in rows:
             by_version.setdefault(row.version_id, []).append(_line(row))
     for scope in scopes:
-        scope["lines"] = by_version.get(scope.pop("_vid"), [])
+        scope["lines"] = list(by_version.get(scope.pop("_vid"), []))
 
 
 def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: int) -> tuple[dict, int]:
