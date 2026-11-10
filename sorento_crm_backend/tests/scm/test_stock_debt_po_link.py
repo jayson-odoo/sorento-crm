@@ -1296,3 +1296,54 @@ def test_b12_a_done_replace_records_its_hint_before_the_send(scm_app, fake_ss, r
     fake_ss.answers["/api/v1/autocount/po-links"] = answer
     w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
     assert seen == [f"sorento:autocount_write:po_replace:{DB}:12008:12009"]
+
+
+def test_b13_an_unlink_answered_with_from_so_dtl_key_0_clears_the_link(scm_app, fake_ss):
+    """AC-E2E-DB3 B13 (db3, 10 Nov): AutoCount answers `FromSODtlKey: 0`, not null, for a row with
+    no link; the CRM line must drop its stored SO link."""
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    fake_ss.answers["/api/v1/autocount/po-links/unlink"] = (200, {
+        "operationId": "op-b13", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12008, "docNo": "202609-S0029",
+        "replacedLines": [{"oldDtlKey": 12009, "newDtlKey": 12330}],
+        "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+            {"DtlKey": 12330, "ItemCode": "X", "Location": w["hq"].warehouse_code, "Qty": 500, "FromSODtlKey": 0},
+        ]},
+    })
+    resp = w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
+    assert resp.json()["results"][0]["outcome"] == "done", resp.text
+    (line,) = _lines_of(w)
+    assert line.id == w["po_line"].id and line.source_ref == f"{DB}:12008:12330"
+    assert line.from_so_line_ref is None
+
+
+@pytest.mark.parametrize("zero_ref", [f"{DB}:11988:0", f"{DB}:0:0"])
+def test_b13_an_ingest_push_naming_so_dtl_key_0_clears_the_link(scm_app, fake_ss, zero_ref):
+    """AC-E2E-DB3 B13: a PO row AutoCount holds with `FromSODtlKey 0` is explicitly unlinked; a
+    ref naming DtlKey 0 is that statement, not an unresolvable ref (AC-RL-47 keeps those)."""
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    _push_po(w, [(12009, 500, w["hq"], zero_ref, 16)])
+    (line,) = _lines_of(w)
+    assert line.from_so_line_ref is None
+
+
+def test_b13_a_push_without_from_so_line_ref_leaves_the_link(scm_app, fake_ss):
+    """None / absent stays 'unknown': the stored link is kept (no change from before)."""
+    from app.services.document_ingest_service import DocumentIngestService
+
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    po = w["po"]
+    DocumentIngestService(w["db"], company_id=SORENTO_COMPANY_ID).ingest("purchase_orders", [{
+        "source_ref": po.source_ref, "po_number": po.po_number, "status": "open",
+        "supplier_code": po.supplier.supplier_code,
+        "lines": [{"source_ref": f"{DB}:12008:12009", "product_code": w["product"].product_code,
+                   "warehouse_code": w["hq"].warehouse_code, "qty_ordered": 500, "line_number": 16}],
+    }])
+    (line,) = _lines_of(w)
+    assert line.from_so_line_ref == w["so_line"].source_ref
