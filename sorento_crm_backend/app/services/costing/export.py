@@ -69,6 +69,14 @@ def build_workbook(result: dict) -> bytes:
             if fmt and value is not None:
                 cell.number_format = fmt
 
+    # A product name or supplier code that starts with "=" would otherwise be written as a formula.
+    # Keep every string cell as the text it is (the same neutralising as the report workbooks).
+    for row in ws.iter_rows(min_row=1):
+        for cell in row:
+            if cell.data_type == "f":
+                cell.data_type = "s"
+                cell.quotePrefix = True
+
     widths = [18, 16, 32, 12, 9, 12, 14, 8, 14, 14, 14, 24, 11, 14, 20, 10, 42]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=2, column=i).column_letter].width = w

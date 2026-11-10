@@ -702,7 +702,8 @@ def _merge_group(
                 db,
                 costing_products,
                 f"t.customer_id = :r AND EXISTS (SELECT 1 FROM {costing_products} s "
-                "WHERE s.customer_id = :s AND s.product_id = t.product_id)",
+                "WHERE s.customer_id = :s AND s.product_id = t.product_id "
+                "AND s.company_id IS NOT DISTINCT FROM t.company_id)",
                 {"r": rid, "s": survivor},
             )
         aliases = tables.get("customer_aliases")

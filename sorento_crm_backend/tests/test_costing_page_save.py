@@ -148,6 +148,30 @@ def test_ac_cg_08_sending_the_value_a_cell_already_has_is_not_a_change(costing_e
     assert len(e.audit_rows("customer_costing_products", w.pp_jac.id)) == before
 
 
+def test_ac_cg_08_resending_an_unchanged_transport_pair_and_method_is_not_a_change(costing_env):
+    e, w = _env(costing_env)
+    e.override(w.wb, transport_mode="add", transport_value="15", cost_method="selected",
+               cost_method_supplier_id=w.sup_b.id)
+    e.db.commit()
+    before = len(e.audit_rows("costing_product_overrides", w.wb.id))
+    stamp = _override(e, w.wb).updated_at
+
+    r = _patch(e, w, {"product_id": w.wb.id, "transport_mode": "add", "transport_value": 15,
+                      "cost_method": "selected", "cost_method_supplier_id": w.sup_b.id})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 0}
+    assert len(e.audit_rows("costing_product_overrides", w.wb.id)) == before
+    assert _override(e, w.wb).updated_at == stamp
+
+    # a changed cell next to unchanged ones writes only the changed one
+    r2 = _patch(e, w, {"product_id": w.wb.id, "transport_mode": "add", "transport_value": 15,
+                       "cost_method": "average"})
+    assert r2.json() == {"updated": 1}
+    fresh = e.audit_rows("costing_product_overrides", w.wb.id)[before:]
+    assert len(fresh) == 1
+    assert not {"transport_mode", "transport_value"} & set(fresh[0].new_values)
+
+
 def test_ac_cg_08_an_empty_change_list_is_a_noop_200(costing_env):
     e, w = _env(costing_env)
     r = e.patch_rows({"party_id": w.customer.id, "changes": []})

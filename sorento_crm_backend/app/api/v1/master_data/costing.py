@@ -13,12 +13,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import get_actor_user_id, require_permission
 from app.services.costing import basis, export as export_service, page, party as party_service
 from app.services.costing.actor import acting
 from app.services.costing import rates as rate_service
@@ -43,8 +43,9 @@ def _today() -> date:
     return today_malaysia()
 
 
-def _actor(user: dict) -> Optional[str]:
-    return (user or {}).get("id")
+def _actor(request: Request, user: dict) -> Optional[str]:
+    """Who the row is stamped to: the real user at the keyboard, also under impersonation."""
+    return get_actor_user_id(request, user) if (user or {}).get("id") else None
 
 
 def _split(value: Optional[str]) -> list:
@@ -52,6 +53,15 @@ def _split(value: Optional[str]) -> list:
 
 
 # ------------------------------------------------------------------ rows
+
+
+def _ids(value: Optional[str], name: str) -> list:
+    """The ids of a comma-separated filter; a malformed one is a 422, not an empty result."""
+    out = _split(value)
+    bad = [v for v in out if not party_service.valid_uuid(v)]
+    if bad:
+        raise AppException(status_code=422, message=f"{name} must be ids.")
+    return out
 
 
 def _rows_query(
@@ -62,7 +72,8 @@ def _rows_query(
     if bad:
         raise AppException(status_code=422, message=f"Unknown cost method: {', '.join(bad)}.")
     return page.RowsQuery(
-        party_id=party_id or None, q=q, category_ids=_split(category_id), brand_ids=_split(brand_id),
+        party_id=_ids(party_id, 'party_id')[0] if party_id else None, q=q,
+        category_ids=_ids(category_id, 'category_id'), brand_ids=_ids(brand_id, 'brand_id'),
         methods=methods, has_cost=bool(has_cost), as_of=as_of, page=page_no, limit=limit,
         sort=sort, direction=direction,
     )
@@ -71,7 +82,8 @@ def _rows_query(
 @router.get("/rows")
 def get_rows(
     party_id: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Alias of query."),
     category_id: Optional[str] = Query(None),
     brand_id: Optional[str] = Query(None),
     cost_method: Optional[str] = Query(None),
@@ -86,7 +98,7 @@ def get_rows(
     _user: dict = _view,
     db: Session = Depends(get_db),
 ):
-    rq = _rows_query(party_id, q, category_id, brand_id, cost_method, has_cost, as_of, page_no, limit, sort, direction)
+    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, as_of, page_no, limit, sort, direction)
     result = page.list_rows(db, rq, _today())
     return {
         "data": [page.serialize_row(r) for r in result["rows"]],
@@ -102,9 +114,9 @@ class RowChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_id: str
-    markup_pct: Optional[float] = Field(None, ge=0)
+    markup_pct: Optional[float] = Field(None, ge=0, lt=10000, allow_inf_nan=False)
     transport_mode: Optional[Literal["add", "multiply"]] = None
-    transport_value: Optional[float] = None
+    transport_value: Optional[float] = Field(None, lt=1e8, allow_inf_nan=False)
     cost_method: Optional[Literal["primary", "selected", "average", "last_po"]] = None
     cost_method_supplier_id: Optional[str] = None
 
@@ -130,11 +142,12 @@ class RowsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     party_id: Optional[str] = None
-    changes: list[RowChange]
+    changes: list[RowChange] = Field(..., max_length=500)
 
 
 @router.patch("/rows", dependencies=[_view])
 def patch_rows(
+    request: Request,
     body: RowsPatch,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
@@ -151,8 +164,8 @@ def patch_rows(
         )
         for c in body.changes
     ]
-    with acting(db, _actor(current_user)):
-        updated = save_service.apply_changes(db, body.party_id or None, changes, actor=_actor(current_user))
+    with acting(db, _actor(request, current_user)):
+        updated = save_service.apply_changes(db, body.party_id or None, changes, actor=_actor(request, current_user))
     return {"updated": updated}
 
 
@@ -180,7 +193,8 @@ def get_row_history(
 @router.get("/export")
 def export_rows(
     party_id: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Alias of query."),
     category_id: Optional[str] = Query(None),
     brand_id: Optional[str] = Query(None),
     cost_method: Optional[str] = Query(None),
@@ -193,7 +207,7 @@ def export_rows(
     _user: dict = _view,
     db: Session = Depends(get_db),
 ):
-    rq = _rows_query(party_id, q, category_id, brand_id, cost_method, has_cost, as_of, 1, None, sort, direction)
+    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, as_of, 1, None, sort, direction)
     content = export_service.build_workbook(page.list_rows(db, rq, _today()))
     stamp = (as_of or _today()).isoformat()
     return Response(
@@ -206,7 +220,7 @@ def export_rows(
 
 
 class SettingsBody(BaseModel):
-    sst_factor: float = Field(..., gt=0)
+    sst_factor: float = Field(..., gt=0, lt=100, allow_inf_nan=False)
     default_method: Literal["primary", "average", "last_po"]
 
 
@@ -217,19 +231,20 @@ def get_settings(_user: dict = _view, db: Session = Depends(get_db)):
 
 @router.put("/settings", dependencies=[_view])
 def put_settings(
+    request: Request,
     body: SettingsBody,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
+    with acting(db, _actor(request, current_user)):
         return settings_service.put_settings(
-            db, sst_factor=body.sst_factor, default_method=body.default_method, actor=_actor(current_user)
+            db, sst_factor=body.sst_factor, default_method=body.default_method, actor=_actor(request, current_user)
         )
 
 
 class RuleBody(BaseModel):
     mode: Optional[Literal["add", "multiply"]] = None
-    value: Optional[float] = None
+    value: Optional[float] = Field(None, lt=1e8, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _both_or_neither(self):
@@ -247,14 +262,15 @@ def get_category_rules(_user: dict = _view, db: Session = Depends(get_db)):
 
 @router.put("/category-rules/{category_id}", dependencies=[_view])
 def put_category_rule(
+    request: Request,
     category_id: str,
     body: RuleBody,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
+    with acting(db, _actor(request, current_user)):
         return settings_service.put_category_rule(
-            db, category_id, mode=body.mode, value=body.value, actor=_actor(current_user)
+            db, category_id, mode=body.mode, value=body.value, actor=_actor(request, current_user)
         )
 
 
@@ -264,8 +280,8 @@ def put_category_rule(
 class RateCreate(BaseModel):
     currency: str = Field(..., min_length=1, max_length=10)
     effective_from: date
-    rate_to_base: Optional[float] = Field(None, gt=0)
-    units_per_base: Optional[float] = Field(None, gt=0)
+    rate_to_base: Optional[float] = Field(None, gt=0, lt=1e12, allow_inf_nan=False)
+    units_per_base: Optional[float] = Field(None, gt=0, lt=1e12, allow_inf_nan=False)
     note: Optional[str] = Field(None, max_length=255)
 
     @model_validator(mode="after")
@@ -276,8 +292,8 @@ class RateCreate(BaseModel):
 
 
 class RateUpdate(BaseModel):
-    rate_to_base: Optional[float] = Field(None, gt=0)
-    units_per_base: Optional[float] = Field(None, gt=0)
+    rate_to_base: Optional[float] = Field(None, gt=0, lt=1e12, allow_inf_nan=False)
+    units_per_base: Optional[float] = Field(None, gt=0, lt=1e12, allow_inf_nan=False)
     note: Optional[str] = Field(None, max_length=255)
 
     @model_validator(mode="after")
@@ -296,26 +312,28 @@ def get_exchange_rates(
 
 @router.post("/exchange-rates", status_code=201, dependencies=[_view])
 def post_exchange_rate(
+    request: Request,
     body: RateCreate,
     current_user: dict = Depends(require_permission(RATE_WRITE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
+    with acting(db, _actor(request, current_user)):
         return rate_service.create_rate(
             db, currency=body.currency, effective_from=body.effective_from,
             rate_to_base=body.rate_to_base, units_per_base_in=body.units_per_base, note=body.note,
-            actor=_actor(current_user), today=_today(),
+            actor=_actor(request, current_user), today=_today(),
         )
 
 
 @router.put("/exchange-rates/{rate_id}", dependencies=[_view])
 def put_exchange_rate(
+    request: Request,
     rate_id: str,
     body: RateUpdate,
     current_user: dict = Depends(require_permission(RATE_WRITE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
+    with acting(db, _actor(request, current_user)):
         return rate_service.update_rate(
             db, rate_id, rate_to_base=body.rate_to_base, units_per_base_in=body.units_per_base,
             note_given="note" in body.model_fields_set, note=body.note, today=_today(),
@@ -326,7 +344,7 @@ def put_exchange_rate(
 
 
 class PartyBody(BaseModel):
-    markup_pct: float = Field(..., ge=0)
+    markup_pct: float = Field(..., ge=0, lt=10000, allow_inf_nan=False)
     cost_method: Optional[Literal["primary", "average", "last_po"]] = None
     is_active: bool = True
 
@@ -347,26 +365,34 @@ def get_party(customer_id: str, _user: dict = _view, db: Session = Depends(get_d
     return party_service.get_party(db, customer_id)
 
 
+@router.get("/parties/{customer_id}/product-ids")
+def get_party_product_ids(customer_id: str, _user: dict = _view, db: Session = Depends(get_db)):
+    """Every product id on the party's list: a cheap read with no costing, for the Add products picker."""
+    return {"data": party_service.product_ids(db, customer_id)}
+
+
 @router.put("/parties/{customer_id}", dependencies=[_view])
 def put_party(
+    request: Request,
     customer_id: str,
     body: PartyBody,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
+    with acting(db, _actor(request, current_user)):
         return party_service.put_party(
             db, customer_id, markup_pct=body.markup_pct, cost_method=body.cost_method,
-            is_active=body.is_active, actor=_actor(current_user),
+            is_active=body.is_active, actor=_actor(request, current_user),
         )
 
 
 @router.post("/parties/{customer_id}/products", dependencies=[_view])
 def post_party_products(
+    request: Request,
     customer_id: str,
     body: PartyProductsBody,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
 ):
-    with acting(db, _actor(current_user)):
-        return party_service.add_products(db, customer_id, body.product_ids, actor=_actor(current_user))
+    with acting(db, _actor(request, current_user)):
+        return party_service.add_products(db, customer_id, body.product_ids, actor=_actor(request, current_user))

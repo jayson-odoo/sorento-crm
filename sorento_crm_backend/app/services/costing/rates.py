@@ -42,7 +42,11 @@ def rate_from_units(units_per_base: object) -> Decimal:
     units = to_decimal(units_per_base)  # type: ignore[arg-type]
     if units <= 0:
         raise AppException(status_code=422, message="A rate must be greater than zero.")
-    return (ONE / units).quantize(_SIX, rounding=ROUND_HALF_UP)
+    rate = (ONE / units).quantize(_SIX, rounding=ROUND_HALF_UP)
+    if rate <= 0:
+        # So large a figure that its inverse is nothing at six places: not a rate.
+        raise AppException(status_code=422, message="That rate is too large to store.")
+    return rate
 
 
 def units_per_base(rate_to_base: object) -> Optional[Decimal]:
@@ -65,13 +69,8 @@ def _positive_rate(value: object) -> Decimal:
 
 
 def rate_on(db: Session, currency: str, day: date) -> Optional[ExchangeRate]:
-    """The row in force for `currency` on `day`, else None."""
-    return (
-        db.query(ExchangeRate)
-        .filter(ExchangeRate.currency == normalize_currency(currency), ExchangeRate.effective_from <= day)
-        .order_by(ExchangeRate.effective_from.desc())
-        .first()
-    )
+    """The row in force for `currency` on `day`, else None. One lookup with the page's: `RateBook`."""
+    return load_rate_book(db).on(currency, day)
 
 
 class RateBook:

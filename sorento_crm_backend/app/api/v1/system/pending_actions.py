@@ -41,6 +41,7 @@ from app.models.access import Team
 from app.models.accessory import Accessory
 from app.models.base import company_scope, get_company_scope
 from app.models.certificate import Certificate
+from app.models.costing import CustomerCostingProduct
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
 from app.models.country import Country
 from app.models.dealer_kit import (
@@ -167,6 +168,14 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
 # by the requester (`ACKNOWLEDGE`) or by CS (`RESERVE`, who may cancel a request that
 # is not hers - the ownership question itself is `cancel_request`'s own job, not the
 # park gate's).
+#: Grants an action needs IN ADDITION to its declared one (all of them). The Costing record
+#: actions touch cost data, which `products.cost.view` guards on every costing route, so parking
+#: one without it is refused here as well.
+_ALSO_REQUIRED_PERMISSIONS: dict = {
+    "costing_party_product.unlink": ("products.cost.view",),
+    "exchange_rate.delete": ("products.cost.view",),
+}
+
 _ANY_OF_PERMISSIONS: dict = {
     "form_comment.delete": (
         "complaint_management.complaints.view",
@@ -370,6 +379,7 @@ _PARK_SCOPED_MODELS: dict = {
     "attachment_directory.set_company": AttachmentDirectory,
     "brand.delete": Brand,
     "campaign.delete": MarketingCampaign,
+    "costing_party_product.unlink": CustomerCostingProduct,
     "certificate.delete": Certificate,
     "cost_price_change_set.discard": CostPriceChangeSet,
     "country.delete": Country,
@@ -473,6 +483,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "contact_tag.delete",
     "container_size.delete",
     "currency_rate.delete",
+    # No company column: a dated exchange rate is the same for every company.
+    "exchange_rate.delete",
     "email_template.delete",
     "idea.archive",
     "idea.delete",
@@ -663,14 +675,15 @@ def _assert_permission(db: Session, user_id: Optional[str], action_key: str, slu
             )
         return
 
-    if not user_id or not UserPermissionService(db).check_user_has_permission(
-        str(user_id), slug
-    ):
-        raise AppException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            message=f"Permission required: {slug}",
-            code="FORBIDDEN",
-        )
+    for needed in (slug, *_ALSO_REQUIRED_PERMISSIONS.get(action_key, ())):
+        if not user_id or not UserPermissionService(db).check_user_has_permission(
+            str(user_id), needed
+        ):
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message=f"Permission required: {needed}",
+                code="FORBIDDEN",
+            )
 
 
 def _window_seconds(row: SlaFormAction) -> Optional[int]:

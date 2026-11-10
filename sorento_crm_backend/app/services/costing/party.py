@@ -65,6 +65,14 @@ def get_party(db: Session, customer_id: str) -> dict:
     return party_view(db, get_customer(db, customer_id))
 
 
+def product_ids(db: Session, customer_id: str) -> list:
+    customer = get_customer(db, customer_id)
+    return [
+        str(pid) for (pid,) in db.query(CustomerCostingProduct.product_id)
+        .filter(CustomerCostingProduct.customer_id == customer.id).all()
+    ]
+
+
 def put_party(
     db: Session, customer_id: str, *, markup_pct: float, cost_method: Optional[str],
     is_active: bool, actor: Optional[str],

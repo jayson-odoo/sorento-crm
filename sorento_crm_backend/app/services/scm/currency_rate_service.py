@@ -70,9 +70,24 @@ def list_rates(db: Session) -> dict:
 
     missing = sorted(c for c in used
                      if c and c != BASE_CURRENCY and c not in held)
+    # The next dated row of each currency that has not started yet ("Scheduled from ...").
+    scheduled: dict[str, ExchangeRate] = {}
+    for r in (
+        db.query(ExchangeRate)
+        .filter(ExchangeRate.effective_from > _today())
+        .order_by(ExchangeRate.effective_from.desc())
+    ):
+        scheduled[r.currency] = r  # descending, so the earliest future row wins
+    out = []
+    for r in rows:
+        item = _serialize(r)
+        nxt = scheduled.get(r.currency)
+        item["scheduled_from"] = nxt.effective_from.isoformat() if nxt else None
+        item["scheduled_rate_to_base"] = float(nxt.rate_to_base) if nxt else None
+        out.append(item)
     return {
         "base_currency": BASE_CURRENCY,
-        "rates": [_serialize(r) for r in rows],
+        "rates": out,
         "missing": missing,
     }
 
@@ -100,6 +115,15 @@ def upsert_rate(db: Session, currency: str, rate_to_base: float, *,
         )
 
     effective_from = as_of or _today()
+    in_force = _in_force_rows(db, code)
+    if in_force and effective_from < in_force[0].effective_from:
+        # This screen keeps ONE live rate per currency: it can change today's, or schedule a
+        # later one. Back-dating a rate rewrites history, which Costing > Settings owns.
+        raise AppException(
+            status_code=422,
+            message="A past rate is added in Costing > Settings.",
+            code="PAST_RATE",
+        )
     existing = (
         db.query(ExchangeRate)
         .filter(ExchangeRate.currency == code, ExchangeRate.effective_from == effective_from)

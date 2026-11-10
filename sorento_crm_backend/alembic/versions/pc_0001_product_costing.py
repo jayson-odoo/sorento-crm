@@ -5,7 +5,7 @@ Additive only. Six tables (`exchange_rates`, `costing_settings`, `costing_catego
 dated `exchange_rates` row per existing `scm.currency_rate` row (the legacy table stays in
 place and is no longer read), the `products.party_costing.manage` permission granted by role
 slug to `admin` and `director` only, and the `products.cost.view` permission row when no
-other lane has made it yet (with no grants: SUPPLIER-COST-ACCESS owns them).
+other lane has made it yet, granted to the same two roles (grants are ON CONFLICT DO NOTHING).
 
 Idempotent (`IF NOT EXISTS`, `WHERE NOT EXISTS`, `ON CONFLICT DO NOTHING`) so the shared dev
 database, which converges through `create_all`, can take it in any order. The downgrade drops
@@ -201,24 +201,27 @@ def _seed_permissions(conn) -> None:
             {"id": str(uuid.uuid4()), "slug": slug, "name": name, "desc": desc, "now": now},
         )
 
-    perm_id = conn.execute(sa.text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": MANAGE}).scalar_one()
     role_ids = [
         r.id
         for r in conn.execute(
             sa.text("SELECT id FROM user_roles WHERE slug = ANY(:slugs)"), {"slugs": list(GRANT_ROLES)}
         ).fetchall()
     ]
-    for rid in role_ids:
-        conn.execute(
-            sa.text(
-                """
-                INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-                VALUES (:id, :r, :p, :now)
-                ON CONFLICT (role_id, permission_id) DO NOTHING
-                """
-            ),
-            {"id": str(uuid.uuid4()), "r": rid, "p": perm_id, "now": now},
-        )
+    # Both slugs go to admin and director: the Costing page needs the read gate as well as the
+    # manage one, and the grant must not wait on another lane's migration.
+    for slug in (MANAGE, COST_VIEW):
+        perm_id = conn.execute(sa.text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": slug}).scalar_one()
+        for rid in role_ids:
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+                    VALUES (:id, :r, :p, :now)
+                    ON CONFLICT (role_id, permission_id) DO NOTHING
+                    """
+                ),
+                {"id": str(uuid.uuid4()), "r": rid, "p": perm_id, "now": now},
+            )
 
 
 def upgrade() -> None:
@@ -231,6 +234,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
+    # `products.cost.view` and its grants are NOT removed here, though upgrade() may have inserted
+    # or granted them: SUPPLIER-COST-ACCESS (#2319) owns that permission, and a downgrade of this
+    # lane must not take a read gate other screens rely on away from anyone.
     perm_ids = [
         r.id
         for r in conn.execute(

@@ -46,6 +46,7 @@ def _specs(w):
          {"currency": "RMB", "effective_from": "2026-12-01", "rate_to_base": 0.6}),
         ("rates-put", "PUT", f"/exchange-rates/{w.rmb_new.id}", {"rate_to_base": 0.63}),
         ("party-get", "GET", f"/parties/{cid}", None),
+        ("party-product-ids", "GET", f"/parties/{cid}/product-ids", None),
         ("party-put", "PUT", f"/parties/{cid}", {"markup_pct": 8, "cost_method": None, "is_active": True}),
         ("party-add", "POST", f"/parties/{cid}/products", {"product_ids": [w.tap.id]}),
     ]
@@ -81,6 +82,7 @@ def test_the_whole_costing_api_is_mounted():
         ("PUT", f"{BASE}/exchange-rates/{{id}}"),
         ("GET", f"{BASE}/parties/{{customer_id}}"), ("PUT", f"{BASE}/parties/{{customer_id}}"),
         ("POST", f"{BASE}/parties/{{customer_id}}/products"),
+        ("GET", f"{BASE}/parties/{{customer_id}}/product-ids"),
     }
     # the exchange-rate id parameter may be spelled differently; compare modulo the name
     def norm(p):
