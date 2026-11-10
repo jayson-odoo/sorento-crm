@@ -526,6 +526,37 @@ def test_a_sent_legacy_layout_3_revision_still_prints_as_it_went_out():
         assert 'class="cover-col"' not in html
 
 
+def test_a_new_revision_and_the_draft_preview_never_print_a_stored_purpose():
+    """PROPOSAL-FORM-COLLAPSE PFC-5 holds for what is issued today: a document that still stores a
+    Quotation Purpose from before the field left the form prints none on a new (layout 4) revision,
+    its sign page or the draft preview. Only revisions that already went out print it, as they did."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_pdf_service as qpdf
+
+    from .test_project_quotation_signing import _public_client
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        stored = document.quotation_purpose
+        assert stored  # still stored
+        preview = qdocs.preview_cover(db, project=env["project"], payload={"document_id": document.id})
+        record = _issue(db, document, env["owner"])
+        db.refresh(record)
+        assert record.layout_version == 4
+        html = qpdf.build_issue_html(db, record)
+        token = qdocs.issue_sign_link(db, record=record)
+        db.commit()
+        client, app = _public_client(db)
+        try:
+            body = client.get(f"/api/v1/public/quotation-sign/{token}").json()
+        finally:
+            app.dependency_overrides.clear()
+        for printed in (html, repr(preview), repr(body)):
+            assert stored not in printed
+            assert "QUOTATION PURPOSE" not in printed.upper() and "PROPOSAL PURPOSE" not in printed.upper()
+
+
 def test_designer_preview_returns_sections_with_sample_values():
     from app.services.quotation_cover_service import preview_design
 

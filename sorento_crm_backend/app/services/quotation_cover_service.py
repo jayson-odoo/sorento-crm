@@ -408,10 +408,8 @@ def rows_for_design(
     rows: List[Dict[str, Any]] = []
     for item in design["rows"]:
         key = item["key"]
-        # Quotation Purpose no longer prints anywhere: cover, sign page, preview (owner, 10 Nov
-        # 2026). The column and any stored value stay; a design still lists the row.
-        if key == "purpose":
-            continue
+        # Only layout 2 / 3 revisions reach here, and they reprint as they went out, Purpose row
+        # included. A new revision is layout 4, whose sources carry no Purpose (PFC-5, QCF D1).
         value = values.get(key) or ""
         if not item.get("shown", True) or not value:
             continue
@@ -432,7 +430,7 @@ def cover_rows(
     project: Optional[Project] = None,
     design: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """The rows of one issue (or of a draft shaped like one) under ``design``."""
+    """The rows of one layout 2 / 3 issue under ``design`` (layout 4 and drafts use sections)."""
     from app.services.project_quotation_document_service import document_noun
 
     return rows_for_design(
