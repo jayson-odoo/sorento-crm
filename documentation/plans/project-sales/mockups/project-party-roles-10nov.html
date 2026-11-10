@@ -83,71 +83,86 @@ td{padding:9px 10px;border-bottom:1px solid var(--line)}
 .hint{display:block;font-size:12px;color:var(--muted);margin-top:4px}
 .print{border:1px dashed var(--line);border-radius:6px;padding:10px;font-size:12px;font-family:ui-monospace,monospace}
 .out{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:10px;align-self:start}
+.lr{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.lk{color:var(--primary);font-size:12px;font-weight:500;white-space:nowrap}
+.lk.mut{color:var(--muted)}
+.dimbg{background:rgba(17,24,39,.35);padding:24px 16px}
+.dlg{background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);max-width:520px;margin:0 auto}
+.dlg .hd{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600}
+.dlg .bd{padding:8px 18px}
+.dlg .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+.crow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.crow .cn{flex:1;display:flex;flex-direction:column;font-size:13px}.crow .cn span{color:var(--muted);font-size:12px}
+.cb{width:16px;height:16px;border:1.5px solid #9ca3af;border-radius:4px;flex:none}
+.cb.on{background:var(--primary);border-color:var(--primary)}.cb.dis{opacity:.5}
+.addrow{padding:10px 0}
 .gone{font-size:12px;color:var(--muted);text-decoration:line-through;margin:14px 0 0}
 </style>
 </head>
 <body>
 <div class="doc">
 <h1>Project party roles + proposal "To" (PROJECT-PARTY-ROLES)</h1>
-<p class="sub">Mock v3 (owner 14:00: proposal TO is guided; choose the party, autoload, pick or create party and contacts on the spot and backfill them onto the project, two or more Attn, address from the project). v2: contacts picked in the same step as the party. Screens: 1 registration Parties section drawn from the role list (owner's 10 Nov example), 2 the same read-only, 3 the one new column on the existing Lookup sets screen, 4 the proposal TO block on PPF2611004 (developer PARAGON VIEW SDN BHD). Callouts map each element to the component it changes. Person names masked.</p>
+<p class="sub">Mock v4 (owner 15:10: v3 too complicated and bloated). Each role is ONE line; a small "2 contacts" link next to the label opens a contacts popup where contacts are ticked, added and given a missing number; the proposal's Attn uses the same popup. Any party can fill any role (Q4 b). Screens: 1 registration Parties section, 1c the contacts popup, 1b at 375, 2 project page read-only, 3 the one new column on Lookup sets, 4 the proposal TO block on PPF2611004 (developer PARAGON VIEW SDN BHD). Person names masked.</p>
 
 <!-- ============================================================ 1 -->
-<h2 class="ft">1. Register / edit project, Parties and contacts (1280): party and its contacts in ONE step</h2>
+<h2 class="ft">1. Register / edit project, Parties and contacts (1280): one line per role, contacts in a popup</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="content">
   <div class="phrow"><div><h1>Edit project</h1><div class="crumbs">Project sales / owner example (10 Nov screenshot)</div></div>
     <div><span class="btn">Cancel</span> <span class="btn primary">Save</span></div></div>
   <div class="section"><div class="hd">Parties and contacts <span class="co">1</span></div><div class="bd">
     <div class="grid2">
-      <div class="field"><label>Architect</label><div class="sel">A. BAKHTIAR ARCHITECT <span class="chev">&#x2715; &#x25BE;</span></div>
-        <div class="pc"><div class="sel"><span class="chip">AR. PERSON 01, 012-345 6789 &#x2715;</span><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div> <span class="co">2</span></div></div>
-      <div class="field"><label>Main contractor</label><div class="sel">AHMAD ZAKI RESOURCES BERHAD <span class="chev">&#x2715; &#x25BE;</span></div>
-        <div class="pc"><div class="sel"><span class="chip">MR. PERSON 02 &#x2715;</span><span class="ph">en. azm</span><span class="chev">&#x25BE;</span></div>
-          <div class="menu"><div class="on">+ Add contact "En. Azman" <span class="co">3</span></div></div>
-          <div class="fill">MR. PERSON 02 has no number <span class="input sm">01x-xxx xxxx</span> <span class="btn">Save number</span> <span class="co">4</span></div></div></div>
-      <div class="field"><label>Trading houses <span class="co">5</span></label><div class="sel"><span class="chip">TRADING HOUSE A &#x2715;</span><span class="chip">TRADING HOUSE B &#x2715;</span><span class="chev">&#x25BE;</span></div>
-        <div class="pc"><span class="pn">TRADING HOUSE A</span><div class="sel"><span class="chip">MS. PERSON 03 &#x2715;</span><span class="chev">&#x25BE;</span></div></div>
-        <div class="pc"><span class="pn">TRADING HOUSE B</span><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
-      <div class="field"><label>Subcontractors</label><div class="sel"><span class="chip">SUBCONA &#x2715;</span><span class="chev">&#x25BE;</span></div>
-        <div class="pc"><span class="pn">SUBCONA</span><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
-      <div class="field"><label>Tender parties</label><div class="sel"><span class="chip">TPA &#x2715;</span><span class="ph">tender b</span><span class="chev">&#x25BE;</span></div>
-        <div class="menu"><div class="on">+ Add "Tender B" as a tender party <span class="co">6</span></div></div></div>
-      <div class="field"><label>Consultant</label><div class="sel">CONSULTANTA <span class="chev">&#x2715; &#x25BE;</span></div>
-        <div class="pc"><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
-      <div class="field"><label>Interior designer <span class="pill">Inactive</span> <span class="co">7</span></label><div class="sel">IDA <span class="chev">&#x2715;</span></div>
-        <div class="pc"><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div></div>
-      <div class="field"><label>Quantity surveyor <span class="co">8</span></label><div class="sel"><span class="ph">Search quantity surveyors</span><span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Architect</label><span class="lk">1 contact</span></div><div class="sel">A. BAKHTIAR ARCHITECT <span class="chev">&#x2715; &#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Main contractor <span class="co">2</span></label><span class="lk">2 contacts</span></div><div class="sel">AHMAD ZAKI RESOURCES BERHAD <span class="chev">&#x2715; &#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Subcontractors <span class="co">3</span></label></div><div class="sel"><span class="ph">ahmad</span><span class="chev">&#x25BE;</span></div>
+        <div class="menu"><div class="on"><span>AHMAD ZAKI RESOURCES BERHAD</span><span class="role">Main contractor</span></div><div><span>+ Add "ahmad" as a new party</span><span></span></div></div></div>
+      <div class="field"><div class="lr"><label>Trading houses</label><span class="lk">1 contact</span></div><div class="sel"><span class="chip">TRADING HOUSE A &#x2715;</span><span class="chip">TRADING HOUSE B &#x2715;</span><span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Tender parties</label><span class="lk mut">Add contacts</span></div><div class="sel"><span class="chip">TPA &#x2715;</span><span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Consultant</label><span class="lk mut">Add contacts</span></div><div class="sel">CONSULTANTA <span class="chev">&#x2715; &#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Interior designer <span class="pill">Inactive</span> <span class="co">4</span></label><span class="lk mut">Add contacts</span></div><div class="sel">IDA <span class="chev">&#x2715;</span></div></div>
+      <div class="field"><div class="lr"><label>Quantity surveyor <span class="co">5</span></label></div><div class="sel"><span class="ph">Search parties</span><span class="chev">&#x25BE;</span></div></div>
     </div>
-    <p class="gone">Removed: the 8 separate "Contacts at &lt;party&gt; - Pick contacts" boxes that sat below this grid. <span class="co">9</span></p>
   </div></div>
 </div></div></div>
 <div class="notes"><ol>
-<li><span class="co">1</span><div><b>One picker per active role, in the list's order</b>Developer is not here (page 1). Architect and main contractor are now ordinary roles, same picker as the rest.<span class="ref">ProjectForm.tsx:935-1075 (FormSection "Parties and contacts"); LINK_ROLES :66-73 and the per-role fetchers :205-219 go; the role list comes from useLookupSetOptions('project_party_role') as lead source does (:221)</span></div></li>
-<li><span class="co">2</span><div><b>Contacts sit right under the party, same field</b>Appears the moment a party is picked, on create AND edit (today: create only, far below). Each chip shows name + number. Picks become the project's stakeholders, as today.<span class="ref">_shared/components/PartyContactsPicker.tsx (moves inside the role field; "Contacts at X" label dropped, party name kept as a small caption for many-party roles); components/common/SearchableMultiSelect</span></div></li>
-<li><span class="co">3</span><div><b>Contact not found: create it on the spot</b>Typed name prefilled; name is the only required field, phone optional (2 Nov B4). Created on the party and picked in one go.<span class="ref">createOption on SearchableMultiSelect -> _shared/components/PartyContactDialog.tsx (initialName, onCreated), unchanged</span></div></li>
-<li><span class="co">4</span><div><b>Missing number filled on the spot</b>A picked contact without a phone gets one inline input; saving writes the number to the contact on the party.<span class="ref">components/ui/input + the existing party-contact update the dialog already calls</span></div></li>
-<li><span class="co">5</span><div><b>"Many parties" roles get the multi picker; one contacts row per picked party</b><span class="ref">components/common/SearchableMultiSelect; single roles keep components/common/SearchableSelect (clearable)</span></div></li>
-<li><span class="co">6</span><div><b>Party not found: create it on the spot</b>As the 28 Oct ruling; its contacts row opens straight after.<span class="ref">partyCreateOption in ProjectForm.tsx (unchanged, takes the role key)</span></div></li>
-<li><span class="co">7</span><div><b>Deactivated role still on this project</b>Grey Inactive pill, kept on save, no search (only clear). Its contacts stay editable.<span class="ref">components/ui/badge</span></div></li>
-<li><span class="co">8</span><div><b>A role an admin added</b>Example only (not seeded).</div></li>
-<li><span class="co">9</span><div><b>The separate contacts block goes</b><span class="ref">ProjectForm.tsx:1057-1072 (pickedParties.map -> PartyContactsPicker) removed</span></div></li>
+<li><span class="co">1</span><div><b>One line per active role, in the list's order</b>Developer is not here (page 1). Architect and main contractor are ordinary roles now. Every party, whatever its role, is a row in the one parties table. The separate "Contacts at X" boxes and the nested contact rows are gone.<span class="ref">ProjectForm.tsx:935-1075 (FormSection "Parties and contacts"); LINK_ROLES :66-73, per-role fetchers :205-219 and the contacts block :1057-1072 go; roles from useLookupSetOptions('project_party_role')</span></div></li>
+<li><span class="co">2</span><div><b>Contacts summary = one small link next to the label</b>"2 contacts" when picked, "Add contacts" when none, hidden until a party is picked. Opens the popup (screen 1c). Hover shows the names.<span class="ref">components/ui/button (variant link, size sm)</span></div></li>
+<li><span class="co">3</span><div><b>Any party can fill any role (Q4 b)</b>The search covers every party of the company; the caption is the party's usual role. Not found: "+ Add as a new party", then the contacts popup opens straight away.<span class="ref">components/common/SearchableMultiSelect / SearchableSelect (clearable); partyCreateOption in ProjectForm.tsx</span></div></li>
+<li><span class="co">4</span><div><b>Deactivated role still on this project</b>Kept on save, only clear, no search. Contacts still editable.<span class="ref">components/ui/badge</span></div></li>
+<li><span class="co">5</span><div><b>A role an admin added</b>Example only, not seeded.</div></li>
 </ol></div>
 </div>
 
-<h2 class="ft">1b. Same section at 375</h2>
+<h2 class="ft">1c. The contacts popup (opened from "2 contacts" on Main contractor)</h2>
+<div class="layout">
+<div class="frame dimbg" style="width:640px;max-width:100%"><div class="dlg">
+  <div class="hd">Contacts at AHMAD ZAKI RESOURCES BERHAD <span class="co">6</span></div>
+  <div class="bd">
+    <div class="crow"><span class="cb on"></span><div class="cn"><b>MR. PERSON 02</b><span>Project manager</span></div><span class="lk">Add number</span> <span class="co">7</span></div>
+    <div class="crow"><span class="cb on"></span><div class="cn"><b>EN. PERSON 05</b><span>QS, 013-xxx xxxx</span></div></div>
+    <div class="crow"><span class="cb on dis"></span><div class="cn"><b>PN. PERSON 06</b><span>Director, 019-xxx xxxx</span></div><span class="pill">On this project</span> <span class="co">8</span></div>
+    <div class="crow"><span class="cb"></span><div class="cn"><b>MS. PERSON 07</b><span>Admin</span></div></div>
+    <div class="addrow"><span class="lk">+ Add contact</span> <span class="co">9</span></div>
+  </div>
+  <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Done</span></div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">6</span><div><b>One popup per role field</b>A many-party role (Trading houses) opens with line tabs, one per picked party.<span class="ref">components/ui/dialog; line tabs components/ui/tabs</span></div></li>
+<li><span class="co">7</span><div><b>Missing number: "Add number" turns into one input in that row</b>Saved to the contact on the party.<span class="ref">components/ui/input; the party-contact update PartyContactDialog already calls</span></div></li>
+<li><span class="co">8</span><div><b>Already a stakeholder: ticked and fixed here (Q6 b)</b>The popup only adds; removal stays on the Stakeholders tab.<span class="ref">components/ui/checkbox (disabled)</span></div></li>
+<li><span class="co">9</span><div><b>Not found: "+ Add contact" opens name / job title / phone in place</b>Name only required, phone optional (2 Nov B4). Created on the party and ticked.<span class="ref">fields of _shared/components/PartyContactDialog.tsx, reused as an inline form</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">1b. Parties section at 375</h2>
 <div class="layout">
 <div class="frame w375 m375"><div class="content">
   <div class="section"><div class="hd">Parties and contacts</div><div class="bd">
     <div class="grid2">
-      <div class="field"><label>Architect</label><div class="sel">A. BAKHTIAR ARCHITECT <span class="chev">&#x25BE;</span></div>
-        <div class="pc"><div class="sel"><span class="chip">AR. PERSON 01, 012-345 6789 &#x2715;</span></div></div></div>
-      <div class="field"><label>Main contractor</label><div class="sel">AHMAD ZAKI RESOURCES BERHAD <span class="chev">&#x25BE;</span></div>
-        <div class="pc"><div class="sel"><span class="chip">MR. PERSON 02 &#x2715;</span></div>
-          <div class="fill">MR. PERSON 02 has no number <span class="input sm">01x-xxx xxxx</span> <span class="btn">Save number</span></div></div></div>
-      <div class="field"><label>Trading houses</label><div class="sel"><span class="chip">TRADING HOUSE A &#x2715;</span><span class="chip">TRADING HOUSE B &#x2715;</span></div>
-        <div class="pc"><span class="pn">TRADING HOUSE A</span><div class="sel"><span class="chip">MS. PERSON 03 &#x2715;</span></div></div>
-        <div class="pc"><span class="pn">TRADING HOUSE B</span><div class="sel"><span class="ph">Pick or add contacts</span></div></div></div>
-      <div class="field"><label>Interior designer <span class="pill">Inactive</span></label><div class="sel">IDA</div></div>
+      <div class="field"><div class="lr"><label>Architect</label><span class="lk">1 contact</span></div><div class="sel">A. BAKHTIAR ARCHITECT <span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Main contractor</label><span class="lk">2 contacts</span></div><div class="sel">AHMAD ZAKI RESOURCES BERHAD <span class="chev">&#x25BE;</span></div></div>
+      <div class="field"><div class="lr"><label>Trading houses</label><span class="lk">1 contact</span></div><div class="sel"><span class="chip">TRADING HOUSE A &#x2715;</span><span class="chip">TRADING HOUSE B &#x2715;</span></div></div>
+      <div class="field"><div class="lr"><label>Interior designer <span class="pill">Inactive</span></label><span class="lk mut">Add contacts</span></div><div class="sel">IDA</div></div>
     </div>
   </div></div>
 </div></div>
@@ -216,7 +231,7 @@ td{padding:9px 10px;border-bottom:1px solid var(--line)}
           <div><span>+ Add "PGB" as a new party</span><span class="role"></span></div> <span class="co">11</span>
         </div></div>
       <div class="ef"><label>Name</label><div class="input">PARAGON VIEW SDN BHD</div></div>
-      <div class="ef"><label>Attn</label><div class="sel"><span class="ph">Pick or add contacts</span><span class="chev">&#x25BE;</span></div></div>
+      <div class="ef"><div class="lr"><label>Attn</label><span class="lk">Choose contacts</span></div><div class="input"></div></div>
     </div>
     <div class="out">Header section outside the TO block (Subject, collapse) belongs to lane PROPOSAL-FORM-COLLAPSE and is left as it is.</div>
   </div></div>
@@ -235,9 +250,7 @@ td{padding:9px 10px;border-bottom:1px solid var(--line)}
       <div class="cap">To</div>
       <div class="ef"><label>Party</label><div class="sel">PGB GROUP SDN BHD <span class="pill">Main contractor</span><span class="chev">&#x2715; &#x25BE;</span></div>
         <div class="fill info">Not on this project yet. Add as <span class="sel mini">Main contractor &#x25BE;</span> <span class="co">12</span></div></div>
-      <div class="ef"><label>Attn <span class="co">13</span></label><div class="sel"><span class="chip">MS. ANNE CHEW &#x2715;</span><span class="chip">MS IIYANA &#x2715;</span><span class="ph">add</span><span class="chev">&#x25BE;</span></div>
-        <div class="menu"><div><span>EN. PERSON 04</span><span class="role">Purchasing, 012-xxx</span></div><div class="on">+ Add contact "Ms Lee"</div></div>
-        <div class="fill">MS IIYANA has no number <span class="input sm">01x-xxx xxxx</span> <span class="btn">Save number</span></div></div>
+      <div class="ef"><div class="lr"><label>Attn <span class="co">13</span></label><span class="lk">Choose contacts</span></div><div class="input">MS. ANNE CHEW &amp; MS IIYANA</div></div>
       <div class="ef"><label>Name</label><div class="input">PGB GROUP SDN BHD</div></div>
       <div class="ef"><label>Phone <span class="co">14</span></label><div class="input">012-xxx xxxx</div></div>
       <div class="ef"><label>Email</label><div class="input">anne.chew@pgb.example</div></div>
@@ -255,7 +268,7 @@ td{padding:9px 10px;border-bottom:1px solid var(--line)}
 </div></div></div>
 <div class="notes"><ol>
 <li><span class="co">12</span><div><b>Backfilled onto the project, role picked here</b>Role defaults to the party's type; on Save the party is linked to the project in that role (a "one party" role already filled is not offered). Shows in the project's Parties section afterwards.<span class="ref">components/common/SearchableSelect over the role lookup set; server: set_party_links append, project_party_contact_service.py</span></div></li>
-<li><span class="co">13</span><div><b>Attn = one or more contacts of that party</b>Contacts already on the project first. Not found: create on the spot (name only required); it is added to the party and as a project stakeholder. Missing number filled here.<span class="ref">components/common/SearchableMultiSelect + _shared/components/PartyContactDialog.tsx (same as registration); stakeholder add via add_registered_contacts (project_party_contact_service.py:266)</span></div></li>
+<li><span class="co">13</span><div><b>Attn = one or more contacts, chosen in the same popup as registration</b>"Choose contacts" opens the contacts popup of the picked party (screen 1c): tick one or more, add a contact, add a missing number. The ticked names fill Attn; the text stays editable. A contact ticked here that is not a stakeholder yet is added to the project; a new one also to the party.<span class="ref">the contacts popup of screen 1c (components/ui/dialog); stakeholder add via add_registered_contacts (project_party_contact_service.py:266)</span></div></li>
 <li><span class="co">14</span><div><b>Phone and email come from the first Attn</b>Then the party's own phone/email when the contact has none. Editable.<span class="ref">components/ui/input; recipient_phone_snapshot / recipient_email_snapshot (unchanged columns)</span></div></li>
 <li><span class="co">15</span><div><b>Address: owner said "from project"; two readings, both shown</b>A letter's TO address is normally the addressee's; the project site already prints in the project title. Recommend A with B as the fallback. Every field stays editable.<span class="ref">recipient_address_snapshot; party.address (models/projects.py:124) / sales_profile.address + location + state (:439-443)</span></div></li>
 <li><span class="co">16</span><div><b>Two Attn print joined with "&amp;"</b>Real sample: "ATTN: MS. ANNE CHEW &amp; MS IIYANA" (PGB GROUP proposal). Stored in the existing attn_name text.<span class="ref">project_quotation_pdf_service.py (attn line unchanged, text only)</span></div></li>
@@ -269,7 +282,7 @@ td{padding:9px 10px;border-bottom:1px solid var(--line)}
     <div class="cap">To</div>
     <div class="ef"><label>Party</label><div class="sel">PGB GROUP SDN BHD <span class="chev">&#x25BE;</span></div>
       <div class="fill info">Not on this project yet. Add as <span class="sel mini">Main contractor &#x25BE;</span></div></div>
-    <div class="ef"><label>Attn</label><div class="sel"><span class="chip">MS. ANNE CHEW &#x2715;</span><span class="chip">MS IIYANA &#x2715;</span></div></div>
+    <div class="ef"><div class="lr"><label>Attn</label><span class="lk">Choose contacts</span></div><div class="input">MS. ANNE CHEW &amp; MS IIYANA</div></div>
     <div class="ef"><label>Name</label><div class="input">PGB GROUP SDN BHD</div></div>
     <div class="ef"><label>Address</label><div class="input">Level 8, Menara PGB<br>50450 Kuala Lumpur</div></div>
     <div class="ef"><label>Phone</label><div class="input">012-xxx xxxx</div></div>

@@ -1,6 +1,6 @@
 # CARD: configurable project party roles + proposal "To" picker (lane PROJECT-PARTY-ROLES)
 
-Status: behaviour card v3 (owner additions 10 Nov ~13:40 contacts in the same step, ~14:00 guided proposal TO), waiting on the owner. No code yet. Q1-Q6 unchanged from v1/v2.
+Status: behaviour card v4. Owner answered Q1-Q7 on 10 Nov ~15:10 MYT (section "Owner answers" below supersedes any rule above it); mock v4 waiting on approval. No code yet.
 
 ## What is true today (origin/main a4af6565, read in this lane)
 
@@ -151,6 +151,44 @@ Q7. Proposal address (owner: "the address we can get from project"). (a) the cho
     **Recommend (a)**: a letter's TO address is the addressee's own, the site already prints in the project
     title, and the fallback still gives "from the project" when the party has no address on file. Mock 4b
     shows both.
+
+## Owner answers, 10 Nov ~15:10 MYT (supersede the rules above where they differ)
+
+Q1 (a) lookup set + `allows_many`. Q2 (a). Q3 (a). Q4 **(b)**. Q5 (a). Q6 **(b)**. Q7 (a).
+
+A. **One parties table for every role (Q2, owner: "we do have Parties right so should be able to reuse the
+   parties table").** Confirmed: every company on a project, whatever its role (developer, architect, main
+   contractor, trading house, a role an admin adds later), is ONE row in `projects.parties`. A project says
+   which party plays which role through `projects.party_links (project_id, role, party_id)`; developer stays the
+   `projects.developer_party_id` column. No new party table; the architect / main contractor columns are
+   backfilled into `party_links` and no longer written (drop held for the owner).
+B. **Any party can fill any role (Q4 b), in this lane.** A firm that is main con on one project and subcon on
+   another is one party. Replaces rule 7:
+   - every role picker (registration and the proposal TO) searches ALL active parties of the company, not
+     only one type; `set_party_links` stops refusing a party whose type differs from the role (today
+     `project_party_contact_service.py:192-197`, code `project_party_role_mismatch`);
+   - **`parties.party_type` stays, as the party's usual role**: set to the role it was first created for,
+     shown as the caption next to the name in every picker and as the Type column / filter on the party
+     master, used as the default role when a proposal backfills the party onto a project. It never restricts
+     a pick. Its values are the role lookup's keys (checked against the set, active or not, instead of
+     `PARTY_TYPES`), and it can be edited on the party master;
+   - "Add as a new party" on create-on-the-spot first returns an existing active party with the same name of
+     ANY type (today: same name AND same type, `project_reference_service.py:244-257`), so one firm stays one
+     row.
+C. **Contacts in a popup (mock v4, owner feedback on v3: "too complicated", "very bloated").** Replaces rules
+   10-12 and 17's picker: each role is ONE line (the party picker). Once a party is picked, a small link next
+   to the role's label reads "N contacts" (or "Add contacts") and opens a contacts popup for that party
+   (many-party roles: line tabs, one per picked party). In the popup the user ticks contacts, adds a contact
+   (name only required, phone optional) and fills a missing number ("Add number" turns into one input, saved
+   to the contact). Creating a party on the spot opens its popup straight away. The proposal's Attn uses the
+   same popup: "Choose contacts" next to Attn, the ticked names fill Attn joined with " & ".
+D. **The popup only adds (Q6 b).** On edit, contacts that are already the project's stakeholders show ticked
+   and fixed, with "On this project". Removing a stakeholder stays on the Stakeholders tab. Same in the
+   proposal popup.
+E. **Proposal address (Q7 a):** the chosen party's address; when the party has none, the project's site
+   address. Editable.
+F. **TO locks on issue (Q5 a):** the party is changeable while the proposal is a draft and fixed once
+   revision A is issued; a different party gets its own proposal.
 
 ## Questions (at most 5, each with a recommendation)
 
