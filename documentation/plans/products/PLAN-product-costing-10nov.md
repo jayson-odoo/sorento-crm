@@ -383,3 +383,18 @@ mark-up dropped from History masking.
 - 11 Nov 00:2x: owner reshaped the lane to one costing page (Sales > Targets pattern); plan v5 (section 0), UAC section CG, mock v5, questions QA-QE.
 - 11 Nov 00:3x: owner QA (a), no import, QD (a); QB / QE working answers; UAC + test list final for v5.
 - 11 Nov: owner final QB (a), QE all products no default filter; build started (option a for #2319).
+
+## 11. Migration check (cloud sandbox, 10 Nov)
+
+No dev copy is reachable from the cloud, so the check ran on a main-shaped copy: a fresh database
+`sorento_mig` bootstrapped from **origin/main's** models (`scripts/bootstrap_env.py`, stamped at
+`combo_0001_part_labels`), with `scm.currency_rate` rows RMB 0.625 (as_of 01/11/2026) and USD 4.40
+(no as_of) and a `director` role added. Then this branch's `alembic upgrade head`:
+
+- upgrade applied `pc_0001_product_costing`; `exchange_rates` seeded RMB 0.625 effective
+  01/11/2026 and USD 4.40 effective the migration date; both permission rows present;
+  `products.party_costing.manage` granted to `admin` and `director` only (`purchasing`,
+  `salesperson` not granted);
+- `alembic downgrade -1`: the six tables and the manage permission gone, `products.cost.view` kept
+  (owned by #2319), `scm.currency_rate` untouched (2 rows);
+- upgrade again: same result; `alembic heads` = `pc_0001_product_costing` only.
