@@ -1,6 +1,6 @@
 # PLAN: RELEASE-FIX-QUOTE (11 Nov 2026)
 
-Status: in progress (small fix track: test-only plus two one-line service fixes, no migration, no auth).
+Status: in review (small fix track: test-only plus two one-line service fixes, no migration, no auth).
 
 Release sweep on main 6e6657e2 found two behaviour regressions. This lane fixes both and nothing else.
 

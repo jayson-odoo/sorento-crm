@@ -19,8 +19,9 @@ long title at 1280px and 375px, and is prefilled with the project title on a new
 A sub-column's right-click offers no Duplicate; there is no Duplicate icon.
 
 **PFC-5 No Quotation Purpose.** The form has no Quotation Purpose field, Save sends none, the
-header card shows none even when one is stored, and the PDF cover, sign page and previews print no
-Purpose row.
+header card shows none even when one is stored, and a new revision's PDF cover, its sign page and
+the previews print no Purpose row. A revision that already went out reprints as it was sent, Purpose
+row included (QCF D1; RELEASE-FIX-QUOTE, 11 Nov 2026).
 
 **PFC-6 Heading rows.** A section heading is its own full-width row with a drag handle; dragging it
 moves only the heading; dragging, removing or restoring a line never moves or drops a heading.
