@@ -587,3 +587,56 @@ def test_a_run_ticking_brw_ib_by_name_includes_it(db):
     assert float(row.pool_on_hand) == 20.0
     assert float(row.po_open_qty) == 140.0
     assert float(row.incoming_spo_qty) == 20.0
+
+
+# LOWSTOCK-BINS-REGRESS (release blocker on #2296): ticking replaces only the PROJECT-BIN half
+# of the site-pool rule. An INACTIVE warehouse counts nowhere, ticked or not (the rule's
+# `is_active` leg, `pool_predicate.active_site_pool_sql`).
+#
+# Each test adds one more active location the run does not tick: "nothing ticked" is a COUNT
+# test (`reorder_run_service._covers_every_warehouse`, ticked ids >= active warehouses), and
+# in this small estate a ticked inactive id would otherwise lift the count to "All" and hide
+# the inactive location behind the nothing-ticked reading.
+
+
+def test_a_ticked_inactive_project_bin_counts_in_no_column(db):
+    """BRW + an INACTIVE BRW-IB ticked: every column reads BRW alone, as a BRW-only run."""
+    brw, brw_ib, product, spo_brw, _spo_ib, po_brw, _po_ib = _srtwcx7405_pj(db)
+    brw_ib.is_active = False
+    _warehouse(db, "UNTICKED-2")
+    db.flush()
+    run = _run(db, [brw.id, brw_ib.id])
+    _buy(db, run, product, brw)
+
+    assert svc.report_warehouse_ids(db, run) == [brw.id]
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_brw
+    assert float(row.last_receipt_qty) == 42.0
+    assert float(row.pool_on_hand) == 6.0
+    assert float(row.po_open_qty) == 100.0
+    assert [d["number"] for d in row.po_open_docs] == [po_brw.po_number]
+    assert float(row.incoming_spo_qty or 0) == 0.0
+
+
+def test_the_shared_set_drops_a_ticked_inactive_site_pool_location(db):
+    """A ticked INACTIVE site-pool warehouse leaves the one shared set; the active one stays."""
+    brw = _warehouse(db, "BRW")
+    old = _warehouse(db, "OLD")
+    old.is_active = False
+    _warehouse(db, "UNTICKED-2")
+    db.flush()
+    assert svc.report_warehouse_ids(db, _run(db, [brw.id, old.id])) == [brw.id]
+
+
+def test_a_ticked_inactive_location_does_not_make_a_ticked_bin_read_as_nothing_ticked(db):
+    """BRW + BRW-IB + an inactive OLD ticked, in an estate of 3 active warehouses: the
+    inactive id must not lift the count to "All" (`_covers_every_warehouse`), which would
+    read the run as nothing-ticked and drop the ticked BRW-IB (reviewer probe)."""
+    brw = _warehouse(db, "BRW")
+    brw_ib = _warehouse(db, "BRW-IB", segment="project")
+    old = _warehouse(db, "OLD")
+    old.is_active = False
+    db.flush()
+    run = _run(db, [brw.id, brw_ib.id, old.id])
+    assert svc.report_warehouse_ids(db, run) == sorted([brw.id, brw_ib.id])
