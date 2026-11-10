@@ -409,7 +409,7 @@ def test_rv_clearing_the_party_on_a_draft_saves_no_party():
 
 @pytest.mark.parametrize(
     "stored, shown",
-    [("+60129876543", "012-987 6543"), ("0320000002", "03-2000 0002"), ("+601112345678", "011-1234 5678"),
+    [("+60120000501", "012-000 0501"), ("0320000002", "03-2000 0002"), ("+601111111111", "011-1111 1111"),
      ("082-123 456", "082-123 456"), ("03-1111", "03-1111")],
 )
 def test_ht_the_letter_prints_one_local_phone_format(stored, shown):

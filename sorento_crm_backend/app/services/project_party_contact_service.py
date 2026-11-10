@@ -106,7 +106,7 @@ def clean_phone(value: Any) -> Optional[str]:
 
 
 def display_phone(value: Any) -> Optional[str]:
-    """A number as the letter prints it: one local format ("012-987 6543") whether it was stored
+    """A number as the letter prints it: one local format ("012-000 0501") whether it was stored
     as E.164 or typed by hand (owner hand test, 10 Nov). Not a Malaysian number it can read: as
     stored."""
     import re

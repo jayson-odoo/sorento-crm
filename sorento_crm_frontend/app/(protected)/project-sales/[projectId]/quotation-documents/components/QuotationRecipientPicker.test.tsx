@@ -317,7 +317,7 @@ describe('Attn from the contacts popup', () => {
   it('switching to another party and back re-applies the single contact (owner re-test 10 Nov)', async () => {
     listPartyContacts.mockImplementation(async (partyId: string) =>
       partyId === 'p-a'
-        ? [{ id: 'ca', party_id: 'p-a', name: 'EN. AGROW', phone: '+60129876543', is_active: true }]
+        ? [{ id: 'ca', party_id: 'p-a', name: 'EN. AGROW', phone: '+60120000501', is_active: true }]
         : [
             { id: 'cb1', party_id: 'p-b', name: 'MS. B1', is_active: true },
             { id: 'cb2', party_id: 'p-b', name: 'MS. B2', is_active: true },
@@ -337,7 +337,7 @@ describe('Attn from the contacts popup', () => {
     rerender(view({ recipient_party_id: 'p-a' }));
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
     expect(onChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ attn_contact_ids: ['ca'], attn_name: 'EN. AGROW', recipient_phone_snapshot: '012-987 6543' }),
+      expect.objectContaining({ attn_contact_ids: ['ca'], attn_name: 'EN. AGROW', recipient_phone_snapshot: '012-000 0501' }),
     );
   });
 
