@@ -1,0 +1,301 @@
+"""QUOTE-TERMS-SELECT: Payment Terms picked from the AutoCount-synced terms master, Validity as a
+number + day/week/month/year. Plan: documentation/plans/projects/PLAN-quote-terms-select-10nov.md.
+
+The print text stays in the existing ``payment_terms`` / ``validity`` text columns (issue freeze,
+cover, PDF and sign link read those unchanged); the structured fields decide that text on save.
+A legacy free-text value no structured field touched is kept as it is (no silent loss).
+
+Postgres only, through the shared quotation document ``api`` fixture.
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.services import quote_terms_service as qts
+
+from .test_project_quotation_document_routes import (  # noqa: F401  (api is a fixture)
+    BASE,
+    _create_document,
+    api,
+)
+
+TEMPLATES = f"{BASE}/config/quotation-templates"
+MARKER = "zzt-qterms"
+
+
+# ------------------------------------------------------------------------------ pure rules
+
+
+@pytest.mark.parametrize(
+    "value,unit,expected",
+    [(2, "week", "2 WEEKS"), (1, "month", "1 MONTH"), (30, "day", "30 DAYS"), (1, "year", "1 YEAR")],
+)
+def test_validity_prints_number_and_unit_upper_case_plural_when_not_one(value, unit, expected):
+    assert qts.format_validity(value, unit) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("30 days", (30, "day")),
+        (" 2 Weeks ", (2, "week")),
+        ("1 month", (1, "month")),
+        ("2 WEEKS", (2, "week")),
+        ("1 year", (1, "year")),
+        ("30 days from quotation date", None),
+        ("two weeks", None),
+        ("", None),
+        (None, None),
+        ("0 days", None),
+    ],
+)
+def test_legacy_validity_text_maps_only_on_an_exact_number_and_unit(text, expected):
+    assert qts.parse_validity(text) == expected
+
+
+def test_a_term_prints_its_description_else_its_code():
+    from types import SimpleNamespace
+
+    assert qts.term_label(SimpleNamespace(term_code="C.B.D.", description="CASH BEFORE DELIVERY")) == (
+        "CASH BEFORE DELIVERY"
+    )
+    assert qts.term_label(SimpleNamespace(term_code="30 DAYS", description=None)) == "30 DAYS"
+    assert qts.term_label(SimpleNamespace(term_code="30 DAYS", description="  ")) == "30 DAYS"
+
+
+# ------------------------------------------------------------------------------ helpers
+
+
+def _term(db, company_id: str, code: str, description=None, *, is_active=True):
+    from app.models.payment_term import PaymentTerm
+
+    row = PaymentTerm(
+        company_id=company_id,
+        term_code=f"{MARKER}-{code}",
+        description=description,
+        is_active=is_active,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _other_company(db) -> str:
+    import uuid
+
+    from app.models.company import Company
+
+    suffix = uuid.uuid4().hex[:6]
+    other = Company(id=str(uuid.uuid4()), name=f"{MARKER} other {suffix}", code=f"ZQT{suffix}")
+    db.add(other)
+    db.flush()
+    return str(other.id)
+
+
+def _terms_template(client, **extra) -> dict:
+    body = {"kind": "terms", "name": f"{MARKER} Standard terms", "body_html": "<p>clause</p>", **extra}
+    response = client.post(TEMPLATES, json=body)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+# ------------------------------------------------------------------------------ the select
+
+
+def test_the_template_select_lists_this_companys_active_terms_only(api):
+    client, db, company_id, *_ = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    _term(db, company_id, "OLD", "RETIRED TERM", is_active=False)
+    _term(db, _other_company(db), "ELSE", "SOMEONE ELSES TERM")
+    db.commit()
+
+    response = client.get(f"{TEMPLATES}/payment-terms")
+    assert response.status_code == 200, response.text
+    rows = [row for row in response.json()["data"] if row["code"].startswith(MARKER)]
+    assert [row["id"] for row in rows] == [str(cbd.id)]
+    assert rows[0] == {
+        "id": str(cbd.id),
+        "code": f"{MARKER}-CBD",
+        "description": "CASH BEFORE DELIVERY",
+        "label": "CASH BEFORE DELIVERY",
+    }
+
+
+def test_the_quotation_form_has_its_own_select_on_the_project(api):
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    response = client.get(f"{BASE}/projects/{project.id}/quotation-documents/payment-terms")
+    assert response.status_code == 200, response.text
+    assert str(cbd.id) in {row["id"] for row in response.json()["data"]}
+
+
+# ------------------------------------------------------------------------------ template
+
+
+def test_template_picks_a_term_and_a_validity_and_prints_both(api):
+    client, db, company_id, *_ = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+
+    created = _terms_template(
+        client, payment_term_id=str(cbd.id), validity_value=2, validity_unit="week"
+    )
+    assert created["payment_term_id"] == str(cbd.id)
+    assert created["payment_terms"] == "CASH BEFORE DELIVERY"
+    assert created["validity_value"] == 2
+    assert created["validity_unit"] == "week"
+    assert created["validity"] == "2 WEEKS"
+
+    updated = client.put(
+        f"{TEMPLATES}/{created['id']}", json={"validity_value": 1, "validity_unit": "month"}
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["validity"] == "1 MONTH"
+    # Untouched by this save, so unchanged.
+    assert body["payment_terms"] == "CASH BEFORE DELIVERY"
+    assert body["payment_term_id"] == str(cbd.id)
+
+
+def test_clearing_the_select_clears_the_printed_text_too(api):
+    client, db, company_id, *_ = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    created = _terms_template(
+        client, payment_term_id=str(cbd.id), validity_value=2, validity_unit="week"
+    )
+
+    cleared = client.put(
+        f"{TEMPLATES}/{created['id']}",
+        json={"payment_term_id": None, "validity_value": None, "validity_unit": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    body = cleared.json()
+    assert body["payment_term_id"] is None and body["payment_terms"] is None
+    assert body["validity_value"] is None and body["validity_unit"] is None
+    assert body["validity"] is None
+
+
+def test_a_legacy_free_text_value_survives_a_save_that_does_not_touch_it(api):
+    """No silent loss: the old text keeps printing until someone picks."""
+    client, *_ = api
+    created = _terms_template(
+        client,
+        payment_terms=f"{MARKER} 50% deposit, balance before delivery",
+        validity=f"{MARKER} 30 days from quotation date",
+    )
+    assert created["payment_term_id"] is None and created["validity_value"] is None
+
+    renamed = client.put(f"{TEMPLATES}/{created['id']}", json={"name": f"{MARKER} renamed"})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["payment_terms"] == f"{MARKER} 50% deposit, balance before delivery"
+    assert renamed.json()["validity"] == f"{MARKER} 30 days from quotation date"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"validity_value": 2, "validity_unit": "fortnight"},
+        {"validity_value": 0, "validity_unit": "day"},
+        {"validity_value": 1000, "validity_unit": "day"},
+        {"validity_value": 2},
+        {"validity_unit": "week"},
+        {"validity_value": 2, "validity_unit": None},
+    ],
+)
+def test_a_validity_needs_a_number_from_1_to_999_and_a_known_unit(api, body):
+    client, *_ = api
+    created = _terms_template(client)
+    response = client.put(f"{TEMPLATES}/{created['id']}", json=body)
+    assert response.status_code == 422, response.text
+
+
+def test_a_term_of_another_company_or_unknown_is_refused(api):
+    import uuid
+
+    client, db, _company_id, *_ = api
+    foreign = _term(db, _other_company(db), "ELSE", "SOMEONE ELSES TERM")
+    db.commit()
+    created = _terms_template(client)
+    for term_id in (str(foreign.id), str(uuid.uuid4())):
+        response = client.put(f"{TEMPLATES}/{created['id']}", json={"payment_term_id": term_id})
+        assert response.status_code == 422, response.text
+        assert response.json().get("code") == "payment_term_unknown", response.text
+
+
+def test_an_inactive_term_cannot_be_newly_picked(api):
+    client, db, company_id, *_ = api
+    old = _term(db, company_id, "OLD", "RETIRED TERM", is_active=False)
+    db.commit()
+    created = _terms_template(client)
+    response = client.put(f"{TEMPLATES}/{created['id']}", json={"payment_term_id": str(old.id)})
+    assert response.status_code == 422, response.text
+
+
+# ------------------------------------------------------------------------------ quotation copy
+
+
+def test_letter_templates_carry_the_structured_defaults(api):
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    made = _terms_template(
+        client, payment_term_id=str(cbd.id), validity_value=2, validity_unit="week"
+    )
+    assert made["is_active"] is True
+
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] == str(cbd.id)
+    assert got["payment_terms"] == "CASH BEFORE DELIVERY"
+    assert got["validity_value"] == 2
+    assert got["validity_unit"] == "week"
+    assert got["validity"] == "2 WEEKS"
+
+
+def test_a_quotation_picks_and_patches_its_own_terms(api):
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    net = _term(db, company_id, "N30", None)
+    db.commit()
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+
+    created = _create_document(
+        client, project.id, payment_term_id=str(cbd.id), validity_value=2, validity_unit="week"
+    )
+    assert created["payment_term_id"] == str(cbd.id)
+    assert created["payment_terms"] == "CASH BEFORE DELIVERY"
+    assert created["validity"] == "2 WEEKS"
+    assert created["validity_value"] == 2 and created["validity_unit"] == "week"
+
+    patched = client.patch(f"{root}/{created['id']}", json={"payment_term_id": str(net.id)})
+    assert patched.status_code == 200, patched.text
+    # No description: the code prints.
+    assert patched.json()["payment_terms"] == f"{MARKER}-N30"
+    assert patched.json()["validity"] == "2 WEEKS"
+
+    reread = client.get(f"{root}/{created['id']}").json()
+    assert reread["payment_term_id"] == str(net.id)
+
+
+def test_a_quotation_keeps_legacy_text_on_a_header_save(api):
+    client, _db, _company_id, _user, project, _party = api
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    created = _create_document(client, project.id, payment_terms=f"{MARKER} 50% deposit")
+    patched = client.patch(f"{root}/{created['id']}", json={"attn_name": "Mr Tan"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["payment_terms"] == f"{MARKER} 50% deposit"
+
+
+def test_the_cover_preview_prints_the_picked_values_before_save(api):
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    response = client.post(
+        f"{BASE}/projects/{project.id}/quotation-documents/cover-preview",
+        json={"payment_term_id": str(cbd.id), "validity_value": 2, "validity_unit": "week"},
+    )
+    assert response.status_code == 200, response.text
+    rows = {row["key"]: row for row in response.json()["cover_rows"]}
+    assert rows["payment_terms"]["text"] == "CASH BEFORE DELIVERY"
+    assert rows["validity"]["text"] == "2 WEEKS"
