@@ -15,18 +15,18 @@ import { TownLightbox, type TownTarget } from './TownLightbox';
 // The scene (and three.js with it) is fetched only when this page shows it.
 const TownScene = dynamic(() => import('./TownScene').then((m) => m.TownScene), { ssr: false });
 
-/** WebGL present and the user not asking for reduced motion. Decided after mount (no SSR guess). */
+/** WebGL present. Decided after mount (no SSR guess). Reduced motion still shows the town, static
+ * (the scene itself skips the fly-in and parks everything). */
 function useSceneAvailable(): boolean {
   const [available, setAvailable] = useState(false);
   useEffect(() => {
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     let webgl = false;
     try {
       webgl = !!document.createElement('canvas').getContext('webgl2');
     } catch {
       webgl = false;
     }
-    setAvailable(webgl && !reduced);
+    setAvailable(webgl);
   }, []);
   return available;
 }

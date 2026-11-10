@@ -79,6 +79,13 @@ describe('placeTags', () => {
     expect(spots[1]).toBeNull();
   });
 
+  it('pulls a tag at the stage edge back inside, so it is never clipped', () => {
+    const view = { left: 0, right: 375, bottom: 0, top: 500 };
+    const [spot] = placeTags([{ x: 360, y: 200, w: 150, h: 20 }], [], view);
+    expect((spot as { x: number }).x + 75).toBeLessThanOrEqual(375);
+    expect((spot as { y: number }).y).toBe(200);
+  });
+
   it('places tags apart from each other in priority order, and skips one off screen', () => {
     const tags = [{ x: 50, y: 50, w: 60, h: 20 }, null, { x: 52, y: 50, w: 60, h: 20 }];
     const spots = placeTags(tags, []);

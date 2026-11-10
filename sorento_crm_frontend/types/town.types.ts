@@ -2,7 +2,8 @@
  * viewer: no amounts without sales.reports.view, no names or ranks either, and no names on the
  * wallboard. */
 export interface TownShop {
-  /** A click key: the customer id for a full viewer, "s1".."sN" otherwise. Never rendered. */
+  /** A click key: the customer id for a full viewer, otherwise an opaque "s" + 12 hex key that stays the
+   * same for the shop all day (the sale beat diffs keys between polls). Never rendered. */
   key: string;
   kind: 'shop' | 'stall';
   account_label: string | null;

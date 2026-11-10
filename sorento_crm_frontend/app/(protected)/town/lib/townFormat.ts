@@ -154,12 +154,14 @@ export function separateLabels(
  * Where the shop tags sit on screen (the v6 DOM pills), after the fixed labels have been placed. Each
  * tag, in priority order, tries its anchor, then a step up, a step down, a step to each side and so on,
  * and takes the first spot clear of every box already placed; a tag with no clear spot is culled
- * (null) rather than drawn over another label. `null` in `tags` is a tag off screen. Returns the
+ * (null) rather than drawn over another label. With a `view`, every spot is first pulled inside it,
+ * so a tag is never clipped by the stage edge. `null` in `tags` is a tag off screen. Returns the
  * centres in input order.
  */
 export function placeTags(
   tags: (ScreenBox | null)[],
   placed: ScreenBox[],
+  view?: { left: number; right: number; bottom: number; top: number },
   margin = 3,
 ): ({ x: number; y: number } | null)[] {
   const taken = [...placed];
@@ -169,7 +171,8 @@ export function placeTags(
     const side = tag.w / 2 + 6;
     const tries = [[0, 0], [0, -step], [0, step], [side, 0], [-side, 0], [0, -2 * step], [side, -step], [-side, -step]];
     for (const [ox, oy] of tries) {
-      const at: ScreenBox = { ...tag, x: tag.x + ox, y: tag.y + oy };
+      const moved: ScreenBox = { ...tag, x: tag.x + ox, y: tag.y + oy };
+      const at: ScreenBox = view ? { ...moved, ...clampInView(moved, view, margin) } : moved;
       if (taken.every((other) => !overlapsBox(at, other, margin))) {
         taken.push(at);
         return { x: at.x, y: at.y };

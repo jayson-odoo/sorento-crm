@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import gzip
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -467,12 +468,26 @@ def day_events(db: Session, company_id: str, day: date, shop_keys: set) -> list:
 
 # ---------------------------------------------------------------------- redaction and wallboard
 
+_OPAQUE_RE = re.compile(r"s[0-9a-f]{12}")
+
+
+def opaque_key(snapshot: dict, key: str) -> str:
+    """A shop's key for a viewer who may not see customer ids: "s" + 12 hex of an HMAC over the company,
+    the day and the customer id. The same shop keeps it all day, whatever the list order (the sale beat
+    diffs keys between polls, TOWN-V2); it changes every day and cannot be turned back into an id. A key
+    that is already opaque stays as it is, so `strip_names(redact(...))` keeps the same keys."""
+    if _OPAQUE_RE.fullmatch(key):
+        return key
+    message = f"{snapshot.get('company_id')}:{snapshot.get('day')}:{key}".encode()
+    return "s" + hmac.new(settings.jwt_secret.encode(), message, hashlib.sha256).hexdigest()[:12]
+
+
 def _opaque_keys(out: dict) -> None:
-    """Replace each shop's customer id with its position, so a viewer cannot correlate customers.
+    """Replace each shop's customer id with its opaque key, so a viewer cannot correlate customers.
     The lorries' destinations (`deliveries.customers`) follow their shop to its new key."""
     renamed = {}
-    for index, shop in enumerate(out.get("shops", []), start=1):
-        renamed[shop["key"]] = shop["key"] = f"s{index}"
+    for shop in out.get("shops", []):
+        renamed[shop["key"]] = shop["key"] = opaque_key(out, shop["key"])
     deliveries = out.get("deliveries")
     for customer in (deliveries or {}).get("customers", []):
         customer["key"] = renamed.get(customer["key"])

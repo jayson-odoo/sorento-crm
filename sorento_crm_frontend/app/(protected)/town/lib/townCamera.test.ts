@@ -85,4 +85,18 @@ describe('town tooltips', () => {
     expect(townTip(quiet, { kind: 'approve' })).toEqual({ title: 'Approvals', detail: 'All clear' });
     expect(townTip(quiet, { kind: 'port' })).toEqual({ title: 'Port', detail: 'Nothing on the way' });
   });
+
+  it('names where a lorry is going: a shop in the town, or a customer outside it (named on the personal view only)', () => {
+    const withShop = { ...(SNAPSHOT as object), shops: [{ key: 'k1', kind: 'shop', account_label: 'A/C I', today_docs: 0, name: 'ZZT Tiling SDN BHD [A/C I]' }] } as never;
+    expect(townTip(withShop, { kind: 'lorry', customer: { key: 'k1', orders: 3 } })).toEqual({ title: 'Lorry to ZZT Tiling [A/C I]', detail: '3 orders due today or overdue' });
+    expect(townTip(withShop, { kind: 'lorry', customer: { key: null, name: 'ZZT Faraway SDN BHD', orders: 1 } })).toEqual({ title: 'Customer outside the town', detail: 'ZZT Faraway · 1 order due today or overdue' });
+    expect(townTip(withShop, { kind: 'lorry', customer: { key: null, orders: 2 } })).toEqual({ title: 'Customer outside the town', detail: '2 orders due today or overdue' });
+  });
+
+  it('names a ship or a late container by its shipment, with the supplier only when the snapshot carries one', () => {
+    const row = { shipment_number: 'SHP-1', container: 'C1', eta: null, products: 4, quantity: 10, late: false };
+    expect(townTip(SNAPSHOT, { kind: 'shipment', row })).toEqual({ title: 'SHP-1 on the water', detail: 'No ETA · 4 products' });
+    const late = { ...row, late: true, supplier: 'ZZT Supplier' };
+    expect(townTip(SNAPSHOT, { kind: 'shipment', row: late })).toEqual({ title: 'SHP-1 · late', detail: 'No ETA · 4 products · ZZT Supplier' });
+  });
 });

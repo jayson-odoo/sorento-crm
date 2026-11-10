@@ -5,6 +5,7 @@ import { count, rm0, shopLabel, shortName } from './townFormat';
 /** What the pointer is over. A mouse shows its tooltip; a tap on touch opens the lightbox instead. */
 export type TipSubject =
   | { kind: 'sales' }
+  | { kind: 'bought'; others: number }
   | { kind: 'shop'; shop: TownShop }
   | { kind: 'warehouse'; index: number }
   | { kind: 'low' }
@@ -27,6 +28,8 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
           ? `${rm0(today.amount)} · ${count(today.invoice_count)} invoices`
           : `${count(today.invoice_count)} invoices`,
       };
+    case 'bought':
+      return { title: 'Bought today', detail: `${count(subject.others)} more dealers invoiced today` };
     case 'shop': {
       const { shop } = subject;
       const detail = !shop.today_docs
