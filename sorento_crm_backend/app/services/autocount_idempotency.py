@@ -29,6 +29,10 @@ _PREFIX = "sorento:autocount_write:attempt:"
 _TTL_SECONDS = 30 * 24 * 3600
 # The key was refused because another request holds or used it, not because AutoCount said no.
 _NOT_A_REFUSAL_OF_THE_INTENT = ("IDEMPOTENCY_",)
+# SS turned these ops on after storing the refusal (SS #230, 10 Nov 2026): a VENDOR_UNSUPPORTED
+# stored before the attempt count existed would be replayed to the first press. The press asks
+# again once, on the next attempt; a refusal changed nothing, so it cannot write twice.
+_ASK_AGAIN_AT_ONCE = ("VENDOR_UNSUPPORTED",)
 
 
 # After a store error, skip it for this long: a down Redis must not cost its timeout per line.
@@ -80,7 +84,8 @@ def send_with_attempts(
     base_key: str,
     send: Callable[[str], Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """`send(key)` on this intent's current attempt; a definite refusal moves the next press on.
+    """`send(key)` on this intent's current attempt; a definite refusal moves the next press on,
+    and a VENDOR_UNSUPPORTED one is asked again once in this press.
 
     `store` is a Redis-like client (`get`, `set(ex=)`) or None; any store error falls back to
     attempt 0 and never fails the write."""
@@ -94,9 +99,17 @@ def send_with_attempts(
             _store_failed()
             store = None
     answer = send(attempt_key(base_key, attempt))
-    if store is not None and is_definite_refusal(answer):
+    if not is_definite_refusal(answer):
+        return answer
+    attempt += 1
+    if str(answer.get("errorCode") or "") in _ASK_AGAIN_AT_ONCE:
+        answer = send(attempt_key(base_key, attempt))
+        if is_definite_refusal(answer):
+            attempt += 1
+        # Anything else keeps this attempt, so a retry replays it.
+    if store is not None:
         try:
-            store.set(name, attempt + 1, ex=_TTL_SECONDS)
+            store.set(name, attempt, ex=_TTL_SECONDS)
         except Exception:  # noqa: BLE001
             logger.warning("autocount write: could not record the refusal for a new attempt")
             _store_failed()

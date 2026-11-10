@@ -135,6 +135,8 @@ def po_links_for(db: Session, so_line_ids: Sequence[str]) -> Dict[str, List[Dict
 class StockDebtPoLinkService:
     def __init__(self, db: Session):
         self.db = db
+        # One per press (the service is built per request): every SS write of it carries this.
+        self.request_id = uuid.uuid4().hex
 
     # ------------------------------------------------------------------ reads
 
@@ -356,7 +358,9 @@ class StockDebtPoLinkService:
 
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
-            return FoundryxAutocountClient(self.db).write(path, body, idempotency_key=key)
+            return FoundryxAutocountClient(self.db).write(
+                path, body, idempotency_key=key, request_id=self.request_id
+            )
         except FoundryxPullError as exc:
             message = UNREACHABLE if exc.code == "UNREACHABLE" else exc.message
             return {"outcome": "vendor_error", "errorCode": exc.code, "message": message}

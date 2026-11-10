@@ -474,7 +474,9 @@ def test_unlink_sends_each_linked_po_row_of_the_ticked_lines(scm_app, fake_ss):
     assert resp.status_code == 200, resp.text
     (result,) = resp.json()["results"]
     assert result["outcome"] == "refused"
-    (body,) = fake_ss.bodies("/api/v1/autocount/po-links/unlink")
+    # VENDOR_UNSUPPORTED is asked again once (SS #230), with the same body.
+    body, again = fake_ss.bodies("/api/v1/autocount/po-links/unlink")
+    assert again == body
     assert (body["poDocKey"], body["poDtlKey"]) == (12008, 12009)
 
 
@@ -497,7 +499,8 @@ def test_relink_moves_a_po_row_to_another_line_of_the_row(scm_app, fake_ss):
         {"po_line_id": w["po_line"].id, "to_sales_order_line_id": other.id},
     ]})
     assert resp.status_code == 200, resp.text
-    (body,) = fake_ss.bodies("/api/v1/autocount/po-links/relink")
+    body, again = fake_ss.bodies("/api/v1/autocount/po-links/relink")
+    assert again == body
     assert (body["soDocKey"], body["soDtlKey"]) == (11999, 12001)
     assert body["docDate"] == "2026-09-01"
     assert fake_ss.headers("/api/v1/autocount/po-links/relink")[0].get("Idempotency-Key")
@@ -903,10 +906,26 @@ def test_a_stored_vendor_unsupported_is_asked_again_in_the_same_press(scm_app, f
     assert result["outcome"] == "done"
     k1, k2 = _keys_sent(fake_ss)
     assert k1 and k2 and k1 != k2
-    # The press that got `done` keeps its key: a later timeout retry replays, never a 2nd split.
-    fake_ss.answers["/api/v1/autocount/po-links"] = (504, {"code": "TIMEOUT", "message": "slow"})
-    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
-    assert _keys_sent(fake_ss)[2] == k2
+
+
+def test_an_unconfirmed_answer_after_asking_again_keeps_that_attempt(refusal_store):
+    """The second send timed out: the next press must replay ITS key, never split twice."""
+    from app.services import autocount_idempotency as idem
+
+    sent = []
+    answers = iter([
+        {"outcome": "refused", "errorCode": "VENDOR_UNSUPPORTED"},
+        {"outcome": "pending_verification", "errorCode": None},
+        {"outcome": "done", "errorCode": None},
+    ])
+
+    def send(key):
+        sent.append(key)
+        return next(answers)
+
+    assert idem.send_with_attempts(refusal_store, "base", send)["outcome"] == "pending_verification"
+    assert idem.send_with_attempts(refusal_store, "base", send)["outcome"] == "done"
+    assert sent == ["base", idem.attempt_key("base", 1), idem.attempt_key("base", 1)]
 
 
 def test_a_live_vendor_unsupported_is_asked_again_only_once(scm_app, fake_ss):
@@ -951,9 +970,9 @@ def test_vendor_unsupported_is_asked_again_with_redis_down(scm_app, fake_ss, mon
 
 def test_every_write_of_a_press_carries_one_request_id(scm_app, fake_ss):
     w = _world(scm_app, fake_ss)
-    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
-    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w), _link_item(w, 100)]})
-    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    fake_ss.answers["/api/v1/autocount/po-links"] = _UNSUPPORTED  # two sends per press
+    for _ in range(2):
+        w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
     ids = [h.get("X-Request-ID") for h in fake_ss.headers("/api/v1/autocount/po-links")]
-    assert len(ids) == 3 and all(ids)
-    assert ids[0] == ids[1] and ids[2] != ids[0]
+    assert len(ids) == 4 and all(ids)
+    assert ids[0] == ids[1] and ids[2] == ids[3] and ids[0] != ids[2]
