@@ -1,6 +1,6 @@
 # PLAN: Quotation cover page: source-field rows and the sales cover sheet layout (QUOTE-COVER-FIELDS)
 
-**Status:** Plan. Behaviour card posted as `crew-ask` on the lane PR; waiting on owner answers before the mock.
+**Status:** Plan. Behaviour card + mock v1 (`documentation/mockups/QUOTE-COVER-FIELDS/index.html`) filed as crew-ask on PR #2307; build waits for owner approval.
 Track: M (expected migration for the missing sources, see card Q2). Follow-up to QUOTE-COVER-DESIGN
 (`documentation/plans/projects/PLAN-quote-cover-design-02nov.md`).
 
