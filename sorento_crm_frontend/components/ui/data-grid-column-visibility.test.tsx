@@ -139,9 +139,19 @@ const PRODUCT_IDS = [
   'created_at',
   'updated_at',
 ];
-const NOT_HIDEABLE = new Set(['product_code', 'product_name']);
+/** The one identifying key column a list locks (owner rule, 10 Nov 2026). */
+const NOT_HIDEABLE = new Set(['product_code']);
 
 const PRODUCT_COLUMNS = [
+  // Grid chrome, never a menu row: the row-select checkbox (as `data-grid-select-column`
+  // builds it) and the trailing row-actions column (as `ProductsList.tsx` builds it).
+  {
+    id: 'select',
+    header: () => 'select-all',
+    size: 40,
+    enableHiding: false,
+    meta: { draggable: false },
+  },
   ...PRODUCT_IDS.map((id) => ({
     accessorKey: id,
     id,
@@ -284,8 +294,9 @@ async function readGridAndMenu(savedConfig: unknown) {
   const menu = items.map((item) => ({
     id: (item.textContent ?? '').replace(/^T:/, ''),
     ticked: item.getAttribute('aria-checked') === 'true',
+    locked: item.getAttribute('aria-disabled') === 'true',
   }));
-  return { rendered, menu };
+  return { rendered, menu, items };
 }
 
 beforeEach(() => {
@@ -299,8 +310,40 @@ describe('Columns menu == rendered columns', () => {
     // The grid draws the variant columns past Updated, where the saved order put them.
     expect(rendered.indexOf('variant_type')).toBeGreaterThan(rendered.indexOf('updated_at'));
 
-    const hideableRendered = rendered.filter((id) => !NOT_HIDEABLE.has(id));
-    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(hideableRendered);
+    // EVERY column the grid shows is a ticked row, in the grid's order - the key column too.
+    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(rendered);
+    expect(rendered[0]).toBe('product_code');
+  });
+
+  it('the key column is listed ticked and locked; every other column can be unticked', async () => {
+    const { menu } = await readGridAndMenu(OWNER_SAVED_CONFIG);
+
+    expect(menu.filter((item) => item.locked).map((item) => item.id)).toEqual(['product_code']);
+    expect(menu.find((item) => item.id === 'product_code')?.ticked).toBe(true);
+    expect(menu.find((item) => item.id === 'product_name')?.locked).toBe(false);
+    // Grid chrome is not a column the reader chooses.
+    expect(menu.map((item) => item.id)).not.toContain('select');
+    expect(menu.map((item) => item.id)).not.toContain('actions');
+    expect(menu.map((item) => item.id)).not.toContain('');
+  });
+
+  it('unticking the key column does nothing; unticking Product Name hides it', async () => {
+    const { items } = await readGridAndMenu(OWNER_SAVED_CONFIG);
+    const byId = (id: string) => items.find((item) => item.textContent === `T:${id}`)!;
+
+    // The locked row is disabled (pointer-events: none); click it anyway, as a reader would.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await user.click(byId('product_code'));
+    await user.click(byId('product_name'));
+
+    // The open menu marks the page behind it aria-hidden, so read past that.
+    const headers = screen
+      .getAllByRole('columnheader', { hidden: true })
+      .map((h) => h.textContent);
+    expect(headers).toContain('H:product_code');
+    expect(headers).not.toContain('H:product_name');
+    expect(byId('product_code').getAttribute('aria-checked')).toBe('true');
+    expect(byId('product_name').getAttribute('aria-checked')).toBe('false');
   });
 
   it('a saved row with stale keys (renamed or removed columns) still matches the grid', async () => {
@@ -316,8 +359,7 @@ describe('Columns menu == rendered columns', () => {
     });
 
     expect(rendered).not.toContain('brand_name');
-    const hideableRendered = rendered.filter((id) => !NOT_HIDEABLE.has(id));
-    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(hideableRendered);
+    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(rendered);
     // The stale ids are nowhere: not in the grid, not in the menu.
     expect(menu.map((item) => item.id)).not.toContain('is_variant');
     expect(menu.map((item) => item.id)).not.toContain('product_type');
@@ -330,8 +372,7 @@ describe('Columns menu == rendered columns', () => {
   it('a fresh user (no saved row) sees the definition order in both', async () => {
     const { rendered, menu } = await readGridAndMenu(null);
 
-    const hideableRendered = rendered.filter((id) => !NOT_HIDEABLE.has(id));
-    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(hideableRendered);
+    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(rendered);
     expect(menu.find((item) => item.id === 'exclude_from_planning')?.ticked).toBe(false);
   });
 });

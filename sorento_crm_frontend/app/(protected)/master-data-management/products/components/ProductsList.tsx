@@ -499,7 +499,7 @@ const ProductsList = () => {
           skeleton: <Skeleton className="h-4 w-40" />,
         },
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'is_variant',
