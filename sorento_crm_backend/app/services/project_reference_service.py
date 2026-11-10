@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy import select as db_select
 from sqlalchemy.orm import Session
 
@@ -108,6 +108,7 @@ def _customer_name_expr():
 #: server). Unknown keys fall back to the name.
 PARTY_SORTS = {
     "name": lambda: func.lower(ProjectParty.name),
+    "registration_no": lambda: func.lower(ProjectParty.registration_no),
     "party_type": lambda: ProjectParty.party_type,
     "is_active": lambda: ProjectParty.is_active,
     "project_count": _project_count_expr,
@@ -135,8 +136,14 @@ def list_parties(
     if not include_inactive:
         query = query.filter(ProjectParty.is_active.is_(True))
     if search and search.strip():
+        # The registration no. is a column of its own on the Parties grid, so the search
+        # that filters the grid matches it too (PARTIES-LIST-ONE-LINE).
+        needle = f"%{search.strip().lower()}%"
         query = query.filter(
-            func.lower(ProjectParty.name).like(f"%{search.strip().lower()}%")
+            or_(
+                func.lower(ProjectParty.name).like(needle),
+                func.lower(ProjectParty.registration_no).like(needle),
+            )
         )
     total = query.count()
     page = max(1, int(page or 1))
