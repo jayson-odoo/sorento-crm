@@ -352,6 +352,7 @@ class SystemSetting(Base):
     website_url = Column(String, nullable=True)
     support_email = Column(String, nullable=True)
     support_phone = Column(String, nullable=True)
+    fax = Column(String, nullable=True)
     language = Column(String, default="en", nullable=False)
     timezone = Column(String, default="UTC", nullable=False)
     currency = Column(String, default="MYR", nullable=False)

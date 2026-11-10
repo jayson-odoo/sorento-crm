@@ -11,14 +11,14 @@ before; the editor writes it as a heading row on that version's next save. Issue
 change.
 
 Revision ID: pfc_0001_line_is_section
-Revises: ptag_0021_icon_conditions
+Revises: qcf_0001_fax
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "pfc_0001_line_is_section"
-down_revision = "ptag_0021_icon_conditions"
+down_revision = "qcf_0001_fax"
 branch_labels = None
 depends_on = None
 
