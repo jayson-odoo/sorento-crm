@@ -520,7 +520,7 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Date')).toHaveValue(today);
     // The subject arrives as the project's title, the same default the server would use.
     await waitFor(() =>
-      expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'),
+      expect(screen.getByLabelText('Project title')).toHaveValue('Menara Test'),
     );
     const card = await openLines();
     expect(screen.getByRole('button', { name: 'Scope actions on Scope 1' })).toBeInTheDocument();
@@ -982,7 +982,7 @@ describe('QuotationFormClient tabs (AC-QF055)', () => {
   it('holds recipient, attention, your ref, date, subject and address in the Header tab', async () => {
     renderForm();
 
-    for (const label of ['Name', 'Address', 'Attn', 'Your Ref', 'Date', 'Subject']) {
+    for (const label of ['Name', 'Address', 'Attn', 'Your Ref', 'Date', 'Project title']) {
       expect(await screen.findByLabelText(label)).toBeInTheDocument();
     }
   });

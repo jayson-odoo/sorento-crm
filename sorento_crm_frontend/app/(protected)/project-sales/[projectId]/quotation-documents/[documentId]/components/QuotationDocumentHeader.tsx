@@ -366,12 +366,16 @@ export function QuotationDocumentHeader({
             record header already shows right above this card (#1335). */}
         {onChange ? (
           <div className="border-t border-border pt-4 md:col-span-2">
-            <EditField id="quotation-subject-title" label="Subject">
-              <Input
+            {/* A wrapping textarea named for what it holds (PROPOSAL-FORM-COLLAPSE, owner
+                10 Nov): a long title such as a Malay development name overflowed a one-line
+                input. Still one value, prefilled from the project title. */}
+            <EditField id="quotation-subject-title" label="Project title">
+              <Textarea
                 id="quotation-subject-title"
+                rows={2}
                 value={document.subject_title ?? ''}
                 onChange={(event) => onChange({ subject_title: event.target.value || null })}
-                placeholder="The one line naming the job"
+                placeholder="The project title the quotation names"
               />
             </EditField>
           </div>

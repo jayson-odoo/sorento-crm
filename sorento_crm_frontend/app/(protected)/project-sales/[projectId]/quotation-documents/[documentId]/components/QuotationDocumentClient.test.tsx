@@ -519,7 +519,19 @@ describe('QuotationDocumentClient header dedupe', () => {
     expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
 
     rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
-    expect(screen.getByLabelText('Subject')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+    expect(screen.getByLabelText('Project title')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+  });
+
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): a long Malay title overflowed the one-line input, so
+  // the field is a wrapping textarea named for what it holds.
+  it('edits the project title in a wrapping textarea, labelled Project title', () => {
+    const onChange = vi.fn();
+    render(<QuotationDocumentHeader document={quotationDocument()} onChange={onChange} />);
+    const field = screen.getByLabelText('Project title');
+    expect(field.tagName).toBe('TEXTAREA');
+    expect(screen.queryByLabelText('Subject')).toBeNull();
+    fireEvent.change(field, { target: { value: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' } });
+    expect(onChange).toHaveBeenCalledWith({ subject_title: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' });
   });
 });
 
