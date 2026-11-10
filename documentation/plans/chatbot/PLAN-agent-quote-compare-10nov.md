@@ -1,7 +1,7 @@
 # PLAN: AGENT-QUOTE-COMPARE - the agent compares a project's quotations
 
-Status: building (size M; behaviour card answered by crew 10 Nov: Q1-Q5 all (a)). Track: M (agent behaviour on an
-existing screen; new panel read, so security-reviewer joins).
+Status: built, in review (PR #2315; size M; behaviour card answered by crew 10 Nov: Q1-Q5 all (a)). Track: M (agent
+behaviour on an existing screen; new panel read, so security-reviewer joins).
 
 UAC: `agent-quote-compare-acceptance-criteria.md`. Behaviour card (causes with file:line, real dev examples):
 `agent-quote-compare-behaviour-card.md`.
@@ -48,3 +48,13 @@ tools.py:137), `limit_sentence`/`status="limited"`.
 
 The owner's question on the panel of PPF2611008 (PRJQ-2026-0013 vs QT-2026-0003) and PPF2611003 (revisions), x3,
 dev DB sorento_prod_1104, Gemini ledger lines before/after; rounds, tokens and answers in crew-done.
+
+## Review rounds (10 Nov)
+
+- Round 2 (reviewer + security-reviewer): the in-process read skipped the project router's "only theirs" guard
+  (`_own_scope.check`) and the module guard; the partial reply would have reached WhatsApp contacts. Fixed: own
+  scope + module guard on the tool, partial reply on staff panel turns only, provider failure class traced in
+  `chat()`, `rate_only` on lines.
+- Round 3-4 (live runs + crew pass): a line priced above list gave a negative discount the answer verifier
+  cannot back ("-(not verified)"). Fixed: `discount_pct` only below list, `above_list_pct` above it, and the tool
+  description says how to show both.
