@@ -1791,7 +1791,7 @@ export function QuotationLinesGrid({
    * so one menu serves every row (owner hand test, points 2 and 3).
    */
   const [menuTarget, setMenuTarget] = React.useState<{
-    kind: 'line' | 'section';
+    kind: 'line' | 'section' | 'header';
     key: string;
   } | null>(null);
   /**
@@ -1799,6 +1799,11 @@ export function QuotationLinesGrid({
    * description, Qty): there the browser's own menu shows, for copy, paste and spelling.
    */
   const targetOf = (element: Element | null) => {
+    // A column header's whole box, its name included, answers with Duplicate (owner, 10 Nov:
+    // right-click rather than an icon). Every other editable control keeps the browser's menu.
+    const group = element?.closest<HTMLElement>('[data-matrix-header-key]');
+    if (group?.dataset.matrixHeaderKey && columnsEditable)
+      return { kind: 'header' as const, key: group.dataset.matrixHeaderKey };
     if (
       element?.closest(
         'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
@@ -1974,7 +1979,17 @@ export function QuotationLinesGrid({
                 keepFocusAfterMenu.current = false;
               }}
             >
-              {menuTarget?.kind === 'section' ? (
+              {menuTarget?.kind === 'header' ? (
+                <ContextMenuItem
+                  disabled={Boolean(matrix?.saving) || pending !== null}
+                  onSelect={() => {
+                    keepFocusAfterMenu.current = true;
+                    duplicateHeader(menuTarget.key);
+                  }}
+                >
+                  Duplicate
+                </ContextMenuItem>
+              ) : menuTarget?.kind === 'section' ? (
                 <>
                   <ContextMenuItem
                     onSelect={() => renameSection(menuTarget.key)}

@@ -16,7 +16,7 @@
  */
 import * as React from 'react';
 import type { CellContext, ColumnDef, HeaderContext } from '@tanstack/react-table';
-import { Copy, GripVertical, Plus, Undo2, X } from 'lucide-react';
+import { GripVertical, Plus, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -277,6 +277,8 @@ function LabelEditor({
       <div
         role="group"
         aria-label={label}
+        // The grid's right-click menu offers Duplicate on a header (owner, 10 Nov: no icon).
+        data-matrix-header-key={kind === 'header' ? itemKey : undefined}
         className={cn('flex w-full min-w-0 items-center gap-0.5 rounded-sm', over && 'ring-2 ring-primary')}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
@@ -351,18 +353,6 @@ function LabelEditor({
             }
           }}
         />
-        {kind === 'header' && (
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={`Duplicate ${label}`}
-            title="Duplicate"
-            className="shrink-0 text-muted-foreground hover:text-primary disabled:opacity-50"
-            onClick={() => matrix.duplicateHeader(itemKey)}
-          >
-            <Copy className="size-3" aria-hidden />
-          </button>
-        )}
         <button
           type="button"
           disabled={busy}
@@ -637,8 +627,6 @@ const NUMERIC = 'px-1 align-top';
  * padding, rounded up for the resize handle.
  */
 export const EDIT_LABEL_CHROME_PX = 52;
-/** A header's Duplicate icon (12px) and its 2px gap. */
-export const EDIT_DUPLICATE_PX = 14;
 /** One character at text-xs, font-medium, uppercase (the header's case): "BALCONY" is ~56px. */
 export const EDIT_LABEL_CHAR_PX = 8;
 /** A leaf column's narrowest width while its label is an input: "BALCONY" / "KITCHEN" in full. */
@@ -656,10 +644,8 @@ export function leafColumnWidth(label: string, editable: boolean, rowSpanHeader 
     const base = rowSpanHeader ? 96 : 72;
     return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(base, label.trim().length * EDIT_LABEL_CHAR_PX + 24));
   }
-  // A header with no columns is edited in its own leaf cell, with a Duplicate icon as well.
-  const extra = rowSpanHeader ? EDIT_DUPLICATE_PX : 0;
-  const fit = EDIT_LABEL_CHROME_PX + extra + label.trim().length * EDIT_LABEL_CHAR_PX;
-  return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(EDIT_LEAF_MIN_WIDTH + 8 * Number(rowSpanHeader) + extra, fit));
+  const fit = EDIT_LABEL_CHROME_PX + label.trim().length * EDIT_LABEL_CHAR_PX;
+  return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(EDIT_LEAF_MIN_WIDTH + (rowSpanHeader ? 8 : 0), fit));
 }
 
 function leafColumn(

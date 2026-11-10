@@ -714,14 +714,20 @@ describe('+ Column header in the header row on a scope with no columns', () => {
 
 /**
  * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): duplicate a column-header group with its columns so
- * the column names are not retyped. Quantities stay blank (fresh keys); the copy's name takes
- * the caret, selected, for a rename.
+ * the column names are not retyped, from a RIGHT-CLICK on the group header (owner Q2 b: "want to
+ * keep the UI minimum", no icon). Quantities stay blank (fresh keys).
  */
 describe('duplicating a column header', () => {
-  it('copies the group and its column names right after it, named "(copy)"', () => {
+  async function rightClickHeader(label: string) {
+    const name = screen.getByRole('textbox', { name: `Column header ${label}` });
+    expect(fireEvent.contextMenu(name)).toBe(false);
+    return screen.findByRole('menuitem', { name: 'Duplicate' });
+  }
+
+  it('right-click Duplicate copies the group and its column names right after it, named "(copy)"', async () => {
     const onChange = vi.fn();
     renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
-    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Type A - 1 BH' }));
+    fireEvent.click(await rightClickHeader('Type A - 1 BH'));
     expect(onChange).toHaveBeenCalledTimes(1);
     const next = onChange.mock.calls[0][0] as MatrixHeader[];
     expect(next.map((header) => header.label)).toEqual([
@@ -734,12 +740,11 @@ describe('duplicating a column header', () => {
     expect(next[1].key).not.toBe('a');
   });
 
-  it('is offered on headers only, and only while the columns can be edited', () => {
-    const { unmount } = renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
-    expect(screen.getAllByRole('button', { name: /^Duplicate / })).toHaveLength(3);
-    expect(screen.queryByRole('button', { name: 'Duplicate 1 BH' })).toBeNull();
-    unmount();
-    renderGrid({ lines: [staged(TRAP, true)], matrix: { columns: UNIT, onChange: vi.fn() } });
+  it('adds no icon to the header, and a sub-column right-click offers no Duplicate', async () => {
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
     expect(screen.queryByRole('button', { name: /^Duplicate / })).toBeNull();
+    fireEvent.contextMenu(screen.getAllByRole('textbox', { name: 'Column 1 BH' })[0]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate' })).toBeNull();
   });
 });
