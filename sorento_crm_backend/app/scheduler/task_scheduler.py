@@ -454,6 +454,16 @@ def _handler_product_discontinued_check(db, task):
     return run_product_discontinued_check(db, task)
 
 
+def _handler_product_list_price_check(db, task):
+    """Report products whose list price changed (batched) to subscribed staff."""
+    from app.services.product_watched_field_notify_service import (
+        LIST_PRICE,
+        run_watched_field_check,
+    )
+
+    return run_watched_field_check(db, LIST_PRICE, task)
+
+
 def _handler_project_staleness_sweep(db, task):
     """Move every live project up or off the staleness ladder (AC-H5, AC-H6).
 
@@ -575,6 +585,16 @@ def _handler_scm_reorder_run(db, task):
     # Validates every key first; a bad stored value fails the run here, before anything
     # is created, rather than planning a scope nobody asked for.
     kwargs = _scm_reorder_run_kwargs(md, run_day)
+    # SCM-INACTIVE-LOCATIONS: a saved scope DROPS a location deactivated since it was
+    # configured (create_run would refuse the whole run) and the run summary says which.
+    # Every ticked code inactive falls back to the nothing-ticked rule (every active
+    # location; the report reads the site pool), and the message says that too.
+    skipped = reorder_svc.inactive_warehouse_codes(db, kwargs["warehouse_codes"])
+    if skipped:
+        kept = [c for c in kwargs["warehouse_codes"] if c not in skipped]
+        kwargs["warehouse_codes"] = kept
+    skipped_message = reorder_svc.skipped_inactive_message(
+        skipped, fell_back=bool(skipped) and not kwargs["warehouse_codes"])
     include_market = kwargs["include_market"]
     budget = md.get("budget")  # validated above: a non-negative number or absent
 
@@ -601,7 +621,10 @@ def _handler_scm_reorder_run(db, task):
     except Exception:
         db.rollback()
         logger.exception("low_stock_report_ready dispatch failed for run %s", run_id)
-    return {"run_id": run_id, "include_market": include_market, **funding}
+    result = {"run_id": run_id, "include_market": include_market, **funding}
+    if skipped_message:
+        result["message"] = skipped_message
+    return result
 
 
 def _drain_email_outbox_tick():
@@ -633,6 +656,28 @@ def _ai_trace_sweep_tick():
             sweep_expired_traces(db)
     except Exception as e:
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
+
+
+def _handler_town_snapshot(db, task):
+    """Scheduled task `town_snapshot` (SORENTO-TOWN): rebuild every active company's town
+    snapshot. The build opens its own sessions; outside 07:00-22:05 Malaysia time it does
+    nothing. A failed company raises after the rest are built, so it lands as the task's
+    last error rather than a log line."""
+    from app.services.town.snapshot import run_town_snapshot_tick
+
+    return run_town_snapshot_tick()
+
+
+def _panel_draft_purge_tick():
+    """APScheduler tick: hard-delete AI panel files attached but never sent, past 24 hours (P1).
+    Owns its own DB session; best-effort and never raises."""
+    try:
+        from app.tasks.chat_turns import purge_panel_drafts
+
+        with scheduler_session("panel_draft_purge") as db:
+            purge_panel_drafts(db)
+    except Exception as e:
+        logger.error("Panel draft purge tick failed: %s", e, exc_info=True)
 
 
 def _chat_facts_sweep_tick():
@@ -828,6 +873,7 @@ def register_task_handlers():
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
     register_handler("attachment_storage_audit", run_attachment_storage_audit)
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
+    register_handler("product_list_price_check", _handler_product_list_price_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
     register_handler("form_action_commit", _handler_form_action_commit)
@@ -843,6 +889,10 @@ def register_task_handlers():
     register_handler("project_staleness_sweep", _handler_project_staleness_sweep)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
+    # SORENTO-TOWN: a `scheduled_tasks` row (town_0002), every 3 minutes; the job itself keeps
+    # to 07:00-22:05 MYT. It was a bare APScheduler job, invisible on Scheduled Tasks. Off the
+    # heartbeat thread: a build takes seconds (ranking capped at 30s) every 3 minutes.
+    register_handler("town_snapshot", _handler_town_snapshot, background=True)
 
 
 def start_scheduler():
@@ -896,6 +946,15 @@ def start_scheduler():
         trigger=IntervalTrigger(hours=24),
         id="ai_trace_sweep",
         name="AI assistant trace retention sweep",
+        replace_existing=True,
+    )
+
+    # AI panel draft files (AGENT-PANEL-COMPOSER P1): hourly, drafts older than 24 hours.
+    scheduler.add_job(
+        _panel_draft_purge_tick,
+        trigger=IntervalTrigger(hours=1),
+        id="panel_draft_purge",
+        name="AI panel draft file purge",
         replace_existing=True,
     )
 

@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarRange,
   CircleDollarSign,
+  Columns3,
   Info,
   LoaderCircleIcon,
   Plus,
@@ -15,10 +16,14 @@ import {
   Trash2,
   UsersRound,
 } from 'lucide-react';
+import type { ColumnDef, Table } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
   SearchableMultiSelect,
@@ -67,6 +73,7 @@ import type {
   Rounding,
   TargetAccount,
   ThresholdUnit,
+  TierAdditional,
   TierRateEntry,
   SalesTargetCreatePayload,
   SalesTargetDetail,
@@ -99,6 +106,8 @@ const ROUNDING_OPTIONS = (Object.keys(ROUNDING_LABEL) as Rounding[]).map((value)
   value,
   label: ROUNDING_LABEL[value],
 }));
+/** A tier's Additional is a % on top of its rate, or a fixed RM (owner, 5 Nov). */
+type AdditionalKind = 'pct' | 'amount';
 const TIER_TYPE_OPTIONS = [
   { value: 'main', label: 'Tier' },
   { value: 'additional', label: '+ Additional' },
@@ -147,12 +156,21 @@ interface TierDraft {
   key: number;
   from: string;
   rate: string;
-  bonus: string;
+  /** The tier's Additional: a % (`additional_rate`) or a fixed RM (`bonus_amount`). */
+  addValue: string;
+  addKind: AdditionalKind;
+  /** A legacy "+ Additional" row. */
   additional: boolean;
   /** Tiers per period: the period's start. */
   period: string;
   /** Dealer targets: the rate typed for each counted account; empty = earns nothing. */
   accountRates: Record<string, string>;
+  /** Dealer targets: each account's own RM Additional (owner 8 Nov); empty = none. */
+  accountBonuses: Record<string, string>;
+  /** Saved with per-account rates (`target_tier_rates`, as the import writes them): Save keeps
+   * them per account rather than collapsing equal rates into the tier rate, so a Save never
+   * rewrites the rates of tiers nobody touched (crew browser pass, 7 Nov). */
+  perAccount: boolean;
 }
 
 let nextTierKey = 0;
@@ -160,8 +178,12 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
   nextTierKey += 1;
   const threshold = tier ? (tier.from_pct ?? tier.threshold) : null;
   const accountRates: Record<string, string> = {};
+  const accountBonuses: Record<string, string> = {};
   if (tier?.account_rates) {
-    for (const r of tier.account_rates) accountRates[r.customer_id] = String(r.rate);
+    for (const r of tier.account_rates) {
+      accountRates[r.customer_id] = String(r.rate);
+      if (r.bonus_amount !== null && r.bonus_amount !== undefined) accountBonuses[r.customer_id] = String(r.bonus_amount);
+    }
   } else if (tier && tier.rate !== null && tier.rate !== undefined) {
     for (const id of accounts) accountRates[id] = String(tier.rate);
   }
@@ -169,10 +191,16 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
     key: nextTierKey,
     from: threshold === null || threshold === undefined ? from : String(threshold),
     rate: tier && tier.rate !== null && tier.rate !== undefined ? String(tier.rate) : '',
-    bonus: tier?.bonus_amount === null || tier?.bonus_amount === undefined ? '' : String(tier.bonus_amount),
+    ...(tier?.additional_rate !== null && tier?.additional_rate !== undefined
+      ? { addValue: String(tier.additional_rate), addKind: 'pct' as const }
+      : tier?.bonus_amount !== null && tier?.bonus_amount !== undefined
+        ? { addValue: String(tier.bonus_amount), addKind: 'amount' as const }
+        : { addValue: '', addKind: 'pct' as const }),
     additional: !!tier?.is_additional,
     period: tier?.period_start ?? '',
     accountRates,
+    accountBonuses,
+    perAccount: !!tier?.account_rates,
   };
 }
 
@@ -201,9 +229,8 @@ interface Draft {
   newAgentFigures: Record<string, Record<string, string>>;
   method: CommissionMethod;
   tiers: TierDraft[];
-  /** Dealer targets: the counted accounts and the paid one (customer ids). */
+  /** Dealer targets: the counted accounts (customer ids), each its own payee. */
   accountIds: string[];
-  payoutId: string;
   thresholdUnit: ThresholdUnit;
   rounding: Rounding;
   perPeriod: boolean;
@@ -233,7 +260,6 @@ function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
     method: 'none',
     tiers: [],
     accountIds: [],
-    payoutId: '',
     // A dealer scheme is fixed RM tiers per period, highest tier paying (owner, 16 Oct).
     thresholdUnit: preset?.kind === 'dealer' ? 'amount' : 'pct',
     rounding: 'sen',
@@ -269,7 +295,6 @@ function draftOf(target: SalesTargetDetail): Draft {
     method: target.commission_method ?? 'none',
     tiers: (target.tiers ?? []).map((t) => tierDraft(t, '', accountIds)),
     accountIds,
-    payoutId: target.payout_account?.customer_id ?? '',
     thresholdUnit: target.threshold_unit ?? 'pct',
     rounding: target.rounding ?? 'sen',
     perPeriod: !!target.tiers_per_period,
@@ -291,17 +316,24 @@ function savedFigures(target: SalesTargetDetail): Record<string, string> {
 }
 
 /** A dealer tier's rates: one `rate` when every counted account has the same one, else the
- * accounts given a rate (only they earn on the tier). */
+ * accounts given a rate (only they earn on the tier). A tier saved per account, or with an RM
+ * Additional typed per account, stays per account. */
 function dealerRates(t: TierDraft, accountIds: string[]): Pick<CommissionTier, 'rate' | 'account_rates'> {
   const typed = accountIds.map((id) => (t.accountRates[id] ?? '').trim());
-  if (typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
+  const bonus = (id: string) => (t.accountBonuses[id] ?? '').trim();
+  const ownBonus = accountIds.some((id) => bonus(id) !== '');
+  if (!t.perAccount && !ownBonus && typed.length && typed.every((v) => v !== '' && Number(v) === Number(typed[0]))) {
     return { rate: Number(typed[0]), account_rates: null };
   }
   return {
     rate: 0,
     account_rates: accountIds
-      .filter((id) => (t.accountRates[id] ?? '').trim() !== '')
-      .map((id) => ({ customer_id: id, rate: Number(t.accountRates[id]) })),
+      .filter((id) => (t.accountRates[id] ?? '').trim() !== '' || bonus(id) !== '')
+      .map((id) => ({
+        customer_id: id,
+        rate: Number(t.accountRates[id] || 0),
+        ...(bonus(id) !== '' ? { bonus_amount: Number(bonus(id)) } : {}),
+      })),
   };
 }
 
@@ -310,7 +342,8 @@ function tiersOf(draft: Draft): CommissionTier[] {
   return draft.tiers.map((t) => ({
     ...(draft.thresholdUnit === 'pct' ? { from_pct: Number(t.from) } : { threshold: Number(t.from) }),
     ...(dealer ? dealerRates(t, draft.accountIds) : { rate: Number(t.rate) }),
-    bonus_amount: t.bonus.trim() === '' ? null : Number(t.bonus),
+    bonus_amount: t.addKind === 'amount' && t.addValue.trim() !== '' && !t.additional ? Number(t.addValue) : null,
+    ...(t.addKind === 'pct' && t.addValue.trim() !== '' && !t.additional ? { additional_rate: Number(t.addValue) } : {}),
     ...(t.additional ? { is_additional: true } : {}),
     ...(draft.perPeriod ? { period_start: t.period || null } : {}),
   }));
@@ -328,13 +361,31 @@ function tierProblem(draft: Draft): string {
     text.trim() === '' ? required : !Number.isFinite(Number(text)) || Number(text) < 0;
   const dealer = draft.kind === 'dealer';
   const unit = THRESHOLD_LABEL[draft.thresholdUnit];
-  if (draft.tiers.some((t) => bad(t.from, true) || bad(t.bonus, false))) {
+  if (draft.tiers.some((t) => bad(t.from, true))) {
     return draft.thresholdUnit === 'pct' ? 'Type a from % for every tier.' : `Type the threshold (${unit}) of every tier.`;
+  }
+  if (draft.tiers.some((t) => !t.additional && bad(t.addValue, false))) return 'An Additional is not a number.';
+  if (
+    dealer &&
+    draft.accountIds.length > 1 &&
+    draft.tiers.some((t) => !t.additional && t.addKind === 'amount' && t.addValue.trim() !== '')
+  ) {
+    return 'This target counts several accounts: set the RM Additional per account, not for the tier.';
   }
   if (dealer) {
     if (draft.tiers.some((t) => Object.values(t.accountRates).some((v) => bad(v, false)))) return 'A rate is not a number.';
+    if (draft.tiers.some((t) => Object.values(t.accountBonuses).some((v) => bad(v, false)))) {
+      return 'An Additional is not a number.';
+    }
     if (draft.tiers.some((t) => !draft.accountIds.some((id) => (t.accountRates[id] ?? '').trim() !== ''))) {
       return 'Give every tier a rate for at least one account.';
+    }
+    if (
+      draft.tiers.some(
+        (t) => t.addValue.trim() !== '' && draft.accountIds.some((id) => (t.accountBonuses[id] ?? '').trim() !== ''),
+      )
+    ) {
+      return "A tier's Additional is set per account or for the tier, not both.";
     }
   } else if (draft.tiers.some((t) => bad(t.rate, true))) {
     return 'Type a rate for every tier.';
@@ -396,7 +447,6 @@ function changes(target: SalesTargetDetail, draft: Draft): SalesTargetUpdatePayl
   if (target.subject_kind === 'dealer') {
     const before = (target.accounts ?? []).map((a) => a.customer_id);
     if (draft.accountIds.join() !== before.join()) out.customer_ids = draft.accountIds;
-    if (draft.payoutId !== (target.payout_account?.customer_id ?? '')) out.payout_customer_id = draft.payoutId || null;
   }
   // A child's What counts and Dates follow its team target (T3); its figures and tiers are its own.
   if (target.parent) return out;
@@ -543,6 +593,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   });
   // Set once Save found a bad number: each field's sentence then follows its value live.
   const [showErrors, setShowErrors] = useState(false);
+  const [lightboxPeriod, setLightboxPeriod] = useState<TargetPeriod | null>(null);
 
   // Every name a picked category, product or brand is known by (F5).
   const labels = useRef(new Map<string, string>());
@@ -550,9 +601,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   for (const c of options?.categories ?? []) labels.current.set(c.id, c.label);
   for (const b of options?.brands ?? []) labels.current.set(b.id, b.label);
   for (const a of target?.accounts ?? []) labels.current.set(a.customer_id, `${a.code} - ${a.name}`);
-  if (target?.payout_account) {
-    labels.current.set(target.payout_account.customer_id, `${target.payout_account.code} - ${target.payout_account.name}`);
-  }
   const searchCustomers = useTargetCustomerSearch();
   const fetchCustomers = useCallback(
     async (query: string) => {
@@ -705,7 +753,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
         ? {
             subject_kind: 'dealer',
             customer_ids: draft.accountIds,
-            ...(draft.payoutId ? { payout_customer_id: draft.payoutId } : {}),
             ...figure,
             ...common,
           }
@@ -846,7 +893,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                         subjectId: '',
                         agentFigures: {},
                         accountIds: [],
-                        payoutId: '',
                         // A dealer scheme is fixed RM tiers, highest tier paying (owner, 16 Oct).
                         ...(v === 'dealer' ? { thresholdUnit: 'amount' as const, perPeriod: true } : {}),
                       })
@@ -867,12 +913,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   <SearchableMultiSelect
                     id="target-who"
                     value={draft.accountIds}
-                    onChange={(ids) =>
-                      set({
-                        accountIds: ids,
-                        payoutId: draft.payoutId || ids[0] || '',
-                      })
-                    }
+                    onChange={(ids) => set({ accountIds: ids })}
                     fetchOptions={fetchCustomers}
                     selectedOptions={draft.accountIds.map((id) => ({ value: id, label: labels.current.get(id) ?? 'Loading account' }))}
                     placeholder="Search customers by code or name"
@@ -916,7 +957,10 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   </span>
                 )}
               </Field>
-              <Field label="Name" htmlFor={editing ? 'target-name' : undefined}>
+              <Field
+                label={isDealer && !editing ? 'Customer' : 'Name'}
+                htmlFor={editing ? 'target-name' : undefined}
+              >
                 {editing ? (
                   <Input
                     id="target-name"
@@ -925,6 +969,11 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     onChange={(e) => set({ name: e.target.value })}
                     className="h-8"
                   />
+                ) : isDealer ? (
+                  // The dealer, not the target's own name (that is the page title).
+                  <span className="block truncate" title={target?.subject_label}>
+                    {target?.subject_label}
+                  </span>
                 ) : (
                   <span className="block truncate" title={target?.name}>
                     {target?.name}
@@ -1083,18 +1132,14 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                 ) : (
                   <div className="rounded-lg border border-dashed py-8 text-center text-sm font-medium">No periods yet</div>
                 )
+              ) : target && !editing ? (
+                <PeriodsGrid target={target} today={today} onOpenTiers={setLightboxPeriod} />
               ) : target ? (
                 <PeriodsTable
                   unit={unit}
                   commission={target.commission_method !== 'none'}
                   ratio={target.threshold_unit === 'points'}
                   provisional={isDealer && target.basis !== 'invoiced'}
-                  paysTo={isDealer}
-                  footer={
-                    target.commission_method !== 'none' && !editing ? (
-                      <PeriodsTotal target={target} paysTo={isDealer} />
-                    ) : null
-                  }
                 >
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
@@ -1142,22 +1187,12 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                             <td className="whitespace-nowrap px-3 py-2">
                               {future ? '-' : p.tier_reached ? `Tier ${p.tier_reached}` : 'None'}
                             </td>
-                            <td className="max-w-[10rem] truncate px-3 py-2 text-end tabular-nums" title={rateText(p.tier_rates, target.metric)}>
-                              {future ? '-' : rateText(p.tier_rates, target.metric) || '-'}
+                            <td className="max-w-[12rem] truncate px-3 py-2 text-end tabular-nums" title={reachedRateText(p, target.metric)}>
+                              {future ? '-' : reachedRateText(p, target.metric) || '-'}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                               {future || paid === null ? '-' : formatMoney(paid)}
-                              {p.replaced ? (
-                                <span className="block text-xs text-muted-foreground">
-                                  {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
-                                </span>
-                              ) : null}
                             </td>
-                            {isDealer ? (
-                              <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                                {paid ? payoutShort(target) : '-'}
-                              </td>
-                            ) : null}
                           </>
                         ) : null}
                       </tr>
@@ -1212,11 +1247,10 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
             <Card>
               <section aria-label="Accounts" className="flex flex-col gap-3 p-5">
                 <DealerAccounts
+                  onOpenTiers={setLightboxPeriod}
                   target={target}
                   draft={draft}
                   labels={labels.current}
-                  fetchCustomers={fetchCustomers}
-                  set={set}
                 />
               </section>
             </Card>
@@ -1249,6 +1283,14 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
           </Card>
         </TabsContent>
       </Tabs>
+      {target ? (
+        <TierLightbox
+          target={target}
+          period={lightboxPeriod}
+          accounts={accountColumns(target, null, labels.current)}
+          onClose={() => setLightboxPeriod(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1261,6 +1303,8 @@ function RecordIdentity({
   target: SalesTargetDetail | undefined;
   canOpenAgent: boolean;
 }) {
+  // A `sales.targets.view_own` holder cannot open the team target their agent target is part of.
+  const canOpenParent = useHasPermission('sales.targets.view');
   if (!target) {
     return (
       <div className="flex min-w-0 flex-col gap-1.5">
@@ -1283,22 +1327,30 @@ function RecordIdentity({
         {target.name}
       </h2>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate">
-          {'For '}
-          {subjectHref ? (
-            <Link href={subjectHref} className="text-primary hover:underline">
-              {target.subject_label}
-            </Link>
-          ) : (
-            target.subject_label
-          )}
-        </span>
+        {/* A dealer's name is the Customer under Details (owner markup, 5 Nov 11:40); an agent or
+            team keeps its link here. */}
+        {target.subject_kind !== 'dealer' ? (
+          <span className="min-w-0 truncate">
+            {'For '}
+            {subjectHref ? (
+              <Link href={subjectHref} className="text-primary hover:underline">
+                {target.subject_label}
+              </Link>
+            ) : (
+              target.subject_label
+            )}
+          </span>
+        ) : null}
         {target.parent ? (
           <span className="min-w-0 truncate">
             {'Agent target, part of '}
-            <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
-              {target.parent.name}
-            </Link>
+            {canOpenParent ? (
+              <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
+                {target.parent.name}
+              </Link>
+            ) : (
+              target.parent.name
+            )}
           </span>
         ) : null}
         {isTeam ? (
@@ -1325,6 +1377,25 @@ function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
   return p.commission_earned + (p.bonus_earned ?? 0);
 }
 
+/** `+ 1.00%`, `+ RM 1.00/unit`, `+ RM 500.00` or, set per account, `+ A/C I RM 500.00, A/C III
+ * RM 100.00`: a tier's Additional; `''` when it has none. */
+export function additionalText(add: TierAdditional | null | undefined, metric: TargetMetric): string {
+  if (!add || !add.value) return '';
+  if (add.kind === 'amount' && add.accounts?.length) {
+    const own = add.accounts.filter((e) => e.rate).map((e) => `${e.label ?? ''} RM ${formatMoney(e.rate)}`.trim());
+    return `+ ${own.join(', ')}`;
+  }
+  if (add.kind === 'amount') return `+ RM ${formatMoney(add.value)}`;
+  return metric === 'quantity' ? `+ RM ${formatMoney(add.value)}/unit` : `+ ${formatMoney(add.value)}%`;
+}
+
+/** The reached tier's rate(s) and its Additional: `A/C I 6.00% + 1.00%`. */
+export function reachedRateText(p: TargetPeriod, metric: TargetMetric): string {
+  const rates = rateText(p.tier_rates, metric);
+  const add = additionalText(p.tier_additional, metric);
+  return rates && add ? `${rates} ${add}` : rates;
+}
+
 /** `6.00%`, or `A/C I 2.00%, A/C III 3.00%`; RM per unit on a quantity target. */
 export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMetric): string {
   return (entries ?? [])
@@ -1336,73 +1407,31 @@ export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMet
     .join(', ');
 }
 
-/** `300-A077 (A/C I)` for a table cell; the full name sits in the summary and the title. */
-function payoutShort(target: SalesTargetDetail): string {
-  const a = target.payout_account;
-  return a ? `${a.code} (${a.label})` : '-';
-}
-
-/** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */
-function payoutText(target: SalesTargetDetail): string {
-  const a = target.payout_account;
-  return a ? `${a.code} - ${a.name} (${a.label})` : '-';
-}
-
-/** Above the tabs: what the target has earned so far and where it is paid (owner, 4 Nov:
- * "this dealer is eligible for around 6k commission right? how do I see this 6k pay to which
- * acc?"). Earned to date counts ended periods only; the current period is shown apart. */
+/** Above the tabs: what the target has earned so far. Earned to date counts ended periods
+ * only; the current period is shown apart. A dealer target pays each account its own share,
+ * shown per account on the Accounts tab (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov). */
 function CommissionSummary({ target }: { target: SalesTargetDetail }) {
   const current = target.periods.find((p) => p.is_current);
-  const isDealer = target.subject_kind === 'dealer';
   return (
     <Card>
-      <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
+      <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
         <Field label="Commission earned to date (RM)">
           <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_to_date ?? 0)}</span>
-          <span className="block text-xs text-muted-foreground">Periods that have ended</span>
         </Field>
-        <Field label="Current period so far (RM)">
+        <Field label="Current period commission (RM)">
           {current ? (
             <>
               <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_current ?? 0)}</span>
               <span className="block text-xs text-muted-foreground">
-                {`${periodRange(current.period_start, current.period_end)}, ${formatPct(current.achieved_pct)} of target, not final`}
+                {periodRange(current.period_start, current.period_end)}
               </span>
             </>
           ) : (
             <span className="text-lg font-semibold">-</span>
           )}
         </Field>
-        {isDealer ? (
-          <Field label="Pays to">
-            <span className="block truncate font-medium" title={payoutText(target)}>
-              {payoutText(target)}
-            </span>
-            <span className="block text-xs text-muted-foreground">Payment is not tracked in the CRM</span>
-          </Field>
-        ) : null}
       </section>
     </Card>
-  );
-}
-
-/** The Periods table's Total row: every period's figures summed (a period not started yet
- * adds its target and nothing else). */
-function PeriodsTotal({ target, paysTo }: { target: SalesTargetDetail; paysTo: boolean }) {
-  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
-  const sum = (pick: (p: SalesTargetDetail['periods'][number]) => number | null | undefined) =>
-    target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
-  return (
-    <tfoot className="border-t bg-muted/40 font-medium">
-      <tr>
-        <td className="whitespace-nowrap px-3 py-2">Total</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.target_value))}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.achieved_value))}</td>
-        <td colSpan={target.threshold_unit === 'points' ? 4 : 3} className="px-3 py-2" aria-hidden="true" />
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(sum(paidIn))}</td>
-        {paysTo ? <td className="px-3 py-2" aria-hidden="true" /> : null}
-      </tr>
-    </tfoot>
   );
 }
 
@@ -1417,7 +1446,6 @@ function PeriodsTable({
   commission = false,
   ratio = false,
   provisional = false,
-  paysTo = false,
   footer = null,
   children,
 }: {
@@ -1425,8 +1453,6 @@ function PeriodsTable({
   commission?: boolean;
   ratio?: boolean;
   provisional?: boolean;
-  /** A dealer target: the account each period's commission pays to. */
-  paysTo?: boolean;
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -1447,7 +1473,6 @@ function PeriodsTable({
                 <th className="px-3 py-2 text-start font-medium">Tier reached</th>
                 <th className="px-3 py-2 text-end font-medium">Rate</th>
                 <th className="px-3 py-2 text-end font-medium">Commission (RM)</th>
-                {paysTo ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
               </>
             ) : null}
           </tr>
@@ -1859,23 +1884,19 @@ function accountColumns(
   return ids.map((id) => ({ id, label: byId.get(id) ?? (labels.get(id) ?? '').split(' - ')[0] ?? '' }));
 }
 
-/** A dealer target's Accounts tab: in read mode, each counted account's sales in every period
- * with the period's total, its commission and the account that commission pays to (owner Q5,
- * 4 Nov: commission is earned on all the accounts together and paid to one, so it sits on the
- * period's total, never split per selling account). In Edit, the accounts being picked. The
- * paid account may be one the target does not count (owner ruling 16 Oct). */
+/** A dealer target's Accounts tab: in read mode, each counted account's sales and its own
+ * commission in every period, then the period's total (lane TARGET-PER-ACCOUNT-PAYOUT, owner
+ * 8 Nov: each account is its own payee, no single "Pays to"). In Edit, the accounts being picked. */
 function DealerAccounts({
   target,
   draft,
   labels,
-  fetchCustomers,
-  set,
+  onOpenTiers,
 }: {
+  onOpenTiers: (p: TargetPeriod) => void;
   target: SalesTargetDetail | undefined;
   draft: Draft | null;
   labels: Map<string, string>;
-  fetchCustomers: (query: string) => Promise<{ value: string; label: string }[]>;
-  set: (patch: Partial<Draft>) => void;
 }) {
   const accounts: TargetAccount[] = draft
     ? draft.accountIds.map((id) => {
@@ -1886,7 +1907,6 @@ function DealerAccounts({
     : (target?.accounts ?? []);
   const today = todayMalaysiaYyyyMmDd();
   const periods = draft || !target ? [] : target.periods.filter((p) => p.period_start <= today);
-  const commission = target?.commission_method !== 'none';
   return (
     <>
       {accounts.length && draft ? (
@@ -1913,69 +1933,8 @@ function DealerAccounts({
           </table>
         </div>
       ) : accounts.length && target ? (
-        <div className="overflow-x-auto rounded-lg border">
-          <table aria-label="Counted accounts" className="w-full min-w-[48rem] text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-start font-medium">Period</th>
-                <th className="px-3 py-2 text-start font-medium">Code</th>
-                <th className="px-3 py-2 text-start font-medium">Customer</th>
-                <th className="px-3 py-2 text-start font-medium">Account</th>
-                <th className="px-3 py-2 text-end font-medium">
-                  {target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`}
-                </th>
-                {commission ? <th className="px-3 py-2 text-end font-medium">Commission (RM)</th> : null}
-                {commission ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
-              </tr>
-            </thead>
-            {periods.map((p) => {
-              const sales = new Map((p.accounts ?? []).map((a) => [a.customer_id, a.achieved_value]));
-              const paid = paidIn(p);
-              return (
-                <tbody key={p.id} className={`divide-y border-b ${p.is_current ? 'bg-primary/5' : ''}`}>
-                  {accounts.map((a, i) => (
-                    <tr key={a.customer_id}>
-                      <td className="whitespace-nowrap px-3 py-2">
-                        {i === 0 ? (
-                          <span className="inline-flex items-center gap-2">
-                            {periodRange(p.period_start, p.period_end)}
-                            {p.is_current ? (
-                              <Badge variant="primary" appearance="light" size="sm">
-                                Current
-                              </Badge>
-                            ) : null}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">{a.code}</td>
-                      <td className="max-w-[16rem] truncate px-3 py-2" title={a.name}>
-                        {a.name}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">{a.label}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                        {formatMoney(sales.get(a.customer_id) ?? 0)}
-                      </td>
-                      {commission ? <td colSpan={2} className="px-3 py-2" aria-hidden="true" /> : null}
-                    </tr>
-                  ))}
-                  <tr className="bg-muted/40 font-medium">
-                    <td colSpan={4} className="whitespace-nowrap px-3 py-2">
-                      {p.is_current ? 'Period total (so far)' : 'Period total'}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(p.achieved_value)}</td>
-                    {commission ? (
-                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(paid)}</td>
-                    ) : null}
-                    {commission ? (
-                      <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                        {paid ? payoutShort(target) : '-'}
-                      </td>
-                    ) : null}
-                  </tr>
-                </tbody>
-              );
-            })}
-          </table>
+        <div role="group" aria-label="Counted accounts">
+          <AccountsGrid target={target} accounts={accounts} periods={periods} onOpenTiers={onOpenTiers} />
         </div>
       ) : (
         <div className="flex w-full flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
@@ -1983,37 +1942,6 @@ function DealerAccounts({
           <span className="text-xs text-muted-foreground">Pick them under Details.</span>
         </div>
       )}
-      <div className="sm:w-96">
-        <Field label="Pays to" htmlFor={draft ? 'target-pays-to' : undefined}>
-          {draft ? (
-            <SearchableSelect
-              id="target-pays-to"
-              value={draft.payoutId}
-              onChange={(v) => set({ payoutId: v })}
-              fetchOptions={(query) => fetchCustomers(query)}
-              selectedOption={
-                draft.payoutId ? { value: draft.payoutId, label: labels.get(draft.payoutId) ?? '' } : undefined
-              }
-              placeholder="The first counted account"
-              clearable
-              wrapOptions
-            />
-          ) : target?.payout_account ? (
-            `${target.payout_account.code} - ${target.payout_account.name} (${target.payout_account.label})`
-          ) : (
-            '-'
-          )}
-        </Field>
-      </div>
-      {target?.replaced_by ? (
-        <div className="sm:w-96">
-          <Field label="Replaced by">
-            <Link href={`/sales/targets/${target.replaced_by.target_id}`} className="text-primary hover:underline">
-              {`${target.replaced_by.target_no} ${target.replaced_by.name}`}
-            </Link>
-          </Field>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -2041,6 +1969,8 @@ function CommissionTiers({
 }) {
   const rateUnit = metric === 'quantity' ? 'RM per unit' : '% of RM';
   const dealer = (draft?.kind ?? target?.subject_kind) === 'dealer';
+  // Held here, not in the grid: Edit swaps the grid for inputs, and the pick must survive it.
+  const [periodPick, setPeriodPick] = useState<string[]>([]);
   const periodLabel = (start: string) => {
     const p = periodStarts.find((x) => x.start === start);
     return p ? dateRange(p.start, p.end) : start ? shortDate(start) : '-';
@@ -2066,11 +1996,6 @@ function CommissionTiers({
     }
     const unit = target?.threshold_unit ?? 'pct';
     const perPeriod = !!target?.tiers_per_period;
-    const rateOf = (t: CommissionTier, accountId?: string) => {
-      if (!t.account_rates) return formatFigure(t.rate);
-      const r = t.account_rates.find((x) => x.customer_id === accountId);
-      return r ? formatFigure(r.rate) : '-';
-    };
     return (
       <>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
@@ -2079,47 +2004,17 @@ function CommissionTiers({
           <Field label="Round to">{ROUNDING_LABEL[target?.rounding ?? 'sen']}</Field>
           <Field label="Tiers">{perPeriod ? 'Own tiers per period' : 'Same every period'}</Field>
         </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <table aria-label="Commission tiers" className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                {perPeriod ? <th className="px-3 py-2 text-start font-medium">Period</th> : null}
-                <th className="px-3 py-2 text-start font-medium">{`From (${THRESHOLD_LABEL[unit]})`}</th>
-                {dealer ? (
-                  accounts.map((a) => (
-                    <th key={a.id} className="px-3 py-2 text-end font-medium">{`${a.label} rate`}</th>
-                  ))
-                ) : (
-                  <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
-                )}
-                <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {tiers.map((t, i) => (
-                <tr key={`${t.period_start ?? ''}-${i}`}>
-                  {perPeriod ? (
-                    <td className="whitespace-nowrap px-3 py-2">{periodLabel(t.period_start ?? '')}</td>
-                  ) : null}
-                  <td className="whitespace-nowrap px-3 py-2">
-                    {t.is_additional ? '+ Additional from ' : ''}
-                    {unit === 'pct' ? `${formatFigure(t.from_pct ?? null)}%` : formatFigure(t.threshold ?? null)}
-                  </td>
-                  {dealer ? (
-                    accounts.map((a) => (
-                      <td key={a.id} className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                        {rateOf(t, a.id)}
-                      </td>
-                    ))
-                  ) : (
-                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.rate)}</td>
-                  )}
-                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.bonus_amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {target ? (
+          <div role="group" aria-label="Commission tiers">
+            <TiersGrid
+              target={target}
+              rows={tierRows(target, tiers)}
+              accounts={accounts}
+              listingKey="sales.targets.view::tiers"
+              periodFilter={{ value: periodPick, onChange: setPeriodPick }}
+            />
+          </div>
+        ) : null}
       </>
     );
   }
@@ -2200,6 +2095,19 @@ function CommissionTiers({
     );
   }
   const fromLabel = draft.thresholdUnit === 'pct' ? 'From (%)' : `From (${THRESHOLD_LABEL[draft.thresholdUnit]})`;
+  // Several counted accounts: each account's own RM Additional, like its rate (owner 8 Nov).
+  const ownBonus = dealer && accounts.length > 1;
+  // Legacy "+ Additional" rows not yet folded onto their tier keep their Type column.
+  const legacy = draft.tiers.some((t) => t.additional);
+  // A combined target takes its RM Additional per account only (owner 8 Nov 23:59): the tier's
+  // own Additional is a % there.
+  const addKindOptions = [
+    { value: 'pct', label: draft.metric === 'quantity' ? 'RM/unit' : '%' },
+    // A legacy tier-level amount keeps its RM option so it shows what Save asks to clear.
+    ...(ownBonus && !draft.tiers.some((t) => t.addKind === 'amount' && t.addValue.trim() !== '')
+      ? []
+      : [{ value: 'amount', label: 'RM' }]),
+  ];
   const periodOptions = periodStarts.map((p) => ({ value: p.start, label: periodLabel(p.start) }));
   return (
     <>
@@ -2211,7 +2119,7 @@ function CommissionTiers({
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr>
               {draft.perPeriod ? <th className="px-3 py-2 text-start font-medium">Period</th> : null}
-              <th className="px-3 py-2 text-start font-medium">Type</th>
+              {legacy ? <th className="px-3 py-2 text-start font-medium">Type</th> : null}
               <th className="px-3 py-2 text-start font-medium">{fromLabel}</th>
               {dealer ? (
                 accounts.map((a) => (
@@ -2220,7 +2128,12 @@ function CommissionTiers({
               ) : (
                 <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
               )}
-              <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
+              {ownBonus
+                ? accounts.map((a) => (
+                    <th key={`b-${a.id}`} className="px-3 py-2 text-end font-medium">{`${a.label} additional (RM)`}</th>
+                  ))
+                : null}
+              <th className="px-3 py-2 text-end font-medium">Additional</th>
               <th className="w-10 px-3 py-2">
                 <span className="sr-only">Remove</span>
               </th>
@@ -2241,15 +2154,17 @@ function CommissionTiers({
                     />
                   </td>
                 ) : null}
-                <td className="px-3 py-1.5">
-                  <SearchableSelect
-                    value={t.additional ? 'additional' : 'main'}
-                    onChange={(v) => setTier(t.key, { additional: v === 'additional' })}
-                    options={TIER_TYPE_OPTIONS}
-                    triggerClassName="h-8 w-36"
-                    aria-label={`Tier ${i + 1} type`}
-                  />
-                </td>
+                {legacy ? (
+                  <td className="px-3 py-1.5">
+                    <SearchableSelect
+                      value={t.additional ? 'additional' : 'main'}
+                      onChange={(v) => setTier(t.key, { additional: v === 'additional' })}
+                      options={TIER_TYPE_OPTIONS}
+                      triggerClassName="h-8 w-36"
+                      aria-label={`Tier ${i + 1} type`}
+                    />
+                  </td>
+                ) : null}
                 <td className="px-3 py-1.5">
                   <NumberInput
                     min={0}
@@ -2289,15 +2204,44 @@ function CommissionTiers({
                     />
                   </td>
                 )}
+                {ownBonus
+                  ? accounts.map((a) => (
+                      <td key={`b-${a.id}`} className="px-3 py-1.5">
+                        {t.additional ? null : (
+                          <NumberInput
+                            min={0}
+                            step="any"
+                            aria-label={`Tier ${i + 1} ${a.label} additional (RM)`}
+                            value={t.accountBonuses[a.id] ?? ''}
+                            onChange={(e) =>
+                              setTier(t.key, { accountBonuses: { ...t.accountBonuses, [a.id]: e.target.value } })
+                            }
+                            className="ms-auto h-8 w-24 text-end"
+                          />
+                        )}
+                      </td>
+                    ))
+                  : null}
                 <td className="px-3 py-1.5">
-                  <NumberInput
-                    min={0}
-                    step="any"
-                    aria-label={`Tier ${i + 1} bonus (RM)`}
-                    value={t.bonus}
-                    onChange={(e) => setTier(t.key, { bonus: e.target.value })}
-                    className="ms-auto h-8 w-28 text-end"
-                  />
+                  {t.additional ? null : (
+                    <div className="flex items-center justify-end gap-1.5">
+                      <NumberInput
+                        min={0}
+                        step="any"
+                        aria-label={`Tier ${i + 1} additional`}
+                        value={t.addValue}
+                        onChange={(e) => setTier(t.key, { addValue: e.target.value })}
+                        className="h-8 w-20 text-end"
+                      />
+                      <SearchableSelect
+                        value={t.addKind}
+                        onChange={(v) => setTier(t.key, { addKind: (v as AdditionalKind) || 'pct' })}
+                        options={addKindOptions}
+                        triggerClassName="h-8 w-24"
+                        aria-label={`Tier ${i + 1} additional in`}
+                      />
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-1.5 text-end">
                   <Button
@@ -2318,5 +2262,595 @@ function CommissionTiers({
       {problem ? <p className="text-sm text-destructive">{problem}</p> : null}
       <div>{addButton}</div>
     </>
+  );
+}
+
+// ----------------------------------------------------------------------------------------
+// The read-mode tables on the standard grid (owner, 5 Nov 11:30): Periods, Accounts and the
+// Commission tiers are `PanelDataGrid` with the Columns chooser, as every other detail tab;
+// a period's Tier reached / Rate opens that period's tiers in a lightbox.
+// ----------------------------------------------------------------------------------------
+
+type TargetPeriod = SalesTargetDetail['periods'][number];
+
+/** The Columns chooser, as the other detail grids mount it (`PODeliveriesPanel`). */
+function ColumnsButton<T>({ table }: { table: Table<T> }) {
+  return (
+    <DataGridColumnVisibility
+      table={table}
+      trigger={
+        <Button variant="outline" size="sm" className="gap-1.5">
+          <Columns3 className="size-4" aria-hidden />
+          Columns
+        </Button>
+      }
+    />
+  );
+}
+
+/** A tier's Additional as the engine reads it: its % first, else its RM (Bonus). */
+function tierAdditional(t: CommissionTier, labelOf: (customerId: string) => string): TierAdditional | null {
+  if (t.additional_rate) return { kind: 'pct', value: t.additional_rate };
+  const own = (t.account_rates ?? []).filter((r) => r.bonus_amount);
+  if (own.length) {
+    return {
+      kind: 'amount',
+      value: own.reduce((sum, r) => sum + (r.bonus_amount ?? 0), 0),
+      accounts: own.map((r) => ({ label: labelOf(r.customer_id), rate: r.bonus_amount ?? null })),
+    };
+  }
+  if (t.bonus_amount) return { kind: 'amount', value: t.bonus_amount };
+  return null;
+}
+
+/** The tier table's Additional cell; a legacy tier-level RM amount on a combined target pays
+ * nothing (owner 8 Nov 23:59), so it says so. */
+function tierAdditionalText(t: CommissionTier, target: SalesTargetDetail): string {
+  const labelOf = (id: string) => target.accounts?.find((a) => a.customer_id === id)?.label ?? '';
+  const add = tierAdditional(t, labelOf);
+  const combined = target.subject_kind === 'dealer' && (target.accounts ?? []).length > 1;
+  if (combined && add?.kind === 'amount' && !add.accounts?.length) {
+    return `RM ${formatMoney(add.value)} not paid: set it per account`;
+  }
+  return additionalText(add, target.metric);
+}
+
+/** A period's tiers in the engine's order: main tiers by threshold (so position n is "Tier n"),
+ * then any legacy "+ Additional" rows. */
+function periodTiers(target: SalesTargetDetail, periodStart: string): CommissionTier[] {
+  const from = (t: CommissionTier) => (t.from_pct ?? t.threshold ?? 0);
+  const mine = target.tiers.filter((t) => !target.tiers_per_period || t.period_start === periodStart);
+  return [
+    ...mine.filter((t) => !t.is_additional).sort((a, b) => from(a) - from(b)),
+    ...mine.filter((t) => t.is_additional).sort((a, b) => from(a) - from(b)),
+  ];
+}
+
+interface TierRow {
+  key: string;
+  tier: CommissionTier;
+  /** 1-based among its period's main tiers; null on a legacy "+ Additional" row. */
+  number: number | null;
+}
+
+function tierRows(target: SalesTargetDetail, tiers: CommissionTier[]): TierRow[] {
+  const counter = new Map<string, number>();
+  return tiers.map((tier, i) => {
+    const period = target.tiers_per_period ? (tier.period_start ?? '') : '';
+    let number: number | null = null;
+    if (!tier.is_additional) {
+      number = (counter.get(period) ?? 0) + 1;
+      counter.set(period, number);
+    }
+    return { key: `${period}-${i}`, tier, number };
+  });
+}
+
+/** The tiers as a grid: the Commission tab's read mode, and the lightbox (one period, the
+ * reached tier highlighted). */
+function TiersGrid({
+  target,
+  rows,
+  accounts,
+  listingKey,
+  reached = null,
+  periodFilter,
+}: {
+  target: SalesTargetDetail;
+  rows: TierRow[];
+  accounts: { id: string; label: string }[];
+  listingKey: string | null;
+  /** The lightbox: the main tier number to highlight. */
+  reached?: number | null;
+  /** The Commission tab's Period filter, its pick owned by the caller. */
+  periodFilter?: { value: string[]; onChange: (v: string[]) => void };
+}) {
+  const unit = target.threshold_unit ?? 'pct';
+  const perPeriod = !!target.tiers_per_period;
+  const dealer = target.subject_kind === 'dealer';
+  const legacy = rows.some((r) => r.tier.is_additional);
+  const rateUnit = target.metric === 'quantity' ? 'RM per unit' : '% of RM';
+  const periods = periodFilter?.value ?? [];
+  const periodOptions = target.periods.map((p) => ({ value: p.period_start, label: periodRange(p.period_start, p.period_end) }));
+  const labelOf = (start: string | null | undefined) =>
+    periodOptions.find((o) => o.value === start)?.label ?? (start ? shortDate(start) : '-');
+  const shown = periods.length ? rows.filter((r) => periods.includes(r.tier.period_start ?? '')) : rows;
+  const columns = useMemo<ColumnDef<TierRow>[]>(() => {
+    const out: ColumnDef<TierRow>[] = [];
+    if (perPeriod) {
+      out.push({
+        id: 'period',
+        accessorFn: (r) => r.tier.period_start ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => <span className="truncate">{labelOf(row.original.tier.period_start)}</span>,
+        size: 190,
+        meta: { headerTitle: 'Period' },
+      });
+    }
+    out.push({
+      id: 'tier',
+      accessorFn: (r) => r.number ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title={legacy ? 'Type' : 'Tier'} column={column} />,
+      cell: ({ row }) => (row.original.number ? `Tier ${row.original.number}` : '+ Additional'),
+      size: 110,
+      meta: { headerTitle: legacy ? 'Type' : 'Tier' },
+    });
+    out.push({
+      id: 'from',
+      accessorFn: (r) => r.tier.from_pct ?? r.tier.threshold ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title={`From (${THRESHOLD_LABEL[unit]})`} column={column} />,
+      cell: ({ row }) => {
+        const t = row.original.tier;
+        return unit === 'pct' ? `${formatFigure(t.from_pct ?? null)}%` : formatFigure(t.threshold ?? null);
+      },
+      size: 130,
+      meta: { headerTitle: `From (${THRESHOLD_LABEL[unit]})`, cellClassName: 'tabular-nums' },
+    });
+    if (dealer) {
+      for (const a of accounts) {
+        out.push({
+          // By label, so a hidden "A/C I rate" stays hidden on the next target too (by id when
+          // two accounts share a label).
+          id: accounts.filter((x) => x.label === a.label).length > 1 ? `rate-${a.id}` : `rate-${a.label}`,
+          accessorFn: (r) => r.tier.account_rates?.find((x) => x.customer_id === a.id)?.rate ?? r.tier.rate ?? null,
+          header: ({ column }) => <DataGridColumnHeader title={`${a.label} rate`} column={column} />,
+          cell: ({ row }) => {
+            const t = row.original.tier;
+            if (!t.account_rates) return formatFigure(t.rate);
+            const r = t.account_rates.find((x) => x.customer_id === a.id);
+            return r ? formatFigure(r.rate) : '-';
+          },
+          size: 120,
+          meta: { headerTitle: `${a.label} rate`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        });
+      }
+    } else {
+      out.push({
+        id: 'rate',
+        accessorFn: (r) => r.tier.rate ?? null,
+        header: ({ column }) => <DataGridColumnHeader title={`Rate (${rateUnit})`} column={column} />,
+        cell: ({ row }) => formatFigure(row.original.tier.rate),
+        size: 130,
+        meta: { headerTitle: `Rate (${rateUnit})`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    out.push({
+      id: 'additional',
+      accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
+      header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
+      cell: ({ row }) => {
+        const text = tierAdditionalText(row.original.tier, target);
+        return text ? (
+          <span className="block truncate" title={text}>
+            {text}
+          </span>
+        ) : (
+          '-'
+        );
+      },
+      size: 130,
+      meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, accounts, legacy, perPeriod, dealer, unit, rateUnit]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          {periodFilter && perPeriod ? (
+            <div className="w-full sm:w-72">
+              <span id="target-tier-period-filter-label" className="sr-only">
+                Period
+              </span>
+              <SearchableMultiSelect
+                id="target-tier-period-filter"
+                value={periods}
+                onChange={periodFilter.onChange}
+                options={periodOptions}
+                placeholder="Every period"
+                clearable
+              />
+            </div>
+          ) : null}
+          <div className="sm:ms-auto">
+            <ColumnsButton table={table} />
+          </div>
+        </div>
+      )}
+      columns={columns}
+      rows={shown}
+      getRowId={(r) => r.key}
+      listingKey={listingKey}
+      emptyTitle="No tiers in this period"
+      paginate={false}
+      rowClassName={(r) => (reached !== null && r.number === reached ? 'bg-primary/10 font-medium' : undefined)}
+      rowAttributes={(r) => ({ 'data-reached': reached !== null && r.number === reached ? 'true' : undefined })}
+    />
+  );
+}
+
+/** A period's tiers in a lightbox, the reached tier highlighted (owner, 5 Nov 11:30). */
+function TierLightbox({
+  target,
+  period,
+  accounts,
+  onClose,
+}: {
+  target: SalesTargetDetail;
+  period: TargetPeriod | null;
+  accounts: { id: string; label: string }[];
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!period} onOpenChange={(open) => (open ? null : onClose())}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{period ? `Tiers, ${periodRange(period.period_start, period.period_end)}` : 'Tiers'}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {period ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm">
+                {period.tier_reached
+                  ? `Tier ${period.tier_reached} reached: ${reachedRateText(period, target.metric)}`
+                  : 'No tier reached'}
+              </p>
+              <TiersGrid
+                target={target}
+                rows={tierRows(target, periodTiers(target, period.period_start))}
+                accounts={accounts}
+                listingKey={null}
+                reached={period.tier_reached ?? null}
+              />
+            </div>
+          ) : null}
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A cell that opens the period's tiers. */
+function TierLink({ label, onOpen, title }: { label: string; onOpen: () => void; title?: string }) {
+  return (
+    <button
+      type="button"
+      className="max-w-full truncate text-primary hover:underline"
+      title={title ?? label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** The Periods tab in read mode. */
+function PeriodsGrid({
+  target,
+  today,
+  onOpenTiers,
+}: {
+  target: SalesTargetDetail;
+  today: string;
+  onOpenTiers: (p: TargetPeriod) => void;
+}) {
+  const isDealer = target.subject_kind === 'dealer';
+  const commission = target.commission_method !== 'none';
+  const points = target.threshold_unit === 'points';
+  const provisional = isDealer && target.basis !== 'invoiced';
+  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
+  const unit = unitOf(target.metric);
+  const sum = (pick: (p: TargetPeriod) => number | null | undefined) =>
+    target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
+  const columns = useMemo<ColumnDef<TargetPeriod>[]>(() => {
+    const future = (p: TargetPeriod) => p.period_start > today;
+    const out: ColumnDef<TargetPeriod>[] = [
+      {
+        id: 'period',
+        accessorFn: (p) => p.period_start,
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-2">
+            {periodRange(row.original.period_start, row.original.period_end)}
+            {row.original.is_current ? (
+              <Badge variant="primary" appearance="light" size="sm">
+                Current
+              </Badge>
+            ) : null}
+          </span>
+        ),
+        footer: commission ? () => 'Total' : undefined,
+        size: 240,
+        meta: { headerTitle: 'Period' },
+      },
+      {
+        id: 'target',
+        accessorFn: (p) => p.target_value,
+        header: ({ column }) => <DataGridColumnHeader title={`Target (${unit})`} column={column} />,
+        cell: ({ row }) => figure(row.original.target_value),
+        footer: commission ? () => figure(sum((p) => p.target_value)) : undefined,
+        size: 130,
+        meta: { headerTitle: `Target (${unit})`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      },
+      {
+        id: 'achieved',
+        accessorFn: (p) => p.achieved_value,
+        header: ({ column }) => (
+          <DataGridColumnHeader title={provisional ? `Achieved (${PROVISIONAL})` : 'Achieved'} column={column} />
+        ),
+        cell: ({ row }) => (future(row.original) ? '-' : figure(row.original.achieved_value)),
+        footer: commission ? () => figure(sum((p) => p.achieved_value)) : undefined,
+        size: 170,
+        meta: {
+          headerTitle: provisional ? `Achieved (${PROVISIONAL})` : 'Achieved',
+          cellClassName: 'text-end tabular-nums',
+          headerClassName: 'text-end',
+        },
+      },
+      {
+        id: 'pct',
+        accessorFn: (p) => p.achieved_pct,
+        header: ({ column }) => <DataGridColumnHeader title="%" column={column} />,
+        cell: ({ row }) => (future(row.original) ? '-' : formatPct(row.original.achieved_pct)),
+        size: 80,
+        meta: { headerTitle: '%', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      },
+    ];
+    if (points) {
+      out.push({
+        id: 'ratio',
+        accessorFn: (p) => p.point_ratio ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="RM per point" column={column} />,
+        cell: ({ row }) => (row.original.ratio_missing ? 'No ratio' : formatFigure(row.original.point_ratio ?? null)),
+        size: 120,
+        meta: { headerTitle: 'RM per point', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    if (commission) {
+      out.push(
+        {
+          id: 'tier_reached',
+          accessorFn: (p) => p.tier_reached ?? 0,
+          header: ({ column }) => <DataGridColumnHeader title="Tier reached" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            if (future(p)) return '-';
+            return (
+              <TierLink
+                label={p.tier_reached ? `Tier ${p.tier_reached}` : 'None'}
+                title={`Tiers, ${periodRange(p.period_start, p.period_end)}`}
+                onOpen={() => onOpenTiers(p)}
+              />
+            );
+          },
+          size: 120,
+          meta: { headerTitle: 'Tier reached' },
+        },
+        {
+          id: 'rate',
+          accessorFn: (p) => reachedRateText(p, target.metric),
+          header: ({ column }) => <DataGridColumnHeader title="Rate" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            const text = reachedRateText(p, target.metric);
+            if (future(p) || !text) return '-';
+            return <TierLink label={text} onOpen={() => onOpenTiers(p)} />;
+          },
+          size: 180,
+          meta: { headerTitle: 'Rate', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        },
+        {
+          id: 'commission',
+          accessorFn: (p) => paidIn(p),
+          header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            const paid = paidIn(p);
+            return <span>{future(p) || paid === null ? '-' : formatMoney(paid)}</span>;
+          },
+          footer: () => formatMoney(sum(paidIn)),
+          size: 150,
+          meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        },
+      );
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, today, onOpenTiers]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full justify-end">
+          <ColumnsButton table={table} />
+        </div>
+      )}
+      columns={columns}
+      rows={target.periods}
+      getRowId={(p) => p.id}
+      listingKey="sales.targets.view::periods"
+      emptyTitle="No periods yet"
+      paginate={false}
+      rowClassName={(p) => (p.is_current ? 'bg-primary/5' : undefined)}
+    />
+  );
+}
+
+interface AccountRow {
+  key: string;
+  period: TargetPeriod;
+  /** Null on the period's total row. */
+  account: TargetAccount | null;
+  first: boolean;
+}
+
+/** The Accounts tab in read mode: each counted account's sales and its own commission per
+ * period (each account is its own payee, owner 8 Nov), then the period's total. On a points
+ * target, Points beside Sales (RM), at the period's own ratio (the one the tiers are read with). */
+function AccountsGrid({
+  target,
+  accounts,
+  periods,
+  onOpenTiers,
+}: {
+  target: SalesTargetDetail;
+  accounts: TargetAccount[];
+  periods: TargetPeriod[];
+  onOpenTiers: (p: TargetPeriod) => void;
+}) {
+  const commission = target.commission_method !== 'none';
+  const points = target.threshold_unit === 'points';
+  const rows = useMemo<AccountRow[]>(
+    () =>
+      periods.flatMap((p) => [
+        ...accounts.map((a, i) => ({ key: `${p.id}-${a.customer_id}`, period: p, account: a, first: i === 0 })),
+        { key: `${p.id}-total`, period: p, account: null, first: false },
+      ]),
+    [periods, accounts],
+  );
+  const columns = useMemo<ColumnDef<AccountRow>[]>(() => {
+    const own = (r: AccountRow) => (r.period.accounts ?? []).find((a) => a.customer_id === r.account?.customer_id);
+    const sales = (r: AccountRow) => (r.account ? (own(r)?.achieved_value ?? 0) : (r.period.achieved_value ?? 0));
+    const pointsOf = (r: AccountRow) => (r.account ? own(r)?.achieved_points : r.period.achieved_points) ?? null;
+    // Each account's own commission + bonus; the total row is the period's.
+    const paid = (r: AccountRow) => (r.account ? (own(r)?.commission_earned ?? null) : paidIn(r.period));
+    const out: ColumnDef<AccountRow>[] = [
+      {
+        id: 'period',
+        accessorFn: (r) => r.period.period_start,
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (!r.account) return r.period.is_current ? 'Period total (so far)' : 'Period total';
+          if (!r.first) return null;
+          const label = periodRange(r.period.period_start, r.period.period_end);
+          return (
+            <span className="inline-flex items-center gap-2">
+              {commission ? <TierLink label={label} title={`Tiers, ${label}`} onOpen={() => onOpenTiers(r.period)} /> : label}
+              {r.period.is_current ? (
+                <Badge variant="primary" appearance="light" size="sm">
+                  Current
+                </Badge>
+              ) : null}
+            </span>
+          );
+        },
+        size: 200,
+        meta: { headerTitle: 'Period' },
+      },
+      {
+        id: 'code',
+        accessorFn: (r) => r.account?.code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        cell: ({ row }) => row.original.account?.code ?? '',
+        size: 120,
+        meta: { headerTitle: 'Code' },
+      },
+      {
+        id: 'customer',
+        accessorFn: (r) => r.account?.name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.account?.name}>
+            {row.original.account?.name ?? ''}
+          </span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Customer' },
+      },
+      {
+        id: 'account',
+        accessorFn: (r) => r.account?.label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Account" column={column} />,
+        cell: ({ row }) => row.original.account?.label ?? '',
+        size: 100,
+        meta: { headerTitle: 'Account' },
+      },
+      {
+        id: 'sales',
+        accessorFn: sales,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title={target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => formatMoney(sales(row.original)),
+        size: 170,
+        meta: {
+          headerTitle: target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`,
+          cellClassName: 'text-end tabular-nums',
+          headerClassName: 'text-end',
+        },
+      },
+    ];
+    if (points) {
+      out.push({
+        id: 'points',
+        accessorFn: pointsOf,
+        header: ({ column }) => <DataGridColumnHeader title="Points" column={column} />,
+        cell: ({ row }) => {
+          const value = pointsOf(row.original);
+          return row.original.period.ratio_missing || value === null ? 'No ratio' : formatFigure(value);
+        },
+        size: 130,
+        meta: { headerTitle: 'Points', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    if (commission) {
+      out.push({
+        id: 'commission',
+        accessorFn: paid,
+        header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
+        cell: ({ row }) => {
+          const value = paid(row.original);
+          return value === null ? '-' : formatMoney(value);
+        },
+        size: 180,
+        meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    return out;
+  }, [target, commission, points, onOpenTiers]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full justify-end">
+          <ColumnsButton table={table} />
+        </div>
+      )}
+      columns={columns}
+      rows={rows}
+      getRowId={(r) => r.key}
+      listingKey="sales.targets.view::accounts"
+      emptyTitle="No periods yet"
+      paginate={false}
+      rowClassName={(r) =>
+        r.account ? (r.period.is_current ? 'bg-primary/5' : undefined) : 'bg-muted/40 font-medium'
+      }
+    />
   );
 }

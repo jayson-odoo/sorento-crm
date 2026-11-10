@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dealer access mock v3</title>
+<!--
+  DEALER-ACCESS-SCREEN mock v3 (owner 9 Nov 23:25: "reuse as many component as possible, keep the solution simple").
+  v2 minus everything not needed to grant, change or remove: no WhatsApp column or filter, no Added column, no Account
+  filter, no separate view state, one empty state. Static, no script. Case: the masked dev case of
+  CARD-dealer-access-portal-09nov.md section 0 (dealer CHO***, Sorento 300-N034..N036 of salesperson WT***, the viewer;
+  Mocha 300-N026..N043 of JIM***). People "Person A..G", agreed fake phones (scripts/pii_guard.py).
+-->
+<style>
+  :root { --bg:#fafafa; --card:#fff; --fg:#09090b; --muted:#71717a; --mutedbg:#f4f4f5; --line:#ececee; --input:#e4e4e7;
+          --primary:#3b82f6; --primaryfg:#fff; --primarysoft:#eff6ff; --primarytext:#1d4ed8;
+          --ok:#166534; --okbg:#dcfce7; --warn:#a16207; --warnbg:#fef9c3; --err:#b91c1c; --errbg:#fef2f2; --destr:#dc2626; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+          --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --mutedbg:#1f1f23; --line:#27272a; --input:#3f3f46;
+          --primarysoft:#172554; --primarytext:#bfdbfe; --ok:#86efac; --okbg:#052e16; --warn:#fde047; --warnbg:#2a2306;
+          --err:#fca5a5; --errbg:#2a1215; } }
+  :root[data-theme="dark"] { --bg:#09090b; --card:#111113; --fg:#fafafa; --muted:#a1a1aa; --mutedbg:#1f1f23; --line:#27272a;
+          --input:#3f3f46; --primarysoft:#172554; --primarytext:#bfdbfe; --ok:#86efac; --okbg:#052e16; --warn:#fde047;
+          --warnbg:#2a2306; --err:#fca5a5; --errbg:#2a1215; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 Inter, system-ui, sans-serif; padding:24px 16px; }
+  .wrap { max-width:1280px; margin:0 auto; display:grid; gap:28px; }
+  section { min-width:0; }
+  .state { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+  .n { display:inline-block; font-size:10px; color:var(--muted); border:1px dashed var(--input); border-radius:4px;
+       padding:0 3px; margin-left:4px; vertical-align:middle; font-weight:400; }
+  .page { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .crumb { color:var(--muted); font-size:12px; margin-bottom:2px; }
+  h1 { font-size:18px; margin:0 0 14px; font-weight:600; }
+  .search { width:100%; height:48px; border:1px solid var(--input); border-radius:6px; padding:0 14px 0 38px; font:inherit;
+            font-size:15px; background:var(--card) no-repeat 12px center; color:var(--fg); }
+  .bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:12px 0; }
+  .bar .left { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .btn { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 12px; border-radius:6px; font:inherit;
+         border:1px solid var(--input); background:var(--card); color:var(--fg); cursor:pointer; white-space:nowrap; }
+  .btn.sm { height:28px; padding:0 10px; font-size:12px; }
+  .btn.primary { background:var(--primary); border-color:var(--primary); color:var(--primaryfg); }
+  .btn.ghost { border-color:transparent; background:transparent; color:var(--muted); }
+  .btn.icon { width:28px; padding:0; justify-content:center; }
+  .count { background:var(--mutedbg); color:var(--fg); border-radius:999px; padding:0 6px; font-size:11px; }
+  .chip { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border-radius:999px;
+          background:var(--primarysoft); color:var(--primarytext); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; table-layout:fixed; width:100%; min-width:1000px; }
+  th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden;
+           text-overflow:ellipsis; vertical-align:middle; }
+  th { font-size:12px; color:var(--muted); font-weight:500; background:var(--card); }
+  tr:last-child td { border-bottom:0; }
+  .pill { display:inline-flex; align-items:center; height:20px; padding:0 6px; border-radius:999px; font-size:11px;
+          background:var(--mutedbg); color:var(--muted); margin-right:3px; }
+  .b { display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:999px; font-size:12px; }
+  .b-primary { background:var(--primarysoft); color:var(--primarytext); }
+  .b-secondary { background:var(--mutedbg); color:var(--muted); }
+  .b-success { background:var(--okbg); color:var(--ok); }
+  .b-warning { background:var(--warnbg); color:var(--warn); }
+  .muted { color:var(--muted); font-size:12px; }
+  .dim td { opacity:.45; }
+  .countdown { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:6px; background:var(--card);
+               padding:4px 6px 4px 10px; font-size:12px; position:relative; overflow:hidden; }
+  .countdown .barline { position:absolute; left:0; bottom:0; height:3px; width:60%; background:var(--destr); }
+  .pop { width:320px; max-width:100%; padding:12px; display:grid; gap:10px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .field { display:grid; gap:6px; }
+  .field label, .lbl { font-size:12px; font-weight:500; }
+  .select { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:32px; border:1px solid var(--input);
+            border-radius:6px; padding:3px 8px; background:var(--card); color:var(--fg); font-size:12px; flex-wrap:wrap; }
+  .select .ph { color:var(--muted); }
+  .x { color:var(--muted); font-size:12px; }
+  .menu { width:240px; padding:4px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .menu div { padding:6px 8px; border-radius:4px; font-size:13px; }
+  .menu .hd { color:var(--muted); font-size:11px; padding-top:8px; }
+  .menu .sep { border-top:1px solid var(--line); padding:0; margin:4px 0; }
+  .menu .red { color:var(--destr); }
+  .modal { max-width:640px; margin:0 auto; box-shadow:0 12px 40px rgba(0,0,0,.12); }
+  .modal header { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .modal header h2 { font-size:15px; margin:0; font-weight:600; }
+  .modal .body { padding:16px; display:grid; gap:14px; background:var(--bg); max-height:none; }
+  .inner { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; display:grid; gap:12px; }
+  .inner-h { display:flex; justify-content:space-between; align-items:center; }
+  .inner-h b { font-size:13px; }
+  .person { display:grid; grid-template-columns: 1.1fr 1.3fr 1fr 28px; gap:8px; align-items:start; padding-top:12px;
+            border-top:1px solid var(--line); }
+  .person:first-of-type { border-top:0; padding-top:0; }
+  .input { height:32px; border:1px solid var(--input); border-radius:6px; padding:0 8px; background:var(--card); color:var(--fg);
+           font:inherit; font-size:12px; width:100%; min-width:0; }
+  .phone { display:flex; gap:0; }
+  .phone .cc { flex:0 0 74px; border-radius:6px 0 0 6px; border-right:0; display:flex; align-items:center; justify-content:center; }
+  .phone .input:last-child { border-radius:0 6px 6px 0; }
+  .alert { grid-column:1 / -1; border-radius:6px; padding:6px 10px; font-size:12px; }
+  .alert.err { background:var(--errbg); color:var(--err); }
+  .alert.info { background:var(--primarysoft); color:var(--primarytext); }
+  .err-in { border-color:var(--destr); }
+  .modal footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--line); background:var(--card); border-radius:0 0 8px 8px; }
+  .meta { display:flex; flex-wrap:wrap; gap:16px; font-size:12px; color:var(--muted); }
+  .meta b { color:var(--fg); font-weight:500; }
+  .ro { font-size:13px; padding:6px 0; }
+  .empty { text-align:center; padding:32px 16px; color:var(--muted); }
+  .empty b { display:block; color:var(--fg); font-size:14px; margin-bottom:4px; }
+  .phonebox { width:100%; max-width:375px; border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--bg); }
+  .cardlist { display:grid; gap:8px; }
+  .pcard { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; display:grid; gap:4px; }
+  .pcard .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .map { width:100%; min-width:760px; }
+  .map td, .map th { white-space:normal; }
+  code { font-size:11.5px; overflow-wrap:anywhere; }
+  .grid2 { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:20px; }
+  @media (max-width: 760px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .person { grid-template-columns: 1fr; }
+    .person .btn.icon { justify-self:end; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="muted" style="margin:0">Dealer access, mock v3. Viewer: salesperson WT***. Rows = people linked to MY customers
+(me -&gt; my sales agent -&gt; customers whose sales agent that is -&gt; contacts linked to those customers). Level = the
+contact's owner tag; Employee = no tag.</p>
+
+<section>
+  <p class="state">State 1: the list (sidebar MY WORK &gt; Dealer access)</p>
+  <div class="page">
+    <div class="crumb">My work / Dealer access</div>
+    <h1>Dealer access <span class="n">1</span></h1>
+    <input class="search" placeholder="Search person, phone or account code"><span class="n">2</span>
+    <div class="bar">
+      <div class="left">
+        <button class="btn sm">&#9783; Filter <span class="count">1</span></button><span class="n">3</span>
+        <span class="chip">Company: Sorento &#x2715;</span>
+        <button class="btn sm ghost">Clear all</button>
+      </div>
+      <button class="btn sm primary">+ Add people</button>
+    </div>
+    <div class="card scroll"><span class="n" style="margin:6px">4</span>
+      <table style="min-width:760px">
+        <colgroup><col style="width:170px"><col style="width:150px"><col style="width:100px"><col style="width:260px">
+          <col style="width:200px"><col style="width:52px"></colgroup>
+        <thead><tr><th>Person</th><th>Phone</th><th>Company</th><th>My accounts</th><th>Access <span class="n">5</span></th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Person A</td><td>+60 12-000 0001</td><td>Sorento</td>
+            <td title="300-N034, 300-N035, 300-N036"><span class="pill">300-N034</span><span class="pill">300-N035</span><span class="pill">+1</span></td>
+            <td><span class="pill" style="background:var(--primarysoft);color:var(--primarytext)">Sorento Business Owner</span></td>
+            <td><button class="btn icon ghost">&#8943;</button><span class="n">6</span></td></tr>
+          <tr><td>Person B</td><td>+60 16-000 0002</td><td>Sorento</td>
+            <td><span class="pill">300-N034</span></td><td><span class="muted">Employee</span></td>
+            <td><button class="btn icon ghost">&#8943;</button></td></tr>
+          <tr><td>Person C</td><td>+60 17-000 0003</td><td>Sorento</td>
+            <td><span class="pill">300-N036</span></td>
+            <td title="Employee. Also has access through another account"><span class="muted">Employee &middot; also another account</span></td>
+            <td><button class="btn icon ghost">&#8943;</button></td></tr>
+          <tr class="dim"><td>Person D</td><td>+60 19-000 0004</td><td>Sorento</td>
+            <td><span class="pill">300-N035</span></td><td><span class="muted">Employee</span></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <div class="countdown" style="width:280px">Unlinking Person D from 300-N035 in 4s <button class="btn sm ghost">Cancel</button>
+        <div class="barline"></div></div><span class="n">7</span>
+    </div>
+    <p class="muted" style="margin:8px 0 0">One row per person and company. Only my own accounts are shown; Person C's other dealer is
+      never named. Row click opens state 3. Row D: unlink pending (5 s, Cancel).</p>
+  </div>
+</section>
+
+<section class="grid2">
+  <div>
+    <p class="state">State 2a: Filter popover</p>
+    <div class="card pop">
+      <div class="field"><label>Company</label>
+        <div class="select"><span class="chip">Sorento &#x2715;</span><span class="x">&#9662;</span></div></div>
+      <div class="field"><label>Access</label>
+        <div class="select"><span class="ph">Any access</span><span class="x">&#9662;</span></div></div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn sm ghost">Clear all</button></div>
+    </div>
+    <p class="muted">Company: my companies only. Access: Business Owner / Employee.</p>
+  </div>
+  <div>
+    <p class="state">State 2b: row menu (Person A)</p>
+    <div class="card menu">
+      <div>Edit</div>
+      <div class="sep"></div>
+      <div class="hd">Unlink from</div>
+      <div class="red">300-N034 CHO*** (A/C I)</div>
+      <div class="red">300-N035 CHO*** (A/C II)</div>
+      <div class="red">300-N036 CHO*** (A/C III)</div>
+    </div>
+    <p class="muted">Unlinking the person's last link turns AI replies off in the same change.</p>
+  </div>
+</section>
+
+<section class="grid2">
+  <div>
+    <p class="state">State 3a: Add people (modal, portal form)</p>
+    <div class="card modal" style="max-width:none">
+      <header><h2>Add people <span class="n">8</span></h2><button class="btn icon ghost">&#x2715;</button></header>
+      <div class="body">
+        <div class="inner">
+          <div class="field"><label>Company</label>
+            <div class="select"><span>Sorento</span><span class="x">&#9662;</span></div></div>
+          <div class="field"><label>My accounts</label>
+            <div class="select"><span><span class="chip">300-N034 CHO*** (A/C I) &#x2715;</span> <span class="chip">300-N035 CHO*** (A/C II) &#x2715;</span></span><span class="x">&#9662;</span></div></div>
+        </div>
+        <div class="inner">
+          <div class="inner-h"><b>People</b><button class="btn sm">+ Add person</button></div>
+          <div class="person">
+            <input class="input" value="Person E">
+            <div class="phone"><span class="input cc">MY +60</span><input class="input" value="12-000 0005"></div>
+            <div class="select"><span>Business Owner</span><span class="x">&#9662;</span></div>
+            <button class="btn icon ghost">&#128465;</button>
+          </div>
+          <div class="person">
+            <input class="input" value="Person F">
+            <div class="phone"><span class="input cc">MY +60</span><input class="input" value="17-000 0006"></div>
+            <div class="select"><span>Employee</span><span class="x">&#9662;</span></div>
+            <button class="btn icon ghost">&#128465;</button>
+            <div class="alert info">Also has access through another account. Kept as they are: AI replies, stock, brands and media.</div>
+          </div>
+          <div class="person">
+            <input class="input" value="Person G">
+            <div class="phone"><span class="input cc err-in">MY +60</span><input class="input err-in" value="11-111 1111"></div>
+            <div class="select"><span>Employee</span><span class="x">&#9662;</span></div>
+            <button class="btn icon ghost">&#128465;</button>
+            <div class="alert err">This number belongs to a staff member.</div>
+          </div>
+        </div>
+      </div>
+      <footer><button class="btn">Cancel</button><button class="btn primary">Save</button></footer>
+    </div>
+    <p class="muted">Nothing pre-ticked. A refused row blocks Save with its reason; nothing is half-written.</p>
+  </div>
+  <div>
+    <p class="state">State 3b: Edit (Person C), same form</p>
+    <div class="card modal" style="max-width:none">
+      <header><h2>Person C</h2><button class="btn icon ghost">&#x2715;</button></header>
+      <div class="body">
+        <div class="inner">
+          <div class="field"><label>Company</label><div class="ro">Sorento</div></div>
+          <div class="field"><label>Phone</label><div class="ro">+60 17-000 0003</div></div>
+          <div class="field"><label>My accounts</label>
+            <div class="select"><span><span class="chip">300-N036 CHO*** (A/C III) &#x2715;</span></span><span class="x">&#9662;</span></div></div>
+          <div class="field"><label>Access</label>
+            <div class="select"><span>Business Owner</span><span class="x">&#9662;</span></div>
+            <div class="alert err">This person also has access through another account; ask the office to change their level.</div></div>
+        </div>
+      </div>
+      <footer><button class="btn">Cancel</button><button class="btn primary">Save</button></footer>
+    </div>
+  </div>
+</section>
+
+<section class="grid2">
+  <div>
+    <p class="state">State 4: 375px</p>
+    <div class="phonebox">
+      <h1 style="font-size:16px;margin-bottom:10px">Dealer access</h1>
+      <input class="search" placeholder="Search person, phone or account code">
+      <div class="bar"><button class="btn sm">&#9783; Filter <span class="count">1</span></button><button class="btn sm primary">+ Add people</button></div>
+      <div class="cardlist">
+        <div class="pcard"><div class="top"><b>Person A</b><button class="btn icon ghost">&#8943;</button></div>
+          <span class="muted">+60 12-000 0001 &middot; Sorento</span>
+          <div><span class="pill" style="background:var(--primarysoft);color:var(--primarytext)">Sorento Business Owner</span></div>
+          <div><span class="pill">300-N034</span><span class="pill">300-N035</span><span class="pill">+1</span></div></div>
+        <div class="pcard"><div class="top"><b>Person B</b><button class="btn icon ghost">&#8943;</button></div>
+          <span class="muted">+60 16-000 0002 &middot; Sorento &middot; Employee</span>
+          <div><span class="pill">300-N034</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <p class="state">State 5: empty</p>
+    <div class="card empty"><b>No people have access yet</b>Add people to give them access to your accounts.</div>
+  </div>
+</section>
+
+<section>
+  <p class="state">Element -&gt; existing component (sorento_crm_frontend/)</p>
+  <div class="card scroll">
+    <table class="map">
+      <colgroup><col style="width:44px"><col style="width:170px"><col style="width:320px"><col></colgroup>
+      <thead><tr><th>#</th><th>Element</th><th>Reuses</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Page header</td><td><code>components/common/PageHeader.tsx</code></td><td>Title only</td></tr>
+        <tr><td>2</td><td>Search</td><td><code>components/common/ListSearchInput.tsx</code></td><td>Portal size, as <code>app/(auth)/portal/components/SubmissionList.tsx</code></td></tr>
+        <tr><td>3</td><td>Filter + Add people</td><td><code>app/(auth)/portal/components/LandingToolbar.tsx</code></td><td>Two fields (Company, Access), each <code>SearchableMultiSelect clearable</code>; primary sm button right as <code>SubmissionList.tsx</code></td></tr>
+        <tr><td>4</td><td>Listing</td><td><code>components/ui/data-grid.tsx</code> + <code>components/common/PillOverflow.tsx</code></td><td>fixed layout, resizable, truncate + title; phone width falls back to cards (<code>LandingCardShell.tsx</code>)</td></tr>
+        <tr><td>5</td><td>Access</td><td><code>app/(protected)/user-management/contacts/components/ContactTagsCell.tsx</code></td><td>The owner tag as the contacts screen shows it</td></tr>
+        <tr><td>6</td><td>Row menu</td><td><code>components/common/RowActionsMenu.tsx</code></td><td>Edit; Unlink from (own accounts), red, last</td></tr>
+        <tr><td>7</td><td>Unlink countdown</td><td><code>hooks/useDeferredRowAction.tsx</code></td><td>Server-deferred, 5 s, Cancel, no dialog</td></tr>
+        <tr><td>8</td><td>Add / edit modal</td><td><code>components/ui/dialog.tsx</code> + <code>SearchableSelect</code>, <code>SearchableMultiSelect</code>, <code>PhoneInput</code> (MY), <code>components/ui/alert.tsx</code></td><td>Portal form look of <code>app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm.tsx</code> (Cards, "+ Add" rows with trash)</td></tr>
+        <tr><td>-</td><td>Menu item</td><td><code>config/menu.config.tsx</code> MY WORK</td><td><code>audience: 'salesperson'</code>, <code>user_management.contacts.edit_own</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">One write path: Save and Unlink call the #2268 service (grant plan/execute, access update), same checks, texts and audit.</p>
+</section>
+
+</div>
+</body>
+</html>

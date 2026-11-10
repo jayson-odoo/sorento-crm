@@ -1,8 +1,9 @@
 """The one way the backend writes a date a person reads (DATE-FORMAT-UNIFY, 4 Nov 2026).
 
 - date:      ``01/01/2026``
-- date-time: ``30/09/2026, 12:23 pm``
+- date-time: ``30/09/2026, 12:23 pm`` (``fmt_datetime_24h``: ``30/09/2026 12:23``, crm_query answers)
 - range:     ``01/01/2026 - 31/03/2026`` (plain hyphen, the range picker's own shape)
+- day label: ``Tue 27 Oct`` (``fmt_day_label``, a chip with no year)
 
 Malaysia time, the same as the frontend's ``formatDateInMalaysia``. A NAIVE datetime is read as
 UTC by default because that is how timestamps are stored; pass ``naive_is_utc=False`` for a value
@@ -55,6 +56,19 @@ def fmt_date(value: Any, fallback: str = "", *, naive_is_utc: bool = True) -> st
     return f"{d.day:02d}/{d.month:02d}/{d.year}"
 
 
+def fmt_day_label(value: Any, fallback: str = "", *, naive_is_utc: bool = True) -> str:
+    """``Tue 27 Oct``: the short day label a chip carries, no year (the Town snapshot's
+    last-week compare). English names (``strftime`` under the C locale the app never changes)."""
+    if value is None or value == "":
+        return fallback
+    d = _coerce(value)
+    if d is None:
+        return str(value)
+    if isinstance(d, datetime):
+        d = _in_malaysia(d, naive_is_utc)
+    return f"{d:%a} {d.day} {d:%b}"
+
+
 def fmt_datetime(value: Any, fallback: str = "", *, naive_is_utc: bool = True) -> str:
     """``30/09/2026, 12:23 pm``. A plain date shows as a date."""
     if value is None or value == "":
@@ -68,6 +82,20 @@ def fmt_datetime(value: Any, fallback: str = "", *, naive_is_utc: bool = True) -
     hour12 = d.hour % 12 or 12
     ampm = "pm" if d.hour >= 12 else "am"
     return f"{d.day:02d}/{d.month:02d}/{d.year}, {hour12}:{d.minute:02d} {ampm}"
+
+
+def fmt_datetime_24h(value: Any, fallback: str = "", *, naive_is_utc: bool = True) -> str:
+    """``02/10/2026 01:30``: the 24-hour stamp a crm_query answer carries (owner ruling, 5 Nov).
+    A plain date shows as a date."""
+    if value is None or value == "":
+        return fallback
+    d = _coerce(value)
+    if d is None:
+        return str(value)
+    if not isinstance(d, datetime):
+        return fmt_date(d)
+    d = _in_malaysia(d, naive_is_utc)
+    return f"{d.day:02d}/{d.month:02d}/{d.year} {d.hour:02d}:{d.minute:02d}"
 
 
 def fmt_date_range(start: Any, end: Any, fallback: str = "", *, naive_is_utc: bool = True) -> str:

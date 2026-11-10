@@ -404,6 +404,9 @@ class PriceTagRequestService:
                     code="INVALID_PART",
                 )
 
+            excluded_variant_ids = PriceTagRequestService._clean_excluded_variants(
+                db, product_id, line_data.get("excluded_variant_ids"), idx
+            )
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
             # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
@@ -442,29 +445,53 @@ class PriceTagRequestService:
                     if not p.get("product_id")
                     for c in (p.get("candidates") or [])
                 ]
-                pricing_row = line_pricing(
-                    db,
-                    lines=[
-                        {
-                            "key": "_p",
-                            "product_id": product_id,
-                            "part_product_ids": resolved_part_ids,
-                            "candidate_product_ids": candidate_ids,
-                            "combo_id": combo_id,
-                            "promotion_id": promotion_id,
-                            "manual_sell_price": manual_sell_price,
-                        }
-                    ],
-                    viewer=viewer,
-                    # A SAVED line's basis is what the salesperson committed
-                    # to, never the lookup's auto pick (owner ruling, review
-                    # round 2): with no stored promotion the line is `list`,
-                    # however many promotions cover its product.
-                    auto_pick=False,
-                )[0]
-                if promotion_id and promotion_id not in {
-                    option["id"] for option in pricing_row["promotion_options"]
-                }:
+                def _price(promo_id, candidates):
+                    return line_pricing(
+                        db,
+                        lines=[
+                            {
+                                "key": "_p",
+                                "product_id": product_id,
+                                "part_product_ids": resolved_part_ids,
+                                "candidate_product_ids": candidates,
+                                "combo_id": combo_id,
+                                "promotion_id": promo_id,
+                                "manual_sell_price": manual_sell_price,
+                            }
+                        ],
+                        viewer=viewer,
+                        # A SAVED line's basis is what the salesperson committed
+                        # to, never the lookup's auto pick (owner ruling, review
+                        # round 2): with no stored promotion the line is `list`,
+                        # however many promotions cover its product.
+                        auto_pick=False,
+                    )[0]
+
+                def _offered(row) -> bool:
+                    return promotion_id in {o["id"] for o in row["promotion_options"]}
+
+                pricing_row = _price(promotion_id, candidate_ids)
+                if (
+                    promotion_id
+                    and not _offered(pricing_row)
+                    and combo_id
+                    and _offered(
+                        _price(
+                            promotion_id,
+                            PriceTagRequestService._combo_part_ids(db, combo_id),
+                        )
+                    )
+                ):
+                    # PRICETAG-DISCONTINUED-PICK (crew pass, 7 Nov): the form
+                    # pre-fills a promotion while a group is open, when any
+                    # option covers it (AC-S7-2). A pick that narrows the group
+                    # past every covered option leaves a promotion that covers
+                    # one of the line's OWN package options but nothing on the
+                    # line: it prices nothing, so it is dropped rather than
+                    # refusing the save. The form says so after the save.
+                    promotion_id = None
+                    pricing_row = _price(None, candidate_ids)
+                if promotion_id and not _offered(pricing_row):
                     # AC-S6-5: a line's promotion must be active, visible to
                     # this viewer, and cover at least one product on the line
                     # (the parent, a resolved part, or any candidate) -
@@ -534,6 +561,7 @@ class PriceTagRequestService:
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
+                    excluded_variant_ids=excluded_variant_ids,
                     sort_order=idx if sort_order is None else sort_order,
                     promotion_id=promotion_id,
                     manual_sell_price=manual_sell_price,
@@ -567,6 +595,26 @@ class PriceTagRequestService:
                 company_id=request.company_id,
             )
             PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+
+    @staticmethod
+    def _clean_excluded_variants(db: Session, product_id, sent, idx: int) -> list[str]:
+        """PRICETAG-UPGRADE-VARIANTS S3: the line's unticked variant members, de-duplicated in the
+        order sent. Every id must be a member of the line product's variant tree (the product
+        itself is not one); anything else is a 422 ``NOT_A_VARIANT`` naming the line."""
+        from app.services.dealer_kit.variant_service import variant_members
+
+        wanted = list(dict.fromkeys(str(item) for item in sent or []))
+        if not wanted:
+            return []
+        members = {m["product_id"] for m in variant_members(db, product_id)}
+        if any(item not in members for item in wanted):
+            raise AppException(
+                status_code=422,
+                message="A variant on this line is not part of its product's family.",
+                detail=f"line:{idx}",
+                code="NOT_A_VARIANT",
+            )
+        return wanted
 
     @staticmethod
     def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
@@ -876,6 +924,27 @@ class PriceTagRequestService:
             .all()
         )
         return [row.product_id for row in rows if row.product_id]
+
+    @staticmethod
+    def _combo_part_ids(db: Session, combo_id: str) -> list[str]:
+        """The package's fixed parts and group options, never its upgrades.
+
+        Upgrades are left out on purpose: the tag prices every upgrade of the package under the
+        line's promotion, picked or not (`tag_data_service._line_slots`), so a promotion on an
+        upgrade is NOT inert and must not be dropped.
+        """
+        from app.models.product_combo import ProductComboPart
+
+        return [
+            pid
+            for (pid,) in db.query(ProductComboPart.part_product_id)
+            .filter(
+                ProductComboPart.combo_id == combo_id,
+                ProductComboPart.is_upgrade.isnot(True),
+            )
+            .all()
+            if pid
+        ]
 
     @staticmethod
     def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:

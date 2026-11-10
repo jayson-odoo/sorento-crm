@@ -235,6 +235,20 @@ def test_product_list_sorts_by_class_name_server_side_nulls_last(env) -> None:
         assert [r["id"] for r in res.json()["data"] if r["id"] in wanted] == expected
 
 
+def test_product_list_sorts_by_brand_name_server_side(env) -> None:
+    """ACC-COPY-TO-PRODUCTS review: the product grids offer Brand (and Category) as sortable."""
+    client, db = env
+    a, z = _brand(db, "AAA"), _brand(db, "ZZZ")
+    pz, pa = _product(db, brand=z), _product(db, brand=a)
+    db.commit()
+    wanted = {pz.id, pa.id}
+    for direction, expected in (("asc", [pa.id, pz.id]), ("desc", [pz.id, pa.id])):
+        res = client.get(PRODUCTS + "/", params={"query": MARKER, "sort": "brand_name", "dir": direction,
+                                                 "limit": 500})
+        assert res.status_code == 200, res.text
+        assert [r["id"] for r in res.json()["data"] if r["id"] in wanted] == expected
+
+
 def test_product_update_sets_and_clears_the_class(env) -> None:
     client, db = env
     row = _class(db, "FORM")

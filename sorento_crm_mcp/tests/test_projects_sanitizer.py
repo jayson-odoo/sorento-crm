@@ -165,3 +165,20 @@ def test_the_quotation_id_stays_because_the_agent_has_to_name_the_quotation():
     quotation" has to be able to come back to the same row on the next turn."""
     out = _sanitize("crm_project_quotations_list", {"data": [_QUOTATION_ROW]})
     assert out["data"][0]["id"] == _QUOTATION_ROW["id"]
+
+
+def test_party_links_keep_role_and_name_but_not_the_party_uuid():
+    """PROJECT-PARTY-ROLES: architect and main contractor moved into `party_links`; the link's
+    `party_id` is a UUID and must not reach the chat any more than `architect_party_id` did."""
+    row = dict(_ROW)
+    row["party_links"] = [
+        {"role": "architect", "party_id": "88888888-8888-8888-8888-888888888888", "name": "Arkitek Damai"},
+        {"role": "trading_house", "party_id": "77777777-7777-7777-7777-777777777777", "name": "Niaga Damai"},
+    ]
+    for tool in ("crm_projects_list", "crm_project_detail"):
+        payload = _sanitized(tool, row) if tool == "crm_projects_list" else _sanitize(tool, row)
+        got = payload["data"][0] if tool == "crm_projects_list" else payload
+        assert got["party_links"] == [
+            {"role": "architect", "name": "Arkitek Damai"},
+            {"role": "trading_house", "name": "Niaga Damai"},
+        ]

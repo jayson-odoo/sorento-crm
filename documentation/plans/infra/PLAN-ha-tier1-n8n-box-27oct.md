@@ -1,5 +1,11 @@
 # PLAN: HA plan v2, Tier 1 on the n8n box with automatic failover (HA-TIER1-N8N-BOX)
 
+**SUPERSEDED IN PART 4 Nov 2026 by `PLAN-ha-cf-failover-04nov.md` (same folder), owner ruling 4 Nov
+14:45: NO witness server, Cloudflare Load Balancing is the witness.** Patroni, etcd, the witness
+and their templates are gone; failover is a two-node controller (`infra/scripts/cf_failover.py`).
+What still stands from this plan: active-passive, Malaysia, Cloudflare LB + R2, WAL-G, the role
+endpoint, the scheduler guard, the role watcher.
+
 **AMENDED 1 Nov 2026 by `PLAN-n8n-decom-ha-01nov.md` (same folder), owner rulings there.** n8n
 retires, so node B becomes a plain CRM node, a mirror of node A. Everything below that keeps n8n
 on node B is superseded: the HAProxy (`infra/templates/haproxy/`, deleted), section 6, the n8n

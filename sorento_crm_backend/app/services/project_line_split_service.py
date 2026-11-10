@@ -293,6 +293,16 @@ class LineFacts:
         )
 
     @property
+    def was_location(self) -> Optional[str]:
+        """SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): the location AutoCount moved the line
+        from, read off the same change NEW QTY / NEW DATE read (a pending one, else the last
+        applied); None when the line did not move. LOCATION prints it, NEW LOCATION the
+        line's own location now, as the purchasing email does."""
+        source = self.pending_from if self.pending_from is not None else self.applied_from
+        was = (source or {}).get("location") or None
+        return was if was and was != self.location else None
+
+    @property
     def shows_change(self) -> bool:
         """NEW QTY / NEW DATE are read off a change: a pending one, else the last applied."""
         return self.pending or self.refers_back
@@ -812,9 +822,15 @@ class LineSplitService:
         out: Dict[str, LineFacts] = {}
         for line, core in rows:
             product_id = line.product_id or (core.product_id if core is not None else None)
-            location = line.stock_location or (
-                warehouses.get(str(core.warehouse_id)) if core is not None else None
-            )
+            # SPLIT-SHEET-LOCATION (owner, 6 Nov 2026): the line's own AutoCount location
+            # (the core warehouse), what the board reads (`fact.own_code`). `stock_location`
+            # is where it was last planned, or a CS draft's pool code (SO429664 read BRW
+            # here while the board read BRW-BB), so it is only the fallback.
+            location = (
+                warehouses.get(str(core.warehouse_id))
+                if core is not None and core.warehouse_id
+                else None
+            ) or line.stock_location
             delivered = _dec(getattr(core, "qty_delivered", None))
             ordered = _dec(line.qty if line.qty is not None else getattr(core, "qty_ordered", None))
             out[str(line.id)] = LineFacts(
@@ -878,6 +894,9 @@ class LineSplitService:
                     # PRODUCT-CHANGE-TALLY: the email's ITEM CODE when AutoCount swapped the
                     # product (`item_code` is then its NEW ITEM CODE); null otherwise.
                     "was_item_code": plan.was_item_code,
+                    # SPLIT-SHEET-LOCATION: LOCATION = where the line was (the change's old
+                    # location), NEW LOCATION = `location` beside it; null when it did not move.
+                    "was_location": f.was_location,
                     "location": f.location,
                     "base_qty": float(plan.base_qty),
                     "base_date": plan.base_date,

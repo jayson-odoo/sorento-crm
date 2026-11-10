@@ -188,6 +188,10 @@ class ParserConfig:
     # SUPPLIER-ASK: the prompt in use carries `SUPPLIER_ID_ASK`, so a Supplier candidate line ends with its row id
     # and the parser answers with it; the id binds the supplier (and every supplier the span pass scored as close).
     supplier_ids: bool = False
+    # Owner ruling 3 Nov 2026: the prompt in use carries `PARTY_SIDE_LINE`, so the schema offers `party_side`
+    # (`with_party_side`): the model's read of which side a both-sides company is on. False for a bare config and every
+    # text without the line: a both-sides name is asked, as before.
+    party_side: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -1037,9 +1041,19 @@ REPORT_ASK_LISTS = (
 )
 
 
+#: REPORT-FILTER-ALL: the explicit "every value" of a `report_ask` filter slot (company and channel "ALL", a list
+#: ["ALL"]). A prompt text that writes `REPORT_ALL_WORD` defines it (`report_ask_defined_in` then holds "ALL"): the
+#: channel enum offers it and the report lane reads an empty slot as "not said" (`report_ask.from_object`).
+REPORT_ALL = "ALL"
+REPORT_ALL_WORD = '["ALL"]'
+
+
 def report_ask_defined_in(raw_template: Any) -> frozenset[str]:
-    """The keys of `REPORT_ASK_DEFINED` the prompt text defines: the text names the key as `"<key>":`."""
-    return frozenset(key for key in REPORT_ASK_DEFINED if f'"{key}":' in (raw_template or ""))
+    """The keys of `REPORT_ASK_DEFINED` the prompt text defines (the text names the key as `"<key>":`), plus
+    `REPORT_ALL` when the text writes `REPORT_ALL_WORD`."""
+    text = raw_template or ""
+    keys = {key for key in REPORT_ASK_DEFINED if f'"{key}":' in text}
+    return frozenset(keys | ({REPORT_ALL} if REPORT_ALL_WORD in text else set()))
 
 
 def report_ask_keys(defined: Any = ()) -> tuple[str, ...]:
@@ -1065,7 +1079,10 @@ def with_report_ask(schema: dict[str, Any], defined: Any = ()) -> dict[str, Any]
         "group_by": copy.deepcopy(props["group_by"]),
         "top_n": {"type": ["integer", "null"]},
         "measure": copy.deepcopy(props["measure"]),
-        "channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
+        "channel": {
+            "type": ["string", "null"],
+            "enum": [*SALES_CHANNELS, *([REPORT_ALL] if REPORT_ALL in set(defined or ()) else []), None],
+        },
         "company": {"type": ["string", "null"]},
         **{key: copy.deepcopy(strings) for key in REPORT_ASK_LISTS},
     }
@@ -1092,6 +1109,24 @@ ROW_ID_ASK = (
 #: a frozen copy). Supplier lines then print `[id: <row id>]`; the id binds, never the name.
 SUPPLIER_ID_ASK = "For a supplier entity, canonical_code is the id of the Supplier candidates line the message means."
 LANGUAGE_ASK = 'Also return top-level "message_language": the language the user wrote the current message in.'
+
+
+#: Owner ruling 3 Nov 2026 (prod, after #2066: "it keeps asking me to choose fullshun customer or supplier, it is so
+#: clear that sales is talking about customer"): the heading line of the prompt section that turns `party_side` on (the
+#: `REPORT_ASK_LINE` pattern). The side of a company named on both sides is read by the model from the whole turn;
+#: code reads no word of the message for it (owner rule, 28 Oct). Production serves no text with the line until the
+#: owner moves the label.
+PARTY_SIDE_LINE = "== PARTY_SIDE: whether the company the user names is our customer or our supplier =="
+PARTY_SIDES = ("customer", "supplier", "unclear")
+
+
+def with_party_side(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the flag-gated `party_side` last in `properties` and `required` (required and nullable,
+    as strict mode needs)."""
+    out = copy.deepcopy(schema)
+    out["properties"]["party_side"] = {"type": ["string", "null"], "enum": [*PARTY_SIDES, None]}
+    out["required"] = [*[k for k in out["required"] if k != "party_side"], "party_side"]
+    return out
 
 
 def with_message_language(schema: dict[str, Any]) -> dict[str, Any]:
@@ -1258,6 +1293,8 @@ def resolve_config(
             json_schema = with_message_language(json_schema)
         if REPORT_ASK_LINE in (raw_template or ""):
             json_schema = with_report_ask(json_schema, report_ask_defined_in(raw_template))
+        if PARTY_SIDE_LINE in (raw_template or ""):
+            json_schema = with_party_side(json_schema)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1286,6 +1323,7 @@ def resolve_config(
         message_language=LANGUAGE_ASK in (raw_template or ""),
         report_ask=REPORT_ASK_LINE in (raw_template or ""),
         report_ask_defined=report_ask_defined_in(raw_template),
+        party_side=PARTY_SIDE_LINE in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         max_output_tokens=max_output_tokens_setting(db),
@@ -1563,7 +1601,8 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
     schema = with_message_language(schema) if config.message_language else schema
-    return with_report_ask(schema, config.report_ask_defined) if config.report_ask else schema
+    schema = with_report_ask(schema, config.report_ask_defined) if config.report_ask else schema
+    return with_party_side(schema) if config.party_side else schema
 
 
 def _usage(config: ParserConfig, result: Any, effort: str, started: float) -> dict[str, Any]:

@@ -258,8 +258,9 @@ jobs:
   #    LESSONS-LEARNT.md, or the PR template) AND no path matches
   #    `NOT_DOCS_RE`: the parts of documentation/ that tests READ as live
   #    inputs (`documentation/reference/*.md`, `plans/<domain>/fixtures/`,
-  #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`, and two
-  #    plan files whose text a test asserts against). A change there can
+  #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`,
+  #    `plans/(_archive/)?chatbot/` (prompt candidates a test hashes) and the few plan
+  #    files whose text a test asserts against). A change there can
   #    turn a test red, so it keeps the full pipeline. Nothing under the
   #    four service trees counts either, whatever its extension: `*.md`
   #    files inside them are test fixtures (tests/chatbot/replay_turns,
@@ -586,7 +587,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$|plans/(_archive/)?chatbot/|plans/sales/SQL-sales-subtotal-reconcile\.sql$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
@@ -1596,6 +1597,16 @@ jobs:
         if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
         run: python3 scripts/pii_guard.py
 
+      # AI-GATE (PLAN-ai-tools-standard-5nov.md 2.5, DoD line 6): a GET route
+      # this PR ADDS that takes `page` or `limit` must be in an assistant
+      # registry EntityDef.routes, or carry `# ai: not-for-assistant <reason>`
+      # directly above its decorators. Diff against main's head (merged into
+      # the PR head by the step above, so the merge base is that main). Stdlib
+      # only, parses the source by AST, a few seconds.
+      - name: Assistant coverage of new list routes
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        run: python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"
+
       # DOCS-SYNC-AUTO: every guide must publish to Outline on merge (the
       # automatic push in outline-user-guides-sync.yml). Fails on a guide
       # folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages would be
@@ -1611,10 +1622,24 @@ jobs:
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one
       # reverting it leave a tree that already passed; a merge commit lands
       # both).
+      # CI-GITLEAKS-RETRY (github.com release URLs 504'd every PR gate on
+      # 8 Nov 2026): a re-run of the same PR skips the download. Saved from the
+      # PR's own ref, so a new PR still downloads (retries + API fallback in the
+      # script). The key's version must match GITLEAKS_VERSION in
+      # scripts/ci_gitleaks.sh, which re-checks the sha256 of a cached tarball.
+      - name: Cache the gitleaks CLI
+        if: github.event_name == 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gitleaks
+          key: gitleaks-8.30.1-${{ runner.arch }}
+
       - name: Secret scan (gitleaks)
         if: github.event_name == 'pull_request'
         env:
           RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          GITLEAKS_CACHE_DIR: ~/.cache/gitleaks
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci_gitleaks.sh
 
       - name: Select the changed test files to run
@@ -2189,8 +2214,42 @@ jobs:
               "$IMAGE_REPO:${svc}-${GITHUB_SHA}"
           done
 
-      - name: Sync deploy script to server
+      # HA-CF-FAILOVER (documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 2 row 1):
+      # with a second host configured (secret SSH_HOST_B), one release deploys BOTH nodes, the
+      # Postgres primary first (scripts/ha_release.sh); without it, the single-host steps below
+      # run exactly as before.
+      - name: Detect the HA second host
+        id: ha
         if: steps.targets.outputs.should_deploy == 'true'
+        env:
+          HOST_B: ${{ secrets.SSH_HOST_B }}
+        run: |
+          if [ -n "$HOST_B" ]; then echo "two_nodes=true" >> "$GITHUB_OUTPUT"; else echo "two_nodes=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Deploy both HA nodes (primary first)
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes == 'true'
+        timeout-minutes: 210
+        env:
+          HOST_A: ${{ secrets.SSH_HOST }}
+          HOST_B: ${{ secrets.SSH_HOST_B }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Both hosts' public keys (`ssh-keyscan` output, checked against the boxes' own
+          # fingerprints): the release refuses a host whose key does not match.
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          key=$(mktemp)
+          kh=$(mktemp)
+          trap 'rm -f "$key" "$kh"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$kh"
+          chmod 600 "$key" "$kh"
+          HA_HOSTS="$HOST_A $HOST_B" SSH_KEY_FILE="$key" KNOWN_HOSTS_FILE="$kh" ./scripts/ha_release.sh
+
+      - name: Sync deploy script to server
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -2208,7 +2267,7 @@ jobs:
           strip_components: 0
 
       - name: Deploy to Server (blue/green)
-        if: steps.targets.outputs.should_deploy == 'true'
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -2232,8 +2291,23 @@ jobs:
             chmod +x ./scripts/blue_green_deploy.sh
             IMAGE_TAG="${{ github.sha }}" ./scripts/blue_green_deploy.sh
 
+      # Two-node mode: the public host is whichever node Cloudflare routes to, possibly not
+      # SSH_HOST, so the check runs from the runner against the public URL only.
+      - name: Verify the public endpoint (HA, two nodes)
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes == 'true'
+        run: |
+          started=$(date +%s)
+          while [ $(( $(date +%s) - started )) -lt 90 ]; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://fe-sorento.foundryx.my/ || true)
+            echo "public URL: HTTP ${code:-000} after $(( $(date +%s) - started ))s"
+            case "$code" in 2*|3*) exit 0;; esac
+            sleep 5
+          done
+          echo "public URL did not answer 2xx/3xx within 90s"
+          exit 1
+
       - name: Verify public endpoints
-        if: steps.targets.outputs.should_deploy == 'true'
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}

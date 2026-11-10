@@ -22,9 +22,10 @@ import { AssetPickerDialog } from '@/app/(protected)/dealer-kit/tag-templates/co
 import { ICON_LIBRARY_QUERY_KEY, useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
-import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
+import { IconConditionsPopover } from './IconConditionsPopover';
+import { SPEC_REGISTRY_QUERY_KEY, useSpecRegistryQuery } from '../../hooks/useSpecRegistryQuery';
 import { dedupe, seedValuesFor, seedWordsFor, type SpecKeyDraft, type WordError } from '../../hooks/useSpecKeyRecord';
-import type { SpecRegistryKey } from '../../types/productSpec.types';
+import type { IconCondition, SpecRegistryKey } from '../../types/productSpec.types';
 
 /** `_self` names the specification itself, never a choice (D7); this tab never
  *  renders it - its words live on Details as "Other names for this specification". */
@@ -46,6 +47,8 @@ const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_LABELS: Record<string, string> = {};
 const EMPTY_ICONS: Record<string, string[]> = {};
 const NO_ICON_IDS: string[] = [];
+const NO_CONDITIONS: IconCondition[] = [];
+const NO_REGISTRY: SpecRegistryKey[] = [];
 
 export interface ValuesAndWordsTabProps {
   row: SpecRegistryKey;
@@ -85,7 +88,8 @@ export function ValuesAndWordsTab({
 }: ValuesAndWordsTabProps) {
   const isBoolean = row.data_type === 'boolean';
   const isNumeric = row.data_type === 'numeric';
-  const canEdit = mode === 'edit' && !isBoolean;
+  // A numeric key's rows are the values products hold: they carry icons, never a rename or removal.
+  const canEdit = mode === 'edit' && !isBoolean && !isNumeric;
 
   const [editing, setEditing] = useState<{ value: string; column: 'choice' | 'words' } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -105,6 +109,7 @@ export function ValuesAndWordsTab({
   // Until both are known the cell cannot tell "no icons" from "not loaded yet" (crew pass).
   const iconsLoading = permissionsLoading || (canManageIcons && iconLibraryLoading);
   const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
+  const [conditionsOpen, setConditionsOpen] = useState<string | null>(null);
   const queryClient = useQueryClient();
   // An icon uploaded inside the picker is not in the list the cell names icons from until it
   // is read again (review S2).
@@ -148,6 +153,8 @@ export function ValuesAndWordsTab({
       delete nextValueLabels[value];
       const nextValueIcons = { ...d.valueIcons };
       delete nextValueIcons[value];
+      const nextConditions = { ...d.valueIconConditions };
+      delete nextConditions[value];
       const builtIn = seedValuesFor(row).includes(value);
       return {
         ...d,
@@ -159,6 +166,7 @@ export function ValuesAndWordsTab({
         droppedWords: nextDroppedWords,
         valueLabels: nextValueLabels,
         valueIcons: nextValueIcons,
+        valueIconConditions: nextConditions,
       };
     });
 
@@ -202,10 +210,32 @@ export function ValuesAndWordsTab({
   const valueLabels = draft ? draft.valueLabels : row.value_labels ?? EMPTY_LABELS;
   const valueIcons = draft ? draft.valueIcons : row.value_icons ?? EMPTY_ICONS;
   const editIcons = mode === 'edit' && canManageIcons;
+  const { data: registry = NO_REGISTRY } = useSpecRegistryQuery();
+  const conditionsOf = (value: string, iconId: string): IconCondition[] =>
+    (draft ? draft.valueIconConditions : row.value_icon_conditions)?.[value]?.[iconId] ?? NO_CONDITIONS;
 
   /** Rewrite one choice's icon list in the open draft (reassigned, never mutated). */
   const setIcons = (value: string, next: (ids: string[]) => string[]) =>
-    setDraft((d) => ({ ...d, valueIcons: { ...d.valueIcons, [value]: next(d.valueIcons[value] ?? []) } }));
+    setDraft((d) => {
+      const ids = next(d.valueIcons[value] ?? []);
+      // An icon taken off the value takes its conditions with it.
+      const kept = Object.fromEntries(
+        Object.entries(d.valueIconConditions?.[value] ?? {}).filter(([id]) => ids.includes(id)),
+      );
+      return {
+        ...d,
+        valueIcons: { ...d.valueIcons, [value]: ids },
+        valueIconConditions: { ...d.valueIconConditions, [value]: kept },
+      };
+    });
+  const setConditions = (value: string, iconId: string, list: IconCondition[]) =>
+    setDraft((d) => ({
+      ...d,
+      valueIconConditions: {
+        ...d.valueIconConditions,
+        [value]: { ...d.valueIconConditions?.[value], [iconId]: list },
+      },
+    }));
   const moveIcon = (value: string, index: number, delta: number) =>
     setIcons(value, (ids) => {
       const out = [...ids];
@@ -231,16 +261,19 @@ export function ValuesAndWordsTab({
 
   // A choice the business has taken away is not a choice (B-6): it is neither
   // listed nor counted, whether the removal came from this grid or an earlier Save.
+  const numericValues = row.numeric_values ?? EMPTY_STRING_ARRAY;
   const choices = useMemo(
     () =>
-      dedupe([...(isBoolean ? ['true'] : liveValues), ...Object.keys(words)]).filter(
-        (value) => value !== SELF_KEY && !droppedValues.includes(value),
-      ),
-    [isBoolean, liveValues, droppedValues, words],
+      isNumeric
+        ? numericValues
+        : dedupe([...(isBoolean ? ['true'] : liveValues), ...Object.keys(words)]).filter(
+            (value) => value !== SELF_KEY && !droppedValues.includes(value),
+          ),
+    [isNumeric, numericValues, isBoolean, liveValues, droppedValues, words],
   );
 
   const displayName = (value: string) =>
-    value === 'true' && isBoolean ? 'Yes' : readableValue(value, undefined, valueLabels);
+    value === 'true' && isBoolean ? 'Yes' : isNumeric ? value : readableValue(value, undefined, valueLabels);
 
   const commitAdd = () => {
     const trimmed = newChoice.trim();
@@ -424,6 +457,17 @@ export function ValuesAndWordsTab({
                       <span className="max-w-24 truncate text-xs">{name}</span>
                     )}
                   </span>
+                  {editIcons && (
+                    <IconConditionsPopover
+                      iconName={name}
+                      hostKey={row.spec_key}
+                      registry={registry}
+                      conditions={conditionsOf(value, id)}
+                      onChange={(list) => setConditions(value, id, list)}
+                      open={conditionsOpen === `${value}\u0000${id}`}
+                      onOpenChange={(next) => setConditionsOpen(next ? `${value}\u0000${id}` : null)}
+                    />
+                  )}
                   {editIcons && index > 0 && (
                     <Button
                       type="button"
@@ -483,6 +527,8 @@ export function ValuesAndWordsTab({
       minSize: 120,
     };
 
+    // A numeric value has no words of its own (the key's other names are on Details).
+    if (isNumeric) return [choiceColumn, iconsColumn, productsColumn];
     if (!canEdit) return [choiceColumn, wordsColumn, iconsColumn, productsColumn];
 
     const actionsColumn: ColumnDef<ChoiceRow> = {
@@ -541,12 +587,17 @@ export function ValuesAndWordsTab({
     valueLabels,
     countByValue,
     valueIcons,
+    draft?.valueIconConditions,
+    conditionsOpen,
+    row.value_icon_conditions,
+    registry,
     iconAssets,
     editIcons,
     iconsLoading,
     row.allowed_values,
     row.also_on,
     wordError,
+    isNumeric,
   ]);
 
   const table = useReactTable({
@@ -604,7 +655,7 @@ export function ValuesAndWordsTab({
             header, in read mode and edit mode - the same place as Add a rule (fix
             round 5, owner ruling 27 Sep 2026). A yes-or-no specification has its
             one choice already, so it has no toolbar. */}
-        {!isBoolean && (
+        {!isBoolean && !isNumeric && (
           <div
             data-testid="choices-grid-toolbar"
             className="flex flex-wrap items-center justify-end gap-2 border-b p-2"

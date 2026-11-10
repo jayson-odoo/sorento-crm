@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.utils.date_format import fmt_date, fmt_date_range, fmt_datetime, fmt_maybe_date
+from app.utils.date_format import fmt_date, fmt_date_range, fmt_datetime, fmt_datetime_24h, fmt_maybe_date
 
 MYT = timezone(timedelta(hours=8))
 
@@ -70,6 +70,25 @@ def test_fmt_datetime_fallback():
     assert fmt_datetime(None, fallback="-") == "-"
 
 
+# --- fmt_datetime_24h (crm_query answers, owner ruling 5 Nov: dd/mm/yyyy HH:MM) ---------------
+
+def test_fmt_datetime_24h_is_dd_mm_yyyy_space_zero_padded_24_hour():
+    # Naive is UTC: 17:30 UTC on 1 Oct is 01:30 on 2 Oct in Malaysia.
+    assert fmt_datetime_24h(datetime(2026, 10, 1, 17, 30)) == "02/10/2026 01:30"
+    assert fmt_datetime_24h(datetime(2026, 9, 30, 6, 5)) == "30/09/2026 14:05"
+
+
+def test_fmt_datetime_24h_converts_an_aware_datetime():
+    assert fmt_datetime_24h(datetime(2026, 9, 30, 23, 59, tzinfo=MYT)) == "30/09/2026 23:59"
+    assert fmt_datetime_24h(datetime(2026, 9, 30, 16, 0, tzinfo=timezone.utc)) == "01/10/2026 00:00"
+
+
+def test_fmt_datetime_24h_wall_clock_plain_date_and_fallback():
+    assert fmt_datetime_24h(datetime(2026, 8, 18, 10, 0), naive_is_utc=False) == "18/08/2026 10:00"
+    assert fmt_datetime_24h(date(2026, 8, 18)) == "18/08/2026"
+    assert fmt_datetime_24h(None, fallback="-") == "-"
+
+
 # --- fmt_date_range -------------------------------------------------------------------------
 
 def test_fmt_date_range_joins_with_a_plain_hyphen():
@@ -109,6 +128,16 @@ def test_activity_summary_line_shows_dates_in_the_one_shape():
     assert _summary("UPDATE", None, [{"field": "Due", "from": None, "to": "2026-12-01"}]) == (
         "Due: - → 01/12/2026"
     )
+
+
+def test_fmt_day_label_is_weekday_day_month():
+    """The short day label a chip carries (the Town snapshot's last-week compare): no year."""
+    from app.utils.date_format import fmt_day_label
+
+    assert fmt_day_label(date(2026, 10, 27)) == "Tue 27 Oct"
+    assert fmt_day_label(date(2026, 12, 2)) == "Wed 2 Dec"
+    assert fmt_day_label("2027-01-03") == "Sun 3 Jan"
+    assert fmt_day_label(None, "-") == "-"
 
 
 # --- guard ----------------------------------------------------------------------------------

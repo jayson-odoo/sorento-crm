@@ -14,20 +14,25 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, require_any_permission, require_permission
 from app.schemas.new_product_application import (
     FeedbackIn,
     AttachmentLinkIn,
     LinkIn,
     NewProductApplicationWrite,
+    PurchasingResponseIn,
     ReasonIn,
 )
 from app.services import new_product_application_service as svc
 from app.services import npa_xlsx
 from app.services.error_handler import AppException
+from app.services.handling_lock_service import assert_can_act_on_form
 from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
+
+#: The product page's own view slug: its Lineage tab reads this route.
+PRODUCTS_VIEW = "master_data.products.view"
 
 router = APIRouter()
 
@@ -92,10 +97,42 @@ def prefill(
 @router.get("/products")
 def search_products(
     q: str = Query(""),
-    _user: dict = Depends(require_permission(svc.OPEN_CODE)),
+    # The applicant picks current codes here too (NPA-FROM-SI rule 4), purchasing the new code.
+    _user: dict = Depends(require_any_permission([svc.CREATE, svc.OPEN_CODE])),
     db: Session = Depends(get_db),
 ):
     return svc.search_products(db, q)
+
+
+def _id_list(raw: str) -> list:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()][:20]
+
+
+@router.get("/reuse-suggestions")
+def reuse_suggestions(
+    product_ids: str = Query(""),
+    _user: dict = Depends(
+        require_any_permission([svc.CREATE, svc.VIEW, svc.APPROVE, svc.OPEN_CODE])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 6: codes created before from exactly these current codes (a suggestion).
+    The earlier application's remark only for NPA view-all holders (security review round 3)."""
+    actor = svc.actor_from_slugs(_user["id"], permission_slugs(db, _user["id"]))
+    return svc.reuse_suggestions(db, _id_list(product_ids), full_why=actor.can_view_all)
+
+
+@router.get("/lineage")
+def product_lineage(
+    product_id: str = Query(...),
+    user: dict = Depends(
+        require_any_permission([svc.VIEW, svc.APPROVE, svc.OPEN_CODE, PRODUCTS_VIEW])
+    ),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI rule 5: a product's lineage. Application links only for NPA viewers."""
+    actor = svc.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+    return svc.lineage(db, product_id, can_view_applications=actor.can_view_all)
 
 
 @router.get("")
@@ -188,11 +225,86 @@ def download_application(
     )
 
 
+@router.post("/{application_id}/export/xlsx")
+def export_application_xlsx(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The same workbook through My Downloads, the stock inquiry PDF's way (NPA-FORM-SLA, owner 9 Nov):
+    a `user_downloads` row the RQ worker fills, so the list's Print Count counts it and its button
+    re-downloads it. Whoever can view the record may take it."""
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_new_product_application_xlsx
+
+    app = _load(db, application_id)
+    svc.assert_can_view(app, _actor(db, user))
+    downloads = DownloadService(db)
+    # One in flight per viewer per application (security review N3), as the order inquiry exports.
+    if downloads.has_in_flight(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+    ):
+        raise AppException(
+            status_code=409,
+            message="This workbook is already being prepared - check My Downloads.",
+            code="CONFLICT",
+        )
+    download = downloads.create(
+        user_id=str(user["id"]),
+        kind="new_product_application_xlsx",
+        source_entity_type=svc.ENTITY,
+        source_entity_id=str(app.id),
+        filename=f"{app.application_no}.xlsx",
+    )
+    try:
+        enqueue_job(
+            generate_new_product_application_xlsx,
+            str(download.id),
+            str(app.id),
+            str(user["id"]),
+            queue_name="imports",
+            job_timeout=600,
+        )
+    except Exception as e:  # noqa: BLE001 - the drawer must show it, never a pending row forever
+        downloads.mark_failed(str(download.id), f"Could not queue the workbook: {e}")
+        raise AppException(status_code=500, message="Could not queue the workbook. Please try again.", code="INTERNAL_ERROR")
+    return DownloadResponse.model_validate(downloads.get(str(download.id)))
+
+
+#: The approver's and purchasing's moves: gated by the form handling lock like every SI move
+#: (`api/v1/procurement/stock_inquiries.py`, NPA-FORM-SLA). The applicant's own moves (submit,
+#: revise, cancel) are not stage work and stay open to them.
+_STAGE_WORK = {
+    svc.approve,
+    svc.reject,
+    svc.purchasing_reject,
+    svc.save_purchasing_response,
+    svc.save_feedback,
+    svc.link_new_code,
+    svc.close_new_code,
+    svc.undo_new_code,
+    svc.link_line,
+    svc.close_line,
+    svc.undo_line,
+}
+
+
+def _gate(db: Session, user: dict, app, fn) -> None:
+    if fn in _STAGE_WORK:
+        assert_can_act_on_form(db, str(app.id), user, source_entity_type=svc.ENTITY)
+
+
 def _move(db: Session, user: dict, application_id: str, fn, **kw):
     try:
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
+        _gate(db, user, app, fn)
         event = fn(db, app, actor=actor, **kw)
         return _done(db, app, event, actor.user_id)
     except Exception:
@@ -245,6 +357,7 @@ def _line_move(db: Session, user: dict, application_id: str, line_id: str, fn, *
         app = _load(db, application_id, for_update=True)
         actor = _actor(db, user)
         svc.assert_can_view(app, actor)
+        _gate(db, user, app, fn)
         event = fn(db, app, validate_uuid_path(line_id, resource="Line"), actor=actor, **kw)
         return _done(db, app, event, actor.user_id)
     except Exception:
@@ -282,6 +395,141 @@ def undo_line(
     db: Session = Depends(get_db),
 ):
     return _line_move(db, user, application_id, line_id, svc.undo_line)
+
+
+@router.post("/{application_id}/new-code/link")
+def link_new_code(
+    application_id: str,
+    payload: LinkIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI: the ONE new product code (owner, mock v3)."""
+    return _move(db, user, application_id, svc.link_new_code, product_id=payload.product_id)
+
+
+@router.post("/{application_id}/new-code/close")
+def close_new_code(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _move(db, user, application_id, svc.close_new_code, reason=payload.reason)
+
+
+@router.post("/{application_id}/new-code/undo")
+def undo_new_code(application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _move(db, user, application_id, svc.undo_new_code)
+
+
+@router.post("/{application_id}/purchasing-reject")
+def purchasing_reject(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 09:30: purchasing's Reject, as on the stock inquiry page."""
+    return _move(db, user, application_id, svc.purchasing_reject, reason=payload.reason)
+
+
+@router.post("/{application_id}/purchasing-response/reply")
+def save_purchasing_response_and_reply(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov 15:10: the stock inquiry's "Update & Reply" on the NPA. Saves like Save only,
+    then replies through the linked stock inquiry's conversation on the SI's send path, with the
+    NPA's OWN template use case (owner 8 Nov 17:35: new_product_application_update)."""
+    from app.api.v1.procurement.stock_inquiries import _respond_user_id_from_current_user
+    from app.models.procurement import StockInquiry
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import StockInquiryService
+    from app.services.response_gate import assert_response_write_allowed
+
+    def refuse(message: str, field: str) -> AppException:
+        return AppException(status_code=422, message=message, code="VALIDATION_ERROR", details={"field": field})
+
+    if not (payload.purchasing_response or "").strip():
+        raise refuse("Enter a purchasing response first.", "purchasing_response")
+    si_service = StockInquiryService(db)
+    try:
+        app = _load(db, application_id, for_update=True)
+        actor = _actor(db, user)
+        svc.assert_can_view(app, actor)
+        _gate(db, user, app, svc.save_purchasing_response)
+        inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+        si_chat = inquiry is not None and bool(
+            si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        )
+        if not si_chat and svc.raised_in_portal(app):
+            # Owner 9 Nov ~02:30: a portal-raised NPA with no stock inquiry chat replies to its
+            # applicant through the portal that raised it (an in-app notice with the text and the
+            # link to that portal page; the response shows on that page). No WhatsApp send.
+            event = svc.save_purchasing_response(
+                db, app, actor=actor, data=payload.model_dump(exclude_unset=True)
+            )
+            svc.mark_responded(app)
+            detail = _done(db, app, event, actor.user_id)
+            # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+            svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
+            svc.notify_purchasing_reply(db, app)
+            db.commit()
+            return detail
+        if inquiry is None:
+            raise refuse(
+                "Only an application raised from a stock inquiry or in the portal can reply.",
+                "stock_inquiry_id",
+            )
+        # The SI's own refusals, BEFORE the save and the commit, so a reply that cannot go saves
+        # nothing: its response stage gate (crew answer 8 Nov: same check, same sentence as the
+        # SI's Update & Reply; Save only stays open, as on the SI), then its conversation.
+        assert_response_write_allowed("stock_inquiry", inquiry.status)
+        event = svc.save_purchasing_response(db, app, actor=actor, data=payload.model_dump(exclude_unset=True))
+        identifier = si_service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        if not identifier:
+            raise refuse("The stock inquiry has no Respond.io conversation to reply to.", "stock_inquiry_id")
+        svc.mark_responded(app)
+        respond_user_id = _respond_user_id_from_current_user(user)
+        message_body = svc.reply_message(db, app)
+        update_text = app.purchasing_response or ""
+        link = svc.portal_url(db, app)
+        template_vars = svc.template_vars(db, app)
+        detail = _done(db, app, event, actor.user_id)
+        # The reply is purchasing's answer, as the SI's Update & Reply (purchasing_respond).
+        svc.notify(db, app, svc.PURCHASING_RESPOND, actor_id=actor.user_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    si_service.enqueue_application_update_reply(
+        inquiry,
+        app,
+        identifier=identifier,
+        update_text=update_text,
+        message_body=message_body,
+        portal_url=link,
+        template_vars=template_vars,
+        respond_user_id=respond_user_id,
+        crm_sender_user_id=user.get("id"),
+    )
+    return detail
+
+
+@router.put("/{application_id}/purchasing-response")
+def save_purchasing_response(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov: purchasing's one dialog (outcome, lead time, cost)."""
+    return _move(
+        db, user, application_id, svc.save_purchasing_response, data=payload.model_dump(exclude_unset=True)
+    )
 
 
 @router.put("/{application_id}/feedback")

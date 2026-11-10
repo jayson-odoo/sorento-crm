@@ -1,13 +1,24 @@
 'use client';
 
+/**
+ * System Management > Scheduled Tasks (SCHEDULED-TASKS-GRID, owner 9 Nov 2026).
+ *
+ * The standard list stack (`DataGrid` + `DataGridListToolbar` + `buildSelectColumn`, query
+ * through `buildDataGridParams`), the same one `procurement-management/packing-lists` uses:
+ * page, sort and search run on the server; every column sorts; every filter is multi-select.
+ * ONE line per row: no cell stacks a second line, long text truncates and carries its full
+ * value in `title`. The description and the Enabled switch + Run now live on the detail page.
+ */
+
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
+  PaginationState,
   RowSelectionState,
-  useReactTable,
+  SortingState,
+  VisibilityState,
   getCoreRowModel,
-  getPaginationRowModel,
+  useReactTable,
 } from '@tanstack/react-table';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -16,13 +27,16 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { useScheduledTasks } from '../hooks/useScheduledTasks';
 import type { ScheduledTask } from '../types/scheduledTask.types';
-import { ChevronRight } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
   seconds: 'sec',
@@ -31,155 +45,253 @@ const INTERVAL_LABELS: Record<string, string> = {
   days: 'day',
 };
 
-function formatFrequency(task: ScheduledTask): string {
+export const ENABLED_OPTIONS = [
+  { value: 'true', label: 'Enabled' },
+  { value: 'false', label: 'Disabled' },
+];
+
+export const LAST_STATUS_OPTIONS = [
+  { value: 'success', label: 'Success' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'skipped', label: 'Skipped' },
+  { value: 'started', label: 'Started' },
+  { value: 'never', label: 'Never run' },
+];
+
+export const FREQUENCY_OPTIONS = [
+  { value: 'seconds', label: 'Seconds' },
+  { value: 'minutes', label: 'Minutes' },
+  { value: 'hours', label: 'Hours' },
+  { value: 'days', label: 'Days' },
+];
+
+export function formatFrequency(task: Pick<ScheduledTask, 'interval_unit' | 'interval_value'>): string {
   const unit = INTERVAL_LABELS[task.interval_unit] ?? task.interval_unit;
   return `Every ${task.interval_value} ${unit}${task.interval_value !== 1 ? 's' : ''}`;
 }
 
-export default function ScheduledTasksList() {
-  const router = useRouter();
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+/** One line, always: the cell clips and the full value is the hover title. */
+function OneLine({ text, className }: { text: string; className?: string }) {
+  return (
+    <span className={`block truncate ${className ?? ''}`} title={text}>
+      {text}
+    </span>
+  );
+}
 
-  const { data, isLoading, refetch, isFetching, error } = useScheduledTasks();
+function dateCell(value: string | null) {
+  return value ? <OneLine text={formatDateTimeInMalaysia(value)} className="tabular-nums" /> : <OneLine text="-" />;
+}
+
+export default function ScheduledTasksList() {
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({ key: false });
+  const [enabled, setEnabled] = useState<string[]>([]);
+  const [lastStatus, setLastStatus] = useState<string[]>([]);
+  const [frequency, setFrequency] = useState<string[]>([]);
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
+
+  useResetPageOnFilterChange(setPagination, [enabled, lastStatus, frequency, searchQuery]);
+
+  const { data, isLoading, isPlaceholderData, isFetching, refetch, error } = useScheduledTasks({
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
+    sorting,
+    searchQuery,
+    enabled,
+    last_status: lastStatus,
+    interval_unit: frequency,
+  });
   const tasks = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
 
   const columns = useMemo<ColumnDef<ScheduledTask>[]>(
     () => [
-      buildSelectColumn<ScheduledTask>(),
+      buildSelectColumn<ScheduledTask>({ rowLabel: (row) => `Select ${row.original.name}` }),
       {
+        id: 'name',
         accessorKey: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="font-medium">{row.original.name}</span>
-            {row.original.description && (
-              <span className="text-xs text-muted-foreground truncate max-w-[200px]">
-                {row.original.description}
-              </span>
-            )}
-          </div>
-        ),
-        size: 220,
+        header: ({ column }) => <DataGridColumnHeader title="Name" visibility column={column} />,
+        cell: ({ row }) => <OneLine text={row.original.name} className="font-medium" />,
+        size: 240,
         minSize: 140,
-        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-8 w-40" /> },
+        enableHiding: true,
+        meta: { headerTitle: 'Name' },
       },
       {
+        id: 'key',
         accessorKey: 'key',
-        header: ({ column }) => <DataGridColumnHeader title="Key" column={column} />,
-        cell: ({ row }) => (
-          <Badge variant="secondary">
-            {row.original.key}
-          </Badge>
-        ),
-        size: 180,
-        minSize: 100,
+        header: ({ column }) => <DataGridColumnHeader title="Key" visibility column={column} />,
+        cell: ({ row }) => <OneLine text={row.original.key} className="font-mono text-xs" />,
+        size: 200,
         meta: { headerTitle: 'Key' },
       },
       {
-        accessorKey: 'enabled',
-        header: ({ column }) => <DataGridColumnHeader title="Enabled" column={column} />,
-        cell: ({ row }) => (
-          <Badge variant={row.original.enabled ? 'success' : 'secondary'}>
-            {row.original.enabled ? 'Yes' : 'No'}
-          </Badge>
-        ),
-        size: 90,
-        meta: { headerTitle: 'Enabled' },
-      },
-      {
-        accessorKey: 'interval',
-        header: ({ column }) => <DataGridColumnHeader title="Frequency" column={column} />,
-        cell: ({ row }) => formatFrequency(row.original),
-        size: 120,
+        id: 'frequency',
+        accessorFn: (row) => formatFrequency(row),
+        header: ({ column }) => <DataGridColumnHeader title="Frequency" visibility column={column} />,
+        cell: ({ row }) => <OneLine text={formatFrequency(row.original)} />,
+        size: 130,
         meta: { headerTitle: 'Frequency' },
       },
       {
-        accessorKey: 'next_run_at',
-        header: ({ column }) => <DataGridColumnHeader title="Next Run" column={column} />,
-        cell: ({ row }) =>
-          row.original.next_run_at
-            ? formatDateTimeInMalaysia(row.original.next_run_at)
-            : '-',
-        size: 160,
-        meta: { headerTitle: 'Next Run' },
-      },
-      {
-        accessorKey: 'last_run_at',
-        header: ({ column }) => <DataGridColumnHeader title="Last Run" column={column} />,
-        cell: ({ row }) =>
-          row.original.last_run_at
-            ? formatDateTimeInMalaysia(row.original.last_run_at)
-            : '-',
-        size: 160,
-        meta: { headerTitle: 'Last Run' },
-      },
-      {
-        accessorKey: 'last_status',
-        header: ({ column }) => <DataGridColumnHeader title="Last Status" column={column} />,
-        cell: ({ row }) => {
-          const status = row.original.last_status || '-';
-          return (
-            <Badge status={status}>
-              {status}
-            </Badge>
-          );
-        },
-        size: 100,
-        meta: { headerTitle: 'Last Status' },
-      },
-      {
-        accessorKey: 'actions',
-        header: '',
+        id: 'enabled',
+        accessorKey: 'enabled',
+        header: ({ column }) => <DataGridColumnHeader title="Enabled" visibility column={column} />,
         cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            onClick={() => router.push(`/system-management/scheduled-tasks/${row.original.id}`)}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
+          <Badge variant={row.original.enabled ? 'success' : 'secondary'} appearance="light">
+            {row.original.enabled ? 'Enabled' : 'Disabled'}
+          </Badge>
         ),
-        size: 60,
-        enableHiding: false,
+        size: 110,
+        meta: { headerTitle: 'Enabled' },
+      },
+      {
+        id: 'last_status',
+        accessorKey: 'last_status',
+        header: ({ column }) => <DataGridColumnHeader title="Last status" visibility column={column} />,
+        cell: ({ row }) =>
+          row.original.last_status ? (
+            <Badge status={row.original.last_status}>{formatStatusLabel(row.original.last_status)}</Badge>
+          ) : (
+            <OneLine text="Never run" className="text-muted-foreground" />
+          ),
+        size: 120,
+        meta: { headerTitle: 'Last status' },
+      },
+      {
+        id: 'last_run_at',
+        accessorKey: 'last_run_at',
+        header: ({ column }) => <DataGridColumnHeader title="Last run" visibility column={column} />,
+        cell: ({ row }) => dateCell(row.original.last_run_at),
+        size: 190,
+        meta: { headerTitle: 'Last run' },
+      },
+      {
+        id: 'next_run_at',
+        accessorKey: 'next_run_at',
+        header: ({ column }) => <DataGridColumnHeader title="Next run" visibility column={column} />,
+        cell: ({ row }) => dateCell(row.original.next_run_at),
+        size: 190,
+        meta: { headerTitle: 'Next run' },
+      },
+      {
+        id: 'last_error',
+        accessorKey: 'last_error',
+        header: ({ column }) => <DataGridColumnHeader title="Last error" visibility column={column} />,
+        cell: ({ row }) =>
+          row.original.last_error ? (
+            <OneLine text={row.original.last_error} className="text-destructive" />
+          ) : (
+            <OneLine text="-" className="text-muted-foreground" />
+          ),
+        size: 320,
+        minSize: 120,
+        meta: { headerTitle: 'Last error' },
       },
     ],
-    [router],
+    [],
   );
 
   const table = useReactTable({
     data: tasks,
     columns,
     getRowId: (row) => row.id,
-    state: { pagination, rowSelection },
+    pageCount: Math.ceil(total / pagination.pageSize) || 1,
+    state: { pagination, sorting, rowSelection, columnVisibility },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
-    onPaginationChange: (updater) => {
-      const next = typeof updater === 'function' ? updater(pagination) : updater;
-      setPagination(next);
-    },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    manualPagination: false,
-    pageCount: Math.ceil(total / pagination.pageSize) || 1,
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    columnResizeMode: 'onChange',
   });
+
+  const activeFilters = [enabled, lastStatus, frequency].filter((v) => v.length > 0).length;
 
   return (
     <DataGrid
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       error={error}
       onRetry={() => void refetch()}
-      onRowClick={(task) => task?.id && router.push(`/system-management/scheduled-tasks/${task.id}`)}
+      rowHref={(task) => `/system-management/scheduled-tasks/${task.id}`}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyMessage={
+        activeFilters > 0 || searchQuery ? 'No scheduled tasks match your filters.' : 'No scheduled tasks yet.'
+      }
     >
       <Card>
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
+            searchSlot={
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search name, key or error"
+                className="w-full sm:w-64"
+              />
+            }
+            filters={{
+              kind: 'custom',
+              active: activeFilters > 0,
+              activeCount: activeFilters,
+              content: (
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="scheduled-task-enabled-filter">Enabled</Label>
+                    <SearchableMultiSelect
+                      id="scheduled-task-enabled-filter"
+                      value={enabled}
+                      onChange={setEnabled}
+                      options={ENABLED_OPTIONS}
+                      placeholder="Any"
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="scheduled-task-status-filter">Last status</Label>
+                    <SearchableMultiSelect
+                      id="scheduled-task-status-filter"
+                      value={lastStatus}
+                      onChange={setLastStatus}
+                      options={LAST_STATUS_OPTIONS}
+                      placeholder="Any"
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="scheduled-task-frequency-filter">Frequency</Label>
+                    <SearchableMultiSelect
+                      id="scheduled-task-frequency-filter"
+                      value={frequency}
+                      onChange={setFrequency}
+                      options={FREQUENCY_OPTIONS}
+                      placeholder="Any"
+                      triggerClassName="mt-1"
+                      clearable
+                    />
+                  </div>
+                </div>
+              ),
+            }}
             exportConfig={{ filename: 'scheduled_tasks_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}

@@ -5,6 +5,7 @@
  * function every renderer draws with. The `feature-icon-drops.ts` pattern.
  */
 import { accessoriesOf, accessoryBoxLayout, accessoryLineCount } from './accessory-box';
+import { cardDropped } from './accessory-card';
 import { layerShownFor } from './product-block';
 import type { LineTagData, TagBindingData, TagSheetDoc } from './tag-template-types';
 
@@ -45,13 +46,16 @@ export function accessoryDrops(
         if (layer.props?.kind !== 'accessories' || layer.visible === false) continue;
         if (!layerShownFor(layer, binding)) continue;
         const items = accessoriesOf(binding, layer);
-        dropped += accessoryBoxLayout(
-          items.length,
-          layer.props,
-          layer.width_mm,
-          layer.height_mm,
-          accessoryLineCount(items),
-        ).dropped;
+        const props = layer.props;
+        dropped += props.card
+          ? cardDropped(items.length, props, layer.width_mm, layer.height_mm)
+          : accessoryBoxLayout(
+              items.length,
+              props,
+              layer.width_mm,
+              layer.height_mm,
+              accessoryLineCount(items),
+            ).dropped;
       }
       if (dropped > 0) out.push({ tagLabel: data.tag_label || '?', dropped });
     }

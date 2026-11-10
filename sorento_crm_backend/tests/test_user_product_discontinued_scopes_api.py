@@ -381,3 +381,36 @@ def test_put_a_rejected_scope_list_leaves_the_profile_update_unapplied(api, db):
     check = client.get(f"/api/v1/user-management/users/{uid}")
     assert check.status_code == 200
     assert check.json()["name"] != "Should Not Stick"
+
+
+# --------------------------------------------------------------------------- #
+# PRODUCT-FIELD-CHANGE-NOTIFY: list-price toggles ride the same GET/PUT
+# --------------------------------------------------------------------------- #
+
+
+def test_list_price_toggles_round_trip(api, db):
+    client, allow, _caller = api
+    allow.update({USERS_VIEW, USERS_EDIT})
+    uid = _target_user(db)
+    db.commit()
+
+    before = client.get(f"/api/v1/user-management/users/{uid}").json()
+    body = before.get("data", before)
+    assert body["notify_email_on_product_list_price"] is False
+    assert body["notify_whatsapp_on_product_list_price"] is False
+
+    resp = client.put(
+        f"/api/v1/user-management/users/{uid}",
+        json={
+            "notify_email_on_product_list_price": True,
+            "notify_whatsapp_on_product_list_price": True,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = client.get(f"/api/v1/user-management/users/{uid}").json()
+    body = after.get("data", after)
+    assert body["notify_email_on_product_list_price"] is True
+    assert body["notify_whatsapp_on_product_list_price"] is True
+    # Discontinued toggle untouched.
+    assert body["notify_email_on_product_discontinued"] is True

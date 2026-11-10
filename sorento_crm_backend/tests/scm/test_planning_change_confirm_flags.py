@@ -12,7 +12,7 @@ a qty change and its batch.
 from __future__ import annotations
 
 from tests._pg_fixture import blank_session
-from tests.test_planning_changes import BASE, _client, _line_payload, _restore
+from tests.test_planning_changes import BASE, _client, _line_payload, _restore, apply_batch
 from tests.scm.test_planning_change_delta_seam import (
     _active_decision,
     _change_and_batch,
@@ -93,7 +93,7 @@ def test_row_amend_then_apply_keeps_order_back_and_the_investigation_flag():
                 json={"decision": "amend", "composition": _flagged_buy(str(world["line"].id))},
             )
             assert response.status_code == 200, response.text
-            applied = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+            applied = apply_batch(db, batch, world["actor"])
         finally:
             _restore(originals)
 

@@ -308,6 +308,13 @@ _HANDOVER_COMMITTED_TX_KEY = "oi_handover_committed_tx"
 _UNDO_PENDING_KEY = "oi_undo_pending"
 _UNDO_COMMITTED_TX_KEY = "oi_undo_committed_tx"
 
+#: FP-EMAIL-ONE-TRIGGER (owner, 6 Nov 2026: "I only want the email to purchasing to have 1
+#: trigger, which is this button"): the ROOT transactions a purchasing email trigger ran in
+#: (`mark_purchasing_email_trigger`). The handover drain sends only for one of these, and
+#: `_dispatch_changed_with_links` queues only inside one, so no other path (AutoCount ingest,
+#: a script, a service call) can email purchasing whatever it records.
+_PURCHASING_TRIGGER_TX_KEY = "oi_purchasing_trigger_tx"
+
 #: `Session.info` key for the `order_inquiry_rejected` email + the raiser's in-app notice
 #: (`PLAN-oi-reject-notify-13oct.md`), one item per order inquiry a reject touched, queued
 #: by `_uncover_and_notify_rejection` and fired once the session actually commits.
@@ -337,6 +344,37 @@ def _transaction_chain(session) -> List[Any]:
         chain.append(current)
         current = getattr(current, "parent", None)
     return chain
+
+
+def mark_purchasing_email_trigger(session) -> None:
+    """Mark the ROOT transaction this session is in as one that may email purchasing
+    (FP-EMAIL-ONE-TRIGGER, owner 6 Nov 2026).
+
+    Two callers, both a person's press, and no others:
+    - the board Confirm (`fulfilment_planning._confirm_with_possible_rejects`, the seam both
+      Confirm routes share): THE trigger;
+    - Publish amendment (`projects/sales_orders.publish_amendment`): kept as it was by the
+      owner (Q4, "not used yet"), an exception named in
+      `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`.
+    A purchasing handover line any write queues is sent only when the root transaction it was
+    queued under carries this mark, and a changed-with-links notice is queued only inside one.
+    The mark ends with that transaction, committed or not (`_fire_pending_handover`)."""
+    session.connection()  # autobegin, so there is a root transaction to mark
+    root = _transaction_chain(session)[-1]
+    marked = session.info.setdefault(_PURCHASING_TRIGGER_TX_KEY, [])
+    if not any(tx is root for tx in marked):
+        marked.append(root)
+
+
+def _may_email_purchasing(session) -> bool:
+    """True when the session's current root transaction carries
+    `mark_purchasing_email_trigger`'s mark."""
+    marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
+    if not marked:
+        return False
+    chain = _transaction_chain(session)
+    return bool(chain) and any(tx is chain[-1] for tx in marked)
+
 
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
@@ -452,6 +490,7 @@ _HANDOVER_VERB_ORDER = (
     IV_CHANGE_SO,
     IV_CANCEL_BALANCE,
     "CHANGE_ITEM_CODE",
+    "CHANGE_LOCATION",
     "QTY_CHANGE",
     "USE_OWN",
     "USE",
@@ -473,6 +512,8 @@ _HANDOVER_VERB_LABEL = {
     # the email's headline would otherwise print blank. Worded as REMARK words it
     # (OI-EMAIL-PRINT, owner 9 Oct).
     "CHANGE_ITEM_CODE": "NEW ITEM CODE",
+    # SPLIT-SHEET-LOCATION (owner, 7 Nov 2026): AutoCount moved the line's location.
+    "CHANGE_LOCATION": "NEW LOCATION",
     # EMAIL-SO-CHANGES (crew decision, 12 Oct): the headline is never empty. A line whose
     # quantity or date moved but that asks purchasing for nothing (landed stock meets a
     # rise; a date set where none was) reads QTY CHANGE.
@@ -930,6 +971,80 @@ def _saved_decision_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
         ),
         _own_remark(snapshot),
     )
+
+
+def _location_moved_from(
+    before: Optional[Mapping[str, Any]], now: Mapping[str, Any]
+) -> Optional[str]:
+    """SPLIT-SHEET-LOCATION (owner, 7 Nov 2026, Q3): the location a saved line was confirmed
+    at before, when AutoCount has since moved the line (its snapshot `location` is the core
+    warehouse, `ProjectSupplyService._snapshot`); None when it did not move. Any move counts,
+    within the pool or not (Q4)."""
+    was = (before or {}).get("location") or None
+    now_location = now.get("location") or None
+    return was if was and now_location and was != now_location else None
+
+
+def held_order_locations(db: Session, line_ids: Sequence[str]) -> Dict[str, Tuple[str, Decimal]]:
+    """SPLIT-SHEET-LOCATION: per line, the ONE location purchasing's live orders for it sit at
+    (its ORDER / ORDER BACK rows, not redirected to the pool); a line whose orders sit at two
+    locations, or that has none, is left out. Read by a Confirm BEFORE it writes, because the
+    write restamps a raised row onto the line's own location. Each entry is `(location, qty
+    held)`. An imported row can only differ from its line's location after a move: the sheet
+    import refuses one whose location differs (`LOCATION_DIFFERS`)."""
+    if not line_ids:
+        return {}
+    codes: Dict[str, set] = {}
+    qty: Dict[str, Decimal] = {}
+    for line_id, code, row_qty in db.query(
+        OrderInquiryRow.so_line_id, OrderInquiryRow.stock_location, OrderInquiryRow.qty
+    ).filter(
+        OrderInquiryRow.so_line_id.in_(list(line_ids)),
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+        OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+        OrderInquiryRow.redirected_to_pool.is_(False),
+    ):
+        key = str(line_id)
+        codes.setdefault(key, set()).add(code or "")
+        qty[key] = qty.get(key, _ZERO) + _dec(row_qty)
+    return {
+        key: (next(iter(found)), qty[key])
+        for key, found in codes.items()
+        if len(found) == 1 and next(iter(found))
+    }
+
+
+def _held_location_moved_from(
+    held: Optional[Tuple[str, Decimal]], now: Mapping[str, Any]
+) -> Optional[str]:
+    """Where purchasing's order sits when the line's own location is now elsewhere, for a line
+    confirmed for the first time (no snapshot to compare with); None otherwise."""
+    location = now.get("location") or None
+    if not held or not location:
+        return None
+    return held[0] if held[0] != location else None
+
+
+def _say_moved(item: Dict[str, Any], was: str, now: Mapping[str, Any]) -> None:
+    """A queued row line told for a moved saved line: at the line's new location, with the
+    move in REMARK (the row itself keeps its location, owner Q3)."""
+    location = now.get("location") or None
+    entry = item.get("line") or {}
+    phrase = _new_location_remark(was)
+    entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+    # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026).
+    entry["was"] = {**(entry.get("was") or {}), "location": was}
+    if location:
+        entry["location"] = location
+        item["stock_location"] = location
+    item["verb_keys"] = [*(item.get("verb_keys") or []), "CHANGE_LOCATION"]
+    # Read by `_queue_plan_rows` when the line's splits tell it in place of this line.
+    item["moved_from"] = was
+
+
+def _new_location_remark(was: str) -> str:
+    """REMARK's words for a moved line: the new code already prints in LOCATION."""
+    return f"NEW LOCATION (was {was})"
 
 
 def _own_remark(snapshot: Optional[Mapping[str, Any]]) -> Optional[str]:
@@ -1533,6 +1648,24 @@ def _record_cancel(
         root_entity_id=str(order_id) if order_id else None,
         skip_flush=True,
     )
+
+
+def _rows_named(rows, row_ids) -> List[Any]:
+    wanted = set(row_ids)
+    return [row for row in rows if str(row.id) in wanted]
+
+
+def _one_inquiry_root(rows) -> Dict[str, Any]:
+    """The audit root for one Confirm / Unconfirm press (STANDARD-HISTORY AC-SH-B7): the OI
+    when every row is that one OI's, else nothing (`log_audit` keeps its default root, the
+    first row). The History tab finds a press either way, through `new_values.row_ids`."""
+    inquiry_ids = {str(row.order_inquiry_id) for row in rows}
+    if len(inquiry_ids) != 1:
+        return {}
+    return {
+        "root_entity_type": "project_order_inquiries",
+        "root_entity_id": inquiry_ids.pop(),
+    }
 
 
 class ProjectOrderInquiryService:
@@ -4560,6 +4693,9 @@ class ProjectOrderInquiryService:
         """
         if not had_link:
             return
+        if not _may_email_purchasing(self.db):
+            # FP-EMAIL-ONE-TRIGGER: only a marked trigger emails purchasing.
+            return
         try:
             from app.services.automation_triggers import build_order_inquiry_link
 
@@ -4891,6 +5027,7 @@ class ProjectOrderInquiryService:
         pso_id: str,
         saved: Sequence[Tuple[ProjectSalesOrderLine, Mapping[str, Any], Optional[Mapping[str, Any]]]],
         actor_user_id: Optional[str] = None,
+        held_locations: Optional[Mapping[str, str]] = None,
     ) -> None:
         """The purchasing email of one Confirm: ONE line per SAVED line whose decision is new
         or changed, saying what was decided (ORDERBACK-DELTA extension, owner 13 Oct 2026
@@ -4921,6 +5058,15 @@ class ProjectOrderInquiryService:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
             own = _own_remark(now)
+            # SPLIT-SHEET-LOCATION (crew browser pass, SO358013 line 224): a line's FIRST
+            # Confirm has no decision to compare locations with, but purchasing's own order
+            # may sit at the old location (read before this Confirm wrote).
+            held = (held_locations or {}).get(str(line.id)) if before is None else None
+            held_from = _held_location_moved_from(held, now)
+            moved = {
+                "moved_from": held_from,
+                "held_qty": held[1] if held_from and held else None,
+            }
             if own is not None and not unchanged and not (
                 purchasing_remark(now) or (before is not None and purchasing_remark(before))
             ):
@@ -4943,6 +5089,7 @@ class ProjectOrderInquiryService:
                 # Cancel SO is told); a remark-only change is a change.
                 self._queue_saved_line(
                     pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
+                    **moved,
                     keys=[
                         key for _w, _l, _q, key in _saved_line_parts(now)
                         if key in _PURCHASING_KEYS
@@ -4965,8 +5112,11 @@ class ProjectOrderInquiryService:
             no_record = before is None or not _decision_words(before)
             # Only a Buy line: a mixed decision (Use BRW and Buy) reads in full, and a
             # Borrow's own hole row is not the line's decision.
-            if (unchanged and row_lines) or (
-                buy_words and (same_kind or no_record) and len(row_lines) == 1
+            # A moved line is told from its snapshots (`_queue_saved_line`), at its new
+            # location with NEW LOCATION: its rows' own lines read the old one.
+            if _location_moved_from(before, now) is None and (
+                (unchanged and row_lines)
+                or (buy_words and (same_kind or no_record) and len(row_lines) == 1)
             ):
                 # The rows already told this line in the one-line form purchasing works
                 # from (QTY = what they held, QTY CHANGE TO = the new need, EMAIL-HANDOVER-
@@ -4974,6 +5124,9 @@ class ProjectOrderInquiryService:
                 # refused row restated, AC-H6): that line stands as the line.
                 for item in row_lines:
                     item["told_for_saved_line"] = True
+                if held_from and row_lines:
+                    # The rows' own one line carries the move (a settle, a rise).
+                    _say_moved(row_lines[0], held_from, now)
                 queue.extend(row_lines)
                 continue
             if unchanged:
@@ -5025,6 +5178,7 @@ class ProjectOrderInquiryService:
                 # Several row lines for one line of the same kind (a redirect, two rows):
                 # what purchasing must order is what the rows raised, never need - held.
                 raised=raised if same_kind and lines_told > 1 else None,
+                **moved,
             )
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
@@ -5166,6 +5320,8 @@ class ProjectOrderInquiryService:
                     "stock_location": f.line.stock_location or f.location,
                     "verb_keys": ["QTY_CHANGE"],
                     "line": {**sample["line"], "item_code": f.item_code},
+                    # `sample` is another line's item: its move is not this line's.
+                    "moved_from": None,
                 }
             ]
         if not told:
@@ -5270,6 +5426,14 @@ class ProjectOrderInquiryService:
             self.decorate_handover_line(entry, item.get("core_line_id"))
             entry["continued"] = index > 0
             item["verb_keys"] = self._plan_row_keys(row, template)
+            moved_from = template.get("moved_from")
+            if moved_from and index == 0:
+                # SPLIT-SHEET-LOCATION (review S3): the move AutoCount made, said once, on
+                # the line's first plan row (the saved line it replaces said it).
+                phrase = _new_location_remark(moved_from)
+                entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+                entry["was"] = {**(entry.get("was") or {}), "location": moved_from}
+                item["verb_keys"] = [*item["verb_keys"], "CHANGE_LOCATION"]
 
     @staticmethod
     def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
@@ -5501,7 +5665,12 @@ class ProjectOrderInquiryService:
         taken_back: Decimal = _ZERO,
         raised: Optional[Decimal] = None,
         taken_rows: Sequence[Tuple[Decimal, Decimal, str]] = (),
+        moved_from: Optional[str] = None,
+        held_qty: Optional[Decimal] = None,
     ) -> None:
+        """`moved_from` / `held_qty` (SPLIT-SHEET-LOCATION): on a line's first Confirm, the
+        location purchasing's live order sits at when the line has moved since, and how much
+        it holds there (`held_order_locations`)."""
         explicit = remark is not None
         if not explicit:
             # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): only purchasing's parts. A line
@@ -5535,6 +5704,7 @@ class ProjectOrderInquiryService:
                     now,
                 )
                 keys = keys + ["CHANGED"]
+        moved_from = moved_from or _location_moved_from(before, now)
         if before is not None:
             qty_before = _dec(before.get("open_qty"))
             date_before, date_now = before.get("required_date"), now.get("required_date")
@@ -5646,7 +5816,7 @@ class ProjectOrderInquiryService:
                     # donor is named beside any date or quantity word
                     # (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
                     not same_kinds
-                    or not pieces
+                    or (not pieces and not moved_from)
                     or _borrow_donors(before) != _borrow_donors(now)
                 ):
                     pieces.append(remark)
@@ -5654,24 +5824,54 @@ class ProjectOrderInquiryService:
                     # What the customer's cut takes off what purchasing holds.
                     pieces.append(f"CANCEL {_qty_str(taken_back)}")
                     keys.append(IV_CANCEL_BALANCE)
+                if moved_from:
+                    # SPLIT-SHEET-LOCATION (owner Q3): only the move is stated; purchasing
+                    # decides what to do with what they hold at the old location.
+                    pieces.append(_new_location_remark(moved_from))
+                    keys.append("CHANGE_LOCATION")
                 remark = ", ".join(piece for piece in pieces if piece)
                 if not remark:
                     # Nothing of purchasing's moved: no line.
                     return
+            elif moved_from:
+                remark = ", ".join(
+                    piece for piece in (remark, _new_location_remark(moved_from)) if piece
+                )
+                keys.append("CHANGE_LOCATION")
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")
                 keys.append("CHANGE_ITEM_CODE")
+        elif moved_from:
+            # A first Confirm of a line AutoCount moved away from where purchasing's order
+            # sits (crew browser pass, SO358013 line 224). When nothing else changed for
+            # them (they hold what the line now orders, nothing taken back), the move is
+            # the whole line; otherwise it follows what the line already says.
+            phrase = _new_location_remark(moved_from)
+            nothing_else = (
+                not explicit
+                and taken_back <= _ZERO
+                and held_qty is not None
+                and held_qty == _purchasing_qty(now)
+            )
+            remark = phrase if nothing_else or not remark else f"{remark}, {phrase}"
+            keys.append("CHANGE_LOCATION")
+        if moved_from:
+            # LOCATION prints the old location, NEW LOCATION the new one (owner, 9 Nov 2026,
+            # as QTY / NEW QTY).
+            was["location"] = moved_from
         facts = self._handover_order_facts(pso_id)
-        inquiry_id = (
-            self.db.query(OrderInquiry.id)
+        # OI-SAVED-LINE-RAISER-HOTFIX: the raiser rides the item, as a row line's does
+        # (`handover_item`), so routing never has to read the header back post-commit.
+        inquiry_id, raised_by = (
+            self.db.query(OrderInquiry.id, OrderInquiry.raised_by)
             .filter(
                 OrderInquiry.project_sales_order_id == pso_id,
                 OrderInquiry.amendment_id.is_(None),
             )
             .order_by(OrderInquiry.inquiry_no)
             .limit(1)
-            .scalar()
-        )
+            .first()
+        ) or (None, None)
         required = now.get("required_date")
         line_entry = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
@@ -5694,6 +5894,8 @@ class ProjectOrderInquiryService:
                 "row_id": f"saved:{line.id}",
                 "so_line_id": str(line.id),
                 "order_inquiry_id": str(inquiry_id) if inquiry_id else None,
+                #: OI-ROUTE-BY-RAISER: who raised this OI, the `order_inquiry.raisedBy` fact.
+                "raised_by": str(raised_by) if raised_by else None,
                 "pso_id": pso_id,
                 "so_number": facts.get("so_number"),
                 "customer": facts.get("customer"),
@@ -5705,6 +5907,9 @@ class ProjectOrderInquiryService:
                 "item_code": now.get("item_code"),
                 "verb_keys": keys or ["QTY_CHANGE"],
                 "line": line_entry,
+                # SPLIT-SHEET-LOCATION: read by `_queue_plan_rows` when the line's splits
+                # tell it in place of this line.
+                "moved_from": moved_from,
                 "actor": self._handover_actor(actor_user_id),
                 "tx_chain": tx_chain,
                 "tx": tx_chain[-1] if tx_chain else None,
@@ -6316,21 +6521,16 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         reason: str = "Removed in AutoCount",
-        notify: bool = True,
     ) -> int:
         """AC-REMOVED-LINES (owner, 26 Oct 2026): a sales order line AutoCount REMOVED has its
-        order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them - the
-        calls `ProjectSupplyService.cancel_lines` makes after writing the core line (drafts
-        dropped, `retire_rows_for_cancelled_lines`, the purchasing handover) - but the core
-        line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
-        board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
-        share. Handover lines are queued only for lines whose rows actually retired. Call
-        before `flag_rows_for_cancelled_lines`, which then meets the rows still live on the line
-        (actioned ones) and runs them through `auto_confirm`.
+        order inquiry rows retired as CS's Transfer to Cancel SO retires them (drafts dropped,
+        `retire_rows_for_cancelled_lines`), but the core line gets no `cancelled_at` /
+        `cancelled_by_id` / `cancel_reason`: those mean the CS board.
 
-        `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
-        call queued for after the commit, the purchasing handover and the changed-with-links
-        notice, is dropped again, so it retires rows and sends nothing.
+        Only `scripts/release_removed_autocount_lines.py` calls this now: the ingest leaves a
+        removed line for the board (FP-EMAIL-ONE-TRIGGER Q1 (a)). It emails nobody: whatever it
+        queues for purchasing is dropped at the commit, which is not a board Confirm
+        (`mark_purchasing_email_trigger`).
         """
         from app.services import project_line_draft_service
 
@@ -6338,47 +6538,16 @@ class ProjectOrderInquiryService:
         if not lines:
             return 0
         core_ids = [str(line.id) for line in lines]
-        queue_keys = (_HANDOVER_PENDING_KEY, _CHANGED_WITH_LINKS_PENDING_KEY)
-        queued_before = {key: len(self.db.info.get(key) or []) for key in queue_keys}
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
             core_ids,
             company_id=str(lines[0].company_id) if lines[0].company_id else None,
         )
-        retired = self.retire_rows_for_cancelled_lines(
+        return self.retire_rows_for_cancelled_lines(
             [(cid, reason) for cid in core_ids],
             actor_user_id=actor_user_id,
             note_text=reason,
         )
-        if not notify:
-            for key in queue_keys:
-                if key in self.db.info:
-                    del self.db.info[key][queued_before[key]:]
-            return retired
-        queued = {
-            str(item.get("so_line_id"))
-            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])
-        }
-        if queued:
-            mirrors = (
-                self.db.query(ProjectSalesOrderLine)
-                .filter(
-                    ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids),
-                    ProjectSalesOrderLine.id.in_(list(queued)),
-                )
-                .all()
-            )
-            core_by_id = {str(line.id): line for line in lines}
-            by_pso: Dict[str, List[Tuple[ProjectSalesOrderLine, Any]]] = defaultdict(list)
-            for mirror in mirrors:
-                core = core_by_id.get(str(mirror.core_sales_order_line_id))
-                if core is not None:
-                    by_pso[str(mirror.project_sales_order_id)].append((mirror, core))
-            for pso_id, pairs in by_pso.items():
-                self.record_cancelled_lines(
-                    pso_id=pso_id, cancelled=pairs, actor_user_id=actor_user_id
-                )
-        return retired
 
     def retire_rows_for_cancelled_lines(
         self,
@@ -9535,6 +9704,9 @@ class ProjectOrderInquiryService:
                 company_id=rows[0].company_id,
                 ip_address=ip_address,
                 description=f"Confirm: {len(confirmed_ids)} row(s) marked Done by hand",
+                # STANDARD-HISTORY AC-SH-B7 (owner Q3, 10 Nov): a press on one OI names
+                # it as the root; a press across several keeps the default root.
+                **_one_inquiry_root(_rows_named(rows, confirmed_ids)),
             )
         if confirmed_ids:
             # Companions bundled to a row just marked Done by hand follow it.
@@ -9713,6 +9885,8 @@ class ProjectOrderInquiryService:
                 company_id=found_by_id[touched_ids[0]].company_id,
                 ip_address=ip_address,
                 description=f"Unconfirm: {len(touched_ids)} row(s) back to To confirm",
+                # STANDARD-HISTORY AC-SH-B7 (owner Q3, 10 Nov), as Confirm above.
+                **_one_inquiry_root([found_by_id[row_id] for row_id in touched_ids]),
             )
         return {"updated": updated, "skipped": skipped}
 
@@ -15301,7 +15475,10 @@ def handover_route_groups(
     `dispatch_event`'s own filter fires exactly that group's rows.
 
     A line with no `raised_by` (queued before the field existed, or a stand-in) reads it off
-    its OI header."""
+    its OI header, read unscoped: `_fire_pending_handover`'s post-commit session carries no
+    company scope, so a scoped read there returns nothing (fail-closed) and the line would
+    reach no raiser-conditioned row (OI-SAVED-LINE-RAISER-HOTFIX). The ids only ever come
+    from rows the caller already wrote or was allowed to read (`_handover_excel_names`)."""
     from app.models.automation import Automation
     from app.services.automation_service import AutomationService
 
@@ -15311,11 +15488,13 @@ def handover_route_groups(
         if not item.get("raised_by") and item.get("order_inquiry_id")
     }
     if missing:
-        raisers = dict(
-            db.query(OrderInquiry.id, OrderInquiry.raised_by)
-            .filter(OrderInquiry.id.in_(list(missing)))
-            .all()
-        )
+        with company_scope(db, None):
+            raisers = {
+                str(oi_id): raiser
+                for oi_id, raiser in db.query(OrderInquiry.id, OrderInquiry.raised_by)
+                .filter(OrderInquiry.id.in_(list(missing)))
+                .all()
+            }
         for item in items:
             if not item.get("raised_by") and item.get("order_inquiry_id"):
                 raiser = raisers.get(str(item["order_inquiry_id"]))
@@ -15667,6 +15846,17 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # (see `_mark_handover_transaction_committed`'s own guard), so there is
             # nothing to prune here.
             return
+        # FP-EMAIL-ONE-TRIGGER: was this root a purchasing email trigger? Its mark ends with
+        # it, whatever way it ended, so a later write on the same session is judged on its own.
+        marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
+        was_trigger = False
+        if marked:
+            still_marked = [tx for tx in marked if tx is not transaction]
+            was_trigger = len(still_marked) != len(marked)
+            if still_marked:
+                session.info[_PURCHASING_TRIGGER_TX_KEY] = still_marked
+            else:
+                session.info.pop(_PURCHASING_TRIGGER_TX_KEY, None)
         # Which saved lines a Confirm told (`record_saved_lines`) lives only as long as the
         # write it belongs to, so a later apply never forgets its own lines on its account.
         session.info.pop(_SAVED_TOLD_KEY, None)
@@ -15701,6 +15891,15 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             session.info[_HANDOVER_PENDING_KEY] = remaining
         else:
             session.info.pop(_HANDOVER_PENDING_KEY, None)
+        if not was_trigger:
+            # The ONE gate: purchasing is emailed from the board Confirm and nowhere else.
+            # The rows this write changed stand; nobody is emailed about them.
+            logger.info(
+                "order_inquiry_handover: %d line(s) not sent, the write was not a purchasing"
+                " trigger",
+                len(concluded),
+            )
+            return
 
         from app.database import SessionLocal
 

@@ -92,13 +92,14 @@ def test_q1_over_jan_mar_over_tier_and_tier_incentive_with_merged_accounts():
     assert q.codes == [a1, a3]
     assert (q.start, q.end, q.split_every, q.split_unit) == (date(2026, 1, 1), date(2026, 12, 31), 3, "month")
     assert q.threshold_unit == "amount"
-    # 6. "+ Additional 1%" as a SECOND tier at the same threshold is that tier's additional; a
-    # second additional line at its own threshold stacks too (ruling 5).
+    # 6. "+ Additional 1%" as a SECOND tier at the same threshold is that tier's Additional,
+    # folded onto it (lane TARGET-TIER-ADDITIONAL, owner 5 Nov); an additional line at a
+    # threshold no tier starts at stays a line of its own, said on the row.
     assert _tiers(q, date(2026, 1, 1)) == [
         (D("500000"), D("2"), False, None),
-        (D("500000"), D("1"), True, None),
         (D("600000"), D("0.5"), True, None),
     ]
+    assert [t.additional_rate for t in q.tiers if t.period_start == date(2026, 1, 1)] == [D("1"), None]
 
 
 def test_monthly_header_over_jan_to_dec():
@@ -144,18 +145,20 @@ def test_rate_naming_one_account_of_the_target_pays_only_that_account():
     a1 = _k(S, s_rows["ALPHA:A/C I"])
     q = _one(parsed, a1, "quarterly")
     assert _tiers(q, date(2026, 4, 1)) == [(D("400000"), None, False, {a1: D("3")})]
-    assert q.payout_code == a1
 
 
-def test_rate_naming_another_account_of_the_dealer_is_the_pay_to_case():
+def test_rate_naming_another_account_of_the_dealer_names_no_payee():
+    """Owner 8 Nov: the rate pays the counted account itself; the named account is no payee."""
+    from app.services.sales.dealer_target_import import PAY_TO_IGNORED
+
     parsed, s_rows, _ = _parse()
     d1, d3 = _k(S, s_rows["DELTA:A/C I"]), _k(S, s_rows["DELTA:A/C III"])
     own = _one(parsed, d1, "quarterly")
-    assert own.codes == [d1] and own.payout_code == d1
+    assert own.codes == [d1]
     paid = _one(parsed, d3, "quarterly")
     assert paid.codes == [d3]                     # counts A/C III
-    assert paid.payout_code == d1                 # pays A/C I
     assert _tiers(paid, date(2026, 1, 1)) == [(D("80000"), D("2"), False, None)]
+    assert PAY_TO_IGNORED in next(r for r in parsed.rows if r.key == d3).warnings
 
 
 # --------------------------------------------------------------------------------------- #
@@ -378,7 +381,7 @@ def test_apply_uses_picks_and_skips_and_computes(api):
     sale(("ALPHA", "A/C III"), 150000, date(2026, 2, 1))
     sale(("ALPHA", "A/C I"), 300000, date(2026, 5, 1))     # Q2 450,000 >= 400,000: 3% on A/C I only
     sale(("ALPHA", "A/C III"), 150000, date(2026, 5, 1))
-    sale(("DELTA", "A/C III"), 90000, date(2026, 2, 1))    # paid to A/C I
+    sale(("DELTA", "A/C III"), 90000, date(2026, 2, 1))    # its own share
 
     data, s_rows, m_rows = rl.build()
     picks = {
@@ -410,8 +413,9 @@ def test_apply_uses_picks_and_skips_and_computes(api):
     assert period(alpha, "2026-04-01")["commission_earned"] == 9000       # 3% of A/C I's 300,000
     delta = detail("DELTA:A/C III")
     assert [a["code"] for a in delta["accounts"]] == [crm[("DELTA", "A/C III")].customer_code]
-    assert delta["payout_account"]["code"] == crm[("DELTA", "A/C I")].customer_code
+    assert "payout_account" not in delta
     assert period(delta, "2026-01-01")["commission_earned"] == 1800
+    assert [a["commission_earned"] for a in period(delta, "2026-01-01")["accounts"]] == [1800]
     charlie_q = detail("CHARLIE:A/C I")
     assert (charlie_q["start_date"], charlie_q["end_date"]) == ("2026-01-01", "2026-12-31")
     lima = detail("LIMA:A/C I", M, m_rows, "yearly")
@@ -578,17 +582,16 @@ def _wb(fill):
     return buf.getvalue()
 
 
-def test_a_scheme_whose_pay_to_row_is_skipped_is_not_created(api):
-    """Review B1: DELTA A/C III pays A/C I; skipping A/C I fails A/C III, no target pays it."""
+def test_a_skipped_row_named_by_a_rate_no_longer_blocks_the_target(api):
+    """Review B1 retired (owner 8 Nov): DELTA A/C III's rate names A/C I, which is no payee, so
+    skipping A/C I leaves A/C III's own target standing."""
     client, db, company_id = api
     rl.seed(db, company_id, _uid, _code)
     data, s_rows, _ = rl.build()
     picks = {f"{S}!{s_rows['DELTA:A/C I']}": "skip"}
     body = _upload(client, data, dry_run=True, db=db, picks=picks).json()
     d3 = _by(body, S, s_rows["DELTA:A/C III"])
-    assert d3["status"] == "not_representable"
-    assert d3["reason"] == f"shares a target with row {s_rows['DELTA:A/C I']}, which is skipped"
-    assert "!" not in d3["reason"]
+    assert d3["status"] == "mapped", d3
 
 
 def test_a_text_only_first_data_row_is_never_read_as_a_header():

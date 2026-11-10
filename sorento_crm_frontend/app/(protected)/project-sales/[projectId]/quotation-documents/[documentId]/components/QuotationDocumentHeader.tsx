@@ -61,15 +61,21 @@ function Field({
 function EditField({
   id,
   label,
+  action,
   children,
 }: {
   id: string;
   label: string;
+  /** A small link beside the label (Attn's "Choose contacts"). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="min-w-0 space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -164,6 +170,8 @@ export function QuotationDocumentHeader({
   details = [],
   preparedBy = null,
   onChange,
+  recipientPicker,
+  attnAction,
 }: {
   /**
    * The document as the screen currently stands: the shell hands down the server's row with the
@@ -188,6 +196,10 @@ export function QuotationDocumentHeader({
    * screen's one Save sends it with the lines.
    */
   onChange?: (patch: QuotationDocumentBody) => void;
+  /** PROJECT-PARTY-ROLES PR 2: the Party picker that heads the TO block in an edit session. */
+  recipientPicker?: React.ReactNode;
+  /** Beside the Attn label in an edit session: "Choose contacts". */
+  attnAction?: React.ReactNode;
 }) {
   const lines = addressLines(document.recipient_address_snapshot);
   // `formatDateInMalaysia` answers '' on anything it cannot read, and a blank where a date
@@ -203,6 +215,7 @@ export function QuotationDocumentHeader({
           </p>
           {onChange ? (
             <div className="space-y-3 pt-1">
+              {recipientPicker}
               <EditField id="quotation-recipient-name" label="Name">
                 <Input
                   id="quotation-recipient-name"
@@ -238,6 +251,16 @@ export function QuotationDocumentHeader({
                   placeholder="Their contact number"
                 />
               </EditField>
+              <EditField id="quotation-recipient-fax" label="Fax">
+                <Input
+                  id="quotation-recipient-fax"
+                  value={document.recipient_fax_snapshot ?? ''}
+                  onChange={(event) =>
+                    onChange({ recipient_fax_snapshot: event.target.value || null })
+                  }
+                  placeholder="Their fax number"
+                />
+              </EditField>
               <EditField id="quotation-recipient-email" label="Email">
                 <Input
                   id="quotation-recipient-email"
@@ -248,7 +271,7 @@ export function QuotationDocumentHeader({
                   placeholder="Their email address"
                 />
               </EditField>
-              <EditField id="quotation-attn-name" label="Attn">
+              <EditField id="quotation-attn-name" label="Attn" action={attnAction}>
                 <Input
                   id="quotation-attn-name"
                   value={document.attn_name ?? ''}
@@ -274,6 +297,12 @@ export function QuotationDocumentHeader({
               <p className="min-w-0 break-words text-sm text-muted-foreground">
                 {document.recipient_phone_snapshot ?? '-'}
               </p>
+              {document.recipient_fax_snapshot ? (
+                <p className="min-w-0 break-words text-sm">
+                  <span className="text-muted-foreground">Fax: </span>
+                  <span className="font-medium">{document.recipient_fax_snapshot}</span>
+                </p>
+              ) : null}
               {document.recipient_email_snapshot ? (
                 <p className="min-w-0 break-words text-sm">
                   <span className="text-muted-foreground">Email: </span>
@@ -366,31 +395,23 @@ export function QuotationDocumentHeader({
             record header already shows right above this card (#1335). */}
         {onChange ? (
           <div className="border-t border-border pt-4 md:col-span-2">
-            <EditField id="quotation-subject-title" label="Subject">
-              <Input
+            {/* A wrapping textarea named for what it holds (PROPOSAL-FORM-COLLAPSE, owner
+                10 Nov): a long title such as a Malay development name overflowed a one-line
+                input. Still one value, prefilled from the project title. */}
+            <EditField id="quotation-subject-title" label="Project title">
+              <Textarea
                 id="quotation-subject-title"
+                rows={2}
                 value={document.subject_title ?? ''}
                 onChange={(event) => onChange({ subject_title: event.target.value || null })}
-                placeholder="The one line naming the job"
+                placeholder="e.g. CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN"
               />
             </EditField>
           </div>
         ) : null}
-        {onChange ? (
-          <div className="min-w-0 md:col-span-2">
-            <EditField id="quotation-purpose" label="Quotation Purpose">
-              <Input
-                id="quotation-purpose"
-                value={document.quotation_purpose ?? ''}
-                onChange={(event) => onChange({ quotation_purpose: event.target.value || null })}
-              />
-            </EditField>
-          </div>
-        ) : document.quotation_purpose ? (
-          <div className="min-w-0 md:col-span-2">
-            <Field label="Quotation Purpose" wide value={document.quotation_purpose} />
-          </div>
-        ) : null}
+        {/* No Quotation Purpose: removed from the form and from every new revision (owner, 10 Nov
+            2026). The column stays, so a stored value is kept but no longer shown or sent; a
+            revision that already went out still reprints it as sent. */}
         {document.prepared_by ?? preparedBy ? (
           <div className="min-w-0 md:col-span-2">
             <Field label="Prepared By" wide value={document.prepared_by ?? preparedBy} />

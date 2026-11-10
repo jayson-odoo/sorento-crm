@@ -513,22 +513,27 @@ export async function fetchSubmission(
   const res = await portalFetch(
     `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`,
   );
-  // 403 OWNER_MISMATCH: session is valid but the form belongs to another
-  // contact - surface as a typed error so the caller offers owner login.
-  if (res.status === 403) {
-    // The global handler flattens AppException to {message, detail, code}.
-    const body = await res
-      .clone()
-      .json()
-      .catch(() => ({}));
-    const code = body?.code ?? body?.detail?.code;
-    if (code === 'OWNER_MISMATCH') {
-      throw new PortalOwnerMismatchError(
-        body?.message ?? body?.detail?.message,
-      );
-    }
-  }
+  await throwIfOwnerMismatch(res);
   return unwrap<PortalSubmissionDetail>(res, 'Failed to load submission.');
+}
+
+/**
+ * 403 OWNER_MISMATCH: the session is valid but the record belongs to another contact. Thrown as
+ * a typed error so the caller offers the owner's login (`portalSessionRedirectPath`). One rule for
+ * every record a View link opens (submissions, new product applications). Any other response
+ * passes through untouched.
+ */
+export async function throwIfOwnerMismatch(res: Response): Promise<void> {
+  if (res.status !== 403) return;
+  // The global handler flattens AppException to {message, detail, code}.
+  const body = await res
+    .clone()
+    .json()
+    .catch(() => ({}));
+  const code = body?.code ?? body?.detail?.code;
+  if (code === 'OWNER_MISMATCH') {
+    throw new PortalOwnerMismatchError(body?.message ?? body?.detail?.message);
+  }
 }
 
 /**
@@ -1132,6 +1137,7 @@ export interface ProjectLookupItem {
   id: string;
   project_code: string;
   title: string;
+  name?: string | null;
   company_name?: string | null;
 }
 

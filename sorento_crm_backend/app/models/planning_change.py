@@ -75,6 +75,8 @@ PLANNING_CHANGE_KIND_QTY_DOWN = "qty_down"
 PLANNING_CHANGE_KIND_CANCELLED = "cancelled"
 PLANNING_CHANGE_KIND_ADDED = "added"
 PLANNING_CHANGE_KIND_PRODUCT_CHANGED = "product_changed"
+# SPLIT-SHEET-LOCATION (owner, 7 Nov 2026): AutoCount moved the line's location, nothing else.
+PLANNING_CHANGE_KIND_LOCATION_CHANGED = "location_changed"
 
 # `PlanningChangeRow.suggested` is RETIRED (Slice C): the rule table its five verbs came
 # from is replaced by `planning_change_service.compose_suggestion`, which diffs the re-run

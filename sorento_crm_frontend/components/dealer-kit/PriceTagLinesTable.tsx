@@ -42,6 +42,7 @@ import {
   picksNeeded,
   templateAfterFlip,
   unfittedPriceType,
+  variantPriceWarning,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -170,6 +171,78 @@ export function PriceTagLinesTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Variants on this tag (PRICETAG-UPGRADE-VARIANTS S3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which members of the line product's variant tree a feature icons layer on "All variants" reads:
+ * every member ticked by default, the line's own product locked on, a discontinued member listed
+ * with its hint but not counted. The line stores the UNTICKED ids. The Q5 warning sits under it.
+ */
+function VariantsRow({
+  line,
+  colSpan,
+  onUpdate,
+}: {
+  line: DraftLine;
+  colSpan: number;
+  onUpdate: (key: string, patch: Partial<DraftLine>) => void;
+}) {
+  const members = line.variant_members ?? [];
+  const own = line.product_id as string;
+  const unticked = new Set(line.excluded_variant_ids ?? []);
+  const live = members.filter((m) => !m.is_discontinued);
+  const tickedLive = live.filter((m) => !unticked.has(m.product_id)).length;
+  const value = [own, ...members.filter((m) => !unticked.has(m.product_id)).map((m) => m.product_id)];
+  const options = [
+    { value: own, label: line.code, disabled: true },
+    ...members.map((m) => ({
+      value: m.product_id,
+      label: m.code,
+      description: distinctName(m.code, m.name) ?? undefined,
+      badgeText: m.is_discontinued ? 'Discontinued' : undefined,
+    })),
+  ];
+  const count = `${tickedLive + 1} of ${live.length + 1} ticked`;
+  const tickedCodes = options.filter((option) => value.includes(option.value)).map((option) => option.label);
+  const warning = variantPriceWarning(line);
+  const id = `variants-${line.key}`;
+  return (
+    <tr className="align-top">
+      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
+        <div className="sticky left-0 max-w-[calc(100vw-9rem)] space-y-1 border-l-2 border-border pl-3 sm:max-w-md">
+          <Label htmlFor={id} className="text-xs font-medium">
+            Variants on this tag
+            {/* Read out with the label; the trigger shows the same count. */}
+            <span className="sr-only">{count}</span>
+          </Label>
+          <SearchableMultiSelect
+            id={id}
+            value={value}
+            onChange={(ids) => {
+              const keep = new Set(ids);
+              onUpdate(line.key, {
+                excluded_variant_ids: members.filter((m) => !keep.has(m.product_id)).map((m) => m.product_id),
+              });
+            }}
+            options={options}
+            // The count, never the joined codes: eight codes overflow the box (browser pass, 1280px).
+            renderTriggerLabel={() => (
+              <span className="truncate" title={tickedCodes.join(', ')}>
+                {count}
+              </span>
+            )}
+            emptyMessage="No variants."
+            size="sm"
+          />
+          {warning && <p className="text-xs text-warning">{warning}</p>}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -308,7 +381,7 @@ function PartRow({
                   value: candidate.product_id,
                   label: candidateOptionLabel(candidate, pricing, priceMode),
                   description: distinctName(candidate.code, candidate.name) ?? undefined,
-                  disabled: discontinued(candidate),
+                  // Owner, 7 Nov: a discontinued option is still a choice; the badge only says so.
                   badgeText: discontinued(candidate) ? 'Discontinued' : undefined,
                 }))}
                 placeholder={`Pick ${picksK}`}
@@ -334,10 +407,10 @@ function PartRow({
                     ),
                     // Owner, 4 Nov: the code is already the option's first line; a second
                     // line only when the name says something the code does not.
+                    // Owner, 7 Nov: a discontinued option stays pickable, marked "Discontinued".
                     description: discontinued(candidate)
                       ? 'Discontinued'
                       : (distinctName(candidate.code, candidate.name) ?? undefined),
-                    disabled: discontinued(candidate),
                   }))}
                   placeholder={
                     part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`
@@ -765,6 +838,13 @@ function LineRow({
             </div>
           </td>
         </tr>
+      )}
+      {!isSet &&
+        line.product_id &&
+        (line.variant_members?.length ?? 0) > 0 &&
+        // Only a template that reads "All variants" prints the members (crew re-pass 1).
+        line.tag_templates?.some((template) => template.id === line.tag_template_id && template.reads_variants) && (
+        <VariantsRow line={line} colSpan={subRowSpan} onUpdate={onUpdate} />
       )}
       {showPackage && (
         <tr className="align-top">

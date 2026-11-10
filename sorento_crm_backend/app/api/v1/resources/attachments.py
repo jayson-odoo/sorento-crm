@@ -38,7 +38,7 @@ from app.services.storage_router import (
     sanitize_storage_filename,
 )
 from app.services.uuid_list_param import parse_uuid_list
-from app.services.entity_attachment_service import EntityAttachmentService
+from app.services.entity_attachment_service import EntityAttachmentService, is_private_to_others
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
 from app.services.excel_macro_stripper import (
@@ -656,6 +656,25 @@ def _resolve_attachment_file_path(
     return resolve_signed_url(file_path, provider=provider)
 
 
+def new_upload_storage_key(
+    entity_type: Optional[str],
+    final_entity_type: str,
+    entity_id: Optional[str],
+    attachment_id: str,
+    original_filename: str,
+) -> str:
+    """Storage key of a NEW upload. Basename = the immutable original filename.
+
+    Every key carries the attachment id, so two uploads never share an object: the old flat
+    ``{type}/{name}`` scheme could silently clobber, and so could ``promotion/{entity}/{name}``
+    until IMAGE-UNIFY, which matters now that renditions beside a key are cached as immutable.
+    Promotion keys keep their ``promotion/{entity_id}/`` prefix.
+    """
+    if (entity_type or "").strip().lower() == "promotion" and entity_id:
+        return f"promotion/{entity_id}/{attachment_id}/{original_filename}"
+    return f"{final_entity_type}/{attachment_id}/{original_filename}"
+
+
 def _attachment_response_with_linked_entities(
     service: AttachmentService, attachment, current_user: Optional[dict] = None
 ) -> dict:
@@ -743,7 +762,7 @@ def get_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
@@ -1013,23 +1032,22 @@ async def create_attachment(
                 db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
             )
 
-        # Construct storage key. Basename = immutable original_filename.
-        # - promotion: already scoped by entity_id (unchanged).
-        # - generic: uuid-segregated by attachment_id so same-name uploads across folders
-        #    can NEVER share a key (the old flat {type}/{name} scheme could silently clobber).
+        # Construct storage key. A Replace keeps the row (same id, every link) but never the key:
+        # renditions are cached as immutable, so the new bytes go under a new key
+        # (`replace_storage_key`) and the old objects stay for a cleanup job (IMAGE-UNIFY).
         if existing_to_replace is not None:
-            # Replace-in-place: overwrite the EXISTING object at its own key so we
-            # don't orphan bytes or desync the uuid-segregated key from the row id.
-            # Fall back to a computed key only when the prior path is blank/legacy.
-            from app.services.storage_router import extract_key as _extract_key
-            s3_file_path = _extract_key(existing_to_replace.file_path) or (
-                f"{final_entity_type}/{existing_to_replace.id}/"
-                f"{sanitize_storage_filename(existing_to_replace.original_filename) or original_filename}"
+            from app.services.storage_router import replace_storage_key
+
+            s3_file_path = replace_storage_key(
+                final_entity_type,
+                str(existing_to_replace.id),
+                sanitize_storage_filename(existing_to_replace.original_filename) or original_filename,
+                file_hash,
             )
-        elif (entity_type or "").strip().lower() == "promotion" and entity_id:
-            s3_file_path = f"promotion/{entity_id}/{original_filename}"
         else:
-            s3_file_path = f"{final_entity_type}/{attachment_id}/{original_filename}"
+            s3_file_path = new_upload_storage_key(
+                entity_type, final_entity_type, entity_id, attachment_id, original_filename
+            )
 
         # Upload to whichever provider STORAGE_DEFAULT_PROVIDER points at (s3 or r2).
         from app.services.storage_router import (
@@ -1131,6 +1149,8 @@ async def create_attachment(
         # event_type=attachment_replaced so n8n intake updates the linked
         # record instead of duplicate-rejecting.
         if existing_to_replace is not None:
+            replaced_provider = existing_to_replace.storage_provider
+            replaced_file_path = existing_to_replace.file_path
             existing_to_replace.attachment_type_id = type_id  # type: ignore[assignment]
             existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
             existing_to_replace.file_path = stored_file_path  # type: ignore[assignment]
@@ -1154,6 +1174,13 @@ async def create_attachment(
             db.commit()
             db.refresh(existing_to_replace)
             attachment = existing_to_replace
+            # The old bytes and their renditions go in the worker, after the commit (crew ruling
+            # (a) on #2133): a Replace never deletes in the request and never fails on the cleanup.
+            from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
+
+            enqueue_replaced_original_cleanup(
+                replaced_provider, replaced_file_path, s3_key, db=db, attachment_id=attachment.id
+            )
             if attachment_type is not None and not is_promotion_upload:
                 try:
                     _create_and_send_webhook(
@@ -1455,6 +1482,14 @@ def bulk_download_attachments(
             message="Select at least one folder or file.",
             code="EMPTY_SELECTION",
         )
+    if attachment_ids:
+        # Another person's private file (the AI panel's) is left out like an id that does not exist.
+        stranger = {
+            str(a.id)
+            for a in db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+            if is_private_to_others(a, str(current_user["id"]))
+        }
+        attachment_ids = [i for i in attachment_ids if i not in stranger]
     if DownloadService(db).has_in_flight(
         user_id=current_user["id"], kind="attachment_bulk_zip", any_source=True
     ):
@@ -1547,7 +1582,7 @@ def update_attachment(
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         # Both ends of an edit: the entity the file is on now, and the one it is re-pointed to.
-        current = service.get_attachment(attachment_id)
+        current = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         assert_can_write_existing(db, current.entity_type, current.entity_id, current_user)
         requested = attachment_data.model_dump(exclude_unset=True)
         if "entity_type" in requested or "entity_id" in requested:
@@ -1598,10 +1633,10 @@ def download_attachment(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         
         # Get file content from S3
-        file_content = service.get_file_content(attachment_id)
+        file_content = service.get_file_content_for(attachment)
         
         # Return file as streaming response
         return Response(
@@ -1634,7 +1669,7 @@ def get_attachment_metadata(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
@@ -1656,7 +1691,7 @@ def get_attachment_preview_url(
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
-        attachment = service.get_attachment(attachment_id)
+        attachment = service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
         file_path = getattr(attachment, "file_path", None)
         if (variant or "").strip().lower() == "thumb":
             thumb_path = getattr(attachment, "thumbnail_path", None)
@@ -1900,7 +1935,7 @@ def read_attachment_again(
     from app.services import rate_limit
 
     validate_uuid_path(attachment_id, resource="Attachment")
-    attachment = AttachmentService(db).get_attachment(attachment_id)
+    attachment = AttachmentService(db).get_attachment(attachment_id, viewer_id=str(current_user["id"]))
     reason = knowledge_service.read_block_reason(db, attachment)
     if reason:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
@@ -1928,7 +1963,7 @@ def resubmit_attachment_webhook(
         validate_uuid_path(attachment_id, resource="Attachment")
         # Verify attachment exists (ORM row; file_path is stable base URL or S3 key from DB)
         attachment_service = AttachmentService(db)
-        attachment = attachment_service.get_attachment(attachment_id)
+        attachment = attachment_service.get_attachment(attachment_id, viewer_id=str(current_user["id"]))
 
         # An untyped attachment is never sent to n8n (owner rule, 2 Oct 2026), even
         # one with a log from before that rule; say so rather than send it.

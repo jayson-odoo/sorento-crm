@@ -222,6 +222,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 # ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
 # to every role holding the matching brands slug).
 PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
+# QUOTE-TERMS-SELECT: AutoCount Terms, ingest-only reference data (migration
+# qts_0001_quote_terms_select grants each slug to every role holding the item classes one).
+PERMISSION_REGISTRY.extend(_crud("master_data", "payment_terms", "Payment Terms"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))
@@ -716,6 +719,18 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Town (Dashboards > Town): admin-only by owner ruling, 10 Nov 2026 (TOWN-V2). Granted to `admin` and
+# `superadmin` (migration town_0001_view_perm + the admin grant seed); any other role only when an
+# admin grants it on the Roles screen.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dashboards.town.view",
+        "name": "View the Town",
+        "description": "See the Town: today's sales, dealers, stock, deliveries, approvals and incoming shipments, and its wallboard mode.",
+    },
+])
+
+
 # Ideation (Ideas board embed, shared-service SSO)
 PERMISSION_REGISTRY.extend([
     {
@@ -1020,6 +1035,16 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SALES-LEADERBOARD: Sales > Leaderboard; granted to admin and superadmin by `slb_0001_leaderboard_perm`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.leaderboard.view",
+        "name": "View the sales leaderboard",
+        "description": "Open Sales > Leaderboard: invoiced sales ranked by sales person. Shows no commission.",
+    },
+])
+
+
 # SALES-UNIFIED (#1916): the set-apart customers the sales reports pull out of Dealer and
 # Project team. Reading the list is `sales.reports.view`; granted to admin and superadmin by
 # `sales_unified_0001`.
@@ -1052,6 +1077,12 @@ PERMISSION_REGISTRY.extend([
         "slug": "projects.projects.view_own",
         "name": "View Own Projects",
         "description": "See only the projects you own, collaborate on or registered from the portal, and everything under them. Ignored when View Projects is also held.",
+    },
+    {
+        # Seeded by `sales_0007_targets_view_own` (AI-TOOLS-WAVE2, owner ruling 5 Nov), granted to no role.
+        "slug": "sales.targets.view_own",
+        "name": "View Own Sales Targets",
+        "description": "See only the agent targets of your own sales agents, with their commission. Ignored when View Sales Targets is also held.",
     },
     {
         "slug": "sales.opportunities.view_own",
@@ -1115,10 +1146,11 @@ PERMISSION_REGISTRY.extend([
 ])
 
 # AGENTIC-P3 W0: change a dealer contact's role or end its access, only for contacts linked to
-# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`, granted to NO
-# role there. Holding `user_management.contacts.edit` allows the same for any contact.
+# customers of the user's own sales agents. Seeded by `agp3_0002_contacts_edit_own`; granted to role
+# `salesperson` by `dap_0001_dealer_access` (DEALER-ACCESS-PORTAL, which also lets it grant access).
+# Holding `user_management.contacts.edit` allows the same for any contact.
 PERMISSION_REGISTRY.append({
     "slug": "user_management.contacts.edit_own",
     "name": "Edit Own Dealer Contacts' Access",
-    "description": "Change the role or end the access of dealer contacts linked to customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
+    "description": "Give, change or end the access of dealer contacts on customers of your own sales agents, through the agent. Ignored when Edit Contacts is also held.",
 })

@@ -164,7 +164,7 @@ def test_ac_2_1_a_combo_line_resolves_the_whole_combo_object(db):
     row, _request = _row(db, s)
     combo = row["combo"]
 
-    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "choices", "upgrades"}
+    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "accessory_box_style", "choices", "upgrades", "main_label", "parts_line", "part_labels"}
     assert combo["id"] == s["combo"].id
     assert combo["name"] == "ZZT 4 in 1"
     assert combo["description"] == "Cabinet, mirror, basin"

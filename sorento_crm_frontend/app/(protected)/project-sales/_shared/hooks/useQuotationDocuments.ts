@@ -12,6 +12,7 @@ import {
   addQuotationScope,
   approveQuotationDocument,
   createQuotationDocument,
+  openQuotationFormDraft,
   createQuotationSignLink,
   deleteQuotationDocument,
   getQuotationFeedback,
@@ -74,6 +75,30 @@ export function useQuotationDocument(
     queryKey: quotationDocumentKey(projectId ?? '', documentId ?? ''),
     queryFn: () => getQuotationDocument(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+    // QUOTE-AUTOSAVE: the page's "Unsaved draft" line comes from the record, and the draft can be
+    // written from another tab or person; coming back to the page re-reads it, even inside the
+    // app-wide 30 s fresh window.
+    refetchOnWindowFocus: 'always',
+  });
+}
+
+/**
+ * QUOTE-AUTOSAVE: open the form's draft, which claims it for this tab (owner, Q4): an existing
+ * document's (`documentId`), or the person's own new-proposal draft (null). Run ONCE per visit (no
+ * refetch on focus, mount or reconnect): a second open from the same tab would take the claim away
+ * from itself, and the form seeds from the answer a single time. (Window focus never refetches:
+ * the shared QueryProvider default.)
+ */
+export function useQuotationFormDraftOpen(projectId: string | undefined, documentId: string | null) {
+  return useQuery({
+    queryKey: ['project-quotation-form-draft-open', projectId ?? '', documentId ?? 'new'],
+    queryFn: () => openQuotationFormDraft(projectId as string, documentId),
+    enabled: Boolean(projectId),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
   });
 }
 
@@ -159,6 +184,11 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     queryClient.invalidateQueries({ queryKey: [ISSUES_KEY, projectId] });
     queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
     queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
+    // A save may link the To party to the project and add its Attn people as stakeholders
+    // (PROJECT-PARTY-ROLES PR 2): the project's parties, people and record are fresh again.
+    queryClient.invalidateQueries({ queryKey: ['projects', 'parties', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['projects', 'stakeholders', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['projects', 'detail', projectId] });
   };
 
   /**

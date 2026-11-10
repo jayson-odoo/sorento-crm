@@ -12,6 +12,7 @@ from .test_project_quotation_cover_page import (  # noqa: F401  (helpers, not te
     LABELS,
     MARKER as COVER_MARKER,
     TERMS,
+    _force_layout_3,
     _full_document,
 )
 from .test_project_quotation_pdf import _issue, _setup
@@ -91,26 +92,28 @@ def sign_body(db, record):
 # ------------------------------------------------------------------ send
 
 
-def test_issue_stamps_layout_3_and_copies_the_active_design_and_closing():
+def test_issue_stamps_layout_4_and_copies_the_active_design_and_closing():
+    from app.services.quotation_cover_service import COVER_LAYOUT_SECTIONS, normalize_design
+
     d = designed(closing_html="<p>design closing</p>")
     with blank_session() as db:
         env = _setup(db)
         record = _issue(db, prepared(db, env, d), env["owner"])
         db.refresh(record)
-        assert record.layout_version == 3
-        assert record.cover_design == d
+        assert record.layout_version == COVER_LAYOUT_SECTIONS
+        assert record.cover_design == normalize_design(d)
         assert MARKER in record.cover_closing_rendered and "closing words" in record.cover_closing_rendered
 
 
 def test_issue_with_no_active_design_copies_the_default_design():
-    from app.services.quotation_cover_service import DEFAULT_DESIGN
+    from app.services.quotation_cover_service import COVER_LAYOUT_SECTIONS, default_design
 
     with blank_session() as db:
         env = _setup(db)
         record = _issue(db, prepared(db, env), env["owner"])
         db.refresh(record)
-        assert record.layout_version == 3
-        assert record.cover_design == DEFAULT_DESIGN
+        assert record.layout_version == COVER_LAYOUT_SECTIONS
+        assert record.cover_design == default_design()
 
 
 def test_changing_or_activating_designs_afterwards_leaves_the_sent_revision_alone():
@@ -152,6 +155,7 @@ def _html3(db, env, d, **kw):
     from app.services import project_quotation_pdf_service as qpdf
 
     record = _issue(db, prepared(db, env, d, **kw), env["owner"])
+    _force_layout_3(db, record, d)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
     return record, qpdf.build_issue_html(db, record)
 
 
@@ -221,6 +225,7 @@ def test_pdf_layout_3_escapes_title_labels_and_cleans_intro_and_closing():
         document.cover_letter_html = "<p>ok</p><script>alert('x')</script>"
         document.cover_closing_html = '<p onclick="evil()">fine</p><iframe>frame</iframe>'
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record, d)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         from app.services import project_quotation_pdf_service as qpdf
 
         html = qpdf.build_issue_html(db, record)
@@ -259,6 +264,7 @@ def test_countersign_layout_3_follows_the_design():
         document.cover_letter_html = "<p>intro <strong>b</strong></p><script>alert(1)</script>"
         document.cover_closing_html = '<p onclick="x()">closing words</p>'
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record, d)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         body = sign_body(db, record)
         rows = body["cover_rows"]
         assert [r["key"] for r in rows] == [
@@ -290,6 +296,7 @@ def test_countersign_default_design_matches_the_2088_rows_and_title():
     with blank_session() as db:
         env = _setup(db)
         record = _issue(db, prepared(db, env), env["owner"])
+        _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         body = sign_body(db, record)
         assert [r["key"] for r in body["cover_rows"]] == KEYS
         assert [r["label"] for r in body["cover_rows"]] == [
@@ -356,6 +363,7 @@ def _cover_of(db, env, kind, d=None):
     from app.services import project_quotation_pdf_service as qpdf
 
     record = _issue(db, prepared(db, env, d, kind=kind), env["owner"])
+    _force_layout_3(db, record, d)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
     db.refresh(record)
     return record, qpdf.build_issue_html(db, record), sign_body(db, record)
 

@@ -323,7 +323,17 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // (bodyOnly, see BODY_ONLY_SEGMENTS). Total unchanged: 170.
     // PRICETAG-ACCESSORIES: `master-data-management/accessories` is a new DataGrid list segment
     // with its own `loading.tsx` (ListPageSkeleton). Total: 171.
-    expect(requiredSegmentNames.length).toBe(171);
+    // SALES-LEADERBOARD (#2227): `sales/leaderboard` is a new DataGrid segment with its own `loading.tsx`
+    // (ListPageSkeleton). Total: 172.
+    // PRICETAG-ACCESSORY-DESIGNER (#2237): `dealer-kit/accessory-templates` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton). Total: 173.
+    // CERT-LINK-CLEANUP (#2249): `master-data-management/certificates/links` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton). Total: 174.
+    // DEALER-ACCESS-SCREEN (#2294): `sales/dealer-access` is a new DataGrid list segment with its own
+    // `loading.tsx` (ListPageSkeleton). Total: 175.
+    // QUOTE-TERMS-SELECT (#2305): `master-data-management/payment-terms` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton). Total: 176.
+    expect(requiredSegmentNames.length).toBe(176);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

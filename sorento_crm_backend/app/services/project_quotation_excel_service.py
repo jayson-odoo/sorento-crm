@@ -69,6 +69,7 @@ from app.services import project_quotation_pdf_service as pdf
 from app.services import quotation_columns
 from app.services import quotation_matrix as matrix
 from app.services.project_quotation_document_service import document_noun, quotation_no
+from app.services.project_quotation_service import line_text
 
 _IMAGE_LABEL = dict(quotation_columns.COLUMNS)[quotation_columns.IMAGE]
 
@@ -552,8 +553,20 @@ def _write_scope(
     first_data_row = row
 
     current_band: Optional[str] = None
-    for position, line in enumerate(lines, start=1):
+    position = 0
+    for line in lines:
         band = _text(line.band_label)
+        if line.is_section:
+            # A heading row is the band and nothing else: no cells, no item number, nothing
+            # summed (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            _put(sheet, row, 1, band, font=_BOLD, fill=_BAND_FILL, alignment=_WRAP_LEFT)
+            sheet.merge_cells(
+                start_row=row, start_column=1, end_row=row, end_column=money_column
+            )
+            row += 1
+            continue
+        position += 1
         # Once, above the line that opens the band. Repeated down every row it is noise a QS reads
         # past; in the item row's own cells it cannot be told apart from a description.
         if band and band != current_band:
@@ -594,7 +607,7 @@ def _write_scope(
         # Typed tech-spec text from before drawings printed is kept, under the description.
         description = "\n".join(
             part
-            for part in (_text(line.description_snapshot), _text(line.technical_spec))
+            for part in (_text(line_text(line)), _text(line.technical_spec))
             if part
         )
         _put(
@@ -685,11 +698,11 @@ def _write_scope(
             )
         row += 1
 
-    if not lines:
+    if not position:
         _put(sheet, row, 1, "No items priced in this scope.", font=_ITALIC)
         row += 1
 
-    if grid and lines:
+    if grid and position:
         row = _write_grid_footer(
             sheet, row, first_data_row, counted_rows, positions, leaf_col, pair_col, summary["footer"]
         )

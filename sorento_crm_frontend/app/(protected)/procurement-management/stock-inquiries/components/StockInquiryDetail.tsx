@@ -25,7 +25,7 @@ import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
 import { withRevisionSuffix } from '@/lib/document-number';
-import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
@@ -38,6 +38,10 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { PurchasingResponseDialog } from '@/components/common/PurchasingResponseDialog';
+import { NewProductApplicationBanners } from '@/components/common/NewProductApplicationBanners';
+import { RejectOutlineButton } from '@/components/common/RejectOutlineButton';
 import {
   exportStockInquiryToExcel,
   exportStockInquiryWithRevisionsToExcel,
@@ -175,6 +179,8 @@ function StaffStockInquiryDetail({
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
+  // The reply dialog's "Salesperson must create a New Product Application" box.
+  const [editNpaRequested, setEditNpaRequested] = useState(false);
   const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -306,8 +312,15 @@ function StaffStockInquiryDetail({
 
   /** Persists the purchasing response when `skipSaveShort` is false, then sends it via Respond.io */
   const sendPurchasingUpdateAndReplyViaRespond = useCallback(
-    async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
+    async (
+      purchasingResponseText: string,
+      options?: { skipSaveShort?: boolean; npaRequested?: boolean },
+    ) => {
       const { body } = await buildPurchasingRespondMessage(purchasingResponseText);
+      const npaField =
+        options?.npaRequested === undefined
+          ? {}
+          : { npa_requested: options.npaRequested };
       if (!body) {
         toast.error('Enter a purchasing response before sending.');
         return;
@@ -315,12 +328,12 @@ function StaffStockInquiryDetail({
       if (!options?.skipSaveShort) {
         await updateInquiryMutation.mutateAsync({
           id: inquiryId,
-          data: { purchasing_response: body },
+          data: { purchasing_response: body, ...npaField },
         });
       }
       await updateAndReplyMutation.mutateAsync({
         id: inquiryId,
-        data: { purchasing_response: body },
+        data: { purchasing_response: body, ...npaField },
       });
     },
     [
@@ -420,9 +433,9 @@ function StaffStockInquiryDetail({
             {inquiry.status && (
               <>
                 {' · '}
-                <span className={`${STATUS_PILL_BASE} ${statusPillClass(inquiry.status)}`}>
+                <Badge status={inquiry.status}>
                   {STOCK_INQUIRY_STATUS_LABELS[inquiry.status] ?? inquiry.status}
-                </span>
+                </Badge>
               </>
             )}
           </p>
@@ -685,6 +698,7 @@ function StaffStockInquiryDetail({
                 size="sm"
                 onClick={() => {
                   setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                  setEditNpaRequested(Boolean(inquiry.npa_requested));
                   setEditPurchasingResponseOpen(true);
                 }}
                 data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"
@@ -697,9 +711,7 @@ function StaffStockInquiryDetail({
               (inquiry.status === 'pending_purchasing' ||
                 inquiry.status === 'responded') &&
               canPurchasingReject && (
-              <Button
-                variant="outline"
-                size="sm"
+              <RejectOutlineButton
                 disabled={purchasingRejectMutation.isPending}
                 onClick={() => {
                   setRejectAction('purchasing');
@@ -707,11 +719,7 @@ function StaffStockInquiryDetail({
                   setRejectDialogOpen(true);
                 }}
                 data-guide-target="procurement.stock-inquiries.reject-button"
-                className="text-destructive border-destructive/40 hover:bg-destructive/10"
-              >
-                <XCircle className="size-4 mr-1" />
-                Reject
-              </Button>
+              />
             )}
             {businessCtasEnabled && inquiry.status === 'rejected' && canReopen && (
               <Button
@@ -967,116 +975,84 @@ function StaffStockInquiryDetail({
         />
       )}
 
-      <Dialog
+      <PurchasingResponseDialog
         open={editPurchasingResponseOpen}
         onOpenChange={(open) => {
           setEditPurchasingResponseOpen(open);
           if (!open) setResponseAttachmentFiles([]);
         }}
+        response={editPurchasingResponseValue}
+        onResponseChange={setEditPurchasingResponseValue}
+        canReply={Boolean(inquiry.respond_inbox_url && responseWritable)}
+        noReplyReason={
+          inquiry.respond_inbox_url
+            ? undefined
+            : 'No WhatsApp reply: this inquiry has no WhatsApp conversation.'
+        }
+        saving={
+          updateInquiryMutation.isPending ||
+          uploadResponseAttachmentsMutation.isPending
+        }
+        replying={openingReplySheet || updateAndReplyMutation.isPending}
+        replyDisabled={
+          updateInquiryMutation.isPending ||
+          uploadResponseAttachmentsMutation.isPending ||
+          !businessCtasEnabled
+        }
+        replyTitle={lockedCtaTitle}
+        saveGuideTarget="procurement.stock-inquiries.save-response-button"
+        replyGuideTarget="procurement.stock-inquiries.update-and-reply-button"
+        onSave={async () => {
+          const uploaded = await uploadStagedResponseAttachments();
+          if (!uploaded) return;
+          try {
+            await updateInquiryMutation.mutateAsync({
+              id: inquiryId,
+              data: {
+                purchasing_response: editPurchasingResponseValue.trim(),
+                npa_requested: editNpaRequested,
+              },
+            });
+            setEditPurchasingResponseOpen(false);
+          } catch {
+            // toast from mutation
+          }
+        }}
+        onReply={async () => {
+          const uploaded = await uploadStagedResponseAttachments();
+          if (!uploaded) return;
+          setOpeningReplySheet(true);
+          try {
+            await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue, {
+              npaRequested: editNpaRequested,
+            });
+            setEditPurchasingResponseOpen(false);
+          } catch {
+            // toast from mutation
+          } finally {
+            setOpeningReplySheet(false);
+          }
+        }}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit purchasing response</DialogTitle>
-            <DialogDescription>
-              Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="edit-purchasing-response">Purchasing response</Label>
-            <Textarea
-              id="edit-purchasing-response"
-              value={editPurchasingResponseValue}
-              onChange={(e) => setEditPurchasingResponseValue(e.target.value)}
-              placeholder="Response text..."
-              rows={5}
-              className="resize-none"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Attachments</Label>
-            <ResponseAttachmentDropzone
-              files={responseAttachmentFiles}
-              onFilesChange={setResponseAttachmentFiles}
-              disabled={uploadResponseAttachmentsMutation.isPending}
-            />
-          </div>
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={closeEditPurchasingResponse}>
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              data-guide-target="procurement.stock-inquiries.save-response-button"
-              // Blank response = nothing to save or send. Disable up front instead
-              // of accepting the click and rejecting it with a toast afterwards.
-              disabled={
-                !editPurchasingResponseValue.trim() ||
-                updateInquiryMutation.isPending ||
-                uploadResponseAttachmentsMutation.isPending
-              }
-              title={
-                !editPurchasingResponseValue.trim()
-                  ? 'Enter a purchasing response first.'
-                  : undefined
-              }
-              onClick={async () => {
-                const uploaded = await uploadStagedResponseAttachments();
-                if (!uploaded) return;
-                try {
-                  await updateInquiryMutation.mutateAsync({
-                    id: inquiryId,
-                    data: { purchasing_response: editPurchasingResponseValue.trim() },
-                  });
-                  setEditPurchasingResponseOpen(false);
-                } catch {
-                  // toast from mutation
-                }
-              }}
-            >
-              {updateInquiryMutation.isPending || uploadResponseAttachmentsMutation.isPending
-                ? 'Saving…'
-                : 'Save only'}
-            </Button>
-            {inquiry.respond_inbox_url && responseWritable && (
-                <Button
-                  variant="primary"
-                  data-guide-target="procurement.stock-inquiries.update-and-reply-button"
-                  disabled={
-                    !editPurchasingResponseValue.trim() ||
-                    updateInquiryMutation.isPending ||
-                    openingReplySheet ||
-                    updateAndReplyMutation.isPending ||
-                    uploadResponseAttachmentsMutation.isPending ||
-                    !businessCtasEnabled
-                  }
-                  title={
-                    !editPurchasingResponseValue.trim()
-                      ? 'Enter a purchasing response first.'
-                      : lockedCtaTitle
-                  }
-                  onClick={async () => {
-                    const uploaded = await uploadStagedResponseAttachments();
-                    if (!uploaded) return;
-                    setOpeningReplySheet(true);
-                    try {
-                      await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue);
-                      setEditPurchasingResponseOpen(false);
-                    } catch {
-                      // toast from mutation
-                    } finally {
-                      setOpeningReplySheet(false);
-                    }
-                  }}
-                >
-                  <Send className="size-4 mr-1" />
-                  {openingReplySheet || updateAndReplyMutation.isPending
-                    ? 'Sending…'
-                    : 'Update & Reply'}
-                </Button>
-              )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="edit-npa-requested"
+            checked={editNpaRequested}
+            onCheckedChange={(v) => setEditNpaRequested(v === true)}
+          />
+          <Label htmlFor="edit-npa-requested">
+            Salesperson must create a New Product Application
+          </Label>
+        </div>
+        <div className="space-y-2">
+          <Label>Attachments</Label>
+          <ResponseAttachmentDropzone
+            files={responseAttachmentFiles}
+            onFilesChange={setResponseAttachmentFiles}
+            disabled={uploadResponseAttachmentsMutation.isPending}
+          />
+        </div>
+      </PurchasingResponseDialog>
 
       {inquiry.status === 'rejected' && (
         <RejectionReasonBanner
@@ -1122,7 +1098,16 @@ function StaffStockInquiryDetail({
         }
       />
 
+      {canSeeApplications && applications !== undefined && (
+        <NewProductApplicationBanners
+          requested={inquiry.npa_requested}
+          applications={applications}
+          audience="staff"
+        />
+      )}
 
+      {/* "New product applications (N)" is a tab of the page's ONE bar (StockInquiryDetailTabs),
+          next to Details / Comments / Revisions / SLA Tracking: no second row here. */}
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
           <InquiryReadValue empty=" - ">
@@ -1201,6 +1186,7 @@ function StaffStockInquiryDetail({
                   className="shrink-0"
                   onClick={() => {
                     setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                    setEditNpaRequested(Boolean(inquiry.npa_requested));
                     setEditPurchasingResponseOpen(true);
                   }}
                   aria-label="Edit purchasing response"
@@ -1212,32 +1198,6 @@ function StaffStockInquiryDetail({
             </div>
           </div>
         </InquiryFormTableRow>
-        {canSeeApplications && (
-          <InquiryFormTableRow label="New product applications" labelClassName="items-start pt-3">
-            {applications && applications.length > 0 ? (
-              <ul className="space-y-1.5 py-2 text-sm">
-                {applications.map((a) => (
-                  <li key={a.id} className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/procurement-management/new-product-applications/${a.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {a.application_no}
-                    </Link>
-                    <span className={`${STATUS_PILL_BASE} ${statusPillClass(a.status)}`}>
-                      {a.status_label}
-                    </span>
-                    {a.opened_codes.length > 0 && (
-                      <span className="break-words">{a.opened_codes.join(', ')}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <InquiryReadValue>None yet</InquiryReadValue>
-            )}
-          </InquiryFormTableRow>
-        )}
         {(inquiry.last_responded_at || inquiry.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">

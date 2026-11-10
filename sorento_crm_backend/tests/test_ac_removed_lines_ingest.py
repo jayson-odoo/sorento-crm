@@ -54,6 +54,7 @@ from app.models.project_so import (
 from app.models.scm import OrderLinkClaim
 
 from .test_ingest_documents import (
+    _USER_ID,
     INGEST_PO,
     INGEST_SO,
     _po_line,
@@ -454,12 +455,7 @@ def _remove_so_line_x(env, record, y):
     env.db.expire_all()
 
 
-def test_ac_rl_20_a_removed_so_line_retires_its_live_rows_like_transfer_to_cancel_so(
-    env, monkeypatch
-):
-    """Live raised / partly linked / placed rows on the removed SO line: links back, row
-    `cancelled`, OI_ROW_CANCELLED audit per row. The core line is `cancelled` but gets NO
-    `cancelled_at` / `cancelled_by_id` (those mean the CS board)."""
+def _three_rows_on_x(env):
     po = _push_po(env)
     record, header, line_x, y = _push_so(env)
     raised, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED)
@@ -472,10 +468,68 @@ def test_ac_rl_20_a_removed_so_line_retires_its_live_rows_like_transfer_to_cance
         env, header, line_x, state=INQUIRY_PARTLY_LINKED, links=1, qty="10",
         po_line_id=po.line_b, po_number=po.po_number, share=shared,
     )
+    return record, header, line_x, y, {raised: [], placed: placed_links, partly: partly_links}
+
+
+def test_fp_email_one_trigger_q1_a_removed_so_line_leaves_its_rows_for_the_board(env):
+    """FP-EMAIL-ONE-TRIGGER Q1 (a), owner 6 Nov 2026 (supersedes AC-RL-20's retire at ingest):
+    the push cancels the core line but retires no order inquiry row - the removal waits on the
+    board as the push's planning-change `cancelled` row, for CS to Confirm. The core line still
+    gets no `cancelled_at` / `cancelled_by_id` (those mean the CS board)."""
+    record, header, line_x, y, rows = _three_rows_on_x(env)
+    before = {row_id: _row_snapshot(env, row_id)["state"] for row_id in rows}
 
     _remove_so_line_x(env, record, y)
 
-    for row_id in (raised, placed, partly):
+    for row_id, links in rows.items():
+        snap = _row_snapshot(env, row_id)
+        assert snap["state"] == before[row_id], (row_id, snap)
+        assert snap["state"] != INQUIRY_CANCELLED, (row_id, snap)
+        assert "Removed in AutoCount" not in (snap["note"] or ""), (row_id, snap)
+    core = env.db.execute(
+        text("SELECT line_status, cancelled_at, cancelled_by_id FROM sales_order_lines WHERE id = :i"),
+        {"i": str(line_x["id"])},
+    ).mappings().one()
+    assert core["line_status"] == "cancelled"
+    assert core["cancelled_at"] is None and core["cancelled_by_id"] is None
+    from app.models.planning_change import PlanningChangeRow
+
+    pending = (
+        env.db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.core_line_id == str(line_x["id"]),
+            PlanningChangeRow.kind == "cancelled",
+        )
+        .all()
+    )
+    assert len(pending) == 1, "the removal waits on the board as a cancelled row"
+
+
+def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cancel(
+    env, monkeypatch
+):
+    """Q1 (a): CS's Confirm of that pending change retires the rows (OI_ROW_CANCELLED each) and
+    is the one email purchasing gets for it, every line a CANCEL."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services import planning_change_service
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+    record, header, line_x, y, rows = _three_rows_on_x(env)
+    _remove_so_line_x(env, record, y)
+    batch_id = (
+        env.db.query(PlanningChangeRow.batch_id)
+        .filter(PlanningChangeRow.core_line_id == str(line_x["id"]))
+        .scalar()
+    )
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+
+    mark_purchasing_email_trigger(env.db)
+    planning_change_service.apply(env.db, str(batch_id), _USER_ID)
+    env.db.commit()
+    env.db.expire_all()
+
+    for row_id in rows:
         snap = _row_snapshot(env, row_id)
         assert snap["state"] == INQUIRY_CANCELLED, (row_id, snap)
         assert snap["link_lines"] == [], (row_id, snap)
@@ -485,22 +539,18 @@ def test_ac_rl_20_a_removed_so_line_retires_its_live_rows_like_transfer_to_cance
             .count()
         )
         assert audits == 1, (row_id, audits)
-        note = snap["note"] or ""
-        assert "Removed in AutoCount" in note, (row_id, note)
-        assert "Transferred to Cancel SO" not in note, (row_id, note)
-    core = env.db.execute(
-        text("SELECT line_status, cancelled_at, cancelled_by_id FROM sales_order_lines WHERE id = :i"),
-        {"i": str(line_x["id"])},
-    ).mappings().one()
-    assert core["line_status"] == "cancelled"
-    assert core["cancelled_at"] is None and core["cancelled_by_id"] is None
+    matches = _handover_calls(calls)
+    assert len(matches) == 1, [c["trigger_type"] for c in calls]
+    lines = matches[0]["context"]["handover"]["lines"]
+    assert lines and all("CANCEL" in line["remark"] for line in lines), lines
 
 
-def test_ac_rl_20_a_removed_so_line_hands_the_cancelled_rows_over_to_purchasing(
+def test_fp_email_one_trigger_s1_a_removed_so_line_emails_purchasing_nothing(
     env, monkeypatch
 ):
-    """The same purchasing handover Transfer to Cancel SO produces: one
-    `order_inquiry_handover` dispatch, every line a plain CANCEL."""
+    """FP-EMAIL-ONE-TRIGGER S1 (owner, 6 Nov 2026; SO398322): an AutoCount push is not the
+    board Confirm, so it emails purchasing nothing - no handover CANCEL, no changed-with-links
+    notice - even for a linked row. Supersedes AC-RL-20's "hands the rows over"."""
     po = _push_po(env)
     record, header, line_x, y = _push_so(env)
     _so_mirror_row(
@@ -512,23 +562,42 @@ def test_ac_rl_20_a_removed_so_line_hands_the_cancelled_rows_over_to_purchasing(
 
     _remove_so_line_x(env, record, y)
 
-    matches = _handover_calls(calls)
-    assert len(matches) == 1, [c["trigger_type"] for c in calls]
-    lines = matches[0]["context"]["handover"]["lines"]
-    assert lines and all(line["remark"] == "CANCEL" for line in lines), lines
+    oi_mail = [
+        c["trigger_type"]
+        for c in calls
+        if c["trigger_type"] in ("order_inquiry_handover", "order_inquiry_changed_with_links")
+    ]
+    assert oi_mail == [], oi_mail
 
 
-def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_only_flagged(env):
-    """Actioned rows are only flagged (`ack_state = changed`), as today; not cancelled."""
+def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_left_for_the_board(env):
+    """An actioned row on a removed SO line is neither cancelled nor acknowledged by the push
+    (FP-EMAIL-ONE-TRIGGER, crew 7 Nov: a removed line is left out of the cancelled-line flag);
+    it keeps its state and ack until CS's board Confirm."""
     record, header, line_x, y = _push_so(env)
-    actioned, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_ACTIONED)
+    actioned, _ = _so_mirror_row(
+        env, header, line_x, state=INQUIRY_ACTIONED, ack=ACK_AWAITING
+    )
 
     _remove_so_line_x(env, record, y)
 
     snap = _row_snapshot(env, actioned)
-    assert snap["state"] == INQUIRY_ACTIONED, snap
-    # ruling (c): the mirror row holds no live link, nothing to order on a cancelled line
-    assert snap["ack_state"] == ACK_ACKNOWLEDGED, snap
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_ACTIONED, ACK_AWAITING), snap
+
+
+def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged(env):
+    """Guard of the removed-line exclusion: a push that cancels the HEADER (the line left out
+    too) is a cancelled order, not a removed line, so its live rows are flagged done
+    (`flag_rows_for_cancelled_lines` -> acknowledged) as before."""
+    record, header, line_x, y = _push_so(env)
+    row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
+
+    res = env.post(INGEST_SO, [dict(record, status="cancelled", lines=[y])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    snap = _row_snapshot(env, row_id)
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_ACKNOWLEDGED), snap
 
 
 # ============================================================== guards (AC-RL-30..34)
@@ -808,3 +877,67 @@ def test_ac_rl_47_guard_a_claim_naming_a_removed_so_line_is_left_in_place(env):
     ).mappings().first()
     assert row is not None, "the claim must stay"
     assert str(row["so_line_id"]) == str(line_x["id"]) and str(row["po_line_id"]) == po.line_b
+
+
+def test_fp_email_one_trigger_an_unmarked_retire_of_linked_rows_emails_nobody(env, monkeypatch):
+    """The changed-with-links half of the gate (review B1): retiring LINKED rows outside a
+    purchasing trigger (here the reconciliation script's call) queues no
+    `order_inquiry_changed_with_links` notice and sends no handover."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    record, header, line_x, y, rows = _three_rows_on_x(env)
+    assert any(rows.values()), "fixture: at least one row carries a link"
+    core = env.db.get(SalesOrderLine, str(line_x["id"]))
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+
+    retired = ProjectOrderInquiryService(env.db).retire_rows_for_removed_so_lines([core])
+    env.db.commit()
+
+    assert retired == len(rows), retired
+    oi_mail = [
+        c["trigger_type"]
+        for c in calls
+        if c["trigger_type"] in ("order_inquiry_handover", "order_inquiry_changed_with_links")
+    ]
+    assert oi_mail == [], oi_mail
+
+
+def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_board_confirm(
+    env, monkeypatch
+):
+    """Crew, 7 Nov (review of 7a12f9ae): with Q1 (a) the push no longer retires a removed SO
+    line's rows, so `flag_rows_for_cancelled_lines` met LIVE rows and acknowledged them by the
+    system: a buy purchasing still had open read Done, with no email and nothing changed on the
+    board. A REMOVED line is left out of that flag: the row keeps its state and ack until CS's
+    board Confirm retires it (and emails the CANCEL)."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services import planning_change_service
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
+
+    record, header, line_x, y = _push_so(env)
+    row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
+
+    _remove_so_line_x(env, record, y)
+
+    snap = _row_snapshot(env, row_id)
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
+    # Crew, 7 Nov: and the OI Documents list (purchasing's view) still reads it Outstanding.
+    from app.services.order_inquiry_header_service import OrderInquiryHeaderService
+
+    inquiry_id = _so_mirror_row.last[1]
+    assert OrderInquiryHeaderService(env.db).get(str(inquiry_id)).status == "outstanding"
+
+    batch_id = (
+        env.db.query(PlanningChangeRow.batch_id)
+        .filter(PlanningChangeRow.core_line_id == str(line_x["id"]))
+        .scalar()
+    )
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+    mark_purchasing_email_trigger(env.db)
+    planning_change_service.apply(env.db, str(batch_id), _USER_ID)
+    env.db.commit()
+
+    assert _row_snapshot(env, row_id)["state"] == INQUIRY_CANCELLED
+    assert len(_handover_calls(calls)) == 1, [c["trigger_type"] for c in calls]

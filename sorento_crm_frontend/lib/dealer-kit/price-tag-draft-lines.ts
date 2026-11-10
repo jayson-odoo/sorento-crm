@@ -14,7 +14,9 @@ import type {
   PriceTagRequestLineInput,
   ProductComboOption,
   ProductTagTemplateOption,
+  VariantMemberOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { defaultOptionFor, fittingOptions, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
@@ -93,6 +95,15 @@ export interface DraftLine {
   /** R13: the template and LP/SP a LOADED line was saved with. While both are unchanged the
    *  template is kept (AC-37): no "No SP template linked" pill, eye enabled, no Submit reason. */
   kept_template?: { id: string; price_type: PriceMode } | null;
+  // ---- PRICETAG-UPGRADE-VARIANTS ----
+  /** The product's variant members, answered once per product. Absent = not asked yet. */
+  variant_members?: VariantMemberOption[];
+  /** Which product `variant_members` was answered for. */
+  variant_members_for?: string | null;
+  /** The line product's own list price, for the "Variants price differently" warning. */
+  own_list_price?: number | null;
+  /** The members UNTICKED for this tag; a member added later joins ticked. */
+  excluded_variant_ids?: string[];
 }
 
 /** The combo the line is asked for as, once the combos lookup has answered. */
@@ -132,6 +143,7 @@ export interface DraftLineSource {
   manual_sell_price?: number | null;
   tag_template_id?: string | null;
   price_type?: PriceMode | null;
+  excluded_variant_ids?: string[] | null;
 }
 
 let partKeySeq = 0;
@@ -337,6 +349,7 @@ export function emptyDraftLine(): DraftLine {
     promotion_locked: false,
     manual_sell_price: null,
     pricing: null,
+    excluded_variant_ids: [],
   };
 }
 
@@ -364,17 +377,32 @@ function foldPicks(parts: DraftPart[]): DraftPart[] {
 }
 
 /**
- * A reopened multi-pick row has no candidates (the server stores the picks only). Once the combos
- * lookup answers, give it back its group's options, the same source `partsFromCombo` uses, so it
- * renders as the multi-select it was.
+ * A reopened multi-pick row, or the reopened Upgrade row, has no candidates (the server stores the
+ * picks only). Once the combos lookup answers, give it back its options, the same source
+ * `partsFromCombo` uses, so it renders as the picker it was with its pick kept (the Upgrade row even
+ * with one pick: PRICETAG-UPGRADE-VARIANTS crew re-pass). Fixed parts, a lone resolved group pick and
+ * rows that already have candidates are left alone.
  */
 export function restoreGroupCandidates(parts: DraftPart[], combo: ProductComboOption | undefined): DraftPart[] {
   if (!combo) return parts;
   return parts.map((part) => {
-    if (!part.role || part.candidates.length > 0 || (part.product_ids?.length ?? 0) < 2) return part;
-    const candidates = combo.parts
-      .filter((p) => !p.is_upgrade && p.choice_group === part.role)
-      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, is_discontinued: p.is_discontinued ?? false }));
+    if (!part.role || part.candidates.length > 0) return part;
+    // A lone resolved group pick stays a resolved part (reopen test); the Upgrade row is an offer,
+    // so even one pick reopens as its picker and can be changed or cleared.
+    if (part.role !== 'Upgrade' && (part.product_ids?.length ?? 0) < 2) return part;
+    const candidates =
+      part.role === 'Upgrade'
+        ? combo.parts
+            .filter((p) => p.is_upgrade)
+            .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, topup_amount: p.topup_amount ?? null }))
+        : combo.parts
+            .filter((p) => !p.is_upgrade && p.choice_group === part.role)
+            .map((p) => ({
+              product_id: p.product_id,
+              code: p.code,
+              name: p.name,
+              is_discontinued: p.is_discontinued ?? false,
+            }));
     return candidates.length > 0 ? { ...part, candidates } : part;
   });
 }
@@ -430,6 +458,8 @@ export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): Dra
     // request's mode is read as FOLLOWING Preferred Default (price_type null); only a line that
     // differs keeps its own.
     price_type: line.price_type && line.price_type !== requestMode ? line.price_type : null,
+    // The members lookup answers `variant_members` once the line is on screen.
+    excluded_variant_ids: line.excluded_variant_ids ?? [],
   };
 }
 
@@ -538,6 +568,23 @@ export function partsPayload(parts: DraftPart[]) {
   );
 }
 
+/**
+ * The note after a save that dropped a line's promotion: the server drops one a narrowed pick no
+ * longer touches (PRICETAG-DISCONTINUED-PICK, it prices nothing there). Null when none was dropped.
+ */
+export function droppedPromotionNote(
+  sent: Array<{ promotion_id?: string | null }>,
+  saved: Array<{ promotion_id?: string | null; sort_order: number }> | undefined,
+): string | null {
+  if (!saved) return null;
+  const ordered = [...saved].sort((a, b) => a.sort_order - b.sort_order);
+  const lines = sent.flatMap((line, index) =>
+    line.promotion_id && ordered[index] && !ordered[index].promotion_id ? [index + 1] : [],
+  );
+  if (lines.length === 0) return null;
+  return `Promotion removed from ${lines.length === 1 ? 'line' : 'lines'} ${lines.join(', ')}: it does not cover the option picked.`;
+}
+
 /** Every product the parts have resolved so far, picks included. */
 export function pickedProductIds(parts: DraftPart[]): string[] {
   return parts.flatMap((p) => (p.product_ids?.length ? p.product_ids : p.product_id ? [p.product_id] : []));
@@ -577,7 +624,52 @@ export function draftLinesPayload(
     manual_sell_price:
       (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
+    excluded_variant_ids: l.line_type === 'product' ? (l.excluded_variant_ids ?? []) : [],
   }));
+}
+
+/**
+ * PRICETAG-UPGRADE-VARIANTS: the line once the members lookup answered for `productId`. An unticked
+ * id that is no longer a member (re-parented or re-coded since it was unticked) is dropped, so it
+ * can never block a save with NOT_A_VARIANT; the chooser could not show it to clear it.
+ */
+export function withVariantMembers(
+  line: DraftLine,
+  productId: string,
+  answer: { members?: VariantMemberOption[] | null; own_list_price?: number | null } | null | undefined,
+): DraftLine {
+  // An answer without a list (an older server, a stand-in) reads as no members, and says nothing
+  // about the saved unticked ids, so they are left as they were.
+  const known = Array.isArray(answer?.members);
+  const members = known ? (answer?.members as VariantMemberOption[]) : [];
+  const current = new Set(members.map((m) => m.product_id));
+  return {
+    ...line,
+    variant_members: members,
+    variant_members_for: productId,
+    own_list_price: answer?.own_list_price ?? null,
+    excluded_variant_ids: known
+      ? (line.excluded_variant_ids ?? []).filter((id) => current.has(id))
+      : (line.excluded_variant_ids ?? []),
+  };
+}
+
+/** PRICETAG-UPGRADE-VARIANTS Q5: "Variants price differently: RM x to RM y" over the line product
+ *  and its ticked live members, or null when they all list the same (or nothing is known). */
+export function variantPriceWarning(
+  line: Pick<DraftLine, 'variant_members' | 'own_list_price' | 'excluded_variant_ids'>,
+): string | null {
+  const unticked = new Set(line.excluded_variant_ids ?? []);
+  const prices = [
+    line.own_list_price,
+    ...(line.variant_members ?? [])
+      .filter((m) => !m.is_discontinued && !unticked.has(m.product_id))
+      .map((m) => m.list_price),
+  ].filter((price): price is number => price != null);
+  if (prices.length < 2) return null;
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+  return low === high ? null : `Variants price differently: ${formatTagPrice(low)} to ${formatTagPrice(high)}`;
 }
 
 /** The template the line prints with: its pick, or the lone link. Null when not decided. */
@@ -658,10 +750,8 @@ export function lineProblemsOf(
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
     const k = picksNeeded(line, part.role, priceMode);
     if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
-    for (const id of picked) {
-      const option = combo?.parts.find((p) => p.product_id === id);
-      if (option?.is_discontinued) out.push(`${option.code} is discontinued.`);
-    }
+    // Owner, 7 Nov: a discontinued product never stops Approve, picked or fixed. Its row's
+    // "Discontinued" badge is the warning.
   }
   if (line.combo_id && pricing) {
     if (linePriceType(line, priceMode) === 'list') {
@@ -691,7 +781,6 @@ function isCheckMessage(message: string): boolean {
     message === 'No tag template yet.' ||
     message.startsWith('Template needs ') ||
     /^No combo (list|selling) price\.$/.test(message) ||
-    / is discontinued\.$/.test(message) ||
     /: pick \d+ more\.$/.test(message) ||
     / template linked$/.test(message)
   );

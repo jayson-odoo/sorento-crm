@@ -220,3 +220,20 @@ def test_a_hinted_report_tool_with_a_blank_pair_forwards_the_identity(mcp, crm):
     sent = [r for r in _crm_requests(crm) if r.url.path.endswith("/order-management/report-ask")]
     assert len(sent) == 1, "the blank pair must not stop the call before the CRM"
     assert sent[0].headers.get(IDENTITY) == STAFF_ID
+
+
+# --- AI-TOOLS-WAVE2: the backend's staff proof rides with the identity, never alone ------------------------
+PROOF = "x-staff-proof"
+
+
+def test_the_staff_proof_is_relayed_verbatim_with_the_identity(mcp, crm):
+    _call(mcp, "crm_inventory_stock_balance_list", {}, {**STAFF, "X-MCP-Staff-Proof": "v1.123.abc"})
+    sent = _crm_requests(crm)
+    assert sent and all(r.headers.get(PROOF) == "v1.123.abc" and r.headers.get(IDENTITY) == STAFF_ID for r in sent)
+
+
+def test_no_staff_marker_no_proof_even_if_the_caller_sends_one(mcp, crm):
+    headers = {**BASE, "X-MCP-Staff-Proof": "v1.123.abc", "X-Staff-Proof": "v1.123.abc"}
+    _call(mcp, "crm_inventory_stock_balance_list", {"contact_id": "900000008", "space_id": "364817"}, headers)
+    sent = _crm_requests(crm)
+    assert sent and all(PROOF not in r.headers for r in sent)

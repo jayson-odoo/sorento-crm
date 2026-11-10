@@ -1,7 +1,8 @@
 """Contact tag catalog and tagging (CONTACT-TAGS S1).
 
 Tags are labels staff put on contacts. No code path here (or in sync, the external upsert or
-create_contact) assigns a tag on its own. `settings` is stored for S2 and not interpreted.
+create_contact) assigns a tag on its own; the agent's dealer access tools add or remove the two
+Business owner tags (`owner_tag`, `change_tags`) when a user sets that level.
 """
 from __future__ import annotations
 
@@ -32,6 +33,89 @@ def tags_by_contact(db: Session, contact_ids: Iterable[str]) -> dict[str, list[d
     for contact_id, tag_id, name in rows:
         out.setdefault(str(contact_id), []).append({"id": str(tag_id), "name": name})
     return out
+
+
+def owner_codes_by_contact(db: Session, contact_ids: Iterable[str], company_codes: Iterable[str]) -> dict[str, set[str]]:
+    """`{contact_id: company codes whose STANDARD Business owner tag the contact holds}`: the one test of the owner
+    level (owner ruling 9 Nov: levels are contact tags, not access types), for the Dealer access list and the access
+    write path alike so they cannot drift."""
+    ids = [str(i) for i in contact_ids]
+    tags = {code: owner_tag(db, code) for code in set(company_codes)}
+    held = tags_by_contact(db, ids)
+    return {
+        cid: {
+            code for code, tag in tags.items()
+            if tag is not None and any(t["id"] == str(tag.id) for t in held.get(cid, []))
+        }
+        for cid in ids
+    }
+
+
+def is_standard_owner_tag(tag: ContactTag, company_code: str) -> bool:
+    """Does the tag set exactly the company's template owner types and nothing else (UAC A15, order aside)?"""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    settings = tag.settings or {}
+    types = settings.get("access_types")
+    return (
+        set(settings) == {"access_types"} and isinstance(types, list)
+        and set(types) == set(TEMPLATE["owner_types"].get(company_code, ()))
+    )
+
+
+def owner_tag(db: Session, company_code: str) -> Optional[ContactTag]:
+    """The active Business owner tag of the company (`TEMPLATE["owner_tags"]`, name matched case-insensitively);
+    None when it is missing, switched off, or not standard (`is_standard_owner_tag`): an edited tag never grants more
+    than the template."""
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    name = TEMPLATE["owner_tags"].get(company_code)
+    if not name:
+        return None
+    tag = (
+        db.query(ContactTag)
+        .filter(func.lower(ContactTag.name) == name.lower(), ContactTag.is_active.is_(True))
+        .order_by(ContactTag.id)
+        .first()
+    )
+    return tag if tag is not None and is_standard_owner_tag(tag, company_code) else None
+
+
+def change_tags(
+    db: Session, contact: RespondContact, *, add=(), remove=(), actor_id: Optional[str] = None
+) -> None:
+    """Add and remove tags on ONE contact inside the caller's transaction (no commit, no gates: the caller decided),
+    then recompute what the changed tags set (TAG-UNION). A tag already held is not added again; one not held is
+    not removed."""
+    from app.services import contact_tag_union
+
+    cid = str(contact.id)
+    held = {t["id"] for t in tags_by_contact(db, [cid]).get(cid, [])}
+    to_add = [t for t in dict.fromkeys(add) if str(t.id) not in held]
+    to_remove = [t for t in dict.fromkeys(remove) if str(t.id) in held]
+    if not (to_add or to_remove):
+        return
+    contact_tag_union.ensure_seeded(db, [contact])
+    for tag in to_remove:
+        db.execute(delete(respond_contact_tags).where(
+            and_(respond_contact_tags.c.contact_id == cid, respond_contact_tags.c.tag_id == str(tag.id))
+        ))
+    if to_add:
+        db.execute(
+            insert(respond_contact_tags),
+            [{"contact_id": cid, "tag_id": str(t.id), "created_by": actor_id} for t in to_add],
+        )
+    service = ContactTagService(db)
+    for tag in to_remove:
+        service._audit_membership(cid, tag.name, False, actor_id)
+    for tag in to_add:
+        service._audit_membership(cid, tag.name, True, actor_id)
+    db.flush()
+    changed = [*to_add, *to_remove]
+    contact_tag_union.recompute(
+        db, [contact], keys=_keys(t for t in changed if t.is_active), actor_id=actor_id,
+        trigger="Tags changed: " + ", ".join(sorted(t.name for t in changed)),
+    )
 
 
 class ContactTagService:
@@ -154,29 +238,62 @@ class ContactTagService:
         return self._with_count([row])[0]
 
     def update_tag(self, tag_id: str, data: dict, actor_id: Optional[str], gates=None) -> dict:
+        from app.services import contact_tag_settings as cts, contact_tag_union
+
         row = self.get_tag(tag_id)
+        old_settings = dict(row.settings or {})
         if data.get("settings") is not None:
-            self._check_settings(row.settings or {}, data["settings"], gates)
+            self._check_settings(old_settings, data["settings"], gates)
+        toggled = data.get("is_active") is not None and bool(data["is_active"]) != bool(row.is_active)
+        if toggled:
+            # Switching a tag on grants what it sets to every holder; off takes it away (TAG-UNION D4).
+            assert_tag_gates([old_settings, data.get("settings") or {}], gates)
         if data.get("name") is not None:
             self._assert_name_free(data["name"], own_id=str(row.id))
+        settings_changed = data.get("settings") is not None and data["settings"] != old_settings
+        holders = cts.holders_of(self.db, str(row.id)) if (settings_changed or toggled) else []
+        contact_tag_union.ensure_seeded(self.db, holders)  # before the change: the old rule's value
         for key in ("name", "description", "is_active", "sort_order", "settings"):
             if key in data and (data[key] is not None or key == "description"):
                 setattr(row, key, data[key])
         row.updated_by = actor_id
+        self.db.flush()
+        if holders:
+            new_settings = row.settings or {}
+            if toggled:  # gated above on every section the tag sets, old and new
+                keys = contact_tag_union.keys_of(old_settings) | contact_tag_union.keys_of(new_settings)
+            else:  # only the sections that changed: exactly what assert_gates checked
+                changed = {s for s in set(old_settings) | set(new_settings) if old_settings.get(s) != new_settings.get(s)}
+                keys = contact_tag_union.keys_of({s: old_settings[s] for s in changed if s in old_settings}) | (
+                    contact_tag_union.keys_of({s: new_settings[s] for s in changed if s in new_settings})
+                )
+            for chunk in _chunks(holders):
+                contact_tag_union.recompute(
+                    self.db, chunk, keys=keys, actor_id=actor_id,
+                    trigger=f"Tag {'switched ' + ('on' if row.is_active else 'off') if toggled else 'edited'}: {row.name}",
+                )
         self.db.commit()
         self.db.refresh(row)
         return self._with_count([row])[0]
 
-    def delete_tag(self, tag_id: str, gates=None) -> None:
-        """Remove the tag; its contact links go by cascade. No contact access value changes.
+    def delete_tag(self, tag_id: str, gates=None, actor_id: Optional[str] = None) -> None:
+        """Remove the tag; its contact links go by cascade, and every holder loses what only it granted.
 
         Deleting clears every section the tag sets, so it needs the same gates as clearing them by PATCH."""
+        from app.services import contact_tag_settings as cts, contact_tag_union
+
         row = self.get_tag(tag_id)
         if gates is not None:
-            from app.services import contact_tag_settings as cts
-
             cts.assert_gates(row.settings or {}, {}, *gates)
+        holders = cts.holders_of(self.db, str(row.id)) if row.is_active else []
+        contact_tag_union.ensure_seeded(self.db, holders)
+        keys, name = contact_tag_union.keys_of(row.settings or {}), row.name
         self.db.execute(delete(ContactTag).where(ContactTag.id == str(row.id)))
+        self.db.flush()
+        for chunk in _chunks(holders):
+            contact_tag_union.recompute(
+                self.db, chunk, keys=keys, actor_id=actor_id, trigger=f"Tag deleted: {name}"
+            )
         self.db.commit()
 
     # ---------------------------------------------------------------- tagging
@@ -203,12 +320,20 @@ class ContactTagService:
             description=f"Tag {'added' if added else 'removed'}: {tag_name}",
         )
 
-    def set_contact_tags(self, contact_id: str, tag_ids: list[str], actor_id: Optional[str]) -> list[dict]:
+    def set_contact_tags(
+        self, contact_id: str, tag_ids: list[str], actor_id: Optional[str], gates=None
+    ) -> list[dict]:
+        from app.services import contact_tag_union
+
         contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
         if contact is None:
             raise handle_not_found("Contact", contact_id)
         wanted = self._require_tags(tag_ids)
         before = {t["id"]: t["name"] for t in tags_by_contact(self.db, [contact_id]).get(contact_id, [])}
+        changed = [t for t in wanted if t not in before] + [t for t in before if t not in wanted]
+        changed_rows = self._require_tags(changed)
+        assert_tag_gates([r.settings for r in changed_rows.values() if r.is_active], gates)
+        contact_tag_union.ensure_seeded(self.db, [contact])
         self.db.execute(delete(respond_contact_tags).where(respond_contact_tags.c.contact_id == contact_id))
         if wanted:
             self.db.execute(
@@ -221,6 +346,12 @@ class ContactTagService:
         for tag_id, row in wanted.items():
             if tag_id not in before:
                 self._audit_membership(contact_id, row.name, True, actor_id)
+        self.db.flush()
+        if changed_rows:
+            contact_tag_union.recompute(
+                self.db, [contact], keys=_keys(r for r in changed_rows.values() if r.is_active), actor_id=actor_id,
+                trigger="Tags changed: " + ", ".join(sorted(r.name for r in changed_rows.values())),
+            )
         self.db.commit()
         return tags_by_contact(self.db, [contact_id]).get(contact_id, [])
 
@@ -234,8 +365,11 @@ class ContactTagService:
         apply_settings: bool = False,
         gates=None,
     ) -> dict:
+        from app.services import contact_tag_union
+
         add = self._require_tags(add_tag_ids)
         remove = self._require_tags(remove_tag_ids)
+        assert_tag_gates([r.settings for r in {**add, **remove}.values() if r.is_active], gates)
         ids = list(dict.fromkeys(contact_ids))
         contacts = {
             str(c.id): c
@@ -294,35 +428,82 @@ class ContactTagService:
                 self._audit_membership(row["contact_id"], names[row["tag_id"]], True, actor_id)
             self.db.flush()
 
-        if apply_settings and add and gates is not None:
-            # The settings of the tags ADDED here are applied after the tag change; a preview
-            # runs the same change inside a savepoint it then rolls back (preview equals apply).
-            from app.services import contact_tag_apply
-
+        # TAG-UNION: a tag change recomputes the settings the changed tags set, always (apply_settings is
+        # kept for old callers and no longer decides anything). A preview runs the same change inside a
+        # savepoint it then rolls back (preview equals apply).
+        touched_ids = list(dict.fromkeys([c for c, _ in deletes] + [r["contact_id"] for r in inserts]))
+        touched = [contacts[cid] for cid in touched_ids]
+        if inserts or deletes:
             savepoint = self.db.begin_nested()
             try:
+                contact_tag_union.ensure_seeded(self.db, touched)
                 write_tags()
-                applied = contact_tag_apply.apply_settings(
-                    self.db,
-                    [r["contact_id"] for r in results if r["status"] != "failed"],
-                    dry_run=dry_run,
-                    actor_id=actor_id,
-                    can=gates[0],
-                    is_superadmin=gates[1],
-                    only_tags=set(add),
+                rows = contact_tag_union.recompute(
+                    self.db, touched, keys=_keys(r for r in {**add, **remove}.values() if r.is_active),
+                    actor_id=actor_id, trigger="Tags changed: " + ", ".join(sorted(all_names.values())),
                 )
             except Exception:
                 savepoint.rollback()
                 raise
             if dry_run:
                 savepoint.rollback()
+                self.db.expire_all()
             else:
                 savepoint.commit()
                 self.db.commit()
-            by_contact = {r["contact_id"]: r for r in applied["results"]}
+            by_contact = {r["contact_id"]: r for r in rows}
             for r in results:
                 r["settings"] = by_contact.get(r["contact_id"])
-        elif not dry_run and (inserts or deletes):
-            write_tags()
-            self.db.commit()
         return {"dry_run": dry_run, "results": results, "counts": counts}
+
+
+def _keys(tags) -> set[tuple[str, str]]:
+    from app.services import contact_tag_union
+
+    out: set[tuple[str, str]] = set()
+    for tag in tags:
+        out |= contact_tag_union.keys_of(tag.settings or {})
+    return out
+
+
+def _chunks(items: list, size: int = 200):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+_GATE_WORDS = {
+    "companies": "Companies",
+    "stock_visibility": "Stock visibility",
+    "agents": "Chatbot agents",
+    "agent_fields": "Agent field access",
+    "outbound_enabled": "Messaging (outbound)",
+}
+
+
+def assert_tag_gates(settings_list, gates) -> None:
+    """TAG-UNION D4 (owner Q4): adding or removing a tag (or switching it on or off) grants or takes away
+    what it sets, so it needs the gate of every gated section the tag sets. 403 naming the section."""
+    if gates is None:
+        return
+    from app.services import contact_tag_settings as cts
+    from app.services.error_handler import AppException
+
+    can, is_superadmin = gates
+    for settings in settings_list:
+        # The AI model a tag puts its holders on spends AI quota (the same right as setting it on a tag).
+        if ((settings or {}).get("chatbot") or {}).get("llm") is not None and not can(cts.AI_SETTINGS_EDIT):
+            raise AppException(
+                status_code=403,
+                message="You may not add or remove a tag that sets the AI model.",
+                code="FORBIDDEN",
+            )
+        for section in (settings or {}):
+            if section not in cts._GATES or (settings or {}).get(section) is None:
+                continue
+            slug = cts._GATES[section]
+            if not (is_superadmin() if slug is None else can(slug)):
+                raise AppException(
+                    status_code=403,
+                    message=f"You may not add or remove a tag that sets {_GATE_WORDS.get(section, section)}.",
+                    code="FORBIDDEN",
+                )

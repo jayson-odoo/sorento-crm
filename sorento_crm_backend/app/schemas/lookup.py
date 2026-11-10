@@ -31,6 +31,7 @@ class LookupOptionCreate(BaseModel):
     sort_order: int = 0
     is_active: bool = True
     description: Optional[str] = None
+    allows_many: bool = False
     keywords: List[LookupKeywordIn] = Field(default_factory=list)
 
 
@@ -40,6 +41,7 @@ class LookupOptionUpdate(BaseModel):
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
     description: Optional[str] = None
+    allows_many: Optional[bool] = None
     keywords: Optional[List[LookupKeywordIn]] = None  # None = leave unchanged; [] = clear
 
 
@@ -51,6 +53,7 @@ class LookupOptionResponse(BaseModel):
     sort_order: int
     is_active: bool
     description: Optional[str]
+    allows_many: bool = False
     keywords: List[LookupKeywordOut]
     created_at: datetime
     updated_at: Optional[datetime]

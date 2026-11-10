@@ -235,9 +235,9 @@ def test_design_media_lists_icons_in_value_then_list_order_and_signs_their_urls(
 
     mine = [i for i in media["feature_icons"] if i["spec_key"] == key]
     assert mine == [
-        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["cold_only"]},
-        {"id": b.id, "name": "ZZT b hot", "spec_key": key, "values": ["mixer"]},
-        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["mixer"]},
+        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["cold_only"], "conditions": []},
+        {"id": b.id, "name": "ZZT b hot", "spec_key": key, "values": ["mixer"], "conditions": []},
+        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["mixer"], "conditions": []},
     ]
     assert plain.id not in {i["id"] for i in media["feature_icons"]}
     assert a.id in media["assets"] and b.id in media["assets"]

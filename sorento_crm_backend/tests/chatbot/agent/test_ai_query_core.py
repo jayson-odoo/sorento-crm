@@ -516,15 +516,25 @@ def test_Q12_the_registry_is_consistent_with_the_models_and_the_permission_regis
     from app.services.assistant_registry import ENTITIES
 
     slugs = {p["slug"] for p in PERMISSION_REGISTRY}
+    from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
+
+    # AI-TOOLS-WAVE2: a field may name a reveal key (`reveal:<key>`) the sales report gates on.
+    known = slugs | {f"reveal:{k}" for k, _label in FIELD_REVEAL_KEYS}
     assert {"order", "product", "purchase_order", "complaint"} <= set(ENTITIES)
     for key, ent in ENTITIES.items():
         assert ent.key == key
         columns = {c.key for c in sa_inspect(ent.model).columns}
         for name, field in ent.fields.items():
             col = field.column or name
-            assert col in columns, f"{key}.{name}: no column {col} on {ent.model.__name__}"
+            if ent.compute is not None:
+                # AI-TOOLS-WAVE2: a computed entity's field has no column; its kind says its type.
+                assert field.kind in ("text", "number", "date", "boolean"), f"{key}.{name}: computed field needs a kind"
+            elif field.expr is None:
+                assert col in columns, f"{key}.{name}: no column {col} on {ent.model.__name__}"
             if field.permission:
-                assert field.permission in slugs, f"{key}.{name}: unknown slug {field.permission}"
+                assert field.permission in known, f"{key}.{name}: unknown slug {field.permission}"
+        if ent.aggregate_permission:
+            assert ent.aggregate_permission in known, f"{key}: unknown aggregate slug {ent.aggregate_permission}"
         for slug in (ent.view_permission, ent.own_permission):
             if slug:
                 assert slug in slugs, f"{key}: unknown slug {slug}"

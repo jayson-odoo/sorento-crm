@@ -933,3 +933,23 @@ class TagSizePreset(Base, CompanyScopedMixin):
     created_by = Column(String, nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
+
+
+class AccessoryBoxPreset(Base, CompanyScopedMixin):
+    """A saved accessories box design (PRICETAG-ACCESSORY-DESIGNER). Live linked: a tag template box
+    carries ``props.presetId`` and follows this row's ``design``. Name unique per company ignoring case.
+    """
+
+    __tablename__ = "accessory_box_preset"
+    __table_args__ = (
+        Index("uq_dealer_kit_accessory_box_preset_company_name", "company_id", text("lower(name)"), unique=True),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(100), nullable=False)
+    design = Column(JSONB, nullable=False)
+    created_by = Column(String, nullable=True)
+    updated_by = Column(String, nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()

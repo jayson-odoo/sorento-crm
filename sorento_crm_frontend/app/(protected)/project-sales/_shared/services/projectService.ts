@@ -6,6 +6,7 @@ import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
   PartyContact,
   PartyContactBody,
+  PartyRole,
   PartyOnProject,
   ClashPreview,
   MediaKind,
@@ -70,6 +71,7 @@ import type {
   TaskStatusChangeBody,
 } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
+import { projectDisplayName } from '../lib/projectName';
 
 const BASE = '/api/v1/project-sales';
 
@@ -162,7 +164,7 @@ export async function listEditableProjectOptions(query: string) {
     .filter((project) => project.can_edit)
     .map((project) => ({
       value: project.id,
-      label: project.title,
+      label: projectDisplayName(project),
       description: [projectCodeLabel(project), project.developer_name].filter(Boolean).join(' · '),
     }));
 }
@@ -229,9 +231,10 @@ export type ProjectExtractFieldKey =
   | 'state'
   | 'mukim'
   | 'title'
+  | 'name'
   | 'customer';
 
-/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+/** The backend sends title, name and mukim as plain strings, the rest as proposal objects. */
 export type ProjectExtractResult = Partial<
   Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
 >;
@@ -451,6 +454,24 @@ export async function decideTakeoverRequest(
 }
 
 // ------------------------------------------------------------------ parties
+
+/** The editable lookup set the party roles come from (PROJECT-PARTY-ROLES). */
+export const PARTY_ROLE_SET_KEY = 'project_party_role';
+
+/** Every party role, inactive ones included: a project still shows a role switched off since. */
+export async function listPartyRoles(): Promise<PartyRole[]> {
+  const response = await apiFetch(
+    `/api/v1/lookup/${PARTY_ROLE_SET_KEY}/options?include_inactive=true`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the party roles'));
+  const rows = (await response.json()) as Partial<PartyRole>[];
+  return rows.map((row) => ({
+    value: String(row.value ?? ''),
+    label: String(row.label ?? row.value ?? ''),
+    is_active: row.is_active !== false,
+    allows_many: Boolean(row.allows_many),
+  }));
+}
 
 export async function listParties(
   params: {

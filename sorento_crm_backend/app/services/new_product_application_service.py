@@ -28,7 +28,11 @@ from typing import Any, Dict, Iterable, List, Optional
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.new_product_application import NewProductApplication, NewProductApplicationLine
+from app.models.new_product_application import (
+    NewProductApplication,
+    NewProductApplicationLine,
+    NewProductApplicationSource,
+)
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
@@ -36,6 +40,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
 from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
+from app.services.response_gate import is_response_status_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,9 @@ DRAFT = "draft"
 SUBMITTED = submission_status.SUBMITTED
 RESUBMITTED = submission_status.RESUBMITTED
 APPROVED = "approved"
+#: Owner re-test 9 Nov ~12:35 ("make it same with stock inquiry"): Update & Reply moves an
+#: Approved application to Responded, exactly as the SI's (procurement_service.update_inquiry_and_reply).
+RESPONDED = "responded"
 REJECTED = "rejected"
 COMPLETED = "completed"
 CANCELLED = "cancelled"
@@ -60,6 +68,7 @@ STATUS_LABELS = {
     SUBMITTED: "Submitted",
     RESUBMITTED: submission_status.APPEALED_LABEL,
     APPROVED: "Approved",
+    RESPONDED: "Responded",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
     CANCELLED: "Cancelled",
@@ -69,7 +78,9 @@ STATUS_LABELS = {
 #: (422), the terminal ones are closed (409).
 EDITABLE = (DRAFT, REJECTED)
 AWAITING_REVIEW = submission_status.AWAITING_REVIEW
-LOCKED = (*AWAITING_REVIEW, APPROVED)
+#: Purchasing works an application while it is Approved, and after replying, Responded (as the SI).
+WITH_PURCHASING = (APPROVED, RESPONDED)
+LOCKED = (*AWAITING_REVIEW, *WITH_PURCHASING)
 
 HEADER_TEXT = ("customer_name", "project_name", "remark")
 #: The v4 paper form's product block (AC-NPA-70): nothing else is written by the applicant.
@@ -217,6 +228,28 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
             value = line.get(field)
             if value is not None and not _ref_exists(db, model, value):
                 raise _invalid(field, f"Product {index}: the chosen {FIELD_WORDS[field]} does not exist.")
+    _check_current_codes(db, data.get("current_product_ids"))
+
+
+def _check_current_codes(db: Session, ids: Optional[List[Any]]) -> None:
+    """Every current code is a product of the company (the query's company filter), picked once."""
+    if not ids:
+        return
+    wanted = [str(i) for i in ids]
+    missing = _invalid("current_product_ids", "A chosen product code does not exist.")
+    if not all(_is_uuid(i) for i in wanted):
+        raise missing
+    codes = {
+        str(k): v
+        for k, v in db.query(Product.id, Product.product_code).filter(Product.id.in_(set(wanted))).all()
+    }
+    seen = set()
+    for pid in wanted:
+        if pid not in codes:
+            raise missing
+        if pid in seen:
+            raise _invalid("current_product_ids", f"{codes[pid]} is already one of the product codes.")
+        seen.add(pid)
 
 
 def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> None:
@@ -227,6 +260,9 @@ def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> Non
     for key in HEADER_TEXT:
         if key in data:
             setattr(app, key, _clean(data[key]))
+    # Left out = kept, an empty list clears (NPA-FROM-SI, mock v3: PRODUCT CODES in the header).
+    if data.get("current_product_ids") is not None:
+        _set_sources(app, data["current_product_ids"])
     if "lines" in data:
         _apply_lines(db, app, data["lines"] or [])
 
@@ -252,12 +288,31 @@ def _apply_lines(db: Session, app: NewProductApplication, body: List[Dict[str, A
         for key in LINE_TEXT:
             setattr(row, key, _clean(line.get(key)))
         for key in LINE_REFS:
-            setattr(row, key, line.get(key) or None)
+            # Only when sent: the screens no longer send brand (owner, mock v3), and a saved
+            # older line must keep its brand (the Excel BRAND row reads it).
+            if key in line:
+                setattr(row, key, line.get(key) or None)
         for key in LINE_NUMBERS:
             setattr(row, key, line.get(key))
         if row.id is None or str(row.id) not in kept:
             app.lines.append(row)
     db.flush()
+
+
+def _set_sources(app: NewProductApplication, product_ids: List[Any]) -> None:
+    """The application's current codes, in the order picked. Rows kept for codes still picked,
+    so a re-save does not churn the audit trail."""
+    wanted = [str(i) for i in product_ids]
+    by_product = {str(src.product_id): src for src in app.sources}
+    for source in list(app.sources):
+        if str(source.product_id) not in wanted:
+            app.sources.remove(source)
+    for position, pid in enumerate(wanted, start=1):
+        source = by_product.get(pid)
+        if source is None:
+            app.sources.append(NewProductApplicationSource(product_id=pid, position=position))
+        elif source.position != position:
+            source.position = position
 
 
 def _drop_line(db: Session, app: NewProductApplication, row: NewProductApplicationLine) -> None:
@@ -358,8 +413,11 @@ def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> No
 
 
 def validate_submit(app: NewProductApplication) -> None:
-    if not app.lines:
-        raise _invalid("lines", "Add at least one product before you submit.")
+    # Owner 8 Nov: an application raised from a stock inquiry needs no product rows (the inquiry
+    # carries the product; PRODUCT CODES + REMARK say what is asked). Owner 9 Nov: the product rows
+    # are gone from the form, so a standalone one says what new product is wanted in REMARK.
+    if not app.lines and not app.stock_inquiry_id and not (app.remark or "").strip():
+        raise _invalid("remark", "Say in REMARK what new product is wanted before you submit.")
     missing = [line.line_no for line in app.lines if not (line.description or "").strip()]
     if missing:
         raise _invalid(
@@ -391,6 +449,22 @@ def _require(app: NewProductApplication, status: str, verb: str) -> None:
             f"Only a {STATUS_LABELS[status].lower()} application can be {verb}.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
         )
+
+
+def _require_with_purchasing(app: NewProductApplication, verb: str) -> None:
+    """Approved, or Responded after purchasing replied (the SI's purchasing stage)."""
+    if app.status not in WITH_PURCHASING:
+        raise _conflict(
+            f"Only an approved or responded application can be {verb}.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+
+
+def mark_responded(app: NewProductApplication) -> None:
+    """Update & Reply (either channel): Approved -> Responded, as the SI's Update & Reply. A reply
+    that also completed it stays Completed; Save only never calls this (the SI's plain save)."""
+    if app.status == APPROVED:
+        app.status = RESPONDED
 
 
 def _require_awaiting_review(app: NewProductApplication, verb: str) -> None:
@@ -429,8 +503,34 @@ def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     return "rejected"
 
 
+def purchasing_reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> str:
+    """Owner 8 Nov 09:30: "not opening should be considered Reject like stock inquiry has a reject
+    button". Purchasing ends an Approved application with a reason; it goes to Rejected, the
+    applicant hears it (the "rejected" notice) and can fix and submit it again, as on an SI."""
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can reject this application.")
+    _require_with_purchasing(app, "rejected by purchasing")
+    reason = _clean(reason)
+    if not reason:
+        raise _invalid("reason", "Enter the reason for rejecting.")
+    app.status = REJECTED
+    app.decided_at = datetime.utcnow()
+    app.decided_by = actor.user_id
+    app.reject_reason = reason
+    db.flush()
+    return "rejected"
+
+
+def _new_code_resolved(app: NewProductApplication) -> bool:
+    return (
+        app.new_product_id is not None
+        or app.new_code_text is not None
+        or app.new_code_closed_reason is not None
+    )
+
+
 def _assert_nothing_resolved(app: NewProductApplication, verb: str) -> None:
-    if any(_resolved(line) for line in app.lines):
+    if _new_code_resolved(app) or any(_resolved(line) for line in app.lines):
         raise _conflict(
             f"A code has already been opened or closed on this application, so it cannot be {verb}.",
             "NEW_PRODUCT_APPLICATION_IN_PROGRESS",
@@ -438,8 +538,9 @@ def _assert_nothing_resolved(app: NewProductApplication, verb: str) -> None:
 
 
 def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> Optional[str]:
-    """Submitted / Approved -> Draft with a reason. Returns "withdrawn" from Submitted so the
-    approvers hear the request is gone (#1698 D3-D5); from Approved nobody is told."""
+    """Submitted / Approved -> Draft with a reason. Returns "withdrawn": whoever held the stage it
+    voided hears the request is gone (approval or purchasing alike, NPA-FORM-SLA); with no stage
+    open nobody is told."""
     if not (is_owner(app, actor) or actor.can_approve):
         raise _forbidden("Only the applicant or an approver can revise this application.")
     if app.status not in LOCKED:
@@ -451,26 +552,29 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     reason = _clean(reason)
     if not reason:
         raise _invalid("reason", "Say what changed, and why.")
-    was = app.status
     app.status = DRAFT
     app.revise_reason = reason
+    app.revision_no = (app.revision_no or 0) + 1
     app.decided_at = None
     app.decided_by = None
     app.reject_reason = None
     # AC-NPA-75: purchasing's answer was for the old version of the request.
     app.lead_time = None
+    app.cost_price = None
+    app.purchasing_response = None
     app.feedback_by = None
     app.feedback_at = None
     for line in app.lines:
         line.cost_price = None
+    _void_sla(db, app, f"Revised: {reason}")
     db.flush()
-    return "withdrawn" if was in AWAITING_REVIEW else None
+    return "withdrawn"
 
 
 def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> None:
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can cancel this application.")
-    if app.status not in (DRAFT, *AWAITING_REVIEW, APPROVED, REJECTED):
+    if app.status not in (DRAFT, *AWAITING_REVIEW, *WITH_PURCHASING, REJECTED):
         raise _conflict(
             f"A {STATUS_LABELS[app.status].lower()} application cannot be cancelled.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -479,6 +583,7 @@ def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     app.status = CANCELLED
     app.cancelled_at = datetime.utcnow()
     app.cancel_reason = _clean(reason)
+    _void_sla(db, app, "Cancelled by the applicant.")
     db.flush()
 
 
@@ -496,14 +601,16 @@ def _open_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewPro
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can open codes for new product applications.")
     line = _line(app, line_id)
-    _require(app, APPROVED, "worked by purchasing")
+    _require_with_purchasing(app, "worked by purchasing")
     if _resolved(line):
         raise _conflict("This line is already done. Undo it first.", "NEW_PRODUCT_APPLICATION_LINE_DONE")
     return line
 
 
 def _maybe_complete(app: NewProductApplication) -> Optional[str]:
-    if app.lines and all(_resolved(line) for line in app.lines):
+    # The ONE new product code decides (owner, mock v3); every line done stays the rule for an
+    # application worked line by line before it.
+    if _new_code_resolved(app) or (app.lines and all(_resolved(line) for line in app.lines)):
         app.status = COMPLETED
         app.completed_at = datetime.utcnow()
         return "completed"
@@ -550,16 +657,164 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can undo a line.")
     line = _line(app, line_id)
-    if app.status not in (APPROVED, COMPLETED) or not _resolved(line):
+    if app.status not in (*WITH_PURCHASING, COMPLETED) or not _resolved(line):
         raise _conflict("There is nothing to undo on this line.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
     line.opened_product_id = None
     line.closed_reason = None
     line.resolved_by = None
     line.resolved_at = None
-    if app.status == COMPLETED:
+    # The header new code still completes it (NPA-FROM-SI): only a line-worked application reopens.
+    if app.status == COMPLETED and not _new_code_resolved(app):
         app.status = APPROVED
         app.completed_at = None
     db.flush()
+
+
+def _open_new_code(app: NewProductApplication, actor: Actor) -> None:
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can open codes for new product applications.")
+    _require_with_purchasing(app, "worked by purchasing")
+    if _new_code_resolved(app):
+        raise _conflict("The new product code is already done. Undo it first.", "NEW_PRODUCT_APPLICATION_LINE_DONE")
+
+
+def link_new_code(
+    db: Session, app: NewProductApplication, *, actor: Actor, product_id: Optional[str]
+) -> Optional[str]:
+    """NPA-FROM-SI: purchasing links the ONE new product code AutoCount sent (picked by a person;
+    a suggestion only pre-fills the picker). Completes the application."""
+    _open_new_code(app, actor)
+    product = (
+        db.query(Product).filter(Product.id == product_id, Product.is_active.is_(True)).first()
+        if _is_uuid(product_id)
+        else None
+    )
+    if product is None:
+        raise _invalid("product_id", "Pick an active product from the product list.")
+    app.new_product_id = product.id
+    app.new_code_text = None
+    app.new_code_by = actor.user_id
+    app.new_code_at = datetime.utcnow()
+    event = _maybe_complete(app)
+    db.flush()
+    return event
+
+
+def close_new_code(
+    db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]
+) -> Optional[str]:
+    _open_new_code(app, actor)
+    reason = _clean(reason)
+    if not reason:
+        raise _invalid("reason", "Enter why this code is not being opened.")
+    app.new_code_closed_reason = reason
+    app.new_code_by = actor.user_id
+    app.new_code_at = datetime.utcnow()
+    event = _maybe_complete(app)
+    db.flush()
+    return event
+
+
+def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> None:
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can undo the new product code.")
+    if app.status not in (*WITH_PURCHASING, COMPLETED) or not _new_code_resolved(app):
+        raise _conflict("There is nothing to undo.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
+    app.new_product_id = None
+    app.new_code_text = None
+    app.new_code_closed_reason = None
+    app.new_code_by = None
+    app.new_code_at = None
+    if app.status == COMPLETED and not (app.lines and all(_resolved(line) for line in app.lines)):
+        app.status = APPROVED
+        app.completed_at = None
+    db.flush()
+
+
+#: "Not opening" left the dialog for the Reject button (owner 8 Nov 09:30).
+OUTCOMES = ("link", "new")
+
+
+def _product_by_code(db: Session, code: Optional[str], company_id: Optional[str] = None) -> Optional[Product]:
+    """The product whose code is exactly ``code`` (trimmed, case folded) in the application's
+    company: the code a person typed, never a near one, never another company's."""
+    text = (code or "").strip().upper()
+    if not text:
+        return None
+    query = db.query(Product).filter(func.upper(Product.product_code) == text)
+    if company_id:
+        query = query.filter(Product.company_id == company_id)
+    rows = query.limit(2).all()
+    return rows[0] if len(rows) == 1 else None
+
+
+def save_purchasing_response(
+    db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]
+) -> Optional[str]:
+    """Owner 8 Nov: purchasing answers in ONE dialog, like the stock inquiry's "Edit purchasing
+    response": the outcome (link an existing code / a new code it opens in AutoCount / not
+    opening), lead time and cost. Approved or Completed only. Any outcome completes; ``outcome``
+    sent as null clears it (back to Approved). A key left out is not changed."""
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can answer new product applications.")
+    if app.status not in (*WITH_PURCHASING, COMPLETED):
+        raise _conflict(
+            "Purchasing answers once the application is approved.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+    by_id = {str(line.id): line for line in app.lines}
+    for item in data.get("lines") or []:
+        if str(item["id"]) not in by_id:
+            raise _invalid("lines", "That product is not on this application.")
+    event = None
+    if "outcome" in data:
+        outcome = data["outcome"]
+        if outcome is not None and outcome not in OUTCOMES:
+            raise _invalid("outcome", "Choose link or new. To end the application, use Reject.")
+        product_id, text, reason = None, None, None
+        if outcome == "link":
+            product = (
+                db.query(Product).filter(Product.id == data.get("product_id"), Product.is_active.is_(True)).first()
+                if _is_uuid(data.get("product_id"))
+                else None
+            )
+            if product is None:
+                raise _invalid("product_id", "Pick an active product from the product list.")
+            product_id = product.id
+        elif outcome == "new":
+            text = _clean(data.get("new_code"))
+            if not text:
+                raise _invalid("new_code", "Enter the new product code.")
+            existing = _product_by_code(db, text, app.company_id)
+            product_id = existing.id if existing is not None else None
+            text = None if existing is not None else text
+        app.new_product_id, app.new_code_text, app.new_code_closed_reason = product_id, text, reason
+        if outcome is None:
+            app.new_code_by = None
+            app.new_code_at = None
+            if app.status == COMPLETED and not (app.lines and all(_resolved(line) for line in app.lines)):
+                app.status = APPROVED
+                app.completed_at = None
+        else:
+            app.new_code_by = actor.user_id
+            app.new_code_at = datetime.utcnow()
+            if app.status in WITH_PURCHASING:
+                event = _maybe_complete(app)
+    if "purchasing_response" in data:
+        app.purchasing_response = _clean(data["purchasing_response"])
+    if "lead_time" in data:
+        app.lead_time = _clean(data["lead_time"])
+    if "cost_price" in data:
+        app.cost_price = data["cost_price"]
+    for item in data.get("lines") or []:
+        if "cost_price" in item:
+            by_id[str(item["id"])].cost_price = item["cost_price"]
+    app.feedback_by = actor.user_id
+    app.feedback_at = datetime.utcnow()
+    db.flush()
+    # A save moves no Form SLA clock, as the SI's plain save (owner re-test 9 Nov ~03:05): only
+    # Update & Reply is purchasing's answer (`PURCHASING_RESPOND`, emitted by the reply route).
+    return event
 
 
 def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
@@ -568,7 +823,7 @@ def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data
     untouched. A key left out of ``data`` is not changed; a null clears."""
     if not actor.can_open_code:
         raise _forbidden("Only purchasing can save feedback on new product applications.")
-    if app.status not in (APPROVED, COMPLETED):
+    if app.status not in (*WITH_PURCHASING, COMPLETED):
         raise _conflict(
             "Feedback can be saved once the application is approved.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -676,6 +931,7 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
     the customer stays typed text, the code field stays one line however many codes it
     holds."""
     inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
+    current = _exact_current_code(db, inquiry.product_code)
     return {
         "stock_inquiry_id": str(inquiry.id),
         "stock_inquiry_number": inquiry.inquiry_number,
@@ -683,7 +939,9 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
         "customer_name": _clean(inquiry.project_customer),
         "project_name": _clean(inquiry.project_name),
         "needed_by": _parse_date(inquiry.delivery_date),
-        "remark": None,
+        "remark": _clean(inquiry.remark),
+        "current_product_ids": current,
+        "current_products": _products_out(db, current),
         "lines": [
             {
                 "proposed_code": _clean(inquiry.product_code),
@@ -692,6 +950,30 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
             }
         ],
     }
+
+
+def _products_out(db: Session, ids: List[str]) -> List[Dict[str, Any]]:
+    rows = {
+        str(r[0]): r
+        for r in db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .filter(Product.id.in_(ids or [None]))
+        .all()
+    }
+    return [
+        {"id": r[0], "product_code": r[1], "product_name": r[2], "is_active": r[3]}
+        for r in (rows.get(str(i)) for i in ids)
+        if r is not None
+    ]
+
+
+def _exact_current_code(db: Session, code_text: Optional[str]) -> List[str]:
+    """NPA-FROM-SI Q3 (a): the inquiry's code text, trimmed and case-folded, equal to ONE product
+    code of the company. Anything else ("A & B", a near code) starts empty: never a guess."""
+    text = (code_text or "").strip().upper()
+    if not text:
+        return []
+    ids = [str(r[0]) for r in db.query(Product.id).filter(func.upper(Product.product_code) == text).limit(2).all()]
+    return ids if len(ids) == 1 else []
 
 
 def assert_portal_inquiry_allowed(
@@ -717,9 +999,12 @@ def _folded(column):
 
 
 def search_products(db: Session, q: str) -> List[Dict[str, Any]]:
+    """The NPA pickers' search (Link an existing product code, PRODUCT CODES, staff and portal).
+    An empty search lists the first active products, so a picker opens with something to pick
+    (owner hand test 8 Nov 20:45)."""
     from app.services import sample_request_service
 
-    return sample_request_service.search_products(db, q)
+    return sample_request_service.search_products(db, q, list_when_empty=True)
 
 
 def _simple_lookup(db: Session, model, code_col, name_col, q: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -740,6 +1025,364 @@ def portal_lookup(db: Session, kind: str, q: str = "") -> List[Dict[str, Any]]:
     if kind == "brands":
         return _simple_lookup(db, Brand, Brand.brand_code, Brand.brand_name, q)
     raise handle_not_found("Lookup", kind)
+
+
+# ------------------------------------------------------------------ lineage + reuse (NPA-FROM-SI)
+
+#: How many earlier codes one suggestion lists (newest first).
+MAX_SUGGESTIONS = 3
+
+
+def _sources_by_app(db: Session, app_ids: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Application id -> its current codes in the order picked (one query)."""
+    wanted = {str(i) for i in app_ids if i}
+    if not wanted:
+        return {}
+    src = NewProductApplicationSource
+    rows = (
+        db.query(src.application_id, Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .join(Product, Product.id == src.product_id)
+        .filter(src.application_id.in_(wanted))
+        .order_by(src.application_id, src.position)
+        .all()
+    )
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for app_id, pid, code, name, active in rows:
+        out.setdefault(str(app_id), []).append(
+            {"id": pid, "product_code": code, "product_name": name, "is_active": active}
+        )
+    return out
+
+
+def _inquiry_texts(db: Session, apps: Iterable[NewProductApplication]) -> Dict[str, Optional[str]]:
+    ids = {str(a.stock_inquiry_id) for a in apps if a.stock_inquiry_id and not a.lines}
+    if not ids:
+        return {}
+    rows = db.query(StockInquiry.id, StockInquiry.item_description).filter(StockInquiry.id.in_(ids)).all()
+    return {str(i): _clean(d) for i, d in rows}
+
+
+def _why(app: NewProductApplication, inquiry_texts: Dict[str, Optional[str]], *, full: bool) -> Optional[str]:
+    """Why the code was asked for: the PRODUCT TYPE text of its products, in order. With no product
+    rows (raised from a stock inquiry): the REMARK for NPA view-all holders only (`full`), since a
+    remark is another salesperson's free text that may name a customer or project (security review
+    round 3); everyone else gets the inquiry's item description (product text)."""
+    texts = [l.description for l in app.lines if l.description]
+    if texts:
+        return "; ".join(texts)
+    inquiry = inquiry_texts.get(str(app.stock_inquiry_id)) if app.stock_inquiry_id else None
+    return (_clean(app.remark) or inquiry) if full else inquiry
+
+
+def _new_product_join():
+    """The new code's product: the linked one, or the product whose code is exactly the code
+    purchasing typed (case folded) once AutoCount has sent it."""
+    return or_(
+        Product.id == NewProductApplication.new_product_id,
+        (NewProductApplication.new_product_id.is_(None))
+        & (Product.company_id == NewProductApplication.company_id)
+        & (func.upper(Product.product_code) == func.upper(func.trim(NewProductApplication.new_code_text))),
+    )
+
+
+def _created_apps(db: Session):
+    """Applications with a new code (linked, or typed by purchasing), with that product when it
+    exists: (application, product id, code, name, active). The application query carries the
+    company filter, so another company's lineage never shows."""
+    return (
+        db.query(
+            NewProductApplication,
+            Product.id,
+            func.coalesce(Product.product_code, NewProductApplication.new_code_text),
+            Product.product_name,
+            Product.is_active,
+        )
+        .outerjoin(Product, _new_product_join())
+        .filter(
+            or_(NewProductApplication.new_product_id.isnot(None), NewProductApplication.new_code_text.isnot(None))
+        )
+    )
+
+
+def reuse_suggestions(
+    db: Session,
+    product_ids: Iterable[Any],
+    *,
+    exclude_application_id: Optional[str] = None,
+    portal: bool = False,
+    full_why: bool = False,
+) -> List[Dict[str, Any]]:
+    """Card rule 6, owner rule: the codes created before from EXACTLY this set of current codes
+    (order ignored), newest first. A suggestion only; nothing here links anything. The portal
+    variant names no application (another salesperson's), customer, project or quantity (Q4)."""
+    wanted = sorted({str(i) for i in product_ids if i})
+    if not wanted or not all(_is_uuid(i) for i in wanted):
+        return []
+    src = NewProductApplicationSource
+    exact = (
+        select(src.application_id)
+        .group_by(src.application_id)
+        .having(
+            func.count(src.id) == len(wanted),
+            func.count(src.id).filter(src.product_id.in_(wanted)) == len(wanted),
+        )
+    )
+    query = _created_apps(db).filter(NewProductApplication.id.in_(exact))
+    if exclude_application_id:
+        query = query.filter(NewProductApplication.id != str(exclude_application_id))
+    rows = query.order_by(NewProductApplication.new_code_at.desc()).limit(MAX_SUGGESTIONS * 3).all()
+    inquiry_texts = _inquiry_texts(db, [r[0] for r in rows])
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for app, pid, code, name, active in rows:
+        key = str(pid) if pid else (code or "").upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        item = {
+            "product_id": pid,
+            "product_code": code,
+            "product_name": name,
+            "is_active": active,
+            "description": _why(app, inquiry_texts, full=full_why and not portal),
+            "created_at": _iso(app.new_code_at),
+        }
+        if not portal:
+            item["application_id"] = app.id
+            item["application_no"] = app.application_no
+        out.append(item)
+        if len(out) == MAX_SUGGESTIONS:
+            break
+    return out
+
+
+def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dict[str, Any]:
+    """Card rule 5: how ``product_id`` came to exist (created_from) and the new codes built from it
+    (made_from_this). The application is the why; customer and project only for NPA viewers."""
+    if not _is_uuid(product_id):
+        return {"created_from": [], "made_from_this": []}
+    order = NewProductApplication.new_code_at.desc()
+    created = _created_apps(db).filter(Product.id == product_id).order_by(order).all()
+    made = (
+        _created_apps(db)
+        .filter(
+            NewProductApplication.id.in_(
+                select(NewProductApplicationSource.application_id).where(
+                    NewProductApplicationSource.product_id == product_id
+                )
+            )
+        )
+        .order_by(order)
+        .all()
+    )
+    sources = _sources_by_app(db, [r[0].id for r in (*created, *made)])
+    inquiry_texts = _inquiry_texts(db, [r[0] for r in (*created, *made)])
+
+    def row(app, pid, code, name, active) -> Dict[str, Any]:
+        qty = [l.expected_qty for l in app.lines if l.expected_qty is not None]
+        item = {
+            "application_no": app.application_no,
+            "product_id": pid,
+            "product_code": code,
+            "product_name": name,
+            "is_active": active,
+            "current_products": sources.get(str(app.id), []),
+            "description": _why(app, inquiry_texts, full=can_view_applications),
+            "created_at": _iso(app.new_code_at),
+        }
+        if can_view_applications:
+            item.update(
+                application_id=app.id,
+                customer_name=app.customer_name,
+                project_name=app.project_name,
+                expected_qty=_num(sum(qty)) if qty else None,
+            )
+        return item
+
+    return {"created_from": [row(*r) for r in created], "made_from_this": [row(*r) for r in made]}
+
+
+def _closed_not_opening(app: NewProductApplication) -> bool:
+    return bool(
+        app.status == COMPLETED and app.new_code_closed_reason and not (app.new_product_id or app.new_code_text)
+    )
+
+
+def display_status(app: NewProductApplication) -> str:
+    """An application purchasing closed as Not opening (before the Reject button, owner 8 Nov)
+    is shown, coloured and counted as rejected; every other one as its status."""
+    return REJECTED if _closed_not_opening(app) else app.status
+
+
+def status_label(app: NewProductApplication) -> str:
+    return STATUS_LABELS.get(display_status(app), app.status)
+
+
+def _new_code(db: Session, app: NewProductApplication) -> Optional[str]:
+    """The ONE new product code: the linked product's, else the code purchasing typed."""
+    code = None
+    if app.new_product_id:
+        code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
+    return code or app.new_code_text
+
+
+def template_vars(db: Session, app: NewProductApplication) -> Dict[str, Any]:
+    """The variables a ``new_product_application_update`` template can map (owner 8 Nov 17:35:
+    "depends on the template, just like SI"). A blank value goes as "-" (``sanitize_param``)."""
+    from app.services.document_number import display_document_number
+
+    inquiry = db.get(StockInquiry, app.stock_inquiry_id) if app.stock_inquiry_id else None
+    customer = (
+        db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
+        if app.customer_id
+        else None
+    )
+    codes = (
+        db.query(Product.product_code)
+        .join(NewProductApplicationSource, NewProductApplicationSource.product_id == Product.id)
+        .filter(NewProductApplicationSource.application_id == app.id)
+        .order_by(NewProductApplicationSource.position)
+        .all()
+    )
+    return {
+        "entity_number": app.application_no,
+        "inquiry_number": (display_document_number(inquiry) or inquiry.inquiry_number) if inquiry else None,
+        "status": status_label(app),
+        "reason": app.reject_reason,
+        "customer": " - ".join(p for p in customer if p) if customer else app.customer_name,
+        "project": app.project_name,
+        "product_code": ", ".join(c for (c,) in codes if c),
+        "new_product_code": _new_code(db, app),
+        "lead_time": app.lead_time,
+    }
+
+
+def portal_url(db: Session, app: NewProductApplication) -> str:
+    """The NPA's portal page for the contact who raised it, by the SI's portal link mechanism
+    (``PortalService.submission_link``, with the row's own space). Owner 8 Nov 17:50: the
+    salesperson raises NPAs in the portal, so the row carries their contact; a staff-raised
+    row has none and gets no link (no contact copy, no fallback to the SI page)."""
+    from app.services.portal_service import PortalService
+
+    link = PortalService(db).submission_link(
+        app.contact_id, "new_product_application", str(app.id), space_id=app.space_id
+    )
+    return (link or "").strip()
+
+
+def raised_in_portal(app: NewProductApplication) -> bool:
+    """Raised by a salesperson in the portal: the row carries their contact (owner 8 Nov 17:50)."""
+    return app.source == "portal" and bool(app.contact_id)
+
+
+def notify_purchasing_reply(db: Session, app: NewProductApplication) -> int:
+    """Update & Reply on a portal-raised NPA (owner 9 Nov ~02:30): tell the applicant, in the same
+    in-app (+ email) channel as the NPA's other applicant notices, with the response text and the
+    link to the NPA in the portal that raised it. No WhatsApp. Best effort, after the commit."""
+    if not app.applicant_id:
+        return 0
+    link = portal_url(db, app) or f"/procurement-management/new-product-applications/{app.id}"
+    text = (app.purchasing_response or "").strip()
+    title = f"{app.application_no}: purchasing replied"
+    try:
+        from app.services.notification_service import NotificationService
+
+        NotificationService(db).create_with_channel_preferences(
+            user_id=str(app.applicant_id),
+            type="new_product_application_purchasing_reply",
+            title=title,
+            body=f"{title}: {text}" if text else title,
+            data={
+                "application_id": str(app.id),
+                "application_no": app.application_no,
+                "link": link,
+            },
+            source_entity_type=ENTITY,
+            source_entity_id=str(app.id),
+            dedup_key=f"{app.id}:purchasing_reply:{app.feedback_at.isoformat() if app.feedback_at else ''}",
+            event_type="new_product_application_purchasing_reply",
+            send_in_app=True,
+            send_email=True,
+            send_whatsapp=False,
+            send_web_push=False,
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application reply notice not sent: %s (%s)", app.id, exc)
+        if not db.is_active:
+            db.rollback()
+        return 0
+
+
+def reply_message(db: Session, app: NewProductApplication) -> str:
+    """The text "Update & Reply" sends to the salesperson through the stock inquiry's
+    conversation: the application, the new code (when there is one) and purchasing's response."""
+    parts = [f"{app.application_no}: {app.purchasing_response or ''}".strip()]
+    code = _new_code(db, app)
+    if code:
+        parts.append(f"New product code: {code}")
+    if app.lead_time:
+        parts.append(f"Lead time: {app.lead_time}")
+    return "\n".join(parts)
+
+
+#: Added to purchasing's reply while the inquiry asks for an NPA and has none yet (rule 1).
+NPA_NEXT_STEP = "Next step: please create a New Product Application for this inquiry."
+#: An application that still answers the inquiry's ask (a rejected or cancelled one does not).
+_LIVE = (DRAFT, *AWAITING_REVIEW, *WITH_PURCHASING, COMPLETED)
+
+
+def has_live_application(db: Session, stock_inquiry_id: Any) -> bool:
+    rows = (
+        db.query(NewProductApplication)
+        .filter(
+            NewProductApplication.stock_inquiry_id == str(stock_inquiry_id),
+            NewProductApplication.status.in_(_LIVE),
+        )
+        .all()
+    )
+    # An older Not opening result reads Rejected (owner 8 Nov), so it no longer answers the ask.
+    return any(not _closed_not_opening(a) for a in rows)
+
+
+def npa_next_step_sentence(db: Session, inquiry: StockInquiry) -> Optional[str]:
+    if not getattr(inquiry, "npa_requested", False) or has_live_application(db, inquiry.id):
+        return None
+    return NPA_NEXT_STEP
+
+
+def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict[str, Any]]:
+    """The portal stock inquiry's "New product applications" tab: the applications its OWN
+    contact raised from it, newest first. Both filters bind to the contact's own rows, so
+    the company filter is lifted (None = every company) only here: an inquiry carries no
+    company, and the contact's application may sit under the company its token resolved."""
+    from app.models.base import company_scope
+
+    if not inquiry.contact_id:
+        return []
+    with company_scope(db, None):
+        rows = (
+            db.query(NewProductApplication)
+            .filter(
+                NewProductApplication.stock_inquiry_id == str(inquiry.id),
+                NewProductApplication.contact_id == str(inquiry.contact_id),
+            )
+            .order_by(NewProductApplication.created_at.desc())
+            .all()
+        )
+        created = _created_codes_for(db, rows)
+        return [
+            {
+                "id": a.id,
+                "application_no": a.application_no,
+                "status": a.status,
+                "status_label": status_label(a),
+                "display_status": display_status(a),
+                "created_at": _iso(a.created_at),
+                "created_codes": created.get(str(a.id), []),
+            }
+            for a in rows
+        ]
 
 
 # ------------------------------------------------------------------ reads
@@ -768,25 +1411,11 @@ _SORTS = {
     "stock_inquiry_number": select(StockInquiry.inquiry_number)
     .where(StockInquiry.id == NewProductApplication.stock_inquiry_id)
     .scalar_subquery(),
-    "first_line": select(
-        func.coalesce(NewProductApplicationLine.description, NewProductApplicationLine.proposed_code)
-    )
-    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
-    .order_by(NewProductApplicationLine.line_no)
-    .limit(1)
+    # The stock inquiry list's columns (owner hand test 9 Nov): the applicant is the salesperson.
+    "salesperson": select(func.coalesce(User.name, User.email))
+    .where(User.id == NewProductApplication.applicant_id)
     .scalar_subquery(),
-    "lines_total": select(func.count(NewProductApplicationLine.id))
-    .where(NewProductApplicationLine.application_id == NewProductApplication.id)
-    .scalar_subquery(),
-    "lines_done": select(func.count(NewProductApplicationLine.id))
-    .where(
-        NewProductApplicationLine.application_id == NewProductApplication.id,
-        or_(
-            NewProductApplicationLine.opened_product_id.isnot(None),
-            NewProductApplicationLine.closed_reason.isnot(None),
-        ),
-    )
-    .scalar_subquery(),
+    "revision_no": NewProductApplication.revision_no,
 }
 
 
@@ -834,7 +1463,19 @@ def list_for(
             )
         )
     total = query.count()
-    column = _SORTS.get(sort or "", NewProductApplication.created_at)
+    from app.services.procurement_service import StockInquiryService
+
+    # Assigned To / Handled By / Print Count read exactly as on the stock inquiry list.
+    if sort in ("assigned_to_name", "handled_by_name"):
+        column = StockInquiryService._sla_person_name_sort(
+            "assigned_to_id" if sort == "assigned_to_name" else "handled_by_id",
+            ENTITY,
+            NewProductApplication,
+        )
+    elif sort == "print_count":
+        column = StockInquiryService._print_count_sort(actor.user_id, ENTITY, NewProductApplication)
+    else:
+        column = _SORTS.get(sort or "", NewProductApplication.created_at)
     ordered = column.asc() if direction == "asc" else column.desc()
     rows = (
         query.order_by(ordered.nulls_last(), NewProductApplication.application_no.desc())
@@ -843,8 +1484,19 @@ def list_for(
         .all()
     )
     opened = _opened_codes(db, [str(r.id) for r in rows])
+    created = _created_codes_for(db, rows)
+    si = StockInquiryService(db)
+    si._attach_sla_handlers(rows, source_entity_type=ENTITY)  # noqa: SLF001
+    si._attach_print_counts(rows, actor.user_id, source_entity_type=ENTITY)  # noqa: SLF001
+    items = [serialize_summary(db, r, opened, created) for r in rows]
+    if actor.contact_id:
+        # A portal contact's own list names no staff (security S3), as its detail hides the
+        # purchasing person: the stage's assignee and lock holder stay on the staff side.
+        for item in items:
+            item.pop("assigned_to_name", None)
+            item.pop("handled_by_name", None)
     return {
-        "items": [serialize_summary(db, r, opened) for r in rows],
+        "items": items,
         "total": total,
         "page": page,
         "limit": limit,
@@ -895,10 +1547,11 @@ def _opened_codes(db: Session, app_ids: List[str]) -> Dict[str, List[str]]:
 
 
 def serialize_summary(
-    db: Session, app: NewProductApplication, opened: Optional[Dict[str, List[str]]] = None
+    db: Session,
+    app: NewProductApplication,
+    opened: Optional[Dict[str, List[str]]] = None,
+    created: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    lines = list(app.lines)
-    first = lines[0] if lines else None
     inquiry = (
         db.query(StockInquiry.inquiry_number).filter(StockInquiry.id == app.stock_inquiry_id).scalar()
         if app.stock_inquiry_id
@@ -909,25 +1562,56 @@ def serialize_summary(
         "id": app.id,
         "application_no": app.application_no,
         "status": app.status,
-        "status_label": STATUS_LABELS.get(app.status, app.status),
+        "status_label": status_label(app),
+        "display_status": display_status(app),
         "source": app.source,
         "applicant_id": app.applicant_id,
         "applicant_name": applicant,
+        # The stock inquiry list's columns (owner hand test 9 Nov). The three below are set on the
+        # row by `list_for` (the SI list's own helpers); a single serialize reads them as empty.
+        "salesperson": applicant,
+        "revision_no": app.revision_no or 0,
+        "assigned_to_name": getattr(app, "assigned_to_name", None),
+        "handled_by_name": getattr(app, "handled_by_name", None),
+        "print_count": getattr(app, "print_count", 0),
         "stock_inquiry_id": app.stock_inquiry_id,
         "stock_inquiry_number": inquiry,
         "customer_name": app.customer_name,
         "project_name": app.project_name,
-        "first_line": (first.description or first.proposed_code) if first else None,
-        "lines_total": len(lines),
-        "lines_done": sum(1 for line in lines if _resolved(line)),
         "opened_codes": (opened if opened is not None else _opened_codes(db, [str(app.id)])).get(
             str(app.id), []
         ),
+        "created_codes": (created if created is not None else _created_codes_for(db, [app])).get(str(app.id), []),
         "needed_by": _iso(app.needed_by),
         "submitted_at": _iso(app.submitted_at),
         "created_at": _iso(app.created_at),
     }
 
+
+def _created_codes_for(db: Session, apps: List[NewProductApplication]) -> Dict[str, List[Dict[str, Any]]]:
+    """NPA-FROM-SI: application id -> the new code purchasing linked, with its current codes and
+    when (the stock inquiry's "code created" indicator reads this; nothing is stored for it).
+    Two queries for any number of applications."""
+    done = [a for a in apps if a.new_product_id or a.new_code_text]
+    if not done:
+        return {}
+    codes = {
+        str(k): v
+        for k, v in db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_([a.new_product_id for a in done if a.new_product_id] or [None]))
+        .all()
+    }
+    sources = _sources_by_app(db, [a.id for a in done])
+    return {
+        str(a.id): [
+            {
+                "product_code": codes.get(str(a.new_product_id)) if a.new_product_id else a.new_code_text,
+                "current_codes": [c["product_code"] for c in sources.get(str(a.id), [])],
+                "created_at": _iso(a.new_code_at),
+            }
+        ]
+        for a in done
+    }
 
 def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict[str, Any]]:
     """Read-only values from the product purchasing linked (AC-NPA-76, D3): item group, base
@@ -978,19 +1662,43 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         db, Product, [l.opened_product_id for l in lines], Product.product_code, Product.product_name, Product.is_active
     )
     facts = _linked_product_facts(db, [l.opened_product_id for l in lines])
-    users = _user_names(db, [app.decided_by, app.applicant_id, app.feedback_by, *[l.resolved_by for l in lines]])
+    sources = _sources_by_app(db, [app.id]).get(str(app.id), [])
+    new_product = (
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .filter(Product.id == app.new_product_id)
+        .first()
+        if app.new_product_id
+        else None
+    )
+    if new_product is None and app.new_code_text:
+        typed = _product_by_code(db, app.new_code_text, app.company_id)
+        if typed is not None:
+            new_product = (typed.id, typed.product_code, typed.product_name, typed.is_active)
+    new_product_id = new_product[0] if new_product else None
+    users = _user_names(
+        db, [app.decided_by, app.applicant_id, app.feedback_by, app.new_code_by, *[l.resolved_by for l in lines]]
+    )
     customer = (
         db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
         if app.customer_id
         else None
     )
     inquiry = (
-        db.query(StockInquiry.inquiry_number, StockInquiry.product_code)
+        db.query(
+            StockInquiry.inquiry_number,
+            StockInquiry.product_code,
+            StockInquiry.status,
+            StockInquiry.item_description,
+            StockInquiry.purchasing_response,
+            StockInquiry.quantity,
+            StockInquiry.respond_inbox_url,
+        )
         .filter(StockInquiry.id == app.stock_inquiry_id)
         .first()
         if app.stock_inquiry_id
         else None
     )
+    inquiry_inbox = (inquiry[6] or "").strip() if inquiry else ""
 
     def line_out(l: NewProductApplicationLine) -> Dict[str, Any]:
         prod = products.get(str(l.opened_product_id), (None, None, None))
@@ -1030,10 +1738,39 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     out = {
         **summary,
         "stock_inquiry_product_code": inquiry[1] if inquiry else None,
+        # NPA-FROM-SI rule 7: the application's "Stock inquiry" tab (the one inquiry it links).
+        "stock_inquiry": (
+            {
+                "id": app.stock_inquiry_id,
+                "inquiry_number": inquiry[0],
+                "product_code": inquiry[1],
+                "status": inquiry[2],
+                "item_description": inquiry[3],
+                "purchasing_response": inquiry[4],
+                "quantity": inquiry[5],
+            }
+            if inquiry
+            else None
+        ),
         "customer_id": app.customer_id,
         "customer_code": customer[0] if customer else None,
         "remark": app.remark,
         "lead_time": app.lead_time,
+        "cost_price": _money(app.cost_price),
+        "purchasing_response": app.purchasing_response,
+        # "Update & Reply" goes through the linked stock inquiry's conversation, as the SI's does,
+        # and only while the SI takes a response (its own page's rule: inbox and response stage).
+        # Owner 9 Nov ~02:30: a portal-raised NPA without that chat replies through its portal.
+        "can_reply": bool(
+            not portal
+            and (
+                (inquiry_inbox and is_response_status_allowed("stock_inquiry", inquiry[2]))
+                or (not inquiry_inbox and raised_in_portal(app) and app.status in (*WITH_PURCHASING, COMPLETED))
+            )
+        ),
+        "reply_channel": (
+            None if portal else "whatsapp" if inquiry_inbox else "portal" if raised_in_portal(app) else None
+        ),
         "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
         "feedback_at": _iso(app.feedback_at),
         "decided_at": _iso(app.decided_at),
@@ -1046,6 +1783,31 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "completed_at": _iso(app.completed_at),
         "updated_at": _iso(app.updated_at),
         "attachments": _attachments(db, str(app.id)),
+        # NPA-FROM-SI (mock v3): PRODUCT CODES under STOCK INQUIRY, ONE NEW PRODUCT CODE under REMARK.
+        "current_products": sources,
+        "suggestions": reuse_suggestions(
+            db, [c["id"] for c in sources], exclude_application_id=app.id, portal=portal
+        ),
+        "new_product_id": new_product_id,
+        "new_product_code": new_product[1] if new_product else app.new_code_text,
+        "new_product_name": new_product[2] if new_product else None,
+        "new_product_active": new_product[3] if new_product else None,
+        # The code purchasing typed for a new item (owner 8 Nov); null once linked by id.
+        "new_code_text": app.new_code_text,
+        "new_code_closed_reason": app.new_code_closed_reason,
+        "new_code_by_name": users.get(str(app.new_code_by)) if app.new_code_by else None,
+        "new_code_at": _iso(app.new_code_at),
+        # The values AutoCount set on the new code (read-only, #1769 v4 D3), as the per-row
+        # "From AutoCount" showed them; the portal sees the supplier only (PQ1).
+        "new_product_facts": (
+            {
+                k: v
+                for k, v in _linked_product_facts(db, [new_product_id]).get(str(new_product_id), {}).items()
+                if not (portal and k in _PORTAL_HIDDEN)
+            }
+            if new_product_id
+            else None
+        ),
         "lines": [line_out(l) for l in lines],
     }
     if portal:
@@ -1054,40 +1816,146 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     return out
 
 
+# ------------------------------------------------------------------ form SLA (NPA-FORM-SLA)
+
+#: Update & Reply (either channel): the SI's purchasing_respond, the purchasing stage's response.
+PURCHASING_RESPOND = "purchasing_respond"
+#: The moves the Form SLA config listens to. The NPA's own move names are its SLA events
+#: (documentation/plans/procurement/PLAN-npa-form-sla-08nov.md stage map).
+SLA_EVENTS = ("submitted", "resubmitted", "approved", "rejected", "completed", PURCHASING_RESPOND)
+
+
+def _void_sla(db: Session, app: NewProductApplication, reason: str) -> None:
+    """Revise / Cancel: the open stage stops (voided, never resolved, so it never counts as
+    handled), in the move's own transaction. Who held it is kept on the instance for the
+    "withdrawn" notice, which goes out after the commit. Best effort: never blocks the move."""
+    app._sla_voided_to = set()  # noqa: SLF001
+    try:
+        from app.services.form_sla_service import FormSLAOrchestrator
+
+        voided = FormSLAOrchestrator(db).void_active_for_source(
+            ENTITY, str(app.id), reason=reason, void_reason="withdrawn"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application SLA void failed: %s (%s)", app.id, exc)
+        return
+    for tracker in voided:
+        for user_id in (tracker.assigned_to_id, getattr(tracker, "_voided_handled_by_id", None)):
+            if user_id:
+                app._sla_voided_to.add(str(user_id))  # noqa: SLF001
+
+
+def _emit_sla(db: Session, app: NewProductApplication, event: str, actor_id: Optional[str]) -> None:
+    """Drive the Form SLA stages (the SI's engine). Errors never undo the committed move."""
+    try:
+        from app.services.form_sla_service import emit_form_event
+
+        emit_form_event(
+            db,
+            ENTITY,
+            str(app.id),
+            event,
+            contact_id=app.contact_id,
+            actor_user_id=actor_id,
+            # The NPA's own company routes its stages (not its contact's, as on the SI).
+            company_id=str(app.company_id) if app.company_id else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application SLA event failed: %s %s (%s)", event, app.id, exc)
+        if not db.is_active:
+            db.rollback()
+
+
 # ------------------------------------------------------------------ notifications
 
 
-def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = ()) -> List[str]:
-    from app.services.project_notify_service import approver_user_ids
-
-    return approver_user_ids(db, company_id=company_id, exclude=set(exclude), slug=slug)
-
-
+#: Who the NPA itself tells. Submit / resubmit / approve are told by the started Form SLA stage
+#: (its assignee), as on the SI; a withdrawal tells whoever held the voided stage.
 _EVENTS = {
-    "submitted": ("waits for your approval", "approvers"),
-    "resubmitted": ("was appealed and waits for your approval", "approvers"),
-    "withdrawn": ("was taken back for changes", "approvers"),
-    "approved": ("is approved: codes to open", "purchasing"),
+    "withdrawn": ("was taken back for changes", "voided"),
     "rejected": ("was rejected", "applicant"),
     "completed": ("is done: the codes are open", "applicant"),
 }
+
+
+#: The SI's team notice for an NPA move (owner 8 Nov, "like SI"): the same agent and team sets
+#: the SI's notice uses (`api/v1/procurement/stock_inquiries.py`, `procurement_service.py`), which
+#: are the team sets the NPA stage rows are seeded on. (team set, heading, intro).
+_TEAM_NOTICES = {
+    "submitted": (
+        "project_sales",
+        "New product application submitted",
+        "Dear Project Sales Team,\n\nA new product application has been submitted and requires your review.",
+    ),
+    "resubmitted": (
+        "project_sales",
+        "New product application appealed",
+        "Dear Project Sales Team,\n\nA previously rejected new product application has been edited and "
+        "appealed, and requires your review.",
+    ),
+    "approved": (
+        "purchasing",
+        "New product application pending purchasing",
+        "Dear Purchasing Team,\n\nA new product application has been approved and is now pending purchasing review.",
+    ),
+}
+TEAM_AGENT = "lead_time_enquiries"
+
+
+def _staff_url(app: NewProductApplication) -> str:
+    from app.config import settings
+
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    return f"{base}/procurement-management/new-product-applications/{app.id}"
+
+
+def _team_notice(db: Session, app: NewProductApplication, event: str) -> None:
+    """The SI's own team notice (`StockInquiryService._notify_team_stock_inquiry`), for the NPA.
+    Best effort: a failure is logged and never undoes the committed move."""
+    team_set, heading, intro = _TEAM_NOTICES[event]
+    try:
+        from app.services.procurement_service import StockInquiryService
+
+        StockInquiryService(db)._notify_team_stock_inquiry(  # noqa: SLF001
+            inquiry_id=str(app.id),
+            agent_code=TEAM_AGENT,
+            team_assignment_code=team_set,
+            title=f"{heading}: {app.application_no}",
+            intro_plain=intro,
+            intro_html=intro.replace("\n", "<br />"),
+            event_type=f"new_product_application_{event}",
+            source_entity_type=ENTITY,
+            company_id=str(app.company_id),
+            view_url=_staff_url(app),
+            button_label="Open new product application",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("new product application team notice not sent: %s %s (%s)", event, app.id, exc)
+        if not db.is_active:
+            db.rollback()
 
 
 def notify(
     db: Session, app: NewProductApplication, event: Optional[str], actor_id: Optional[str] = None
 ) -> int:
     """Tell the people who now have to act (card rule 8). Call AFTER the move commits; a
-    failure is logged and swallowed per recipient, so it never undoes the move."""
+    failure is logged and swallowed per recipient, so it never undoes the move.
+
+    NPA-FORM-SLA (owner 8 Nov, "like SI"): the move first drives the Form SLA stages, and the
+    stage that starts tells its assignee (the SI's assignment notice); then the SI's team notice
+    goes to the stage's team set, with or without a stage row, as on the SI. There is no
+    permission-holder broadcast any more. A withdrawal tells whoever held the stage it voided."""
+    if event in SLA_EVENTS:
+        _emit_sla(db, app, event, actor_id)
+    if event in _TEAM_NOTICES:
+        _team_notice(db, app, event)
     if event not in _EVENTS:
         return 0
     phrase, audience = _EVENTS[event]
     try:
-        if audience == "approvers":
-            # Never the applicant, and never the person who just acted (an approver who
-            # revised does not need to hear the request was withdrawn).
-            recipients = _holders(db, APPROVE, app.company_id, exclude=[app.applicant_id, actor_id])
-        elif audience == "purchasing":
-            recipients = _holders(db, OPEN_CODE, app.company_id)
+        if audience == "voided":
+            held = getattr(app, "_sla_voided_to", None) or set()
+            recipients = [u for u in held if u not in {str(actor_id or ""), str(app.applicant_id or "")}]
         else:
             recipients = [app.applicant_id] if app.applicant_id else []
         from app.services.notification_service import NotificationService
@@ -1098,11 +1966,7 @@ def notify(
         return 0
 
     sent = 0
-    if event == "approved":
-        open_lines = sum(1 for line in app.lines if not _resolved(line))
-        title = f"{app.application_no}: {open_lines} new code{'s' if open_lines != 1 else ''} to open"
-    else:
-        title = f"{app.application_no} {phrase}"
+    title = f"{app.application_no} {phrase}"
     for user_id in {str(u) for u in recipients if u}:
         try:
             service.create_with_channel_preferences(

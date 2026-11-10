@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional, Set
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.services.entity_attachment_service import exclude_private_types
 from app.models.base import company_scope
 from app.models.resources import Attachment, AttachmentDirectory
 from app.services.resources_service import AttachmentDirectoryService
@@ -116,7 +117,7 @@ def _count_files(db: Session, directory_ids: List[str]) -> int:
     if not directory_ids:
         return 0
     return int(
-        db.query(func.count(Attachment.id))
+        exclude_private_types(db.query(func.count(Attachment.id)))
         .filter(Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == False)  # noqa: E712
         .scalar()
         or 0
@@ -174,7 +175,7 @@ def plan_archive(
     files_by_dir: Dict[str, List[Attachment]] = {}
     if all_dir_ids:
         for a in (
-            db.query(Attachment)
+            exclude_private_types(db.query(Attachment))
             .filter(Attachment.directory_id.in_(all_dir_ids), Attachment.is_deleted == False)  # noqa: E712
             .order_by(Attachment.uploaded_at, Attachment.id)
             .all()

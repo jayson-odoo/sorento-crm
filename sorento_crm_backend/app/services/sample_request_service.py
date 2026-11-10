@@ -33,6 +33,7 @@ from app.services.error_handler import AppException, handle_not_found
 from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -1001,15 +1002,21 @@ def _folded(column):
 
 
 def search_products(
-    db: Session, q: str, limit: int = 20, product_ids: Optional[set] = None
+    db: Session,
+    q: str,
+    limit: int = 20,
+    product_ids: Optional[set] = None,
+    list_when_empty: bool = False,
 ) -> List[Dict[str, Any]]:
     """Active products whose code (dashes, spaces, case ignored) or name matches. The
     search only LISTS products; a person always picks one (card rule 5).
 
     ``product_ids`` (a request's source quotation, SFQ-27) narrows the search to those products,
-    and an empty search then lists them all so a phone user can pick without typing."""
+    and an empty search then lists them all so a phone user can pick without typing.
+    ``list_when_empty`` (New Product Application pickers, owner 8 Nov) lists the first ``limit``
+    active products for an empty search; the sample request keeps listing nothing."""
     text = (q or "").strip()
-    if not text and product_ids is None:
+    if not text and product_ids is None and not list_when_empty:
         return []
     query = (
         db.query(Product, Brand.brand_name)
@@ -1102,13 +1109,16 @@ def _quotation_items(
     # (product id or None, what a person would recognise the line by)
     wanted: List[tuple] = []
     for line in quote_lines:
+        if line.is_section:
+            # A heading row is not an item to sample (PROPOSAL-FORM-COLLAPSE).
+            continue
         if line.product_id:
             wanted.append((str(line.product_id), line.product_code_snapshot))
         elif line.set_parts_snapshot:
             for part in line.set_parts_snapshot:
                 wanted.append((part.get("product_id"), part.get("product_code")))
         else:
-            text = line.description_snapshot or line.product_code_snapshot or ""
+            text = line_text(line) or line.product_code_snapshot or ""
             wanted.append((None, " ".join(text.split())))
     return wanted
 

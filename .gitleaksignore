@@ -46,3 +46,11 @@ b93b9704fd2d24e9cf84fc60c82e84ac83a2140a:sorento_crm_backend/tests/test_agentic_
 28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:236
 28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:252
 28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:256
+# SORENTO-TOWN (#2248): made-up customer UUIDs as shop `key` values in the TownCards test fixture, there to
+# prove the UI never renders a UUID (fictional, never a secret).
+3d3b5c47d8ae6c33bed392cdc88013f01531f66d:sorento_crm_frontend/app/(protected)/town/components/TownCards.test.tsx:generic-api-key:32
+3d3b5c47d8ae6c33bed392cdc88013f01531f66d:sorento_crm_frontend/app/(protected)/town/components/TownCards.test.tsx:generic-api-key:43
+3d3b5c47d8ae6c33bed392cdc88013f01531f66d:sorento_crm_frontend/app/(protected)/town/components/TownCards.test.tsx:generic-api-key:54
+# TOWN-V2 (#2310): 's0a1b2c3d4e5f' is a made-up opaque shop key in a vitest fixture (the wallboard
+# variant's "s" + 12 hex shape, TownScene.lifecycle.test.tsx), never a secret.
+e7ac515aa472dd85ce9be8e9396c13151ee522b8:sorento_crm_frontend/app/(protected)/town/components/TownScene.lifecycle.test.tsx:generic-api-key:207

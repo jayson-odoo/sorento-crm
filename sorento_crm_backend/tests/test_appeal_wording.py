@@ -118,4 +118,8 @@ def test_every_label_map_reads_appealed():
     assert SI_PDF["resubmitted"] == "Appealed"
     assert npa.STATUS_LABELS["resubmitted"] == "Appealed"
     assert form_action_notify._status_label("resubmitted") == "Appealed"
-    assert npa._EVENTS["resubmitted"][0] == "was appealed and waits for your approval"
+    # NPA-FORM-SLA (#2261): the NPA's own resubmit notice moved from _EVENTS to the SI-style team
+    # notice (_TEAM_NOTICES); the started Form SLA stage tells its assignee.
+    _team_set, heading, intro = npa._TEAM_NOTICES["resubmitted"]
+    assert heading == "New product application appealed"
+    assert "appealed" in intro and "resubmitted" not in intro.lower()

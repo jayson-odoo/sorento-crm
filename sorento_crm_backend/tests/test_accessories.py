@@ -322,11 +322,13 @@ def test_a3_product_tag_data_carries_the_products_list(db, signed):
     assert data["accessories"] == [
         {
             "kind": "accessory", "id": drainer.id, "name": drainer.name,
-            "spec": "390x300x140, Depth: 160mm", "image": None, "code": None, "list_price": None,
+            "spec": "390x300x140, Depth: 160mm", "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
         {
             "kind": "accessory", "id": board.id, "name": board.name,
-            "spec": None, "image": None, "code": None, "list_price": None,
+            "spec": None, "remark": None, "image": None, "images": [],
+            "colours": [], "code": None, "list_price": None,
         },
     ]
 
@@ -535,16 +537,12 @@ def test_p1_a_product_cannot_list_itself(db, monkeypatch):
     assert put.status_code == 422, put.text
 
 
-def test_p1_a_combo_part_cannot_also_be_its_free_item(db, monkeypatch):
-    from tests.test_product_combos import _part
-
+def test_p1_a_combo_host_cannot_be_its_free_item(db, monkeypatch):
+    """A part may be (COMBO-FREE-PART, tests/test_combo_free_part.py); the host never is."""
     client = _caller(db, {VIEW, EDIT}, monkeypatch)
     host = _product(db, "ZZACC")
-    tap = _product(db, "ZZTAP")
     combo = _combo(db, host, "ZZT 1 tap")
-    _part(db, combo, tap)
     url = COMBO_LIST.format(combo_id=combo.id)
-    assert client.put(url, json=_items(products=[(0, tap.id)])).status_code == 422
     assert client.put(url, json=_items(products=[(0, host.id)])).status_code == 422
 
 
@@ -722,7 +720,7 @@ def test_sec_write_routes_take_a_signed_in_user_not_an_api_key():
 
     source = Path(accessories.__file__).read_text()
     assert "require_permission_with_api_key(EDIT)" not in source
-    assert source.count("require_permission(EDIT)") == 7
+    assert source.count("require_permission(EDIT)") == 13  # + 4 picture routes (POST, PATCH, DELETE, PUT order) + PUT colours + POST copy (ACC-COPY-TO-PRODUCTS)
 
 
 def test_crew_an_ala_carte_line_with_no_list_carries_none(db, signed):
@@ -733,3 +731,43 @@ def test_crew_an_ala_carte_line_with_no_list_carries_none(db, signed):
     (row,) = seed.rows(db, request)
     assert row["accessories"] == []
     assert row["included_accessories"] == ""
+
+
+# --------------------------------------------------------------------------- HOTFIX-COMBO-IMAGE-ID
+
+
+# Prod 9 Nov (SRTWB7065): a combo whose free items include a catalogue product WITH a photo 500ed
+# the Combos card. The product entry's picture is the product's own photo, not an accessory
+# picture row, so it has no picture id; the list read must still answer 200.
+
+
+def test_hotfix_a_free_product_with_a_photo_reads_200_on_every_list(db, monkeypatch, signed):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    combo = _combo(db, host, "ZZT basin + waste")
+    waste = _waste(db)
+    waste.company_id = host.company_id
+    photo = r9.seed_product_photo(db, waste)
+    drainer = _accessory(db, _name("DRAINER"))
+    body = _items(drainer.id, products=[(0, waste.id)])
+
+    put = client.put(COMBO_LIST.format(combo_id=combo.id), json=body)
+    assert put.status_code == 200, put.text
+    put = client.put(PRODUCT_LIST.format(product_id=host.id), json=body)
+    assert put.status_code == 200, put.text
+
+    combos = client.get(COMBOS.format(product_id=host.id))
+    assert combos.status_code == 200, combos.text
+    combo_list = client.get(COMBO_LIST.format(combo_id=combo.id))
+    assert combo_list.status_code == 200, combo_list.text
+    product_list = client.get(PRODUCT_LIST.format(product_id=host.id))
+    assert product_list.status_code == 200, product_list.text
+
+    for rows in (combos.json()["data"][0]["accessories"], combo_list.json()["data"], product_list.json()["data"]):
+        entry, accessory = rows
+        assert entry["kind"] == "product" and entry["id"] == waste.id
+        (picture,) = entry["images"]
+        assert picture["attachment_id"] == photo.id
+        assert picture["id"] is None, "a product photo is not an accessory picture row"
+        assert entry["image"]["attachment_id"] == photo.id
+        assert accessory["kind"] == "accessory" and accessory["id"] == drainer.id

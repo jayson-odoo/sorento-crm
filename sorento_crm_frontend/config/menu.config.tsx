@@ -51,6 +51,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
+  Store,
   TrendingUp,
   UserCheck,
   UserCircle,
@@ -112,6 +113,14 @@ const STAFF_SIDEBAR: MenuConfig = [
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
   },
   {
+    // SORENTO-TOWN: admin-only (owner, 10 Nov 2026, TOWN-V2) through its own permission, granted to the
+    // admin and superadmin roles; amounts are still redacted server-side for anyone else granted it.
+    title: 'Town',
+    icon: Store,
+    path: '/town',
+    permission: 'dashboards.town.view',
+  },
+  {
     title: 'Ideas',
     icon: Lightbulb,
     audience: 'staff',
@@ -162,6 +171,12 @@ const STAFF_SIDEBAR: MenuConfig = [
         title: 'Sales Teams',
         path: '/sales/teams',
         permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Leaderboard',
+        path: '/sales/leaderboard',
+        permission: 'sales.leaderboard.view',
         moduleKey: 'sales',
       },
       {
@@ -633,6 +648,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'master_data.item_classes.view',
           },
           {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
+          },
+          {
             title: 'Units of Measure',
             path: '/master-data-management/units-of-measure',
             permission: 'master_data.units_of_measure.view',
@@ -645,6 +665,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Certificates',
             path: '/master-data-management/certificates',
+            permission: 'master_data.certificates.view',
+          },
+          {
+            title: 'Certificate Links',
+            path: '/master-data-management/certificates/links',
             permission: 'master_data.certificates.view',
           },
         ],
@@ -722,6 +747,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Tag Sizes',
             path: '/dealer-kit/tag-sizes',
+            permission: 'dealer_kit.page.view',
+          },
+          {
+            title: 'Accessory Templates',
+            path: '/dealer-kit/accessory-templates',
             permission: 'dealer_kit.page.view',
           },
         ],
@@ -1527,10 +1557,25 @@ export const MENU_SIDEBAR: MenuConfig = [
     audience: 'salesperson',
   },
   {
+    // AI-TOOLS-WAVE2 (owner ruling 5 Nov): own agent targets with their commission.
+    title: 'My targets',
+    icon: TrendingUp,
+    path: '/sales/targets',
+    permission: 'sales.targets.view_own',
+    audience: 'salesperson',
+  },
+  {
     title: 'Customer asks',
     icon: Star,
     path: '/sales/customer-asks',
     permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Dealer access',
+    icon: UserCheck,
+    path: '/sales/dealer-access',
+    permission: 'user_management.contacts.edit_own',
     audience: 'salesperson',
   },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
@@ -2006,6 +2051,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.certificates.view',
     },
     {
+      title: 'Certificate Links',
+      path: '/master-data-management/certificates/links',
+      permission: 'master_data.certificates.view',
+    },
+    {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
       permission: 'master_data.product_categories.view',
@@ -2039,6 +2089,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Item Classes',
       path: '/master-data-management/item-classes',
       permission: 'master_data.item_classes.view',
+    },
+    {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
     },
     {
       title: 'Units of Measure',

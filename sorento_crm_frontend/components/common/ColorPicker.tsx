@@ -279,9 +279,11 @@ interface ColorPickerProps {
   label?: string;
   /** Colours already used on this tag (S3, AC-S3-5), most-used first. */
   usedColours?: string[];
+  /** The swatch button's accessible name when it needs to say more than "Colour" (e.g. "Colour 2"). */
+  ariaLabel?: string;
 }
 
-export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorPickerProps) {
+export function ColorPicker({ value, onChange, label, usedColours = [], ariaLabel }: ColorPickerProps) {
   const [open, setOpen] = useState(false);
   const [inputValue, setInputValue] = useState(value);
   const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(toSpectrumHex(value)));
@@ -339,13 +341,16 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
   const handleSvCommit = (next: SvChange) => {
     onChange(hsvToHex({ ...hsv, ...next }));
   };
+  /** A hue on black, white or grey shows no colour at all; picking one means the full colour. */
+  const withHue = (h: number): Hsv =>
+    hsv.s === 0 || hsv.v === 0 ? { h, s: 100, v: 100 } : { ...hsv, h };
   const handleHueLive = (h: number) => {
-    const nextHsv = { ...hsv, h };
+    const nextHsv = withHue(h);
     setHsv(nextHsv);
     setInputValue(hsvToHex(nextHsv));
   };
   const handleHueCommit = (h: number) => {
-    onChange(hsvToHex({ ...hsv, h }));
+    onChange(hsvToHex(withHue(h)));
   };
 
   const handleEyedropper = async () => {
@@ -369,7 +374,7 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
           <PopoverTrigger asChild>
             <button
               type="button"
-              aria-label={label ? `${label} colour` : 'Colour'}
+              aria-label={ariaLabel ?? (label ? `${label} colour` : 'Colour')}
               className="size-7 shrink-0 rounded border border-input shadow-sm"
               style={{
                 backgroundColor: value === 'transparent' ? undefined : value,

@@ -9,8 +9,13 @@
  *  DELETE /accessories/{id} -> 204 (409 while listed on products or combos)
  *  POST   /accessories/{id}/image (multipart `file`) -> {attachment_id, url}
  *  DELETE /accessories/{id}/image -> 204
+ *  POST   /accessories/{id}/images (multipart `file`) -> picture, 201 (a picture carries no colour)
+ *  PUT    /accessories/{id}/colours {colours: [{name?, hex}]} -> the ordered colours list
+ *  removal of a picture is the deferred
+ *         action `accessory_image.delete` (the DELETE route is the same service call)
+ *  PUT    /accessories/{id}/images/order {ids} -> pictures
  *  GET|PUT /products/{id}/accessories and /product-combos/{id}/accessories
- *    PUT {items: [{accessory_id} | {product_id}]} replaces the whole ordered list -> { data }
+ *    PUT {items: [{accessory_id | product_id, image_id?, name?, spec?, remark?}]} replaces the whole ordered list -> { data }
  *    entries are {kind: 'accessory'|'product', id, name, spec, image, code, list_price, ...}
  */
 import { apiFetch } from '@/lib/api';
@@ -20,8 +25,10 @@ import type {
   Accessory,
   AccessoryEntry,
   AccessoryImage,
+  AccessoryColour,
   AccessoryItemRef,
   AccessoryOwnerKind,
+  AccessoryPicture,
   AccessoryWrite,
 } from '../types/accessory.types';
 
@@ -42,6 +49,12 @@ export async function searchAccessories(query: string, limit = 50): Promise<Acce
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load accessories'));
   const body = (await res.json()) as { data?: Accessory[] };
   return body.data ?? [];
+}
+
+export async function getAccessory(id: string): Promise<Accessory> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the accessory'));
+  return (await res.json()) as Accessory;
 }
 
 export async function createAccessory(write: AccessoryWrite): Promise<Accessory> {
@@ -88,6 +101,35 @@ export async function deleteAccessoryImage(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove the picture'));
 }
 
+export async function addAccessoryPicture(id: string, file: File): Promise<AccessoryPicture> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/images`, { method: 'POST', body: form });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to upload the picture'));
+  return (await res.json()) as AccessoryPicture;
+}
+
+/** Replace the accessory's ordered colours list (max 12, no duplicate hex). */
+export async function replaceAccessoryColours(id: string, colours: AccessoryColour[]): Promise<AccessoryColour[]> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/colours`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ colours }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the colours'));
+  return (await res.json()) as AccessoryColour[];
+}
+
+export async function orderAccessoryPictures(id: string, ids: string[]): Promise<AccessoryPicture[]> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/images/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to reorder the pictures'));
+  return (await res.json()) as AccessoryPicture[];
+}
+
 function ownerPath(kind: AccessoryOwnerKind, id: string): string {
   const root = kind === 'product' ? 'products' : 'product-combos';
   return `/api/v1/master-data/${root}/${encodeURIComponent(id)}/accessories`;
@@ -103,6 +145,7 @@ export async function listOwnerAccessories(
   return body.data ?? [];
 }
 
+/** Replace the whole ordered list. The box style is never sent, so the server leaves it alone. */
 export async function replaceOwnerAccessories(
   kind: AccessoryOwnerKind,
   id: string,
@@ -116,4 +159,32 @@ export async function replaceOwnerAccessories(
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the accessories'));
   const body = (await res.json()) as { data?: AccessoryEntry[] };
   return body.data ?? [];
+}
+
+/** What a copy did (or, with `dryRun`, would do): ACC-COPY-TO-PRODUCTS. */
+export interface AccessoryCopySummary {
+  targets: number;
+  targets_with_a_list: number;
+  entries_added: number;
+  entries_already_there: number;
+  box_style_set: number;
+}
+
+/**
+ * Add this product's entries to the picked products: each keeps its own list and gets the
+ * entries it is missing at the end; the box style goes to products with none. One transaction.
+ * `dryRun` answers the same summary and writes nothing (the confirm step).
+ */
+export async function copyProductAccessories(
+  sourceId: string,
+  targetIds: string[],
+  dryRun = false,
+): Promise<AccessoryCopySummary> {
+  const res = await apiFetch(`${ownerPath('product', sourceId)}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_product_ids: targetIds, dry_run: dryRun }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to copy the accessories'));
+  return (await res.json()) as AccessoryCopySummary;
 }

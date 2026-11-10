@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef } from 'react';
-import { GripVertical, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { GripVertical, Pencil, X } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
@@ -20,13 +20,16 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { AttachmentImage } from '@/components/common/AttachmentImage';
 import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { formatCurrency } from '@/lib/helpers';
+import { richOneLine } from '@/lib/dealer-kit/rich-text';
 import { codeWithName } from '@/lib/product-display';
 import { getProducts } from '../../services/productService';
 import { searchAccessories } from '../../../accessories/services/accessoryService';
@@ -35,20 +38,29 @@ import {
   useOwnerAccessories,
   useReplaceOwnerAccessories,
 } from '../../../accessories/hooks/useAccessories';
-import { entryKey, type AccessoryEntry, type AccessoryOwnerKind } from '../../../accessories/types/accessory.types';
+import {
+  entryKey,
+  hasOverrides,
+  rowPicture,
+  type AccessoryEntry,
+  type AccessoryOwnerKind,
+} from '../../../accessories/types/accessory.types';
+import { AccessoryEntryDialog } from './AccessoryEntryDialog';
 
 function AccessoryThumb({ accessory }: { accessory: AccessoryEntry }) {
-  return accessory.image ? (
-    // A signed CDN URL, not an asset next/image can optimise.
-    <img
-      src={accessory.image.url}
-      alt=""
+  // The row's own pick (`entry.image_id`), so a Save shows it at once through the optimistic write.
+  const picture = rowPicture(accessory);
+  return (
+    <AttachmentImage
+      thumbUrl={picture?.thumb_url}
+      url={picture?.url}
       className="size-10 shrink-0 rounded-md border object-cover"
+      fallback={
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
+          No picture
+        </span>
+      }
     />
-  ) : (
-    <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-dashed px-0.5 text-center text-2xs leading-tight text-muted-foreground">
-      No picture
-    </span>
   );
 }
 
@@ -60,15 +72,20 @@ function AccessoryText({ accessory }: { accessory: AccessoryEntry }) {
           <span className="font-semibold">{accessory.code} </span>
         ) : null}
         <span className={accessory.kind === 'product' ? '' : 'font-medium'}>{accessory.name}</span>
+        {hasOverrides(accessory) ? (
+          <Badge variant="secondary" size="sm" className="ml-1.5 align-middle">
+            Own text
+          </Badge>
+        ) : null}
       </p>
       {accessory.kind === 'product' && accessory.list_price != null ? (
         <p className="truncate text-xs text-muted-foreground">
           LP: {formatCurrency(accessory.list_price)}
         </p>
       ) : null}
-      {accessory.spec ? (
-        <p className="truncate text-xs text-muted-foreground" title={accessory.spec}>
-          {accessory.spec}
+      {richOneLine(accessory.spec) ? (
+        <p className="truncate text-xs text-muted-foreground" title={richOneLine(accessory.spec)}>
+          {richOneLine(accessory.spec)}
         </p>
       ) : null}
     </div>
@@ -80,9 +97,11 @@ const PRODUCT_PAGE_SIZE = 50;
 function SortableRow({
   accessory,
   onRemove,
+  onEdit,
 }: {
   accessory: AccessoryEntry;
   onRemove: () => void;
+  onEdit: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: entryKey(accessory),
@@ -104,6 +123,16 @@ function SortableRow({
       </button>
       <AccessoryThumb accessory={accessory} />
       <AccessoryText accessory={accessory} />
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="shrink-0"
+        aria-label="Edit for this list"
+        onClick={onEdit}
+      >
+        <Pencil className="size-4" />
+      </Button>
       <Button
         type="button"
         variant="ghost"
@@ -144,6 +173,7 @@ export function AccessoryListField({
   const create = useCreateAccessory();
   const items = data ?? [];
   const known = useRef(new Map<string, AccessoryEntry>());
+  const [editing, setEditing] = useState<AccessoryEntry | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -163,28 +193,34 @@ export function AccessoryListField({
 
   const has = (key: string) => items.some((a) => entryKey(a) === key);
 
-  const fetchOptions = async (query: string): Promise<SearchableSelectOption[]> => {
-    const found = await searchAccessories(query);
-    return found
+  /**
+   * ONE picker for both kinds (owner 10 Nov): the accessory library on the first page, then the
+   * catalogue products, server-searched and paged. Values carry the kind (`accessory:<id>`,
+   * `product:<id>`), the same key the list itself uses.
+   */
+  const fetchOptions = async (query: string, pageIndex: number): Promise<SearchableSelectOption[]> => {
+    const [accessories, products] = await Promise.all([
+      pageIndex === 0 ? searchAccessories(query) : Promise.resolve([]),
+      getProducts({
+        pageIndex,
+        pageSize: PRODUCT_PAGE_SIZE,
+        sorting: [],
+        searchQuery: query,
+        status: 'active',
+      }),
+    ]);
+    const accessoryOptions = accessories
       .filter((a) => !has(`accessory:${a.id}`))
       .map((a) => {
         known.current.set(`accessory:${a.id}`, { ...a, kind: 'accessory', code: null, list_price: null });
-        return { value: a.id, label: a.name, description: a.spec ?? undefined };
+        return {
+          value: `accessory:${a.id}`,
+          label: a.name,
+          description: richOneLine(a.spec) || undefined,
+          group: 'Accessories',
+        };
       });
-  };
-
-  const fetchProductOptions = async (
-    query: string,
-    pageIndex: number,
-  ): Promise<SearchableSelectOption[]> => {
-    const products = await getProducts({
-      pageIndex,
-      pageSize: PRODUCT_PAGE_SIZE,
-      sorting: [],
-      searchQuery: query,
-      status: 'active',
-    });
-    return (products.data ?? [])
+    const productOptions = (products.data ?? [])
       .filter((p) => p.id !== ownerHostId && !has(`product:${p.id}`))
       .map((p) => {
         known.current.set(`product:${p.id}`, {
@@ -199,11 +235,15 @@ export function AccessoryListField({
           list_price: null,
         });
         return {
-          value: p.id,
+          value: `product:${p.id}`,
           label: codeWithName(p.product_code, p.product_name),
           searchText: `${p.product_code} ${p.product_name}`,
+          // Still pickable, with the grey hint the other combo pickers use (owner 7 Nov).
+          description: p.is_discontinued ? 'Discontinued' : undefined,
+          group: 'Products',
         };
       });
+    return [...accessoryOptions, ...productOptions];
   };
 
   const add = (key: string) => {
@@ -244,6 +284,7 @@ export function AccessoryListField({
                     key={entryKey(accessory)}
                     accessory={accessory}
                     onRemove={() => write(items.filter((a) => entryKey(a) !== entryKey(accessory)))}
+                    onEdit={() => setEditing(accessory)}
                   />
                 ))}
               </ul>
@@ -260,29 +301,32 @@ export function AccessoryListField({
           </ul>
         )
       ) : null}
+      <AccessoryEntryDialog
+        entry={editing}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSave={(overrides) => {
+          if (!editing) return;
+          write(items.map((a) => (entryKey(a) === entryKey(editing) ? { ...a, entry: overrides } : a)));
+          setEditing(null);
+        }}
+      />
       {canEdit ? (
         <SearchableSelect
           value=""
-          onChange={(id) => add(`accessory:${id}`)}
-          fetchOptions={fetchOptions}
-          placeholder="Add accessory"
-          aria-label={`Add accessory${label ? ` to ${label}` : ''}`}
-          clearable={false}
-          createOption={{
-            label: (query) => `Create "${query}"`,
-            onCreate: (query) => void onCreate(query),
+          onChange={(key) => {
+            if (key) add(key);
           }}
-        />
-      ) : null}
-      {canEdit ? (
-        <SearchableSelect
-          value=""
-          onChange={(id) => add(`product:${id}`)}
-          fetchOptions={fetchProductOptions}
+          fetchOptions={fetchOptions}
           paginated
           pageSize={PRODUCT_PAGE_SIZE}
-          placeholder="Add product"
-          aria-label={`Add product${label ? ` to ${label}` : ''}`}
+          placeholder="Add accessory or product"
+          aria-label={`Add accessory or product${label ? ` to ${label}` : ''}`}
+          emptyMessage="No accessories or products found."
+          clearable={false}
+          createOption={{
+            label: (query) => (query.trim() ? `Create accessory "${query.trim()}"` : null),
+            onCreate: (query) => void onCreate(query.trim()),
+          }}
         />
       ) : null}
     </div>

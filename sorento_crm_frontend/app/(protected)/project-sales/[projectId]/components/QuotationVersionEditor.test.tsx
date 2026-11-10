@@ -18,6 +18,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MotionGlobalConfig } from 'motion/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@/lib/toast';
 import type {
@@ -188,6 +189,21 @@ vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseSer
     })),
   };
 });
+// QUOTE-DESC-RICHTEXT: the Description cell opens the shared rich text editor in a popover. The
+// editor has its own tests; here it is a labelled textarea, so a test types plain text into it.
+vi.mock('@/components/ui/rich-text-editor', () => ({
+  RichTextEditor: (props: {
+    value: string;
+    onChange: (html: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
 // The viewer is the existing AttachmentPreviewModal; a stub says whether it opened and on what.
 vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   default: (props: { items: { name: string }[]; startIndex?: number }) => (
@@ -495,9 +511,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     // The line IS the row: every field is a cell, so there is nothing to open.
-    expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-      'Wall-hung WC',
-    );
+    expect(descriptionCell('SRT-WC-01').textContent).toBe('Wall-hung WC');
     expect(screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' })).toHaveValue('10.00');
     expect(screen.queryByRole('button', { name: /Edit SRT-WC-01/i })).toBeNull();
     // And no per-row save affordance, because there is one Save for the whole document now.
@@ -830,6 +844,8 @@ describe('QuotationVersionEditor', () => {
     expectNothingWritten();
   });
 
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026): a heading a line still carries from before is
+  // shown as its own row right above that line, and is written that way on the next Save.
   it('opens a section with one heading above the line that carries it', async () => {
     listQuotationLines.mockResolvedValue([
       line({ band_label: 'BILL NO 3 PAGE 15/4' }),
@@ -838,16 +854,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
     // ONCE, and only for the line that carries it: the line below is inside the section, it
     // does not repeat the heading.
     expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-BIDET-09' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-BIDET-09' }),
     ).toBeNull();
 
-    // Directly above its own line, inside the same table, so the two cannot drift apart.
+    // Directly above that line, as a row of its own.
     const bandRow = heading.closest('tr');
     const lineRow = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }).closest('tr');
     expect(bandRow?.nextElementSibling).toBe(lineRow);
@@ -862,20 +878,19 @@ describe('QuotationVersionEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
 
     const heading = await screen.findByRole('textbox', {
-      name: 'Section heading on line 2',
+      name: 'Section heading above line 2',
     });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
     // The line under the heading is ready to fill in: a section IS a line.
-    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
-      target: { value: 'Grab bar' },
-    });
+    await typeDescription('line 2', 'Grab bar');
 
+    // A heading row of its own, then the line under it (PROPOSAL-FORM-COLLAPSE).
     await waitFor(() =>
-      expect(stagedBody()[1]).toMatchObject({
-        band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
-        description_snapshot: 'Grab bar',
-      }),
+      expect(stagedBody().slice(1)).toEqual([
+        { is_section: true, band_label: 'OPTIONAL ITEMS FOR OKU TOILET' },
+        expect.objectContaining({ description_snapshot: 'Grab bar', band_label: null }),
+      ]),
     );
     expectNothingWritten();
   });
@@ -885,11 +900,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     fireEvent.change(heading, { target: { value: '' } });
+    fireEvent.blur(heading);
 
-    // Null, not an empty string: the column is nullable and a blank heading is no heading.
-    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ band_label: null }));
+    // A blank heading is no heading: its row goes, the line stays, and the line carries none.
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' })).toBeNull(),
+    );
+    expect(stagedBody()).toHaveLength(1);
+    expect(stagedBody()[0]).toMatchObject({ id: 'l1', band_label: null });
   });
 
   it("reads a frozen version's bands and rate-only lines without offering an editor", async () => {
@@ -907,7 +927,7 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('BILL NO 3 PAGE 15/4')).toBeInTheDocument();
     expect(screen.getByText('rate only')).toBeInTheDocument();
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-WC-01' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' }),
     ).toBeNull();
     expect(screen.queryByRole('checkbox', { name: 'Rate only on SRT-WC-01' })).toBeNull();
   });
@@ -963,7 +983,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on line 2' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Unit price on SRT-BASIN-02' }), {
@@ -986,12 +1006,10 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     // Typed into, so it is real data rather than a mis-click, but it names neither a product
     // nor a set. Marked as it is typed, not held back until Save (AC-9).
-    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
-      target: { value: 'Bespoke vanity top' },
-    });
+    await typeDescription('line 2', 'Bespoke vanity top');
 
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
     expect(screen.queryByText('A non-standard item needs a description')).toBeNull();
@@ -1003,7 +1021,7 @@ describe('QuotationVersionEditor', () => {
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
 
     // Empty is not wrong. Marking a row red the instant it appears would be the screen
     // shouting at somebody for pressing the button it offered them.
@@ -1018,9 +1036,7 @@ describe('QuotationVersionEditor', () => {
 
     // One decision answers the rest of the row, off the product record rather than off memory.
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'Vitreous china counter basin',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('Vitreous china counter basin'),
     );
     expect(screen.getByRole('combobox', { name: 'Brand on SRT-WC-01' })).toHaveTextContent(
       'SORENTO',
@@ -1042,16 +1058,13 @@ describe('QuotationVersionEditor', () => {
     // including over an edit made before the re-pick. The cost was stated and accepted.
     await renderEditing();
 
-    const description = screen.getByRole('textbox', { name: 'Description on SRT-WC-01' });
-    fireEvent.change(description, { target: { value: 'Wording agreed with the QS' } });
+    await typeDescription('SRT-WC-01', 'Wording agreed with the QS');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
 
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'Vitreous china counter basin',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('Vitreous china counter basin'),
     );
   });
 
@@ -1399,6 +1412,19 @@ async function openNotes(label: string) {
   return screen.findByRole('textbox', { name: `Note text on ${label}` });
 }
 
+/** The Description cell: a button showing the text, opening the editor (QUOTE-DESC-RICHTEXT). */
+function descriptionCell(label: string) {
+  return screen.getByRole('button', { name: `Description on ${label}` });
+}
+
+async function typeDescription(label: string, text: string) {
+  openTrigger(`Description on ${label}`);
+  fireEvent.change(
+    await screen.findByRole('textbox', { name: `Description text on ${label}` }),
+    { target: { value: text } },
+  );
+}
+
 /** What a drop of dnd-kit would do: the table's own handler, fired with the two keys. */
 function dragLine(activeId: string, overId: string) {
   act(() => {
@@ -1413,8 +1439,8 @@ async function chooseMenuItem(label: string, item: string) {
 
 function descriptionOrder(): string[] {
   return screen
-    .getAllByRole('textbox', { name: /^Description on / })
-    .map((el) => (el as HTMLTextAreaElement).value);
+    .getAllByRole('button', { name: /^Description on / })
+    .map((el) => el.textContent ?? '');
 }
 
 const TWO_LINES = [
@@ -1430,6 +1456,24 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2);
   });
 
+  it('finds a styled description by its words, never by its markup (QUOTE-DESC-RICHTEXT)', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: '<p><strong>Ba</strong>sin mixer</p>', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Grab bar', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const search = screen.getByRole('textbox', { name: 'Search lines by product or description' });
+    fireEvent.change(search, { target: { value: 'basin' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-2' })).toBeNull(),
+    );
+    expect(screen.getByRole('button', { name: 'Description on A-1' })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'strong' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-1' })).toBeNull(),
+    );
+  });
+
   it('offers no drag handles and no grid editors in the read view', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     renderEditor();
@@ -1439,11 +1483,9 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(screen.queryByRole('button', { name: /^Line actions on / })).toBeNull();
   });
 
-  it('edits the description in a textarea and sends its line breaks in the save body', async () => {
+  it('edits the description in the shared editor and sends its line breaks in the save body', async () => {
     await renderEditing();
-    const description = screen.getByRole('textbox', { name: 'Description on SRT-WC-01' });
-    expect(description.tagName).toBe('TEXTAREA');
-    fireEvent.change(description, { target: { value: 'Wall-hung WC\nc/w soft-close seat' } });
+    await typeDescription('SRT-WC-01', 'Wall-hung WC\nc/w soft-close seat');
     await waitFor(() =>
       expect(stagedBody()[0].description_snapshot).toBe('Wall-hung WC\nc/w soft-close seat'),
     );
@@ -1489,7 +1531,7 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(stagedBody().map((l) => l.id)).toEqual(['l1', undefined, 'l2']);
 
     await chooseMenuItem('A-2', 'Insert a section above');
-    expect(await screen.findByRole('textbox', { name: 'Section heading on A-2' })).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Section heading above A-2' })).toBeInTheDocument();
 
     await chooseMenuItem('A-1', 'Remove line');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
@@ -1556,7 +1598,7 @@ describe('QuotationVersionEditor line without a product (QUOTE-NO-FREE-TEXT)', (
   it('flags a typed-into line with no product or set, and still counts it as unfinished', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.change(screen.getByRole('textbox', { name: 'Qty on line 2' }), { target: { value: '4' } });
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
     expect(unfinishedStagedLines(session?.scopes[QUOTATION.id]?.lines ?? [])).toBeGreaterThan(0);
@@ -1737,7 +1779,7 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
     line({ id: 'l3', product_code: 'A-3', description: 'Third', sort_order: 20, band_label: 'BILL NO 3' }),
   ];
 
-  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and carries its section bar', async () => {
+  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and leaves the heading where it was', async () => {
     listQuotationLines.mockResolvedValue(THREE);
     await renderEditing();
     expect(dnd.dragEnd).not.toBeNull();
@@ -1746,12 +1788,19 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l2' } });
     });
 
-    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l3', 'l2']));
+    // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026: "a heading shouldnt be tied to line"): the
+    // heading line 3 used to carry is its own row now, so it stays put and line 3 moves alone.
+    await waitFor(() =>
+      expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+        'l1',
+        'l3',
+        'l2',
+        'heading',
+      ]),
+    );
     expect(itemNumbers()).toEqual(['1', '2', '3']);
-    // The heading that opened on line 3 travels with line 3: still directly above its row.
-    const heading = screen.getByRole('textbox', { name: 'Section heading on A-3' });
-    const lineRow = screen.getByRole('textbox', { name: 'Qty on A-3' }).closest('tr');
-    expect(heading.closest('tr')?.nextElementSibling).toBe(lineRow);
+    const heading = screen.getByRole('textbox', { name: 'Section heading at the end' });
+    expect(heading).toHaveValue('BILL NO 3');
     expectNothingWritten();
   });
 
@@ -1762,7 +1811,12 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l3' } });
       dnd.dragEnd!({ active: { id: 'l3' }, over: null });
     });
-    expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l2', 'l3']);
+    expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+      'l1',
+      'l2',
+      'heading',
+      'l3',
+    ]);
   });
 
   it('shows no stale pick after the product goes A -> B -> A, and saves both picks null', async () => {
@@ -1862,9 +1916,7 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRTWC8356-RL/ }));
     await waitFor(() =>
-      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
-        'SORENTO ONE PIECE (RIMLESS) TOILET (S-TRAP 250MM)  SRTWC8356-RL',
-      ),
+      expect(descriptionCell('SRT-WC-01').textContent).toBe('SORENTO ONE PIECE (RIMLESS) TOILET (S-TRAP 250MM)  SRTWC8356-RL'),
     );
     expect(screen.getByRole('combobox', { name: 'Brand on SRT-WC-01' })).toHaveTextContent('SORENTO');
     expect(screen.getByRole('combobox', { name: 'UOM on SRT-WC-01' })).toHaveTextContent('PCS');
@@ -1962,16 +2014,16 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
   it('marks a new line with a description but no product or set as soon as the description is typed (defect 4)', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    const description = await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     expect(screen.queryByText('Pick a catalogue product or set')).toBeNull();
-    fireEvent.change(description, { target: { value: 'Bespoke top' } });
+    await typeDescription('line 2', 'Bespoke top');
     expect(await screen.findByText('Pick a catalogue product or set')).toBeInTheDocument();
   });
 
   it('carries a note typed on a never-saved line in the first save body (defect 5)', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.change(await openNotes('line 2'), { target: { value: 'Ex-works' } });
     await waitFor(() => expect(stagedBody()[1]).toMatchObject({ notes: 'Ex-works' }));
   });
@@ -1979,10 +2031,10 @@ describe('QuotationVersionEditor fix round 2 (QUOTATION-UX)', () => {
   it('labels a never-saved line by its picked product code, and the label survives a reorder', async () => {
     await renderEditing();
     fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
-    await screen.findByRole('textbox', { name: 'Description on line 2' });
+    await screen.findByRole('button', { name: 'Description on line 2' });
     fireEvent.click(screen.getByRole('combobox', { name: 'Product on line 2' }));
     fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
-    await screen.findByRole('textbox', { name: 'Description on SRT-BASIN-02' });
+    await screen.findByRole('button', { name: 'Description on SRT-BASIN-02' });
 
     fireEvent.change(await openNotes('SRT-BASIN-02'), { target: { value: 'c/w trap' } });
     const keys = (session?.scopes[QUOTATION.id]?.lines ?? []).map((l) => l.key);
@@ -2126,7 +2178,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
     ];
     const barOf = () =>
-      screen.getByRole('textbox', { name: 'Section heading on A-1' }).closest('td') as HTMLElement;
+      screen.getByRole('textbox', { name: 'Section heading above A-1' }).closest('td') as HTMLElement;
 
     it('Rename focuses the section heading', async () => {
       listQuotationLines.mockResolvedValue(BANDED);
@@ -2134,7 +2186,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
       await waitFor(() =>
-        expect(screen.getByRole('textbox', { name: 'Section heading on A-1' })).toHaveFocus(),
+        expect(screen.getByRole('textbox', { name: 'Section heading above A-1' })).toHaveFocus(),
       );
     });
 
@@ -2144,7 +2196,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove section' }));
       await waitFor(() =>
-        expect(screen.queryByRole('textbox', { name: 'Section heading on A-1' })).toBeNull(),
+        expect(screen.queryByRole('textbox', { name: 'Section heading above A-1' })).toBeNull(),
       );
       expect(screen.getByRole('textbox', { name: 'Qty on A-1' })).toBeInTheDocument();
       await waitFor(() => expect(stagedBody()[0].band_label ?? null).toBeNull());
@@ -2241,7 +2293,8 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
         line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
       ]);
       await renderEditing();
-      for (const name of ['Description on A-1', 'Qty on A-1', 'Section heading on A-1']) {
+      // The description is edited in a popover now (QUOTE-DESC-RICHTEXT), not in the row.
+      for (const name of ['Qty on A-1', 'Section heading above A-1']) {
         expect(fireEvent.contextMenu(screen.getByRole('textbox', { name }))).toBe(true);
       }
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -2937,5 +2990,100 @@ describe('QuotationVersionEditor: an unsaved line keeps its product code across 
     const picker = await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
     expect(picker).toHaveTextContent('SRT-BASIN-02');
     expect(screen.queryByText('Selected product')).toBeNull();
+  });
+});
+
+describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the closing menu', () => {
+  // vitest.setup skips every animation, so a menu would unmount the instant it closes. A browser
+  // plays the exit, and that window is where the bug lives: run the animations for real here.
+  beforeEach(() => {
+    MotionGlobalConfig.skipAnimations = false;
+  });
+  afterEach(() => {
+    MotionGlobalConfig.skipAnimations = true;
+  });
+
+  /**
+   * Click a menu item the way a real browser plays it out: the menu runs its exit animation (the
+   * content stays mounted until it ends), anything the click queued with a timer (a focus move,
+   * say) runs inside that window, and then the pointer leaving the clicked item makes Radix focus
+   * the menu itself (react-menu onItemLeave). React derives onPointerLeave from pointerout.
+   */
+  async function clickAndLeaveClosingMenu(item: HTMLElement) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(item);
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(item.isConnected).toBe(true);
+    fireEvent.pointerOut(item, { pointerType: 'mouse', relatedTarget: document.body });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  }
+
+  /** The session's rows in order, headings as `H:<label>`, lines as their id (the write body
+   *  leaves an unnamed heading out, so it is read from the session itself). */
+  function stagedOrder(): string[] {
+    return (session?.scopes[QUOTATION.id]?.lines ?? []).map((l) =>
+      l.draft.is_section ? `H:${l.draft.band_label ?? ''}` : String(l.id),
+    );
+  }
+
+  it('row "..." menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+
+    fireEvent.change(heading, { target: { value: 'PAGE 2' } });
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'H:PAGE 2', 'l2']));
+    expectNothingWritten();
+  });
+
+  it('right-click menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    fireEvent.contextMenu(rowOf('A-2').querySelector('td') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+  });
+
+  it('right-click Rename on a heading keeps the caret in it after the menu has closed', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const heading = screen.getByRole('textbox', { name: 'Section heading above A-1' });
+    fireEvent.contextMenu(heading.closest('[data-section-key]') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Rename' });
+    await clickAndLeaveClosingMenu(item);
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
+  it('a heading left empty and blurred by the user still goes, and no line moves', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.blur(heading);
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'l2']));
+    expect(screen.queryByRole('textbox', { name: 'Section heading above A-2' })).toBeNull();
   });
 });

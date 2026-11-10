@@ -99,6 +99,9 @@ export type RichTextEditorProps = {
    * never splits it. Value in and out still carries them as plain `{{path}}` text.
    */
   mergeFields?: boolean;
+  /** With `mergeFields`: a chip's readable name for a path, null to show the token itself. The
+   *  value in and out still carries the plain `{{path}}`. */
+  mergeFieldLabel?: (path: string) => string | null;
 };
 
 /** Editors whose caret somebody has placed (a focus or a selection change). */
@@ -298,7 +301,10 @@ function ColorPopoverButton({
   const Icon = kind === 'color' ? Baseline : Highlighter;
 
   function apply(hex: string) {
-    const chain = editor.chain().focus();
+    // No `.focus()`: the map and hue slider apply on every release, and pulling the focus into
+    // the editor counts as focus outside this popover and the picker's own, closing both mid-pick
+    // (owner hand test, QUOTE-DESC-RICHTEXT round 1). The command acts on the kept selection.
+    const chain = editor.chain();
     if (kind === 'color') chain.setColor(hex).run();
     else chain.setBackgroundColor(hex).run();
   }
@@ -635,7 +641,11 @@ export function RichTextEditor({
   'aria-labelledby': labelledBy,
   toolbar = 'full',
   mergeFields = false,
+  mergeFieldLabel,
 }: RichTextEditorProps) {
+  // Read through a ref so a new labeller (a part renamed) needs no new editor.
+  const labelRef = useRef(mergeFieldLabel);
+  labelRef.current = mergeFieldLabel;
   const inline = toolbar === 'inline' || toolbar === 'none';
   const bare = toolbar === 'none';
   // A `mergeFields` editor holds its tokens as atoms; the value in and out keeps them as text.
@@ -706,7 +716,7 @@ export function RichTextEditor({
       BackgroundColor,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ];
-    if (mergeFields) list.push(MergeFieldNode);
+    if (mergeFields) list.push(MergeFieldNode.configure({ label: (path) => labelRef.current?.(path) ?? null }));
     if (inline) {
       // No link, highlight or alignment either: the inline toolbar has no button for them.
       const dropped = new Set(['link', 'backgroundColor', 'textAlign']);

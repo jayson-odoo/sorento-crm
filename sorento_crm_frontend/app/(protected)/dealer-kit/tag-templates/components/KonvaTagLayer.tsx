@@ -51,7 +51,7 @@ import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-tex
 import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
-import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
+import { featureIconRow, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoryBoxLayout,
   accessoryCardInner,
@@ -62,8 +62,24 @@ import {
   fitLinePt,
   ptToMm,
   sampleAccessories,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
+import {
+  accessoryDesignSamples,
+  boxColours,
+  cardBoxLayout,
+  cardElementsFor,
+  cardElementsForDesign,
+  cardIconLayout,
+  cardTextBox,
+  cardTextProps,
+  colourDotLayout,
+  DEFAULT_DOT_OUTLINE,
+  fitCardTextProps,
+  footerElementsFor,
+  type ResolvedCardElement,
+} from '@/lib/dealer-kit/accessory-card';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -419,6 +435,11 @@ function LayerContent({
           scale={scale}
           props={props}
           accessories={display?.accessories}
+          editing={display?.accessoryEditing}
+          cardIcons={display?.cardIcons}
+          iconUrls={display?.iconUrls}
+          headerHidden={display?.accessoryHeaderHidden}
+          dropMarker={display?.accessoryDropMarker}
         />
       );
 
@@ -1161,6 +1182,11 @@ function AccessoriesContent({
   scale,
   props,
   accessories,
+  editing,
+  cardIcons,
+  iconUrls,
+  headerHidden,
+  dropMarker,
 }: {
   w: number;
   h: number;
@@ -1169,7 +1195,31 @@ function AccessoriesContent({
   scale: number;
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
+  editing?: boolean;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
+  dropMarker?: boolean;
 }) {
+  // A box with a designed card takes its own path; one without keeps the legacy cards below.
+  if (props.card) {
+    return (
+      <DesignedAccessoriesContent
+        w={w}
+        h={h}
+        widthMm={widthMm}
+        heightMm={heightMm}
+        scale={scale}
+        props={props}
+        accessories={accessories}
+        editing={editing}
+        cardIcons={cardIcons}
+        iconUrls={iconUrls}
+        headerHidden={headerHidden}
+        dropMarker={dropMarker}
+      />
+    );
+  }
   const items = accessories ?? sampleAccessories();
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
@@ -1203,7 +1253,10 @@ function AccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const header = accessoryHeaderStyle(props);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
   return (
     <>
       {box.frame && (
@@ -1217,34 +1270,7 @@ function AccessoriesContent({
           cornerRadius={px(props.cornerRadius_mm)}
         />
       )}
-      {box.header?.onBorder && (
-        // Breaks the border behind a header that sits on it (legend style).
-        <Rect
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          fill={props.headerBackground || '#ffffff'}
-        />
-      )}
-      {box.header && (
-        <Text
-          x={px(box.header.x_mm)}
-          y={px(box.header.y_mm)}
-          width={px(box.header.width_mm)}
-          height={px(box.header.height_mm)}
-          text={props.headerText}
-          align={box.header.onBorder ? 'center' : header.align}
-          verticalAlign="middle"
-          fontStyle={konvaFontStyle(header)}
-          textDecoration={konvaDecoration(header)}
-          fontFamily={header.fontFamily ?? undefined}
-          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
-          fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={header.color}
-          wrap="none"
-        />
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
@@ -1295,6 +1321,7 @@ function AccessoriesContent({
           </Group>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
           <>
@@ -1318,6 +1345,465 @@ function AccessoriesContent({
           </>
         </Group>
       )}
+    </>
+  );
+}
+
+/**
+ * PRICETAG-ACCESSORY-DESIGNER: a box with a designed `card`. The frame, header and badge are the
+ * legacy ones; each shown card is drawn at the layout's `scale` with the elements
+ * `cardElementsFor` resolves for that accessory; the footer follows the cards. The print page
+ * draws the same layout (`cardBoxLayout`), so the two cannot disagree.
+ */
+function DesignedAccessoriesContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  accessories,
+  editing,
+  cardIcons,
+  iconUrls,
+  headerHidden,
+  dropMarker,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: AccessoriesLayerProps;
+  accessories: TagAccessory[] | undefined;
+  editing?: boolean;
+  cardIcons?: FeatureIcon[];
+  iconUrls?: Record<string, string>;
+  headerHidden?: boolean;
+  dropMarker?: boolean;
+}) {
+  // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
+  const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
+  const box = cardBoxLayout(items.length, props, widthMm, heightMm);
+  if (box.shown === 0) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Text
+          width={w}
+          height={h}
+          text="Accessories"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const px = (mm: number) => mm2px(mm, scale);
+  const shownItems = items.slice(0, box.shown);
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = !headerHidden && box.header && (
+    <AccessoryHeaderNodes header={box.header} props={props} scale={scale} />
+  );
+  const content = (
+    <>
+      {box.frame && (
+        <Rect
+          y={px(box.frame.y_mm)}
+          width={px(box.frame.width_mm)}
+          height={px(box.frame.height_mm)}
+          fill={props.fill}
+          stroke={props.stroke}
+          strokeWidth={px(props.strokeWidth_mm)}
+          cornerRadius={px(props.cornerRadius_mm)}
+        />
+      )}
+      {!box.header?.moved && headerNode}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        return (
+          <Group
+            key={`${item.id}-${i}`}
+            x={px(card.x_mm)}
+            y={px(card.y_mm)}
+            // While a card is edited the first one is the editable frame; the rest follow, faded.
+            opacity={editing && i > 0 ? 0.45 : 1}
+          >
+            <Rect
+              width={px(card.width_mm)}
+              height={px(card.height_mm)}
+              fill={props.cardFill}
+              cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
+            />
+            {(editing && i === 0
+              ? cardElementsForDesign(item, props.card!, cardIcons)
+              : cardElementsFor(item, props.card!, cardIcons)
+            ).map((element) => (
+              <CardElementNode
+                key={element.id}
+                element={element}
+                factor={box.scale}
+                scale={scale}
+                boxFont={props.fontFamily}
+                iconUrls={iconUrls}
+              />
+            ))}
+          </Group>
+        );
+      })}
+      {box.header?.moved && headerNode}
+      {box.footer && props.footer && (
+        <Group x={px(box.footer.x_mm)} y={px(box.footer.y_mm)}>
+          {footerElementsFor(boxColours(shownItems), props.footer).map((element) => (
+            <CardElementNode
+              key={element.id}
+              element={element}
+              factor={1}
+              scale={scale}
+              boxFont={props.fontFamily}
+            />
+          ))}
+        </Group>
+      )}
+      {box.badge && (
+        <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
+          <Ellipse
+            x={px(box.badge.width_mm / 2)}
+            y={px(box.badge.height_mm / 2)}
+            radiusX={px(box.badge.width_mm / 2)}
+            radiusY={px(box.badge.height_mm / 2)}
+            fill={props.badgeColor}
+          />
+          <Text
+            width={px(box.badge.width_mm)}
+            height={px(box.badge.height_mm)}
+            text="+"
+            align="center"
+            verticalAlign="middle"
+            fontStyle="bold"
+            fontSize={px(box.badge.height_mm * 0.9)}
+            fill="#ffffff"
+          />
+        </Group>
+      )}
+    </>
+  );
+  return (
+    <>
+      {/* TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on print. */}
+      {box.clipped ? (
+        <Group clipX={0} clipY={0} clipWidth={w} clipHeight={h}>
+          {content}
+        </Group>
+      ) : (
+        content
+      )}
+      {/* Q2: editor only (never print): how many accessories the box has no room for. */}
+      {dropMarker && box.dropped > 0 && <DropMarker w={w} h={h} dropped={box.dropped} />}
+    </>
+  );
+}
+
+/** TAG-ACC-CARD-RESIZE Q2: the "+N" chip in the box's bottom-right corner, editor canvas only. */
+function DropMarker({ w, h, dropped }: { w: number; h: number; dropped: number }) {
+  const label = `+${dropped}`;
+  const fontSize = Math.max(8, Math.min(11, h / 4));
+  const chipW = fontSize * (0.65 * label.length + 0.9);
+  const chipH = fontSize * 1.5;
+  return (
+    <Group
+      x={Math.max(0, w - chipW - 2)}
+      y={Math.max(0, h - chipH - 2)}
+      listening={false}
+      name="accessory-drop-marker"
+    >
+      <Rect width={chipW} height={chipH} fill="#f59e0b" cornerRadius={chipH / 2} />
+      <Text
+        width={chipW}
+        height={chipH}
+        text={label}
+        align="center"
+        verticalAlign="middle"
+        fontStyle="bold"
+        fontSize={fontSize}
+        fill="#ffffff"
+      />
+    </Group>
+  );
+}
+
+/** One resolved card (or footer) element at `factor` (the card's shrink), `scale` px per mm. */
+function CardElementNode({
+  element,
+  factor,
+  scale,
+  boxFont,
+  iconUrls,
+}: {
+  element: ResolvedCardElement;
+  factor: number;
+  scale: number;
+  boxFont?: string;
+  iconUrls?: Record<string, string>;
+}) {
+  const px = (mm: number) => mm2px(mm * factor, scale);
+  const x = px(element.x_mm);
+  const y = px(element.y_mm);
+  switch (element.kind) {
+    case 'picture':
+      if (element.placeholder) {
+        // Designer only: where a picture goes, never printed.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            fill="#e5e7eb"
+            stroke="#9ca3af"
+            strokeWidth={1}
+            listening={false}
+          />
+        );
+      }
+      return (
+        <Group x={x} y={y}>
+          <ImageContent
+            w={px(element.width_mm)}
+            h={px(element.height_mm)}
+            url={element.src ?? null}
+            fit={element.fit ?? 'contain'}
+            maskShape="none"
+          />
+        </Group>
+      );
+    case 'text': {
+      // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as print).
+      const boxed = cardTextBox(element, factor);
+      const mm = (value: number) => mm2px(value, scale);
+      return (
+        <Group x={x} y={y}>
+          {boxed.background && (
+            <Rect
+              width={mm(boxed.background.width_mm)}
+              height={mm(boxed.background.height_mm)}
+              fill={boxed.background.fill}
+              cornerRadius={mm(boxed.background.radius_mm)}
+            />
+          )}
+          <Group x={mm(boxed.text.x_mm)} y={mm(boxed.text.y_mm)}>
+            <CardTextNode
+              element={element}
+              widthMm={boxed.text.width_mm}
+              heightMm={boxed.text.height_mm}
+              factor={factor}
+              scale={scale}
+              boxFont={boxFont}
+            />
+          </Group>
+        </Group>
+      );
+    }
+    case 'feature_icons': {
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
+      const icons = element.icons ?? [];
+      const row = cardIconLayout(element, icons.length, factor);
+      if (row.length === 0) {
+        // Designer only (no icon to sample): where the icons go.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            stroke="#3b82f6"
+            strokeWidth={1}
+            dash={[3, 3]}
+            listening={false}
+          />
+        );
+      }
+      return (
+        <Group x={x} y={y}>
+          {row.map((cell, i) => (
+            <Group key={`${icons[i].id}-${i}`} x={mm2px(cell.x_mm, scale)} y={mm2px(cell.y_mm, scale)}>
+              <ImageContent
+                w={mm2px(cell.size_mm, scale)}
+                h={mm2px(cell.size_mm, scale)}
+                url={iconUrls?.[icons[i].id] ?? null}
+                fit="contain"
+                maskShape="none"
+              />
+            </Group>
+          ))}
+        </Group>
+      );
+    }
+    case 'colour_dots': {
+      const colours = element.colours ?? [];
+      const dots = colourDotLayout(element, colours.length, factor);
+      return (
+        <Group x={x} y={y}>
+          {dots.map((dot, i) => (
+            <Ellipse
+              key={i}
+              x={mm2px(dot.x_mm + dot.d_mm / 2, scale)}
+              y={mm2px(dot.y_mm + dot.d_mm / 2, scale)}
+              radiusX={mm2px(dot.d_mm / 2, scale)}
+              radiusY={mm2px(dot.d_mm / 2, scale)}
+              fill={colours[i]}
+              stroke={element.dotOutline || DEFAULT_DOT_OUTLINE}
+              strokeWidth={mm2px(0.15 * factor, scale)}
+            />
+          ))}
+        </Group>
+      );
+    }
+    case 'shape': {
+      const w = px(element.width_mm);
+      const h = px(element.height_mm);
+      const stroke = element.stroke || undefined;
+      const strokeWidth = px(element.strokeWidth_mm ?? 0.2);
+      if (element.shape === 'ellipse') {
+        return (
+          <Ellipse
+            x={x + w / 2}
+            y={y + h / 2}
+            radiusX={w / 2}
+            radiusY={h / 2}
+            fill={element.fill || undefined}
+            stroke={stroke}
+            strokeWidth={stroke ? strokeWidth : 0}
+          />
+        );
+      }
+      if (element.shape === 'line') {
+        // A rule along the longer side, in the stroke colour.
+        const thick = Math.min(Math.max(strokeWidth, 1), Math.max(w, h));
+        const horizontal = w >= h;
+        return (
+          <Rect
+            x={x}
+            y={horizontal ? y + (h - thick) / 2 : y}
+            width={horizontal ? w : thick}
+            height={horizontal ? thick : h}
+            fill={element.stroke || element.fill || '#111827'}
+          />
+        );
+      }
+      return (
+        <Rect
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          fill={element.fill || undefined}
+          stroke={stroke}
+          strokeWidth={stroke ? strokeWidth : 0}
+          cornerRadius={element.shape === 'rounded_rect' ? px(element.cornerRadius_mm ?? 1) : 0}
+        />
+      );
+    }
+  }
+}
+
+/** A text element: plain or rich, shrunk until it sits inside its rect (never spills, never cut). */
+function CardTextNode({
+  element,
+  widthMm,
+  heightMm,
+  factor,
+  scale,
+  boxFont,
+}: {
+  element: ResolvedCardElement;
+  widthMm: number;
+  heightMm: number;
+  factor: number;
+  scale: number;
+  boxFont?: string;
+}) {
+  const epoch = useFontsEpoch();
+  const text = element.text ?? '';
+  const props = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
+  }, [element, factor, boxFont, text, widthMm, heightMm, epoch]);
+  const w = mm2px(widthMm, scale);
+  const h = mm2px(heightMm, scale);
+  if (isRich(text)) {
+    return (
+      <RichTextContent
+        props={props}
+        w={w}
+        h={h}
+        widthMm={widthMm}
+        heightMm={heightMm}
+        scale={scale}
+        blocks={parseRichText(text)}
+      />
+    );
+  }
+  return (
+    <TextContent props={props} w={w} h={h} widthMm={widthMm} heightMm={heightMm} scale={scale} text={text} />
+  );
+}
+
+
+/**
+ * PRICETAG-HEADER-DRAG: the accessories box header as the canvas draws it, from the shared layout's
+ * `header`: the band's background (or the legend break on the border) and its text, padded, one
+ * line or wrapping. Exported so the header drag handle draws the very same nodes while dragged.
+ * `origin`: draw relative to the band's own corner (the drag handle) instead of the box's.
+ */
+export function AccessoryHeaderNodes({
+  header: band,
+  props,
+  scale,
+  origin = 'box',
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  props: AccessoriesLayerProps;
+  scale: number;
+  origin?: 'box' | 'band';
+}) {
+  const px = (mm: number) => mm2px(mm, scale);
+  const style = accessoryHeaderStyle(props);
+  const x = origin === 'band' ? 0 : band.x_mm;
+  const y = origin === 'band' ? 0 : band.y_mm;
+  return (
+    <>
+      {band.fill && (
+        <Rect
+          x={px(x)}
+          y={px(y)}
+          width={px(band.width_mm)}
+          height={px(band.height_mm)}
+          fill={band.fill}
+          cornerRadius={px(band.radius_mm)}
+          listening={origin === 'box' ? undefined : false}
+        />
+      )}
+      <Text
+        x={px(x + band.padding.left)}
+        y={px(y + band.padding.top)}
+        width={px(Math.max(0, band.width_mm - band.padding.left - band.padding.right))}
+        height={px(Math.max(0, band.height_mm - band.padding.top - band.padding.bottom))}
+        text={props.headerText}
+        align={band.onBorder || (band.moved && !band.wrap) ? 'center' : style.align}
+        verticalAlign="middle"
+        fontStyle={konvaFontStyle(style)}
+        textDecoration={konvaDecoration(style)}
+        fontFamily={style.fontFamily ?? undefined}
+        letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+        fontSize={px(ptToMm(band.fontSize_pt))}
+        fill={style.color}
+        wrap={band.wrap ? 'word' : 'none'}
+        lineHeight={band.wrap ? (props.headerStyle?.lineHeight ?? 1) : undefined}
+        listening={origin === 'box' ? undefined : false}
+      />
     </>
   );
 }

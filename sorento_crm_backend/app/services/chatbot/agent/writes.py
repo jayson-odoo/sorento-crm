@@ -57,6 +57,16 @@ class WriteDef:
     runs_as: str = "user"
     #: One plain note the model is given with the proposal (data `note`); the shared `message` stays as is.
     proposal_note: str | None = None
+    #: True = rows of a pasted table may be proposed together through `crm_batch_propose` (AGENT-BULK-ACTIONS).
+    batchable: bool = False
+    #: (args, shown or None) -> the row's cells in the batch preview table; None for a skipped row.
+    preview: Callable[[dict, dict | None], dict] | None = None
+    #: (args) -> what makes two rows the same record (a later duplicate is skipped); None = never the same.
+    batch_key: Callable[[dict], Any] | None = None
+    #: True = a pick may change the fields `batch_key` reads (a customer-agent row: the picked code replaces the
+    #: written name), so the pick check also finds the row's earlier waiting list by its table row number, for this
+    #: write only. False (a phone key a pick never touches): a different key at the same number is another row.
+    pick_changes_key: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +168,9 @@ def run_as_user(
     if user is None:
         raise AppException(status_code=403, message="The user is no longer available.", code="USER_GONE")
     user["linked_user_id"] = str(ctx.user_id)
+    # The console operator acting for the linked user (None on the user's own turn): a write that limits itself to
+    # what the person may set on screen limits itself to what BOTH may set (AGENT-BULK-ACTIONS).
+    user["operator_user_id"] = str(getattr(ctx, "operator_user_id", None) or "") or None
     previous = get_company_scope(db)
     actor = AuditActor(
         actor_type="user",
@@ -237,7 +250,9 @@ def _route_failure(exc: Exception) -> ToolResult:
         if exc.status_code in (403, 404):
             return ToolResult("denied", message=error_text(exc))
         if 400 <= exc.status_code < 500:
-            return ToolResult("invalid", message=error_text(exc))
+            # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
+            choices = getattr(exc, "choices", None)
+            return ToolResult("invalid", data={"choices": choices} if choices else None, message=error_text(exc))
     logger.warning("agent: in-process route call failed", exc_info=True)
     return ToolResult("error", message="The tool failed.")
 
@@ -532,6 +547,8 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
             return f"`{key}` must be one of: {', '.join(spec['enum'])}."
         if "maxLength" in spec and isinstance(value, str) and len(value) > spec["maxLength"]:
             return f"`{key}` is too long."
+        if "maxItems" in spec and isinstance(value, list) and len(value) > spec["maxItems"]:
+            return f"`{key}` has more than {spec['maxItems']} values."
     return None
 
 
@@ -921,11 +938,13 @@ def _own_agent_ids(db, user_id: str) -> list[str]:
 
 @contextmanager
 def _users_scope(db, user_id: str):
-    """The user's company scope for the body, whatever scope the session carries (restored after)."""
+    """EVERY company the user is granted for the body, whatever scope the session carries (restored after).
+    Own accounts, "another account" and the contact facts are read over all the user's companies, never only
+    the active one (DEALER-ACCESS-SCREEN S8)."""
     from app.models.base import company_scope
     from app.services import company_scope_resolver
 
-    with company_scope(db, company_scope_resolver._scope_for_user(db, user_id, None)):
+    with company_scope(db, frozenset(company_scope_resolver.resolve_user_grant_ids(db, user_id))):
         yield
 
 
@@ -952,6 +971,36 @@ def contact_in_scope(db, user_id: str, contact_pk: str) -> bool:
             .first()
             is not None
         )
+
+
+def _all_links(db, contact_pk: str) -> set[str]:
+    """The customer ids linked to the contact in EVERY company, whatever the user may see."""
+    from app.models.access import RespondContactCustomer
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        return {
+            str(c) for (c,) in db.query(RespondContactCustomer.customer_id)
+            .filter(RespondContactCustomer.contact_id == str(contact_pk))
+        }
+
+
+def _not_own_links(db, user_id: str, contact_pk: str) -> set[str]:
+    """The contact's links (every company) that are not the user's own accounts: active customers of the user's own
+    sales agents in the user's companies. Only ever counted or worded "another account", never named."""
+    from app.models.order import Customer
+
+    links = _all_links(db, contact_pk)
+    agents = _own_agent_ids(db, user_id)
+    if not links or not agents:
+        return links
+    with _users_scope(db, user_id):
+        own = {
+            str(c) for (c,) in db.query(Customer.id).filter(
+                Customer.id.in_(links), Customer.is_active.is_(True), Customer.sales_agent_id.in_(agents)
+            )
+        }
+    return links - own
 
 
 def _owner_types(codes) -> set[str]:
@@ -981,17 +1030,27 @@ def _contact_facts(db, contact, user_id: str) -> dict:
         .filter(RespondContactCompany.respond_contact_id == contact.id)
     )
     template_codes = [c for c in codes if c in TEMPLATE["owner_types"]]
-    owner_codes = [c for c in template_codes if types & _owner_types([c])]
+    # The owner level is the company's standard owner TAG, never the owner access types alone (owner ruling 9 Nov).
+    from app.services.contact_tag_service import owner_codes_by_contact
+
+    held_tags = owner_codes_by_contact(db, [str(contact.id)], template_codes).get(str(contact.id), set())
+    owner_codes = [c for c in template_codes if c in held_tags]
     role = "owner" if owner_codes else ("employee" if TEMPLATE["base_type"] in types else "none")
     with _users_scope(db, user_id):
         links = sorted(
             str(cid) for (cid,) in db.query(RespondContactCustomer.customer_id)
             .filter(RespondContactCustomer.contact_id == contact.id)
         )
-    return {
+    out = {
         "types": types, "codes": codes, "template_codes": template_codes, "owner_codes": owner_codes,
         "role": role, "links": links,
     }
+    if not _permitted(db, user_id, CONTACT_EDIT):
+        # Own scope: another account's link is only counted, never carried by id (DEALER-ACCESS-PORTAL B3, C5).
+        others = _not_own_links(db, user_id, contact.id)
+        out["links"] = [c for c in links if c not in others]
+        out["other_links"] = len(others)
+    return out
 
 
 def _role_label(role: str, owner_codes: list[str]) -> str:
@@ -1080,12 +1139,33 @@ def _own_customer_codes(db, user_id: str, ids: list[str]) -> dict[str, str]:
     return out
 
 
+#: Settings a user may ask for that this tool never changes (UAC C7): refused by code, so the model cannot answer
+#: "done" for them (crew live x3, 9 Nov: "stock replies off").
+_OFFICE_SETTINGS = (
+    ("chatbot_stock_allowed", "Stock replies"), ("escalation_allowed", "Hand-over"),
+    ("packing_list_allowed", "Packing list"), ("notify_salesman", "Notify salesman"),
+)
+
+
 def _contact_plan(db, user: dict, args: dict) -> dict:
     """What the call would change, after every scope check. Raises the route-shaped error otherwise."""
     from app.models.access import RespondContact
     from app.services.contact_access_sheet_service import TEMPLATE
     from app.services.error_handler import AppException, handle_not_found
 
+    other = _line(args.get("other_setting"))[:80]
+    what = next((label for key, label in _OFFICE_SETTINGS if args.get(key) is not None), None) or (
+        f'"{other}"' if other else None
+    )
+    if what:
+        # One change at a time: the whole call is refused, whatever else it asks for.
+        raise AppException(
+            status_code=422, code="VALIDATION_ERROR",
+            message=(
+                f"{what} is changed on the contact's Access tab, not here." if _permitted(db, str(user["id"]), CONTACT_EDIT)
+                else f"{what} is set by the office; ask the office."
+            ),
+        )
     contact = db.get(RespondContact, str(args["contact_id"]))
     if contact is None:
         raise handle_not_found("Contact", args["contact_id"])
@@ -1115,8 +1195,13 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     phone = contact.phone_number
     add: set[str] = set()
     remove: set[str] = set()
+    add_tags: list = []
+    remove_tags: list = []
     lines: list[str] = []
     template_codes = facts["template_codes"]
+    if args.get("role_companies"):
+        # The Dealer access screen changes the level of ONE company's row: only ever narrows (S5).
+        template_codes = [c for c in template_codes if c in set(args["role_companies"])]
     if role == "owner" and not template_codes:
         raise AppException(
             status_code=422,
@@ -1128,7 +1213,10 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         )
     if role is not None:
         lacking = [c for c in template_codes if c not in facts["owner_codes"]]
-        changes = bool(lacking) if role == "owner" else role != facts["role"]
+        # Employee means no dealer prices: a held owner tag OR a held owner type (a legacy contact) is taken off.
+        legacy_types = bool(facts["types"] & _owner_types(template_codes))
+        owned = [c for c in template_codes if c in facts["owner_codes"]]
+        changes = bool(lacking) if role == "owner" else bool(owned or legacy_types or facts["role"] == "none")
         if changes:
             if not facts["codes"]:
                 raise AppException(
@@ -1138,43 +1226,94 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 raise AppException(
                     status_code=422, message="This contact's companies have no owner role to set.", code="VALIDATION_ERROR"
                 )
+            from app.services.contact_tag_service import owner_tag, tags_by_contact
+
+            # Business owner is the company's owner tag (DEALER-ACCESS-PORTAL C1, C2). Own scope: neither a promotion
+            # nor a demotion while another account also reaches the person (C3, A14).
+            if facts.get("other_links"):
+                raise AppException(
+                    status_code=422, code="VALIDATION_ERROR",
+                    message="This person also has access through another account; ask the office to change their level.",
+                )
             if role == "owner":
-                add = {TEMPLATE["base_type"]} | _owner_types(lacking)
+                for code in lacking:
+                    tag = owner_tag(db, code)
+                    if tag is None:
+                        raise AppException(
+                            status_code=422, code="VALIDATION_ERROR",
+                            message=f"The \"{TEMPLATE['owner_tags'][code]}\" tag is missing; ask the office.",
+                        )
+                    add_tags.append(tag)
+                add = {TEMPLATE["base_type"]}
                 new_label = _role_label("owner", template_codes)
             else:
+                from app.models.access import ContactTag
+                from app.services.contact_tag_service import is_standard_owner_tag
+
+                code_of = {TEMPLATE["owner_tags"][c].lower(): c for c in template_codes if c in TEMPLATE["owner_tags"]}
+                held = [t["id"] for t in tags_by_contact(db, [str(contact.id)]).get(str(contact.id), [])]
+                remove_tags = [
+                    t for t in (db.query(ContactTag).filter(ContactTag.id.in_(held)).all() if held else [])
+                    if t.name.lower() in code_of
+                ]
+                for tag in remove_tags:
+                    # Removing an edited tag would take away more than the owner level (security review L1).
+                    if not is_standard_owner_tag(tag, code_of[tag.name.lower()]):
+                        raise AppException(
+                            status_code=422, code="VALIDATION_ERROR",
+                            message=f"The \"{tag.name}\" tag is not the standard one; ask the office.",
+                        )
                 add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
                 new_label = _role_label("employee", [])
-            lines.append(f"{_role_label(facts['role'], facts['owner_codes'])} -> {new_label}")
+            was = _role_label(facts["role"], facts["owner_codes"]) if facts["owner_codes"] else (
+                "Employee with dealer prices" if legacy_types else _role_label(facts["role"], [])
+            )
+            lines.append(f"{was} -> {new_label}")
         elif not facts["codes"] and role != facts["role"]:
             raise AppException(
                 status_code=422, message="This contact has no company, so its role cannot be set.", code="VALIDATION_ERROR"
             )
+    link = [c for c in link_ids if c not in facts["links"]]
+    if ai is None and unlink_ids and not (_all_links(db, contact.id) - set(unlink_ids)) and not link:
+        # The person's last link anywhere goes: AI replies go off in the same change (C4).
+        ai = False
+    if ai is not None and ai != bool(contact.chatbot_allowed) and facts.get("other_links"):
+        # Own scope: a person another account also reaches keeps its settings (A13); only the office changes them
+        # (crew live x3, 9 Nov). C4 cannot reach here: with another link left it is not the last one.
+        raise AppException(
+            status_code=422, code="VALIDATION_ERROR",
+            message="This person also has access through another account; ask the office to change their settings.",
+        )
     if ai is not None and ai != bool(contact.chatbot_allowed):
         lines.append(f"AI replies {'on' if contact.chatbot_allowed else 'off'} -> {'on' if ai else 'off'}")
     else:
         ai = None
-    link = [c for c in link_ids if c not in facts["links"]]
     lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink_ids]
     if not lines:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
     from app.models.order import Customer
 
+    # Own scope: `facts["links"]` holds the user's own accounts only, so no other account is named (C5).
     known: dict = {}
     if facts["links"]:
         with _users_scope(db, uid):
             known = dict(db.query(Customer.id, Customer.customer_code).filter(Customer.id.in_(facts["links"])).all())
     return {
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
+        "add_tags": add_tags, "remove_tags": remove_tags,
         "link": link, "unlink": list(unlink_ids), "codes": codes, "lines": lines, "phone": phone,
         "link_codes": {**{str(k): v for k, v in known.items()}, **codes},
     }
 
 
 def _contact_state(contact, facts: dict) -> dict:
-    return {
+    out = {
         "role": facts["role"], "owner_companies": facts["owner_codes"],
         "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"],
     }
+    if "other_links" in facts:
+        out["other_links"] = facts["other_links"]
+    return out
 
 
 def _contact_read_before(db, user: dict, args: dict) -> dict:
@@ -1197,8 +1336,9 @@ def _on_off(value: Any) -> str:
     return "On" if value else "Off"
 
 
-def _link_words(ids: list, codes: dict) -> str:
-    return ", ".join(sorted(codes.get(str(i), "a customer") for i in ids)) or "none"
+def _link_words(ids: list, codes: dict, others: int = 0) -> str:
+    """The linked customers by code; `others` links (own scope) read "another account", never their code."""
+    return ", ".join([*sorted(codes.get(str(i), "a customer") for i in ids), *["another account"] * others]) or "none"
 
 
 def _contact_words(state: dict, codes: dict) -> dict:
@@ -1206,7 +1346,7 @@ def _contact_words(state: dict, codes: dict) -> dict:
     return {
         "Role": _role_label(state["role"], state["owner_companies"]),
         "AI replies": _on_off(state["chatbot_allowed"]),
-        "Customer links": _link_words(state["links"], codes),
+        "Customer links": _link_words(state["links"], codes, int(state.get("other_links") or 0)),
     }
 
 
@@ -1235,6 +1375,11 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
         if any(r is None for r in rows):
             raise AppException(status_code=422, message="An access type this role needs is missing.", code="VALIDATION_ERROR")
         contact.access_types = rows
+    if plan["add_tags"] or plan["remove_tags"]:
+        from app.services.contact_tag_service import change_tags
+
+        db.flush()  # the types above first: the tag recompute writes the same rows by SQL
+        change_tags(db, contact, add=plan["add_tags"], remove=plan["remove_tags"], actor_id=uid)
     if plan["ai"] is not None:
         contact.chatbot_allowed = plan["ai"]
     for customer_id in plan["link"]:
@@ -1339,8 +1484,10 @@ WRITES[UPDATE_CONTACT] = WriteDef(
             "description": (
                 "Propose a change to one dealer contact's access: role (owner = Business owner, employee), "
                 "chatbot_allowed (AI replies), and customer links. To resign a contact, set chatbot_allowed "
-                "false and unlink its accounts. Nothing changes until the user confirms. contact_id and "
-                "customer ids must come from crm_contacts_find. Call once per contact."
+                "false and unlink its accounts. Route EVERY change the user asks for on a dealer contact through "
+                "this tool, including the settings below it cannot make: it answers what to do instead. Nothing "
+                "changes until the user confirms. contact_id and customer ids must come from crm_contacts_find. "
+                "Call once per contact."
             ),
             "parameters": {
                 "type": "object",
@@ -1350,6 +1497,17 @@ WRITES[UPDATE_CONTACT] = WriteDef(
                     "chatbot_allowed": {"type": "boolean"},
                     "link_customer_ids": {"type": "array", "items": {"type": "string"}},
                     "unlink_customer_ids": {"type": "array", "items": {"type": "string"}},
+                    "chatbot_stock_allowed": {"type": "boolean", "description": "Stock replies on or off."},
+                    "escalation_allowed": {"type": "boolean", "description": "Hand-over to a person on or off."},
+                    "packing_list_allowed": {"type": "boolean", "description": "Packing list replies on or off."},
+                    "notify_salesman": {"type": "boolean", "description": "Notify the salesman on or off."},
+                    "other_setting": {
+                        "type": "string",
+                        "description": (
+                            "Any other change the user asked for on this person, in their words, e.g. enquiry "
+                            "agents, stock locations, brands, prices."
+                        ),
+                    },
                 },
                 "required": ["contact_id"],
             },
@@ -2674,3 +2832,6 @@ WRITES[CREATE_TICKET] = WriteDef(
 
 # Registers `crm_query` and `crm_describe` in USER_READS; imported last because it builds on this module.
 from app.services.chatbot.agent import query_tools  # noqa: E402,F401
+
+# AGENT-BULK-ACTIONS: the contact grant row write and the generic batch tool; imported last for the same reason.
+from app.services.chatbot.agent import batch, contact_grant, contact_tags, customer_agent  # noqa: E402,F401

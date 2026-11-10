@@ -518,7 +518,7 @@ class TestContract:
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.11"
+        assert body["version"] == "2.14"
         assert "item_classes" in body["entities"]
         assert set(body["fields_added"]["item_classes"]) == {
             "code", "name", "description", "is_active",

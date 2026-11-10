@@ -52,6 +52,9 @@ export type SlotBinding =
   // PS-SPEC-SHEET: an image slot showing the subject's technical drawing (the quotation line's
   // frozen drawing, or a part's first "Technical Specifications" file). Empty when it has none.
   | 'drawing'
+  // PRICETAG-UPGRADE-VARIANTS S2: on an "Upgrade N" position, its top-up and the tag SP plus it.
+  | 'upgrade_topup'
+  | 'sell_price_with_upgrade'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -154,7 +157,10 @@ export type SubjectSlot =
   | { kind: 'main' }
   | { kind: 'fixed'; index: number }
   | { kind: 'pick'; group: number; index: number }
-  | { kind: 'upgrade'; index: number };
+  | { kind: 'upgrade'; index: number }
+  /** PRICETAG-UPGRADE-VARIANTS S3: a feature icons layer on "All variants" (the subject and the
+   *  live members of its variant tree). The main product for anything else; never a combo position. */
+  | { kind: 'variants' };
 
 /** K2: where each product of a tag sits. */
 export interface TagSlots {
@@ -195,6 +201,9 @@ export interface TextLayerProps {
   /** Same meaning as `PriceBadgeLayerProps.showCurrency`, for a text layer bound to a price slot.
    *  Absent = the bare figure; true = `RM 849`, and nothing at all when there is no amount. */
   showCurrency?: boolean;
+  /** PRICETAG-UPGRADE-VARIANTS S2: printed before an `upgrade_topup` / `sell_price_with_upgrade`
+   *  figure ("TOPUP "), never when the figure is empty. Unused by every other slot. */
+  prefix?: string;
 }
 
 export interface ShapeLayerProps {
@@ -366,10 +375,15 @@ export interface AccessoryTextStyle {
   align?: 'left' | 'center' | 'right';
   letterSpacing?: number;
   color?: string;
+  /** PRICETAG-HEADER-DRAG round 2: line height of a resized (wrapping) header. Absent = 1. */
+  lineHeight?: number;
 }
 
 export interface AccessoriesLayerProps {
   kind: 'accessories';
+  /** PRICETAG-UPGRADE-VARIANTS S1: what the box lists. `upgrades` = the combo's upgrades on offer
+   *  (`upgradesOf`); absent / `free` = the free items, as every box saved before. */
+  list?: 'free' | 'upgrades';
   direction: 'vertical' | 'horizontal';
   /**
    * Owner hand test (6 Nov ~15:00): each card is a picture ABOVE its text (stacked, centred, the
@@ -385,6 +399,21 @@ export interface AccessoriesLayerProps {
   headerOnBorder?: boolean;
   /** What shows behind a header on the border (the tag's own background). */
   headerBackground?: string;
+  /** PRICETAG-HEADER-DRAG: where the header was dragged to, its top-left in mm from the box's
+   *  top-left. Absent / null = today's computed spot. A moved header is plain text (never on the
+   *  border) and moves nothing else in the box. Part of the linked design (owner Q5, 9 Nov). */
+  headerPos?: { x_mm: number; y_mm: number } | null;
+  /** Round 2 (owner 9 Nov ~17:00, "resize it like a normal design component"): the header band's
+   *  size once resized; with it the text wraps inside the band at its set size. Only read with
+   *  `headerPos` (a resized header is a placed one). Absent / null = as wide as its text. */
+  headerSize?: { width_mm: number; height_mm: number } | null;
+  /** The header band's background; 'transparent' = none. Absent = today's rule (the "behind the
+   *  header" colour on the border, none elsewhere). */
+  headerFill?: string | null;
+  /** The header band's corner radius (mm). Absent = square. */
+  headerRadius_mm?: number;
+  /** Inner margin between the header band and its text (mm). Absent = 0. */
+  headerPadding?: LayerPadding;
   headerStyle?: AccessoryTextStyle;
   nameStyle?: AccessoryTextStyle;
   specStyle?: AccessoryTextStyle;
@@ -411,6 +440,90 @@ export interface AccessoriesLayerProps {
   subjectSlot?: SubjectSlot;
   /** D7: a request line's part (index into `parts`; -1 the main product) whose OWN list to read. */
   subjectPart?: number;
+  /**
+   * PRICETAG-ACCESSORY-DESIGNER: a designed card. Set = the box draws `card` for every accessory
+   * (`cardBoxLayout`); absent = the legacy card (`accessoryBoxLayout`), untouched.
+   */
+  card?: CardLayout;
+  /** The area under the cards (a note, colour dots). Absent = none. */
+  footer?: FooterLayout;
+  /**
+   * PRICETAG-ACCESSORY-DESIGNER S6 (card path only): a grid of this many columns, wrapping to rows;
+   * `auto` = as many as fit the box at full size. Absent = today's single column (vertical) or row.
+   */
+  columns?: 'auto' | 1 | 2 | 3 | 4;
+  /** Smallest scale the cards shrink to before whole cards are dropped. Absent = 0.7. */
+  shrinkMin?: number;
+  /** The saved accessories template this box follows (live link); absent = its own design. */
+  presetId?: string | null;
+}
+
+/** What a text or picture element of a designed card reads from the accessory. */
+export type CardField =
+  | 'picture'
+  | 'name'
+  | 'code'
+  | 'spec'
+  | 'remark'
+  | 'price'
+  | 'colours'
+  // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's top-up, and the tag SP plus it.
+  | 'topup'
+  | 'price_with_upgrade';
+
+export interface CardElement {
+  id: string;
+  kind: 'picture' | 'text' | 'colour_dots' | 'shape' | 'feature_icons';
+  /** Inside the card (or footer), millimetres. */
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+  hidden?: boolean;
+  /** text: name|code|spec|remark|price, null = fixed `text`; picture: 'picture'; colour_dots: 'colours'. */
+  field?: CardField | null;
+  /** Fixed text, plain or rich (`lib/dealer-kit/rich-text.ts`). */
+  text?: string;
+  fontFamily?: string | null;
+  fontSize?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+  align?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  fit?: 'contain' | 'cover';
+  dotSize_mm?: number;
+  dotGap_mm?: number;
+  dotDirection?: 'row' | 'column';
+  dotOutline?: string;
+  /** Hand-picked hex colours; null or absent = from the data. */
+  colours?: string[] | null;
+  shape?: 'rect' | 'rounded_rect' | 'ellipse' | 'line';
+  fill?: string;
+  stroke?: string;
+  strokeWidth_mm?: number;
+  cornerRadius_mm?: number;
+  /** text with a field: printed before the value when there is one ("TOPUP "). */
+  prefix?: string;
+  /** text (owner 9 Nov ~22:30): space around the text inside its element, like the box header's.
+   *  A text element's `fill` is its background and `cornerRadius_mm` that background's corners. */
+  padding?: LayerPadding;
+  /** feature_icons: the icon size and the space between icons (defaults 4.6 / 0.8). */
+  iconSize_mm?: number;
+  gap_mm?: number;
+}
+
+export interface CardLayout {
+  width_mm: number;
+  height_mm: number;
+  elements: CardElement[];
+}
+
+export interface FooterLayout {
+  show: boolean;
+  height_mm: number;
+  elements: CardElement[];
 }
 
 export interface GroupLayerProps {
@@ -742,6 +855,17 @@ export interface ProductTagData {
   drawing?: TagImage | null;
   /** PRICETAG-ACCESSORIES: the product's own list. Absent on an older payload. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-UPGRADE-VARIANTS S3: the live members of its variant tree. Absent = none. */
+  variants?: TagVariant[];
+}
+
+/** PRICETAG-UPGRADE-VARIANTS S3: one live member of the tag product's variant tree. */
+export interface TagVariant {
+  product_id: string;
+  code: string;
+  specs: TagSpecValue[];
 }
 
 export interface ProductSetMemberTagData {
@@ -813,13 +937,40 @@ export interface TagComboUpgrade {
  * 'product', owner 6 Nov ~10:45): `code`, its description as `name`, `list_price`, read live.
  */
 export interface TagAccessory {
-  kind?: 'accessory' | 'product';
+  /** `upgrade` (PRICETAG-UPGRADE-VARIANTS S1): a combo upgrade on offer, built by `upgradesOf`. */
+  kind?: 'accessory' | 'product' | 'upgrade';
   id: string;
   name: string;
   spec: string | null;
+  /** PRICETAG-ACCESSORY-DESIGNER: absent on a row pinned before it. */
+  remark?: string | null;
+  /** The chosen picture, else the first. */
   image: { attachment_id: string; url: string } | null;
+  /** Every picture, in order, each with its optional colour. */
+  images?: { attachment_id: string; url: string; colour_name: string | null; colour_hex: string | null }[];
+  /** Distinct colours of the pictures, in picture order. */
+  colours?: { name: string | null; hex: string }[];
   code?: string | null;
   list_price?: number | null;
+  /** TAG-ACC-CARD-RESIZE Q4, a catalogue product only: its offer for this viewer (null = none), its
+   *  spec lines and its own price tag description, read live. Absent on a library accessory and on
+   *  a row pinned before them. */
+  sell_price?: number | null;
+  spec_lines?: string[];
+  price_tag_description?: string | null;
+  /** An upgrade's top-up, and the tag's SP plus it (null when either is missing). */
+  topup_amount?: number | null;
+  price_with_upgrade?: number | null;
+  /** An upgrade's own specs, for its feature icons. */
+  specs?: TagSpecValue[];
+}
+
+/** A saved accessories template a product or combo names as its own "Accessories included" box style. */
+export interface TagAccessoryBoxStyle {
+  id: string;
+  name: string;
+  /** The box design (`accessoryDesign` shape); applied with `applyAccessoryDesign`. */
+  design: Record<string, unknown>;
 }
 
 /** The combo a tag's line names. Null on a line with no combo and on an older pin. */
@@ -830,8 +981,16 @@ export interface TagCombo {
   free_items: string | null;
   /** PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   choices: { role: string; options: TagComboOption[] }[];
   upgrades: TagComboUpgrade[];
+  /** COMBO-SETTINGS-UX: the main product's own label ("CABINET"); absent on an older payload. */
+  main_label?: string | null;
+  /** COMBO-SETTINGS-UX: "Each part prints as", a rich line of `{{part.*}}` fields; null = the default. */
+  parts_line?: string | null;
+  /** COMBO-SETTINGS-UX: each part's label, by part product id (only the parts that have one). */
+  part_labels?: Record<string, string>;
 }
 
 /**
@@ -851,6 +1010,8 @@ export interface TagPartData {
   code: string;
   name: string;
   dimensions: string;
+  /** COMBO-SETTINGS-UX: the same measurement as `L780xW480xH400mm`; '' with none, absent on an older payload. */
+  dimensions_lwh?: string;
   spec_lines?: string[];
   specs?: TagSpecValue[];
   images?: TagImage[];
@@ -876,6 +1037,10 @@ export interface TagPartData {
   drawing?: TagImage | null;
   /** PRICETAG-ACCESSORIES: this position's own product's list. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
+  /** PRICETAG-UPGRADE-VARIANTS S1: an upgrade position's top-up. Absent elsewhere and on older rows. */
+  topup_amount?: number | null;
 }
 
 /** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
@@ -939,6 +1104,8 @@ export interface LineTagData {
   /** PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's. Absent on a
    *  row pinned before the list existed. */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER S6: the box style this owner names; absent / null = the template's own box. */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;
@@ -951,6 +1118,8 @@ export interface LineTagData {
   combo?: TagCombo | null;
   /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
   slots?: TagSlots | null;
+  /** PRICETAG-UPGRADE-VARIANTS S3: the line product's live, ticked variant members. Absent = none. */
+  variants?: TagVariant[];
   /** PS-SPEC-SHEET: present only on a spec sheet page's row. */
   brand?: string;
   drawing?: TagImage | null;

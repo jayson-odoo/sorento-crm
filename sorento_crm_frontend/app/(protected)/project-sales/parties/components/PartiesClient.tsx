@@ -27,10 +27,11 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { usePartyMutations, useProjectParties } from '../../_shared/hooks/useProjects';
 import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
-import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
+import { usePartyRoleLabel, usePartyTypeOptions } from './partyTypes';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { formatPhone } from '../../_shared/lib/phoneDisplay';
 
 /**
  * The organisation master, as the same list every other screen in the product uses.
@@ -89,6 +90,12 @@ export function PartiesClient() {
   const total = parties.data?.pagination?.total ?? rows.length;
   const filtered = Boolean(debounced || typeFilter);
 
+  // Read through a ref: the columns must not be rebuilt when the role list arrives, which would
+  // reset the grid's server-side sort.
+  const roleLabel = usePartyRoleLabel();
+  const roleLabelRef = React.useRef(roleLabel);
+  roleLabelRef.current = roleLabel;
+  const typeOptions = usePartyTypeOptions();
   const columns = React.useMemo<ColumnDef<ProjectParty>[]>(
     () => [
       {
@@ -96,21 +103,29 @@ export function PartiesClient() {
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
         size: 260,
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-40" /> },
+        // One line per row (owner, 10 Nov): a long name clamps, the full name is the title.
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.name}>
-              {row.original.name}
-            </span>
-            {row.original.registration_no && (
-              <span
-                className="block truncate text-xs text-muted-foreground"
-                title={row.original.registration_no}
-              >
-                {row.original.registration_no}
-              </span>
-            )}
-          </div>
+          <span className="block truncate font-medium" title={row.original.name}>
+            {row.original.name}
+          </span>
         ),
+      },
+      {
+        id: 'registration_no',
+        accessorFn: (row) => row.registration_no ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Registration no." column={column} />
+        ),
+        size: 150,
+        meta: { headerTitle: 'Registration no.', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) =>
+          row.original.registration_no ? (
+            <span className="block truncate" title={row.original.registration_no}>
+              {row.original.registration_no}
+            </span>
+          ) : (
+            <Muted>-</Muted>
+          ),
       },
       {
         accessorKey: 'party_type',
@@ -118,7 +133,7 @@ export function PartiesClient() {
         size: 160,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
-          const label = TYPE_LABEL[row.original.party_type] ?? row.original.party_type;
+          const label = roleLabelRef.current(row.original.party_type);
           return (
             <Badge variant="secondary" className="truncate" title={label}>
               {label}
@@ -182,7 +197,7 @@ export function PartiesClient() {
         enableSorting: false,
         meta: { headerTitle: 'Contact', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) => {
-          const contact = [row.original.phone, row.original.email]
+          const contact = [formatPhone(row.original.phone), row.original.email]
             .filter(Boolean)
             .join(' · ');
           return contact ? (
@@ -316,7 +331,7 @@ export function PartiesClient() {
                   value={search}
                   onChange={setSearch}
                   isSettling={isSearchInFlight(debouncedSettling, parties.isFetching, debounced)}
-                  placeholder="Search by name…"
+                  placeholder="Search by name or reg. no."
                   aria-label="Search parties"
                   className="w-full max-w-xs"
                 />
@@ -333,10 +348,7 @@ export function PartiesClient() {
                         value={splitMulti(typeFilter)}
                         onChange={(value) => setTypeFilter(joinMulti(value))}
                         clearable
-                        options={PARTY_TYPE_OPTIONS.map((option) => ({
-                          value: option.value,
-                          label: option.label,
-                        }))}
+                        options={typeOptions}
                         placeholder="All types"
                       />
                     </div>

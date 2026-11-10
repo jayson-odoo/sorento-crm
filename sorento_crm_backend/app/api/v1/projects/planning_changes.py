@@ -1,10 +1,10 @@
 """Planning changes (`documentation/plans/scm/PLAN-so-book-diff-replanning.md` section 3).
 
-Four routes, mounted on the same `/project-sales` root as fulfilment planning. Reads take
-`projects.projects.view`; the two writes (the per-row decision and Apply) take
-`projects.projects.edit` - the same dependency `POST /sales-orders/{pso_id}/confirm` uses in
-`fulfilment_planning.py`, reused exactly rather than introducing a separate "manage"
-permission, because Apply writes through that same supply-confirmation path.
+Three routes, mounted on the same `/project-sales` root as fulfilment planning. Reads take
+`projects.projects.view`; the per-row decision takes `projects.projects.edit` - the same
+dependency `POST /sales-orders/{pso_id}/confirm` uses in `fulfilment_planning.py`. A batch is
+applied only by the board's Confirm (`fulfilment_planning._confirm_a_planning_change`): the
+standalone Apply route is gone (FP-EMAIL-ONE-TRIGGER Q2, owner 6 Nov 2026).
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.schemas.planning_change import (
-    ApplyPlanningChangesResult,
     PlanningChangeBatch,
     PlanningChangeListEnvelope,
     PlanningChangeRow,
@@ -90,23 +89,6 @@ def update_planning_change_row(
         )
         db.commit()
         return row
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/planning-changes/{batch_id}/apply", response_model=ApplyPlanningChangesResult)
-def apply_planning_changes(
-    batch_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Apply the accepted rows, atomically per order (AC-R05)."""
-    try:
-        validate_uuid_path(batch_id, resource="Planning change batch")
-        result = planning_change_service.apply(db, batch_id, current_user["id"])
-        db.commit()
-        return result
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

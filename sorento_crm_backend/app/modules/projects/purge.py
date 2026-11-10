@@ -92,6 +92,7 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationDocumentCertificate,
     ProjectQuotationSpecSheet,
     ProjectQuotationVersion,
     ProjectSalesProfile,
@@ -112,6 +113,8 @@ from app.models.projects import (
     ProjectType,
     QuotationAmendmentRequest,
     QuotationAmendmentRequestRow,
+    QuotationDocumentDraft,
+    QuotationDocumentSnapshot,
     QuotationIssueView,
     QuotationSignature,
     QuotationTemplate,
@@ -204,6 +207,11 @@ PURGE_ORDER: List[Type] = [
     QuotationIssueView,
     # quotation_spec_sheets CASCADEs off the document and the issue (SPEC-SHEET-V2).
     ProjectQuotationSpecSheet,
+    ProjectQuotationDocumentCertificate,
+    # quotation_document_snapshots CASCADE off the draft and the document, drafts off the document
+    # and the project (QUOTE-AUTOSAVE); snapshots before drafts, both before the document.
+    QuotationDocumentSnapshot,
+    QuotationDocumentDraft,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

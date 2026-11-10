@@ -27,6 +27,7 @@ from app.services.reports.datasets import (
     sales_order_lines_ask,
     unpaid_documents,
 )
+from app.services.error_handler import AppException
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
@@ -56,15 +57,15 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
         "invoiced": {
             "definition": billing_document_lines.ASK_DEFINITION,
             "label": "invoiced sales",
-            "dimensions": DIMENSIONS,
-            "filters": FILTERS,
+            "dimensions": (*DIMENSIONS, "sales_person"),
+            "filters": (*FILTERS, "sales_person"),
         },
         **{
             basis: {
                 "definition": sales_order_lines_ask.DEFINITIONS[basis],
                 "label": label,
-                "dimensions": (*DIMENSIONS, "sales_order") if basis == "outstanding" else DIMENSIONS,
-                "filters": FILTERS,
+                "dimensions": (*DIMENSIONS, "sales_person", *(("sales_order",) if basis == "outstanding" else ())),
+                "filters": (*FILTERS, "sales_person"),
             }
             for basis, label in (
                 ("delivered", "delivered sales"),
@@ -117,6 +118,7 @@ GROUP_LABELS = {
     "brand": "Brand",
     "category": "Category",
     "sales_agent": "Sales agent",
+    "sales_person": "Sales person",
     "location": "Location",
     "channel": "Channel",
     "account_type": "Account type",
@@ -273,6 +275,23 @@ def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
     }
 
 
+#: The order bases' channel words -> the sales order `demand_class` they filter (`other` is its own word).
+_ORDER_CHANNELS = {**_CHANNEL_CLASS, "other": "other"}
+
+
+def _channel_values(entry: dict[str, Any], values: list[str]) -> list[str]:
+    """The channel filter's values as the basis's dataset reads them: the invoiced basis takes every sales type
+    (normalised by its own filter), the order bases `dealer` / `project` / `other` as demand classes."""
+    if entry["definition"] is billing_document_lines.ASK_DEFINITION:
+        return list(values)
+    out = []
+    for v in values:
+        if v not in _ORDER_CHANNELS:
+            raise AppException(status_code=422, message=f"Unknown channel '{v}'", code="REPORT_INVALID_PARAMS")
+        out.append(_ORDER_CHANNELS[v])
+    return out
+
+
 def _params(
     db: Session, entry: dict[str, Any], filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
     date_from: date, date_to: date, capped_by_policy: bool = True,
@@ -287,7 +306,7 @@ def _params(
         if not values:
             return params, _empty()
         if word == "channel":
-            values = [_CHANNEL_CLASS[v] for v in values]
+            values = _channel_values(entry, values)
         params[word] = list(values)
 
     if "location" in entry["filters"]:  # a document-level basis has no location to cap

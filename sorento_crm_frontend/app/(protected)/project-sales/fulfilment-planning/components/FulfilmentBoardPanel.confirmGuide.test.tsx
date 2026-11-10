@@ -56,7 +56,6 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: vi.fn(),
   getPlanningChangeBatch: (...args: unknown[]) => getPlanningChangeBatch(...args),
   updatePlanningChangeRow: vi.fn(),
-  applyPlanningChanges: vi.fn(),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -1896,8 +1895,9 @@ describe('OI-SPLIT-CONFIRM-POLISH: the Review split page', () => {
       .filter((width) => !Number.isNaN(width))
       .reduce((sum, width) => sum + width, 0);
     expect(parseFloat(table.style.getPropertyValue('--sheet-min'))).toBe(fixed + 100);
-    // a phone hides SO date, S/O no and Location (80 + 76 + 64), so its floor leaves them out
-    expect(parseFloat(table.style.getPropertyValue('--sheet-min-phone'))).toBe(fixed + 100 - 220);
+    // SPLIT-SHEET-LOCATION (owner, 9 Nov 2026): Location shows on a phone too, so only SO date
+    // and S/O no (80 + 76) are left out.
+    expect(parseFloat(table.style.getPropertyValue('--sheet-min-phone'))).toBe(fixed + 100 - 156);
     // REMARK takes whatever width the others leave, so its edge moves with theirs
     const named = ths.filter((th) => th.textContent?.trim() && th.textContent.trim().toLowerCase() !== 'remark');
     expect(named.length).toBeGreaterThan(8);

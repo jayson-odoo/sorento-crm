@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   Banknote,
   Factory,
+  GitBranch,
   Info,
   ListChecks,
   LoaderCircleIcon,
@@ -46,6 +47,7 @@ import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
+import ProductLineageTab from './ProductLineageTab';
 import ListPager from '@/components/common/ListPager';
 import { productsPagerQuery } from '../lib/listQuery';
 import { localStore } from '@/lib/storage';
@@ -57,6 +59,7 @@ const PRODUCT_FORM_TABS = [
   'specifications',
   'suppliers',
   'attachments',
+  'lineage',
 ];
 
 interface ProductFormProps {
@@ -341,6 +344,12 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
               <Paperclip />
               <span>Attachments</span>
             </TabsTrigger>
+            {isEditMode ? (
+              <TabsTrigger value="lineage">
+                <GitBranch />
+                <span>Lineage</span>
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           {/* Tab 1: Basic Information */}
@@ -1066,6 +1075,13 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
           <TabsContent value="attachments">
             <ProductAttachmentsTab productId={productId} isEditMode={isEditMode} />
           </TabsContent>
+
+          {/* Tab 6: Lineage (read-only, existing product only) */}
+          {isEditMode && productId ? (
+            <TabsContent value="lineage">
+              <ProductLineageTab productId={productId} />
+            </TabsContent>
+          ) : null}
         </Tabs>
 
         <div className="flex justify-end gap-2">

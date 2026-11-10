@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy import select as db_select
 from sqlalchemy.orm import Session
 
@@ -23,20 +23,9 @@ from app.models.projects import (
     ProjectType,
 )
 from app.schemas.common import MAX_PAGE_LIMIT
+from app.services import project_party_roles
 from app.services.error_handler import AppException
 from app.utils.multi_value import multi_values
-
-PARTY_TYPES = (
-    "developer",
-    "architect",
-    "main_contractor",
-    "trading_house",
-    "consultant",
-    # PS-REGISTRATION-V3 (this lane owns every new type, owner via crew 2 Nov).
-    "subcontractor",
-    "interior_designer",
-    "tender_party",
-)
 
 # The four roles the client named. Seeded, not hardcoded: a template owns its own
 # list, so a hotel fitout can add "Operator" without a deploy.
@@ -108,6 +97,7 @@ def _customer_name_expr():
 #: server). Unknown keys fall back to the name.
 PARTY_SORTS = {
     "name": lambda: func.lower(ProjectParty.name),
+    "registration_no": lambda: func.lower(ProjectParty.registration_no),
     "party_type": lambda: ProjectParty.party_type,
     "is_active": lambda: ProjectParty.is_active,
     "project_count": _project_count_expr,
@@ -135,8 +125,14 @@ def list_parties(
     if not include_inactive:
         query = query.filter(ProjectParty.is_active.is_(True))
     if search and search.strip():
+        # The registration no. is a column of its own on the Parties grid, so the search
+        # that filters the grid matches it too (PARTIES-LIST-ONE-LINE).
+        needle = f"%{search.strip().lower()}%"
         query = query.filter(
-            func.lower(ProjectParty.name).like(f"%{search.strip().lower()}%")
+            or_(
+                func.lower(ProjectParty.name).like(needle),
+                func.lower(ProjectParty.registration_no).like(needle),
+            )
         )
     total = query.count()
     page = max(1, int(page or 1))
@@ -198,6 +194,7 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
             "registration_no": party.registration_no,
             "address": party.address,
             "phone": party.phone,
+            "fax": party.fax,
             "email": party.email,
             "notes": party.notes,
             "customer_id": party.customer_id,
@@ -215,24 +212,11 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
     ]
 
 
-def _assert_party_type(party_type: str) -> None:
-    if party_type not in PARTY_TYPES:
-        raise AppException(
-            status_code=422,
-            message=(
-                "Party type must be one of: "
-                + ", ".join(t.replace("_", " ") for t in PARTY_TYPES)
-                + "."
-            ),
-            code="project_party_type_invalid",
-        )
-
-
 def create_party(
     db: Session, *, company_id: str, payload: Dict[str, Any], actor_user_id: str
 ) -> tuple:
-    """``(party, created)``: an active party of the same type and name comes back as is."""
-    _assert_party_type(payload.get("party_type"))
+    """``(party, created)``: an active party of the same name, of ANY type, comes back as is."""
+    project_party_roles.assert_party_type(db, payload.get("party_type"))
     name = (payload.get("name") or "").strip()
     if not name:
         raise AppException(
@@ -241,15 +225,15 @@ def create_party(
             code="project_party_name_required",
         )
 
-    # Same-name, same-type duplicates are what destroy the reuse the table exists for, so
-    # the existing row comes back instead of a second one (PROJECT-REGISTER-V2 B4); case and
-    # repeated spaces do not make a name different.
+    # Same-name duplicates are what destroy the reuse the table exists for, so the existing row
+    # comes back instead of a second one (PROJECT-REGISTER-V2 B4); case and repeated spaces do
+    # not make a name different. Any type (PROJECT-PARTY-ROLES Q4 b): a firm that is main con here
+    # and subcon there is one party, its type only the role it usually plays.
     name = " ".join(name.split())
     existing = (
         db.query(ProjectParty)
         .filter(
             ProjectParty.company_id == company_id,
-            ProjectParty.party_type == payload["party_type"],
             ProjectParty.is_active.is_(True),
             func.lower(func.regexp_replace(func.btrim(ProjectParty.name), r"\s+", " ", "g"))
             == name.lower(),
@@ -266,6 +250,7 @@ def create_party(
         registration_no=payload.get("registration_no"),
         address=payload.get("address"),
         phone=payload.get("phone"),
+        fax=payload.get("fax"),
         email=payload.get("email"),
         notes=payload.get("notes"),
         customer_id=payload.get("customer_id"),
@@ -290,13 +275,14 @@ def update_party(
     db: Session, party: ProjectParty, payload: Dict[str, Any]
 ) -> ProjectParty:
     if "party_type" in payload and payload["party_type"] is not None:
-        _assert_party_type(payload["party_type"])
+        project_party_roles.assert_party_type(db, payload["party_type"], current=party.party_type)
     for field in (
         "party_type",
         "name",
         "registration_no",
         "address",
         "phone",
+        "fax",
         "email",
         "notes",
         "customer_id",

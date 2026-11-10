@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import type { Status } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 import type { Project } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isAwaitingDecision } from '../../_shared/components/ApprovalStatePill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 
@@ -122,7 +123,7 @@ export function PipelineBoard({
                     {projectCodeLabel(project)}
                   </span>
                   <span className="max-w-[16rem] truncate" title={project.title}>
-                    {project.title}
+                    {projectDisplayName(project)}
                   </span>
                 </Link>
               </li>
@@ -285,7 +286,7 @@ function ProjectCard({
               {projectCodeLabel(project)}
             </span>
             <p className="line-clamp-2 text-sm font-medium leading-snug" title={project.title}>
-              {project.title}
+              {projectDisplayName(project)}
             </p>
           </Link>
 

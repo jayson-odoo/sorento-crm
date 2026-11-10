@@ -30,6 +30,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.services.error_handler import AppException
+from app.services.sales.commission_service import FoldRow, fold_additionals
 from app.services.sales.period_service import add_months
 
 # --------------------------------------------------------------------------------------
@@ -242,6 +243,12 @@ class SchemeTier:
     #: A fixed amount paid once per period when the tier is reached ("A/C I- 15,000" in an
     #: incentive column, round 10).
     bonus: Optional[Decimal] = None
+    #: The tier's % Additional: a "+ Additional x%" cell on the tier's threshold, folded onto it
+    #: (lane TARGET-TIER-ADDITIONAL, owner 5 Nov).
+    additional_rate: Optional[Decimal] = None
+    #: The counted account (row key) the bonus cell names: that account's own RM Additional
+    #: (owner 8 Nov, Q3: set per account, like the rate). None: the tier's, for every account.
+    bonus_account: Optional[str] = None
 
 
 @dataclass
@@ -252,7 +259,6 @@ class Scheme:
     rows: List[int]
     codes: List[str]
     names: List[str]
-    payout_code: Optional[str]
     start: date
     end: date
     split_every: Optional[int]
@@ -262,11 +268,6 @@ class Scheme:
     tiers: List[SchemeTier]
     #: "<dealer> <2026 | Dec 2025 to Nov 2026> <quarterly | monthly | yearly>", the kind last.
     name: str = ""
-    #: Paid to an account of the dealer with no row in the file, found by name + account.
-    payout_by_name: Optional["ByName"] = None
-    #: The key of the dealer scheme that replaces this per-account one once it reaches a tier
-    #: (crew ruling 16 Oct: Tier 1-3 per account, Tier 4-5 on the dealer, one scale).
-    replaced_by: Optional[str] = None
 
 
 @dataclass
@@ -318,6 +319,9 @@ class _Column:
 
 
 _KIND_NAME = {"Q": "quarterly", "M": "monthly", "Y": "yearly"}
+#: A PAY TO cell, or a rate naming an account the target does not count, no longer names a payee
+#: (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov): every counted account is paid its own share.
+PAY_TO_IGNORED = "PAY TO not used: each counted account is paid its own share"
 
 #: A header cell that names a row's own field, matched on the WHOLE cell so a title such as
 #: "SORENTO DEALER INCENTIVE 2026" is never read as the dealer column.
@@ -1053,7 +1057,7 @@ def _group_schemes(
 ) -> List[Scheme]:
     """The one target of `kind` and unit over `ctx.rows`, or none. A block with Tier 1-3
     per account and Tier 4-5 merged over the accounts is one dealer target plus one target per
-    account that the dealer target replaces once it reaches a tier (crew ruling 16 Oct)."""
+    account; they stack, each paying on its own (owner 8 Nov, lane TARGET-PER-ACCOUNT-PAYOUT)."""
     grid, results = ctx.grid, ctx.results
     if len(ctx.rows) > 1:
         split = _account_and_dealer_columns(ctx, list(kind_cols))
@@ -1076,13 +1080,7 @@ def _group_schemes(
                     inherit_window=(dealer[0].start, dealer[0].end),
                 )
                 for scheme in own_schemes:
-                    if (scheme.start, scheme.end) != (dealer[0].start, dealer[0].end):
-                        # The replacement needs the dealer's period to cover the account's.
-                        raise CellError(
-                            f"{_KIND_NAME[kind]}: an account's window ({scheme.start:%b %Y} to {scheme.end:%b %Y}) "  # date-format-ok: month-level target window, no day to show
-                            f"differs from its dealer's ({dealer[0].start:%b %Y} to {dealer[0].end:%b %Y})"  # date-format-ok: month-level target window, no day to show
-                        )
-                    scheme.replaced_by = dealer[0].key
+                    # Stacks with the dealer target (owner 8 Nov): both pay, neither replaces the other.
                     account = results[r].account_in_file
                     name = (results[r].name_in_file or "")[:80]
                     if account and name:
@@ -1180,6 +1178,32 @@ def _group_schemes(
         else:
             merged_tiers.append(t)
     tiers = merged_tiers
+    # Owner 5 Nov: "+ Additional 1%" is its tier's Additional, not a line of its own; only the
+    # reached tier's pays. One the tier cannot take stays a "+ Additional" line, said on the rows.
+    fold = fold_additionals([
+        FoldRow(t.period_start, t.threshold, t.is_additional, t.rate, t.account_rates, t.additional_rate, t.bonus)
+        for t in tiers
+    ])
+    for m, rate in fold.rates.items():
+        tiers[m].additional_rate = rate
+    notes = [
+        f"{_KIND_NAME[kind]}: the additional "
+        f"{(tiers[i].rate or max((tiers[i].account_rates or {0: Decimal(0)}).values())).normalize():f}% "
+        f"from {tiers[i].threshold:,.0f} stays a line of its own ({why})"
+        for i, why in sorted(fold.skipped.items())
+    ] + [
+        f"{_KIND_NAME[kind]}: the additional on the threshold {tiers[m].threshold:,.0f} now adds on every account the tier pays"
+        for m in sorted(fold.broadened)
+    ] + [
+        f"{_KIND_NAME[kind]}: the additional on the threshold {tiers[m].threshold:,.0f} adds only on the accounts the tier names"
+        for m in sorted(fold.narrowed)
+        if len(codes) > 1
+    ]
+    for note in notes:
+        for r in ctx.rows:
+            if note not in results[r].warnings:
+                results[r].warnings.append(note)
+    tiers = [t for i, t in enumerate(tiers) if i not in fold.moves]
     seen = set()
     labels = {res.key: res.account_in_file or "" for res in results.values()}
 
@@ -1200,17 +1224,12 @@ def _group_schemes(
                 f'(rates "{" | ".join(rate_text(x) for x in twins)}")'
             )
         seen.add(key)
-    if len(set(pay_to)) > 1:
-        raise CellError(f"{_KIND_NAME[kind]}: the rates name two different accounts to pay")
-    if payto_text:
-        payout = ctx.dealer_labels.get(_label_key(payto_text), payto_text)
-    elif pay_to:
-        payout = pay_to[0]
-    else:
-        payout = next((next(iter(t.account_rates)) for t in tiers if t.account_rates), None) or codes[0]
-    by_name = payout if isinstance(payout, ByName) else None
-    if by_name is not None:
-        payout = None
+    if payto_text or pay_to:
+        # Each counted account is paid its own share (lane TARGET-PER-ACCOUNT-PAYOUT, owner 8 Nov):
+        # a PAY TO cell, or a rate naming an account the target does not count, names no payee.
+        for r in ctx.rows:
+            if PAY_TO_IGNORED not in results[r].warnings:
+                results[r].warnings.append(PAY_TO_IGNORED)
     span = (
         str(start.year)
         if (start.month, start.day, end.month, end.day) == (1, 1, 12, 31) and start.year == end.year
@@ -1226,8 +1245,6 @@ def _group_schemes(
             rows=list(ctx.rows),
             codes=list(codes),
             names=[results[r].name_in_file or "" for r in ctx.rows],
-            payout_code=payout,
-            payout_by_name=by_name,
             start=start,
             end=end,
             split_every=split[0],
@@ -1238,6 +1255,33 @@ def _group_schemes(
             name=f"{first_name[:80]} {span}{unit_word} {_KIND_NAME[kind]}",
         )
     ]
+
+
+def _tier_payload(t: SchemeTier, rates: Optional[Dict[str, Decimal]], scheme: Scheme, ids: List[str], customer_of) -> dict:
+    """One tier as `SalesTargetTierIn` takes it. A bonus naming one counted account of a
+    multi-account target is that account's own RM Additional (owner 8 Nov, Q3), so the tier is
+    written per account: the named rates, else the tier's rate on every account."""
+    own_bonus = None
+    if t.bonus is not None and t.bonus_account is not None and len(set(ids)) > 1:
+        own_bonus = customer_of(t.bonus_account).id
+    if own_bonus is not None:
+        per_account = dict(rates) if rates else {cid: Decimal(t.rate or 0) for cid in dict.fromkeys(ids)}
+        per_account.setdefault(own_bonus, Decimal("0"))
+        account_rates = [
+            {"customer_id": cid, "rate": float(rate), **({"bonus_amount": float(t.bonus)} if cid == own_bonus else {})}
+            for cid, rate in per_account.items()
+        ]
+    else:
+        account_rates = [{"customer_id": cid, "rate": float(rate)} for cid, rate in rates.items()] if rates else None
+    return {
+        "period_start": t.period_start if scheme.split_every else None,
+        "threshold": float(t.threshold),
+        "rate": float(t.rate or 0),
+        "is_additional": t.is_additional,
+        "account_rates": account_rates,
+        "bonus_amount": float(t.bonus) if t.bonus is not None and own_bonus is None else None,
+        "additional_rate": float(t.additional_rate) if t.additional_rate is not None else None,
+    }
 
 
 def _period_start(kind: str, number: int, start: date) -> date:
@@ -1433,12 +1477,18 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
         main_rate: Optional[Decimal] = None
         bonus: Optional[Decimal] = None
         extras: List[Tuple[Optional[Dict[str, Decimal]], Optional[Decimal]]] = []
+        bonus_account: Optional[str] = None
         for r, e in entries:
             if e.bonus is not None:
-                # Paid once the tier is reached, to the account the cell names.
+                # Paid once the tier is reached: to the counted account the cell names, as its own
+                # RM Additional (owner 8 Nov, Q3); an account not counted is no payee.
                 if bonus is not None:
                     raise CellError(f"{name}: two bonus amounts for the threshold {threshold:,.0f}")
-                payees.append(resolve(e.label)[0])
+                key, counted = resolve(e.label)
+                if counted:
+                    bonus_account = key
+                else:
+                    payees.append(key)
                 bonus = e.bonus
                 continue
             additional = e.is_additional
@@ -1466,7 +1516,9 @@ def _period_tiers(ctx: _Ctx, cols, period_start, kind, shared_rates=()) -> Tuple
         if main or main_rate is not None:
             if main and main_rate is not None:
                 raise CellError(f"{name}: one tier pays both every account and named accounts")
-            out.append(SchemeTier(period_start, threshold, main_rate, False, main or None, bonus))
+            out.append(
+                SchemeTier(period_start, threshold, main_rate, False, main or None, bonus, bonus_account=bonus_account)
+            )
         for rates, rate in extras:
             out.append(SchemeTier(period_start, threshold, rate, True, rates))
         previous_threshold = threshold
@@ -1813,12 +1865,9 @@ def run(
     parsed = parse_workbook(data, year=year, label_picks=label_picks)
     rows_by_key = {(r.sheet, r.row): r for r in parsed.rows}
 
-    # Codes the file names (a CUSTOMER CODE column, a PAY TO code), matched without regard to
-    # case or surrounding spaces. A code wins over the name when the row has one.
-    codes = {r.code for r in parsed.rows if r.code} | {
-        s.payout_code for s in parsed.schemes
-        if s.payout_code and "!" not in s.payout_code
-    }
+    # Codes the file names (a CUSTOMER CODE column), matched without regard to case or
+    # surrounding spaces. A code wins over the name when the row has one.
+    codes = {r.code for r in parsed.rows if r.code}
     wanted = sorted({code.strip().upper() for code in codes})
     by_code = {}
     if wanted:
@@ -1843,10 +1892,9 @@ def run(
         if valid_ids
         else {}
     )
-    by_name_payouts = [s.payout_by_name for s in parsed.schemes if s.payout_by_name is not None]
     index = (
         _CustomerIndex(db, company_id)
-        if by_name_payouts or any(r.status == "mapped" and not r.code for r in parsed.rows)
+        if any(r.status == "mapped" and not r.code for r in parsed.rows)
         else None
     )
 
@@ -1917,15 +1965,6 @@ def run(
                 if cand.id == c.id:
                     customer_by_key[key] = c
 
-    # Accounts paid by dealer name + account (no row of their own): one exact CRM match each.
-    by_name_customer: Dict[ByName, Customer] = {}
-    for payee in set(by_name_payouts):
-        exact, _suggestions, _capped, _why = index.match(payee.dealer, payee.label)
-        if exact is not None:
-            found = db.query(Customer).filter(Customer.id == exact.id).first()
-            if found is not None:
-                by_name_customer[payee] = found
-
     def customer_of(key: Optional[str]):
         if not key:
             return None
@@ -1954,9 +1993,8 @@ def run(
 
     new = updated = 0
     target_nos: Dict[str, str] = {}
-    key_to_row = {r.key: r for r in parsed.rows if r.key}
 
-    # Schemes that share a row, or whose pay-to account is another scheme's row, are one
+    # Schemes that share a row are one
     # dealer: they are created together or not at all (review S4: no partial dealer).
     parent = list(range(len(parsed.schemes)))
 
@@ -1969,9 +2007,6 @@ def run(
     owner: Dict[Tuple[str, int], int] = {}
     for i, scheme in enumerate(parsed.schemes):
         touched = [(scheme.sheet, r) for r in scheme.rows]
-        payee = key_to_row.get(scheme.payout_code)
-        if payee is not None:
-            touched.append((payee.sheet, payee.row))
         for place in touched:
             if place in owner:
                 parent[find(i)] = find(owner[place])
@@ -1998,10 +2033,6 @@ def run(
                     r.status, r.reason = "not_representable", reason
 
         broken = [r for r in all_rows if r.status != "mapped"]
-        for s in schemes:
-            payee_row = key_to_row.get(s.payout_code)
-            if payee_row is not None and payee_row.status != "mapped":
-                broken.append(payee_row)
         if broken:
             first = broken[0]
             why = {
@@ -2052,23 +2083,10 @@ def run(
                     if r.row in numbers and note not in r.warnings:
                         r.warnings.append(note)
                 ids = list(dict.fromkeys(ids))
-            if scheme.payout_by_name is not None:
-                payout = by_name_customer.get(scheme.payout_by_name)
-                if payout is None:
-                    problem = (
-                        f"pays to {scheme.payout_by_name.label}, which has no row in the file and no "
-                        "single CRM customer of this dealer with that account"
-                    )
-                    break
-            else:
-                payout = customer_of(scheme.payout_code)
-            if payout is None:
-                problem = f"PAY TO: no customer with code {scheme.payout_code}"
-                break
             match_key = (
                 frozenset(ids), scheme.start, scheme.end, scheme.split_every, scheme.split_unit, scheme.threshold_unit
             )
-            same_group = next((p[0].rows[0] for p in prepared if p[3] == match_key), None)
+            same_group = next((p[0].rows[0] for p in prepared if p[2] == match_key), None)
             if same_group is not None:
                 problem = f"the same accounts and dates as row {same_group}"
                 break
@@ -2077,21 +2095,31 @@ def run(
                 # silently overwrite the first (review nit).
                 problem = f"the same accounts and dates as row {written_by[match_key]}"
                 break
-            tiers = [
-                {
-                    "period_start": t.period_start if scheme.split_every else None,
-                    "threshold": float(t.threshold),
-                    "rate": float(t.rate or 0),
-                    "is_additional": t.is_additional,
-                    "account_rates": (
-                        [{"customer_id": cid, "rate": float(rate)} for cid, rate in rates.items()]
-                        if rates
-                        else None
-                    ),
-                    "bonus_amount": float(t.bonus) if t.bonus is not None else None,
-                }
-                for t, rates in zip(scheme.tiers, tier_rates)
-            ]
+            if len(set(ids)) > 1:
+                # Owner 8 Nov 23:59 (a): on a target counting several accounts the RM Additional
+                # is set only per account; a bonus naming no single counted account is refused.
+                loose = next(
+                    (t for t in scheme.tiers if t.bonus is not None and t.bonus_account is None), None
+                )
+                if loose is not None:
+                    problem = (
+                        f"{scheme.name}: the RM bonus on the tier from {loose.threshold:,.0f} names no "
+                        "single account this target counts; on a target counting several accounts, "
+                        "write it against one account (set per account)"
+                    )
+                    break
+                legacy = existing.get(match_key)
+                if legacy is not None and any(
+                    t.bonus_amount is not None for t in target_service._tiers(db, legacy.id)
+                ):
+                    note = (
+                        f"{legacy.target_no} has an RM Additional set for the tier on several accounts: "
+                        "it is not paid; set it per account"
+                    )
+                    for r in all_rows:
+                        if note not in r.warnings:
+                            r.warnings.append(note)
+            tiers = [_tier_payload(t, rates, scheme, ids, customer_of) for t, rates in zip(scheme.tiers, tier_rates)]
             fields = {
                 "commission_method": "retroactive",
                 "threshold_unit": scheme.threshold_unit,
@@ -2101,26 +2129,21 @@ def run(
                 "tiers_per_period": bool(scheme.split_every) and any(t.period_start for t in scheme.tiers),
                 "tiers": tiers,
             }
-            prepared.append((scheme, ids, payout, match_key, fields))
+            prepared.append((scheme, ids, match_key, fields))
         if problem:
             fail(problem)
             continue
         done = []
         try:
             with db.begin_nested():
-                # A dealer target first, so the account targets it replaces can name it.
-                written: Dict[str, str] = {}
-                for scheme, ids, payout, match_key, fields in sorted(prepared, key=lambda p: p[0].replaced_by is not None):
+                for scheme, ids, match_key, fields in prepared:
                     match = existing.get(match_key)
-                    if scheme.replaced_by and scheme.replaced_by not in written:
-                        raise _Refused(scheme, "its dealer target was not written")
-                    fields = {**fields, "replaced_by_target_id": written.get(scheme.replaced_by)}
                     try:
                         if match is not None:
                             target_service.update_target(
                                 db,
                                 match,
-                                SalesTargetUpdate(customer_ids=ids, payout_customer_id=payout.id, **fields),
+                                SalesTargetUpdate(customer_ids=ids, **fields),
                                 user_id=user_id,
                             )
                             target = match
@@ -2130,7 +2153,6 @@ def run(
                                 SalesTargetCreate(
                                     subject_kind="dealer",
                                     customer_ids=ids,
-                                    payout_customer_id=payout.id,
                                     name=scheme.name[:120],
                                     metric="amount",
                                     basis="ordered",
@@ -2150,7 +2172,6 @@ def run(
                         message = errors()[0].get("msg", "not valid") if callable(errors) and errors() else str(exc)
                         raise _Refused(scheme, message) from exc
                     done.append((scheme, match, match_key, target))
-                    written[scheme.key] = target.id
         except _Refused as exc:
             fail(f"{exc.scheme.kind}: {exc.message}")
             continue

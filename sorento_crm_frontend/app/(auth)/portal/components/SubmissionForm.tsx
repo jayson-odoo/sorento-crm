@@ -70,7 +70,6 @@ import {
   PortalSubmissionDetail,
   PortalSubmissionKind,
   PortalSubmissionNeighbours,
-  PortalOwnerMismatchError,
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
@@ -89,6 +88,7 @@ import {
 import {
   portalDetailPath,
   portalDuplicatePath,
+  portalNewPath,
   portalHomePath,
   portalVerifyPath,
 } from '../lib/portal-paths';
@@ -96,7 +96,9 @@ import { cleanLineItems } from '../lib/line-items';
 import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
+import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
 import { MultiPillInput } from './MultiPillInput';
@@ -115,7 +117,17 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import {
+  PROJECT_NAME_MAX_LENGTH,
+  projectDisplayName,
+} from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import { complaintStatusLabel } from '@/lib/complaint-status';
+import {
+  InquiryApplicationsList,
+  NewProductApplicationBanners,
+  npaStillToCreate,
+  type InquiryApplicationRow,
+} from '@/components/common/NewProductApplicationBanners';
 
 type ProductLine = {
   item_code?: string;
@@ -134,6 +146,8 @@ type ComplaintLine = {
 type WidgetKind =
   | 'text'
   | 'textarea'
+  /** One short line (an `Input`), not the auto-growing text area; honours `maxLength`. */
+  | 'line'
   | 'date'
   | 'number'
   | 'lookup-select'
@@ -158,6 +172,7 @@ interface FieldDef {
   defaultFromContact?: 'fullname' | 'first_name' | 'contact_id';
   defaultToday?: boolean;
   placeholder?: string;
+  maxLength?: number;
   required?: boolean;
   /** Render this field only when the predicate (given the current field values)
    *  returns true. Used e.g. for the sponsor-subject "Others" companion input. */
@@ -230,6 +245,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   // agent, set by the server on create; required on submit: title, state, developer.
   project_registration: [
     { name: 'title', label: 'Project title', widget: 'textarea', required: true },
+    { name: 'name', label: 'Project name', widget: 'line', maxLength: PROJECT_NAME_MAX_LENGTH },
     { name: 'distributor_name', label: 'Distributor name' },
     {
       name: 'sales_agent_name',
@@ -900,28 +916,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
           setReviseMode(true);
         }
       } catch (e) {
-        if (e instanceof PortalUnauthorizedError) {
-          routerRef.current.replace(
-            portalVerifyPath({
-              slug,
-              reason: 'expired',
-              type: kind,
-              id: submissionId,
-            }),
-          );
-          return;
-        }
-        // Logged in as a different contact than the form's owner - send them to
-        // the owner's confirm-identity card (deep-link slug), keep their token.
-        if (e instanceof PortalOwnerMismatchError) {
-          routerRef.current.replace(
-            portalVerifyPath({
-              slug,
-              reason: 'expired',
-              type: kind,
-              id: submissionId,
-            }),
-          );
+        // No / expired session, or logged in as a different contact than the form's owner:
+        // the owner's confirm-identity card (deep-link slug); a mismatch keeps its token.
+        const verify = portalSessionRedirectPath(e, { slug, type: kind, id: submissionId });
+        if (verify) {
+          routerRef.current.replace(verify);
           return;
         }
         if (!cancelled)
@@ -1439,7 +1438,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
     // DO-derived ones.
     const aiValues = payload.values;
     const widgetByName: Record<string, WidgetKind | undefined> = {};
-    for (const f of fieldDefs) widgetByName[f.name] = f.widget;
+    const maxLengthByName: Record<string, number | undefined> = {};
+    for (const f of fieldDefs) {
+      widgetByName[f.name] = f.widget;
+      maxLengthByName[f.name] = f.maxLength;
+    }
     setFields((prev) => {
       const next = { ...prev };
       for (const [name, value] of Object.entries(aiValues)) {
@@ -1450,7 +1453,9 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
             .filter(Boolean)
             .join(', ');
         } else {
-          next[name] = value;
+          // A field with a cap (the project name, 80) keeps an over-long AI value inside it.
+          const cap = maxLengthByName[name];
+          next[name] = cap && typeof value === 'string' ? value.slice(0, cap) : value;
         }
       }
       // A new extracted customer name is free text: it no longer matches the picked customer.
@@ -1820,10 +1825,30 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   // Tabs the client adds after these (a CRM complaint's fulfilment DOs, L3), on a saved form only.
   // The portal's client adds none.
   const extraTabs = submissionId ? clientExtraTabs(client) : [];
-  const tabbed = revisionsTabbed || commentsTabbed || extraTabs.length > 0;
+  // A submitted stock inquiry lists the new product applications raised from it (NPA-FROM-SI).
+  const inquiryApplications: InquiryApplicationRow[] =
+    kind === 'stock_inquiry' && Array.isArray(detail?.new_product_applications)
+      ? (detail.new_product_applications as InquiryApplicationRow[])
+      : [];
+  // Only for a contact who holds the NPA form (the server says so).
+  const npaVisible = kind === 'stock_inquiry' && detail?.npa_form_visible === true;
+  const applicationsTabbed = Boolean(
+    npaVisible &&
+      submissionId &&
+      detail &&
+      !detail.is_draft &&
+      Array.isArray(detail.new_product_applications),
+  );
+  const canCreateApplication =
+    npaVisible &&
+    detail?.status === 'responded' &&
+    npaStillToCreate(detail.npa_requested as boolean | undefined, inquiryApplications);
+  const tabbed =
+    revisionsTabbed || commentsTabbed || applicationsTabbed || extraTabs.length > 0;
   const shownTabs = [
     'details',
     ...(commentsTabbed ? ['comments'] : []),
+    ...(applicationsTabbed ? ['applications'] : []),
     ...(revisionsTabbed ? ['revisions'] : []),
     ...extraTabs.map((t) => t.value),
   ];
@@ -2387,7 +2412,9 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
             </Link>
           </Button>
         )}
-        <div className="flex min-w-0 items-center gap-3">
+        {/* flex-wrap: on a 375 px phone the Create button below takes its own row instead of
+            pushing the "< 3/12 >" pager off-screen (crew 375 px pass, 8 Nov). */}
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
           {editing && (
             <Button
               type="button"
@@ -2463,6 +2490,19 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               )}
             </DetailActionsMenu>
           )}
+          {canCreateApplication && detail && (
+            <Button size="sm" asChild className="order-last basis-full sm:order-none sm:basis-auto">
+              <Link
+                href={`${
+                  paths
+                    ? paths.new('new_product_application')
+                    : portalNewPath('new_product_application', slug)
+                }?stock_inquiry_id=${encodeURIComponent(detail.id)}`}
+              >
+                Create new product application
+              </Link>
+            </Button>
+          )}
           {embedded && neighbours && (
             <RecordNavigation
               index={neighbours.position}
@@ -2477,6 +2517,14 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
           )}
         </div>
       </div>
+
+      {npaVisible && detail && !detail.is_draft && (
+        <NewProductApplicationBanners
+          requested={detail.npa_requested as boolean | undefined}
+          applications={inquiryApplications}
+          audience="portal"
+        />
+      )}
 
       {tabbed ? (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -2495,6 +2543,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               >
                 <MessageSquare />
                 <span>Comments ({commentsCount})</span>
+              </TabsTrigger>
+            )}
+            {applicationsTabbed && (
+              <TabsTrigger value="applications">
+                <span>New product applications ({inquiryApplications.length})</span>
               </TabsTrigger>
             )}
             {revisionsTabbed && (
@@ -2521,6 +2574,25 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
                 authorName={contact?.name ?? ''}
                 readOnly={detail?.status === 'voided'}
                 thread={commentsThread}
+              />
+            </TabsContent>
+          )}
+          {applicationsTabbed && (
+            <TabsContent value="applications" className="m-0">
+              <InquiryApplicationsList
+                applications={inquiryApplications}
+                renderNumber={(a) => (
+                  <Link
+                    href={
+                      paths
+                        ? paths.detail('new_product_application', a.id)
+                        : portalDetailPath('new_product_application', a.id, slug)
+                    }
+                    className="text-primary hover:underline"
+                  >
+                    {a.application_no}
+                  </Link>
+                )}
               />
             </TabsContent>
           )}
@@ -3256,6 +3328,17 @@ function FieldControl({
           disabled={disabled}
         />
       );
+    case 'line':
+      return (
+        <Input
+          id={field.name}
+          value={stringValue}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={field.maxLength}
+          placeholder={field.placeholder}
+          disabled={disabled}
+        />
+      );
     case 'date':
       return (
         <Input
@@ -3311,19 +3394,16 @@ function FieldControl({
       );
     case 'debtor-async':
       return (
-        <AsyncCombobox<DebtorLookupItem>
+        <CustomerDebtorCombobox
           id={field.name}
           value={stringValue}
           onChange={(v, item) => {
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => client.lookupDebtors(q, 20, field.lookupKind)}
-          allowFreeText={!field.pickOnly}
-          optionValue={(o) => o.debtor_name}
-          optionLabel={(o) => o.debtor_name}
-          optionMeta={(o) => o.customer_code}
-          placeholder={field.placeholder ?? 'Search debtors...'}
+          lookup={(q) => client.lookupDebtors(q, 20, field.lookupKind)}
+          pickOnly={field.pickOnly}
+          placeholder={field.placeholder}
           disabled={disabled}
         />
       );
@@ -3335,7 +3415,7 @@ function FieldControl({
           onChange={(v) => onChange(v)}
           fetchOptions={(q) => client.lookupProjects(q)}
           optionValue={(o) => o.id}
-          optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
+          optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
           // free text would reach the server as an id and fail there instead of here.
           allowFreeText={false}

@@ -37,5 +37,6 @@ register(
         screen_path="/scm/purchase-orders/{id}",
         pages=("/scm/purchase-orders",),
         routes=("GET /api/v1/scm/purchase-orders",),
+        hint="purchase orders with supplier",
     ),
 )

@@ -10,6 +10,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
     "title": "Dashboards",
   },
   {
+    "path": "/town",
+    "title": "Town",
+  },
+  {
     "children": [
       {
         "path": "/ideas",
@@ -42,6 +46,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
       {
         "path": "/sales/teams",
         "title": "Sales Teams",
+      },
+      {
+        "path": "/sales/leaderboard",
+        "title": "Leaderboard",
       },
       {
         "path": "/master-data-management/sales-agents",
@@ -405,6 +413,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Item Classes",
           },
           {
+            "path": "/master-data-management/payment-terms",
+            "title": "Payment Terms",
+          },
+          {
             "path": "/master-data-management/units-of-measure",
             "title": "Units of Measure",
           },
@@ -415,6 +427,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/master-data-management/certificates",
             "title": "Certificates",
+          },
+          {
+            "path": "/master-data-management/certificates/links",
+            "title": "Certificate Links",
           },
         ],
         "title": "Reference Data",
@@ -478,6 +494,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/dealer-kit/tag-sizes",
             "title": "Tag Sizes",
+          },
+          {
+            "path": "/dealer-kit/accessory-templates",
+            "title": "Accessory Templates",
           },
         ],
         "title": "Room Designer",

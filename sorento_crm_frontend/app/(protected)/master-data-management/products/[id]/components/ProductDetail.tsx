@@ -8,6 +8,7 @@ import {
   Edit,
   FileText,
   GitBranch,
+  Layers,
   Paperclip,
   Receipt,
   ScrollText,
@@ -23,10 +24,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useProduct, useProductPurchaseHistory } from '../../hooks/useProducts';
+import { useProductCombos } from '../../hooks/useProductCombos';
 import { CHAT_SEARCH_LABEL, chatSearchState } from '../../types/product.types';
 import { formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
+import ProductLineageTab from '../../components/ProductLineageTab';
 import ProductStockTab from './ProductStockTab';
 import ProductPurchaseHistoryTab from './ProductPurchaseHistoryTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
@@ -102,6 +105,9 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const { data: purchaseHistory } = useProductPurchaseHistory(productId || null);
   const purchaseCost = purchaseHistory?.cost ?? null;
   const variantsCount = Array.isArray(product?.variants) ? product.variants.length : 0;
+  // Same query the Combos tab reads, so opening it costs no second request.
+  const { data: combosData } = useProductCombos(productId);
+  const combosCount = Array.isArray(combosData) ? combosData.length : 0;
 
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
@@ -332,6 +338,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                   <span>Suppliers</span>
                 </TabsTrigger>
               ) : null}
+              {/* COMBO-SETTINGS-UX (owner 10 Nov): the combo settings have a tab of their own. */}
+              <TabsTrigger value="combos">
+                <Layers />
+                <span>Combos{combosCount ? ` (${combosCount})` : ''}</span>
+              </TabsTrigger>
               <TabsTrigger value="promotions">
                 <Tag />
                 <span>Promotions{promotionsCount ? ` (${promotionsCount})` : ''}</span>
@@ -347,6 +358,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="specifications">
                 <ScrollText />
                 <span>Specifications</span>
+              </TabsTrigger>
+              <TabsTrigger value="lineage">
+                <GitBranch />
+                <span>Lineage</span>
               </TabsTrigger>
             </TabsList>
 
@@ -596,16 +611,16 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 </CardContent>
               </Card>
 
-              {/* PLAN-price-tag-combos.md D1: the catalogue packages this product is
-                  sold as ("Combos", it is the host) and the mirror of anyone else's
-                  ("Sold with", it is a part). A product can be both at once, so both
-                  sections render unconditionally, each with its own empty state. They
-                  sit on Overview rather than Suppliers because a combo is what the
-                  product IS sold as, not a fact about how it is bought. */}
-              <ProductCombosSection productId={productId} />
+              {/* PLAN-price-tag-combos.md D1: the mirror of anyone else's combos ("Sold with",
+                  this product is a part). The combos this product hosts have their own tab. */}
               <ProductAccessoriesSection productId={productId} />
               <ProductTagTemplatesSection productId={productId} />
               <ProductSoldWithSection productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Combos (COMBO-SETTINGS-UX) */}
+            <TabsContent value="combos">
+              <ProductCombosSection productId={productId} productCode={product.product_code} />
             </TabsContent>
 
             {/* Tab: Stock */}
@@ -652,6 +667,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Specifications - what spec-search derived from this product */}
             <TabsContent value="specifications">
               <ProductSpecificationsTab productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Lineage - codes created through a New Product Application */}
+            <TabsContent value="lineage">
+              <ProductLineageTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}
