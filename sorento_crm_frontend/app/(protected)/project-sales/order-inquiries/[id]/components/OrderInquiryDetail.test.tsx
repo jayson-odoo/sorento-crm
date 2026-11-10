@@ -26,10 +26,28 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
 
+// STANDARD-HISTORY wave 1: a test may open the page on a tab (`?tab=history`).
+const searchState = vi.hoisted(() => ({ query: '' }));
+const getOrderInquiryHistorySpy = vi.hoisted(() =>
+  vi.fn(async (_id: string) => ({
+    events: [
+      {
+        id: 'audit-unconfirm',
+        kind: 'unconfirmed',
+        at: '2026-11-09T09:15:53',
+        actor: 'J*** (Purchasing)',
+        title: 'Unconfirmed 9 lines',
+        lines: [
+          { row_id: 'r1', so_line_no: 1, item_code: 'SRTSP131', qty: 4, change: 'Confirmed -> To confirm' },
+        ],
+      },
+    ],
+  })),
+);
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/project-sales/order-inquiries/oi-1',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(searchState.query),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -186,6 +204,7 @@ vi.mock(
         purchase_orders: [],
         spos: [],
       })),
+      getOrderInquiryHistory: (...args: unknown[]) => getOrderInquiryHistorySpy(...(args as [string])),
       listOrderInquiryHeaders: vi.fn(async () => ({
         data: [],
         total: 0,
@@ -255,6 +274,8 @@ function renderDetail(id: string) {
 }
 
 beforeEach(() => {
+  searchState.query = '';
+  getOrderInquiryHistorySpy.mockClear();
   acknowledgeFilterSpy.mockClear();
   acknowledgeRowsSpy.mockClear();
   autoPlaceSpy.mockClear();
@@ -750,5 +771,26 @@ describe('owner hand test (5 Nov 2026): the sales order is named in the header c
     const plain = await screen.findByTestId('oi-header-so');
     expect(plain).toHaveTextContent('SO123456');
     expect(screen.queryByTestId('oi-header-so-link')).toBeNull();
+  });
+});
+
+describe('STANDARD-HISTORY wave 1: the History tab (AC-SH-B8)', () => {
+  it('is the last tab, after Related SPO', async () => {
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    const tabs = screen.getAllByRole('tab').map((tab) => tab.textContent);
+    expect(tabs.slice(-2)).toEqual(['Related SPO', 'History']);
+    // Not opened: nothing is read for it.
+    expect(getOrderInquiryHistorySpy).not.toHaveBeenCalled();
+  });
+
+  it("opened, reads this OI's history and shows a batch press as one event", async () => {
+    searchState.query = 'tab=history';
+    renderDetail('oi-1');
+    const event = await screen.findByTestId('history-event-audit-unconfirm');
+    expect(getOrderInquiryHistorySpy).toHaveBeenCalledWith('oi-1');
+    expect(event).toHaveTextContent('Unconfirmed 9 lines');
+    expect(event).toHaveTextContent('J*** (Purchasing)');
+    expect(screen.getByRole('combobox', { name: 'Product' })).toBeInTheDocument();
   });
 });

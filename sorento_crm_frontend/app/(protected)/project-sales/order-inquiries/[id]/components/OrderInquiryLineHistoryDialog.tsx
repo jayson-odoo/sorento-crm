@@ -26,6 +26,7 @@ import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryReserveHistoryEntry } from '../../../_shared/services/orderInquiryReserveService';
 import { documentsOf } from '../../components/orderInquiryWorklistColumns';
 import { ReserveHistoryEntries } from './ReserveLineHistoryDialog';
+import { OrderInquiryHistory } from './OrderInquiryHistory';
 import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /**
@@ -206,6 +207,8 @@ export function OrderInquiryLineHistoryDialog({
   // S2 (AC-ND-20): every row of the line, cancelled included, arrived with the Lines
   // tab's one `include_history` fetch, so the dialog reads nothing of its own.
   const entries = React.useMemo(() => lineHistoryEntries(line), [line]);
+  const inquiryId = line.primary.order_inquiry_id ?? undefined;
+  const rowIds = React.useMemo(() => line.rows.map((row) => row.id), [line]);
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -219,16 +222,22 @@ export function OrderInquiryLineHistoryDialog({
             className="text-sm"
           />
           <DialogDescription className="sr-only">
-            Every row, decision and reserve behind this sales order line
+            Every event, row, decision and reserve behind this sales order line
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="min-w-0 flex-1 overflow-y-auto">
-          <Tabs defaultValue="rows" className="w-full min-w-0">
+          {/* STANDARD-HISTORY wave 1 (AC-SH-B12): "All events" first - the OI History tab's
+              own component, narrowed to this line's rows. Rows / Decisions / Reserve stay. */}
+          <Tabs defaultValue="all" className="w-full min-w-0">
             <TabsList variant="line" className="mb-3 w-full justify-start">
+              <TabsTrigger value="all">All events</TabsTrigger>
               <TabsTrigger value="rows">Rows</TabsTrigger>
               <TabsTrigger value="decisions">Decisions</TabsTrigger>
               {reserveEntries ? <TabsTrigger value="reserve">Reserve</TabsTrigger> : null}
             </TabsList>
+            <TabsContent value="all" className="mt-0 min-w-0">
+              <OrderInquiryHistory inquiryId={inquiryId} rowIds={rowIds} />
+            </TabsContent>
             <TabsContent value="rows" className="mt-0 min-w-0">
               <LineRowsGrid entries={entries} />
             </TabsContent>
