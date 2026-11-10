@@ -14,6 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from app.services.uuid_path_param import UUID_PATTERN
 
+from typing import Annotated as _Annotated
+
+#: A UUID-shaped id in a list body: a malformed one is a 422, never a database error.
+UUID4Str = _Annotated[str, Field(pattern=UUID_PATTERN)]
+
 # A pure, dependency-free lookup table (no DB, no network), so a schema importing it introduces
 # no cycle. It lives in services because the PDF renderer needs the same answer.
 from app.services import geo_places
@@ -24,9 +29,7 @@ from app.services import geo_places
 class ProjectPartyBase(BaseModel):
     party_type: str = Field(
         ...,
-        description=(
-            "developer | architect | main_contractor | trading_house | consultant"
-        ),
+        description="A key of the lookup set project_party_role: the role the party usually plays.",
     )
     name: str = Field(..., min_length=1, max_length=255)
     registration_no: Optional[str] = Field(None, max_length=100)
@@ -241,8 +244,6 @@ class ProjectRegisterRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -265,14 +266,16 @@ class ProjectUpdateRequest(BaseModel):
     lead_source: Optional[str] = Field(None, max_length=32)
     # Present = replace every link; absent = keep them.
     party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked on edit (PROJECT-PARTY-ROLES rule 13): ADDED as stakeholders, never
+    # removed here (owner Q6 b: removal stays on the Stakeholders tab). UUIDs, so a malformed id
+    # is a 422 rather than a database error.
+    contact_ids: Optional[List[UUID4Str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -308,8 +311,6 @@ class ProjectApproveRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -409,10 +410,6 @@ class ProjectResponse(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    architect_name: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
-    main_contractor_name: Optional[str] = None
     party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None
@@ -2050,7 +2047,21 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 
-class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
+class ProjectQuotationRecipientPick(BaseModel):
+    """PROJECT-PARTY-ROLES PR 2: the "To" chosen from the parties (owner addition 2, 10 Nov).
+
+    ``recipient_party_id`` picks the party (any of the company's; the project's own come first in
+    the picker) and the header autoloads from it; a party not on the project yet is linked to it in
+    ``recipient_role``. ``attn_contact_ids`` are that party's people the letter is for: their names
+    fill Attn and they join the project's stakeholders. Every typed field wins over the autoload.
+    The party is fixed once revision A is issued (owner Q5 a)."""
+
+    recipient_party_id: Optional[str] = Field(default=None, max_length=64)
+    recipient_role: Optional[str] = Field(default=None, max_length=32)
+    attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
+
+
+class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
     The document arrives already filled in: the reference from the numbering rule, the recipient
@@ -2081,7 +2092,7 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
-class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
+class ProjectQuotationDocumentUpdate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """The letterhead, correctable in the edit view.
 
     The recipient block is here and NOT on the base, so it can be corrected but never supplied at
@@ -2249,6 +2260,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     source_label: Optional[str] = None
     quotation_document_id: Optional[str] = None
     recipient_party_type: Optional[str] = None
+    # The role the recipient plays on THIS project (developer, or its party link), for the caption.
+    recipient_role: Optional[str] = None
     current_revision_label: Optional[str] = None
     next_revision_label: Optional[str] = None
 
@@ -2778,6 +2791,10 @@ class ProjectPartyOnProject(BaseModel):
     role: str
     name: str
     phone: Optional[str] = None
+    # The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2).
+    address: Optional[str] = None
+    email: Optional[str] = None
+    fax: Optional[str] = None
     contacts: List[ProjectPartyPerson] = Field(default_factory=list)
 
 

@@ -703,14 +703,10 @@ def test_r2_another_owner_keeps_its_rules_when_the_applicant_is_ineligible(world
 def test_s10_a_party_type_or_template_of_another_company_is_422(world):
     rid = pending(world)
     foreign_dev = developer(world.db, world.other_company, "Foreign Developer")
-    foreign_arch = developer(world.db, world.other_company, "Foreign Architect", "architect")
-    foreign_contractor = developer(world.db, world.other_company, "Foreign Builder", "main_contractor")
     foreign_type = project_type(world.db, world.other_company, "Foreign Type")
     c = as_user(world, world.approver)
     for over in (
         {"developer_party_id": foreign_dev.id},
-        {"architect_party_id": foreign_arch.id},
-        {"main_contractor_party_id": foreign_contractor.id},
         {"type_id": foreign_type.id},
         {"template_id": uid()},
     ):

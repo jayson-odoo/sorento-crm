@@ -574,6 +574,18 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Attn')).toHaveValue('');
   });
 
+  it('PROJECT-PARTY-ROLES: Save addresses a new proposal to the developer party, as its To', async () => {
+    getProject.mockResolvedValue(project({ developer_party_id: 'dev-1' }));
+    renderForm();
+    await nameScope(await openLines(), 'Townhouse');
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    expect(body.recipient_party_id).toBe('dev-1');
+    // Blanks the screen could not fill are left to the server, not sent as null.
+    expect('recipient_address_snapshot' in body).toBe(false);
+  });
+
   it('QUOTE-SCOPE-COMPACT: no scope header repeats the tab; Rename opens Edit scope from the tab', async () => {
     renderForm();
     const card = await openLines();
