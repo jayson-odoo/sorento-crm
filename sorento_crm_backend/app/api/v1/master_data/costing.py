@@ -79,6 +79,7 @@ def _rows_query(
     )
 
 
+# ai: not-for-assistant supplier cost, landing cost and party mark-ups are management-only (management decision 9 Nov 2026); a chat answer carries a figure further than this gated screen
 @router.get("/rows")
 def get_rows(
     party_id: Optional[str] = Query(None),
