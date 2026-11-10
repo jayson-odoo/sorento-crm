@@ -2,10 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
 import { changePercent, count, rm0, sceneSelection, separateLabels, stackTags, tagLabel, townFrame } from '../lib/townFormat';
+import { DEFAULT_VIEW, cameraPosition, dragView, pinchZoom, stepZoom, wheelZoom, type TownView } from '../lib/townCamera';
+import { townTip, type TipSubject } from '../lib/townTips';
 import type { TownTarget } from './TownLightbox';
 
 /**
@@ -81,14 +85,28 @@ const PRISM = (() => {
   return g;
 })();
 
-type Pickable = [THREE.Object3D, (instanceId: number) => void];
+/** A clickable thing: what a click / tap opens, and what the mouse tooltip names. */
+type Pickable = [THREE.Object3D, (instanceId: number) => void, (instanceId: number) => TipSubject | null];
+
+export interface TownTipState {
+  title: string;
+  detail: string;
+  x: number;
+  y: number;
+}
+
+export interface SceneHandle {
+  dispose: () => void;
+  setView: (view: TownView) => void;
+}
 
 function mountScene(
   canvas: HTMLCanvasElement,
   snapshot: TownSnapshot,
-  yawRef: { current: number },
+  viewRef: { current: TownView },
   select: (target: TownTarget) => void,
-): () => void {
+  hover: (tip: TownTipState | null) => void,
+): SceneHandle {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   const scene = new THREE.Scene();
@@ -131,7 +149,8 @@ function mountScene(
     const centreY = BOARD_LOOK_Y * up.y; // what the camera looks at, on screen
     // the scoreboard: always facing the camera, 16.4 wide, 6.4 tall (foreshortened by the elevation), centred 9.2 up
     const board = { x: 0, y: BOARD_Y * up.y, w: BOARD_W, h: BOARD_H * up.y };
-    const view = { left: cam.left, right: cam.right, bottom: centreY + cam.bottom, top: centreY + cam.top };
+    const z = cam.zoom; // a zoomed camera shows less of the town: the labels stay inside what is shown
+    const view = { left: cam.left / z, right: cam.right / z, bottom: centreY + cam.bottom / z, top: centreY + cam.top / z };
     // the fixed labels first: clear of the scoreboard and of each other, inside the canvas, never dropped
     const at = fixedLabels.map(({ sprite, anchor }) => box(anchor, sprite));
     const spots = separateLabels(at, board, view);
@@ -151,8 +170,10 @@ function mountScene(
     });
   };
   const placeCam = () => {
-    cam.position.set(Math.cos(yawRef.current) * 80, 70, Math.sin(yawRef.current) * 80);
+    cam.position.set(...cameraPosition(viewRef.current, BOARD_LOOK_Y));
     cam.lookAt(0, BOARD_LOOK_Y, 0); // the island's centre on screen: its ellipse and the scoreboard above it
+    cam.zoom = viewRef.current.zoom;
+    cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
     layoutTags();
     invalidate();
@@ -283,7 +304,7 @@ function mountScene(
   boardFace.renderOrder = 5; // under every label (10), so a tag never ends up behind the scoreboard
   boardGroup.add(boardFace);
   scene.add(boardGroup);
-  pickables.push([boardFace, () => select({ kind: 'sales' })]);
+  pickables.push([boardFace, () => select({ kind: 'sales' }), () => ({ kind: 'sales' })]);
   const faceBoard = () => boardGroup.rotation.set(0, Math.atan2(cam.position.x, cam.position.z), 0);
 
   // (2) dealer shops in one calm crescent: grey unless bought today; lit ones get a tag
@@ -312,7 +333,11 @@ function mountScene(
   });
   shopMesh.count = slot.length;
   scene.add(shopMesh);
-  pickables.push([shopMesh, (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key })]);
+  pickables.push([
+    shopMesh,
+    (i) => slot[i] && select({ kind: 'shop', key: slot[i].s.key }),
+    (i) => (slot[i] ? { kind: 'shop', shop: slot[i].s } : null),
+  ]);
   [...tagged]
     .map((shop) => slot.find((o) => o.s === shop))
     .forEach((o) => {
@@ -350,11 +375,12 @@ function mountScene(
   });
   whMesh.count = whSlot.length;
   scene.add(whMesh);
-  pickables.push([whMesh, () => select({ kind: 'low' })]);
+  pickables.push([whMesh, () => select({ kind: 'low' }), (i) => ({ kind: 'warehouse', index: i })]);
   const [bx, bz] = polar(18, 182);
   pickables.push([
     fixed(label(`!  ${count(snapshot.reorder.below_count)} low`, bx, 7, bz, '#dc2626', '#ffffff', 300, 1.05)),
     () => select({ kind: 'low' }),
+    () => ({ kind: 'low' }),
   ]);
 
   // (4) depot with lorries lined up
@@ -373,7 +399,7 @@ function mountScene(
   depot.position.set(dx, 0, dz);
   depot.rotation.y = dry;
   scene.add(depot);
-  pickables.push([depot, () => select({ kind: 'deliver' })]);
+  pickables.push([depot, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' })]);
   const lorryN = Math.min(LORRY_CAP, deliveries ? deliveries.to_deliver : 0);
   const lorries = new THREE.InstancedMesh(
     merge([
@@ -397,10 +423,11 @@ function mountScene(
   }
   lorries.count = lorryN;
   scene.add(lorries);
-  pickables.push([lorries, () => select({ kind: 'deliver' })]);
+  pickables.push([lorries, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' })]);
   pickables.push([
     fixed(label(`To deliver: ${deliveries ? count(deliveries.to_deliver) : '-'}`, dx, 5.4, dz, '#1d4ed8', '#ffffff', 380, 0.9)),
     () => select({ kind: 'deliver' }),
+    () => ({ kind: 'deliver' }),
   ]);
 
   // (5) approvals office with a badge
@@ -417,7 +444,7 @@ function mountScene(
   office.position.set(ox, 0, oz);
   office.rotation.y = face(ox, oz);
   scene.add(office);
-  pickables.push([office, () => select({ kind: 'approve' })]);
+  pickables.push([office, () => select({ kind: 'approve' }), () => ({ kind: 'approve' })]);
   pickables.push([
     fixed(
       label(
@@ -429,6 +456,7 @@ function mountScene(
       ),
     ),
     () => select({ kind: 'approve' }),
+    () => ({ kind: 'approve' }),
   ]);
 
   // a handful of trees only, for softness
@@ -447,40 +475,104 @@ function mountScene(
   });
   scene.add(trees);
 
-  // input: drag turns the town, a tap picks a building
+  // input: drag sideways turns, drag up and down tilts, wheel / pinch zooms; a click or a tap opens a
+  // building's lightbox; a mouse resting on one shows its tooltip (touch has no hover: a tap opens)
   const ray = new THREE.Raycaster();
   const ptr = new THREE.Vector2();
-  let drag: { x: number; yaw: number; moved: boolean } | null = null;
+  let drag: { x: number; y: number; view: TownView; moved: boolean } | null = null;
+  const touches = new Map<number, { x: number; y: number }>();
+  let pinch: { distance: number; zoom: number } | null = null;
+  let hovered: string | null = null;
+  const spread = () => {
+    const [a, b] = [...touches.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  const pick = (clientX: number, clientY: number) => {
+    const r = canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    ptr.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ptr, cam);
+    const hits = ray.intersectObjects(pickables.map((p) => p[0]), false);
+    if (!hits.length) return null;
+    const found = pickables.find((p) => p[0] === hits[0].object);
+    return found ? { pickable: found, instance: hits[0].instanceId ?? 0, x: clientX - r.left, y: clientY - r.top } : null;
+  };
+  const clearHover = () => {
+    if (hovered === null) return;
+    hovered = null;
+    canvas.style.cursor = '';
+    hover(null);
+  };
+  const setView = (view: TownView) => {
+    viewRef.current = view;
+    placeCam();
+    faceBoard();
+  };
   const onDown = (e: PointerEvent) => {
-    drag = { x: e.clientX, yaw: yawRef.current, moved: false };
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) {
+      pinch = { distance: spread(), zoom: viewRef.current.zoom };
+      drag = null;
+      return;
+    }
+    drag = { x: e.clientX, y: e.clientY, view: viewRef.current, moved: false };
   };
   const onMove = (e: PointerEvent) => {
-    if (!drag) return;
-    const dxp = e.clientX - drag.x;
-    if (Math.abs(dxp) > 4) drag.moved = true;
-    if (drag.moved) {
-      yawRef.current = drag.yaw - dxp * 0.006;
-      placeCam();
-      faceBoard();
+    if (touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size === 2) {
+      setView({ ...viewRef.current, zoom: pinchZoom(pinch.zoom, pinch.distance, spread()) });
+      return;
     }
+    if (drag) {
+      const dxp = e.clientX - drag.x;
+      const dyp = e.clientY - drag.y;
+      if (Math.hypot(dxp, dyp) > 4) drag.moved = true;
+      if (drag.moved) {
+        clearHover();
+        setView(dragView(drag.view, dxp, dyp));
+      }
+      return;
+    }
+    if (e.pointerType !== 'mouse' || e.target !== canvas) return;
+    const hit = pick(e.clientX, e.clientY);
+    const subject = hit ? hit.pickable[2](hit.instance) : null;
+    if (!hit || !subject) {
+      clearHover();
+      return;
+    }
+    hovered = `${hit.pickable[0].id}:${hit.instance}`;
+    canvas.style.cursor = 'pointer';
+    hover({ ...townTip(snapshot, subject), x: hit.x, y: hit.y });
   };
   const onUp = (e: PointerEvent) => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = null;
     const moved = drag?.moved;
     drag = null;
     if (moved || e.target !== canvas) return;
-    const r = canvas.getBoundingClientRect();
-    ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ptr, cam);
-    const hits = ray.intersectObjects(pickables.map((p) => p[0]), false);
-    if (!hits.length) return;
-    pickables.find((p) => p[0] === hits[0].object)?.[1](hits[0].instanceId ?? 0);
+    const hit = pick(e.clientX, e.clientY);
+    if (!hit) return;
+    clearHover();
+    hit.pickable[1](hit.instance);
+  };
+  const onCancel = (e: PointerEvent) => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = null;
+    drag = null;
+  };
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    setView({ ...viewRef.current, zoom: wheelZoom(viewRef.current.zoom, e.deltaY) });
   };
   const onVisible = () => {
     if (!document.hidden) invalidate();
   };
   canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointerleave', clearHover);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onCancel);
   document.addEventListener('visibilitychange', onVisible);
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
@@ -488,12 +580,15 @@ function mountScene(
   faceBoard();
   resize();
 
-  return () => {
+  const dispose = () => {
     disposed = true;
     if (frameId) cancelAnimationFrame(frameId);
     canvas.removeEventListener('pointerdown', onDown);
+    canvas.removeEventListener('pointerleave', clearHover);
+    canvas.removeEventListener('wheel', onWheel);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onCancel);
     document.removeEventListener('visibilitychange', onVisible);
     observer.disconnect();
     scene.traverse((object) => {
@@ -511,6 +606,7 @@ function mountScene(
     trees.dispose();
     renderer.dispose();
   };
+  return { dispose, setView };
 }
 
 const LEGEND = [
@@ -528,7 +624,9 @@ export function TownScene({
   onSelect: (target: TownTarget) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const yawRef = useRef(Math.PI / 4);
+  const viewRef = useRef<TownView>(DEFAULT_VIEW);
+  const sceneRef = useRef<SceneHandle | null>(null);
+  const [tip, setTip] = useState<TownTipState | null>(null);
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
   const [hint, setHint] = useState(() => !localStore.getItem(HINT_KEY));
@@ -547,11 +645,25 @@ export function TownScene({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    return mountScene(canvas, snapshot, yawRef, (target) => {
-      dismissHint();
-      selectRef.current(target);
-    });
+    const scene = mountScene(
+      canvas,
+      snapshot,
+      viewRef,
+      (target) => {
+        dismissHint();
+        selectRef.current(target);
+      },
+      setTip,
+    );
+    sceneRef.current = scene;
+    return () => {
+      sceneRef.current = null;
+      setTip(null);
+      scene.dispose();
+    };
   }, [snapshot]);
+
+  const changeView = (next: Partial<TownView>) => sceneRef.current?.setView({ ...viewRef.current, ...next });
 
   return (
     <div
@@ -566,6 +678,27 @@ export function TownScene({
             Closed for the day
           </Badge>
         ) : null}
+        {tip ? (
+          <div
+            role="tooltip"
+            className="pointer-events-none absolute z-10 max-w-64 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md"
+            style={{ left: tip.x, top: tip.y - 12 }}
+          >
+            <div className="truncate font-semibold">{tip.title}</div>
+            <div className="truncate text-muted-foreground">{tip.detail}</div>
+          </div>
+        ) : null}
+        <div className="absolute bottom-2 end-2 flex gap-1 rounded-lg border border-border bg-background/80 p-1 backdrop-blur">
+          <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Zoom out" title="Zoom out" onClick={() => changeView({ zoom: stepZoom(viewRef.current.zoom, -1) })}>
+            <Minus />
+          </Button>
+          <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Zoom in" title="Zoom in" onClick={() => changeView({ zoom: stepZoom(viewRef.current.zoom, 1) })}>
+            <Plus />
+          </Button>
+          <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Reset view" title="Reset view" onClick={() => changeView(DEFAULT_VIEW)}>
+            <RotateCcw />
+          </Button>
+        </div>
         {hint ? (
           <div className="pointer-events-none absolute start-1/2 top-3 -translate-x-1/2 rounded-lg border border-border bg-background/80 px-3.5 py-2 text-sm font-semibold backdrop-blur">
             Tap any building
