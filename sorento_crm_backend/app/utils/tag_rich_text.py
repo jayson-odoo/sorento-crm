@@ -316,7 +316,9 @@ def sanitise_description(value: Optional[str]) -> Optional[str]:
     """
     if value is None:
         return None
-    value = _CONTROLS.sub("", value)
+    # Leading invisible characters (BOM, zero-width) are dropped, so the server and the browser
+    # (whose `\s` differs from Python's) always agree on whether a value is rich.
+    value = _CONTROLS.sub("", value).lstrip("\ufeff\u200b\u200c\u200d\u2060\x85")
     if not value.strip():
         return None
     if not is_rich(value):

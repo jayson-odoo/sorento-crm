@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { RichDescription } from '@/components/common/RichDescription';
-import { richOneLine } from '@/lib/dealer-kit/rich-text';
+import { isRich, richOneLine } from '@/lib/dealer-kit/rich-text';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
@@ -78,7 +78,12 @@ function withUom(line: QuotationSignLine): string {
 function Description({ line }: { line: QuotationSignLine }) {
   return (
     <>
-      <RichDescription value={line.description} empty="" />
+      {/* Styled text as the PDF prints it; plain text exactly as this page always showed it. */}
+      {isRich(line.description) ? (
+        <RichDescription value={line.description} empty="" />
+      ) : (
+        cell(line.description)
+      )}
       {line.technical_spec?.trim() ? (
         <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
           {line.technical_spec}

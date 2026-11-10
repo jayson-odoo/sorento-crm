@@ -542,8 +542,9 @@ def _snapshot_product(db: Session, line: ProjectQuotationLine, product: Product)
     sent, and a discontinued SKU must still print on last year's quotation.
     """
     line.product_code_snapshot = product.product_code
-    line.description_snapshot = (
-        line.description_snapshot or product.description or product.product_name
+    # The catalogue text is not edited through the line editor, so it passes the same save rule.
+    line.description_snapshot = line.description_snapshot or sanitise_description(
+        product.description or product.product_name
     )
     line.list_price_snapshot = product.list_price
     if line.uom is None:
@@ -573,7 +574,7 @@ def _snapshot_set(
     from app.services import product_set_service
 
     line.product_code_snapshot = product_set.set_code
-    line.description_snapshot = line.description_snapshot or product_set.name
+    line.description_snapshot = line.description_snapshot or sanitise_description(product_set.name)
     line.list_price_snapshot = product_set_service.resolve_set_price(product_set).resolved
     if line.uom is None:
         line.uom = "SET"

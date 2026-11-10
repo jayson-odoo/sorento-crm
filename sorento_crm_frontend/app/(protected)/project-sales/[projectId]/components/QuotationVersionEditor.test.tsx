@@ -1447,6 +1447,24 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2);
   });
 
+  it('finds a styled description by its words, never by its markup (QUOTE-DESC-RICHTEXT)', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: '<p><strong>Ba</strong>sin mixer</p>', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Grab bar', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const search = screen.getByRole('textbox', { name: 'Search lines by product or description' });
+    fireEvent.change(search, { target: { value: 'basin' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-2' })).toBeNull(),
+    );
+    expect(screen.getByRole('button', { name: 'Description on A-1' })).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: 'strong' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Description on A-1' })).toBeNull(),
+    );
+  });
+
   it('offers no drag handles and no grid editors in the read view', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     renderEditor();

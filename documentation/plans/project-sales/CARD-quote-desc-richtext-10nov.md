@@ -46,10 +46,14 @@ WhatsApp / email send text carries no line descriptions (grep of `QuotationWhats
 ## Rules
 
 R1. The Description cell on a proposal or quotation edits with the shared `RichTextEditor`. Nothing new is built.
-R2. Stored in the same column, in the same format as the price tag description: plain text, or HTML sanitised by
-    `sanitise_tag_html` on EVERY write path (add, save all, edit one, new form, edit form, amendment apply). No migration.
-R3. Plain stays plain. An existing plain description shows exactly as today everywhere (grid, PDF line breaks, sign
-    link, Excel). An edit whose result carries no styling at all (paragraphs only) is stored back as plain text, one
+R2. Stored in the same column, in the same format as the price tag description: plain text, or HTML through the
+    price tag allow-list. The save rule is `sanitise_description` (`utils/tag_rich_text.py`), run in `_write_line` on
+    EVERY write path (add, save all, edit one, new form, edit form) and on the catalogue / set default. Rich input
+    goes through the same allow-list pass as `sanitise_tag_html`; unlike it, plain text is kept exactly as typed,
+    angle brackets included ("PIPE <DN50"), since every plain reader escapes it. No migration.
+R3. Plain stays plain. An existing plain description shows exactly as today everywhere (grid and PDF with their line
+    breaks, sign link inline as before, Excel). Note: once a description is edited, the editor normalises runs of
+    spaces to one (opening without typing changes nothing). An edit whose result carries no styling at all (paragraphs only) is stored back as plain text, one
     line per paragraph, so typing in an old line does not turn it into HTML.
 R4. The catalogue default (product description, else product name; set name for a set) is still the starting text.
 R5. Styled text prints the same on the PDF (both the plain and the matrix scope tables) and the sign link as in the

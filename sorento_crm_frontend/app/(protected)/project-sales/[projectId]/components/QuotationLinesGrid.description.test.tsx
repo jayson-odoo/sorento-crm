@@ -128,6 +128,16 @@ describe('Description cell, editing', () => {
     expect(screen.getByRole('button', { name: /^text colour$/i })).toBeInTheDocument();
   });
 
+  it('opens from the keyboard too (Enter on the focused cell)', async () => {
+    renderGrid([staged({ ...BASE, description: STYLED })], true);
+    const trigger = screen.getByRole('button', { name: /Description on ZZT8518/ });
+    trigger.focus();
+    await act(async () => {
+      fireEvent.keyDown(trigger, { key: 'Enter' });
+    });
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).not.toBeNull());
+  });
+
   it('a plain description opens as one paragraph per line', async () => {
     renderGrid([staged({ ...BASE, description: 'LINE ONE\nLINE TWO' })], true);
     await act(async () => {

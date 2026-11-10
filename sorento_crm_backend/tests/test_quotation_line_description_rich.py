@@ -75,6 +75,12 @@ def test_an_unstyled_edit_whose_text_would_read_as_html_stays_html():
     assert sanitise_description(value) == value
 
 
+def test_a_leading_invisible_character_cannot_hide_markup_from_the_save_rule():
+    clean = sanitise_description('\ufeff<p>WC<img src=x onerror="alert(1)"></p>')
+    assert clean == "WC"
+    assert "<img" not in (sanitise_description("\u200b<p><strong>A</strong><img src=x></p>") or "")
+
+
 def test_an_empty_editor_stores_nothing():
     assert sanitise_description("<p></p>") is None
     assert sanitise_description("   ") is None

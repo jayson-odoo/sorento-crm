@@ -464,10 +464,18 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   return (
     <Popover onOpenChange={(open) => (open ? undefined : grid.markVisited(row.key))}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
+        {/* A div, not a <button>: the styled text holds block elements, which a button may not. */}
+        <div
+          role="button"
+          tabIndex={0}
           aria-label={`Description on ${label}`}
           title="Edit description"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          }}
           className="block min-h-8 w-full min-w-0 cursor-text rounded-md border border-input bg-background px-2 py-1.5 text-left hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {value.trim() ? (
@@ -475,7 +483,7 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           ) : (
             <span className="text-xs text-muted-foreground">Type what the customer reads</span>
           )}
-        </button>
+        </div>
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent
