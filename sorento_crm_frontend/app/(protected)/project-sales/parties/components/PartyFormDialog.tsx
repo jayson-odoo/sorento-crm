@@ -37,6 +37,7 @@ export function PartyFormDialog({
   const [name, setName] = React.useState(party?.name ?? '');
   const [registrationNo, setRegistrationNo] = React.useState(party?.registration_no ?? '');
   const [phone, setPhone] = React.useState(party?.phone ?? '');
+  const [fax, setFax] = React.useState(party?.fax ?? '');
   const [email, setEmail] = React.useState(party?.email ?? '');
   const [address, setAddress] = React.useState(party?.address ?? '');
   const [notes, setNotes] = React.useState(party?.notes ?? '');
@@ -64,6 +65,7 @@ export function PartyFormDialog({
               name: name.trim(),
               registration_no: registrationNo.trim() || null,
               phone: phone.trim() || null,
+              fax: fax.trim() || null,
               email: email.trim() || null,
               address: address.trim() || null,
               notes: notes.trim() || null,
@@ -119,6 +121,14 @@ export function PartyFormDialog({
                   id="party-phone"
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="party-fax">Fax</Label>
+                <Input
+                  id="party-fax"
+                  value={fax}
+                  onChange={(event) => setFax(event.target.value)}
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">

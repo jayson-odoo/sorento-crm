@@ -27,6 +27,7 @@ type KnownParty = {
   address?: string | null;
   phone?: string | null;
   email?: string | null;
+  fax?: string | null;
   /** Address / phone / email were read (a names-only search leaves them unknown). */
   detailed: boolean;
 };
@@ -77,6 +78,7 @@ export function QuotationRecipientPicker({
       address: row.address,
       phone: row.phone,
       email: row.email,
+      fax: row.fax,
       detailed: true,
     }),
     [],
@@ -111,6 +113,7 @@ export function QuotationRecipientPicker({
           address: party.address,
           phone: party.phone,
           email: party.email,
+          fax: party.fax,
           // A caller without the parties view grant gets names only: nothing else is known.
           detailed: 'address' in party || 'phone' in party,
         };
@@ -156,6 +159,7 @@ export function QuotationRecipientPicker({
       recipient_address_snapshot: party.detailed ? party.address || siteAddress || null : null,
       recipient_phone_snapshot: party.detailed ? party.phone || null : null,
       recipient_email_snapshot: party.detailed ? party.email || null : null,
+      recipient_fax_snapshot: party.detailed ? party.fax || null : null,
       attn_name: null,
       attn_contact_ids: [],
     });

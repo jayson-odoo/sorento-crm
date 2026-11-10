@@ -443,7 +443,10 @@ export function promotionFormDateToApiYyyyMmDd(value: Date | string | undefined)
  * Format a UTC datetime (from API/DB) as date and time in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
  */
-export function formatDateTimeInMalaysia(input: Date | string | number): string {
+export function formatDateTimeInMalaysia(
+  input: Date | string | number,
+  { seconds = false }: { seconds?: boolean } = {},
+): string {
   const date = toUTCDate(input);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('en-GB', {
@@ -452,6 +455,8 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    // STANDARD-HISTORY v2: a history shows seconds only where two entries share a minute.
+    ...(seconds ? { second: '2-digit' as const } : {}),
     hourCycle: 'h12',
     timeZone: MALAYSIA_TZ,
   }).format(date);

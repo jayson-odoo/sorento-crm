@@ -69,6 +69,7 @@ export interface PartyOnProject {
   /** The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2). */
   address?: string | null;
   email?: string | null;
+  fax?: string | null;
   contacts: {
     stakeholder_id: string;
     party_contact_id: string | null;
@@ -88,6 +89,7 @@ export interface ProjectParty {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;
@@ -106,6 +108,7 @@ export interface ProjectPartyBody {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;

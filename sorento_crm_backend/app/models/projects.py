@@ -115,6 +115,7 @@ class ProjectParty(Base, CompanyScopedMixin):
     registration_no = Column(String(100), nullable=True)
     address = Column(Text, nullable=True)
     phone = Column(String(50), nullable=True)
+    fax = Column(String(50), nullable=True)
     email = Column(String(150), nullable=True)
     notes = Column(Text, nullable=True)
     customer_id = Column(
@@ -1189,6 +1190,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_fax_snapshot = Column(String(200), nullable=True)
     recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
     # Cover page (QUOTE-COVER-PAGE): free text, per quotation.

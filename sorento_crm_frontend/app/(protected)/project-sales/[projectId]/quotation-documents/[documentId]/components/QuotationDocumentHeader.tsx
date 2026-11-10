@@ -251,6 +251,16 @@ export function QuotationDocumentHeader({
                   placeholder="Their contact number"
                 />
               </EditField>
+              <EditField id="quotation-recipient-fax" label="Fax">
+                <Input
+                  id="quotation-recipient-fax"
+                  value={document.recipient_fax_snapshot ?? ''}
+                  onChange={(event) =>
+                    onChange({ recipient_fax_snapshot: event.target.value || null })
+                  }
+                  placeholder="Their fax number"
+                />
+              </EditField>
               <EditField id="quotation-recipient-email" label="Email">
                 <Input
                   id="quotation-recipient-email"
@@ -287,6 +297,12 @@ export function QuotationDocumentHeader({
               <p className="min-w-0 break-words text-sm text-muted-foreground">
                 {document.recipient_phone_snapshot ?? '-'}
               </p>
+              {document.recipient_fax_snapshot ? (
+                <p className="min-w-0 break-words text-sm">
+                  <span className="text-muted-foreground">Fax: </span>
+                  <span className="font-medium">{document.recipient_fax_snapshot}</span>
+                </p>
+              ) : null}
               {document.recipient_email_snapshot ? (
                 <p className="min-w-0 break-words text-sm">
                   <span className="text-muted-foreground">Email: </span>

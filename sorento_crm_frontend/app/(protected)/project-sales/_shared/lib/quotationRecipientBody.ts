@@ -5,6 +5,7 @@ const RECIPIENT_FIELDS = [
   'recipient_address_snapshot',
   'recipient_phone_snapshot',
   'recipient_email_snapshot',
+  'recipient_fax_snapshot',
 ] as const;
 
 /**
