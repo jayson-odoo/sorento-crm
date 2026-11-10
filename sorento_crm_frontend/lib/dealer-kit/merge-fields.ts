@@ -24,6 +24,7 @@
  */
 
 import { isRich, richPlainText } from './rich-text';
+import { comboPartsHtml } from './combo-parts';
 import { comboPositions } from './combo-slots';
 import { formatTagPrice } from './price-badge';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
@@ -201,6 +202,8 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
   { path: 'combo.free_items', label: 'Combo accessories included', group: 'Combo' },
+  // COMBO-SETTINGS-UX: every part, printed through the combo's own "Each part prints as" line.
+  { path: 'combo.parts', label: 'All parts as a list', group: 'Combo' },
   // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
   { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
   { path: 'line.area', label: 'Area', group: 'Spec sheet' },
@@ -298,6 +301,11 @@ function resolvePath(
     const key = path.slice('spec.'.length);
     const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
+  }
+
+  if (path === 'combo.parts') {
+    // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).
+    return richPlainText(comboPartsHtml(data));
   }
 
   if (path === 'combo.name' || path === 'combo.description' || path === 'combo.free_items') {

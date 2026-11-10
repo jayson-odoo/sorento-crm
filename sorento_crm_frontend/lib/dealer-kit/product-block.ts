@@ -53,6 +53,7 @@ import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
 import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
+import { comboPartsHtml } from './combo-parts';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -721,7 +722,9 @@ export function layerRichBlocks(
         ? resolveSlotText({ slot_binding: 'price_tag_description', props: layer.props }, data)
         : path === 'combo.description'
           ? (comboOf(data)?.description ?? null)
-          : null;
+          : path === 'combo.parts'
+            ? comboPartsHtml(data)
+            : null;
     if (isRich(value)) source = value as string;
   } else if (!isRich(source)) {
     const inline = richTokenInText(source, data, layer.props);
@@ -741,7 +744,9 @@ export function layerRichBlocks(
   return richBlocksWithFields(source, data, mode, layer);
 }
 
-const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
+const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description|combo\.parts)\s*\}\}/g;
+/** Inside a description itself only the parts list is spliced (a description never pulls itself in). */
+const PARTS_TOKEN = /\{\{\s*(combo\.parts)\s*\}\}/g;
 
 /** The stored value behind a rich description token, rich or not. */
 function richTokenValue(
@@ -749,6 +754,7 @@ function richTokenValue(
   data: TagBindingData | null | undefined,
   props: TagLayerProps | undefined,
 ): string | null {
+  if (path === 'combo.parts') return comboPartsHtml(data);
   return path === 'product.price_tag_description'
     ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
     : (comboOf(data)?.description ?? null);
@@ -807,12 +813,13 @@ function spliceRichTokens(
   data: TagBindingData | null | undefined,
   mode: MergeFieldMode,
   layer: Pick<TagLayer, 'props'>,
+  tokens: RegExp = RICH_TOKEN,
 ): RichBlock[] | null {
   const out: RichBlock[] = [{ ...entry, runs: [] }];
   let spliced = false;
   for (const run of entry.runs) {
     let at = 0;
-    for (const match of run.text.matchAll(RICH_TOKEN)) {
+    for (const match of run.text.matchAll(tokens)) {
       const value = richTokenValue(match[1], data, layer.props);
       const blocks = isRich(value) ? richBlocksWithFields(value, data, mode, layer, false) : null;
       if (!blocks) continue;
@@ -846,7 +853,7 @@ export function richBlocksWithFields(
   if (!isRich(value)) return null;
   const out: RichBlock[] = [];
   for (const entry of parseRichText(value)) {
-    const spliced = spliceData && layer ? spliceRichTokens(entry, data, mode, layer) : null;
+    const spliced = layer ? spliceRichTokens(entry, data, mode, layer, spliceData ? RICH_TOKEN : PARTS_TOKEN) : null;
     if (spliced) {
       out.push(...spliced);
       continue;
