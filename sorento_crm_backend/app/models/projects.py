@@ -90,14 +90,6 @@ APPROVAL_REJECTED = "rejected"
 APPROVAL_APPROVED = "approved"
 UNAPPROVED_STATES = (APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_RESUBMITTED, APPROVAL_REJECTED)
 
-PARTY_DEVELOPER = "developer"
-PARTY_ARCHITECT = "architect"
-PARTY_MAIN_CONTRACTOR = "main_contractor"
-PARTY_TRADING_HOUSE = "trading_house"
-PARTY_CONSULTANT = "consultant"
-PARTY_SUBCONTRACTOR = "subcontractor"
-PARTY_INTERIOR_DESIGNER = "interior_designer"
-PARTY_TENDER_PARTY = "tender_party"
 
 
 class ProjectParty(Base, CompanyScopedMixin):
@@ -172,17 +164,9 @@ class ProjectPartyContact(Base, CompanyScopedMixin):
     )
 
 
-#: The roles a project links to through `party_links`; the role IS the party's type. Developer,
-#: architect and main contractor stay single columns where they always were. Owner 2 Nov ~21:40
-#: (Q5 b): several trading houses, subcontractors and tender parties; one of each other role.
-PARTY_LINK_SINGLE_ROLES = ("consultant", "interior_designer")
-PARTY_LINK_ROLES = (
-    PARTY_SUBCONTRACTOR,
-    PARTY_TRADING_HOUSE,
-    PARTY_CONSULTANT,
-    PARTY_INTERIOR_DESIGNER,
-    PARTY_TENDER_PARTY,
-)
+#: A party playing a role on a project. The roles, and whether a role takes one party or several,
+#: are the editable lookup set `project_party_role` (PROJECT-PARTY-ROLES, owner 10 Nov 2026); see
+#: app/services/project_party_roles.py. Developer stays the `projects.developer_party_id` column.
 
 
 class ProjectPartyLink(Base):
@@ -459,6 +443,9 @@ class ProjectSalesProfile(Base):
     developer_name = Column(String(255), nullable=True)
     main_contractor_name = Column(String(255), nullable=True)
     architect_name = Column(String(255), nullable=True)
+    # RETIRED (PROJECT-PARTY-ROLES, owner Q2 a, 10 Nov 2026): architect and main contractor are
+    # ordinary `party_links` roles now, backfilled by migration ppr_0001. Nothing reads or writes
+    # these two columns; they stay until the owner OKs the drop.
     architect_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )

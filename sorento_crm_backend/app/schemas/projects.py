@@ -24,9 +24,7 @@ from app.services import geo_places
 class ProjectPartyBase(BaseModel):
     party_type: str = Field(
         ...,
-        description=(
-            "developer | architect | main_contractor | trading_house | consultant"
-        ),
+        description="A key of the lookup set project_party_role: the role the party usually plays.",
     )
     name: str = Field(..., min_length=1, max_length=255)
     registration_no: Optional[str] = Field(None, max_length=100)
@@ -236,8 +234,6 @@ class ProjectRegisterRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -258,14 +254,15 @@ class ProjectUpdateRequest(BaseModel):
     lead_source: Optional[str] = Field(None, max_length=32)
     # Present = replace every link; absent = keep them.
     party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked on edit (PROJECT-PARTY-ROLES rule 13): ADDED as stakeholders, never
+    # removed here (owner Q6 b: removal stays on the Stakeholders tab).
+    contact_ids: Optional[List[str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -299,8 +296,6 @@ class ProjectApproveRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -398,10 +393,6 @@ class ProjectResponse(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    architect_name: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
-    main_contractor_name: Optional[str] = None
     party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None

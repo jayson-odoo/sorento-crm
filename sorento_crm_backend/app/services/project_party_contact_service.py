@@ -12,8 +12,6 @@ from sqlalchemy.orm import Session
 from app.models.projects import (
     LEAD_SOURCE_SET_KEY,
     LEAD_SOURCES,
-    PARTY_LINK_ROLES,
-    PARTY_LINK_SINGLE_ROLES,
     Project,
     ProjectParty,
     ProjectPartyContact,
@@ -21,6 +19,7 @@ from app.models.projects import (
     ProjectSalesProfile,
     ProjectStakeholder,
 )
+from app.services import project_party_roles as party_roles
 from app.services.error_handler import AppException
 
 # ------------------------------------------------------------------ lead source (rule 8, Q4)
@@ -170,18 +169,13 @@ def _company_party(db: Session, company_id: str, party_id: Any) -> Optional[Proj
 
 
 def set_party_links(db: Session, project: Project, links: Iterable[Dict[str, Any]]) -> None:
-    """Replace the project's links with ``links``. Each party must be this company's and of the
-    role's type; a repeat is one link."""
+    """Replace the project's links with ``links``. Each party must be this company's; any party may
+    fill any role (PROJECT-PARTY-ROLES Q4 b). The roles and their one-or-many rule are the lookup
+    set ``project_party_role``; a repeat is one link."""
     wanted: Dict[tuple, None] = {}
     for link in links or []:
         role = (link or {}).get("role")
         party_id = (link or {}).get("party_id")
-        if role not in PARTY_LINK_ROLES:
-            raise AppException(
-                status_code=422,
-                message="That party role is not one a project links.",
-                code="project_party_role_invalid",
-            )
         party = _company_party(db, str(project.company_id), party_id)
         if party is None:
             raise AppException(
@@ -189,20 +183,12 @@ def set_party_links(db: Session, project: Project, links: Iterable[Dict[str, Any
                 message="Pick the parties, type and template from this company.",
                 code="project_ref_invalid",
             )
-        if party.party_type != role:
-            raise AppException(
-                status_code=422,
-                message=f'"{party.name}" is not a {role.replace("_", " ")}.',
-                code="project_party_role_mismatch",
-            )
         wanted[(role, party.id)] = None
-    for role in PARTY_LINK_SINGLE_ROLES:
-        if sum(1 for r, _p in wanted if r == role) > 1:
-            raise AppException(
-                status_code=422,
-                message=f"A project has one {role.replace('_', ' ')}.",
-                code="project_party_role_single",
-            )
+    existing = [
+        (row.role, row.party_id)
+        for row in db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).all()
+    ]
+    party_roles.check_links(db, list(wanted), existing)
     db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).delete(
         synchronize_session=False
     )
@@ -231,21 +217,9 @@ def party_links_for(db: Session, project_ids: List[str]) -> Dict[str, List[Dict[
 # ------------------------------------------------------------------ the project's parties
 
 
-def _single_role_parties(db: Session, project: Project) -> List[tuple]:
-    """``(role, party_id)`` for the developer, architect and main contractor columns."""
-    profile = db.get(ProjectSalesProfile, project.id)
-    pairs = [("developer", project.developer_party_id)]
-    if profile is not None:
-        pairs += [
-            ("architect", profile.architect_party_id),
-            ("main_contractor", profile.main_contractor_party_id),
-        ]
-    return [(role, pid) for role, pid in pairs if pid]
-
-
 def project_party_roles(db: Session, project: Project) -> List[tuple]:
-    """Every ``(role, party_id)`` on the project, single columns first, in a stable order."""
-    pairs = _single_role_parties(db, project)
+    """Every ``(role, party_id)`` on the project: the developer column first, then the links."""
+    pairs = [(party_roles.DEVELOPER, project.developer_party_id)] if project.developer_party_id else []
     pairs += [
         (row.role, row.party_id)
         for row in db.query(ProjectPartyLink)

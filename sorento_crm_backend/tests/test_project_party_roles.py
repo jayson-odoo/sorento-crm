@@ -337,7 +337,7 @@ def test_ac6_the_project_response_no_longer_carries_the_two_columns(v2):
 def test_ac6_the_project_parties_read_lists_architect_from_the_link(v2):
     arch = _party(v2, "architect")
     pid = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}]).json()["id"]
-    rows = as_user(v2, v2.owner).get(f"{PROJECTS}/{pid}/parties").json()
+    rows = as_user(v2, v2.owner).get(f"{PROJECTS}/{pid}/parties").json()["data"]
     assert ("architect", arch.id) in {(r["role"], r["party_id"]) for r in rows}
 
 
@@ -354,9 +354,11 @@ def test_ac6_the_backfill_sql_copies_both_columns_once(v2):
     profile.architect_party_id = arch.id
     profile.main_contractor_party_id = mc.id
     v2.db.flush()
+    # The scratch schema stands in for `projects`; the statements name the real one.
+    mapped = (v2.db.connection().get_execution_options().get("schema_translate_map") or {}).get("projects", "projects")
     for _ in range(2):
         for stmt in BACKFILL_SQL:
-            v2.db.execute(text(stmt))
+            v2.db.execute(text(stmt.replace("projects.", f"{mapped}.")))
     links = v2.db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == pid).all()
     assert sorted((l.role, l.party_id) for l in links) == sorted([("architect", arch.id), ("main_contractor", mc.id)])
 

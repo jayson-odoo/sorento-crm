@@ -121,7 +121,7 @@ def check_company_refs(
         message="Pick the parties, type and template from this company.",
         code=code,
     )
-    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+    for key in ("developer_party_id",):
         value = payload.get(key)
         if value and not (
             is_uuid(value)
@@ -179,8 +179,6 @@ def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dic
     }
     profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
     stored["customer_id"] = getattr(profile, "customer_id", None)
-    stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
-    stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
     out: Dict[str, Any] = {
         key: payload[key]
         for key in stored
@@ -725,11 +723,6 @@ def serialize_projects(
         .filter(ProjectSalesProfile.project_id.in_([p.id for p in projects]))
         .all()
     }
-    profile_party_names = _party_name_map(
-        db,
-        [pr.architect_party_id for pr in profiles.values()]
-        + [pr.main_contractor_party_id for pr in profiles.values()],
-    )
     from app.services.project_party_contact_service import party_links_for
 
     party_links = party_links_for(db, [p.id for p in projects])
@@ -890,21 +883,7 @@ def serialize_projects(
                 "address": profile.address if profile else None,
                 "state": profile.state if profile else None,
                 "mukim": profile.mukim if profile else None,
-                "architect_party_id": profile.architect_party_id if profile else None,
-                "architect_name": (
-                    profile_party_names.get(profile.architect_party_id)
-                    if profile
-                    else None
-                ),
                 "party_links": party_links.get(project.id, []),
-                "main_contractor_party_id": (
-                    profile.main_contractor_party_id if profile else None
-                ),
-                "main_contractor_name": (
-                    profile_party_names.get(profile.main_contractor_party_id)
-                    if profile
-                    else None
-                ),
                 "estimated_sales_value": (
                     profile.estimated_sales_value if profile else None
                 ),
@@ -1303,8 +1282,6 @@ _PROFILE_FIELDS = (
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
@@ -1454,6 +1431,8 @@ def update_project(
         party_contacts.assert_lead_source(db, payload["lead_source"], required=False)
     if "party_links" in payload and payload["party_links"] is not None:
         party_contacts.set_party_links(db, project, payload["party_links"])
+    # After the links: a contact of a party linked in this same save is accepted (rule 13).
+    party_contacts.add_registered_contacts(db, project, payload.get("contact_ids") or [])
 
     apply_sales_details(db, project, payload)
     return project

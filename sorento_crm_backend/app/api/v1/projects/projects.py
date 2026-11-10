@@ -74,8 +74,6 @@ _PROFILE_KEYS = (
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
