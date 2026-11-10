@@ -220,11 +220,11 @@ def test_r3_a_party_of_another_company_is_refused(v2):
     assert res.status_code == 422, res.text
 
 
-def test_r3_a_party_of_the_wrong_type_for_the_role_is_refused(v2):
+def test_r3_a_party_of_another_type_can_fill_the_role(v2):
+    """PROJECT-PARTY-ROLES Q4 (b), owner 10 Nov: any party can fill any role."""
     arch = _party(v2, "architect")
     res = _register(v2, party_links=[{"role": "subcontractor", "party_id": arch.id}])
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_party_role_mismatch"
+    assert res.status_code == 201, res.text
 
 
 def test_r3_an_unknown_role_is_refused(v2):
@@ -304,7 +304,7 @@ def test_r6_picked_contacts_become_stakeholders(v2):
     one = _contact(v2, arch, name="Ar. Example One", phone="+60120000111", job_title="Principal")
     two = _contact(v2, mc, name="Example Two", job_title="QS")
     res = _register(
-        v2, architect_party_id=arch.id, main_contractor_party_id=mc.id, contact_ids=[one.id, two.id]
+        v2, party_links=[{"role": "architect", "party_id": arch.id}, {"role": "main_contractor", "party_id": mc.id}], contact_ids=[one.id, two.id]
     )
     assert res.status_code == 201, res.text
     rows = {s.person_name: s for s in _stakeholders(v2, res.json()["id"])}
@@ -319,7 +319,7 @@ def test_r6_picked_contacts_become_stakeholders(v2):
 def test_r6_a_contact_picked_twice_is_one_stakeholder(v2):
     mc = _party(v2, "main_contractor")
     one = _contact(v2, mc)
-    res = _register(v2, main_contractor_party_id=mc.id, contact_ids=[one.id, one.id])
+    res = _register(v2, party_links=[{"role": "main_contractor", "party_id": mc.id}], contact_ids=[one.id, one.id])
     assert res.status_code == 201, res.text
     assert len(_stakeholders(v2, res.json()["id"])) == 1
 
@@ -327,7 +327,7 @@ def test_r6_a_contact_picked_twice_is_one_stakeholder(v2):
 def test_r7_a_contact_of_a_party_not_on_the_project_is_refused(v2):
     arch = _party(v2, "architect")
     stray = _contact(v2, _party(v2, "architect"))
-    res = _register(v2, architect_party_id=arch.id, contact_ids=[stray.id])
+    res = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}], contact_ids=[stray.id])
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_contact_not_on_party"
 
@@ -335,7 +335,7 @@ def test_r7_a_contact_of_a_party_not_on_the_project_is_refused(v2):
 def test_r6_contacts_are_kept_on_a_submit_only_draft(v2):
     arch = _party(v2, "architect")
     one = _contact(v2, arch)
-    res = _register(v2, user=v2.sub_a, submit=False, architect_party_id=arch.id, contact_ids=[one.id])
+    res = _register(v2, user=v2.sub_a, submit=False, party_links=[{"role": "architect", "party_id": arch.id}], contact_ids=[one.id])
     assert res.status_code == 201, res.text
     assert [s.party_contact_id for s in _stakeholders(v2, res.json()["id"])] == [one.id]
 
@@ -356,7 +356,7 @@ def _project_with_parties(w):
     mc = _party(w, "main_contractor")
     two = _contact(w, mc, name="Example Two", phone="+60130000222")
     three = _contact(w, mc, name="Example Three")
-    res = _register(w, developer_party_id=dev.id, main_contractor_party_id=mc.id, contact_ids=[two.id, three.id])
+    res = _register(w, developer_party_id=dev.id, party_links=[{"role": "main_contractor", "party_id": mc.id}], contact_ids=[two.id, three.id])
     assert res.status_code == 201, res.text
     return res.json()["id"], dev, mc, two, three
 
@@ -518,7 +518,7 @@ def test_r4_the_parked_delete_removes_the_contact_and_keeps_the_stakeholder_copy
 
     arch = _party(v2, "architect")
     contact = _contact(v2, arch, name="Ar. Leaving")
-    pid = _register(v2, architect_party_id=arch.id, contact_ids=[contact.id]).json()["id"]
+    pid = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}], contact_ids=[contact.id]).json()["id"]
     get_action("project_party_contact.delete").execute(v2.db, {"entity_id": contact.id})
     v2.db.flush()
     assert v2.db.get(ProjectPartyContact, contact.id) is None
@@ -570,7 +570,7 @@ def test_sec_a_contact_of_another_company_is_refused_at_registration(v2):
     arch = _party(v2, "architect")
     foreign_party = _party(v2, "architect", company_id=v2.other_company)
     foreign = _contact(v2, foreign_party)
-    res = _register(v2, architect_party_id=arch.id, contact_ids=[foreign.id])
+    res = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}], contact_ids=[foreign.id])
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_contact_not_on_party"
 
@@ -617,5 +617,5 @@ def test_rv_project_count_counts_a_project_once_when_linked_and_a_contact_was_pi
 def test_rv_an_inactive_contact_cannot_be_picked(v2):
     arch = _party(v2, "architect")
     retired = _contact(v2, arch, is_active=False)
-    res = _register(v2, architect_party_id=arch.id, contact_ids=[retired.id])
+    res = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}], contact_ids=[retired.id])
     assert res.status_code == 422, res.text
