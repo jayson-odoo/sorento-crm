@@ -42,3 +42,24 @@ behaviour is right (code only if it is a real bug). No merged migration is chang
   throwaway DB): 354 and lec_0004 pass. 13 others fail on local-role limits only (a non-superuser cannot
   touch `pg_index` or `session_replication_role`, `audit_logs` is append-only, the local password's `%`
   breaks alembic config interpolation). None of those files is touched here.
+
+## Round 2 (crew, 11 Nov: more items from the same sweep on 6e6657e2)
+
+- #2303 guards: `QuotationDocumentDraft` / `QuotationDocumentSnapshot` were missing from `PURGE_ORDER`
+  (`app/modules/projects/purge.py`). That is an APP gap: an uninstall-with-purge would have left both tables
+  behind. Fix: add them, snapshots before drafts before the document; frontend manifest
+  `sorento_crm_frontend/modules/projects/purge_tables.json` in the same order; the audit entity-type census
+  (`tests/test_projects_audit_entity_types.py`) learns both as born after the move.
+- #2301: the backend MCP catalog copy drifted. Fix: `cp sorento_crm_mcp/sorento_crm_mcp/catalog.py
+  sorento_crm_backend/app/services/mcp_catalog_copy.py` (the step the test and the pre-push hook name).
+- #2305: `tests/test_quotation_form_save.py` fake terms template gains `payment_term_id`, `validity_value`,
+  `validity_unit` (read at `app/services/project_quotation_document_service.py:640-647`).
+- #2305: `PaymentTerm.company_id` NOT NULL in the model to match `qts_0001` (`company_id UUID NOT NULL`), the
+  override `sample_request.py:63` and `new_product_application.py:61` already carry. No migration change.
+  Pinned by a new test in `tests/test_quote_terms_select.py`.
+- #2304: vitest exited 1 on 2 unhandled `target.getClientRects is not a function` errors (ProseMirror's
+  `scrollToSelection` measures a Range; jsdom has no layout). Fix: guarded `Range.prototype` stubs in
+  `sorento_crm_frontend/vitest.setup.ts`.
+- Evidence: main's copies of the 6 backend files give 6 failed (the listed tests); branch green. The
+  vitest file exits 1 on main and 0 on the branch; the 42 test files that mount tiptap or measure rects
+  give 617 passed, exit 0.
