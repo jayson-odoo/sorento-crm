@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
-  PARTY, SUPPLIERS, partyEnvelope, standardEnvelope,
+  PARTY, SUPPLIERS, costingRow, partyEnvelope, standardEnvelope,
 } from './__fixtures__/costingFixtures';
 
 class ResizeObserverStub {
@@ -288,6 +288,25 @@ describe('recomputing while typing', () => {
     const tr = rowOf('CGB9032B');
     await waitFor(() => expect(within(tr).getByText('25.38')).toBeTruthy());
     expect(within(tr).getByText('27.41')).toBeTruthy();
+  });
+});
+
+describe('clearing a transport override', () => {
+  it('falls back to the category rule: WB 245 +20 override cleared shows Landing 31.72', async () => {
+    service.getCostingRows.mockResolvedValue(partyEnvelope([
+      costingRow({
+        transport_source: 'product', transport_mode: 'add', transport_value: 20, landing: 43.71875,
+        final: 47.2162, margin_pct: 67.3, category_transport_mode: 'add', category_transport_value: 8,
+      }),
+    ]));
+    mount();
+    await startEdit();
+    const tr = rowOf('CGB9032B');
+    expect(within(tr).getByText('43.72')).toBeTruthy();
+    typeInto('Transport for CGB9032B', '');
+    typeInto('Transport value for CGB9032B', '');
+    await waitFor(() => expect(within(tr).getByText('31.72')).toBeTruthy());
+    expect(within(tr).getByText('34.26')).toBeTruthy();
   });
 });
 

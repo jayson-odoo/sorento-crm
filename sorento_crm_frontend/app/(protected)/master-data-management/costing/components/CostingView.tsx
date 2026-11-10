@@ -449,10 +449,21 @@ function CostingPage() {
       if (!editing) return null;
       const d = draftOf(row);
       const value = typed(d.tValue);
+      // Cleared back from a product override: the category rule applies, or + 0 when it has none.
+      const cleared = !d.tMode && d.tValue.trim() === '' && row.transport_source === 'product';
+      const fallback =
+        row.category_transport_mode && row.category_transport_value != null
+          ? { mode: row.category_transport_mode, value: row.category_transport_value }
+          : { mode: 'add' as TransportMode, value: 0 };
       return figuresFor(
         row,
         {
-          transport: d.tMode && value !== null && value > 0 ? { mode: d.tMode as TransportMode, value } : null,
+          transport:
+            d.tMode && value !== null && value > 0
+              ? { mode: d.tMode as TransportMode, value }
+              : cleared
+                ? fallback
+                : null,
           markup: (() => {
             const m = typed(d.markup);
             return m !== null && m >= 0 ? m : null;

@@ -50,6 +50,9 @@ export interface CostingRow {
   transport_mode: TransportMode | null;
   transport_value: number | null;
   transport_source: 'product' | 'category' | null;
+  /** The product's own category rule, whatever the source; null when it has none. */
+  category_transport_mode: TransportMode | null;
+  category_transport_value: number | null;
   landing: number | null;
   cost_method: CostMethod;
   cost_method_source: 'product' | 'party' | 'company';

@@ -8,7 +8,7 @@
  *  - Service calls: getExchangeRates(), createExchangeRate(body), updateExchangeRate(id, body),
  *    getCostingSettings(), saveCostingSettings(body), getCategoryRules(), saveCategoryRule(categoryId, body).
  *  - Exchange rates tab: table headers Currency, Effective from, "Units per MYR 1", "MYR per unit",
- *    Status, Note; Status text "Scheduled" / "In force" / "Past"; dates as "d MMM yyyy".
+ *    Status, Note; Status text "Scheduled" / "In force" / "Past"; dates as "dd/mm/yyyy".
  *    The add form is always visible with: text input "Currency", native date input "Effective from",
  *    radios "Units per MYR 1" (checked by default) and "MYR per unit", number input "Rate",
  *    text input "Note", and a submit button "Add rate". The body carries `units_per_base` for the
@@ -148,12 +148,12 @@ describe('Exchange rates tab (AC-ER-01..03)', () => {
       expect(screen.getAllByText(h).length).toBeGreaterThan(0);
     }
     const inForce = screen.getByText('Workbook rate').closest('tr') as HTMLElement;
-    expect(within(inForce).getByText(/1 Nov 2026/)).toBeTruthy();
+    expect(within(inForce).getByText(/01\/11\/2026/)).toBeTruthy();
     expect(within(inForce).getByText(/^1\.6(0*)$/)).toBeTruthy();
     expect(within(inForce).getByText('In force')).toBeTruthy();
     const scheduled = screen.getByText('Q4 budget').closest('tr') as HTMLElement;
     expect(within(scheduled).getByText('Scheduled')).toBeTruthy();
-    expect(within(scheduled).getByText(/1 Dec 2026/)).toBeTruthy();
+    expect(within(scheduled).getByText(/01\/12\/2026/)).toBeTruthy();
     expect(screen.getAllByText('Past').length).toBeGreaterThan(0);
   });
 

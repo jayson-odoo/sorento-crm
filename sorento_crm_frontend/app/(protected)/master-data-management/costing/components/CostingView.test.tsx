@@ -310,7 +310,7 @@ describe('Party view (AC-CG-02, AC-CG-04)', () => {
     service.getCostingRows.mockResolvedValue(partyEnvelope([NO_RATE, NO_PRIMARY, NO_TRANSPORT, ACCESSORY]));
     mount();
     await screen.findByText('E-5xx');
-    expect(within(rowOf('E-5xx')).getByText('No rate for EUR on 11 Nov 2026')).toBeTruthy();
+    expect(within(rowOf('E-5xx')).getByText('No rate for EUR on 11/11/2026')).toBeTruthy();
     expect(within(rowOf('N-6xx')).getByText('Set a primary supplier')).toBeTruthy();
     expect(within(rowOf('T-7xx')).getByText('No transport rule')).toBeTruthy();
     expect(within(rowOf('A-4xx')).getByText('No cost')).toBeTruthy();

@@ -134,7 +134,7 @@ export const NO_PRIMARY = costingRow({
 export const NO_TRANSPORT = costingRow({
   product_id: 'p-nt',
   product_code: 'T-7xx',
-  product_name: 'No transport rule',
+  product_name: 'No transport (masked)',
   transport_mode: null,
   transport_value: null,
   transport_source: null,

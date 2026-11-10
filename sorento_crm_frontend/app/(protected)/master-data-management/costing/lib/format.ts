@@ -3,6 +3,7 @@
  * (CONTRACT section 1). The recompute here is the same formula as the backend's `formula.py`, so
  * the figures move while a cell is typed and match the saved result.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type { CostingReason, CostingRow, CostMethod, TransportMode } from '../types/costing.types';
 
 export const METHOD_LABEL: Record<CostMethod, string> = {
@@ -40,15 +41,9 @@ export function trimmed(value: number | null | undefined, dp = 4): string {
   return String(Number(value.toFixed(dp)));
 }
 
-/** "2026-11-11" -> "11 Nov 2026" (a civil date: no time zone shifts it). */
+/** "2026-11-11" -> "11/11/2026": the repo's one date shape, via the shared helper. */
 export function shortDate(iso: string | null | undefined): string {
-  if (!iso) return '-';
-  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
-  if (!y || !m || !d) return iso;
-  // date-format-ok: Costing dates read "11 Nov 2026" in the reason pills, the rates list and the
-  // Excel title (CONTRACT-product-costing.md s3-s4.5, the Costing tests); not the dd/mm/yyyy shape.
-  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1];
-  return `${d} ${month} ${y}`;
+  return iso ? formatDateInMalaysia(iso) || iso : '-';
 }
 
 export function reasonText(reason: CostingReason): string {
