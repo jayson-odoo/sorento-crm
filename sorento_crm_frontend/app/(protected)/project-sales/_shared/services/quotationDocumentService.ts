@@ -3,6 +3,7 @@ import { codedError, extractApiError } from '@/lib/api-client';
 import type { CoverPageData } from '@/lib/quotation-cover';
 import type {
   QuotationFeedback,
+  QuotationLine,
   QuotationLineBulkItem,
   StagedQuotationLine,
 } from '../types/project.types';
@@ -772,10 +773,10 @@ export type QuotationCoverPreviewBody = Partial<{
 // until the first Save). Every open claims the draft for the tab; only the holder writes.
 //
 //   POST /projects/{projectId}/quotation-documents/{id}/form-draft/open            -> QuotationFormDraftOpened
-//   GET  /projects/{projectId}/quotation-documents/{id}/form-draft/holder?token=    -> QuotationDraftHolder
+//   GET  /projects/{projectId}/quotation-documents/{id}/form-draft/holder           -> QuotationDraftHolder (X-Form-Draft-Token)
 //   PUT  /projects/{projectId}/quotation-documents/{id}/form-draft                  -> { updated_at }, 409 quotation_draft_not_holder
 //   POST /projects/{projectId}/quotation-documents/new-draft/open                   -> QuotationFormDraftOpened
-//   GET  /projects/{projectId}/quotation-documents/new-draft/holder?token=          -> QuotationDraftHolder
+//   GET  /projects/{projectId}/quotation-documents/new-draft/holder                 -> QuotationDraftHolder (X-Form-Draft-Token)
 //   PUT  /projects/{projectId}/quotation-documents/new-draft                        -> { updated_at }, 409
 //   GET  /projects/{projectId}/quotation-documents/{id}/history                     -> ListEnvelope<QuotationHistoryEntry>
 //   GET  /projects/{projectId}/quotation-documents/{id}/history/{entryId}           -> QuotationHistoryEntryDetail
@@ -804,6 +805,14 @@ export type QuotationFormState = {
   removedIds: string[];
   /** The form's live grand total, for the History list. */
   total: string;
+  /**
+   * History entries only: every scope the entry carried no staged lines for, as the record held
+   * it then (the lines route's shape), keyed by the form's scope key. Restore stages these too.
+   */
+  record_lines?: Record<
+    string,
+    { versionId: string; matrix_columns?: MatrixHeader[]; lines: QuotationLine[] }
+  >;
 };
 
 type StagedLine = StagedQuotationLine;
@@ -887,9 +896,10 @@ export async function getQuotationDraftHolder(
   documentId: string | null,
   token: string,
 ): Promise<QuotationDraftHolder> {
-  const response = await apiFetch(
-    `${draftUrl(projectId, documentId)}/holder?token=${encodeURIComponent(token)}`,
-  );
+  // A header, not the query string: proxies log URLs (security review nit).
+  const response = await apiFetch(`${draftUrl(projectId, documentId)}/holder`, {
+    headers: { 'X-Form-Draft-Token': token },
+  });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to check the draft'));
   return response.json();
 }

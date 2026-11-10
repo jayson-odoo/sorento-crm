@@ -178,9 +178,11 @@ export function QuotationHistorySheet({
 
 /** One entry, read-only: the header it held and every line staged in it. */
 function HistoryEntryView({ entry }: { entry: QuotationHistoryEntryDetail }) {
+  // Stored client JSON: read defensively, so a malformed entry shows less rather than crashing.
   const header = entry.doc?.header ?? {};
-  const scopes = entry.doc?.scopes ?? [];
+  const scopes = Array.isArray(entry.doc?.scopes) ? entry.doc.scopes : [];
   const staged = entry.doc?.staged ?? {};
+  const stored = entry.doc?.record_lines ?? {};
   return (
     <>
       <DialogHeader>
@@ -200,21 +202,42 @@ function HistoryEntryView({ entry }: { entry: QuotationHistoryEntryDetail }) {
         <dd>{header.doc_date || '-'}</dd>
       </dl>
       {scopes.map((scope, index) => {
-        const lines = (staged[scope.key]?.lines ?? []).filter((line) => !line.removed);
+        const stagedLines = staged[scope.key]?.lines;
+        // Staged lines when the entry has them, else the lines the record held at that moment.
+        const lines: { key: string; code: string; qty: string; price: string; title: string }[] =
+          Array.isArray(stagedLines)
+            ? stagedLines
+                .filter((line) => line && !line.removed)
+                .map((line) => ({
+                  key: line.key,
+                  code: line.draft?.picked_code || line.draft?.description || 'Line',
+                  qty: line.draft?.quantity ?? '',
+                  price: line.draft?.unit_price ?? '',
+                  title: line.draft?.description ?? '',
+                }))
+            : (Array.isArray(stored[scope.key]?.lines) ? stored[scope.key].lines : []).map(
+                (line, index) => ({
+                  key: line.id ?? `stored-${index}`,
+                  code: line.description || 'Line',
+                  qty: String(line.quantity ?? ''),
+                  price: String(line.unit_price ?? ''),
+                  title: line.description ?? '',
+                }),
+              );
         return (
           <section key={scope.key} className="mt-3 min-w-0">
             <h3 className="text-sm font-semibold">{scope.scope_label || `Scope ${index + 1}`}</h3>
             {lines.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No line changes in this entry.</p>
+              <p className="text-sm text-muted-foreground">No lines.</p>
             ) : (
               <ul className="mt-1 divide-y text-sm">
                 {lines.map((line) => (
                   <li key={line.key} className="flex justify-between gap-3 py-1">
-                    <span className="min-w-0 truncate" title={line.draft.description ?? ''}>
-                      {line.draft.picked_code || line.draft.description || 'Line'}
+                    <span className="min-w-0 truncate" title={line.title}>
+                      {line.code}
                     </span>
                     <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {line.draft.quantity || '-'} x {line.draft.unit_price || '-'}
+                      {line.qty || '-'} x {line.price || '-'}
                     </span>
                   </li>
                 ))}

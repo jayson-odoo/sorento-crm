@@ -54,6 +54,7 @@ import type {
 } from '../../../_shared/types/project.types';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
+
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
   QuotationVersionEditor,
@@ -71,10 +72,12 @@ import {
 import { QuotationHistorySheet } from '../[documentId]/components/QuotationHistorySheet';
 import {
   clearMirror,
-  mirrorKey,
-  readMirror,
+  mirrorPrefix,
+  readMirrors,
   useQuotationFormAutosave,
 } from './useQuotationFormAutosave';
+import { serverToDraft } from '../../components/quotationLineDraft';
+import { hasColumns } from '../../../_shared/lib/quotationMatrix';
 import {
   QuotationDocumentHeader,
   useQuotationHeaderDetails,
@@ -223,16 +226,36 @@ function createLetterBodyOf(letter: QuotationDocumentBody): QuotationDocumentBod
   return body;
 }
 
+/**
+ * A History entry's `record_lines` (every scope it held no staged lines for, as the record held
+ * them) as staged scopes, the way the lines editor seeds a scope (`QuotationVersionEditor`).
+ * `seeded` is empty, so Save writes every restored scope back, which is what a Restore asks for.
+ */
+export function stagedFromRecordLines(state: QuotationFormState): Record<string, StagedScope> {
+  const out: Record<string, StagedScope> = {};
+  Object.entries(state.record_lines ?? {}).forEach(([key, stored]) => {
+    const withCells = hasColumns(stored.matrix_columns ?? []);
+    out[key] = {
+      versionId: stored.versionId,
+      seeded: [],
+      lines: [...(stored.lines ?? [])]
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map((line, index) => ({
+          id: line.id ?? null,
+          key: line.id ?? `restored:${key}:${index}`,
+          line: line.id ? line : null,
+          draft: serverToDraft(line, withCells),
+          removed: false,
+        })),
+    };
+  });
+  return out;
+}
+
 /** "Opened in another tab / by Ben at 10/11/2026 2:30 PM." (owner, Q4). */
 export function viewOnlyMessage(by: string | null, at: string | null): string {
   const who = by ? `in another tab / by ${by}` : 'in another tab';
-  return `Opened ${who}${at ? ` at ${formatDateTimeInMalaysia(at)}` : ''}. This tab is view only; what you typed here is kept in History.`;
-}
-
-/** A naive-UTC server timestamp, or an ISO one, as epoch ms (0 when absent). */
-function epochOf(at: string | null | undefined): number {
-  if (!at) return 0;
-  return Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(at) ? at : `${at}Z`) || 0;
+  return `Opened ${who}${at ? ` at ${formatDateTimeInMalaysia(at)}` : ''}.`;
 }
 
 /** The page title: "New proposal", or the document's number (PS-PROPOSAL-QUOTATION). */
@@ -343,28 +366,30 @@ export function QuotationFormClient({
   const [historyOpen, setHistoryOpen] = React.useState(false);
 
   /**
-   * What the form opens on: the server's draft, unless this browser holds a NEWER copy the server
-   * never got (offline, a tab closed mid-save), which is then opened and sent. An older local copy
-   * is sent under its own, lapsed claim, so the server keeps it as History rather than it being
-   * dropped (Q4), and the server's draft opens.
+   * What the form opens on: the server's draft, unless a tab in this browser left a copy the
+   * server never got (offline, closed mid-save) ON TOP OF the version the server still has, which
+   * is then opened and sent. A copy the server has moved past (a Save, a Discard, another tab's
+   * edit) is sent under its own, lapsed claim instead, so the server keeps it as History rather
+   * than it being dropped (Q4), and the server's draft opens.
    */
   function pickStart(
     docId: string | null,
     claim: QuotationFormDraftOpened | undefined,
   ): QuotationFormState | null {
-    const key = mirrorKey(projectId, docId);
-    const mirror = readMirror(key);
-    if (mirror && epochOf(mirror.at) > epochOf(claim?.updated_at)) {
-      resumeRef.current = mirror.doc;
-      return mirror.doc;
-    }
-    if (mirror) {
-      if (mirror.token && mirror.token !== claim?.token) {
-        void saveQuotationFormDraft(projectId, docId, mirror.doc, mirror.token).catch(
+    let resume: QuotationFormState | null = null;
+    for (const { key, value } of readMirrors(mirrorPrefix(projectId, docId))) {
+      if ((value.baseAt ?? null) === (claim?.updated_at ?? null)) {
+        resume = value.doc; // oldest first, so the newest current copy wins
+      } else if (value.token && value.token !== claim?.token) {
+        void saveQuotationFormDraft(projectId, docId, value.doc, value.token).catch(
           () => undefined,
         );
       }
       clearMirror(key);
+    }
+    if (resume) {
+      resumeRef.current = resume;
+      return resume;
     }
     return claim?.doc ?? null;
   }
@@ -373,9 +398,17 @@ export function QuotationFormClient({
   function applyState(state: QuotationFormState) {
     setHeader({ ...(state.header ?? {}) });
     setLetter({ ...(state.letter ?? {}) });
-    setScopes((state.scopes ?? []).map((scope) => ({ ...scope })));
+    setScopes(
+      (state.scopes ?? []).map((scope) => {
+        // A scope the record no longer has comes back as a new one, with the columns it had.
+        const stored = state.record_lines?.[scope.key];
+        return !scope.id && !scope.matrix_columns?.length && stored?.matrix_columns?.length
+          ? { ...scope, matrix_columns: stored.matrix_columns }
+          : { ...scope };
+      }),
+    );
     setRemovedIds([...(state.removedIds ?? [])]);
-    edit.hydrate((state.staged ?? {}) as Record<string, StagedScope>);
+    edit.hydrate({ ...stagedFromRecordLines(state), ...((state.staged ?? {}) as Record<string, StagedScope>) });
     // The create form's one-off defaults must not overwrite what the state already holds.
     setLetterSeeded(true);
     setTermsDefaulted(true);
@@ -546,6 +579,7 @@ export function QuotationFormClient({
     projectId,
     documentId: routeDocumentId ?? null,
     token: opened.data?.token ?? null,
+    baseAt: opened.data?.updated_at ?? null,
     state: formState,
     isDirty,
     ready: formReady,
@@ -565,7 +599,7 @@ export function QuotationFormClient({
     surface: 'inline',
     successMessage: 'Draft discarded',
     onCommitted: () => {
-      clearMirror(mirrorKey(projectId, routeDocumentId ?? null));
+      autosave.forgetLocalCopy();
       router.push(
         routeDocumentId
           ? `/project-sales/${projectId}/quotation-documents/${routeDocumentId}`
@@ -717,10 +751,12 @@ export function QuotationFormClient({
         });
         id = created.id;
       }
-      clearMirror(mirrorKey(projectId, routeDocumentId ?? null));
+      autosave.forgetLocalCopy();
       router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
     } catch {
-      // The mutation toasted the server's reason; the draft keeps everything that was typed.
+      // The mutation toasted the server's reason; the draft keeps everything that was typed. A
+      // refusal may be the draft moving to another tab: ask now rather than at the next poll.
+      void autosave.checkNow();
     } finally {
       setIsSaving(false);
     }
@@ -742,11 +778,12 @@ export function QuotationFormClient({
       setHistoryOpen(false);
       toast.success('Restored. Save to apply it to the record.');
     } catch (error) {
-      toast.error(
-        error instanceof DraftNotHolderError || error instanceof Error
-          ? error.message
-          : 'Could not restore that entry',
-      );
+      if (error instanceof DraftNotHolderError) {
+        setHistoryOpen(false);
+        autosave.lockOut(error.holderName, error.holderAt);
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : 'Could not restore that entry');
     }
   }
 
@@ -819,8 +856,11 @@ export function QuotationFormClient({
                     variant="outline"
                     disabled={discard.isBlocked || isSaving}
                     onClick={() => {
+                      // Paused and forgotten locally first: nothing sent or reopened after the
+                      // click can bring the discarded draft back.
                       autosave.setPaused(true);
-                      discard.start();
+                      autosave.forgetLocalCopy();
+                      discard.start({ token: opened.data?.token ?? '' });
                     }}
                   >
                     Discard draft
@@ -917,7 +957,9 @@ export function QuotationFormClient({
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
-        <div inert={Boolean(viewOnly)} className="min-w-0">
+        <div inert={Boolean(viewOnly) || isSaving} className="min-w-0">
+        {/* Locked while view-only (Q4) and while a Save is on its way: an edit typed into a Save
+            in flight would land in neither the record nor the draft. */}
         <Tabs value={tab} onValueChange={(value) => setTab(value as FormTab)} className="min-w-0">
           {/* The strip scrolls in its own gutter so the page never drags sideways at 375px. */}
           <div className="min-w-0 overflow-x-auto">

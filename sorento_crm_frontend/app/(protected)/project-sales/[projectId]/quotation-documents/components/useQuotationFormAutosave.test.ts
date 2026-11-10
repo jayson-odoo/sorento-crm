@@ -30,7 +30,9 @@ import {
   clearMirror,
   HOLDER_POLL_MS,
   mirrorKey,
+  mirrorPrefix,
   readMirror,
+  readMirrors,
   useQuotationFormAutosave,
   writeMirror,
 } from './useQuotationFormAutosave';
@@ -53,13 +55,14 @@ function state(subject: string, total = '0'): QuotationFormState {
 
 type Props = { state: QuotationFormState | null; isDirty: boolean };
 
-function setup(initial: Props, documentId: string | null = DOC) {
+function setup(initial: Props, documentId: string | null = DOC, token = TOKEN) {
   return renderHook(
     (props: Props) =>
       useQuotationFormAutosave({
         projectId: PROJECT,
         documentId,
-        token: TOKEN,
+        token,
+        baseAt: '2026-11-10T06:00:00',
         state: props.state,
         isDirty: props.isDirty,
         ready: true,
@@ -152,9 +155,11 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     await tick();
     expect(result.current.status).toBe('error');
     // The unsent copy survives even a closed tab.
-    const mirror = readMirror(mirrorKey(PROJECT, DOC));
+    const mirror = readMirror(mirrorKey(PROJECT, DOC, TOKEN));
     expect(mirror?.doc.header.subject_title).toBe('Typed offline');
     expect(mirror?.token).toBe(TOKEN);
+    // Made on top of the server version this tab opened on.
+    expect(mirror?.baseAt).toBe('2026-11-10T06:00:00');
 
     act(() => {
       window.dispatchEvent(new Event('online'));
@@ -163,7 +168,7 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     expect(saveDraft).toHaveBeenCalledTimes(2);
     expect(saveDraft.mock.calls[1][2].header.subject_title).toBe('Typed offline');
     expect(result.current.status).toBe('saved');
-    expect(readMirror(mirrorKey(PROJECT, DOC))).toBeNull();
+    expect(readMirror(mirrorKey(PROJECT, DOC, TOKEN))).toBeNull();
   });
 
   it('two tabs: a refused write locks this tab view-only, naming who opened it, and saves no more', async () => {
@@ -178,7 +183,7 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     await tick();
     expect(result.current.viewOnly).toEqual({ holderName: 'Ben', holderAt: '2026-11-10T06:30:00' });
     // The server kept this tab's state as History, so the local copy is not needed.
-    expect(readMirror(mirrorKey(PROJECT, DOC))).toBeNull();
+    expect(readMirror(mirrorKey(PROJECT, DOC, TOKEN))).toBeNull();
 
     rerender({ state: state('Older tab again'), isDirty: true });
     await tick(AUTOSAVE_DEBOUNCE_MS * 3);
@@ -212,6 +217,40 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     expect(saveDraft).not.toHaveBeenCalled();
   });
 
+  it('Discard draft: an edit already waiting when Discard starts is not sent either', async () => {
+    const { rerender, result, unmount } = setup({ state: state('Opened'), isDirty: false });
+    rerender({ state: state('Typed just before Discard'), isDirty: true });
+    await tick(200); // pending in the debounce
+    act(() => {
+      result.current.setPaused(true);
+    });
+    unmount(); // the navigation after the commit flushes what was pending
+    await tick(AUTOSAVE_DEBOUNCE_MS * 2);
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('two tabs in one browser keep separate local copies, so neither erases the other', async () => {
+    saveDraft.mockRejectedValue(new TypeError('Failed to fetch'));
+    const holder = setup({ state: state('Opened'), isDirty: false }, DOC, 'tok-holder');
+    const older = setup({ state: state('Opened'), isDirty: false }, DOC, 'tok-older');
+    holder.rerender({ state: state('Holder offline'), isDirty: true });
+    older.rerender({ state: state('Older offline'), isDirty: true });
+    await tick();
+    const copies = readMirrors(mirrorPrefix(PROJECT, DOC)).map((m) => m.value.doc.header.subject_title);
+    expect(copies.sort()).toEqual(['Holder offline', 'Older offline']);
+  });
+
+  it("after a save, the local copy's base is the server's new version", async () => {
+    saveDraft.mockResolvedValueOnce({ updated_at: '2026-11-10T06:20:00' });
+    saveDraft.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { rerender } = setup({ state: state('Opened'), isDirty: false });
+    rerender({ state: state('First'), isDirty: true });
+    await tick();
+    rerender({ state: state('Second, offline'), isDirty: true });
+    await tick();
+    expect(readMirror(mirrorKey(PROJECT, DOC, TOKEN))?.baseAt).toBe('2026-11-10T06:20:00');
+  });
+
   it('Discard draft pauses saving: nothing typed during the countdown revives the draft', async () => {
     const { rerender, result, unmount } = setup({ state: state('Opened'), isDirty: false });
     act(() => {
@@ -237,9 +276,9 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
 
 describe('local mirror', () => {
   it('reads, writes and clears, and never throws when storage is blocked', () => {
-    const key = mirrorKey(PROJECT, null);
-    expect(key).toBe(`quotation-form-draft:new:${PROJECT}`);
-    writeMirror(key, { token: TOKEN, doc: state('x'), at: 'now' });
+    const key = mirrorKey(PROJECT, null, TOKEN);
+    expect(key).toBe(`quotation-form-draft:new:${PROJECT}:${TOKEN}`);
+    writeMirror(key, { token: TOKEN, baseAt: null, doc: state('x'), at: 'now' });
     expect(readMirror(key)?.doc.header.subject_title).toBe('x');
     clearMirror(key);
     expect(readMirror(key)).toBeNull();
@@ -251,7 +290,9 @@ describe('local mirror', () => {
       throw new Error('blocked');
     });
     expect(readMirror(key)).toBeNull();
-    expect(() => writeMirror(key, { token: TOKEN, doc: state('x'), at: 'now' })).not.toThrow();
+    expect(() =>
+      writeMirror(key, { token: TOKEN, baseAt: null, doc: state('x'), at: 'now' }),
+    ).not.toThrow();
     getSpy.mockRestore();
     setSpy.mockRestore();
   });

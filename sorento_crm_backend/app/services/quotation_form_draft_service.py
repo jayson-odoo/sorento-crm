@@ -228,7 +228,9 @@ def open_draft(db: Session, row: QuotationDocumentDraft, user_id: str) -> Dict[s
         "draft_id": str(row.id),
         "token": row.holder_token,
         "doc": doc,
-        "updated_at": row.updated_at if row.doc is not None else None,
+        # Always the row's last write, draft or not: this browser's unsent copy is trusted only
+        # while the server has not moved on since it was made (a Save or a Discard moves this).
+        "updated_at": row.updated_at,
         "updated_by_name": user_name(db, row.updated_by) if row.doc is not None else None,
     }
 
