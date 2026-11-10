@@ -1599,6 +1599,21 @@ class PortalService:
                     # live label derivation, not a bare setattr.
                     continue
                 value = payload.get(field)
+                if kind == "price_tag_request" and field == "customers":
+                    # PRICETAG-REQUEST-LAYOUT: a list of {code, name}, not a multi-text field;
+                    # validated like the create/PUT body. The model mirrors the first into
+                    # the debtor pair, and this field comes after the pair, so it wins.
+                    from pydantic import ValidationError
+
+                    from app.schemas.price_tag import customers_from_payload
+
+                    try:
+                        setattr(row, field, customers_from_payload(value))
+                    except ValidationError:
+                        raise handle_validation_error(
+                            "Each customer needs a name, and a request takes at most 50."
+                        )
+                    continue
                 # Coerce list values for multi-text fields (e.g. complaint.delivery_order_number).
                 if isinstance(value, list):
                     value = ",".join(str(v).strip() for v in value if v not in (None, ""))

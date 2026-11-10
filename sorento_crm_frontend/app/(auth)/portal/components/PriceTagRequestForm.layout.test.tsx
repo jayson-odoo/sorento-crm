@@ -274,6 +274,16 @@ describe('Preview is the one main button; Approve is inside the popup', () => {
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
   });
 
+  it('a refused Approve closes the popup so the form shows what is wrong', async () => {
+    asMock(createRequest).mockRejectedValue(new Error('No tag template yet for CBF-1234.'));
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const popup = await screen.findByTestId('sheet-popup');
+    fireEvent.click(within(popup).getByRole('button', { name: /^approve$/i }));
+    await waitFor(() => expect(screen.queryByTestId('sheet-popup')).toBeNull());
+    expect(screen.getByTestId('submit-problem-summary')).toHaveTextContent('No tag template yet for CBF-1234.');
+  });
+
   it('Back to edit closes the popup without approving', async () => {
     await ready();
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));

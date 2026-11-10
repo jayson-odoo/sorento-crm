@@ -19,7 +19,7 @@ import uuid
 from typing import Optional
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import Integer, Text, and_, cast, func, or_, select
+from sqlalchemy import Integer, and_, cast, func, or_, select, text as sql_text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -2880,8 +2880,14 @@ Marketing's own work is not part of the form's payload, so it is captured
                 or_(
                     PriceTagRequest.doc_number.ilike(like),
                     PriceTagRequest.debtor_name.ilike(like),
-                    # A request for several customers is found by any of them.
-                    cast(PriceTagRequest.customers, Text).ilike(like),
+                    # A request for several customers is found by any of them: their
+                    # names and codes only, never the JSON keys around them.
+                    sql_text(
+                        "EXISTS (SELECT 1 FROM jsonb_array_elements("
+                        "COALESCE(price_tag_requests.customers, '[]'::jsonb)) AS c "
+                        "WHERE c->>'name' ILIKE :customer_like "
+                        "OR c->>'code' ILIKE :customer_like)"
+                    ).bindparams(customer_like=like),
                 )
             )
         return q

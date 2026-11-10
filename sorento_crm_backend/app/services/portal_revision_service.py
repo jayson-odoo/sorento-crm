@@ -1364,6 +1364,8 @@ class PortalRevisionService:
         fields: list[dict] = []
 
         def _display(name: str, value: Any) -> Optional[str]:
+            if name == "customers":
+                return _customer_names(snapshot)
             if name in (adapter.lookup_fields or {}):
                 key = str(value or "").strip().lower()
                 return labels.get(name, {}).get(key) if key else None
@@ -1479,7 +1481,13 @@ class PortalRevisionService:
                 # An id is never shown (no UUID in the UI); a re-pick reads as the
                 # Customer name change. The snapshot still carries it.
                 continue
+            if name in ("debtor_code", "debtor_name") and current.get("customers") is not None:
+                # PRICETAG-REQUEST-LAYOUT: the pair only mirrors the first customer; the
+                # Customers change below says it once, by name.
+                continue
             before, after = previous.get(name), current.get(name)
+            if name == "customers":
+                before, after = _customer_names(previous), _customer_names(current)
             if before == after:
                 continue
             changes.append(
@@ -2184,6 +2192,16 @@ def _line_summary(line: dict) -> str:
     if qty not in (None, ""):
         parts.append(f"x{qty}")
     return " ".join(parts)
+
+
+def _customer_names(snapshot: dict) -> Optional[str]:
+    """A price tag request's customers as one readable line (PRICETAG-REQUEST-LAYOUT); a snapshot
+    taken before the list existed reads as its one dealer."""
+    customers = snapshot.get("customers")
+    if customers is None:
+        return snapshot.get("debtor_name") or None
+    names = [str(c.get("name") or "").strip() for c in customers if isinstance(c, dict)]
+    return ", ".join(n for n in names if n) or None
 
 
 def _diff_lines(previous: Any, current: Any) -> list[dict]:

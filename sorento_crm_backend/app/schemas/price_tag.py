@@ -316,6 +316,19 @@ def _customers_or_debtor(customers, debtor_code, debtor_name):
     return []
 
 
+def customers_from_payload(value) -> Optional[list[dict]]:
+    """``customers`` from a raw dict (the revise path, which never runs through a Pydantic body):
+    the same rules as the request schemas - a name each, each once, at most 50."""
+    from pydantic import TypeAdapter
+
+    if value is None:
+        return None
+    parsed = TypeAdapter(
+        Annotated[list[PriceTagRequestCustomer], Field(max_length=50)]
+    ).validate_python(value)
+    return [c.model_dump() for c in _distinct_customers(parsed)]
+
+
 class PriceTagRequestCreate(BaseModel):
     """What the portal posts when it saves a draft (D48a).
 

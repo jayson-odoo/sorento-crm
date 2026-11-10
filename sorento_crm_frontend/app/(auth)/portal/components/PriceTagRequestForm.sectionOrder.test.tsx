@@ -133,7 +133,7 @@ describe('read-only view section order (AC-P11)', () => {
 
     expect(normalized).toEqual([
       'Customers',
-      'Preferred default',
+      'Preferred Default',
       'Sales Order',
       'Lines',
       // r10 S1: the "Who prints" control (and its `Printing` label) is gone -

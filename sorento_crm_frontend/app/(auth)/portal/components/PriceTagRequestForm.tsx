@@ -1546,6 +1546,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           : action.kind === 'approve'
             ? 'Failed to approve request'
             : 'Failed to send to marketing';
+      // A refused Approve closes the preview, so what it names on the form is in view.
+      if (action.kind === 'approve') setPreviewOpen(false);
       const named = errorFields(e);
       const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
       if (placed > 0) {
@@ -1895,7 +1897,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onOpenChange={(next) => toggleSection('price', next)}
         >
           <div className="space-y-1.5">
-            <Label>Preferred default</Label>
+            <Label>Preferred Default</Label>
             <p className="text-sm font-medium py-2">
               {(request.price_mode ?? 'list') === 'selling'
                 ? 'Selling price'
