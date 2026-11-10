@@ -681,13 +681,16 @@ def test_a_ticked_project_bin_counts_on_the_sheet_but_not_in_the_grid(scm_app):
 # =========================================================================== #
 
 def _inactive_dealer_warehouse(db) -> tuple[str, str]:
-    """An INACTIVE, non-project warehouse (segment left unset, which the rule reads as
-    'dealer') - active_site_pool_sql must exclude it on the `is_active` leg alone, since
-    nothing about its segment marks it a project bin."""
+    """A non-project warehouse (segment left unset, which the rule reads as 'dealer') that
+    the test deactivates with `_deactivate` - active_site_pool_sql must exclude it on the
+    `is_active` leg alone, since nothing about its segment marks it a project bin."""
     code = _code("INACT")
     wid = _mk_warehouse(db, code)
-    db.execute(text("UPDATE warehouses SET is_active = false WHERE id = :id"), {"id": wid})
     return wid, code
+
+
+def _deactivate(db, wid: str) -> None:
+    db.execute(text("UPDATE warehouses SET is_active = false WHERE id = :id"), {"id": wid})
 
 
 def test_inactive_site_pool_warehouse_counts_nowhere(scm_app):
@@ -704,7 +707,13 @@ def test_inactive_site_pool_warehouse_counts_nowhere(scm_app):
     _open_po(db, pid, head, 42)
     _open_po(db, pid, inact, 176)
 
-    run_id = _plan(db, [head_code, inact_code], code)
+    # SCM-INACTIVE-LOCATIONS: `create_run` refuses a code that is ALREADY inactive (422), so
+    # the only way an inactive location sits inside a run now is one deactivated after the
+    # run was created and before it planned. That is the case this guard pins.
+    created = rrs.create_run(db, [head_code, inact_code], enqueue=False, product_codes=[code])
+    _deactivate(db, inact)
+    rrs.run_reorder(created["run_id"], db=db)
+    run_id = created["run_id"]
     row = _product_row(_recs(db, run_id, pid))
 
     assert float(row["inputs"]["on_order"]) == 40.0, (

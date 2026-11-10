@@ -537,7 +537,8 @@ def _quoted_line_for(
     if version is None:
         return None
     query = db.query(ProjectQuotationLine).filter(
-        ProjectQuotationLine.version_id == version.id
+        ProjectQuotationLine.version_id == version.id,
+        ProjectQuotationLine.is_section.is_(False),
     )
     if product_id:
         return query.filter(ProjectQuotationLine.product_id == product_id).first()

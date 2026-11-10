@@ -830,6 +830,8 @@ describe('QuotationVersionEditor', () => {
     expectNothingWritten();
   });
 
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026): a heading a line still carries from before is
+  // shown as its own row right above that line, and is written that way on the next Save.
   it('opens a section with one heading above the line that carries it', async () => {
     listQuotationLines.mockResolvedValue([
       line({ band_label: 'BILL NO 3 PAGE 15/4' }),
@@ -838,16 +840,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
     // ONCE, and only for the line that carries it: the line below is inside the section, it
     // does not repeat the heading.
     expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-BIDET-09' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-BIDET-09' }),
     ).toBeNull();
 
-    // Directly above its own line, inside the same table, so the two cannot drift apart.
+    // Directly above that line, as a row of its own.
     const bandRow = heading.closest('tr');
     const lineRow = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }).closest('tr');
     expect(bandRow?.nextElementSibling).toBe(lineRow);
@@ -862,7 +864,7 @@ describe('QuotationVersionEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
 
     const heading = await screen.findByRole('textbox', {
-      name: 'Section heading on line 2',
+      name: 'Section heading above line 2',
     });
     await waitFor(() => expect(document.activeElement).toBe(heading));
     fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
@@ -871,11 +873,12 @@ describe('QuotationVersionEditor', () => {
       target: { value: 'Grab bar' },
     });
 
+    // A heading row of its own, then the line under it (PROPOSAL-FORM-COLLAPSE).
     await waitFor(() =>
-      expect(stagedBody()[1]).toMatchObject({
-        band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
-        description_snapshot: 'Grab bar',
-      }),
+      expect(stagedBody().slice(1)).toEqual([
+        { is_section: true, band_label: 'OPTIONAL ITEMS FOR OKU TOILET' },
+        expect.objectContaining({ description_snapshot: 'Grab bar', band_label: null }),
+      ]),
     );
     expectNothingWritten();
   });
@@ -885,11 +888,16 @@ describe('QuotationVersionEditor', () => {
 
     await renderEditing();
 
-    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    const heading = screen.getByRole('textbox', { name: 'Section heading above SRT-WC-01' });
     fireEvent.change(heading, { target: { value: '' } });
+    fireEvent.blur(heading);
 
-    // Null, not an empty string: the column is nullable and a blank heading is no heading.
-    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ band_label: null }));
+    // A blank heading is no heading: its row goes, the line stays, and the line carries none.
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' })).toBeNull(),
+    );
+    expect(stagedBody()).toHaveLength(1);
+    expect(stagedBody()[0]).toMatchObject({ id: 'l1', band_label: null });
   });
 
   it("reads a frozen version's bands and rate-only lines without offering an editor", async () => {
@@ -907,7 +915,7 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('BILL NO 3 PAGE 15/4')).toBeInTheDocument();
     expect(screen.getByText('rate only')).toBeInTheDocument();
     expect(
-      screen.queryByRole('textbox', { name: 'Section heading on SRT-WC-01' }),
+      screen.queryByRole('textbox', { name: 'Section heading above SRT-WC-01' }),
     ).toBeNull();
     expect(screen.queryByRole('checkbox', { name: 'Rate only on SRT-WC-01' })).toBeNull();
   });
@@ -1489,7 +1497,7 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(stagedBody().map((l) => l.id)).toEqual(['l1', undefined, 'l2']);
 
     await chooseMenuItem('A-2', 'Insert a section above');
-    expect(await screen.findByRole('textbox', { name: 'Section heading on A-2' })).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Section heading above A-2' })).toBeInTheDocument();
 
     await chooseMenuItem('A-1', 'Remove line');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
@@ -1737,7 +1745,7 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
     line({ id: 'l3', product_code: 'A-3', description: 'Third', sort_order: 20, band_label: 'BILL NO 3' }),
   ];
 
-  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and carries its section bar', async () => {
+  it('AC-QLG01: a row drag moves line 3 above line 2, renumbers, and leaves the heading where it was', async () => {
     listQuotationLines.mockResolvedValue(THREE);
     await renderEditing();
     expect(dnd.dragEnd).not.toBeNull();
@@ -1746,12 +1754,19 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l2' } });
     });
 
-    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l3', 'l2']));
+    // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov 2026: "a heading shouldnt be tied to line"): the
+    // heading line 3 used to carry is its own row now, so it stays put and line 3 moves alone.
+    await waitFor(() =>
+      expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+        'l1',
+        'l3',
+        'l2',
+        'heading',
+      ]),
+    );
     expect(itemNumbers()).toEqual(['1', '2', '3']);
-    // The heading that opened on line 3 travels with line 3: still directly above its row.
-    const heading = screen.getByRole('textbox', { name: 'Section heading on A-3' });
-    const lineRow = screen.getByRole('textbox', { name: 'Qty on A-3' }).closest('tr');
-    expect(heading.closest('tr')?.nextElementSibling).toBe(lineRow);
+    const heading = screen.getByRole('textbox', { name: 'Section heading at the end' });
+    expect(heading).toHaveValue('BILL NO 3');
     expectNothingWritten();
   });
 
@@ -1762,7 +1777,12 @@ describe('QuotationVersionEditor lines grid, fix round 1 (QUOTATION-UX)', () => 
       dnd.dragEnd!({ active: { id: 'l3' }, over: { id: 'l3' } });
       dnd.dragEnd!({ active: { id: 'l3' }, over: null });
     });
-    expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l2', 'l3']);
+    expect(stagedBody().map((l) => l.id ?? (l.is_section ? 'heading' : 'new'))).toEqual([
+      'l1',
+      'l2',
+      'heading',
+      'l3',
+    ]);
   });
 
   it('shows no stale pick after the product goes A -> B -> A, and saves both picks null', async () => {
@@ -2126,7 +2146,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
     ];
     const barOf = () =>
-      screen.getByRole('textbox', { name: 'Section heading on A-1' }).closest('td') as HTMLElement;
+      screen.getByRole('textbox', { name: 'Section heading above A-1' }).closest('td') as HTMLElement;
 
     it('Rename focuses the section heading', async () => {
       listQuotationLines.mockResolvedValue(BANDED);
@@ -2134,7 +2154,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
       await waitFor(() =>
-        expect(screen.getByRole('textbox', { name: 'Section heading on A-1' })).toHaveFocus(),
+        expect(screen.getByRole('textbox', { name: 'Section heading above A-1' })).toHaveFocus(),
       );
     });
 
@@ -2144,7 +2164,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       rightClick(barOf().firstElementChild as Element);
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove section' }));
       await waitFor(() =>
-        expect(screen.queryByRole('textbox', { name: 'Section heading on A-1' })).toBeNull(),
+        expect(screen.queryByRole('textbox', { name: 'Section heading above A-1' })).toBeNull(),
       );
       expect(screen.getByRole('textbox', { name: 'Qty on A-1' })).toBeInTheDocument();
       await waitFor(() => expect(stagedBody()[0].band_label ?? null).toBeNull());
@@ -2241,7 +2261,7 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
         line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
       ]);
       await renderEditing();
-      for (const name of ['Description on A-1', 'Qty on A-1', 'Section heading on A-1']) {
+      for (const name of ['Description on A-1', 'Qty on A-1', 'Section heading above A-1']) {
         expect(fireEvent.contextMenu(screen.getByRole('textbox', { name }))).toBe(true);
       }
       await new Promise((resolve) => setTimeout(resolve, 30));

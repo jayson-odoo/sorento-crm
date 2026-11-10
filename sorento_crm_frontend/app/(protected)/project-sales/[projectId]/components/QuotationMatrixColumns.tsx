@@ -62,6 +62,8 @@ export interface MatrixGridContextValue {
   change: (next: MatrixHeader[]) => void;
   addCol: (headerKey: string) => void;
   addHeader: () => void;
+  /** Copies a header and its column names right after it, its name taking the caret. */
+  duplicateHeader: (headerKey: string) => void;
   pending: PendingRemoval | null;
   startRemoval: (key: string) => void;
   undoRemoval: () => void;
@@ -275,6 +277,8 @@ function LabelEditor({
       <div
         role="group"
         aria-label={label}
+        // The grid's right-click menu offers Duplicate on a header (owner, 10 Nov: no icon).
+        data-matrix-header-key={kind === 'header' ? itemKey : undefined}
         className={cn('flex w-full min-w-0 items-center gap-0.5 rounded-sm', over && 'ring-2 ring-primary')}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
@@ -432,6 +436,45 @@ function AddHeaderHeader() {
     </Button>
   );
 }
+
+/**
+ * How a grid starts (R11, R12): the first column header, offered at the end of a plain scope's
+ * header row, right after Total (RM) (PROPOSAL-FORM-COLLAPSE, owner 10 Nov: "the column header
+ * supposed to be here"). Same handler as the in-row + Column header of a scope with headers.
+ */
+function AddFirstHeaderHeader() {
+  const matrix = useMatrix();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-auto w-full gap-1 whitespace-nowrap px-1 py-0.5 text-xs text-primary normal-case"
+      disabled={matrix.saving || matrix.pending !== null}
+      onClick={matrix.addHeader}
+    >
+      <Plus className="size-3.5" aria-hidden />
+      Column header
+    </Button>
+  );
+}
+
+/** The column that carries `AddFirstHeaderHeader`: editing only, never hidden or dragged. */
+export const ADD_FIRST_HEADER_COLUMN: ColumnDef<MatrixGridRow> = {
+  id: 'mx-add-first-header',
+  header: AddFirstHeaderHeader,
+  cell: EmptyCell,
+  size: 124,
+  minSize: 112,
+  enableResizing: false,
+  enableHiding: false,
+  meta: {
+    headerTitle: 'Add a column header',
+    draggable: false,
+    headerClassName: 'px-1 text-center',
+    cellClassName: 'px-0',
+  },
+};
 
 // ---------------------------------------------------------------------------- cells
 
@@ -595,7 +638,12 @@ const EDIT_LEAF_MAX_WIDTH = 220;
  * and an x, so the column grows with the label, never under `EDIT_LEAF_MIN_WIDTH`.
  */
 export function leafColumnWidth(label: string, editable: boolean, rowSpanHeader = false): number {
-  if (!editable) return rowSpanHeader ? 96 : 72;
+  // Read: a number fits 72px, but the label must fit too (BALCONY ran into the next column on
+  // the view page, owner 10 Nov): its characters plus the cell padding and the resize handle.
+  if (!editable) {
+    const base = rowSpanHeader ? 96 : 72;
+    return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(base, label.trim().length * EDIT_LABEL_CHAR_PX + 24));
+  }
   const fit = EDIT_LABEL_CHROME_PX + label.trim().length * EDIT_LABEL_CHAR_PX;
   return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(EDIT_LEAF_MIN_WIDTH + (rowSpanHeader ? 8 : 0), fit));
 }

@@ -266,7 +266,12 @@ def _line_in_version(db: Session, version_id: str, line_id: str) -> ProjectQuota
     line = (
         db.query(ProjectQuotationLine)
         .join(ProjectQuotationVersion, ProjectQuotationVersion.id == ProjectQuotationLine.version_id)
-        .filter(ProjectQuotationLine.id == str(line_id), ProjectQuotationVersion.id == str(version_id))
+        .filter(
+            ProjectQuotationLine.id == str(line_id),
+            ProjectQuotationVersion.id == str(version_id),
+            # A heading row has no product to draw (PROPOSAL-FORM-COLLAPSE).
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .first()
     )
     if line is None:

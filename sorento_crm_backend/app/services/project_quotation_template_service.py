@@ -84,7 +84,9 @@ MERGE_FIELDS: tuple[Dict[str, str], ...] = (
     },
     {
         "token": "subject_title",
-        "label": "Subject line",
+        # The form calls it Project title (owner, 10 Nov 2026); "on this quotation" keeps it
+        # apart from {{project_title}}, the project record's own title.
+        "label": "Project title on this quotation",
         "example": "CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN",
     },
     {

@@ -59,6 +59,10 @@ KEYS = [
     "validity",
     "prepared_by",
 ]
+# Quotation Purpose no longer prints anywhere (owner, 10 Nov 2026, PROPOSAL-FORM-COLLAPSE): the
+# column stays, an existing value just stops showing. The design still lists the row.
+PRINTED_KEYS = [key for key in KEYS if key != "purpose"]
+PRINTED_LABELS = [label for label in LABELS if label != "Proposal Purpose"]
 
 
 def _full_document(db, env, *, purpose=f"{MARKER} Supply of sanitary ware", terms=TERMS):
@@ -273,8 +277,8 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         rows = cover_rows(db, document, record)
 
-        assert [r["key"] for r in rows] == KEYS
-        assert [r["label"] for r in rows] == LABELS
+        assert [r["key"] for r in rows] == PRINTED_KEYS
+        assert [r["label"] for r in rows] == PRINTED_LABELS
         by = {r["key"]: r for r in rows}
         assert by["reference"]["text"] == (
             f"{document.document_no}-A {env['project'].title}"
@@ -340,12 +344,12 @@ def test_pdf_layout_2_rows_in_order_with_uppercase_labels_and_no_fax():
             "CONTACT:",
             "ADD:",
             "EMAIL:",
-            "PROPOSAL PURPOSE:",
             "TERMS &amp; CONDITIONS:",
             "PAYMENT TERMS:",
             "VALIDITY:",
             "PREPARED BY:",
         ]
+        assert "PROPOSAL PURPOSE:" not in html  # never printed (owner, 10 Nov 2026)
         positions = []
         for label in labels:
             assert label in html, label
@@ -385,7 +389,9 @@ def test_pdf_layout_2_empty_purpose_row_is_omitted_and_script_is_escaped():
         env = _setup(db)
         _d, _r, html = _html_of(db, env, purpose="<script>alert(1)</script>")
         assert "<script>alert" not in html
-        assert "&lt;script&gt;" in html
+        # A stored purpose no longer prints at all, escaped or not.
+        assert "&lt;script&gt;" not in html
+        assert "PROPOSAL PURPOSE" not in html and "QUOTATION PURPOSE" not in html
 
 
 def test_pdf_layout_2_terms_print_on_the_cover_only_and_keep_their_structure():
@@ -460,7 +466,7 @@ def test_countersign_layout_2_returns_cover_rows_in_order_with_the_pdf_reference
         env = _setup(db)
         document, record, body = _sign_page(db, env)
         rows = body["cover_rows"]
-        assert [r["key"] for r in rows] == KEYS
+        assert [r["key"] for r in rows] == PRINTED_KEYS
         ref = f"{document.document_no}-A {env['project'].title}"
         assert rows[0]["text"] == ref
         assert body["our_ref"] == ref
@@ -473,6 +479,10 @@ def test_countersign_layout_2_omits_empty_rows():
     with blank_session() as db:
         env = _setup(db)
         _d, _r, body = _sign_page(db, env, purpose=None)
+        assert "purpose" not in [r["key"] for r in body["cover_rows"]]
+    with blank_session() as db:
+        env = _setup(db)
+        _d, _r, body = _sign_page(db, env)
         assert "purpose" not in [r["key"] for r in body["cover_rows"]]
 
 

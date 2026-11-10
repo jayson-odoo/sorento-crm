@@ -1360,6 +1360,13 @@ class ProjectQuotationLineBase(BaseModel):
         False,
         description="Quoted at a rate and printed, contributing nothing to any total.",
     )
+    is_section: bool = Field(
+        False,
+        description=(
+            "The row is a section heading: band_label only, no product, set, quantity or "
+            "price, and nothing added to any total."
+        ),
+    )
     image_attachment_id: Optional[str] = Field(
         None,
         description=(
@@ -1399,6 +1406,7 @@ class ProjectQuotationLineUpdate(BaseModel):
     complete_set: Optional[str] = Field(None, max_length=100)
     band_label: Optional[str] = Field(None, max_length=150)
     is_rate_only: Optional[bool] = None
+    is_section: Optional[bool] = None
 
     @field_validator("quantity")
     @classmethod
@@ -1563,6 +1571,8 @@ class ProjectQuotationLineResponse(BaseModel):
     technical_spec: Optional[str] = None
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
+    # A section heading row (band_label only), never a priced line (PROPOSAL-FORM-COLLAPSE).
+    is_section: bool = False
 
     is_non_standard: bool = False
     # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.
@@ -2501,6 +2511,8 @@ class QuotationSignScopeLine(BaseModel):
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
+    # A heading row: draw band_label as the band, nothing else (PROPOSAL-FORM-COLLAPSE).
+    is_section: bool = False
     is_rate_only: bool = False
     amount: Optional[Decimal] = None
     qty_cells: Dict[str, Any] = Field(default_factory=dict)
