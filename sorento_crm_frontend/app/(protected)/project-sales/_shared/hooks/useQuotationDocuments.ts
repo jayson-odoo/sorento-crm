@@ -82,7 +82,8 @@ export function useQuotationDocument(
  * QUOTE-AUTOSAVE: open the form's draft, which claims it for this tab (owner, Q4): an existing
  * document's (`documentId`), or the person's own new-proposal draft (null). Run ONCE per visit (no
  * refetch on focus, mount or reconnect): a second open from the same tab would take the claim away
- * from itself, and the form seeds from the answer a single time.
+ * from itself, and the form seeds from the answer a single time. (Window focus never refetches:
+ * the shared QueryProvider default.)
  */
 export function useQuotationFormDraftOpen(projectId: string | undefined, documentId: string | null) {
   return useQuery({
@@ -92,7 +93,6 @@ export function useQuotationFormDraftOpen(projectId: string | undefined, documen
     staleTime: Infinity,
     gcTime: 0,
     retry: false,
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
   });

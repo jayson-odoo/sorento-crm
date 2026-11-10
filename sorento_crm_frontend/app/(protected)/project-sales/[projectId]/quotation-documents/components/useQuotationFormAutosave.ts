@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useAutosave, type AutosaveStatus } from '@/hooks/useAutosave';
+import { localStore } from '@/lib/storage';
 import {
   DraftNotHolderError,
   getQuotationDraftHolder,
@@ -59,23 +60,18 @@ export function mirrorKey(projectId: string, documentId: string | null, token: s
 /** Every tab's copy of one draft this browser holds, oldest first. */
 export function readMirrors(prefix: string): { key: string; value: MirroredDraft }[] {
   const out: { key: string; value: MirroredDraft }[] = [];
-  try {
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (!key || !key.startsWith(prefix)) continue;
-      const value = readMirror(key);
-      if (value) out.push({ key, value });
-    }
-  } catch {
-    // Storage blocked: there is nothing to reopen.
+  for (const key of localStore.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    const value = readMirror(key);
+    if (value) out.push({ key, value });
   }
   return out.sort((a, b) => a.value.at.localeCompare(b.value.at));
 }
 
-/** The unsent copy this browser holds, or null. Storage can throw (private mode): never fatal. */
+/** The unsent copy this browser holds, or null. `localStore` never throws (private mode). */
 export function readMirror(key: string): MirroredDraft | null {
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = localStore.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as MirroredDraft;
     return parsed && typeof parsed === 'object' && parsed.doc ? parsed : null;
@@ -85,19 +81,12 @@ export function readMirror(key: string): MirroredDraft | null {
 }
 
 export function writeMirror(key: string, value: MirroredDraft): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // A full or blocked store only loses the offline safety net, never the server save.
-  }
+  // A full or blocked store only loses the offline safety net, never the server save.
+  localStore.setItem(key, JSON.stringify(value));
 }
 
 export function clearMirror(key: string): void {
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    // As above.
-  }
+  localStore.removeItem(key);
 }
 
 /**

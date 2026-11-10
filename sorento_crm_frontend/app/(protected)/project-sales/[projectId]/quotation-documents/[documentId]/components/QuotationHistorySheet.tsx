@@ -168,7 +168,7 @@ export function QuotationHistorySheet({
       </Sheet>
 
       <Dialog open={viewing !== null} onOpenChange={(next) => !next && setViewing(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
           {viewing && <HistoryEntryView entry={viewing} />}
         </DialogContent>
       </Dialog>
