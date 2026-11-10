@@ -96,21 +96,29 @@ export function PartiesClient() {
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
         size: 260,
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-40" /> },
+        // One line per row (owner, 10 Nov): a long name clamps, the full name is the title.
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.name}>
-              {row.original.name}
-            </span>
-            {row.original.registration_no && (
-              <span
-                className="block truncate text-xs text-muted-foreground"
-                title={row.original.registration_no}
-              >
-                {row.original.registration_no}
-              </span>
-            )}
-          </div>
+          <span className="block truncate font-medium" title={row.original.name}>
+            {row.original.name}
+          </span>
         ),
+      },
+      {
+        id: 'registration_no',
+        accessorFn: (row) => row.registration_no ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Registration no." column={column} />
+        ),
+        size: 150,
+        meta: { headerTitle: 'Registration no.', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) =>
+          row.original.registration_no ? (
+            <span className="block truncate" title={row.original.registration_no}>
+              {row.original.registration_no}
+            </span>
+          ) : (
+            <Muted>-</Muted>
+          ),
       },
       {
         accessorKey: 'party_type',
@@ -316,7 +324,7 @@ export function PartiesClient() {
                   value={search}
                   onChange={setSearch}
                   isSettling={isSearchInFlight(debouncedSettling, parties.isFetching, debounced)}
-                  placeholder="Search by name…"
+                  placeholder="Search by name or reg. no."
                   aria-label="Search parties"
                   className="w-full max-w-xs"
                 />
