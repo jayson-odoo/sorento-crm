@@ -209,7 +209,7 @@ const PermissionList = () => {
         },
         size: 150,
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Slug',
           skeleton: <Skeleton className="w-14 h-8" />,
@@ -228,7 +228,7 @@ const PermissionList = () => {
         },
         size: 300,
         enableSorting: false,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Description',
           skeleton: <Skeleton className="w-28 h-8" />,
@@ -245,7 +245,7 @@ const PermissionList = () => {
           return formatDateTimeSafe(value, '-');
         },
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Created At',
           skeleton: <Skeleton className="w-20 h-8" />,
