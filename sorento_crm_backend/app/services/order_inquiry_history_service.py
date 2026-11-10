@@ -79,6 +79,14 @@ def _lines_word(count: int) -> str:
     return f"{count} line" if count == 1 else f"{count} lines"
 
 
+def _what(lines: List[dict]) -> str:
+    """STANDARD-HISTORY v2 (owner "ok", 10 Nov): one plain sentence per entry. A press on one
+    line names its item ("Confirmed SRTSP131"); a press on several says how many."""
+    if len(lines) == 1 and lines[0].get("item_code"):
+        return lines[0]["item_code"]
+    return _lines_word(len(lines))
+
+
 def _second(value: Optional[datetime]) -> Optional[datetime]:
     return value.replace(microsecond=0) if value else None
 
@@ -196,7 +204,8 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
             out.append(
                 _event(
                     f"audit-{audit.id}", "cancelled", audit.changed_at, audit.user_id,
-                    "Cancelled 1 line", [rows.line(row_id, change, new.get("qty"))],
+                    f"Cancelled {rows.by_id[row_id].item_code or '1 line'}",
+                    [rows.line(row_id, change, new.get("qty"))],
                 )
             )
             continue
@@ -222,13 +231,14 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
             continue
         after = _ACK_LABEL.get(new_state, new_state)
         lines = [
-            rows.line(row_id, f"{_ACK_LABEL.get(prior.get(row_id), 'To confirm')} -> {after}")
+            rows.line(row_id, f"{_ACK_LABEL.get(prior.get(row_id), 'To confirm')} → {after}")
             for row_id in mine
         ]
         out.append(
             _event(
                 f"audit-{audit.id}", kind, audit.changed_at, audit.user_id,
-                f"{verb} {_lines_word(len(lines))}", lines,
+                f"{verb} {_what(lines)}{', back to To confirm' if kind == 'unconfirmed' else ''}",
+                lines,
             )
         )
     return out
@@ -259,7 +269,7 @@ def _links(db: Session, rows: _Rows) -> List[dict]:
         out.append(
             _event(
                 f"link-{first.id}", "linked", first.linked_at, None if auto else linked_by,
-                f"{target} linked to {_lines_word(len(lines))}", lines,
+                f"{target} linked to {_what(lines)}", lines,
                 actor=AUTOMATIC if auto or not linked_by else None,
             )
         )
@@ -286,7 +296,7 @@ def _released(db: Session, rows: _Rows) -> List[dict]:
         out.append(
             _event(
                 f"released-{first.id}", "unlinked", first.released_at, released_by,
-                f"{target} released from {_lines_word(len(lines))}", lines,
+                f"{target} released from {_what(lines)}", lines,
             )
         )
     return out
@@ -311,7 +321,7 @@ def _rejections(rows: _Rows) -> List[dict]:
         out.append(
             _event(
                 f"rejected-{first_id}", "rejected", first.rejected_at, rejected_by,
-                f"Rejected {_lines_word(len(lines))}", lines,
+                f"Rejected {_what(lines)}", lines,
             )
         )
     return out
@@ -341,7 +351,7 @@ def _reserve(db: Session, rows: _Rows) -> List[dict]:
         out.append(
             _event(
                 f"reserve-{first.id}", kind, first.created_at, actor_id,
-                f"{verb} {_lines_word(len(lines))}", lines,
+                f"{verb} {_what(lines)}", lines,
             )
         )
     return out

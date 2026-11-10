@@ -226,16 +226,16 @@ export function OrderInquiryLineHistoryDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="min-w-0 flex-1 overflow-y-auto">
-          {/* STANDARD-HISTORY wave 1 (AC-SH-B12): "All events" first - the OI History tab's
-              own component, narrowed to this line's rows. Rows / Decisions / Reserve stay. */}
-          <Tabs defaultValue="all" className="w-full min-w-0">
+          {/* STANDARD-HISTORY v2 (AC-SH-B12): "History" first - the one history component
+              (Audit Trail), narrowed to this line's rows. Rows / Decisions / Reserve stay. */}
+          <Tabs defaultValue="history" className="w-full min-w-0">
             <TabsList variant="line" className="mb-3 w-full justify-start">
-              <TabsTrigger value="all">All events</TabsTrigger>
+              <TabsTrigger value="history">History</TabsTrigger>
               <TabsTrigger value="rows">Rows</TabsTrigger>
               <TabsTrigger value="decisions">Decisions</TabsTrigger>
               {reserveEntries ? <TabsTrigger value="reserve">Reserve</TabsTrigger> : null}
             </TabsList>
-            <TabsContent value="all" className="mt-0 min-w-0">
+            <TabsContent value="history" className="mt-0 min-w-0">
               <OrderInquiryHistory inquiryId={inquiryId} rowIds={rowIds} />
             </TabsContent>
             <TabsContent value="rows" className="mt-0 min-w-0">

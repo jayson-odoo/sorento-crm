@@ -25,7 +25,7 @@ import BackToList from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
@@ -1014,8 +1014,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             <Ship />
             <span>Related SPO</span>
           </TabsTrigger>
-          {/* STANDARD-HISTORY wave 1 (AC-SH-B8): last, with the PO detail page's own
-              History icon and label. */}
+          {/* STANDARD-HISTORY (AC-SH-B8): last, with the PO detail page's own History icon
+              and label. */}
           <TabsTrigger value="history">
             <History />
             <span>History</span>
@@ -1079,15 +1079,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         </TabsContent>
 
         <TabsContent value="history" className="mt-0 focus-visible:outline-none">
-          {/* The PO History tab's own frame (`AuditTrail`: a Card titled History). */}
-          <Card>
-            <CardHeader>
-              <CardTitle>History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <OrderInquiryHistory inquiryId={id} />
-            </CardContent>
-          </Card>
+          {/* STANDARD-HISTORY v2: the PO / product History tab's own component. */}
+          <OrderInquiryHistory inquiryId={id} />
         </TabsContent>
       </Tabs>
 

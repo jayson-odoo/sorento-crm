@@ -35,16 +35,21 @@ Backend: `GET /api/v1/project-sales/order-inquiry-headers/{inquiry_id}/history`,
 
 Frontend:
 
-- AC-SH-B8: The OI detail page has a History tab, last, after Related SPO, with the same History
-  icon as the PO detail page. It shows the events on the existing `EventTimeline` (grouped by
-  day, dd/mm/yyyy, newest first), each event's kind as an existing `Badge`, and the actor.
-- AC-SH-B9: Filters, the SO History drawer's own: Event (multi), User, Product, Line, date
-  range, and Clear. A Product or Line filter keeps a batch press as ONE event showing only the
-  matching lines.
-- AC-SH-B10: Clicking an event's title expands its lines, one row per line, in the SO History
-  drawer's lines table (Line, Product, Qty, Change).
-- AC-SH-B11: Empty: "No history" heading + hint, no button. Error: "Could not load the history"
-  + Retry (the drawer's states).
-- AC-SH-B12: The OI line History dialog's first tab is "All events": the same component, showing
-  only the events that touched that line's rows, with no Line / Product filter. Rows, Decisions
-  and Reserve stay as they are.
+Frontend (v2, owner "ok" on mock v2 `mockups/standard-history-v2-10nov.html`, 10 Nov):
+
+- AC-SH-B8: The OI detail page has a History tab, last, after Related SPO, with the PO detail
+  page's History icon. It renders the existing `AuditTrail` card titled History: entries newest
+  first, each two lines: one plain sentence, then "dd/mm/yyyy, time · by <who>" (or
+  "Automatic"); seconds only where two entries share a minute.
+- AC-SH-B9: At most one control: a "Search history" box, shown only when there are more than 10
+  entries. It keeps a batch press as ONE entry and shows its matching lines under it. No other
+  filters, no badges, no grids.
+- AC-SH-B10: A multi-line entry offers "Show N lines" (then "Hide"); its lines read
+  "<item>: <before> → <after>", the Audit Trail's own indented change lines. A one-line entry
+  shows its line at once; an entry with no lines offers nothing.
+- AC-SH-B11: Empty: "No history yet" heading + "Changes to this record appear here.", no
+  button. Error: "Could not load the history" + Retry.
+- AC-SH-B12: The OI line History dialog's first tab is "History": the same `AuditTrail` list,
+  only the entries that touched that line's rows, each listing only that line's rows. Rows,
+  Decisions and Reserve stay as they are.
+- AC-SH-B13: The 8 pages already on `AuditTrail` (product, PO, complaint, ...) are unchanged.

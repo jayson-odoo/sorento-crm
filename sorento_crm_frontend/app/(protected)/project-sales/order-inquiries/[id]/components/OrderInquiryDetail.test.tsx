@@ -774,7 +774,7 @@ describe('owner hand test (5 Nov 2026): the sales order is named in the header c
   });
 });
 
-describe('STANDARD-HISTORY wave 1: the History tab (AC-SH-B8)', () => {
+describe('STANDARD-HISTORY: the History tab (AC-SH-B8, v2)', () => {
   it('is the last tab, after Related SPO', async () => {
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
@@ -787,10 +787,10 @@ describe('STANDARD-HISTORY wave 1: the History tab (AC-SH-B8)', () => {
   it("opened, reads this OI's history and shows a batch press as one event", async () => {
     searchState.query = 'tab=history';
     renderDetail('oi-1');
-    const event = await screen.findByTestId('history-event-audit-unconfirm');
+    // STANDARD-HISTORY v2: the Audit Trail list - one sentence, then when and who.
+    const event = (await screen.findByText('Unconfirmed 9 lines')).closest('[data-audit-entry]');
     expect(getOrderInquiryHistorySpy).toHaveBeenCalledWith('oi-1');
-    expect(event).toHaveTextContent('Unconfirmed 9 lines');
-    expect(event).toHaveTextContent('J*** (Purchasing)');
-    expect(screen.getByRole('combobox', { name: 'Product' })).toBeInTheDocument();
+    expect(event).toHaveTextContent('by J*** (Purchasing)');
+    expect(screen.queryByRole('combobox', { name: 'Product' })).not.toBeInTheDocument();
   });
 });

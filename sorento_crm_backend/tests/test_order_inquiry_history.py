@@ -131,15 +131,16 @@ def test_confirm_then_unconfirm_are_one_event_each_listing_every_row_newest_firs
         assert [e["kind"] for e in presses] == ["unconfirmed", "confirmed", "confirmed"]
 
         unconfirm = presses[0]
-        assert unconfirm["title"] == "Unconfirmed 3 lines"
+        assert unconfirm["title"] == "Unconfirmed 3 lines, back to To confirm"
         assert unconfirm["actor"] == "ZZT Purchasing Person"
         assert {e["row_id"] for e in unconfirm["lines"]} == {r.id for r in rows}
-        assert {e["change"] for e in unconfirm["lines"]} == {"Confirmed -> To confirm"}
+        assert {e["change"] for e in unconfirm["lines"]} == {"Confirmed → To confirm"}
 
         one_confirm = presses[1]
-        assert one_confirm["title"] == "Confirmed 1 line"
+        # STANDARD-HISTORY v2: a one-line press names its item, in one plain sentence.
+        assert one_confirm["title"] == "Confirmed ZZT-SRTSP131"
         assert [e["item_code"] for e in one_confirm["lines"]] == ["ZZT-SRTSP131"]
-        assert one_confirm["lines"][0]["change"] == "To confirm -> Confirmed"
+        assert one_confirm["lines"][0]["change"] == "To confirm → Confirmed"
         assert one_confirm["lines"][0]["so_line_no"] == 1
 
         ats = [e["at"] for e in events]
@@ -174,7 +175,7 @@ def test_a_press_filed_under_another_ois_row_is_found_and_never_leaks_that_oi():
         assert foreign.id not in response.text
         confirms = [e for e in response.json()["events"] if e["kind"] == "confirmed"]
         assert len(confirms) == 1
-        assert confirms[0]["title"] == "Confirmed 1 line"
+        assert confirms[0]["title"] == "Confirmed ZZT-MINE"
         assert [e["item_code"] for e in confirms[0]["lines"]] == ["ZZT-MINE"]
 
 
@@ -300,22 +301,26 @@ def test_raise_link_release_reject_cancel_and_reserve_are_events_too():
 
         link = by_kind["linked"][0]
         assert link["actor"] == "Automatic"
-        assert link["title"] == f"{po.po_number} linked to 1 line"
+        assert link["title"] == f"{po.po_number} linked to ZZT-LINKED"
         assert link["lines"][0]["item_code"] == "ZZT-LINKED"
         assert link["lines"][0]["qty"] == 4
 
         released = by_kind["unlinked"][0]
+        assert released["title"] == "ZZT-PO-OLD released from ZZT-LINKED"
         assert released["actor"] == "ZZT Purchasing Person"
         assert "ZZT-PO-OLD" in released["lines"][0]["change"]
 
         rejection = by_kind["rejected"][0]
+        assert rejection["title"] == "Rejected ZZT-REJECTED"
         assert rejection["lines"][0]["item_code"] == "ZZT-REJECTED"
         assert "No such item" in rejection["lines"][0]["change"]
 
         cancel = by_kind["cancelled"][0]
+        assert cancel["title"] == "Cancelled ZZT-CANCELLED"
         assert cancel["lines"][0]["item_code"] == "ZZT-CANCELLED"
 
         reserve = by_kind["reserved"][0]
+        assert reserve["title"] == "Reserved ZZT-RES"
         assert reserve["lines"][0]["item_code"] == "ZZT-RES"
         assert reserve["lines"][0]["qty"] == 3
 

@@ -1,5 +1,5 @@
 /**
- * STANDARD-HISTORY: one entry of a record's History tab (`components/history/RecordHistory`).
+ * STANDARD-HISTORY: one entry of a record's History, as `components/audit/AuditTrail` shows it from plain entries.
  * The backend sends it already merged and in plain words; a batch press is ONE event whose
  * `lines` name every row it touched. Ids are React keys only, never shown (no UUIDs in the UI).
  */

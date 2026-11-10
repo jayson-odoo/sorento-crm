@@ -1,10 +1,10 @@
 # PLAN: one standard History view for every audited record (STANDARD-HISTORY)
 
-Status: Part B wave 1 in build on PR #2299 (track: full, an auth-adjacent read of audit data).
-Part A (an Unconfirm guard) was DROPPED by the owner on 10 Nov ~12:50 MYT ("just drop the
-unconfirm thingy, I didn't say I want this"); its code and tests are reverted and Unconfirm with
-nothing ticked keeps today's behaviour. Scout done, owner answered Q1 to Q4, mock v1 approved
-12:41 on condition that only existing components are used.
+Status: v2 approved by the owner (Lavish, 10 Nov: "ok"); #2299 rebuilt on it: the existing
+`AuditTrail` is the one history component (plain entries mode), `RecordHistory` is deleted.
+Wave 1 v1 was crew-passed but not accepted on hand test (10 Nov ~15:10 MYT: "OI history why so
+complicated geh, ... i want to reuse same component though"). Part A (an Unconfirm guard) was
+dropped by the owner on 10 Nov ~12:50.
 
 ## Owner rulings (10 Nov 2026 ~12:40 MYT, via crew)
 
@@ -76,22 +76,37 @@ Q4 answered by crew: use the real item codes and times; person names stay masked
 - Untouched by the Unconfirm: SRT320-CR (10), SRT5674-N, SRT5732, SRTWB246 (raised, request to
   reserve).
 
-## Wave 1 build notes (PR #2299)
+## Owner hand test of wave 1, and v2 (10 Nov ~15:10)
 
-- Built only from existing components (owner 12:41). `components/history/RecordHistory.tsx` is
-  the SO History drawer's body (`PlanningHistorySheet.tsx`) lifted out of its Sheet; the swap
-  list from mock v1 is in the PR description.
+Verdict: too complicated; reuse the same component. Cause, from the comparison
+(`evidence/standard-history-compare/`): v1 copied the busiest history in the system (the
+planning-admin SO drawer: five filters, Clear, a badge per event, a grid per batch) instead of
+the simple one already on 8 detail pages (`components/audit/AuditTrail.tsx`: one entry per
+change, what / when / who, then indented change lines). v2 makes `AuditTrail` the one component:
+a plain two-line entry (one sentence; dd/mm/yyyy time and person), details only on "Show N
+lines", one search box shown only past 10 entries, no filters or badges. The backend endpoint
+and the OI root stamp stay as built.
+
+## Wave 1 build notes (PR #2299, v2)
+
+- One component: `components/audit/AuditTrail.tsx` takes either its own audit read
+  (`entityType` + `entityId`, the 8 existing pages, unchanged) or plain `entries` from a record's
+  history endpoint (the OI). Plain entry: one sentence; "dd/mm/yyyy, time · by <who>" (seconds
+  only where two entries share a minute); "Show N lines" for a multi-line press; one search box
+  only past 10 entries. No filters, badges or grids. `RecordHistory` (v1) is deleted.
+- Backend titles are the plain sentences (a one-line press names its item, "Confirmed
+  SRTSP131"; an Unconfirm adds "back to To confirm"); change lines use "→".
 - Read gate: `projects.projects.view`, staff sessions only (an X-API-Key principal is refused,
   the PO-history ruling for audit reads). Admin extras (IP, raw values) are not in wave 1.
 - **Deferred, with its trigger: a GIN index on `audit_logs (new_values->'row_ids')`** (partial,
   `entity_type IN ('project_order_inquiry_rows','order_inquiry_rows')`). The History read finds a
-  press through that path, which today is a filter over every OI-row audit row (reviewer: 179 ms
-  at 100k such rows on 1M, 0.08 ms with the index). OI rows are `__audit_skip__`, so the set
-  grows only by Confirm / Unconfirm presses and row cancellations. Trigger: when
-  `SELECT count(*) FROM audit_logs WHERE entity_type IN ('project_order_inquiry_rows',
-  'order_inquiry_rows')` passes 50,000 on prod, add the index in its own migration (CREATE INDEX
-  CONCURRENTLY). Nobody in this lane can read prod; the owner or crew runs the count.
-- Wave 2 (SO / Fulfilment Planning): make `PlanningHistorySheet` render `RecordHistory` (it needs
-  an SO filter, per-kind columns, per-event extras such as "Open email", an alert dot tone and
-  item-code line matching), and pull `_ROW_AUDIT_TYPES` / the 5 s raise window / `_iso` into one
-  backend helper shared with `planning_history_service.py`.
+  press through that path, today a filter over every OI-row audit row (reviewer: 179 ms at 100k
+  such rows on 1M, 0.08 ms with the index). OI rows are `__audit_skip__`, so the set grows only
+  by Confirm / Unconfirm presses and row cancellations. Trigger: when `SELECT count(*) FROM
+  audit_logs WHERE entity_type IN ('project_order_inquiry_rows','order_inquiry_rows')` passes
+  50,000 on prod, add the index in its own migration (CREATE INDEX CONCURRENTLY). Nobody in this
+  lane can read prod; the owner or crew runs the count.
+- Next waves reuse `AuditTrail` (entries mode where a record's history is more than one audit
+  read). The SO drawer keeps its admin filters for planners; the SO record's History tab uses
+  this list. Shared backend helpers (`_ROW_AUDIT_TYPES`, the 5 s raise window, `_iso`) get pulled
+  out of `planning_history_service.py` when the SO wave adds its history read.
