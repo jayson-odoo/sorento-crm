@@ -1,5 +1,6 @@
-import type { TownShop, TownSnapshot } from '@/types/town.types';
-import { count, rm0, shopLabel } from './townFormat';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import type { TownDueCustomer, TownShipment, TownShop, TownSnapshot } from '@/types/town.types';
+import { count, rm0, shopLabel, shortName } from './townFormat';
 
 /** What the pointer is over. A mouse shows its tooltip; a tap on touch opens the lightbox instead. */
 export type TipSubject =
@@ -9,7 +10,11 @@ export type TipSubject =
   | { kind: 'low' }
   | { kind: 'deliver' }
   | { kind: 'approve' }
-  | { kind: 'port' };
+  | { kind: 'port' }
+  | { kind: 'shipment'; row: TownShipment }
+  | { kind: 'lorry'; customer: TownDueCustomer };
+
+const orders = (n: number) => `${count(n)} order${n === 1 ? '' : 's'} due today or overdue`;
 
 /** The hover tooltip: the thing's name and its one key number (TOWN-V2 rule 1). */
 export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: string; detail: string } {
@@ -49,6 +54,26 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
           ? `${count(incoming.incoming)} incoming${incoming.late ? ` · ${count(incoming.late)} late` : ''}`
           : 'Nothing on the way',
       };
+    }
+    case 'shipment': {
+      const { row } = subject;
+      const eta = row.eta ? `ETA ${formatDateInMalaysia(row.eta)}` : 'No ETA';
+      return {
+        title: `${row.shipment_number ?? 'Shipment'}${row.late ? ' · late' : ' on the water'}`,
+        detail: [eta, `${count(row.products)} products`, row.supplier].filter(Boolean).join(' · '),
+      };
+    }
+    case 'lorry': {
+      const { customer } = subject;
+      if (customer.key === null) {
+        // a customer with no shop in the town: its name only exists on the personal view
+        return {
+          title: 'Customer outside the town',
+          detail: [customer.name ? shortName(customer.name) : null, orders(customer.orders)].filter(Boolean).join(' · '),
+        };
+      }
+      const shop = snapshot.shops.find((s) => s.key === customer.key);
+      return { title: `Lorry to ${shop ? shopLabel(shop) : 'Dealer'}`, detail: orders(customer.orders) };
     }
   }
 }

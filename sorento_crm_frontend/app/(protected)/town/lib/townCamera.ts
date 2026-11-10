@@ -34,8 +34,9 @@ export const pinchZoom = (startZoom: number, startDistance: number, distance: nu
   clampZoom((startZoom * distance) / Math.max(1, startDistance));
 export const stepZoom = (zoom: number, direction: 1 | -1) => clampZoom(direction > 0 ? zoom * ZOOM_STEP : zoom / ZOOM_STEP);
 
-/** Where the camera sits for `view`, looking at the island's centre `lookY` up. */
-export function cameraPosition(view: TownView, lookY: number): [number, number, number] {
-  const flat = Math.cos(view.tilt) * RADIUS;
-  return [Math.cos(view.yaw) * flat, lookY + Math.sin(view.tilt) * RADIUS, Math.sin(view.yaw) * flat];
+/** Where the camera sits for `view`, looking at the island's centre `lookY` up, `radius` away (the
+ * perspective camera passes its fitted distance over the zoom; zoom itself is not applied here). */
+export function cameraPosition(view: TownView, lookY: number, radius = RADIUS): [number, number, number] {
+  const flat = Math.cos(view.tilt) * radius;
+  return [Math.cos(view.yaw) * flat, lookY + Math.sin(view.tilt) * radius, Math.sin(view.yaw) * flat];
 }
