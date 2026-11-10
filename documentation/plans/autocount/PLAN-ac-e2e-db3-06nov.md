@@ -70,4 +70,4 @@ SPO stays VENDOR_UNSUPPORTED. Owner wants LINKING results by morning. Resume not
   `foundryx_service_acdb3`. Fixtures: `crew/state/files/AC-E2E-DB3/reseed.sh <TAG>`; read-back `ac_read.py` there.
 - Linking cases: L1 link an existing whole row, L2 change link, L3 unlink, L4 split + relocate regression, L5 SPO
   refused, P pull-back; each: AutoCount read-back, SO qty before/after, SS `ac_api_call_log` rows, screenshot.
-- Progress (update as it lands): stack rebuild [ ], L1 [ ], L2 [ ], L3 [ ], L4 [ ], L5 [ ], P [ ], docs [ ].
+- Progress (update as it lands): stack rebuild [x] (CRM cf5250c6 = main f6413b84 + #2223 2b9b0502; SS main 4193fdc4; fixtures PO-L 12294, SO-L 12297, SO-L2 12300), L1 [ ], L2 [ ], L3 [ ], L4 [ ], L5 [ ], P [ ], docs [ ].
