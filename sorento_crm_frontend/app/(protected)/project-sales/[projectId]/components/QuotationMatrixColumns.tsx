@@ -62,8 +62,9 @@ export interface MatrixGridContextValue {
   change: (next: MatrixHeader[]) => void;
   addCol: (headerKey: string) => void;
   addHeader: () => void;
-  /** Copies a header and its column names right after it, its name taking the caret. */
-  duplicateHeader: (headerKey: string) => void;
+  /** Copies a header and its column names right after it; returns the copy's key, for the caller
+   *  to hand its name the caret (the menu does, once it has closed). */
+  duplicateHeader: (headerKey: string) => string | null;
   pending: PendingRemoval | null;
   startRemoval: (key: string) => void;
   undoRemoval: () => void;
