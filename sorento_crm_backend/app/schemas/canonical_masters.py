@@ -92,6 +92,18 @@ class CanonicalBrand(_Canonical):
     is_active: Optional[bool] = None
 
 
+class CanonicalPaymentTerm(_Canonical):
+    """AutoCount `Terms` (QUOTE-TERMS-SELECT, contract 2.14): `code` is `DisplayTerm`,
+    `description` is what prints on a quotation (else the code), `term_days` is `TermDays`.
+    Caps are the `payment_terms` column widths (`app/models/payment_term.py`)."""
+
+    code: str = Field(..., min_length=1, max_length=50)
+    description: Optional[str] = Field(None, max_length=200)
+    term_days: Optional[int] = Field(None, ge=0, le=3650)
+    # Absent vs null (D14): omitted leaves the stored value (true on create).
+    is_active: Optional[bool] = None
+
+
 class CanonicalItemClass(_Canonical):
     """AutoCount ItemClass (ITEM-CLASS-MASTER, contract 2.11), the brands master exactly.
     Syncs BEFORE brands and products, so a product's `item_class_code` links a real master row

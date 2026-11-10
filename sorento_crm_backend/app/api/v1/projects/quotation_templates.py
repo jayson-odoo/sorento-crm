@@ -65,6 +65,21 @@ def list_merge_fields(
     return _envelope(templates.serialize_merge_fields())
 
 
+@router.get("/quotation-templates/payment-terms")
+def list_payment_terms(
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Payment Terms select (QUOTE-TERMS-SELECT): this company's active AutoCount terms.
+    Declared before ``/{template_id}`` so the literal segment is not read as an id."""
+    from app.services import quote_terms_service as quote_terms
+
+    try:
+        return _envelope(quote_terms.list_terms(db, company_id=acting_company_id(db)))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/quotation-templates/cover-default")
 def get_cover_default(
     _user: dict = Depends(require_permission(VIEW)),
