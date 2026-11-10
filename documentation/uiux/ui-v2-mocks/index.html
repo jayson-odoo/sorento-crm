@@ -134,10 +134,12 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 .v2 .main{display:flex;flex-direction:column;min-width:0}
 .v2 .top{height:48px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 20px}
 .v2 .search{height:30px;border:1px solid var(--line-strong);border-radius:var(--r-sm);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--muted);width:340px;font-size:12.5px;background:var(--bg)}
+.v2 .search svg{width:14px;height:14px;flex:none}
+.v2 .card{overflow-x:auto}
 .v2 .kbd{margin-left:auto;font:11px ui-monospace,Menlo,monospace;border:1px solid var(--line-strong);border-radius:4px;padding:0 4px}
 .v2 .top .r{margin-left:auto;display:flex;gap:8px;align-items:center}
 .v2 .ibtn{width:30px;height:30px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:var(--fg-2);border:1px solid transparent}
-.v2 .ibtn.b{border-color:var(--line-strong);background:var(--bg)}
+.v2 .ibtn.bd{border-color:var(--line-strong);background:var(--bg)}
 .v2 .ibtn svg{width:16px;height:16px}
 .v2 .av{width:26px;height:26px;border-radius:50%;background:var(--neu-bg);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--neu-fg)}
 .v2 .co{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border-radius:var(--r-sm);font-size:12.5px;color:var(--fg-2)}
@@ -418,7 +420,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
         <div class="facets" data-c="FacetChips · NEW components/common/FacetChips.tsx (replaces OrderInquiryStrip + SupplyKindCard)">
           <span class="fc">Stock <b>120</b></span><span class="fc">Indent <b>84</b></span><span class="fc">Project <b>108</b></span><span class="fc on">To confirm <b>17</b></span>
         </div>
-        <div class="card" style="overflow:visible;position:relative" data-c="DataGrid · components/ui/data-grid.tsx">
+        <div class="card" style="position:relative" data-c="DataGrid · components/ui/data-grid.tsx">
           <div class="tb" data-c="DataGridListToolbar · components/ui/data-grid-list-toolbar.tsx (restyle)">
             <span class="sbox" data-c="ListSearchInput · components/common/ListSearchInput.tsx"><svg width="14" height="14"><use href="#i-search"/></svg>Search OI no, S/O no, customer</span>
             <span class="fchip set" data-c="FilterChip · NEW components/ui/data-grid-filter-chip.tsx (SearchableMultiSelect inside)">Reserve: <em>Needs reserve, Parked</em></span>
@@ -531,7 +533,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
           </div>
           <div class="acts" data-c="DetailActions · components/common/DetailActions.tsx">
             <span class="nav2" data-c="RecordNavigation · components/common/RecordNavigation.tsx">3 / 25<span class="ibtn" title="Previous order inquiry"><svg><use href="#i-left"/></svg></span><span class="ibtn" title="Next order inquiry"><svg><use href="#i-right"/></svg></span></span>
-            <span class="ibtn b" data-c="DetailActionsMenu · components/common/DetailActionsMenu.tsx" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span>
+            <span class="ibtn bd" data-c="DetailActionsMenu · components/common/DetailActionsMenu.tsx" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span>
             <span class="btn p">Reserve 2 lines</span>
           </div>
         </div>
@@ -626,7 +628,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
             <div class="sub">R***** Kitchen Sdn Bhd · Prepared by J*****</div></div>
           <div class="acts">
             <span style="font-size:12.5px;color:var(--muted);display:inline-flex;gap:5px;align-items:center" data-c="AutosaveIndicator · QuotationFormClient.tsx:828 (move to components/common)"><svg width="14" height="14" style="color:var(--ok-fg)"><use href="#i-check"/></svg>Saved 2:14 pm</span>
-            <span class="ibtn b" title="Quotation options" data-c="DetailActionsMenu (Discard draft, Download PDF)"><svg><use href="#i-gear"/></svg></span>
+            <span class="ibtn bd" title="Quotation options" data-c="DetailActionsMenu (Discard draft, Download PDF)"><svg><use href="#i-gear"/></svg></span>
             <span style="display:flex;flex-direction:column;align-items:flex-end" data-c="BlockedReason · NEW components/common/BlockedReason.tsx">
               <span class="btn p" style="opacity:.55">Save quotation</span>
               <span class="why">Line 3 needs a rate</span>
@@ -635,7 +637,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
         </div>
         <div class="tabs" data-c="Tabs line"><span class="on">Header</span><span>Cover letter</span><span>Terms</span><span data-c="HistoryTab (replaces QuotationHistorySheet)">History</span></div>
         <div class="card" data-c="FormSection · components/common/FormSection.tsx">
-          <div class="sec-h">Letterhead <small>R***** Kitchen Sdn Bhd · 10/11/2026 · RM 38,140.00</small><span class="r" style="color:var(--muted)">▴</span></div>
+          <div class="sec-h">Letterhead <small>R***** Kitchen Sdn Bhd · 10/11/2026 · RM 36,120.00</small><span class="r" style="color:var(--muted)">▴</span></div>
           <div class="fieldgrid" data-c="Field · components/common/Field.tsx (same component as the portal form)">
             <div class="f"><label>To <span class="req">*</span></label><span class="inp" data-c="SearchableSelect">R***** Kitchen Sdn Bhd<span class="caret">▾</span></span></div>
             <div class="f"><label>Attn</label><span class="inp">Ms. L*** (Purchasing)<span class="caret">▾</span></span></div>
@@ -645,7 +647,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
             <div class="f"><label>Prepared by</label><span class="inp ro">J*****</span></div>
           </div>
         </div>
-        <div class="card" style="overflow:visible;position:relative">
+        <div class="card" style="position:relative">
           <div class="sec-h">Lines <small>3 lines · 1 section</small><span class="r"><span class="btn sm"><svg><use href="#i-plus"/></svg>Add line</span></span></div>
           <table data-c="QuotationLinesGrid · project-sales/[projectId]/components/QuotationLinesGrid.tsx (DataGrid)">
             <colgroup><col style="width:40px"><col style="width:50px"><col style="width:140px"><col style="width:300px"><col style="width:96px"><col style="width:70px"><col style="width:70px"><col style="width:110px"><col style="width:120px"></colgroup>
@@ -657,7 +659,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
               <tr class="hov"><td>3</td><td><span class="thumb"></span></td><td class="id">CB6633</td><td>Concealed cistern, dual flush</td><td>MOCHA</td><td class="num">24</td><td>UNIT</td><td class="num" style="box-shadow:inset 0 0 0 1px var(--danger);color:var(--danger)" title="Needs a rate">-</td><td class="num mut">-</td></tr>
             </tbody>
           </table>
-          <div class="menu" style="left:420px;top:150px" data-c="Line right-click menu · QuotationLinesGrid ContextMenu (exists; restyle)">
+          <div class="menu" style="left:420px;top:96px" data-c="Line right-click menu · QuotationLinesGrid ContextMenu (exists; restyle)">
             <div class="h">Insert line above</div><div>Insert section above</div><div>Duplicate line</div><hr><div>Move up</div><div>Move down</div><hr><div class="d">Remove line</div>
           </div>
           <div class="totals"><span>Subtotal</span><span>36,120.00</span><span>Discount</span><span>0.00</span><span class="g">Total (RM)</span><span class="g">36,120.00</span></div>
@@ -802,7 +804,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
         <div class="facets" data-c="FacetChips (scrolls sideways)"><span class="fc">Stock <b>120</b></span><span class="fc">Indent <b>84</b></span><span class="fc on">To confirm <b>17</b></span><span class="fc">Project <b>108</b></span></div>
         <div class="gridwrap" data-c="DataGrid · pinned first column, 44 px rows on coarse pointer">
           <table>
-            <colgroup><col style="width:128px"><col style="width:112px"><col style="width:100px"><col style="width:150px"><col style="width:150px"></colgroup>
+            <colgroup><col style="width:122px"><col style="width:126px"><col style="width:100px"><col style="width:150px"><col style="width:150px"></colgroup>
             <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th><th>Raised at<span class="so" style="opacity:1;color:var(--primary)">▼</span></th></tr></thead>
             <tbody>
               <tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen Sdn Bhd</td><td class="mut">10/11/2026, 9:42 am</td></tr>
@@ -825,7 +827,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
       <div class="phone"><div class="app v2 pv2" style="position:relative">
         <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span><span class="ibtn"><svg><use href="#i-bell"/></svg></span></span></div>
         <div class="tb2"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>3</span></div>
-        <div class="gridwrap"><table><colgroup><col style="width:128px"><col style="width:112px"><col style="width:100px"><col style="width:150px"></colgroup>
+        <div class="gridwrap"><table><colgroup><col style="width:122px"><col style="width:126px"><col style="width:100px"><col style="width:150px"></colgroup>
           <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th></tr></thead>
           <tbody><tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen</td></tr>
           <tr class="sel"><td class="id">OI-2611-0141</td><td><span class="b warn">Outstanding</span></td><td>SO414280</td><td>B****** Sdn Bhd</td></tr>
