@@ -1,8 +1,9 @@
 # PLAN: pick eligible products inside the Tag Template designer (bulk link)
 
-Status: Plan, waiting on owner (mock v3 + card Q1-Q3 filed as crew-ask; owner 10 Nov: reuse the existing picker (v1), one view no tabs (v2)). Track: standard lane (no
-migration, no permission change, expected diff over 300 lines; security-reviewer joins because the
-client now sends product/combo ids that must be company-scoped).
+Status: in review (mock v3 approved 10 Nov 23:43; built, reviewer round 1 fixed, security CLEAR, browser
+pass done). Track: standard lane (no migration, no permission change, diff over 300 lines; security-reviewer
+joined for multi-company scoping of picked ids). Card: Q1 (a) products only, Q3 (a) never change a default,
+Q2 open (old list-row Assign dialog kept until the owner says retire).
 Lane: PRICETAG-TEMPLATE-PRODUCTS. Requested: owner + management meeting 9 Nov, relayed 10 Nov.
 Mock: `pricetag-template-products-mock-v3.html` (same folder; v1, v2 kept).
 
@@ -108,3 +109,36 @@ assign by product_ids, foreign ids ignored, over-500 refused, defaults rule (0, 
 default untouched); unassign by product_ids.
 vitest: Products action hidden without manage; ticks seeded from product-ids; Save diff (+a, -r); copy dialogs
 unchanged with the old argument; Link sends the picked ids; Remove countdown.
+
+## Browser evidence run (cloud sandbox, agent-browser 0.27.0, 10 Nov, head 404a0713)
+
+Stack: uvicorn :8000 on `.env.ci-tests` (sandbox `sorento_ci`, bootstrapped, every module installed),
+`npm run dev` :3000. Seed (ZZT names, sandbox only): one published template "ZZT Kitchen sink A6", 30
+SRTKS kitchen sinks (one discontinued) + 5 taps; sink 1 linked (default LP + SP), sink 2 linked plus
+another template holding its default LP. Navigation by sidebar clicks from `/`.
+
+1. PASS. Dealer Kit > Room Designer > Tag Templates > the template: toolbar "Products (2)" next to
+   Versions. It opens one view (no tabs): the shared picker, sinks 1 and 2 ticked, "2 use this
+   template", Save off.
+2. PASS after a fix. Filters was unreachable while rows were ticked (the shared toolbar swaps it for the
+   bulk strip); fixed with `keepFiltersWhileSelected`. Search "SRTKS" + Category "ZZT Kitchen Sink":
+   "Filters 1", the Show / Category / Brand controls all in the popover.
+3. PASS. Page tick, "Select all 30 records": "30 use this template after Save: 28 added, 0 removed"
+   (seeded links kept). Untick sink 2: "29 ... 28 added, 1 removed".
+4. PASS. Save: toast "Linked 28 products", the Save button became "Removing in 5s" + Cancel, the
+   dialog closed on commit. DB: 29 linked; sink 1 kept its defaults; sink 2 unlinked, its remaining
+   template now default LP + SP (AC-8); new sink 3 got this template as default LP + SP (AC-7).
+   Toolbar then read "Products (29)".
+5. PASS. 375px: Products sits in the toolbar's "More actions" menu; the modal is full width, the grid
+   scrolls sideways inside its border, no page-level horizontal scroll.
+6. PASS. Master Data > Products > All Products > SRTKS-8014-SS: the "Price tag templates" card lists
+   "ZZT Kitchen sink A6" (AC-9, same rows both directions).
+
+Screenshots kept (cap 2): `evidence-pricetag-template-products/1-save-countdown-1280.png`,
+`2-dialog-375.png`.
+
+## Assistant coverage (DoD 6 to 8)
+
+6: `scripts/ci_ai_coverage.py` ok, no new paged list route (`/product-ids` is an unpaged seed for the
+dialog). 7 and 8: n/a. Linking products to a template is a marketing curation task done visually in
+the designer; the repo has no `ActionDef` registry and no `assistant_<module>.jsonl` gold file to extend.
