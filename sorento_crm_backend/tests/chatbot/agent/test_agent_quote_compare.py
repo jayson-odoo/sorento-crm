@@ -102,11 +102,13 @@ def _last_tool(messages) -> dict:
     return json.loads([m for m in messages if m.get("role") == "tool"][-1]["content"])
 
 
-def _panel_run(db, user_id, script, *, text="compare the two quotations", rec=None, cat=None, **kw):
+def _panel_run(db, user_id, script, *, text="compare the two quotations", rec=None, cat=None, company_id=None, **kw):
     from app.services.chatbot.agent.loop import run_agent_turn
 
     prov = Prov(script)
-    principal = staff_principal.StaffPrincipal(user_id=user_id, conversation_id=str(uuid.uuid4()))
+    principal = staff_principal.StaffPrincipal(
+        user_id=user_id, conversation_id=str(uuid.uuid4()), active_company_id=company_id
+    )
     rec = rec if rec is not None else Recorder()
     with staff_principal.acting_as(principal):
         result = run_agent_turn(
@@ -177,20 +179,23 @@ def test_AC_A2_a_uuid_neither_seeded_nor_in_a_result_is_still_unknown(db):
     assert seen_tool.get("status") == "invalid" and "Unknown id" in seen_tool.get("message", ""), seen_tool
 
 
-def test_AC_A3_seeding_grants_nothing_a_user_without_the_slug_is_denied(db):
-    user_id = seed_user(db, contact_pk=None, slugs=(UNRELATED,))
-    pid = _uid()
+def test_AC_A3_seeding_grants_nothing_a_view_own_user_who_does_not_own_the_page_project_is_refused(db):
+    from app.models.base import company_scope
+
+    world = _seed_world(db)
+    user_id = seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW_OWN,))
     seen_tool: dict = {}
 
     def after(messages, tools):
         seen_tool.update(_last_tool(messages))
         return _answer()
 
-    _result, _prov, rec = _panel_run(
-        db, user_id, [_round(_tc(QUOTES, {"project_id": pid}, "c1")), after], seed_ids=[pid]
-    )
-    assert rec.calls == []
-    assert seen_tool.get("status") == "denied", seen_tool
+    with company_scope(db, frozenset({world.company_id})):
+        _panel_run(
+            db, user_id, [_round(_tc(LINES, {"project_id": world.project_id}, "c1")), after],
+            seed_ids=[world.project_id], company_id=world.company_id,
+        )
+    assert seen_tool.get("status") == "invalid", seen_tool
 
 
 def test_AC_A1_the_panel_hands_the_page_ids_to_the_agent_as_seed_ids(db, monkeypatch):
@@ -490,8 +495,8 @@ def _seed_world(db) -> World:
             db.flush()
             return row
 
-        def line(v, code, desc, qty, list_price, unit, total, order):
-            db.add(ProjectQuotationLine(
+        def line(v, code, desc, qty, list_price, unit, total, order, rate_only=False):
+            db.add(ProjectQuotationLine(is_rate_only=rate_only,
                 company_id=company_id, version_id=v.id, product_code_snapshot=code, description_snapshot=desc,
                 list_price_snapshot=None if list_price is None else Decimal(list_price), unit_price=Decimal(unit),
                 quantity=Decimal(qty), uom="pcs", line_total=Decimal(total), sort_order=order,
@@ -505,12 +510,13 @@ def _seed_world(db) -> World:
         common = scope(doc_a, "Common", 1)
         c1 = version(common, 1, "40.00")
         line(c1, "C4", "Drain", "4", "10.00", "10.00", "40.00", 0)
+        line(c1, "C5", "Alternate drain", "1", "20.00", "20.00", "20.00", 1, rate_only=True)
         empty = scope(doc_b, "Showroom", 0)
         version(empty, 1, "0.00")
 
         issue = ProjectQuotationIssue(
             company_id=company_id, document_id=doc_a.id, issue_no=1, revision_label="B", issued_by=actor,
-            grand_total=Decimal("630.00"),
+            grand_total=Decimal("777.00"),  # deliberately not the 590 + 40 of its pinned scopes
         )
         db.add(issue)
         db.flush()
@@ -521,7 +527,7 @@ def _seed_world(db) -> World:
                                        version_id=c1.id, scope_total=Decimal("40.00"), sort_order=1),
         ])
         db.flush()
-    return World(company_id=company_id, project_id=str(project.id), doc_a=doc_a_no, doc_b=doc_b_no)
+    return World(company_id=company_id, project_id=str(project.id), actor=actor, doc_a=doc_a_no, doc_b=doc_b_no)
 
 
 def _lines(db, world, args, *, user_id=None, seen=None, scope_company=None):
@@ -627,34 +633,187 @@ def test_AC_E5_another_companys_project_is_invalid_never_an_error(db):
     assert out.status == "invalid", (out.status, out.message)
 
 
-def test_AC_E1_a_view_own_only_user_reads_the_lines_on_a_panel_turn(db):
+def test_AC_E1_a_view_own_only_user_who_is_not_owner_or_collaborator_is_refused_like_the_route(db):
     world = _seed_world(db)
     user_id = seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW_OWN,))
+    out = _lines(db, world, {"project_id": world.project_id}, user_id=user_id)
+    assert out.status == "invalid", (out.status, out.message)
+    assert out.data is None
+
+
+def test_AC_E1_a_view_own_only_user_who_owns_the_project_reads_the_lines(db):
+    from app.models.base import company_scope
+    from app.models.projects import Project
+
+    world = _seed_world(db)
+    user_id = seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW_OWN,))
+    with company_scope(db, frozenset({world.company_id})):
+        db.query(Project).filter(Project.id == world.project_id).update({"owner_user_id": user_id})
+        db.flush()
+    out = _lines(db, world, {"project_id": world.project_id}, user_id=user_id)
+    assert out.status == "ok", (out.status, out.message)
+    assert {d["ref"] for d in out.data["documents"]} == {world.doc_a, world.doc_b}
+
+
+def test_AC_E1_a_view_own_only_collaborator_reads_the_lines(db):
+    from app.models.base import company_scope
+    from app.models.projects import ProjectCollaborator
+
+    world = _seed_world(db)
+    user_id = seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW_OWN,))
+    with company_scope(db, frozenset({world.company_id})):
+        db.add(ProjectCollaborator(project_id=world.project_id, user_id=user_id))
+        db.flush()
     out = _lines(db, world, {"project_id": world.project_id}, user_id=user_id)
     assert out.status == "ok", (out.status, out.message)
 
 
-def test_AC_E6_a_scope_too_big_for_the_result_cap_is_capped_and_counts_the_rest(db):
-    from app.models.base import company_scope
-    from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
+def test_module_guard_a_disabled_projects_module_denies_a_non_admin_slug_holder(db, monkeypatch):
+    from app.config import settings as app_settings
+    from app.models.app_modules import AppModuleCatalog, TenantModule
+    from app.modules.runtime.installer import DEFAULT_TENANT_ID
 
     world = _seed_world(db)
+    db.add(AppModuleCatalog(module_key="projects", display_name="Projects"))
+    db.add(AppModuleCatalog(module_key="base", display_name="Base"))
+    db.flush()
+    db.add(TenantModule(tenant_id=DEFAULT_TENANT_ID, module_key="base", enabled=True))
+    db.add(TenantModule(tenant_id=DEFAULT_TENANT_ID, module_key="projects", enabled=False))
+    db.flush()
+    monkeypatch.setattr(app_settings, "module_guard_strict", True, raising=False)
+    out = _lines(db, world, {"project_id": world.project_id})
+    assert out.status == "denied", (out.status, out.message)
+
+
+def test_AC_E3_the_revisions_document_total_is_the_issues_grand_total(db):
+    world = _seed_world(db)
+    out = _lines(db, world, {"project_id": world.project_id, "refs": [f"{world.doc_a}-B"]})
+    assert float(_doc(out, f"{world.doc_a}-B")["total"]) == 777.0
+
+
+def test_AC_E2_a_rate_only_line_is_flagged_and_others_are_not(db):
+    world = _seed_world(db)
+    out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_a]})
+    common = next(s for s in _doc(out, world.doc_a)["scopes"] if s["scope"] == "Common")
+    by_code = {ln["code"]: ln for ln in common["lines"]}
+    assert by_code["C5"]["rate_only"] is True
+    assert by_code["C4"]["rate_only"] is False
+
+
+# ---- the model is offered the tool, and one whole scripted turn uses it
+
+
+def test_the_model_is_offered_the_tool_on_a_staff_panel_turn_for_a_slug_holder(db):
+    user_id = _viewer(db)
+    result, prov, _rec = _panel_run(db, user_id, [_answer()])
+    offered = {t["function"]["name"]: t["function"] for t in prov.seen[0]["tools"]}
+    assert LINES in offered, sorted(offered)
+    props = offered[LINES]["parameters"]["properties"]
+    assert "project_id" in props and "refs" in props, props
+    assert "contact_id" not in props and "space_id" not in props
+
+
+def test_a_whole_turn_reads_the_quotation_lines_from_the_page_project_and_answers(db):
+    from app.models.base import company_scope
+
+    world = _seed_world(db)
+    user_id = _viewer(db)
+    seen_tool: dict = {}
+
+    def after(messages, tools):
+        seen_tool.update(_last_tool(messages))
+        return _answer("Two documents compared.")
+
     with company_scope(db, frozenset({world.company_id})):
-        showroom = db.query(ProjectQuotation).filter(
-            ProjectQuotation.project_id == world.project_id, ProjectQuotation.scope_label == "Showroom"
-        ).one()
-        version = db.query(ProjectQuotationVersion).filter(ProjectQuotationVersion.quotation_id == showroom.id).one()
-        for i in range(250):
-            db.add(ProjectQuotationLine(
-                company_id=world.company_id, version_id=version.id, product_code_snapshot=f"BIG{i:04d}",
-                description_snapshot="long description " * 12, list_price_snapshot=Decimal("10.00"),
-                unit_price=Decimal("9.00"), quantity=Decimal("1"), uom="pcs", line_total=Decimal("9.00"),
-                sort_order=i,
-            ))
+        result, _prov, rec = _panel_run(
+            db, user_id, [_round(_tc(LINES, {"project_id": world.project_id}, "c1")), after],
+            seed_ids=[world.project_id], company_id=world.company_id,
+        )
+    assert seen_tool.get("status") == "ok", seen_tool
+    assert rec.calls == []
+    assert result.status == "answered", (result.status, result.reply_text)
+    digest = _turn(db, result).response["tool_digest"]
+    assert [(d["name"], d["status"]) for d in digest] == [(LINES, "ok")]
+
+
+# ---- D, wider
+
+
+def _fail_stage(db, user_id, failures, script_head, *, limit_rounds=False):
+    if limit_rounds:
+        row = db.query(SystemSetting).first() or SystemSetting()
+        db.add(row)
+        row.chatbot_agent_max_rounds = 1
         db.flush()
-    out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
-    assert out.status == "ok", (out.status, out.message)
-    assert len(json.dumps(out.data, default=str)) <= agent_tools.RESULT_CHAR_CAP
-    scope = _doc(out, world.doc_b)["scopes"][0]
-    assert scope.get("lines_not_shown", 0) > 0, {k: v for k, v in scope.items() if k != "lines"}
-    assert len(scope["lines"]) + scope["lines_not_shown"] == 250
+    return _panel_run(db, user_id, [*script_head, *failures], text="SECRET-PROMPT-TEXT compare quotations")
+
+
+def _entries(db, result):
+    return [e for e in _turn(db, result).trace if e.get("kind") == "agent_provider_failed"]
+
+
+def test_AC_D4_the_trace_entry_is_also_written_when_the_provider_fails_before_any_tool_result(db):
+    user_id = _viewer(db)
+    boom = RuntimeError("down sk-LEAK123")
+    result, _p, _r = _fail_stage(db, user_id, [boom, boom], [])
+    assert result.status == "failed"
+    entries = _entries(db, result)
+    assert entries and entries[-1].get("error_class") == "RuntimeError", entries
+    assert "sk-LEAK123" not in json.dumps(entries) and "SECRET-PROMPT-TEXT" not in json.dumps(entries)
+
+
+def test_AC_D4_the_trace_entry_is_written_for_a_failed_round_too(db):
+    user_id = _viewer(db)
+    boom = RuntimeError("down")
+    result, _p, _r = _fail_stage(db, user_id, [boom, boom], [_round(_tc(QUOTES, {}, "c1"))])
+    entries = _entries(db, result)
+    assert len(entries) >= 1 and all(e.get("error_class") == "RuntimeError" for e in entries), entries
+
+
+@pytest.mark.parametrize("path", ["rounds", "error"])
+def test_AC_D1_a_timeout_found_through_the_cause_chain_reads_as_did_not_respond_in_time(db, path):
+    import httpx
+
+    user_id = _viewer(db)
+    wrapped = RuntimeError("provider wrapper")
+    wrapped.__cause__ = httpx.ReadTimeout("read timed out")
+    failures = [wrapped] if path == "rounds" else [wrapped, wrapped]
+    result, _p, _r = _fail_stage(
+        db, user_id, failures, [_round(_tc(QUOTES, {}, "c1"))], limit_rounds=path == "rounds"
+    )
+    assert result.status == "limited", (result.status, result.reply_text)
+    assert "the model did not respond in time" in result.reply_text, result.reply_text
+
+
+@pytest.mark.parametrize("path", ["rounds", "error"])
+def test_AC_D3_tools_ran_but_none_returned_ok_then_a_failed_final_call_is_failed(db, path):
+    user_id = _viewer(db)
+    refused = _round(_tc(QUOTES, {"project_id": _uid()}, "c1"))  # an unknown id: an `invalid` refusal
+    boom = RuntimeError("down")
+    failures = [boom] if path == "rounds" else [boom, boom]
+    result, _p, rec = _fail_stage(db, user_id, failures, [refused], limit_rounds=path == "rounds")
+    assert rec.calls == []
+    assert result.status == "failed", (result.status, result.reply_text)
+    assert "What I read" not in result.reply_text
+    assert result.reply_text == "The agent could not answer: the model provider failed."
+
+
+def test_a_contact_turn_that_read_data_then_lost_the_model_stays_failed_with_no_what_i_read(db):
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    contact = seed_agent_contact(db)
+    cat = {
+        STOCK: {
+            "description": "stock",
+            "inputSchema": {"type": "object", "properties": {
+                "contact_id": {"type": "string"}, "space_id": {"type": "string"}, "query": {"type": "string"}}},
+        }
+    }
+    prov = Prov([_round(_tc(STOCK, {"query": "SRTWT7445"}, "c1")), RuntimeError("a"), RuntimeError("b")])
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="stock?", provider=prov,
+        mcp_call=lambda name, args: {"items": [{"qty": 12}], "has_result": True}, catalog=cat,
+    )
+    assert result.status == "failed", (result.status, result.reply_text)
+    assert "What I read" not in result.reply_text
