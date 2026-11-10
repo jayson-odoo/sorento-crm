@@ -73,8 +73,22 @@ shipments also ... how about purchased from overseas?"
 
 ## Real examples (dev data)
 
-Requested with `crew-data-request:` on the PR (counts and ETA spread only; no supplier names on
-GitHub). Filled in here when crew answers.
+Crew data request answered 10 Nov (dev DB = 4 Nov prod copy; no receipts after 4 Nov, so "late" is
+inflated by shipments received 4-10 Nov). Effective ETA vs 10 Nov, open = not draft + a line still incoming:
+
+| Company | On the water (> 7 d or no ETA) | Arriving <= 7 d | <= 14 d | Late (ETA passed) | No ETA | Total | Next ETA | Oldest ETA |
+|---|---|---|---|---|---|---|---|---|
+| SRT (Sorento) | 3 | 26 | 27 | 70 | 2 | 99 | 10 Nov | 14 Jun |
+| Mocha | 0 | 4 | 4 | 39 | 0 | 43 | 13 Nov | 2 Aug |
+
+What this changes:
+- **Late dominates** (70 of 99 for SRT), with ETAs back to June. Even after removing the 4-10 Nov
+  inflation, many of these are shipments that arrived but whose lines were never closed (data
+  hygiene), not ships still at sea. A port showing "70 late" would bury the real signal. Revised Q2.
+- **Few ships:** only 3 "on the water" past 7 days; most open shipments fall inside the week. The
+  quay draws at most 12 containers, so SRT's port is always "full" on a normal day, and the 30-row
+  lightbox shows "+69 more".
+- 14 days adds only 1 shipment over 7 days, so Q1 (window) barely matters on this data: keep 7.
 
 ## Edge cases
 
@@ -96,8 +110,13 @@ GitHub). Filled in here when crew answers.
 
 1. **"Arriving soon" window:** (a) 7 days (b) 14 days (c) this calendar month. Rec (a) 7 days: one
    week is what the warehouse plans collection around; longer windows turn most ships into containers.
-2. **Late shipments** (ETA passed, not yet received): (a) own red count on the quay (b) fold into
-   "arriving soon". Rec (a): a passed ETA is the one thing purchasing must chase.
+2. **Late shipments** (ETA passed, not yet received). Dev data: 70 of SRT's 99 open shipments, ETAs back
+   to 14 Jun. Options: (a) all of them, one red count; (b) late = ETA passed in the last 30 days, red count;
+   older open shipments are left out of the town and shown in the lightbox as a one-line footer
+   "N older shipments still open (ETA before <date>)" pointing at packing lists; (c) fold into
+   arriving soon. Rec (b): a June ETA still open is almost always a receipt nobody closed, not a ship.
+   Counting it hides the 5-10 shipments purchasing can actually chase, and the footer keeps the cleanup
+   visible without letting it own the port.
 3. **Supplier names in the port lightbox:** (a) shown on the personal view, hidden on wallboard and for
    viewers without `sales.reports.view` (b) always shown (c) never. Rec (a): same rule as dealer names,
    one rule to remember.
