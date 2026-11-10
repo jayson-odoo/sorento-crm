@@ -93,13 +93,12 @@ class CanonicalBrand(_Canonical):
 
 
 class CanonicalPaymentTerm(_Canonical):
-    """AutoCount `Terms` (QUOTE-TERMS-SELECT, contract 2.14): `code` is `DisplayTerm`,
-    `description` is what prints on a quotation (else the code), `term_days` is `TermDays`.
-    Caps are the `payment_terms` column widths (`app/models/payment_term.py`)."""
+    """AutoCount `Terms` (QUOTE-TERMS-SELECT, contract 2.14). The row has two fields only:
+    `code` is `DisplayTerm` (what prints, matched exactly), `rule` is `Terms` (the calculation
+    rule, e.g. "Net 0th Next 1 Month"). Caps are the `payment_terms` column widths."""
 
-    code: str = Field(..., min_length=1, max_length=50)
-    description: Optional[str] = Field(None, max_length=200)
-    term_days: Optional[int] = Field(None, ge=0, le=3650)
+    code: str = Field(..., min_length=1, max_length=100)
+    rule: Optional[str] = Field(None, max_length=200)
     # Absent vs null (D14): omitted leaves the stored value (true on create).
     is_active: Optional[bool] = None
 

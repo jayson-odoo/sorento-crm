@@ -5,7 +5,7 @@ Revision ID: qts_0001_quote_terms_select
 Revises: ptag_0021_icon_conditions
 Create Date: 2026-11-10
 
-`payment_terms` is AutoCount `Terms` (DisplayTerm, Description, TermDays), company-scoped, unique on
+`payment_terms` is AutoCount `Terms` (DisplayTerm = term_code, Terms = term_rule), company-scoped, unique on
 (company_id, term_code), written only by the ESB ingest (contract 2.14). It starts empty, so no
 legacy payment-terms text can map here; the ingest links exact matches when terms arrive.
 
@@ -69,9 +69,8 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS payment_terms (
             id UUID PRIMARY KEY,
             company_id UUID NOT NULL REFERENCES companies(id),
-            term_code VARCHAR(50) NOT NULL,
-            description TEXT,
-            term_days INTEGER,
+            term_code VARCHAR(100) NOT NULL,
+            term_rule TEXT,
             is_active BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
             updated_at TIMESTAMP WITHOUT TIME ZONE

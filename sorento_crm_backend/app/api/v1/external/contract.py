@@ -172,7 +172,8 @@ FIELDS_ADDED: dict[str, list[str]] = {
     # v2.11 (ITEM-CLASS-MASTER): a new master entity, the brands shape.
     "item_classes": ["code", "name", "description", "is_active"],
     # v2.14 (QUOTE-TERMS-SELECT): AutoCount Terms as a master.
-    "payment_terms": ["code", "description", "term_days", "is_active"],
+    # AutoCount Terms has two fields: code = DisplayTerm (prints), rule = Terms (calculation).
+    "payment_terms": ["code", "rule", "is_active"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that

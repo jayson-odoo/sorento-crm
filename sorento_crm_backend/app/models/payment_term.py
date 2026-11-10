@@ -1,4 +1,8 @@
-"""AutoCount payment terms (`Terms`: DisplayTerm, Description, TermDays) as a read-only master.
+"""AutoCount payment terms (`Terms`: DisplayTerm, Terms) as a read-only master.
+
+The real AutoCount row carries only two fields (crew GET probe, 10 Nov 2026): `DisplayTerm`, the
+label that prints ("CASH BEFORE DELIVERY", "Net 30 days"), and `Terms`, the calculation rule
+("C.O.D.", "Net 0th Next 1 Month"). There is no description and no day count.
 
 QUOTE-TERMS-SELECT (PLAN-quote-terms-select-10nov.md): only the ESB ingest creates or updates a
 row (`master_ingest_service.ENTITY_SPECS["payment_terms"]`); the CRM has no edit screen and never
@@ -8,7 +12,7 @@ quotation that was already sent.
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -20,11 +24,11 @@ class PaymentTerm(Base, CompanyScopedMixin):
     __tablename__ = "payment_terms"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # AutoCount `Terms.DisplayTerm`, e.g. "C.O.D." or "30 DAYS". Unique per company.
-    term_code = Column(String(50), nullable=False)
-    # AutoCount `Terms.Description`; what prints on a quotation, else the code.
-    description = Column(Text, nullable=True)
-    term_days = Column(Integer, nullable=True)
+    # AutoCount `Terms.DisplayTerm`, exactly as AutoCount spells it: what prints on a quotation
+    # and what a debtor's terms name. Unique per company (case matters: "Cash" is not "CASH").
+    term_code = Column(String(100), nullable=False)
+    # AutoCount `Terms.Terms`, the calculation rule. Shown beside the label in the picker only.
+    term_rule = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)

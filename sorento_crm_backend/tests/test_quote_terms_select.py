@@ -53,26 +53,29 @@ def test_legacy_validity_text_maps_only_on_an_exact_number_and_unit(text, expect
     assert qts.parse_validity(text) == expected
 
 
-def test_a_term_prints_its_description_else_its_code():
+def test_a_term_prints_its_autocount_display_term_never_its_rule():
+    """Real AutoCount rows carry DisplayTerm (prints) and Terms (the calculation rule) only."""
     from types import SimpleNamespace
 
-    assert qts.term_label(SimpleNamespace(term_code="C.B.D.", description="CASH BEFORE DELIVERY")) == (
+    assert qts.term_label(SimpleNamespace(term_code="CASH BEFORE DELIVERY", term_rule="C.O.D.")) == (
         "CASH BEFORE DELIVERY"
     )
-    assert qts.term_label(SimpleNamespace(term_code="30 DAYS", description=None)) == "30 DAYS"
-    assert qts.term_label(SimpleNamespace(term_code="30 DAYS", description="  ")) == "30 DAYS"
+    assert qts.term_label(SimpleNamespace(term_code="Net 30 days ", term_rule="Net 0th Next 1 Month")) == (
+        "Net 30 days"
+    )
 
 
 # ------------------------------------------------------------------------------ helpers
 
 
-def _term(db, company_id: str, code: str, description=None, *, is_active=True):
+def _term(db, company_id: str, key: str, display=None, *, rule=None, is_active=True):
+    """A synced term; `display` is its AutoCount DisplayTerm (defaults to a marker code)."""
     from app.models.payment_term import PaymentTerm
 
     row = PaymentTerm(
         company_id=company_id,
-        term_code=f"{MARKER}-{code}",
-        description=description,
+        term_code=display or f"{MARKER}-{key}",
+        term_rule=rule,
         is_active=is_active,
     )
     db.add(row)
@@ -104,19 +107,22 @@ def _terms_template(client, **extra) -> dict:
 
 def test_the_template_select_lists_this_companys_active_terms_only(api):
     client, db, company_id, *_ = api
-    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY", rule="C.O.D.")
+    star = _term(db, company_id, "STAR", "*Net 60 days", rule="Net 60 days")
+    net = _term(db, company_id, "NET", "Net 30 days", rule="Net 0th Next 1 Month")
     _term(db, company_id, "OLD", "RETIRED TERM", is_active=False)
     _term(db, _other_company(db), "ELSE", "SOMEONE ELSES TERM")
     db.commit()
 
     response = client.get(f"{TEMPLATES}/payment-terms")
     assert response.status_code == 200, response.text
-    rows = [row for row in response.json()["data"] if row["code"].startswith(MARKER)]
-    assert [row["id"] for row in rows] == [str(cbd.id)]
+    rows = response.json()["data"]
+    # Plain DisplayTerms first, AutoCount's asterisk variants after them.
+    assert [row["id"] for row in rows] == [str(cbd.id), str(net.id), str(star.id)]
     assert rows[0] == {
         "id": str(cbd.id),
-        "code": f"{MARKER}-CBD",
-        "description": "CASH BEFORE DELIVERY",
+        "code": "CASH BEFORE DELIVERY",
+        "rule": "C.O.D.",
         "label": "CASH BEFORE DELIVERY",
     }
 
@@ -270,7 +276,7 @@ def test_a_quotation_picks_and_patches_its_own_terms(api):
 
     patched = client.patch(f"{root}/{created['id']}", json={"payment_term_id": str(net.id)})
     assert patched.status_code == 200, patched.text
-    # No description: the code prints.
+    # The DisplayTerm prints.
     assert patched.json()["payment_terms"] == f"{MARKER}-N30"
     assert patched.json()["validity"] == "2 WEEKS"
 
@@ -334,25 +340,27 @@ def _customer_on(db, project, company_id: str, terms_code):
 def test_a_new_quotation_defaults_to_the_customers_debtor_terms(api):
     client, db, company_id, _user, project, _party = api
     template_term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
-    debtor_term = _term(db, company_id, "N30", "30 DAYS FROM INVOICE")
+    debtor_term = _term(db, company_id, "N30", "30 days", rule="Net 0th Next 0 Month")
     db.commit()
     _terms_template(
         client, payment_term_id=str(template_term.id), validity_value=2, validity_unit="week"
     )
-    # Spelled the way AutoCount may send it: other case, stray spaces.
-    _customer_on(db, project, company_id, f"  {MARKER}-n30 ")
+    # DisplayTerm exactly; only the char-field padding is ignored.
+    _customer_on(db, project, company_id, "30 days  ")
 
     got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
     assert got["payment_term_id"] == str(debtor_term.id)
-    assert got["payment_terms"] == "30 DAYS FROM INVOICE"
+    assert got["payment_terms"] == "30 days"
     # Validity is still the template's.
     assert got["validity"] == "2 WEEKS" and got["validity_value"] == 2
 
 
-@pytest.mark.parametrize("terms_code", [None, "", "NO-SUCH-TERM"])
+# "30 DAYS" is not "30 days" and "Net 30 days" is not "30 days": DisplayTerm matches exactly.
+@pytest.mark.parametrize("terms_code", [None, "", "NO-SUCH-TERM", "30 DAYS", "Net 30 days"])
 def test_without_a_synced_debtor_term_the_template_default_stands(api, terms_code):
     client, db, company_id, _user, project, _party = api
     template_term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    _term(db, company_id, "N30", "30 days")
     db.commit()
     _terms_template(client, payment_term_id=str(template_term.id))
     _customer_on(db, project, company_id, terms_code)
@@ -366,7 +374,7 @@ def test_an_inactive_debtor_term_does_not_become_the_default(api):
     client, db, company_id, _user, project, _party = api
     _term(db, company_id, "OLD", "RETIRED", is_active=False)
     db.commit()
-    _customer_on(db, project, company_id, f"{MARKER}-OLD")
+    _customer_on(db, project, company_id, "RETIRED")
     got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
     assert got["payment_term_id"] is None
 
@@ -450,7 +458,7 @@ def test_the_legacy_link_skips_a_quotation_that_is_with_a_manager_or_approved(ap
     from app.services import project_quotation_approval_service as approvals
 
     client, db, company_id, _user, project, _party = api
-    open_doc = _create_document(client, project.id, payment_terms="cash before delivery")
+    open_doc = _create_document(client, project.id, payment_terms="CASH BEFORE DELIVERY ")
     locked_doc = _create_document(client, project.id, payment_terms="CASH BEFORE DELIVERY")
     term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
     db.commit()

@@ -48,12 +48,14 @@ def parse_validity(text: Optional[str]) -> Optional[Tuple[int, str]]:
 
 
 def term_label(term: Any) -> str:
-    description = (term.description or "").strip()
-    return description or term.term_code
+    """What prints: AutoCount's DisplayTerm, as AutoCount spells it (owner Q2)."""
+    return (term.term_code or "").strip()
 
 
-def _norm(value: Optional[str]) -> str:
-    return " ".join((value or "").split()).lower()
+def _exact(value: Optional[str]) -> str:
+    """DisplayTerm matching is exact (crew, 10 Nov): only the padding AutoCount char fields carry
+    is ignored. Case matters, "Cash" and "CASH - 30 DAYS" are different terms."""
+    return (value or "").strip()
 
 
 def list_terms(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
@@ -67,12 +69,14 @@ def list_terms(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
         {
             "id": str(row.id),
             "code": row.term_code,
-            "description": row.description,
+            "rule": row.term_rule,
             "label": term_label(row),
         }
         for row in rows
     ]
-    return sorted(out, key=lambda row: row["label"].lower())
+    # Asterisk-prefixed DisplayTerms ("*Net 60 days") are AutoCount's own variants: listed after
+    # the plain ones (owner question pending on whether to show them at all).
+    return sorted(out, key=lambda row: (row["label"].startswith("*"), row["label"].lower()))
 
 
 def project_customer_id(db: Session, project: Any) -> Optional[str]:
@@ -98,7 +102,7 @@ def project_customer_id(db: Session, project: Any) -> Optional[str]:
 
 def customer_term(db: Session, *, company_id: str, customer_id: Optional[str]) -> Optional[PaymentTerm]:
     """The active term named by the customer's AutoCount debtor terms (`Debtor.DisplayTerm`),
-    matched by code ignoring case and spacing; None when the customer names none or none syncs.
+    matched by DisplayTerm exactly; None when the customer names none or none syncs.
     Owner Q3 (10 Nov 2026): this beats the terms template's default on a new quotation."""
     if not customer_id:
         return None
@@ -109,16 +113,16 @@ def customer_term(db: Session, *, company_id: str, customer_id: Optional[str]) -
         .filter(Customer.id == str(customer_id), Customer.company_id == company_id)
         .scalar()
     )
-    if not (code or "").strip():
+    wanted = _exact(code)
+    if not wanted:
         return None
-    wanted = _norm(code)
     for term in (
         db.query(PaymentTerm)
         .filter(PaymentTerm.company_id == company_id, PaymentTerm.is_active.is_(True))
         .order_by(PaymentTerm.created_at, PaymentTerm.id)
         .all()
     ):
-        if _norm(term.term_code) == wanted:
+        if _exact(term.term_code) == wanted:
             return term
     return None
 
@@ -215,9 +219,9 @@ def active_term_id(db: Session, *, company_id: str, term_id: Optional[str]) -> O
 
 
 def link_legacy_terms(db: Session, *, company_id: str) -> int:
-    """Link templates and quotations whose legacy text equals an ACTIVE term's code or description.
+    """Link templates and quotations whose legacy text equals an ACTIVE term's DisplayTerm.
 
-    Case and spacing ignored, this company only, never one already linked, never a quotation that
+    Exact match (only edge padding ignored), this company only, never one already linked, never a quotation that
     is with a manager or approved, and the printed text is left as it is. Runs after a non-dry
     ``payment_terms`` push. Returns the rows linked.
     """
@@ -231,12 +235,8 @@ def link_legacy_terms(db: Session, *, company_id: str) -> int:
         .order_by(PaymentTerm.term_code)
         .all()
     )
-    # A code never loses to another term's description.
     for term in terms:
-        by_text.setdefault(_norm(term.term_code), str(term.id))
-    for term in terms:
-        if (term.description or "").strip():
-            by_text.setdefault(_norm(term.description), str(term.id))
+        by_text.setdefault(_exact(term.term_code), str(term.id))
     if not by_text:
         return 0
 
@@ -252,7 +252,7 @@ def link_legacy_terms(db: Session, *, company_id: str) -> int:
             .all()
         )
         for row in rows:
-            term_id = by_text.get(_norm(row.payment_terms))
+            term_id = by_text.get(_exact(row.payment_terms))
             if term_id and model is ProjectQuotationDocument and (
                 approvals.current_key(db, row) in approvals.LOCKED_KEYS
             ):

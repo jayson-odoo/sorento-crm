@@ -374,7 +374,7 @@ SUPPORTED_ENTITIES = (
 # lines accept `parent_line_ref` (an item-package child names its parent line's source_ref) and
 # `line_type` (AutoCount's raw DtlType). Optional; a 2.11 payload ingests unchanged.
 # "2.14" (QUOTE-TERMS-SELECT, PR #2305): `payment_terms` joins ENTITY_SPECS as a master (AutoCount
-# Terms: code = DisplayTerm, description, term_days), the item classes shape with its own
+# Terms: code = DisplayTerm, rule = Terms), the item classes shape with its own
 # INGEST/READ/DELETE slugs; deletions only deactivate, and a non-dry push links quotations whose
 # legacy payment-terms text equals a term. Additive.
 CONTRACT_VERSION = "2.14"

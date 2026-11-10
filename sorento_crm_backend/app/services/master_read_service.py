@@ -106,8 +106,7 @@ _READ_COLUMNS: dict[str, dict[str, str]] = {
     },
     "payment_terms": {
         "code": "term_code",
-        "description": "description",
-        "term_days": "term_days",
+        "rule": "term_rule",
         "is_active": "is_active",
     },
 }

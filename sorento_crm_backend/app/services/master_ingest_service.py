@@ -408,7 +408,9 @@ def _uom_columns(payload: Any, db: Session, company_id: str, warnings: list[str]
 def _payment_term_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     # QUOTE-TERMS-SELECT (contract 2.14): AutoCount `Terms`, read-only reference data.
     columns: dict[str, Any] = {"term_code": payload.code.strip()}
-    _present(payload, columns, "description", "term_days", "is_active")
+    if "rule" in payload.model_fields_set:
+        columns["term_rule"] = payload.rule
+    _present(payload, columns, "is_active")
     return columns
 
 
