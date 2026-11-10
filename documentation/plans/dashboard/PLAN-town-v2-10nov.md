@@ -1,6 +1,6 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Plan. Behaviour card + mock filed for the owner (`crew report --ask`); build waits for the
+Status: Plan, waiting on the owner. Behaviour card + mock v4 filed for the owner (`crew report --ask`); build waits for the
 owner's OK. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
 no new ingest surface. UAC: `town-v2-acceptance-criteria.md`.
 
@@ -105,6 +105,15 @@ GitHub). Filled in here when crew answers.
    with a mouse). Rec (a): matches "no click needed to learn a name" on the iPad too.
 5. **Lightbox button for the port:** (a) "Open packing lists" (`/procurement-management/packing-lists`)
    (b) none. Rec (a): every other lightbox has one way out to the real screen.
+
+## Mock (v4, filed for the owner)
+
+`mock/town-v2-mock.html`, a fork of the approved v3 mock. The scene is real three.js, so its camera,
+hover and port code is the prototype for the build. Screenshots are in `mock/town-v2/`. The shipments
+in it are a SAMPLE until the crew data request is answered.
+Placement: the port sits outside the island behind the warehouses and the depot (angle 226), at the top
+of the default view where there is empty sky. At the side (angle 136) it clipped off the canvas edge.
+On a phone the port lightbox drops the Container and Products columns; they stay in the hover tooltip.
 
 ## Element -> component map
 
