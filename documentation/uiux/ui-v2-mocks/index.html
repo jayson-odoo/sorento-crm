@@ -108,20 +108,20 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 
 /* ================= AFTER: v2 tokens (proposed, UI-V2-PLAN section 3) ================= */
 .app.v2{
-  --brand-500:#b44d2e;--brand-600:#9a3f24;--brand-50:#fbf1ed;--brand-100:#f6ddd3;
+  --brand-500:#2563eb;--brand-600:#1d4ed8;--brand-50:#eff6ff;--brand-100:#dbeafe;
   --bg:#ffffff;--surface:#ffffff;--canvas:#f7f7f8;--fg:#18181b;--fg-2:#3f3f46;--muted:#71717a;
-  --line:#ececee;--line-strong:#dcdce0;--input:#dcdce0;--hover:#f4f4f5;--sel:#fbf1ed;
+  --line:#ececee;--line-strong:#dcdce0;--input:#dcdce0;--hover:#f4f4f5;--sel:var(--brand-50);
   --primary:var(--brand-500);--primary-hover:var(--brand-600);--primary-fg:#fff;--primary-soft:var(--brand-50);
-  --danger:#b42318;--focus:#b44d2e;
+  --danger:#b42318;--focus:var(--brand-500);
   --ok-bg:#ecfdf3;--ok-fg:#067647;--warn-bg:#fffaeb;--warn-fg:#b54708;--info-bg:#eff4ff;--info-fg:#3538cd;--neu-bg:#f4f4f5;--neu-fg:#52525b;
   --r-sm:6px;--r-md:8px;--r-lg:12px;
-  --row:36px;
+  --row:44px;
   background:var(--canvas);color:var(--fg);font-size:13px;line-height:1.45;display:grid;grid-template-columns:224px 1fr;min-height:640px;position:relative
 }
 .app.v2.dark{
-  --brand-500:#d9734f;--brand-600:#e58a68;--brand-50:#2a1a14;--brand-100:#3a2219;
+  --brand-500:#60a5fa;--brand-600:#93c5fd;--brand-50:#172554;--brand-100:#1e3a8a;
   --bg:#111113;--surface:#18181b;--canvas:#0d0d0f;--fg:#f4f4f5;--fg-2:#d4d4d8;--muted:#a1a1aa;
-  --line:#26262b;--line-strong:#34343a;--input:#3a3a41;--hover:#202024;--sel:#2a1a14;--primary-fg:#1a0d08;
+  --line:#26262b;--line-strong:#34343a;--input:#3a3a41;--hover:#202024;--sel:var(--brand-50);--primary-fg:#0b1530;
   --danger:#f97066;--ok-bg:#0b2a1c;--ok-fg:#47cd89;--warn-bg:#2d1f06;--warn-fg:#fdb022;--info-bg:#1a1f3d;--info-fg:#a4bcfd;--neu-bg:#26262b;--neu-fg:#d4d4d8
 }
 .v2 .side{background:var(--surface);border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px}
@@ -174,11 +174,11 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 .v2 .tb .r{margin-left:auto;display:flex;gap:4px;align-items:center}
 .v2 .selbar{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--primary-soft);font-size:12.5px}
 .v2 .selbar a{color:var(--primary);font-weight:600;text-decoration:none}
-.v2 table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;font-size:13px}
-.v2 th{font-weight:550;color:var(--muted);text-align:left;font-size:12px;background:var(--surface);border-bottom:1px solid var(--line-strong);padding:0 10px;height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;top:0}
+.v2 table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;font-size:14px}
+.v2 th{font-weight:550;color:var(--muted);text-align:left;font-size:12px;background:var(--surface);border-bottom:1px solid var(--line-strong);padding:0 12px;height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;top:0}
 .v2 th .so{opacity:.35;margin-left:3px;font-size:10px}
 .v2 th.sorted{color:var(--fg)}.v2 th.sorted .so{opacity:1;color:var(--primary)}
-.v2 td{border-bottom:1px solid var(--line);padding:0 10px;height:var(--row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface)}
+.v2 td{border-bottom:1px solid var(--line);padding:0 12px;height:var(--row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface)}
 .v2 tr.sel td{background:var(--sel)}
 .v2 tr.hov td{background:var(--hover)}
 .v2 td.num,.v2 th.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -292,6 +292,48 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 .pv2 .sheetm .h{font-weight:650;padding:4px 10px 8px;font-size:14px}
 .pv2 .sheetm div.i{height:44px;display:flex;align-items:center;padding:0 12px;border-radius:8px;font-size:14px}
 .pv2 .scrim{position:absolute;inset:0;background:rgb(0 0 0/.35);z-index:25}
+
+.pv2 .fbar{display:flex;gap:6px;padding:8px 10px;background:var(--surface);align-items:center}
+.pv2 .fbar .sbox{flex:1;width:auto;height:36px}
+.pv2 .showing{font-size:12.5px;color:var(--muted);padding:2px 12px 8px;background:var(--surface);border-bottom:1px solid var(--line)}
+.pv2 .showing b{color:var(--primary)}
+.pv2 .cards{flex:1;min-height:0;overflow:hidden;padding:8px 10px;display:flex;flex-direction:column;gap:8px}
+.pv2 .pc{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 30px 10px 12px;font-size:14px}
+.pv2 .pc.sel{background:var(--sel);border-color:var(--primary)}
+.pv2 .pc .l1{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.pv2 .pc .l2{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv2 .pc .l3{margin-top:2px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv2 .pc .chev{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:18px}
+.pv2 .pc .ck{position:absolute;right:10px;top:50%;transform:translateY(-50%)}
+.pv2 .bnav{display:flex;justify-content:space-around;height:58px;background:var(--surface);border-top:1px solid var(--line);flex:none}
+.pv2 .bnav span{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;color:var(--muted);flex:1}
+.pv2 .bnav span i{width:20px;height:20px;border:1.8px solid currentColor;border-radius:6px;display:block}
+.pv2 .bnav span.on{color:var(--primary);font-weight:650}
+.pv2 .selbar2{display:flex;gap:6px;padding:10px;background:var(--surface);border-top:1px solid var(--line-strong);flex:none;box-shadow:0 -6px 16px rgb(0 0 0/.06)}
+.pv2 .selbar2 .btn{height:40px;flex:1;justify-content:center}
+.pv2 .fab{position:absolute;right:14px;bottom:72px;z-index:20;height:48px;padding:0 18px;border-radius:999px;background:var(--primary);color:var(--primary-fg);display:inline-flex;align-items:center;font-weight:600;font-size:14px;box-shadow:0 8px 20px rgb(0 0 0/.22)}
+.pv2 .phead{background:var(--surface);padding:6px 12px 10px;display:flex;flex-direction:column;gap:4px}
+.pv2 .phead .sub{font-size:13px;color:var(--muted)}.pv2 .phead .sub a{color:var(--primary);text-decoration:none;font-weight:550}
+.pv2 .wait{font-size:12.5px;background:var(--info-bg);color:var(--info-fg);border-radius:8px;padding:6px 8px;margin-top:4px}
+.pv2 .ptabs{background:var(--surface);padding:0 12px;flex:none;overflow:hidden}
+.pv2 .seg2{color:var(--muted)}
+.phone .app.v2{position:relative}
+/* theme panel (mock chrome) */
+.tpanel{position:fixed;right:16px;top:64px;z-index:60;width:320px;max-width:calc(100vw - 32px);background:var(--doc-card);color:var(--doc-fg);border:1px solid var(--doc-line);border-radius:12px;box-shadow:0 16px 40px rgb(0 0 0/.18);padding:14px;display:none;font-size:13px}
+.tpanel.on{display:block}
+.tpanel h3{margin:0 0 8px;font-size:14px}
+.tpanel .sw{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 12px}
+.tpanel .sw button{display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--doc-line);background:transparent;color:var(--doc-fg);border-radius:8px;padding:6px;font:inherit;font-size:11px;cursor:pointer;width:66px}
+.tpanel .sw button[aria-pressed="true"]{outline:2px solid var(--doc-fg)}
+.tpanel .sw i{width:26px;height:26px;border-radius:50%;display:block}
+.tpanel .row{display:flex;gap:8px;align-items:center;margin:6px 0}
+.tpanel input[type=text]{font:12px ui-monospace,Menlo,monospace;width:90px;padding:4px 6px;border:1px solid var(--doc-line);border-radius:6px;background:transparent;color:var(--doc-fg)}
+.tpanel .ramp{display:flex;height:16px;border-radius:4px;overflow:hidden;margin:8px 0}
+.tpanel .ramp span{flex:1}
+.tpanel .ratio{font-size:12px;color:var(--doc-muted)}
+.tpanel .ratio b{color:var(--doc-fg)}
+.tpanel .prev{margin-top:10px;display:flex;gap:8px;align-items:center}
+.tpanel .prev .pbtn{padding:6px 12px;border-radius:6px;font-weight:600}
 @media (max-width:720px){.doc-top{position:static}}
 </style>
 </head>
@@ -328,9 +370,20 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
   </div>
   <div class="seg">
     <button id="mapBtn" aria-pressed="false">Component map</button>
-    <button id="darkBtn" aria-pressed="false">v2 dark</button>
+    <button id="themeBtn" aria-pressed="false">Theme</button>
   </div>
 </header>
+<div class="tpanel" id="tpanel" role="dialog" aria-label="Theme">
+  <h3>Theme (v2 screens)</h3>
+  <div class="ratio">Preset</div>
+  <div class="sw" id="presets"></div>
+  <div class="row"><span class="ratio">Custom brand colour</span><input type="color" id="cpick" value="#3b82f6" aria-label="Pick a colour"><input type="text" id="chex" value="#3b82f6" aria-label="Hex"></div>
+  <div class="row"><span class="ratio">Mode</span><span class="seg"><button data-m="light" aria-pressed="true">Light</button><button data-m="dark" aria-pressed="false">Dark</button></span></div>
+  <div class="ramp" id="ramp" aria-hidden="true"></div>
+  <div class="ratio" id="ratio"></div>
+  <div class="prev"><span class="pbtn" id="pbtn">Save quotation</span><span class="ratio">preview</span></div>
+</div>
+
 
 <main class="doc-main">
 
@@ -436,7 +489,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
             <span style="margin-left:auto;display:flex;gap:6px"><span class="btn sm">Send to purchasing</span><span class="btn sm">Export Excel</span><span class="btn t sm">Clear</span></span>
           </div>
           <table data-c="DataGridTable · components/ui/data-grid-table.tsx (one line per row)">
-            <colgroup><col style="width:38px"><col style="width:150px"><col style="width:128px"><col style="width:104px"><col style="width:110px"><col style="width:64px"><col style="width:190px"><col style="width:170px"><col style="width:100px"><col style="width:98px"><col style="width:150px"><col style="width:112px"></colgroup>
+            <colgroup><col style="width:40px"><col style="width:185px"><col style="width:140px"><col style="width:104px"><col style="width:110px"><col style="width:64px"><col style="width:190px"><col style="width:170px"><col style="width:100px"><col style="width:98px"><col style="width:150px"><col style="width:112px"></colgroup>
             <thead><tr><th><span class="cb mix"></span></th><th class="sorted">Raised at<span class="so">▼</span></th><th>OI no<span class="so">↕</span></th><th>S/O no<span class="so">↕</span></th><th>Raised by<span class="so">↕</span></th><th class="num">Qty<span class="so">↕</span></th><th>Customer<span class="so">↕</span></th><th>Project<span class="so">↕</span></th><th>Agent<span class="so">↕</span></th><th>SO date<span class="so">↕</span></th><th>Reserve<span class="so">↕</span></th><th>Status<span class="so">↕</span></th></tr></thead>
             <tbody>
               <tr class="sel"><td><span class="cb on"></span></td><td class="mut">10/11/2026, 9:42 am</td><td class="id">OI-2611-0142</td><td>SO414285</td><td>E****</td><td class="num">48</td><td>R***** Kitchen Sdn Bhd</td><td>T*** Residences Blk B</td><td>J*****</td><td>09/11/2026</td><td title="Parked by A*****"><span class="b neu">Parked request</span></td><td><span class="b warn">Outstanding</span></td></tr>
@@ -463,7 +516,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
   <div class="legend"><table>
     <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
     <tbody>
-      <tr><td>Sidebar</td><td>Sidebar, SidebarMenu</td><td><span class="tag re">restyle</span></td><td><code>app/components/layouts/demo1/components/sidebar.tsx</code>, <code>sidebar-menu.tsx</code>, <code>config/menu.config.tsx</code></td><td>224 px, 30 px items, brand tint for active, Metronic demo entries removed</td></tr>
+      <tr><td>Sidebar</td><td>Sidebar, SidebarMenu</td><td><span class="tag re">restyle</span></td><td><code>app/components/layouts/demo1/components/sidebar.tsx</code>, <code>sidebar-menu.tsx</code>, <code>config/menu.config.tsx</code></td><td>224 px, 30 px items, active item in the theme's soft tint, Metronic demo entries removed</td></tr>
       <tr><td>Topbar + search</td><td>Header, SearchDialog</td><td><span class="tag re">restyle</span></td><td><code>.../demo1/components/header.tsx</code>, <code>app/components/partials/dialogs/search/search-dialog.tsx</code></td><td>48 px bar; search field is the visible trigger for Cmd/Ctrl+K</td></tr>
       <tr><td>Title + view switch</td><td>PageHeader + ViewToggle</td><td><span class="tag keep">keep</span> / <span class="tag new">new</span></td><td><code>components/common/PageHeader.tsx</code>; NEW <code>components/common/ViewToggle.tsx</code></td><td>The hand-built List | Schedule button pair (<code>OrderInquiriesClient.tsx:1515-1545</code>) becomes one shared toggle</td></tr>
       <tr><td>Kind counts</td><td>FacetChips</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/FacetChips.tsx</code></td><td>Replaces <code>OrderInquiryStrip</code> + <code>SupplyKindCard</code> tiles; a count chip is a filter toggle, 28 px high instead of a 60 px tile</td></tr>
@@ -471,7 +524,7 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
       <tr><td>Filters</td><td>FilterChip (wraps SearchableMultiSelect)</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-filter-chip.tsx</code>; <code>components/common/SearchableMultiSelect.tsx</code></td><td>Every dropdown filter multi-select and on the toolbar row; the Filters panel goes away</td></tr>
       <tr><td>Columns</td><td>Column visibility menu</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid-column-visibility.tsx</code></td><td>Icon button with styled tooltip</td></tr>
       <tr><td>Selection bar + Select all N</td><td>DataGridListToolbar</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-list-toolbar.tsx</code>, <code>data-grid-range-select.ts</code></td><td>Shift/drag ranges already exist; "Select all 312" link added after a page is fully ticked</td></tr>
-      <tr><td>Rows</td><td>DataGridTable</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-table.tsx</code></td><td>36 px rows (Comfortable), one line always; Reserve keeps one badge, "parked by" goes to the cell title</td></tr>
+      <tr><td>Rows</td><td>DataGridTable</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-table.tsx</code></td><td>Today's 44 px rows and 14 px text kept (owner D3), one line always; Reserve keeps one badge, "parked by" goes to the cell title</td></tr>
       <tr><td>Sort arrows</td><td>DataGridColumnHeader</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid-column-header.tsx</code></td><td>Every column sortable server-side; Reserve needs a backend sort key</td></tr>
       <tr><td>Status / Reserve</td><td>Badge</td><td><span class="tag keep">keep</span></td><td><code>components/ui/badge.tsx</code>; <code>project-sales/_shared/lib/orderInquiryHeaderStatus.ts</code></td><td>v2 status tones</td></tr>
       <tr><td>Row right-click menu</td><td>DataGridRowMenu</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-row-menu.tsx</code> on <code>components/ui/context-menu.tsx</code></td><td>Fed by the D15 <code>use&lt;Entity&gt;Actions</code> set; acts on the selection when the row is part of it</td></tr>
@@ -768,11 +821,11 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 
 <!-- =============================== 5. PHONE LIST =============================== -->
 <section class="screen" id="s-phone">
-  <h2>5. Order inquiry list on a phone (375 px)</h2>
-  <p class="lede">Owner rule and audit Q2: one line per row and the grid scrolls sideways inside its box; no cards. v2 makes that comfortable: the first column stays pinned, rows are 44 px for touch, filters open in a bottom sheet, and a long press opens the same row menu as right-click.</p>
+  <h2>5. Phone (375 px), following the Foundryx playbook</h2>
+  <p class="lede">Owner D4: "for the phone, we should follow the playbook". This draws the playbook's phone rules as the gap audit cites them: list cards (PB:179), a filter bar with "Showing n of N" (PB:237), a bottom selection bar (PB:229-235), a top bar that condenses and a floating main action (PB:430-438). Desktop keeps one line per row. Every phone element is tagged "verify against PB" until crew sends the playbook text.</p>
   <div class="phones">
     <div class="only-before" style="flex:none">
-      <div class="frame-label">Before (today)</div>
+      <div class="frame-label">Before (today), list</div>
       <div class="phone"><div class="app pv1">
         <div class="hdr"><span class="bars"></span><b style="font-size:15px">Sorento</b><span style="margin-left:auto;display:flex"><span class="round"></span><span class="round"></span><span class="round"></span></span></div>
         <div class="body">
@@ -799,58 +852,64 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
     <div class="only-after" style="flex:none">
       <div class="frame-label">After (v2), list</div>
       <div class="phone"><div class="app v2 pv2">
-        <div class="top" data-c="AppTopbar (phone) · header.tsx + MobileNavDrawer (vaul, D13)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span><span class="ibtn"><svg><use href="#i-bell"/></svg></span></span></div>
-        <div class="tb2" data-c="DataGridListToolbar (phone)"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" data-c="FilterSheet · NEW (vaul bottom sheet of FilterChips)" style="height:36px"><svg><use href="#i-filter"/></svg>3</span><span class="seg" data-c="ViewToggle (icon-only at 375)"><span class="on" style="height:34px">List</span><span style="height:34px">Sched.</span></span></div>
-        <div class="facets" data-c="FacetChips (scrolls sideways)"><span class="fc">Stock <b>120</b></span><span class="fc">Indent <b>84</b></span><span class="fc on">To confirm <b>17</b></span><span class="fc">Project <b>108</b></span></div>
-        <div class="gridwrap" data-c="DataGrid · pinned first column, 44 px rows on coarse pointer">
-          <table>
-            <colgroup><col style="width:122px"><col style="width:126px"><col style="width:100px"><col style="width:150px"><col style="width:150px"></colgroup>
-            <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th><th>Raised at<span class="so" style="opacity:1;color:var(--primary)">▼</span></th></tr></thead>
-            <tbody>
-              <tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen Sdn Bhd</td><td class="mut">10/11/2026, 9:42 am</td></tr>
-              <tr><td class="id">OI-2611-0141</td><td><span class="b warn">Outstanding</span></td><td>SO414280</td><td>B****** Sdn Bhd</td><td class="mut">10/11/2026, 9:15 am</td></tr>
-              <tr><td class="id">OI-2611-0139</td><td><span class="b warn">Outstanding</span></td><td>SO413902</td><td>M*** Debtor</td><td class="mut">09/11/2026, 5:58 pm</td></tr>
-              <tr><td class="id">OI-2611-0137</td><td><span class="b neu">Completed</span></td><td>SO413877</td><td>A*** Hartanah</td><td class="mut">09/11/2026, 4:20 pm</td></tr>
-              <tr><td class="id">OI-2611-0133</td><td><span class="b warn">Outstanding</span></td><td>SO413650</td><td>T*** Residences</td><td class="mut">09/11/2026, 11:02 am</td></tr>
-              <tr><td class="id">OI-2611-0128</td><td><span class="b neu">Completed</span></td><td>SO413301</td><td>O****</td><td class="mut">08/11/2026, 3:47 pm</td></tr>
-              <tr><td class="id">OI-2611-0125</td><td><span class="b warn">Outstanding</span></td><td>SO413122</td><td>S***** Sdn Bhd</td><td class="mut">08/11/2026, 10:12 am</td></tr>
-              <tr><td class="id">OI-2611-0121</td><td><span class="b warn">Outstanding</span></td><td>SO412977</td><td>R***** Kitchen Sdn Bhd</td><td class="mut">07/11/2026, 4:05 pm</td></tr>
-              <tr><td class="id">OI-2611-0118</td><td><span class="b neu">Completed</span></td><td>SO412804</td><td>K***** Interior</td><td class="mut">07/11/2026, 9:30 am</td></tr>
-            </tbody></table>
+        <div class="top" data-c="Topbar (phone) · components/v2/shell/Topbar.tsx (verify against PB:430-438)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span></span></div>
+        <div class="fbar" data-c="Filter bar · components/v2/grid/GridToolbar.tsx phone (verify against PB:237)"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>Filters 3</span></div>
+        <div class="showing">Showing 25 of 312 · <span class="seg2"><b>List</b> · Schedule</span></div>
+        <div class="cards" data-c="PhoneCardList · NEW components/v2/grid/PhoneCardList.tsx (verify against PB:179)">
+          <div class="pc"><div class="l1"><b>OI-2611-0142</b><span class="b warn">Outstanding</span></div><div class="l2">R***** Kitchen Sdn Bhd</div><div class="l3">SO414285 · 48 units · 10/11/2026, 9:42 am</div><span class="chev">›</span></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0141</b><span class="b warn">Outstanding</span></div><div class="l2">B****** Sdn Bhd (Project)</div><div class="l3">SO414280 · 12 units · 10/11/2026, 9:15 am</div><span class="chev">›</span></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0139</b><span class="b warn">Outstanding</span></div><div class="l2">M*** Debtor</div><div class="l3">SO413902 · 6 units · 09/11/2026, 5:58 pm</div><span class="chev">›</span></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0137</b><span class="b neu">Completed</span></div><div class="l2">A*** Hartanah</div><div class="l3">SO413877 · 220 units · 09/11/2026, 4:20 pm</div><span class="chev">›</span></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0133</b><span class="b warn">Outstanding</span></div><div class="l2">T*** Residences Sdn Bhd</div><div class="l3">SO413650 · 32 units · 09/11/2026, 11:02 am</div><span class="chev">›</span></div>
         </div>
-        <div class="pager" data-c="DataGridPagination (compact)"><span>1 - 25 of 312</span><span class="pg"><span><svg width="14" height="14"><use href="#i-left"/></svg></span><span class="on">1</span><span><svg width="14" height="14"><use href="#i-right"/></svg></span></span></div>
+        <nav class="bnav" data-c="BottomBar · NEW components/v2/shell/BottomBar.tsx (owner D4)"><span><i></i>Home</span><span class="on"><i></i>Inquiries</span><span><i></i>Search</span><span><i></i>Alerts</span><span><i></i>More</span></nav>
       </div></div>
     </div>
 
     <div class="only-after" style="flex:none">
-      <div class="frame-label">After (v2), long press on a row</div>
-      <div class="phone"><div class="app v2 pv2" style="position:relative">
-        <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span><span class="ibtn"><svg><use href="#i-bell"/></svg></span></span></div>
-        <div class="tb2"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>3</span></div>
-        <div class="gridwrap"><table><colgroup><col style="width:122px"><col style="width:126px"><col style="width:100px"><col style="width:150px"></colgroup>
-          <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th></tr></thead>
-          <tbody><tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen</td></tr>
-          <tr class="sel"><td class="id">OI-2611-0141</td><td><span class="b warn">Outstanding</span></td><td>SO414280</td><td>B****** Sdn Bhd</td></tr>
-          <tr><td class="id">OI-2611-0139</td><td><span class="b warn">Outstanding</span></td><td>SO413902</td><td>M*** Debtor</td></tr></tbody></table></div>
-        <div class="scrim"></div>
-        <div class="sheetm" data-c="DataGridRowMenu as vaul sheet on coarse pointer (D13)">
-          <div class="grab"></div><div class="h">OI-2611-0141</div>
-          <div class="i">Open</div><div class="i">Copy OI no</div><div class="i">Send to purchasing</div><div class="i">Request CS to reserve</div><div class="i">Select</div>
+      <div class="frame-label">After (v2), selecting</div>
+      <div class="phone"><div class="app v2 pv2">
+        <div class="top"><span class="ibtn">✕</span><span class="t">3 selected</span><span class="r"><span class="btn t sm">Select all 312</span></span></div>
+        <div class="showing">Showing 25 of 312</div>
+        <div class="cards">
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0142</b><span class="b warn">Outstanding</span></div><div class="l2">R***** Kitchen Sdn Bhd</div><div class="l3">SO414285 · 48 units</div></div>
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0141</b><span class="b warn">Outstanding</span></div><div class="l2">B****** Sdn Bhd (Project)</div><div class="l3">SO414280 · 12 units</div></div>
+          <div class="pc"><span class="cb ck"></span><div class="l1"><b>OI-2611-0139</b><span class="b warn">Outstanding</span></div><div class="l2">M*** Debtor</div><div class="l3">SO413902 · 6 units</div></div>
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0137</b><span class="b neu">Completed</span></div><div class="l2">A*** Hartanah</div><div class="l3">SO413877 · 220 units</div></div>
         </div>
+        <div class="selbar2" data-c="SelectionBar (phone) · components/v2/grid/SelectionBar.tsx (verify against PB:229-235)"><span class="btn p sm">Send to purchasing</span><span class="btn sm">Export</span><span class="btn sm">More</span></div>
+      </div></div>
+    </div>
+
+    <div class="only-after" style="flex:none">
+      <div class="frame-label">After (v2), record</div>
+      <div class="phone"><div class="app v2 pv2">
+        <div class="top" data-c="Topbar condensed · RecordHeader (phone)"><span class="ibtn"><svg><use href="#i-left"/></svg></span><span class="t">OI-2611-0142</span><span class="r"><span class="ibtn" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span></span></div>
+        <div class="phead"><div style="display:flex;gap:6px;align-items:center"><span class="b warn">Outstanding</span><span class="b neu plain">Consignment</span></div><div class="sub"><a href="#">SO414285</a> · Raised by E**** on 10/11/2026</div>
+          <div class="wait" data-c="WaitingOn · NEW components/v2/record/WaitingOn.tsx">Waiting on CS to reserve 2 lines · requested by J***** 10/11/2026</div></div>
+        <div class="tabs ptabs"><span class="on">Lines <span class="n">4</span></span><span>General</span><span>Related PO</span><span>Related SPO</span><span>History</span></div>
+        <div class="cards">
+          <div class="pc"><div class="l1"><b>1 · SRT382-6</b><span class="b info">Needs reserve</span></div><div class="l2">Ceramic Wash Basin 450mm</div><div class="l3">24 units · 28/11/2026 · FOSHAN WORKS</div></div>
+          <div class="pc"><div class="l1"><b>2 · SRTWC8613-RL</b><span class="b info">Needs reserve</span></div><div class="l2">Wall-hung WC, soft-close seat</div><div class="l3">24 units · 28/11/2026 · DAFUYUAN</div></div>
+          <div class="pc"><div class="l1"><b>3 · CB6633</b><span class="b warn">To confirm</span></div><div class="l2">Concealed cistern, dual flush</div><div class="l3">24 units · 05/12/2026 · CHAOSHENG</div></div>
+        </div>
+        <span class="fab" data-c="Floating main action · components/v2/shell/FloatingAction.tsx (verify against PB:430-438)">Reserve 2 lines</span>
+        <nav class="bnav"><span><i></i>Home</span><span class="on"><i></i>Inquiries</span><span><i></i>Search</span><span><i></i>Alerts</span><span><i></i>More</span></nav>
       </div></div>
     </div>
   </div>
 
   <div class="legend"><table>
-    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Playbook</th></tr></thead>
     <tbody>
-      <tr><td>Top bar</td><td>Header + mobile nav drawer</td><td><span class="tag re">restyle</span></td><td><code>.../demo1/components/header.tsx</code>, <code>components/ui/drawer.tsx</code> (vaul)</td><td>Page title moves into the 48 px bar; breadcrumb hidden at 375</td></tr>
-      <tr><td>Toolbar</td><td>DataGridListToolbar</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-list-toolbar.tsx</code></td><td>One row: search, filter count, view toggle</td></tr>
-      <tr><td>Filters</td><td>FilterSheet</td><td><span class="tag new">new</span></td><td>NEW, the FilterChips in <code>components/ui/drawer.tsx</code></td><td>Same multi-select filters as desktop, in a bottom sheet</td></tr>
-      <tr><td>Pinned first column</td><td>DataGrid column pinning</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid.tsx</code> (pinning exists; "nothing pins automatically", DESIGN-LANGUAGE section 4)</td><td>v2 pins the identifier column of every list on coarse pointers by default</td></tr>
-      <tr><td>Row height</td><td>density token</td><td><span class="tag new">new</span></td><td><code>css/config.reui.css</code> <code>--row-h</code></td><td>36 px Comfortable on desktop, 44 px on coarse pointers</td></tr>
-      <tr><td>Long-press menu</td><td>DataGridRowMenu</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-row-menu.tsx</code></td><td>Same items as right-click; a bottom sheet on touch. Long press after 500 ms, the same hold the range select already uses</td></tr>
-      <tr><td>Bottom bar</td><td>none</td><td><span class="tag keep">not added</span></td><td>-</td><td>See plan decision 3</td></tr>
+      <tr><td>Top bar, condensing</td><td>Topbar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/Topbar.tsx</code></td><td>PB:430-438 (verify)</td></tr>
+      <tr><td>Filter bar + "Showing n of N"</td><td>GridToolbar (phone) + FilterSheet</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/GridToolbar.tsx</code>; filters in a vaul sheet (<code>components/ui/drawer.tsx</code>)</td><td>PB:237 (verify)</td></tr>
+      <tr><td>List cards</td><td>PhoneCardList</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/PhoneCardList.tsx</code></td><td>PB:179 (verify); scope per open question Q4</td></tr>
+      <tr><td>Selection bar</td><td>SelectionBar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/SelectionBar.tsx</code></td><td>PB:229-235 (verify)</td></tr>
+      <tr><td>Bottom bar</td><td>BottomBar</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/BottomBar.tsx</code></td><td>Owner D4; 4 destinations + More, the second from telemetry</td></tr>
+      <tr><td>Floating main action</td><td>FloatingAction</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/FloatingAction.tsx</code></td><td>PB:430-438 (verify); only when the page has a primary</td></tr>
+      <tr><td>Waiting on</td><td>WaitingOn</td><td><span class="tag new">new</span></td><td><code>components/v2/record/WaitingOn.tsx</code></td><td>Discovery 4.10 (hand-offs)</td></tr>
+      <tr><td>Row menu on touch</td><td>RowMenu as a sheet</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/RowMenu.tsx</code></td><td>Long press, 500 ms</td></tr>
     </tbody></table></div>
 </section>
 
@@ -874,11 +933,55 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
   });
   var map=document.getElementById('mapBtn');
   map.addEventListener('click',function(){var on=b.classList.toggle('map');map.setAttribute('aria-pressed',String(on))});
-  var dk=document.getElementById('darkBtn');
-  dk.addEventListener('click',function(){
-    var on=dk.getAttribute('aria-pressed')!=='true';dk.setAttribute('aria-pressed',String(on));
-    document.querySelectorAll('.app.v2').forEach(function(a){a.classList.toggle('dark',on)});
-  });
+
+  /* ---- theme engine (mock of lib/theme/generate.ts): one colour -> OKLCH ramp -> AA-guarded tokens ---- */
+  function hex2rgb(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(function(c){return c+c}).join('');var n=parseInt(h,16);return[(n>>16&255)/255,(n>>8&255)/255,(n&255)/255]}
+  function lin(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4)}
+  function delin(c){c=Math.max(0,Math.min(1,c));return c<=0.0031308?12.92*c:1.055*Math.pow(c,1/2.4)-0.055}
+  function rgb2oklch(r){var R=lin(r[0]),G=lin(r[1]),B=lin(r[2]);
+    var l=Math.cbrt(0.4122214708*R+0.5363325363*G+0.0514459929*B),m=Math.cbrt(0.2119034982*R+0.6806995451*G+0.1073969566*B),s=Math.cbrt(0.0883024619*R+0.2817188376*G+0.6299787005*B);
+    var L=0.2104542553*l+0.793617785*m-0.0040720468*s,a=1.9779984951*l-2.428592205*m+0.4505937099*s,b=0.0259040371*l+0.7827717662*m-0.808675766*s;
+    return[L,Math.sqrt(a*a+b*b),Math.atan2(b,a)]}
+  function oklch2rgb(L,C,H){var a=C*Math.cos(H),b=C*Math.sin(H);
+    var l=Math.pow(L+0.3963377774*a+0.2158037573*b,3),m=Math.pow(L-0.1055613458*a-0.0638541728*b,3),s=Math.pow(L-0.0894841775*a-1.291485548*b,3);
+    return[4.0767416621*l-3.3077115913*m+0.2309699292*s,-1.2684380046*l+2.6097574011*m-0.3413193965*s,-0.0041960863*l-0.7034186147*m+1.707614701*s]}
+  function inGamut(c){return c.every(function(v){return v>=-0.0005&&v<=1.0005})}
+  function toHex(L,C,H){var c=C,rgb=oklch2rgb(L,c,H);while(!inGamut(rgb)&&c>0){c-=0.005;rgb=oklch2rgb(L,c,H)}
+    return'#'+rgb.map(function(v){return('0'+Math.round(delin(v)*255).toString(16)).slice(-2)}).join('')}
+  function lum(h){var r=hex2rgb(h);return 0.2126*lin(r[0])+0.7152*lin(r[1])+0.0722*lin(r[2])}
+  function contrast(a,b){var x=lum(a),y=lum(b);return(Math.max(x,y)+0.05)/(Math.min(x,y)+0.05)}
+  var STEPS=[50,100,200,300,400,500,600,700,800,900,950],LS=[.97,.93,.87,.79,.71,.63,.55,.48,.41,.34,.27],CS=[.12,.25,.45,.7,.9,1,1,.95,.85,.72,.6];
+  function ramp(hex){var o=rgb2oklch(hex2rgb(hex)),C=o[1]<0.02?0:o[1],r={};STEPS.forEach(function(s,i){r[s]=toHex(LS[i],C*CS[i],o[2])});return r}
+  function tokens(hex,mode){var r=ramp(hex),t={ramp:r};
+    if(mode==='light'){var pick=[600,700,800,900].find(function(s){return contrast(r[s],'#ffffff')>=4.5});
+      if(pick){t.primary=r[pick];t.fg='#ffffff';t.hover=r[Math.min(950,STEPS[STEPS.indexOf(pick)+1])]}else{t.primary=r[500];t.fg=r[950];t.hover=r[600]}
+      t.soft=r[50];t.soft2=r[100];t.bg='#ffffff'}
+    else{var bg='#111113';var pd=[400,300,200].find(function(s){return contrast(r[s],bg)>=4.5})||200;
+      t.primary=r[pd];t.hover=r[STEPS[STEPS.indexOf(pd)-1]];t.fg=r[950];t.soft=r[950];t.soft2=r[900];t.bg=bg}
+    t.ratio=contrast(t.primary,t.fg);t.onbg=contrast(t.primary,t.bg);return t}
+  var PRESETS=[['Sorento Blue','#3b82f6'],['Sorento Red','#b44d2e'],['Teal','#0f766e'],['Graphite','#3f3f46'],['Indigo','#4f46e5']];
+  var state={hex:'#3b82f6',mode:'light'};
+  function apply(){var t=tokens(state.hex,state.mode);
+    document.querySelectorAll('.app.v2').forEach(function(a){a.classList.toggle('dark',state.mode==='dark');
+      a.style.setProperty('--brand-500',t.primary);a.style.setProperty('--brand-600',t.hover);a.style.setProperty('--brand-50',t.soft);
+      a.style.setProperty('--brand-100',t.soft2);a.style.setProperty('--primary-fg',t.fg)});
+    var rp=document.getElementById('ramp');rp.innerHTML=STEPS.map(function(s){return'<span style="background:'+t.ramp[s]+'"></span>'}).join('');
+    var pb=document.getElementById('pbtn');pb.style.background=t.primary;pb.style.color=t.fg;
+    document.getElementById('ratio').innerHTML='Button text contrast <b>'+t.ratio.toFixed(1)+':1</b> '+(t.ratio>=4.5?'(AA pass)':'(fails AA)')+
+      ' · brand on page <b>'+t.onbg.toFixed(1)+':1</b>. Input '+state.hex+' with white text: '+contrast(state.hex,'#ffffff').toFixed(1)+':1';
+    document.getElementById('chex').value=state.hex;document.getElementById('cpick').value=state.hex;
+    document.querySelectorAll('#presets button').forEach(function(x){x.setAttribute('aria-pressed',String(x.dataset.hex===state.hex))});
+    document.querySelectorAll('[data-m]').forEach(function(x){x.setAttribute('aria-pressed',String(x.dataset.m===state.mode))})}
+  var ps=document.getElementById('presets');
+  PRESETS.forEach(function(p){var bt=document.createElement('button');bt.dataset.hex=p[1];bt.innerHTML='<i style="background:'+p[1]+'"></i>'+p[0];
+    bt.addEventListener('click',function(){state.hex=p[1];apply()});ps.appendChild(bt)});
+  document.getElementById('cpick').addEventListener('input',function(e){state.hex=e.target.value;apply()});
+  document.getElementById('chex').addEventListener('change',function(e){var v=e.target.value.trim();if(/^#?[0-9a-fA-F]{6}$/.test(v)){state.hex=(v[0]==='#'?v:'#'+v).toLowerCase();apply()}});
+  document.querySelectorAll('[data-m]').forEach(function(x){x.addEventListener('click',function(){state.mode=x.dataset.m;apply()})});
+  var tb=document.getElementById('themeBtn'),tp=document.getElementById('tpanel');
+  tb.addEventListener('click',function(){var on=tp.classList.toggle('on');tb.setAttribute('aria-pressed',String(on))});
+  window.__uiv2Theme={state:state,apply:apply,tokens:tokens,contrast:contrast};
+  apply();
   var h=(location.hash||'').slice(1);
   if(h){var t=document.querySelector('[data-s="'+h+'"]');if(t)t.click();}
 })();
