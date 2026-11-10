@@ -8,15 +8,20 @@ Plan: `PLAN-quote-terms-select-10nov.md`. Lane PR #2305.
   company per code (`code` = AutoCount `Terms.DisplayTerm`), updates it on a re-push, and never
   touches another company. `GET /external/contract` lists the entity and its fields.
 - **A2** `/payment_terms/deletions` only deactivates. The read door returns the stored fields.
-- **A3** A non-dry push links every terms template and quotation of that company whose legacy
-  payment-terms text equals a term's code or description (case and spacing ignored) and that has
-  no term yet. Printed text is not rewritten. A dry run links nothing.
+- **A3** A non-dry push links every terms template and unlocked quotation of that company whose
+  legacy payment-terms text equals an ACTIVE term's DisplayTerm exactly (edge padding ignored) and
+  that has no term yet. Printed text is not rewritten. A dry run links nothing.
+- **A5** The feed record is `code` (DisplayTerm, prints), `rule` (AutoCount Terms, the calculation
+  rule) and `is_active`; AutoCount has no description or day count.
+- **A6** Master Data > Payment Terms lists every synced term (active or not) read-only: Term,
+  Rule, Company, Status; search over term and rule; sortable columns.
 - **A4** The CRM never writes AutoCount and has no screen that edits a term.
 
 ## B. Payment Terms field
 
 - **B1** Terms template dialog and the quotation's Terms tab show Payment Terms as a clearable
-  searchable select of this company's ACTIVE terms (label = description, else code).
+  searchable select of this company's ACTIVE terms, one line per term: the AutoCount DisplayTerm
+  only. Asterisk-prefixed variants are listed after the plain ones.
 - **B2** Picking a term saves `payment_term_id` and prints the label; clearing clears both.
 - **B3** A term of another company, an unknown id or an inactive term is refused with 422
   `payment_term_unknown`.
@@ -42,7 +47,7 @@ Plan: `PLAN-quote-terms-select-10nov.md`. Lane PR #2305.
 - **E1** Terms template default (Quotation Templates > Terms > Edit Default / Add).
 - **E2** A new quotation copies the active template's term and validity (picks and texts).
 - **E2b** Owner Q3: when the project's customer carries AutoCount debtor terms
-  (`payment_terms_code`, customer feed contract 2.14) naming an active synced term, that term is
+  (`payment_terms_code`, customer feed contract 2.14) naming an active synced term's DisplayTerm exactly, that term is
   the new quotation's default instead of the template's; validity stays the template's.
 - **E3** The quotation form's Terms tab edits its own copy; the cover preview prints the picks
   before save.

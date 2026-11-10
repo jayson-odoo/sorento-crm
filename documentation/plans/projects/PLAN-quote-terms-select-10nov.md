@@ -69,3 +69,16 @@ Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templa
   validity backfill, `master_data.payment_terms.*` grants mirrored from item classes.
 - FE: one `QuoteTermsFields` component (`project-sales/_shared/components`) in the template dialog
   and the quotation Terms tab; only changed picks are sent.
+
+## Round 3 (10 Nov ~16:00, crew AutoCount probe + owner hand test)
+
+- AutoCount `Terms` has two fields only: `DisplayTerm` (prints) and `Terms` (calculation rule).
+  The master is `payment_terms.term_code` = DisplayTerm and `term_rule` = Terms; no description,
+  no day count. The feed record is `code`, `rule`, `is_active` (contract 2.14).
+- Q2 restated: what prints is the DisplayTerm. Matching (debtor default, legacy link) is exact
+  on DisplayTerm, edge padding ignored, case kept.
+- Owner: the picker shows one line per term, the DisplayTerm only.
+- Owner: Master Data > Reference Data > Payment Terms, a read-only DataGrid (Term, Rule, Company,
+  Status; search over term and rule; sortable). `GET /api/v1/master-data/payment-terms/`, gated
+  `master_data.payment_terms.view`, `# ai: not-for-assistant`.
+- Open: asterisk-prefixed DisplayTerms (crew-ask on the PR); built as "offered, listed last".
