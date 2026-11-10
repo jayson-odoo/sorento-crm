@@ -153,4 +153,53 @@ describe('TemplateProductsDialog', () => {
       expect(screen.getByText('4 use this template after Save: 2 added, 0 removed')).toBeTruthy(),
     );
   });
+
+  it('the bulk strip Clear goes back to the links it opened with, never to nothing', async () => {
+    mount();
+    await waitFor(async () => expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true));
+    fireEvent.click(await box('SRTKS-7040-WH'));
+    fireEvent.click(await box('SRTKS-8050-BK'));
+    expect(screen.getByText('2 use this template after Save: 1 added, 1 removed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(screen.getByText('2 use this template')).toBeTruthy());
+    expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true);
+    expect(isTicked(await box('SRTKS-8050-BK'))).toBe(false);
+  });
+
+  it('a seed that fails to load offers Retry and keeps Save off', async () => {
+    links.listTemplateProductIds.mockRejectedValueOnce(new Error('boom'));
+    mount();
+    expect(await screen.findByText(/Could not load the products that use this template/)).toBeTruthy();
+    fireEvent.click(await box('SRTKS-8050-BK'));
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByText(/use this template/)).toBeTruthy());
+    expect(links.listTemplateProductIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('says Linked as soon as the adds commit, before the removals start counting down', async () => {
+    mount();
+    await waitFor(async () => expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true));
+    fireEvent.click(await box('SRTKS-8050-BK'));
+    fireEvent.click(await box('SRTKS-7040-WH'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(deferred.start).toHaveBeenCalled());
+    expect(toast.success).toHaveBeenCalledWith('Linked 1 product');
+    const toastOrder = toast.success.mock.invocationCallOrder[0];
+    expect(toastOrder).toBeLessThan(deferred.start.mock.invocationCallOrder[0]);
+  });
+
+  it('"Show: Uses this template" lists only the products that use it', async () => {
+    mount();
+    await waitFor(async () => expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true));
+    // Radix opens on pointerdown, not click (same as SalesOrdersList.transferable.test.tsx).
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { ctrlKey: false, button: 0 });
+    fireEvent.click(await screen.findByText('Show: all products'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Uses this template' }));
+    await waitFor(() =>
+      expect(products.getProducts).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag_template_id: T, status: 'active' }),
+      ),
+    );
+  });
 });

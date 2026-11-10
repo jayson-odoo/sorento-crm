@@ -390,16 +390,23 @@ class ProductService:
             filters.append(Product.id.in_(product_ids))
         if tag_template_id:
             # PRICETAG-TEMPLATE-PRODUCTS: "Show: Uses this template" in the designer's picker.
-            from app.models.dealer_kit import ProductTagTemplate
+            # The template must be in the caller's scope too, so the filter cannot confirm
+            # another company's template id.
+            from app.models.dealer_kit import ProductTagTemplate, TagTemplate
+            from app.services.company_scope import build_company_predicate, get_company_scope
 
-            filters.append(
+            link = (
                 self.db.query(ProductTagTemplate.id)
+                .join(TagTemplate, TagTemplate.id == ProductTagTemplate.template_id)
                 .filter(
                     ProductTagTemplate.product_id == Product.id,
                     ProductTagTemplate.template_id == tag_template_id,
                 )
-                .exists()
             )
+            template_scope = build_company_predicate(TagTemplate, get_company_scope(self.db))
+            if template_scope is not None:
+                link = link.filter(template_scope)
+            filters.append(link.exists())
         if entity_buckets is not None:
             if not getattr(entity_buckets, "product_codes", None):
                 return self._EMPTY_RESULT

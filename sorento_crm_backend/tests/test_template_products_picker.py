@@ -271,3 +271,94 @@ def test_products_list_filters_by_tag_template(env):
     body = res.json()
     assert {row["id"] for row in body["data"]} == {p1, p2}
     assert body["pagination"]["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (reviewer B1 / S5, security nits 1 and 3)
+# ---------------------------------------------------------------------------
+
+
+class TestJunkAndForeign:
+    def test_only_junk_ids_match_nothing_never_everything(self, env):
+        import app.services.record_actions  # noqa: F401  (registers the actions)
+        from app.models.base import set_company_scope
+        from app.services.form_action_registry import get_action
+
+        db, c, _ = env
+        ref = _reference(db)
+        p1, p2 = _product(db, ref), _product(db, ref)
+        t = _template(db, "Pick")
+        _link(db, p1, t)
+        junk = {"product_ids": ["not-a-uuid", "also-junk"]}
+
+        preview = c.post(f"{DK}/tag-templates/{t}/assign/preview", json=junk)
+        assert preview.status_code == 200, preview.text
+        assert preview.json() == {"matched": 0, "already_linked": 0}
+        added = c.post(f"{DK}/tag-templates/{t}/assign", json={**junk, "action": "add"})
+        assert added.json() == {"changed": 0}
+        assert _links(db, t) == {p1}
+
+        set_company_scope(db, frozenset({SORENTO}))
+        result = get_action("tag_template.unassign_products").execute(
+            db, {"entity_id": t, **junk, "requested_by_id": MANAGER_ID}
+        )
+        assert result == {"changed": 0}
+        assert _links(db, t) == {p1}
+        assert p2 not in _links(db, t)
+
+    def test_deferred_unassign_never_touches_a_foreign_product(self, env):
+        import app.services.record_actions  # noqa: F401
+        from app.models.base import set_company_scope
+        from app.services.form_action_registry import get_action
+
+        db, _c, _ = env
+        foreign = _foreign_product(db)
+        t = _template(db, "Pick")
+        _link(db, foreign, t)  # not reachable through the API; must survive
+        set_company_scope(db, frozenset({SORENTO}))
+        result = get_action("tag_template.unassign_products").execute(
+            db, {"entity_id": t, "product_ids": [foreign], "requested_by_id": MANAGER_ID}
+        )
+        assert result == {"changed": 0}
+        assert _links(db, t) == {foreign}
+
+    def test_parking_an_unassign_with_more_than_500_ids_is_refused(self, env):
+        db, c, _ = env
+        t = _template(db, "Pick")
+        res = c.post(
+            "/api/v1/pending-actions",
+            json={
+                "action_key": "tag_template.unassign_products",
+                "entity_type": "tag_template",
+                "entity_id": t,
+                "payload": {"product_ids": [str(uuid.uuid4()) for _ in range(501)]},
+            },
+        )
+        assert res.status_code == 400, res.text
+        assert res.json()["code"] == "VALIDATION_ERROR"
+
+    def test_products_list_rejects_a_non_uuid_template_id(self, env):
+        _db, c, _ = env
+        res = c.get("/api/v1/master-data/products/", params={"tag_template_id": "nope"})
+        assert res.status_code == 400
+
+    def test_products_list_ignores_a_template_outside_the_scope(self, env):
+        from app.models.company import Company
+        from app.models.dealer_kit import TagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        mine = _product(db, ref)
+        other_company = str(uuid.uuid4())
+        db.add(Company(id=other_company, name=unique_code("ZZT Other"), code=unique_code("OC")[:20]))
+        db.flush()
+        theirs = TagTemplate(id=str(uuid.uuid4()), name=unique_code("Theirs"), family="ala_carte",
+                             doc={"layers": [], "width_mm": 80, "height_mm": 50},
+                             print_size={}, company_id=other_company)
+        db.add(theirs)
+        db.flush()
+        _link(db, mine, theirs.id)  # not reachable through the API
+
+        res = c.get("/api/v1/master-data/products/", params={"tag_template_id": theirs.id})
+        assert res.status_code == 200, res.text
+        assert res.json()["data"] == []

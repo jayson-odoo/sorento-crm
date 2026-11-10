@@ -78,7 +78,10 @@ export interface ProductTargetPickerOptions {
   extraParams?: Partial<GetProductsParams>;
   /** One more control for the Filters popover, owned by the caller. */
   extraFilter?: { content: ReactNode; activeCount: number };
-  /** "Select all" adds the matching products to the ticks, and Clear goes back to before it. */
+  /**
+   * "Select all" adds the matching products to the ticks instead of replacing them. Clear then
+   * undoes that Select all, and any other Clear goes back to `initialSelection`, never to nothing.
+   */
   mergeSelectAll?: boolean;
 }
 
@@ -104,13 +107,18 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     { id: 'product_code', desc: false },
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  // The ticks just before a merging "Select all", which its Clear goes back to.
-  const beforeMatching = useRef<RowSelectionState>({});
-  const seeded = useRef(false);
+  // The latest ticks, for a "Select all" whose fetch lands after the user ticked more.
+  const selectionRef = useRef<RowSelectionState>({});
+  selectionRef.current = rowSelection;
+  // The ticks just before a merging "Select all"; read only while that Select all is active.
+  const beforeMatching = useRef<RowSelectionState | null>(null);
+  // The seed itself, which a Clear in merge mode goes back to.
+  const seed = useRef<RowSelectionState | null>(null);
   useEffect(() => {
-    if (seeded.current || !initialSelection) return;
-    seeded.current = true;
-    setRowSelection(Object.fromEntries(initialSelection.map((id) => [id, true])));
+    if (seed.current || !initialSelection) return;
+    seed.current = Object.fromEntries(initialSelection.map((id) => [id, true]));
+    // Union: a tick made before the seed arrived is kept.
+    setRowSelection((current) => ({ ...seed.current, ...current }));
   }, [initialSelection]);
   const [matchingActive, setMatchingActive] = useState(false);
   const [matchingTotal, setMatchingTotal] = useState<number | null>(null);
@@ -138,6 +146,7 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
   // describes what is on screen, so it is dropped (ticks made by hand stay).
   useEffect(() => {
     matchingSeq.current += 1;
+    beforeMatching.current = null;
     setMatchingActive(false);
     setMatchingPending(false);
     setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
@@ -291,10 +300,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
       );
       const matching = Object.fromEntries(ids.map((id) => [id, true]));
       if (mergeSelectAll) {
-        setRowSelection((current) => {
-          beforeMatching.current = current;
-          return { ...current, ...matching };
-        });
+        beforeMatching.current = selectionRef.current;
+        setRowSelection({ ...selectionRef.current, ...matching });
       } else {
         setRowSelection(matching);
       }
@@ -324,6 +331,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         <DataGridListToolbar
           table={table}
           keepSearchWhileSelected
+          // Ticked from the start in merge mode, so the strip is always up: keep Filters on it.
+          keepFiltersWhileSelected={mergeSelectAll}
           showColumns={false}
           showExport={false}
           searchSlot={
@@ -405,8 +414,15 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
             limit: MAX_COPY_TARGETS,
             onSelectAll: () => void selectAllMatching(),
             onClear: () => {
+              // Merge mode: undoing an active "Select all" goes back to the ticks before it, and
+              // any other Clear goes back to the seed. Copy dialogs: Clear empties.
+              // `matchingActive` is this render's value: the toolbar resets the rows first.
+              const restore = mergeSelectAll
+                ? ((matchingActive ? beforeMatching.current : null) ?? seed.current ?? {})
+                : {};
+              beforeMatching.current = null;
               setMatchingActive(false);
-              setRowSelection(mergeSelectAll ? beforeMatching.current : {});
+              setRowSelection(restore);
             },
           }}
         />

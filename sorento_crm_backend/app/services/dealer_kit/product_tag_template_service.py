@@ -651,7 +651,7 @@ def _bulk_products_query(db: Session, filters: dict) -> Query:
     if not (brand_ids or category_ids or item_class_ids or family_codes or raw_product_ids):
         raise AppException(
             status_code=422,
-            message="Pick at least one brand, category, item class or model family.",
+            message="Pick at least one product, brand, category, item class or model family.",
             code="FILTER_REQUIRED",
         )
     conditions = []

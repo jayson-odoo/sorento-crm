@@ -12,7 +12,7 @@
  * The parent mounts it only while open, so every open starts from a fresh seed.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,12 +54,22 @@ interface Props {
 }
 
 export function TemplateProductsDialog({ open, onOpenChange, templateId, templateName }: Props) {
-  const linkedQuery = useTemplateProductIds(templateId, open);
-  const linked = useMemo(() => linkedQuery.data ?? [], [linkedQuery.data]);
+  const linkedQuery = useTemplateProductIds(templateId, open, { fresh: true });
+  // The Save diffs against the links as they were when the dialog opened (frozen from a fetch
+  // made after mount, never a cached list), moved on only by this dialog's own adds. A link
+  // made elsewhere meanwhile is then neither a phantom removal nor a phantom add.
+  const [baseline, setBaseline] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (baseline === null && linkedQuery.isFetchedAfterMount && linkedQuery.data) {
+      setBaseline(linkedQuery.data);
+    }
+  }, [baseline, linkedQuery.isFetchedAfterMount, linkedQuery.data]);
+  const linked = useMemo(() => baseline ?? [], [baseline]);
+  const loading = baseline === null && !linkedQuery.isError;
   const [show, setShow] = useState('');
 
   const { picked, grid } = useProductTargetPicker({
-    initialSelection: linkedQuery.data,
+    initialSelection: baseline ?? undefined,
     extraParams: show === SHOW_LINKED ? { tag_template_id: templateId } : undefined,
     mergeSelectAll: true,
     extraFilter: {
@@ -102,26 +112,31 @@ export function TemplateProductsDialog({ open, onOpenChange, templateId, templat
   const overCap = added.length > MAX_COPY_TARGETS || removed.length > MAX_COPY_TARGETS;
   const busy = link.isPending || removal.isPending;
   const unchanged = added.length === 0 && removed.length === 0;
+  const seedFailed = baseline === null && linkedQuery.isError;
 
   const save = async () => {
+    const adding = added;
     const removing = removed;
-    if (added.length > 0) {
+    if (adding.length > 0) {
       try {
-        await link.mutateAsync(added);
+        await link.mutateAsync(adding);
       } catch {
         return; // the hook toasts the failure; nothing is parked
       }
+      // Said now: a Cancel on the removals' countdown does not undo these.
+      toast.success(`Linked ${plural(adding.length, 'product')}`);
+      setBaseline((current) => [...(current ?? []), ...adding]);
     }
     if (removing.length > 0) {
       removal.start({ product_ids: removing });
       return; // the countdown replaces Save; the dialog closes once it commits
     }
-    toast.success(`Linked ${plural(added.length, 'product')}`);
     onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !link.isPending && onOpenChange(next)}>
+    // Not closable mid-Save: during the removals' countdown the dialog holds the only Cancel.
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <DialogContent
         className="flex max-h-[90dvh] w-[calc(100vw-2rem)] max-w-5xl flex-col"
         aria-describedby={undefined}
@@ -138,7 +153,19 @@ export function TemplateProductsDialog({ open, onOpenChange, templateId, templat
         <DialogBody className="min-h-0 flex-1 overflow-y-auto">{grid}</DialogBody>
         <DialogFooter className="flex-wrap items-center gap-2">
           <span className="mr-auto text-sm text-muted-foreground" aria-live="polite">
-            {linkedQuery.isLoading
+            {seedFailed ? (
+              <span className="text-destructive">
+                Could not load the products that use this template.{' '}
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => void linkedQuery.refetch()}
+                >
+                  Retry
+                </Button>
+              </span>
+            ) : loading
               ? 'Loading the products that use this template...'
               : overCap
                 ? `One Save adds or removes at most ${MAX_COPY_TARGETS} products.`
@@ -150,12 +177,12 @@ export function TemplateProductsDialog({ open, onOpenChange, templateId, templat
           </span>
           {removal.countdown ?? (
             <>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={link.isPending}>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
                 Cancel
               </Button>
               <Button
                 onClick={() => void save()}
-                disabled={busy || unchanged || overCap || linkedQuery.isLoading}
+                disabled={busy || unchanged || overCap || baseline === null}
               >
                 {link.isPending ? <LoaderCircle className="mr-1 size-4 animate-spin" /> : null}
                 Save

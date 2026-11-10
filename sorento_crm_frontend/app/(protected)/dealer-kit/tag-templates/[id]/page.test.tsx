@@ -790,6 +790,15 @@ describe('template editor chrome (S7, AC-S7-2)', () => {
     }
   });
 
+  it('PRICETAG-TEMPLATE-PRODUCTS: a spec sheet page has no Products button, even for a manager', async () => {
+    mockGet.mockResolvedValue(templateFixture({ family: 'spec_page' }));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    expect(
+      within(screen.getByTestId('toolbar-trailing')).queryByRole('button', { name: /Products/ }),
+    ).toBeNull();
+  });
+
   it('the page header carries Publish as the only action button (no Versions/Save/Full screen there)', async () => {
     mockGet.mockResolvedValue(templateFixture());
     render(<TagTemplateEditorPage />);

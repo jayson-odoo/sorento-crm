@@ -52,6 +52,8 @@ export function useProducts(params: GetProductsParams) {
       params.variant_filter,
       params.discontinued_batch_id,
       params.list_price_batch_id,
+      // PRICETAG-TEMPLATE-PRODUCTS: the template designer picker's "Show: Uses this template".
+      params.tag_template_id,
     ],
     queryFn: () => getProducts(params),
     gcTime: 1000 * 60 * 60, // 60 minutes

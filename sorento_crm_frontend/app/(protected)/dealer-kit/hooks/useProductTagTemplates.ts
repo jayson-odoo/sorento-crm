@@ -116,11 +116,17 @@ export function usePriceTagTemplateOptions(enabled: boolean) {
 export const templateProductIdsKey = (templateId: string) =>
   ['tag-template-product-ids', templateId] as const;
 
-export function useTemplateProductIds(templateId: string, enabled = true) {
+export function useTemplateProductIds(
+  templateId: string,
+  enabled = true,
+  { fresh = false }: { fresh?: boolean } = {},
+) {
   return useQuery({
     queryKey: templateProductIdsKey(templateId),
     queryFn: () => listTemplateProductIds(templateId),
     enabled: enabled && !!templateId,
+    // The Products dialog diffs its Save against this list, so it always reads it fresh.
+    ...(fresh ? { refetchOnMount: 'always' as const } : {}),
   });
 }
 
