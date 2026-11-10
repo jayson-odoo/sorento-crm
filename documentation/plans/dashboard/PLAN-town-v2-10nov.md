@@ -1,9 +1,9 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Review (fix round 1). Track L (a permission migration + an RBAC gate). All card questions
-answered (Q1-Q6). Built: snapshot `incoming` + `deliveries.customers`, lightbox, hover/tilt/zoom/reset,
-the port + sixth card, the TOWN-LOOK v6 scene and motion (`town/components/townWorld.ts`), admin-only
-access. Security reviewer READY; reviewer round 1 fixes in progress.
+Status: Merge-ready, waiting on the owner's hand test. Track L (a permission migration + an RBAC gate).
+Reviewer READY (round 2), security reviewer READY; crew-tests green on fd670e4; browser pass on the sandbox
+dev server (1280 + 375 touch, `evidence/town-v2/`). Built: snapshot `incoming` + `deliveries.customers`,
+lightbox, hover/tilt/zoom/reset, the port + sixth card, the TOWN-LOOK v6 scene and motion, admin-only access.
 
 ## Journey (owner, 10 Nov ~15:35 MYT, Dashboards > Town)
 
