@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { searchProductOptions } from '../../services/scmOptionsService';
-import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { useActiveWarehouseOptions } from '../../hooks/useScmOptions';
 import { getCandidateOrders } from '../services/reorderRunService';
 import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
@@ -139,7 +139,7 @@ export function RunPlanningModal({
     data: warehouseOptions,
     isLoading: warehousesLoading,
     isError: warehousesError,
-  } = useWarehouseOptions();
+  } = useActiveWarehouseOptions();
 
   /** Products are SEARCHED ON THE SERVER, never a static list: `products/select` answers with
    *  its own default of 100 rows against ~22,000 active products, so the list this field used

@@ -141,7 +141,7 @@ def list_quotations(
     db: Session = Depends(get_db),
 ):
     try:
-        validate_uuid_path(project_id, resource="Project")
+        project_id = validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
         from app.models.projects import ProjectQuotation
 

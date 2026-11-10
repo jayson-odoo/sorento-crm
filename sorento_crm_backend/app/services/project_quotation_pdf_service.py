@@ -575,8 +575,16 @@ def _grid_scope_html(
 
     body: List[str] = []
     current_band: Optional[str] = None
-    for position, (line, row) in enumerate(zip(lines, summary["rows"]), start=1):
+    position = 0
+    for line, row in zip(lines, summary["rows"]):
         band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
+            continue
+        position += 1
         if band and band != current_band:
             current_band = band
             body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
@@ -630,7 +638,8 @@ def _grid_scope_html(
             + "".join(plain[c] for c in after)
             + "</tr>"
         )
-    if not body:
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
         body.append(
             f'<tr><td class="empty" colspan="{span}">No items priced in this scope.</td></tr>'
         )
@@ -700,8 +709,18 @@ def _scope_html(
 
     body: List[str] = []
     current_band: Optional[str] = None
-    for position, line in enumerate(lines, start=1):
+    position = 0
+    for line in lines:
         band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(
+                f'<tr class="band"><td colspan="{len(columns)}">{_cell(band)}</td></tr>'
+            )
+            continue
+        position += 1
         # Printed once, above the line that opens the band. Repeating the same label on the next
         # line is a data quirk rather than a new section, and printing it twice would leave a QS
         # unable to tell where the section starts.
@@ -747,7 +766,8 @@ def _scope_html(
         }
         body.append("<tr>" + "".join(cells[key] for key, _label in columns) + "</tr>")
 
-    if not body:
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
         body.append(
             f'<tr><td class="empty" colspan="{len(columns)}">No items priced in this '
             "scope.</td></tr>"

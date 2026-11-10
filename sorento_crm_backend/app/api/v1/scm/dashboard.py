@@ -120,11 +120,15 @@ def warehouses_tiles(
     xyz: Optional[List[str]] = Query(None),
     active_status: Optional[str] = Query(None),
     lifecycle: Optional[str] = Query(None),
+    # SCM-INACTIVE-LOCATIONS: the reorder / low stock / daily job scope pickers pass true
+    # so an inactive location is never offered for ticking.
+    active_only: bool = Query(False),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
     filters = _filters(warehouse, warehouses, category_id, supplier, health, q,
                        active_status, lifecycle, abc, xyz)
+    filters.active_warehouses_only = active_only
     return {"data": ScmDashboardService(db).warehouses(filters)}
 
 
