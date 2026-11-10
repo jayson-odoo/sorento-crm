@@ -439,8 +439,8 @@ source named; (unverified) marks product knowledge without a source.)
 
 ### 5.2 The Foundryx playbook
 
-**Source:** through `AUDIT` only. The private repo is not readable from this sandbox, and the phone sections were
-asked for (PR #2323 crew-ask).
+**Source:** through `AUDIT`, plus the phone and responsive sections of `SKILL.md` that crew pasted on PR #2323
+(11 Nov), applied in plan section 8.
 
 **What it adds that the four products do not:** plain-words states (blocked reason, no-access naming who can grant
 it), dialog wording, per-file upload rows, and a phone layout (condensing top bar, floating main action, stacked
@@ -459,8 +459,9 @@ See `UI-V2-PLAN.md` (revision 2) for the full program. In short:
      The generator has to fix that (decision Q1).
 2. **Density unchanged** (D3): 44 px rows, 14 px text, 40 px header.
 3. **Dark mode QA in every wave** (D2).
-4. **Phone per the playbook** (D4): cards where the playbook says cards, plus a bottom bar, a floating main action
-   and a bottom selection/filter bar. Desktop stays one line per row.
+4. **Phone per the playbook** (D4, playbook text received 11 Nov): stacked cards, a condensing top bar, a floating
+   main action, a floating selection bar, browser-style tabs for two-panel pages, one system banner; no bottom
+   navigation bar. Desktop stays one line per row (plan section 8).
 5. **A complete parallel v2 behind a per-user version switch** (D5), owner first, with nothing released to staff
    until every archetype passes its exit criteria.
 6. **New from discovery:**

@@ -24,7 +24,7 @@ The playbook gap audit is `documentation/uiux/playbook-uiux-audit.md` (PR #2322,
 | D1 | "keep today's blue, Sorento blue. The theme or the brand should be customizable and selectable, pickable." | Blue stays the default. v2 gets a theme system: selectable presets, a custom brand colour, light and dark, all driven by tokens (section 5) |
 | D2 | Dark mode now, and "check properly in each phase, because this UI I want to do it properly" | Every phase's exit criteria include a dark-mode pass on every screen it touches (section 11) |
 | D3 | "row height, what's the issue? Isn't it now quite good?" | Density unchanged: 44 px rows, 14 px text, 40 px header (measured, `UI-V2-DISCOVERY.md` 2.2). No density option |
-| D4 | "for the phone, we should follow the playbook" | The phone follows the Foundryx playbook: bottom bar, floating main action, bottom selection and filter bars, and its list layout. Desktop keeps one line per row (section 8) |
+| D4 | "for the phone, we should follow the playbook" | The phone follows the Foundryx playbook text (`SKILL.md`, section 8): stacked cards, a condensing top bar, a floating main action, a floating selection bar, browser-style tabs for two-panel pages, one system banner. No bottom navigation bar (the playbook has none). Desktop keeps one line per row |
 | D5 | "a new version rollout. The user can go back ... previous version and new version. But I need it to be very good before I even release to live. So this one should be a very long and detailed thing." | v2 is a complete parallel version behind a per-user version switch (section 6). Nothing reaches staff until every phase has passed its exit criteria and the owner has used v2 as their daily UI (sections 10, 12) |
 | - | Discovery round: "need more thinking, more exploring, more investigating before we make the coding" | The program starts with evidence (telemetry, fixtures, capture tooling) and owner-only use, and is long by design |
 
@@ -464,21 +464,62 @@ four pass.
 
 ## 8. Phone (D4: follow the playbook)
 
-**Source and status:** this section follows the playbook's phone rules as cited in `AUDIT`.
+**Source:** `foundryxkay/playbook-UIUX` `skills/foundryx-playbook-uiux/SKILL.md` (main), cited `SK:<line>`:
+- Responsive `SK:586-606`
+- Lists, Smart view and phones `SK:176-181`
+- Selection bar `SK:230-236`
+- Phone top bar and floating bars `SK:432-445`.
 
-| Playbook rule (`AUDIT` cite) | v2 phone |
+Crew pasted the text verbatim into PR #2323 on 11 Nov 2026.
+
+**What wins on a conflict:** the owner rules (dd/mm/yyyy, one line per row on DESKTOP, right-click menus, minimal
+UI). Every row below says which applies.
+
+**Gaps in the paste:** three passages were cut off in it ("if even that doesn't fit, the", "keeps them the same wh",
+and the "Filtering:" list, of which only its sub-bullets arrived). The rows that depend on them are marked
+(incomplete source) and get settled from the full file before phase 1.
+
+### 8.1 Rules
+
+| # | Playbook rule (verbatim gist, `SK` line) | v2 phone | Owner-rule check |
+| --- | --- | --- | --- |
+| P1 | "Every page works from 360px phones to desktop, with no horizontal page scroll (only a table set to Table view slides sideways, inside its box). Elements that can shrink get `min-width: 0`." (`SK:586-606`) | Mandate moves from 375 to **360 px**; the capture runs at 360 and 375; two pages fail today (`/procurement-management/grn/new`, `/system-management/activity`, discovery 2.0) | Adopted |
+| P2 | "Touch targets are at least 44px." | Unchanged (`COARSE_HIT_TARGET_CLASS`) | Adopted |
+| P3 | "On phones: the red action sits at the top right with the quieter icon actions just left of it, the same order as on desktop. If that leaves the title less than 140px, the title takes its own line and the actions stay together at the right under it; they never split onto separate lines." | `RecordHeader` / `PageHeader` on a phone: one row (title left, then icon actions then the primary at the right) while the title gets at least 140 px; otherwise the title on its own line and the action group on the next, right-aligned, never wrapped apart. "Red action" = our primary (theme colour, D1) | Adopted (colour per theme) |
+| P4 | "Once it scrolls away, it floats at the lower right (see Phone top bar)." / "A copy of the red button (same label) floats in at the lower right, below any other floating widget. The page keeps room at its bottom so the button never covers the last item." (`SK:432-445`) | `FloatingAction`: appears when the header primary scrolls out of view; same label, same action; bottom padding equal to its height + 16 px; sits below the AI assistant widget in the stack | Adopted |
+| P5 | "The floating button does what the page button does. When it's blocked, tapping it pulses what it is waiting for." | Same action. When blocked, tapping it scrolls to and highlights the `BlockedReason` text (a 300 ms tint, no pulse animation) | Pulse replaced by the plain reason (minimal UI; `AUDIT` 8 "skip the pulse") |
+| P6 | Phone top bar condensing: "The icon buttons on its right (such as theme and profile) fold into one menu button. Tapping it opens them back up in the bar." "The search box narrows to 36px high." "Scrolling back up reverses it." "The bar's height never changes, so the page doesn't jump." "Same on every page." | `Topbar` (phone): on scroll down, the right-hand icon buttons (company, notifications, profile) fold into one menu button and the search narrows to 36 px; the bar keeps its height (56 px); scrolling up reverses; one implementation in the v2 shell, so every page behaves the same | Adopted |
+| P7 | "Side panels on phones become browser-style tabs ... (720px and narrower), with a row of tabs on top." Rounded top tabs, the active one joins the panel, others slightly darker, a count allowed ("Changes 5"); "a short fade swaps the content (about 0.2-0.3 s). Each tab keeps its own scroll and state."; default = the main working panel; toggles inside a panel stay toggles | `PanelTabs` (new): any page with two side-by-side panels (product record "Quick Info" + tabs, stock debt board, room designer, chatbot console) merges them into one panel with browser-style tabs at 720 px and below; 200 ms fade (`--duration-base`); per-tab scroll kept | Adopted |
+| P8 | "Phones: stacked cards always, and the toggle hides. Cells marked phone-hidden (secondary columns) hide in card form. Editable line tables aren't part of this: they switch to cards when there isn't room for a readable item box (under 640px)." (`SK:176-181`) | `PhoneCardList` below 720 px for every list: ID + status on line 1, then the columns not marked `phoneHidden`, one per line as "Label : value" with aligned colons (the Smart view info-line format). Editable line grids (quotation lines, OI reserve lines) switch to cards under 640 px | Adopted on the phone. **Desktop keeps one line per row**: the Smart view / Table view toggle and desktop info lines are NOT adopted (owner rule, `AUDIT` Q2); desktop has Table view only |
+| P9 | "Frozen header row (every table) ... Phones show cards, so there's nothing to pin." | Desktop keeps the sticky header (exists); nothing pinned on the phone | Adopted |
+| P10 | Selection bar: "an action that can't apply to every ticked row is greyed out, with its reason as the tooltip ('2 are already sent')" (`SK:230-236`) | `SelectionBar`: inapplicable actions disabled with the reason; on touch the reason shows under the bar on tap (a tooltip cannot hover on a phone) | Adopted (touch variant) |
+| P11 | "The Main Action stays one: when the page exists to act on ticked rows (Send reminders), the red action in the header acts on them, and names the count ('Send 3 reminders'). The bar never adds a second red button." | When a list exists to act on ticked rows, the header primary becomes "Send 3 to purchasing"; the selection bar holds only secondary actions (outline). Applies on desktop too | Adopted; it also fixes discovery W4 (two fills) |
+| P12 | "Changing many at once (Bulk update): a small panel names the fields being changed. Fields left untouched stay as they are on every row, and the action says how many rows it changes ('Update 12 products')." | `BulkUpdateDialog` (exists, `components/common/BulkUpdateDialog`) restyled to this wording | Adopted ("small panel" = dialog, owner R7) |
+| P13 | "Done: a toast says what changed and for how many ('12 products moved to Archived'), with Undo where it can be reversed. Rows that failed stay ticked, with the reason on each." | Toast wording per 9.3; Undo for reversible bulk changes; destructive bulk stays the deferred countdown (`PRINCIPLES.md:255-262`); failed rows stay ticked with a per-row reason | Adopted; delete keeps the countdown |
+| P14 | "On phones: the bar becomes a floating bar at the lower edge, above the floating red action. Clearing the ticks, or a filter that hides them all, slides the bar back out." | Phone `SelectionBar` floats at the lower edge; stacked bottom-up, the floating primary first and the bar above it; it slides out when the ticks clear or a filter hides them all | Adopted |
+| P15 | Filtering on the phone (incomplete source: only the fold/search/floating sub-bullets arrived) | Until the full rule arrives: one filter bar under the top bar (search + "Filters (n)" opening a bottom sheet, "Showing 25 of 312") | Pending the full text |
+| P16 | System banners: "one thin bar across the top of the app, above the top bar, at full width. It is never a pop-up"; `--warn` tint for act-on or limiting, `--info` for news; one line, muted icon left, at most one text button right; words say what and when; news has x and stays closed, a still-true banner has no x and leaves by itself; one at a time with "1 of 2" and ‹ ›; takes its height from the page top; slides down/up in 0.3 s; "Phones: the text may take two lines; the button goes under it at the right." | `SystemBanner` (replaces `components/impersonation/ImpersonationBanner.tsx` as the one banner host): impersonation, offline, maintenance; the phone variant wraps to two lines with the button under it | Adopted |
+| P17 | Motion timings (hover 0.2-0.3 s, toggles about 0.4 s, panels 0.3-0.65 s) | Not adopted: v2 keeps `lib/motion.ts` and the frequency table (`DESIGN-LANGUAGE.md` section 3); no hover motion | Owner minimal UI wins (`AUDIT` Q4) |
+
+### 8.2 What this removes from revision 2
+
+- **The bottom navigation bar** (Home / module / Search / Alerts / More) is gone. The playbook has none; its "bottom
+  bars" are the floating selection bar and the floating main action. Navigation on a phone stays the drawer opened
+  from the top bar (vaul, `DESIGN-LANGUAGE.md` D13).
+- **The 44 px condensed bar** is gone too: P6 keeps the bar's height constant.
+
+### 8.3 Phone checklist (adds to section 7)
+
+| ID | Check |
 | --- | --- |
-| Phones show stacked cards (`PB:179`) | Lists render the playbook's card layout below the tablet breakpoint: title line (ID + status badge), one subtitle line, up to two meta lines, chevron. Desktop keeps one line per row (R2). Scope per open question Q4 |
-| Selection bar: count, actions, clear (`PB:229-235`) | While selecting, a bottom bar replaces the nav: "N selected", up to 3 actions, More, Clear |
-| Text filter + column filters + "Showing n of N" (`PB:237`) | A filter bar under the top bar: search + "Filters (n)"; filters open in a bottom sheet; "Showing 25 of 312" |
-| Phone top bar condenses, main action floats (`PB:430-438`) | Top bar 56 px, condensing to 44 px on scroll with the title; the page primary is a floating action button bottom-right above the bottom bar |
-| System banners take their own height (`PB:439-445`) | Impersonation, offline and maintenance banners push content, never cover it |
-| Header actions stay together at the right (`PB:590`) | Record header: number + badge, subtitle; gear and pager in the condensed bar |
-| 360 px to desktop, no sideways page scroll (`PB:588`) | Unchanged mandate (375 and 1280) |
-| Bottom navigation (owner D4, "bottom bars") | A bottom bar of 4 destinations + More: Home, the user's top module (from telemetry), Search, Notifications, More (opens the full nav sheet) |
-
-**Before phase 1 builds any phone screen,** every line above is checked against the playbook text (crew was asked
-for it on PR #2323) and corrected. The mocks (`ui-v2-mocks/index.html`, screen 5) draw this reading.
+| M-1 | Works at 360 px with no page-level sideways scroll (P1) |
+| M-2 | Header actions on one row, or the title on its own line with the actions together under it; never split (P3) |
+| M-3 | The primary floats at the lower right once the header's scrolls away; same label; the last item is never covered (P4) |
+| M-4 | The top bar condenses without changing height; icons fold into one menu; search 36 px (P6) |
+| M-5 | Lists are cards with phone-hidden columns hidden; editable line grids are cards under 640 px (P8) |
+| M-6 | Two-panel pages become browser-style tabs at 720 px and below (P7) |
+| M-7 | Selection bar floats at the lower edge, above the floating primary; inapplicable actions show why (P10, P14) |
+| M-8 | One system banner at a time, above the top bar, never covering content (P16) |
 
 ## 9. Components: inventory and replacement map
 
@@ -488,7 +529,7 @@ Counts are non-test files, measured on `main` at `6e6657e2` (`rg -l` over `app c
 
 | Concept | Today (files) | v2 component (path) | Retired at sunset |
 | --- | --- | --- | --- |
-| Shell | `Demo1Layout` + `demo1/components/*` (header 187 lines, sidebar-menu 338); menu config 3,548 lines | `components/v2/shell/{AppShell,Sidebar,Topbar,BottomBar,MobileNavSheet}.tsx`; menu config reused | demo1, demo2-10 layouts |
+| Shell | `Demo1Layout` + `demo1/components/*` (header 187 lines, sidebar-menu 338); menu config 3,548 lines | `components/v2/shell/{AppShell,Sidebar,Topbar,FloatingAction,SystemBanner,PanelTabs,MobileNavSheet}.tsx`; menu config reused | demo1, demo2-10 layouts |
 | Page title | `PageHeader` 322; Metronic `Toolbar` 84 (52 demo); raw `<h1>` 14 pages; bespoke 3 | `components/v2/PageHeader.tsx` | Toolbar partial, bespoke headers |
 | Record header | `DetailActions` 63, `RecordHeaderCard` 3, `RecordNavigation` 19 | `components/v2/record/{RecordHeader,RecordMeta,WaitingOn,RecordNavigation}.tsx` | - |
 | History | tab 8, sheet/drawer/panel 5, per-entity history components | `components/v2/record/HistoryTab.tsx` over `EventTimeline` | per-entity History components |
@@ -559,7 +600,7 @@ walkthrough on the crew test copy, the gates in section 11 green for everything 
 
 | Phase | Scope | Exit criteria | Effort |
 | --- | --- | --- | --- |
-| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar, phone bottom bar + nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 and native date inputs (allowlists that only shrink). (j) Small-fix lane, can ship before v2: `handle_not_found` takes a human label instead of a model class name (`sorento_crm_backend/app/services/error_handler.py:36-42`, 17 call sites) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
+| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar (condensing on the phone), floating action, system banner, nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 and native date inputs (allowlists that only shrink). (j) Small-fix lane, can ship before v2: `handle_not_found` takes a human label instead of a model class name (`sorento_crm_backend/app/services/error_handler.py:36-42`, 17 call sites) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
 | **1 List archetype** | `GridToolbar`, `FilterChip`, `FacetChips`, `SelectionBar` + select-all-N (backend bulk-by-filter where missing), `RowMenu`, `PhoneCardList`, `StateView`; reference screen: OI list | L-1..L-9 and X-1..X-11 on the OI list in 4 variants; component suites green; owner sign-off on the reference | 10-14 |
 | **2 Detail archetype** | `RecordHeader`, `WaitingOn`, `RecordMeta`, `HistoryTab` (one backend shape), `ConfirmDialog`, status tone maps; reference screens: OI detail, quotation document view | D-1..D-9 on both references; History tab works for every entity that has audit rows | 10-14 |
 | **3 Form archetype** | `components/v2/forms` shared with the portal, `BlockedReason`, `AutosaveIndicator`, `DatePicker` everywhere, `FileDropzone` v2, image pipeline; reference screens: quotation editor, price tag request (portal + CRM) | F-1..F-7 on both; the portal renders the same component | 10-14 |

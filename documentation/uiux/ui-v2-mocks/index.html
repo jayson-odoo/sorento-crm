@@ -305,10 +305,6 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 .pv2 .pc .l3{margin-top:2px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pv2 .pc .chev{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:18px}
 .pv2 .pc .ck{position:absolute;right:10px;top:50%;transform:translateY(-50%)}
-.pv2 .bnav{display:flex;justify-content:space-around;height:58px;background:var(--surface);border-top:1px solid var(--line);flex:none}
-.pv2 .bnav span{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:11px;color:var(--muted);flex:1}
-.pv2 .bnav span i{width:20px;height:20px;border:1.8px solid currentColor;border-radius:6px;display:block}
-.pv2 .bnav span.on{color:var(--primary);font-weight:650}
 .pv2 .selbar2{display:flex;gap:6px;padding:10px;background:var(--surface);border-top:1px solid var(--line-strong);flex:none;box-shadow:0 -6px 16px rgb(0 0 0/.06)}
 .pv2 .selbar2 .btn{height:40px;flex:1;justify-content:center}
 .pv2 .fab{position:absolute;right:14px;bottom:72px;z-index:20;height:48px;padding:0 18px;border-radius:999px;background:var(--primary);color:var(--primary-fg);display:inline-flex;align-items:center;font-weight:600;font-size:14px;box-shadow:0 8px 20px rgb(0 0 0/.22)}
@@ -318,6 +314,30 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 .pv2 .ptabs{background:var(--surface);padding:0 12px;flex:none;overflow:hidden}
 .pv2 .seg2{color:var(--muted)}
 .phone .app.v2{position:relative}
+.pv2 .sysban{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:flex-start;padding:6px 10px;background:var(--warn-bg);color:var(--warn-fg);font-size:12.5px;line-height:1.35;flex:none}
+.pv2 .sysban span:nth-child(2){flex:1;min-width:0}
+.pv2 .sysban .sbi{width:16px;height:16px;border-radius:50%;border:1.5px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;opacity:.7}
+.pv2 .sysban .sbb{width:100%;text-align:right;font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.pv2 .top .sbox{flex:1;width:auto}
+.pv2 .top .s40{height:40px}.pv2 .top .s36{height:36px}
+.pv2 .ph2{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px 4px;background:var(--surface);font-size:18px}
+.pv2 .showing2{margin-left:auto;font-size:12.5px;color:var(--muted)}
+.pv2 .fbar{border-bottom:1px solid var(--line)}
+.pv2 dl.kv{display:grid;grid-template-columns:72px 1fr;gap:2px 8px;margin:6px 0 0;font-size:13px}
+.pv2 dl.kv dt{color:var(--muted);font-size:12px;position:relative}
+.pv2 dl.kv dt::after{content:":";position:absolute;right:-6px}
+.pv2 dl.kv dd{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}
+.pv2 .fab{bottom:16px}
+.pv2 .fsel{position:absolute;left:10px;right:10px;bottom:76px;z-index:21;display:flex;gap:6px;align-items:center;padding:8px 10px;background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 10px 26px rgb(0 0 0/.18);font-size:13px}
+.pv2 .fsel b{margin-right:auto}
+.pv2 .crumb2{font-size:12px;color:var(--muted)}
+.pv2 .acts2{display:flex;gap:6px;justify-content:flex-end;align-items:center;margin-top:4px}
+.pv2 .acts2 .btn.p{height:36px}
+.pv2 .btabs{display:flex;gap:2px;padding:8px 10px 0;background:var(--canvas)}
+.pv2 .btabs span{padding:7px 12px;border-radius:10px 10px 0 0;background:var(--line);color:var(--muted);font-size:13px}
+.pv2 .btabs span.on{background:var(--surface);color:var(--fg);font-weight:600}
+.pv2 .btabs i{font-style:normal;font-size:11px;background:var(--neu-bg);border-radius:999px;padding:0 5px;margin-left:4px}
+.pv2 .bpanel{background:var(--surface);margin:0 10px;padding:10px 12px;border-radius:0 10px 10px 10px;flex:1}
 /* theme panel (mock chrome) */
 .tpanel{position:fixed;right:16px;top:64px;z-index:60;width:320px;max-width:calc(100vw - 32px);background:var(--doc-card);color:var(--doc-fg);border:1px solid var(--doc-line);border-radius:12px;box-shadow:0 16px 40px rgb(0 0 0/.18);padding:14px;display:none;font-size:13px}
 .tpanel.on{display:block}
@@ -821,95 +841,118 @@ body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;
 
 <!-- =============================== 5. PHONE LIST =============================== -->
 <section class="screen" id="s-phone">
-  <h2>5. Phone (375 px), following the Foundryx playbook</h2>
-  <p class="lede">Owner D4: "for the phone, we should follow the playbook". This draws the playbook's phone rules as the gap audit cites them: list cards (PB:179), a filter bar with "Showing n of N" (PB:237), a bottom selection bar (PB:229-235), a top bar that condenses and a floating main action (PB:430-438). Desktop keeps one line per row. Every phone element is tagged "verify against PB" until crew sends the playbook text.</p>
+  <h2>5. Phone (360-375 px), following the Foundryx playbook</h2>
+  <p class="lede">Owner D4: "for the phone, we should follow the playbook". Drawn from the playbook text (<code>skills/foundryx-playbook-uiux/SKILL.md</code>: Responsive 586-606, Lists 176-181, Selection bar 230-236, Phone top bar 432-445; plan section 8). Owner rules win where they conflict: one line per row stays on DESKTOP only, menus stay right-click / long press, no hover motion. There is no bottom navigation bar: the playbook's bottom bars are the floating selection bar and the floating main action.</p>
   <div class="phones">
     <div class="only-before" style="flex:none">
       <div class="frame-label">Before (today), list</div>
       <div class="phone"><div class="app pv1">
         <div class="hdr"><span class="bars"></span><b style="font-size:15px">Sorento</b><span style="margin-left:auto;display:flex"><span class="round"></span><span class="round"></span><span class="round"></span></span></div>
         <div class="body">
-          <div style="font-size:12px;color:#71717a">Home / Project sales / Order inquiries</div>
+          <div style="font-size:12px;color:#71717a">Dashboards / Procurement / Supply Chain / Order Inquiries</div>
           <h1>Order inquiries</h1>
-          <div style="display:flex"><span class="btn p" style="border-radius:6px 0 0 6px">List</span><span class="btn" style="border-radius:0 6px 6px 0">Schedule</span></div>
-          <div class="scrollx"><div class="kpi"><b>120</b><span>Stock</span></div><div class="kpi"><b>84</b><span>Indent</span></div><div class="kpi"><b>108</b><span>Project</span></div></div>
-          <span class="inp">Search order inquiries...</span>
-          <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn">Filters 3</span><span class="btn">Clear filters</span><span class="btn">Columns</span></div>
+          <div style="display:flex"><span class="btn p" style="border-radius:6px 0 0 6px">Documents</span><span class="btn" style="border-radius:0 6px 6px 0">Lines</span></div>
+          <span class="inp">Search OI, SO, customer...</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn p">Outstanding</span><span class="btn">Filters</span><span class="btn">Columns</span></div>
           <div class="gridbox"><table>
             <colgroup><col style="width:36px"><col style="width:170px"><col style="width:130px"><col style="width:120px"><col style="width:150px"><col style="width:154px"></colgroup>
             <thead><tr><th>☐</th><th>Raised at</th><th>OI no</th><th>S/O no</th><th>Raised by</th><th>Status</th></tr></thead>
             <tbody>
               <tr><td>☐</td><td>10/11/2026, 9:42 am</td><td><b>OI-2611-0142</b></td><td>SO414285</td><td>E****</td><td><span class="pill">Outstanding</span></td></tr>
               <tr><td>☐</td><td>10/11/2026, 9:15 am</td><td><b>OI-2611-0141</b></td><td>SO414280</td><td>E****</td><td><span class="pill">Outstanding</span></td></tr>
-              <tr><td>☐</td><td>09/11/2026, 5:58 pm</td><td><b>OI-2611-0139</b></td><td>SO413902</td><td>W** Y.</td><td><span class="pill">Outstanding</span></td></tr>
             </tbody></table></div>
           <div class="pager"><span>1 - 25 of 312</span><span>‹ 1 2 3 … ›</span></div>
         </div>
       </div></div>
-      <ul class="notes" style="max-width:375px"><li>Title, toggle, tiles, search and three toolbar buttons take about 60% of the screen before the first row.</li><li>The OI number scrolls away when the table scrolls sideways.</li></ul>
+      <ul class="notes" style="max-width:375px"><li>Measured live: the first data row starts at 458 px of an 812 px screen (discovery 2.0).</li><li>Two filled controls (Documents, Outstanding) and the OI number scrolls away sideways.</li></ul>
     </div>
 
     <div class="only-after" style="flex:none">
-      <div class="frame-label">After (v2), list</div>
+      <div class="frame-label">After (v2), list, top of page</div>
       <div class="phone"><div class="app v2 pv2">
-        <div class="top" data-c="Topbar (phone) · components/v2/shell/Topbar.tsx (verify against PB:430-438)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span></span></div>
-        <div class="fbar" data-c="Filter bar · components/v2/grid/GridToolbar.tsx phone (verify against PB:237)"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>Filters 3</span></div>
-        <div class="showing">Showing 25 of 312 · <span class="seg2"><b>List</b> · Schedule</span></div>
-        <div class="cards" data-c="PhoneCardList · NEW components/v2/grid/PhoneCardList.tsx (verify against PB:179)">
-          <div class="pc"><div class="l1"><b>OI-2611-0142</b><span class="b warn">Outstanding</span></div><div class="l2">R***** Kitchen Sdn Bhd</div><div class="l3">SO414285 · 48 units · 10/11/2026, 9:42 am</div><span class="chev">›</span></div>
-          <div class="pc"><div class="l1"><b>OI-2611-0141</b><span class="b warn">Outstanding</span></div><div class="l2">B****** Sdn Bhd (Project)</div><div class="l3">SO414280 · 12 units · 10/11/2026, 9:15 am</div><span class="chev">›</span></div>
-          <div class="pc"><div class="l1"><b>OI-2611-0139</b><span class="b warn">Outstanding</span></div><div class="l2">M*** Debtor</div><div class="l3">SO413902 · 6 units · 09/11/2026, 5:58 pm</div><span class="chev">›</span></div>
-          <div class="pc"><div class="l1"><b>OI-2611-0137</b><span class="b neu">Completed</span></div><div class="l2">A*** Hartanah</div><div class="l3">SO413877 · 220 units · 09/11/2026, 4:20 pm</div><span class="chev">›</span></div>
-          <div class="pc"><div class="l1"><b>OI-2611-0133</b><span class="b warn">Outstanding</span></div><div class="l2">T*** Residences Sdn Bhd</div><div class="l3">SO413650 · 32 units · 09/11/2026, 11:02 am</div><span class="chev">›</span></div>
+        <div class="sysban" data-c="SystemBanner · NEW components/v2/shell/SystemBanner.tsx (SK:432-445)"><span class="sbi">!</span><span>Viewing as T** M** L** (Sales). Changes are saved as them.</span><span class="sbb">Stop viewing</span></div>
+        <div class="top" data-c="Topbar (phone, full) · components/v2/shell/Topbar.tsx (SK:432-445)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="sbox s40"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="r"><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+        <div class="ph2" data-c="PageHeader (phone) · title left, actions together right (SK:586-606)"><b>Order inquiries</b><span class="seg"><span class="on" style="height:32px">Docs</span><span style="height:32px">Lines</span></span></div>
+        <div class="fbar" data-c="Filter bar (phone; full rule pending, plan P15)"><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>Filters 3</span><span class="showing2">Showing 25 of 312</span></div>
+        <div class="cards" data-c="PhoneCardList · NEW components/v2/grid/PhoneCardList.tsx (SK:176-181)">
+          <div class="pc"><div class="l1"><b>OI-2611-0142</b><span class="b warn">Outstanding</span></div><dl class="kv"><dt>Customer</dt><dd>R***** Kitchen Sdn Bhd</dd><dt>S/O no</dt><dd>SO414285</dd><dt>Raised at</dt><dd>10/11/2026, 9:42 am</dd></dl></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0141</b><span class="b warn">Outstanding</span></div><dl class="kv"><dt>Customer</dt><dd>B****** Sdn Bhd (Project)</dd><dt>S/O no</dt><dd>SO414280</dd><dt>Raised at</dt><dd>10/11/2026, 9:15 am</dd></dl></div>
+          <div class="pc"><div class="l1"><b>OI-2611-0139</b><span class="b warn">Outstanding</span></div><dl class="kv"><dt>Customer</dt><dd>M*** Debtor</dd><dt>S/O no</dt><dd>SO413902</dd><dt>Raised at</dt><dd>09/11/2026, 5:58 pm</dd></dl></div>
         </div>
-        <nav class="bnav" data-c="BottomBar · NEW components/v2/shell/BottomBar.tsx (owner D4)"><span><i></i>Home</span><span class="on"><i></i>Inquiries</span><span><i></i>Search</span><span><i></i>Alerts</span><span><i></i>More</span></nav>
       </div></div>
     </div>
 
     <div class="only-after" style="flex:none">
-      <div class="frame-label">After (v2), selecting</div>
-      <div class="phone"><div class="app v2 pv2">
-        <div class="top"><span class="ibtn">✕</span><span class="t">3 selected</span><span class="r"><span class="btn t sm">Select all 312</span></span></div>
-        <div class="showing">Showing 25 of 312</div>
-        <div class="cards">
-          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0142</b><span class="b warn">Outstanding</span></div><div class="l2">R***** Kitchen Sdn Bhd</div><div class="l3">SO414285 · 48 units</div></div>
-          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0141</b><span class="b warn">Outstanding</span></div><div class="l2">B****** Sdn Bhd (Project)</div><div class="l3">SO414280 · 12 units</div></div>
-          <div class="pc"><span class="cb ck"></span><div class="l1"><b>OI-2611-0139</b><span class="b warn">Outstanding</span></div><div class="l2">M*** Debtor</div><div class="l3">SO413902 · 6 units</div></div>
-          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0137</b><span class="b neu">Completed</span></div><div class="l2">A*** Hartanah</div><div class="l3">SO413877 · 220 units</div></div>
+      <div class="frame-label">After (v2), list, scrolled and selecting</div>
+      <div class="phone"><div class="app v2 pv2" style="position:relative">
+        <div class="top" data-c="Topbar condensed: same height, icons folded into one menu, search 36 px (SK:432-445)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="sbox s36"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="r"><span class="ibtn bd" title="More">⋯</span></span></div>
+        <div class="cards" style="padding-bottom:140px">
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0137</b><span class="b neu">Completed</span></div><dl class="kv"><dt>Customer</dt><dd>A*** Hartanah</dd><dt>S/O no</dt><dd>SO413877</dd></dl></div>
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0133</b><span class="b warn">Outstanding</span></div><dl class="kv"><dt>Customer</dt><dd>T*** Residences Sdn Bhd</dd><dt>S/O no</dt><dd>SO413650</dd></dl></div>
+          <div class="pc"><span class="cb ck"></span><div class="l1"><b>OI-2611-0128</b><span class="b neu">Completed</span></div><dl class="kv"><dt>Customer</dt><dd>O****</dd><dt>S/O no</dt><dd>SO413301</dd></dl></div>
+          <div class="pc sel"><span class="cb on ck"></span><div class="l1"><b>OI-2611-0125</b><span class="b warn">Outstanding</span></div><dl class="kv"><dt>Customer</dt><dd>S***** Sdn Bhd</dd><dt>S/O no</dt><dd>SO413122</dd></dl></div>
         </div>
-        <div class="selbar2" data-c="SelectionBar (phone) · components/v2/grid/SelectionBar.tsx (verify against PB:229-235)"><span class="btn p sm">Send to purchasing</span><span class="btn sm">Export</span><span class="btn sm">More</span></div>
+        <div class="fsel" data-c="SelectionBar (phone, floating) · components/v2/grid/SelectionBar.tsx (SK:230-236)"><b>3 selected</b><span class="btn sm">Export</span><span class="btn sm">More</span><span class="btn t sm">Clear</span></div>
+        <span class="fab" data-c="FloatingAction · components/v2/shell/FloatingAction.tsx; the header primary names the count (SK:230-236)">Send 3 to purchasing</span>
       </div></div>
     </div>
 
     <div class="only-after" style="flex:none">
-      <div class="frame-label">After (v2), record</div>
+      <div class="frame-label">After (v2), record, top of page</div>
       <div class="phone"><div class="app v2 pv2">
-        <div class="top" data-c="Topbar condensed · RecordHeader (phone)"><span class="ibtn"><svg><use href="#i-left"/></svg></span><span class="t">OI-2611-0142</span><span class="r"><span class="ibtn" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span></span></div>
-        <div class="phead"><div style="display:flex;gap:6px;align-items:center"><span class="b warn">Outstanding</span><span class="b neu plain">Consignment</span></div><div class="sub"><a href="#">SO414285</a> · Raised by E**** on 10/11/2026</div>
-          <div class="wait" data-c="WaitingOn · NEW components/v2/record/WaitingOn.tsx">Waiting on CS to reserve 2 lines · requested by J***** 10/11/2026</div></div>
+        <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="sbox s40"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="r"><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+        <div class="phead" data-c="RecordHeader (phone): title on its own line because it would get under 140 px; actions together under it (SK:586-606)">
+          <div class="crumb2">Order inquiries</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="font-size:18px">OI-2611-0142</b><span class="b warn">Outstanding</span></div>
+          <div class="acts2"><span class="ibtn bd" title="Previous order inquiry"><svg><use href="#i-left"/></svg></span><span class="ibtn bd" title="Next order inquiry"><svg><use href="#i-right"/></svg></span><span class="ibtn bd" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span><span class="btn p">Reserve 2 lines</span></div>
+          <div class="sub"><a href="#">SO414285</a> · Raised by E**** on 10/11/2026</div>
+          <div class="wait" data-c="WaitingOn · NEW components/v2/record/WaitingOn.tsx">Waiting on CS to reserve 2 lines · requested by J***** 10/11/2026</div>
+        </div>
         <div class="tabs ptabs"><span class="on">Lines <span class="n">4</span></span><span>General</span><span>Related PO</span><span>Related SPO</span><span>History</span></div>
         <div class="cards">
-          <div class="pc"><div class="l1"><b>1 · SRT382-6</b><span class="b info">Needs reserve</span></div><div class="l2">Ceramic Wash Basin 450mm</div><div class="l3">24 units · 28/11/2026 · FOSHAN WORKS</div></div>
-          <div class="pc"><div class="l1"><b>2 · SRTWC8613-RL</b><span class="b info">Needs reserve</span></div><div class="l2">Wall-hung WC, soft-close seat</div><div class="l3">24 units · 28/11/2026 · DAFUYUAN</div></div>
-          <div class="pc"><div class="l1"><b>3 · CB6633</b><span class="b warn">To confirm</span></div><div class="l2">Concealed cistern, dual flush</div><div class="l3">24 units · 05/12/2026 · CHAOSHENG</div></div>
+          <div class="pc"><div class="l1"><b>1 · SRT382-6</b><span class="b info">Needs reserve</span></div><dl class="kv"><dt>Product</dt><dd>Ceramic Wash Basin 450mm</dd><dt>Qty</dt><dd>24</dd><dt>Delivery</dt><dd>28/11/2026</dd></dl></div>
         </div>
-        <span class="fab" data-c="Floating main action · components/v2/shell/FloatingAction.tsx (verify against PB:430-438)">Reserve 2 lines</span>
-        <nav class="bnav"><span><i></i>Home</span><span class="on"><i></i>Inquiries</span><span><i></i>Search</span><span><i></i>Alerts</span><span><i></i>More</span></nav>
+      </div></div>
+    </div>
+
+    <div class="only-after" style="flex:none">
+      <div class="frame-label">After (v2), record, scrolled</div>
+      <div class="phone"><div class="app v2 pv2" style="position:relative">
+        <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="sbox s36"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="r"><span class="ibtn bd" title="More">⋯</span></span></div>
+        <div class="tabs ptabs"><span class="on">Lines <span class="n">4</span></span><span>General</span><span>Related PO</span><span>Related SPO</span><span>History</span></div>
+        <div class="cards" style="padding-bottom:84px">
+          <div class="pc"><div class="l1"><b>2 · SRTWC8613-RL</b><span class="b info">Needs reserve</span></div><dl class="kv"><dt>Product</dt><dd>Wall-hung WC, soft-close seat</dd><dt>Qty</dt><dd>24</dd><dt>Delivery</dt><dd>28/11/2026</dd><dt>Supplier</dt><dd>DAFUYUAN</dd></dl></div>
+          <div class="pc"><div class="l1"><b>3 · CB6633</b><span class="b warn">To confirm</span></div><dl class="kv"><dt>Product</dt><dd>Concealed cistern, dual flush</dd><dt>Qty</dt><dd>24</dd><dt>Delivery</dt><dd>05/12/2026</dd><dt>Supplier</dt><dd>CHAOSHENG</dd></dl></div>
+          <div class="pc"><div class="l1"><b>4 · SRT-WC-01</b><span class="b warn">To confirm</span></div><dl class="kv"><dt>Product</dt><dd>Close-coupled WC</dd><dt>Qty</dt><dd>24</dd><dt>Delivery</dt><dd>05/12/2026</dd><dt>Supplier</dt><dd>CHAOSHENG</dd></dl></div>
+        </div>
+        <span class="fab" data-c="FloatingAction: appears once the header primary scrolls away; same label (SK:432-445)">Reserve 2 lines</span>
+      </div></div>
+    </div>
+
+    <div class="only-after" style="flex:none">
+      <div class="frame-label">After (v2), two-panel page as browser tabs</div>
+      <div class="phone"><div class="app v2 pv2">
+        <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="sbox s40"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="r"><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+        <div class="phead"><div class="crumb2">Products</div><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><b style="font-size:18px">Ceramic Wash Basin 450mm, white</b><span class="b ok">Active</span></div>
+          <div class="acts2"><span class="ibtn bd"><svg><use href="#i-left"/></svg></span><span class="ibtn bd"><svg><use href="#i-right"/></svg></span><span class="ibtn bd"><svg><use href="#i-gear"/></svg></span><span class="btn p">Edit</span></div><div class="sub">SRT382-6</div></div>
+        <div class="btabs" data-c="PanelTabs · NEW components/v2/PanelTabs.tsx: browser-style tabs at 720 px and below (SK:586-606)"><span class="on">Product</span><span>Quick info</span><span>Stock <i>3</i></span></div>
+        <div class="bpanel"><dl class="kv"><dt>Category</dt><dd>Sanitaryware</dd><dt>Brand</dt><dd>SORENTO</dd><dt>List price</dt><dd>RM 1,120.00</dd><dt>Updated</dt><dd>11/11/2026</dd></dl></div>
       </div></div>
     </div>
   </div>
 
   <div class="legend"><table>
-    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Playbook</th></tr></thead>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Playbook (SKILL.md)</th></tr></thead>
     <tbody>
-      <tr><td>Top bar, condensing</td><td>Topbar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/Topbar.tsx</code></td><td>PB:430-438 (verify)</td></tr>
-      <tr><td>Filter bar + "Showing n of N"</td><td>GridToolbar (phone) + FilterSheet</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/GridToolbar.tsx</code>; filters in a vaul sheet (<code>components/ui/drawer.tsx</code>)</td><td>PB:237 (verify)</td></tr>
-      <tr><td>List cards</td><td>PhoneCardList</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/PhoneCardList.tsx</code></td><td>PB:179 (verify); scope per open question Q4</td></tr>
-      <tr><td>Selection bar</td><td>SelectionBar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/SelectionBar.tsx</code></td><td>PB:229-235 (verify)</td></tr>
-      <tr><td>Bottom bar</td><td>BottomBar</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/BottomBar.tsx</code></td><td>Owner D4; 4 destinations + More, the second from telemetry</td></tr>
-      <tr><td>Floating main action</td><td>FloatingAction</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/FloatingAction.tsx</code></td><td>PB:430-438 (verify); only when the page has a primary</td></tr>
-      <tr><td>Waiting on</td><td>WaitingOn</td><td><span class="tag new">new</span></td><td><code>components/v2/record/WaitingOn.tsx</code></td><td>Discovery 4.10 (hand-offs)</td></tr>
-      <tr><td>Row menu on touch</td><td>RowMenu as a sheet</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/RowMenu.tsx</code></td><td>Long press, 500 ms</td></tr>
+      <tr><td>System banner</td><td>SystemBanner</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/SystemBanner.tsx</code> (replaces <code>components/impersonation/ImpersonationBanner.tsx</code> as the host)</td><td>432-445: thin full-width bar above the top bar, one at a time, two lines on a phone</td></tr>
+      <tr><td>Top bar, condensing</td><td>Topbar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/Topbar.tsx</code></td><td>432-445: icons fold into one menu, search 36 px, height never changes</td></tr>
+      <tr><td>Header actions</td><td>PageHeader / RecordHeader (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/PageHeader.tsx</code>, <code>components/v2/record/RecordHeader.tsx</code></td><td>586-606: one row while the title keeps 140 px, else the title on its own line and the actions together under it</td></tr>
+      <tr><td>Floating main action</td><td>FloatingAction</td><td><span class="tag new">new</span></td><td><code>components/v2/shell/FloatingAction.tsx</code></td><td>432-445: a copy of the primary once it scrolls away; blocked = shows the reason (pulse dropped, minimal UI)</td></tr>
+      <tr><td>List cards</td><td>PhoneCardList</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/PhoneCardList.tsx</code></td><td>176-181: stacked cards always on phones, phone-hidden columns hidden; "Label : value" lines with aligned colons</td></tr>
+      <tr><td>Selection bar</td><td>SelectionBar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/SelectionBar.tsx</code></td><td>230-236: floats at the lower edge above the floating primary; the primary names the count; inapplicable actions say why</td></tr>
+      <tr><td>Two-panel pages</td><td>PanelTabs</td><td><span class="tag new">new</span></td><td><code>components/v2/PanelTabs.tsx</code></td><td>586-606: browser-style tabs at 720 px and below, counts allowed, each tab keeps its scroll</td></tr>
+      <tr><td>Filter bar</td><td>GridToolbar (phone)</td><td><span class="tag new">new</span></td><td><code>components/v2/grid/GridToolbar.tsx</code></td><td>Filtering rule arrived incomplete; interim layout (plan P15)</td></tr>
+      <tr><td>Navigation</td><td>MobileNavSheet</td><td><span class="tag keep">keep</span></td><td>vaul drawer from the top bar (<code>components/ui/drawer.tsx</code>)</td><td>No bottom navigation bar in the playbook</td></tr>
     </tbody></table></div>
 </section>
 
