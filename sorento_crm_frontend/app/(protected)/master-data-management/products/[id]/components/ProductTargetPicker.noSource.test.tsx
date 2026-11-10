@@ -84,6 +84,12 @@ describe('alreadyAddedIds', () => {
     expect(screen.getByTestId('picked').textContent).toBe('p2');
   });
 
+  it('says Already added on the row of a product already on the party', async () => {
+    mount({ added: ['p1'] });
+    await screen.findByText('ZZT-TUB-1');
+    expect(screen.getAllByText('Already added')).toHaveLength(1);
+  });
+
   it('the page tick-all never picks an already added product', async () => {
     mount({ added: ['p1'] });
     await screen.findByText('ZZT-TUB-1');

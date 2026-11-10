@@ -12,11 +12,11 @@ import {
   getCostingSettings,
   getExchangeRates,
   getParty,
+  getPartyProductIds,
   saveCategoryRule,
   saveCostingRows,
   saveCostingSettings,
   saveParty,
-  updateExchangeRate,
 } from '../services/costingService';
 import type {
   CostingRowsParams,
@@ -135,24 +135,19 @@ export function useCreateExchangeRate() {
   });
 }
 
-export function useUpdateExchangeRate() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: string; body: ExchangeRateBody }) => updateExchangeRate(v.id, v.body),
-    onSuccess: () => {
-      toast.success('Rate saved');
-      void qc.invalidateQueries({ queryKey: COSTING_RATES_KEY });
-      void qc.invalidateQueries({ queryKey: COSTING_ROWS_KEY });
-    },
-    onError: (error) => toast.error(message(error, 'Failed to save the rate')),
-  });
-}
-
 export function useCostingParty(customerId: string | null) {
   return useQuery({
     queryKey: [...COSTING_PARTY_KEY, customerId],
     queryFn: () => getParty(customerId as string),
     enabled: !!customerId,
+  });
+}
+
+export function usePartyProductIds(customerId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: [...COSTING_PARTY_KEY, customerId, 'product-ids'],
+    queryFn: () => getPartyProductIds(customerId as string),
+    enabled: enabled && !!customerId,
   });
 }
 

@@ -22,6 +22,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   PARTY, SUPPLIERS, costingRow, partyEnvelope, standardEnvelope,
@@ -288,6 +289,37 @@ describe('recomputing while typing', () => {
     const tr = rowOf('CGB9032B');
     await waitFor(() => expect(within(tr).getByText('25.38')).toBeTruthy());
     expect(within(tr).getByText('27.41')).toBeTruthy();
+  });
+});
+
+describe('typing keeps focus (D1)', () => {
+  it('types 12 key by key into a mark-up and keeps the focus and the value', async () => {
+    mount();
+    await startEdit();
+    const input = screen.getByLabelText('Mark-up for CGB9032B') as HTMLInputElement;
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.keyboard('12');
+    const after = screen.getByLabelText('Mark-up for CGB9032B') as HTMLInputElement;
+    expect(after).toBe(input); // the same node: nothing remounted under the typist
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('12');
+    fireEvent.click(headerBtn('Save')!);
+    await waitFor(() => expect(service.saveCostingRows).toHaveBeenCalledTimes(1));
+    expect(saveBody().changes).toEqual([{ product_id: 'p-wb245', markup_pct: 12 }]);
+  });
+
+  it('keeps focus while typing a transport value too', async () => {
+    mount();
+    await startEdit();
+    typeInto('Transport for CGB9032B', 'add');
+    const input = screen.getByLabelText('Transport value for CGB9032B') as HTMLInputElement;
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.keyboard('10');
+    expect(screen.getByLabelText('Transport value for CGB9032B')).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('10');
   });
 });
 

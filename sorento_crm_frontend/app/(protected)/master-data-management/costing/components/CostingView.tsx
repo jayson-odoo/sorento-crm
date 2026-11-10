@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   ExpandedState,
   PaginationState,
-  Row,
   SortingState,
   getCoreRowModel,
   getExpandedRowModel,
@@ -21,6 +20,7 @@ import {
   MoreHorizontal,
   Pencil,
   Settings,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -65,6 +65,7 @@ import {
   METHOD_LABEL,
   TRANSPORT_LABEL,
   figuresFor,
+  type Figures,
   money,
   percent,
   reasonText,
@@ -72,7 +73,8 @@ import {
   transportText,
   trimmed,
 } from '../lib/format';
-import { lookupCostingParties } from '../services/partyLookup';
+import { searchCustomersSelect } from '../../../order-management/customers/services/customerService';
+import type { DebtorLookupItem } from '@/app/(auth)/portal/lib/portal-client';
 import type {
   CostingParty,
   CostingReason,
@@ -187,6 +189,35 @@ function buildChanges(edits: Record<string, Edit>, view: 'standard' | 'party'): 
   return out;
 }
 
+// ------------------------------------------------------------------ the edit context
+//
+// The cells read the draft through this context instead of closing over it, so the column
+// definitions stay the same object while a value is typed: a changing `columns` makes the grid
+// rebuild its cells and the typist loses the box they were in (browser pass D1).
+
+interface EditApi {
+  editing: boolean;
+  view: 'standard' | 'party';
+  party: CostingParty | null;
+  partyId: string;
+  asOf: string;
+  canManage: boolean;
+  removingId: string | null;
+  draftOf: (row: CostingRow) => Draft;
+  patchDraft: (row: CostingRow, patch: Partial<Draft>) => void;
+  figures: (row: CostingRow) => Figures | null;
+  openHistory: (row: CostingRow) => void;
+  removeFromParty: (row: CostingRow) => void;
+}
+
+const EditContext = createContext<EditApi | null>(null);
+
+function useEdit(): EditApi {
+  const api = useContext(EditContext);
+  if (!api) throw new Error('Costing cells render inside the CostingPage');
+  return api;
+}
+
 // ------------------------------------------------------------------ cells
 
 function SetMarker() {
@@ -230,19 +261,23 @@ function Reason({ reason }: { reason: CostingReason | undefined }) {
 const blockingReason = (row: CostingRow) => row.reasons.find((r) => r.code !== 'no_transport_rule');
 const transportReason = (row: CostingRow) => row.reasons.find((r) => r.code === 'no_transport_rule');
 
+function EditHint() {
+  const { editing } = useEdit();
+  return editing ? (
+    <span className="block truncate text-2xs font-normal text-muted-foreground">applies to every party</span>
+  ) : null;
+}
+
 function SupplierPicker({
   row,
   value,
-  partyId,
-  asOf,
   onChange,
 }: {
   row: CostingRow;
   value: string;
-  partyId: string | null;
-  asOf: string | undefined;
   onChange: (v: string) => void;
 }) {
+  const { partyId, asOf } = useEdit();
   const scope = useMemo(
     () => ({ ...(partyId ? { party_id: partyId } : {}), ...(asOf ? { as_of: asOf } : {}) }),
     [partyId, asOf],
@@ -261,6 +296,142 @@ function SupplierPicker({
       placeholder="Supplier"
     />
   );
+}
+
+function TransportCell({ row }: { row: CostingRow }) {
+  const { editing, draftOf, patchDraft } = useEdit();
+  if (editing) {
+    const d = draftOf(row);
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <SearchableSelect
+          aria-label={`Transport for ${row.product_code}`}
+          value={d.tMode}
+          onChange={(v) => patchDraft(row, { tMode: v })}
+          options={MODE_OPTIONS}
+          placeholder="Category rule"
+          clearable
+        />
+        <NumberInput
+          aria-label={`Transport value for ${row.product_code}`}
+          step="any"
+          min={0}
+          value={d.tValue}
+          onChange={(e) => patchDraft(row, { tValue: e.target.value })}
+          className="h-8 text-end"
+        />
+      </div>
+    );
+  }
+  const text = transportText(row.transport_mode, row.transport_value);
+  if (!text) return transportReason(row) ? <Reason reason={transportReason(row)} /> : <Muted>-</Muted>;
+  return <Num marker={row.transport_source === 'product'}>{text}</Num>;
+}
+
+function MethodCell({ row }: { row: CostingRow }) {
+  const { editing, draftOf, patchDraft } = useEdit();
+  if (editing) {
+    const d = draftOf(row);
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <SearchableSelect
+          aria-label={`Cost method for ${row.product_code}`}
+          value={d.method}
+          onChange={(v) => patchDraft(row, { method: v, supplier: v === 'selected' ? d.supplier : '' })}
+          options={METHOD_OPTIONS}
+          placeholder="Company default"
+          clearable
+        />
+        {d.method === 'selected' ? (
+          <SupplierPicker row={row} value={d.supplier} onChange={(v) => patchDraft(row, { supplier: v })} />
+        ) : null}
+      </div>
+    );
+  }
+  const skipped = row.skipped
+    .map((s) => `${s.supplier_code ?? 'A supplier'} (${s.reason === 'no_rate' ? 'no rate' : 'no cost'})`)
+    .join(', ');
+  return (
+    <span
+      className="block truncate"
+      title={skipped ? `${METHOD_LABEL[row.cost_method]}. Skipped: ${skipped}` : METHOD_LABEL[row.cost_method]}
+    >
+      <span>{METHOD_LABEL[row.cost_method]}</span>
+      {row.cost_method_source === 'product' ? <SetMarker /> : null}
+    </span>
+  );
+}
+
+function MarkupCell({ row }: { row: CostingRow }) {
+  const { editing, view, party, draftOf, patchDraft, figures } = useEdit();
+  if (editing && view === 'party') {
+    return (
+      <NumberInput
+        aria-label={`Mark-up for ${row.product_code}`}
+        step="any"
+        min={0}
+        value={draftOf(row).markup}
+        placeholder={party && party.markup_pct !== null ? money(party.markup_pct) : undefined}
+        onChange={(e) => patchDraft(row, { markup: e.target.value })}
+        className="h-8 text-end"
+      />
+    );
+  }
+  const f = figures(row);
+  const markup = f ? f.markup : row.markup_pct;
+  return markup === null ? <Muted>-</Muted> : <Num marker={row.markup_source === 'row'}>{percent(markup)}</Num>;
+}
+
+function LandingCell({ row }: { row: CostingRow }) {
+  const { figures } = useEdit();
+  const f = figures(row);
+  const landing = f ? f.landing : row.landing;
+  return landing === null ? <Reason reason={blockingReason(row)} /> : <Num>{money(landing)}</Num>;
+}
+
+function FinalCell({ row }: { row: CostingRow }) {
+  const { figures } = useEdit();
+  const f = figures(row);
+  const final = f ? f.final : row.final;
+  return final === null ? <Muted>-</Muted> : <Num>{money(final)}</Num>;
+}
+
+function MarginCell({ row }: { row: CostingRow }) {
+  const { figures } = useEdit();
+  const f = figures(row);
+  const margin = f ? f.margin : row.margin_pct;
+  return margin === null ? <Muted>-</Muted> : <Num>{percent(margin)}</Num>;
+}
+
+function RowMenu({ row }: { row: CostingRow }) {
+  const { view, canManage, removingId, openHistory, removeFromParty } = useEdit();
+  const canRemove = view === 'party' && canManage && !!row.party_product_id;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" mode="icon" size="sm" aria-label={`${row.product_code} actions`}>
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => openHistory(row)}>History</DropdownMenuItem>
+        {canRemove ? (
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={removingId === row.party_product_id}
+            onSelect={() => removeFromParty(row)}
+          >
+            Remove from party
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ExpandedSuppliers({ row }: { row: CostingRow }) {
+  const { partyId, asOf } = useEdit();
+  return <CostingSupplierGrid productId={row.product_id} partyId={partyId || null} asOf={asOf || undefined} />;
 }
 
 function Chip({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
@@ -282,6 +453,15 @@ function Chip({ label, value, onClick }: { label: string; value: string; onClick
 
 function partyMethodText(party: CostingParty, defaultMethod: CostMethod): string {
   return party.cost_method ? METHOD_LABEL[party.cost_method] : `${METHOD_LABEL[defaultMethod]} (company)`;
+}
+
+/** The party picker's search: the shared server-searched customers select, in the combobox's shape. */
+async function lookupParties(query: string): Promise<DebtorLookupItem[]> {
+  const options = await searchCustomersSelect(query);
+  return options.map((o) => {
+    const [code, ...rest] = o.label.split(' - ');
+    return { customer_id: o.value, debtor_name: rest.join(' - ') || o.label, customer_code: code, sales_type: null };
+  });
 }
 
 // ------------------------------------------------------------------ the view
@@ -350,7 +530,7 @@ function CostingPage() {
   const rowsParams = useMemo<CostingRowsParams>(
     () => ({
       ...(partyId ? { party_id: partyId } : {}),
-      ...(debouncedSearch ? { q: debouncedSearch } : {}),
+      ...(debouncedSearch ? { query: debouncedSearch } : {}),
       ...(category ? { category_id: category } : {}),
       ...(brand ? { brand_id: brand } : {}),
       ...(method ? { cost_method: method } : {}),
@@ -394,14 +574,6 @@ function CostingPage() {
     setEdits({});
   }, [partyId]);
 
-  const draftOf = (row: CostingRow): Draft => edits[row.product_id]?.cur ?? initialDraft(row);
-  const patchDraft = (row: CostingRow, patch: Partial<Draft>) =>
-    setEdits((all) => {
-      const existing = all[row.product_id];
-      const base = existing?.base ?? initialDraft(row);
-      return { ...all, [row.product_id]: { base, cur: { ...(existing?.cur ?? base), ...patch } } };
-    });
-
   const cancelEdit = () => {
     setEditing(false);
     setEdits({});
@@ -425,29 +597,24 @@ function CostingPage() {
     }
   };
 
-  const columns = useMemo<ColumnDef<CostingRow>[]>(() => {
-    const sortable = (
-      id: string,
-      title: string,
-      extra?: ReactNode,
-    ): Pick<ColumnDef<CostingRow>, 'header' | 'enableSorting'> => ({
-      header: ({ column }) =>
-        extra ? (
-          <div className="min-w-0">
-            <DataGridColumnHeader title={title} column={column} />
-            {extra}
-          </div>
-        ) : (
-          <DataGridColumnHeader title={title} column={column} />
-        ),
-      enableSorting: id in SERVER_SORT,
-    });
-    const hint = editing ? (
-      <span className="block truncate text-2xs font-normal text-muted-foreground">applies to every party</span>
-    ) : null;
-    const figures = (row: CostingRow) => {
+  const editApi: EditApi = {
+    editing,
+    view,
+    party,
+    partyId,
+    asOf,
+    canManage,
+    removingId: removal.targetId,
+    draftOf: (row) => edits[row.product_id]?.cur ?? initialDraft(row),
+    patchDraft: (row, patch) =>
+      setEdits((all) => {
+        const existing = all[row.product_id];
+        const base = existing?.base ?? initialDraft(row);
+        return { ...all, [row.product_id]: { base, cur: { ...(existing?.cur ?? base), ...patch } } };
+      }),
+    figures: (row) => {
       if (!editing) return null;
-      const d = draftOf(row);
+      const d = edits[row.product_id]?.cur ?? initialDraft(row);
       const value = typed(d.tValue);
       // Cleared back from a product override: the category rule applies, or + 0 when it has none.
       const cleared = !d.tMode && d.tValue.trim() === '' && row.transport_source === 'product';
@@ -455,6 +622,7 @@ function CostingPage() {
         row.category_transport_mode && row.category_transport_value != null
           ? { mode: row.category_transport_mode, value: row.category_transport_value }
           : { mode: 'add' as TransportMode, value: 0 };
+      const markup = typed(d.markup);
       return figuresFor(
         row,
         {
@@ -464,15 +632,38 @@ function CostingPage() {
               : cleared
                 ? fallback
                 : null,
-          markup: (() => {
-            const m = typed(d.markup);
-            return m !== null && m >= 0 ? m : null;
-          })(),
+          markup: markup !== null && markup >= 0 ? markup : null,
           inheritedMarkup: party?.markup_pct ?? null,
         },
         view,
       );
-    };
+    },
+    openHistory: (row) => setHistoryRow({ id: row.product_id, code: row.product_code }),
+    removeFromParty: (row) =>
+      removal.run({
+        id: row.party_product_id as string,
+        subject: `${row.product_code} from ${party?.customer_name ?? 'the party'}`,
+      }),
+  };
+
+  // Stable while a value is typed: only the view (Margin or not) changes the columns.
+  const columns = useMemo<ColumnDef<CostingRow>[]>(() => {
+    const sortable = (
+      id: string,
+      title: string,
+      withHint = false,
+    ): Pick<ColumnDef<CostingRow>, 'header' | 'enableSorting'> => ({
+      header: ({ column }) =>
+        withHint ? (
+          <div className="min-w-0">
+            <DataGridColumnHeader title={title} column={column} />
+            <EditHint />
+          </div>
+        ) : (
+          <DataGridColumnHeader title={title} column={column} />
+        ),
+      enableSorting: id in SERVER_SORT,
+    });
 
     const cols: ColumnDef<CostingRow>[] = [
       {
@@ -494,11 +685,7 @@ function CostingPage() {
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
-        meta: {
-          expandedContent: (row: CostingRow) => (
-            <CostingSupplierGrid productId={row.product_id} partyId={partyId || null} asOf={asOf || undefined} />
-          ),
-        },
+        meta: { expandedContent: (row: CostingRow) => <ExpandedSuppliers row={row} /> },
       },
       {
         id: 'category',
@@ -557,128 +744,36 @@ function CostingPage() {
       },
       {
         id: 'transport',
-        ...sortable('transport', 'Transport', hint),
-        cell: ({ row }) => {
-          const r = row.original;
-          if (editing) {
-            const d = draftOf(r);
-            return (
-              <div className="flex min-w-0 flex-col gap-1">
-                <SearchableSelect
-                  aria-label={`Transport for ${r.product_code}`}
-                  value={d.tMode}
-                  onChange={(v) => patchDraft(r, { tMode: v })}
-                  options={MODE_OPTIONS}
-                  placeholder="Category rule"
-                  clearable
-                />
-                <NumberInput
-                  aria-label={`Transport value for ${r.product_code}`}
-                  step="any"
-                  min={0}
-                  value={d.tValue}
-                  onChange={(e) => patchDraft(r, { tValue: e.target.value })}
-                  className="h-8 text-end"
-                />
-              </div>
-            );
-          }
-          const text = transportText(r.transport_mode, r.transport_value);
-          if (!text) return transportReason(r) ? <Reason reason={transportReason(r)} /> : <Muted>-</Muted>;
-          return <Num marker={r.transport_source === 'product'}>{text}</Num>;
-        },
+        ...sortable('transport', 'Transport', true),
+        cell: ({ row }) => <TransportCell row={row.original} />,
         size: 190,
         meta: { headerTitle: 'Transport', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'landing',
         ...sortable('landing', 'Landing (RM)'),
-        cell: ({ row }) => {
-          const f = figures(row.original);
-          const landing = f ? f.landing : row.original.landing;
-          return landing === null ? <Reason reason={blockingReason(row.original)} /> : <Num>{money(landing)}</Num>;
-        },
+        cell: ({ row }) => <LandingCell row={row.original} />,
         size: 130,
         meta: { headerTitle: 'Landing (RM)', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'method',
-        ...sortable('method', 'Cost method', hint),
-        cell: ({ row }) => {
-          const r = row.original;
-          if (editing) {
-            const d = draftOf(r);
-            return (
-              <div className="flex min-w-0 flex-col gap-1">
-                <SearchableSelect
-                  aria-label={`Cost method for ${r.product_code}`}
-                  value={d.method}
-                  onChange={(v) => patchDraft(r, { method: v, supplier: v === 'selected' ? d.supplier : '' })}
-                  options={METHOD_OPTIONS}
-                  placeholder="Company default"
-                  clearable
-                />
-                {d.method === 'selected' ? (
-                  <SupplierPicker
-                    row={r}
-                    value={d.supplier}
-                    partyId={partyId || null}
-                    asOf={asOf || undefined}
-                    onChange={(v) => patchDraft(r, { supplier: v })}
-                  />
-                ) : null}
-              </div>
-            );
-          }
-          const skipped = r.skipped
-            .map((s) => `${s.supplier_code ?? 'A supplier'} (${s.reason === 'no_rate' ? 'no rate' : 'no cost'})`)
-            .join(', ');
-          return (
-            <span
-              className="block truncate"
-              title={skipped ? `${METHOD_LABEL[r.cost_method]}. Skipped: ${skipped}` : METHOD_LABEL[r.cost_method]}
-            >
-              <span>{METHOD_LABEL[r.cost_method]}</span>
-              {r.cost_method_source === 'product' ? <SetMarker /> : null}
-            </span>
-          );
-        },
+        ...sortable('method', 'Cost method', true),
+        cell: ({ row }) => <MethodCell row={row.original} />,
         size: 200,
         meta: { headerTitle: 'Cost method', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'markup',
         ...sortable('markup', 'Mark-up'),
-        cell: ({ row }) => {
-          const r = row.original;
-          if (editing && view === 'party') {
-            return (
-              <NumberInput
-                aria-label={`Mark-up for ${r.product_code}`}
-                step="any"
-                min={0}
-                value={draftOf(r).markup}
-                placeholder={party?.markup_pct !== null && party ? money(party.markup_pct) : undefined}
-                onChange={(e) => patchDraft(r, { markup: e.target.value })}
-                className="h-8 text-end"
-              />
-            );
-          }
-          const f = figures(r);
-          const markup = f ? f.markup : r.markup_pct;
-          return markup === null ? <Muted>-</Muted> : <Num marker={r.markup_source === 'row'}>{percent(markup)}</Num>;
-        },
+        cell: ({ row }) => <MarkupCell row={row.original} />,
         size: 120,
         meta: { headerTitle: 'Mark-up', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'final',
         ...sortable('final', 'Final (RM)'),
-        cell: ({ row }) => {
-          const f = figures(row.original);
-          const final = f ? f.final : row.original.final;
-          return final === null ? <Muted>-</Muted> : <Num>{money(final)}</Num>;
-        },
+        cell: ({ row }) => <FinalCell row={row.original} />,
         size: 120,
         meta: { headerTitle: 'Final (RM)', skeleton: <Skeleton className="h-4 w-16" /> },
       },
@@ -695,11 +790,7 @@ function CostingPage() {
       cols.push({
         id: 'margin',
         ...sortable('margin', 'Margin'),
-        cell: ({ row }) => {
-          const f = figures(row.original);
-          const margin = f ? f.margin : row.original.margin_pct;
-          return margin === null ? <Muted>-</Muted> : <Num>{percent(margin)}</Num>;
-        },
+        cell: ({ row }) => <MarginCell row={row.original} />,
         size: 100,
         meta: { headerTitle: 'Margin', skeleton: <Skeleton className="h-4 w-14" /> },
       });
@@ -707,51 +798,14 @@ function CostingPage() {
     cols.push({
       id: 'actions',
       header: () => null,
-      cell: ({ row }) => rowMenu(row),
+      cell: ({ row }) => <RowMenu row={row.original} />,
       size: 48,
       enableSorting: false,
       enableHiding: false,
       enableResizing: false,
     });
     return cols;
-    // draftOf reads `edits`; the rest are the inputs the cells close over.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, edits, view, party, partyId, asOf, canManage, removal.targetId]);
-
-  // A plain function, not a component: a component defined here would be a new type every render
-  // and an open menu would close under the reader.
-  function rowMenu(row: Row<CostingRow>) {
-    const r = row.original;
-    const canRemove = view === 'party' && canManage && !!r.party_product_id;
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" variant="ghost" mode="icon" size="sm" aria-label={`${r.product_code} actions`}>
-            <MoreHorizontal className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => setHistoryRow({ id: r.product_id, code: r.product_code })}>
-            History
-          </DropdownMenuItem>
-          {canRemove ? (
-            <DropdownMenuItem
-              variant="destructive"
-              disabled={removal.targetId === r.party_product_id}
-              onSelect={() =>
-                removal.run({
-                  id: r.party_product_id as string,
-                  subject: `${r.product_code} from ${party?.customer_name ?? 'the party'}`,
-                })
-              }
-            >
-              Remove from party
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
+  }, [view]);
 
   const table = useReactTable({
     columns,
@@ -801,6 +855,11 @@ function CostingPage() {
         <Settings className="size-4" />
         Settings
       </Button>
+      {canManage && party && !party.has_profile ? (
+        <Button variant="outline" onClick={() => setProfileOpen(true)}>
+          Set up costing
+        </Button>
+      ) : null}
       {canManage ? (
         editing ? (
           <>
@@ -823,25 +882,39 @@ function CostingPage() {
   );
 
   return (
-    <>
+    <EditContext.Provider value={editApi}>
       <Container>
         <PageHeader title="Costing" actions={headerActions} />
       </Container>
       <Container>
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="w-full sm:w-80">
-              <CustomerDebtorCombobox
-                ariaLabel="Party"
-                value={party?.customer_name ?? ''}
-                placeholder="Company standard"
-                pickOnly
-                lookup={lookupCostingParties}
-                onChange={(name, item) => {
-                  if (item) writeUrl({ party: item.customer_id });
-                  else if (!name) writeUrl({ party: '' });
-                }}
-              />
+            <div className="flex w-full items-center gap-1 sm:w-80">
+              <div className="min-w-0 flex-1">
+                <CustomerDebtorCombobox
+                  ariaLabel="Party"
+                  value={party?.customer_name ?? ''}
+                  placeholder="Company standard"
+                  pickOnly
+                  lookup={lookupParties}
+                  onChange={(name, item) => {
+                    if (item) writeUrl({ party: item.customer_id });
+                    else if (!name) writeUrl({ party: '' });
+                  }}
+                />
+              </div>
+              {partyId ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  mode="icon"
+                  size="sm"
+                  aria-label="Clear party"
+                  onClick={() => writeUrl({ party: '' })}
+                >
+                  <X className="size-4" />
+                </Button>
+              ) : null}
             </div>
             {party ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -996,6 +1069,6 @@ function CostingPage() {
           partyName={party.customer_name}
         />
       ) : null}
-    </>
+    </EditContext.Provider>
   );
 }

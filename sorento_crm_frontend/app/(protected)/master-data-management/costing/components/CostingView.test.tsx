@@ -394,7 +394,61 @@ describe('Filters (AC-CG-07)', () => {
     mount();
     await screen.findByText('CGB9032B');
     fireEvent.change(screen.getByPlaceholderText('Search code or name'), { target: { value: 'WB 245' } });
-    await waitFor(() => expect(lastParams().q).toBe('WB 245'));
+    await waitFor(() => expect(lastParams().query).toBe('WB 245'));
+  });
+});
+
+describe('A party without a profile (D2)', () => {
+  const noProfile = () =>
+    partyEnvelope([], {
+      party: { ...PARTY, has_profile: false, markup_pct: null, product_count: 0, is_active: null },
+      total: 0,
+    });
+
+  it('offers Set up costing in the header to someone who can manage, and it opens the profile dialog', async () => {
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockResolvedValue(noProfile());
+    mount();
+    const btn = await within(screen.getByTestId('header-actions')).findByRole('button', { name: 'Set up costing' });
+    fireEvent.click(btn);
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(screen.getByLabelText('Party mark-up (%)')).toBeTruthy();
+  });
+
+  it('shows no Set up costing without manage, nor for a party that has a profile', async () => {
+    url.search = 'party=cust-1';
+    service.getCostingRows.mockResolvedValue(noProfile());
+    perms.granted = new Set(['products.cost.view']);
+    const { unmount } = mount();
+    await screen.findByText('This party has no costing profile yet');
+    expect(within(screen.getByTestId('header-actions')).queryByRole('button', { name: 'Set up costing' })).toBeNull();
+    unmount();
+
+    perms.granted = new Set(['products.cost.view', 'products.party_costing.manage']);
+    service.getCostingRows.mockResolvedValue(partyEnvelope());
+    mount();
+    await screen.findByText('CGB9032B');
+    expect(within(screen.getByTestId('header-actions')).queryByRole('button', { name: 'Set up costing' })).toBeNull();
+  });
+});
+
+describe('Clearing the party (D3)', () => {
+  it('has a clear control that drops party from the URL and keeps the other filters', async () => {
+    url.search = 'party=cust-1&has_cost=1';
+    service.getCostingRows.mockResolvedValue(partyEnvelope());
+    mount();
+    await screen.findByText('CGB9032B');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear party' }));
+    await waitFor(() => expect(urlsWritten().length).toBeGreaterThan(0));
+    const written = urlsWritten().at(-1)!;
+    expect(written).not.toMatch(/party=/);
+    expect(written).toMatch(/has_cost=1/);
+  });
+
+  it('has no clear control on the Company standard', async () => {
+    mount();
+    await screen.findByText('CGB9032B');
+    expect(screen.queryByRole('button', { name: 'Clear party' })).toBeNull();
   });
 });
 

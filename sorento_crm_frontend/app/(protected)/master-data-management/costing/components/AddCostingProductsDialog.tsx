@@ -16,7 +16,7 @@ import {
   pickedLine,
   useProductTargetPicker,
 } from '../../products/[id]/components/ProductTargetPicker';
-import { useAddPartyProducts, useCostingRows } from '../hooks/useCosting';
+import { useAddPartyProducts, usePartyProductIds } from '../hooks/useCosting';
 
 function Picker({
   customerId,
@@ -45,7 +45,7 @@ function Picker({
       <DialogBody className="min-h-0 flex-1 overflow-y-auto">
         {grid}
         <div className="pt-3">
-          <CopyCapNote />
+          <CopyCapNote>At most {MAX_COPY_TARGETS.toLocaleString('en-US')} products per add.</CopyCapNote>
         </div>
       </DialogBody>
       <DialogFooter className="flex-wrap items-center gap-2">
@@ -78,10 +78,9 @@ export function AddCostingProductsDialog({
   customerId: string;
   partyName: string;
 }) {
-  // The party's list as the picker should see it: one page of up to MAX rows is enough to mark
-  // them; the server ignores a repeat anyway ("already").
-  const { data } = useCostingRows({ party_id: customerId, page: 1, limit: MAX_COPY_TARGETS }, open);
-  const alreadyAddedIds = (data?.data ?? []).map((r) => r.product_id);
+  // The party's list as the picker should see it: just the ids, with no costing behind them.
+  const { data } = usePartyProductIds(customerId, open);
+  const alreadyAddedIds = data?.data ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

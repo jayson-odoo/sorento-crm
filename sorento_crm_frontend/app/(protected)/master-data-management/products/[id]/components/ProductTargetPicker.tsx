@@ -56,11 +56,15 @@ export function plural(count: number, noun: string): string {
 }
 
 /** The confirm step's statement of the cap (#2280 hand-test leftover: say it plainly). */
-export function CopyCapNote() {
+export function CopyCapNote({ children }: { children?: ReactNode } = {}) {
   return (
     <p className="text-sm text-muted-foreground" data-testid="copy-cap-note">
-      One copy takes at most {MAX_COPY_TARGETS.toLocaleString('en-US')}{' '}
-      products.
+      {children ?? (
+        <>
+          One copy takes at most {MAX_COPY_TARGETS.toLocaleString('en-US')}{' '}
+          products.
+        </>
+      )}
     </p>
   );
 }
@@ -156,6 +160,11 @@ export function useProductTargetPicker(
             title={row.original.product_code}
           >
             {row.original.product_code}
+            {blocked.has(row.original.id) && row.original.id !== sourceProductId ? (
+              <span className="ms-1.5 text-xs font-normal text-muted-foreground">
+                {ADDED_REASON}
+              </span>
+            ) : null}
             {/* Owner, 7 Nov: a discontinued product stays pickable, with a grey hint. */}
             {row.original.is_discontinued ? (
               <span className="ms-1.5 text-xs font-normal text-muted-foreground">

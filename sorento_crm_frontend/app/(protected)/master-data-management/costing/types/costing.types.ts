@@ -98,7 +98,8 @@ export interface CostingRowsResponse {
 /** The query names the API takes (GET /rows and GET /export). */
 export interface CostingRowsParams {
   party_id?: string;
-  q?: string;
+  /** Search text (code or name). */
+  query?: string;
   category_id?: string;
   brand_id?: string;
   cost_method?: string;

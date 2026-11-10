@@ -17,7 +17,7 @@
  * (exchange_rate.delete) are deferred pending actions, never a call from here (D7).
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type {
   CategoryRule,
@@ -49,14 +49,33 @@ function jsonInit(method: string, body: unknown): RequestInit {
   };
 }
 
-/** The query string for the rows and export reads: absent keys stay out, has_cost only when true. */
-export function costingQuery(params: CostingRowsParams | CostingSupplierParams): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === '' || value === false) continue;
-    search.set(key, value === true ? 'true' : String(value));
-  }
-  const text = search.toString();
+/**
+ * The query string for the rows and export reads: page, limit, sort, dir and query through the
+ * shared `buildDataGridParams`, the filters as extras. Absent keys stay out, has_cost only when true.
+ */
+export function costingQuery(params: CostingRowsParams): string {
+  const { page, limit, sort, dir, query, has_cost: hasCost, ...filters } = params;
+  const sp = buildDataGridParams(
+    {
+      pageIndex: (page ?? 1) - 1,
+      pageSize: limit ?? 50,
+      sorting: sort ? [{ id: sort, desc: dir === 'desc' }] : undefined,
+      searchQuery: query,
+    },
+    { ...filters, ...(hasCost ? { has_cost: 'true' } : {}) },
+  );
+  // The export is the whole filtered set: paging does not apply to it.
+  if (page === undefined) sp.delete('page');
+  if (limit === undefined) sp.delete('limit');
+  return `?${sp.toString()}`;
+}
+
+/** The party / as-of scope of a row's suppliers. */
+function scopeQuery(scope: CostingSupplierParams): string {
+  const sp = new URLSearchParams();
+  if (scope.party_id) sp.set('party_id', scope.party_id);
+  if (scope.as_of) sp.set('as_of', scope.as_of);
+  const text = sp.toString();
   return text ? `?${text}` : '';
 }
 
@@ -70,7 +89,7 @@ export async function getCostingRowSuppliers(
   params: CostingSupplierParams,
 ): Promise<{ data: SupplierBreakdown[] }> {
   return read(
-    await apiFetch(`${BASE}/rows/${encodeURIComponent(productId)}/suppliers${costingQuery(params)}`),
+    await apiFetch(`${BASE}/rows/${encodeURIComponent(productId)}/suppliers${scopeQuery(params)}`),
     'Failed to load the suppliers',
   );
 }
@@ -83,7 +102,7 @@ export async function getCostingRowHistory(
   productId: string,
   partyId?: string | null,
 ): Promise<{ data: HistoryEntry[] }> {
-  const query = costingQuery(partyId ? { party_id: partyId } : {});
+  const query = scopeQuery(partyId ? { party_id: partyId } : {});
   return read(
     await apiFetch(`${BASE}/rows/${encodeURIComponent(productId)}/history${query}`),
     'Failed to load the history',
@@ -146,6 +165,14 @@ export async function saveParty(customerId: string, body: PartyBody): Promise<Co
   return read(
     await apiFetch(`${BASE}/parties/${encodeURIComponent(customerId)}`, jsonInit('PUT', body)),
     'Failed to save the party',
+  );
+}
+
+/** Every product id on the party's list: cheap, no costing. */
+export async function getPartyProductIds(customerId: string): Promise<{ data: string[] }> {
+  return read(
+    await apiFetch(`${BASE}/parties/${encodeURIComponent(customerId)}/product-ids`),
+    'Failed to load the party products',
   );
 }
 

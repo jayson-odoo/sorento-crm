@@ -1,6 +1,7 @@
 'use client';
 
-import { Fragment, useState, type FormEvent } from 'react';
+import { createContext, useContext, useMemo, useState, type FormEvent } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -55,7 +57,7 @@ const MODE_OPTIONS = [
   { value: 'multiply', label: 'Multiply' },
 ];
 
-const TH = 'whitespace-nowrap px-3 py-2 text-start font-medium';
+const RIGHT = { cellClassName: 'text-right tabular-nums', headerClassName: 'text-right' };
 
 /** A positive figure typed into a box, or null for blank, zero, negative or text. */
 function positive(raw: string): number | null {
@@ -185,107 +187,109 @@ function RatesTab() {
   const deletion = useDeferredRowAction({
     actionKey: 'exchange_rate.delete',
     entityType: 'exchange_rate',
-    surface: 'inline',
-    countdownClassName: 'w-full min-w-0',
+    verb: 'Deleting',
     successMessage: 'Rate deleted.',
     invalidateKeys: [[...COSTING_RATES_KEY], [...COSTING_ROWS_KEY]],
   });
   const rows = data?.data ?? [];
-  const columns = canWrite ? 7 : 6;
+
+  const columns = useMemo<ColumnDef<ExchangeRate>[]>(
+    () => [
+      {
+        id: 'currency',
+        header: 'Currency',
+        cell: ({ row }) => <span className="font-medium">{row.original.currency}</span>,
+        size: 90,
+      },
+      {
+        id: 'effective_from',
+        header: 'Effective from',
+        cell: ({ row }) => <span className="whitespace-nowrap">{shortDate(row.original.effective_from)}</span>,
+        size: 130,
+      },
+      {
+        id: 'units',
+        header: 'Units per MYR 1',
+        cell: ({ row }) => trimmed(row.original.units_per_base, 4),
+        size: 140,
+        meta: RIGHT,
+      },
+      {
+        id: 'myr',
+        header: 'MYR per unit',
+        cell: ({ row }) => trimmed(row.original.rate_to_base, 6),
+        size: 130,
+        meta: RIGHT,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => (
+          <Badge variant={STATUS[row.original.status].variant} appearance="light" size="sm">
+            {STATUS[row.original.status].label}
+          </Badge>
+        ),
+        size: 110,
+      },
+      {
+        id: 'note',
+        header: 'Note',
+        cell: ({ row }) =>
+          row.original.note ? (
+            <span className="block truncate" title={row.original.note}>
+              {row.original.note}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+      },
+      ...(canWrite
+        ? [
+            {
+              id: 'actions',
+              header: () => null,
+              cell: ({ row }) => (
+                <Button
+                  variant="ghost"
+                  mode="icon"
+                  size="sm"
+                  aria-label={`Delete ${row.original.currency} rate from ${shortDate(row.original.effective_from)}`}
+                  disabled={deletion.targetId === row.original.id}
+                  onClick={() =>
+                    deletion.run({
+                      id: row.original.id,
+                      subject: `the ${row.original.currency} rate from ${shortDate(row.original.effective_from)}`,
+                    })
+                  }
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              ),
+              size: 56,
+            } satisfies ColumnDef<ExchangeRate>,
+          ]
+        : []),
+    ],
+    // `deletion` changes identity every render; the cell reads only its targetId and run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, deletion.targetId],
+  );
 
   return (
     <div className="space-y-4">
       {canWrite ? <RateForm /> : null}
-      {isError ? (
-        <p className="text-sm text-destructive">
-          {error instanceof Error ? error.message : 'Failed to load the exchange rates.'}
-        </p>
-      ) : null}
-      {isLoading ? null : rows.length ? (
-        <div className="overflow-x-auto rounded-lg border">
-          <table aria-label="Exchange rates" className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                <th className={TH}>Currency</th>
-                <th className={TH}>Effective from</th>
-                <th className={`${TH} text-end`}>Units per MYR 1</th>
-                <th className={`${TH} text-end`}>MYR per unit</th>
-                <th className={TH}>Status</th>
-                <th className={TH}>Note</th>
-                {canWrite ? (
-                  <th className="w-px px-2 py-2">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                ) : null}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.map((r) =>
-                deletion.targetId === r.id && deletion.countdown ? (
-                  <Fragment key={r.id}>
-                    <tr className="text-muted-foreground">
-                      <td className="px-3 py-2">{r.currency}</td>
-                      <td className="whitespace-nowrap px-3 py-2">{shortDate(r.effective_from)}</td>
-                      <td colSpan={columns - 2}>
-                        <span className="sr-only">Deleting</span>
-                      </td>
-                    </tr>
-                    <tr className="!border-t-0">
-                      <td colSpan={columns} className="px-2 pb-2">
-                        {deletion.countdown}
-                      </td>
-                    </tr>
-                  </Fragment>
-                ) : (
-                  <tr key={r.id}>
-                    <td className="px-3 py-2 font-medium">{r.currency}</td>
-                    <td className="whitespace-nowrap px-3 py-2">{shortDate(r.effective_from)}</td>
-                    <td className="px-3 py-2 text-end tabular-nums">{trimmed(r.units_per_base, 4)}</td>
-                    <td className="px-3 py-2 text-end tabular-nums">{trimmed(r.rate_to_base, 6)}</td>
-                    <td className="px-3 py-2">
-                      <Badge variant={STATUS[r.status].variant} appearance="light" size="sm">
-                        {STATUS[r.status].label}
-                      </Badge>
-                    </td>
-                    <td className="max-w-[14rem] px-3 py-2">
-                      {r.note ? (
-                        <span className="block truncate" title={r.note}>
-                          {r.note}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </td>
-                    {canWrite ? (
-                      <td className="px-2 py-1">
-                        <Button
-                          variant="ghost"
-                          mode="icon"
-                          size="sm"
-                          aria-label={`Delete ${r.currency} rate from ${shortDate(r.effective_from)}`}
-                          onClick={() =>
-                            deletion.run({
-                              id: r.id,
-                              subject: `the ${r.currency} rate from ${shortDate(r.effective_from)}`,
-                            })
-                          }
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </td>
-                    ) : null}
-                  </tr>
-                ),
-              )}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed py-6 text-center">
-          <p className="text-sm font-medium">No exchange rates yet</p>
-          <p className="text-xs text-muted-foreground">Add the first rate above.</p>
-        </div>
-      )}
+      <PanelDataGrid<ExchangeRate>
+        columns={columns}
+        rows={rows}
+        getRowId={(r) => r.id}
+        listingKey={null}
+        isLoading={isLoading}
+        error={isError ? error : undefined}
+        emptyTitle="No exchange rates yet"
+        emptyBody="Add the first rate above."
+        pageSize={10}
+      />
     </div>
   );
 }
@@ -378,13 +382,66 @@ const draftOf = (rule: CategoryRule): RuleDraft => ({
   value: rule.value === null ? '' : String(rule.value),
 });
 
+/** The typed rules, read by the cells through context so the columns never change while typing. */
+interface RulesApi {
+  canManage: boolean;
+  current: (rule: CategoryRule) => RuleDraft;
+  patch: (rule: CategoryRule, next: Partial<RuleDraft>) => void;
+}
+const RulesContext = createContext<RulesApi | null>(null);
+
+function RuleMode({ rule }: { rule: CategoryRule }) {
+  const api = useContext(RulesContext)!;
+  return (
+    <SearchableSelect
+      aria-label={`Transport mode for ${rule.category_name}`}
+      value={api.current(rule).mode}
+      onChange={(v) => api.patch(rule, { mode: v })}
+      options={MODE_OPTIONS}
+      placeholder="No rule"
+      clearable
+      disabled={!api.canManage}
+    />
+  );
+}
+
+function RuleValue({ rule }: { rule: CategoryRule }) {
+  const api = useContext(RulesContext)!;
+  return (
+    <NumberInput
+      aria-label={`Transport value for ${rule.category_name}`}
+      step="any"
+      min={0}
+      value={api.current(rule).value}
+      disabled={!api.canManage}
+      onChange={(e) => api.patch(rule, { value: e.target.value })}
+      className="text-end"
+    />
+  );
+}
+
+const RULE_COLUMNS: ColumnDef<CategoryRule>[] = [
+  {
+    id: 'category',
+    header: 'Category',
+    cell: ({ row }) => (
+      <span className="block truncate" title={row.original.category_name}>
+        {row.original.category_name}
+      </span>
+    ),
+    size: 220,
+  },
+  { id: 'mode', header: 'Mode', cell: ({ row }) => <RuleMode rule={row.original} />, size: 190 },
+  { id: 'value', header: 'Value', cell: ({ row }) => <RuleValue rule={row.original} />, size: 130, meta: RIGHT },
+];
+
 function RulesForm({ rules }: { rules: CategoryRule[] }) {
   const canManage = useHasPermission('products.party_costing.manage');
   const save = useSaveCategoryRule();
   const [drafts, setDrafts] = useState<Record<string, RuleDraft>>({});
   const current = (rule: CategoryRule) => drafts[rule.category_id] ?? draftOf(rule);
   const patch = (rule: CategoryRule, next: Partial<RuleDraft>) =>
-    setDrafts((d) => ({ ...d, [rule.category_id]: { ...current(rule), ...next } }));
+    setDrafts((d) => ({ ...d, [rule.category_id]: { ...(d[rule.category_id] ?? draftOf(rule)), ...next } }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -418,68 +475,24 @@ function RulesForm({ rules }: { rules: CategoryRule[] }) {
     }
   };
 
-  if (!rules.length) {
-    return (
-      <div className="rounded-lg border border-dashed py-6 text-center">
-        <p className="text-sm font-medium">No categories yet</p>
-      </div>
-    );
-  }
   return (
-    <form onSubmit={(e) => void submit(e)} className="space-y-4">
-      <div className="overflow-x-auto rounded-lg border">
-        <table aria-label="Transport by category" className="w-full text-sm">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
-            <tr>
-              <th className={TH}>Category</th>
-              <th className={TH}>Mode</th>
-              <th className={TH}>Value</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {rules.map((rule) => {
-              const d = current(rule);
-              return (
-                <tr key={rule.category_id}>
-                  <td className="max-w-[14rem] px-3 py-2">
-                    <span className="block truncate" title={rule.category_name}>
-                      {rule.category_name}
-                    </span>
-                  </td>
-                  <td className="w-44 px-3 py-1.5">
-                    <SearchableSelect
-                      aria-label={`Transport mode for ${rule.category_name}`}
-                      value={d.mode}
-                      onChange={(v) => patch(rule, { mode: v })}
-                      options={MODE_OPTIONS}
-                      placeholder="No rule"
-                      clearable
-                      disabled={!canManage}
-                    />
-                  </td>
-                  <td className="w-32 px-3 py-1.5">
-                    <NumberInput
-                      aria-label={`Transport value for ${rule.category_name}`}
-                      step="any"
-                      min={0}
-                      value={d.value}
-                      disabled={!canManage}
-                      onChange={(e) => patch(rule, { value: e.target.value })}
-                      className="text-end"
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {canManage ? (
-        <Button type="submit" disabled={save.isPending}>
-          Save
-        </Button>
-      ) : null}
-    </form>
+    <RulesContext.Provider value={{ canManage, current, patch }}>
+      <form onSubmit={(e) => void submit(e)} className="space-y-4">
+        <PanelDataGrid<CategoryRule>
+          columns={RULE_COLUMNS}
+          rows={rules}
+          getRowId={(r) => r.category_id}
+          listingKey={null}
+          emptyTitle="No categories yet"
+          pageSize={25}
+        />
+        {canManage ? (
+          <Button type="submit" disabled={save.isPending}>
+            Save
+          </Button>
+        ) : null}
+      </form>
+    </RulesContext.Provider>
   );
 }
 
@@ -503,6 +516,10 @@ function RulesTab() {
  * the transport rule of each category. Three line tabs; the rate form needs `scm.config.manage`,
  * the rest `products.party_costing.manage`.
  */
+// A plain Dialog with Tabs rather than FormDialogScaffold: the scaffold ends in one Cancel / Save
+// footer for the whole dialog, while each tab here saves on its own (a rate is added, the SST and
+// method are saved, the transport rules are saved) and a reader without the manage permission must
+// see no Save at all. The two lists are PanelDataGrid, the shared grid, not hand-built tables.
 export function CostingSettingsDialog({
   open,
   onOpenChange,
