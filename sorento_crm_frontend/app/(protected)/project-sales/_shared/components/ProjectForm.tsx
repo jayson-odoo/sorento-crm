@@ -25,7 +25,6 @@ import { FormSection } from '@/components/common/FormSection';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { PROJECT_NAME_MAX_LENGTH } from '../lib/projectName';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
@@ -36,7 +35,9 @@ import {
   useFetchClashPreview,
   useFetchCustomerOptions,
   useFetchPartyOptions,
+  usePartiesOnProject,
   usePartyMutations,
+  usePartyRoles,
   useProjectTemplates,
   useProjectTypes,
   useRegisterProject,
@@ -47,7 +48,6 @@ import {
 import type {
   ClashCandidate,
   PartyLink,
-  PartyLinkRole,
   PartyType,
   Project,
   ProjectRegisterBody,
@@ -57,28 +57,18 @@ import { isProjectApproved } from '../lib/projectApproval';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { OUTCOME_LABEL } from './OutcomePill';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
-import { PartyContactsPicker } from './PartyContactsPicker';
+import { ProjectPartiesSection, type PartyPick } from './ProjectPartiesSection';
 
 /** The district lookup set of a state: `my_district_<state>` (migration psr3_0001). */
 export function districtSetKey(state: string): string {
   return state ? `my_district_${state.toLowerCase().split(/\s+/).filter(Boolean).join('_')}` : '';
 }
 
-/** The party roles linked beyond the three single columns (owner 2 Nov ~21:40, Q5 b). */
-const LINK_ROLES: { role: PartyLinkRole; label: string; many: boolean }[] = [
-  { role: 'subcontractor', label: 'Subcontractors', many: true },
-  { role: 'trading_house', label: 'Trading houses', many: true },
-  { role: 'tender_party', label: 'Tender parties', many: true },
-  { role: 'consultant', label: 'Consultant', many: false },
-  { role: 'interior_designer', label: 'Interior designer', many: false },
-];
-
-type LinkPicks = Record<PartyLinkRole, PickOption[]>;
-
-function linksFrom(project?: Project): LinkPicks {
-  const picks = Object.fromEntries(LINK_ROLES.map((r) => [r.role, []])) as unknown as LinkPicks;
+/** The project's links as picks per role key (PROJECT-PARTY-ROLES: every role is a link). */
+function picksFrom(project?: Project): Record<string, PartyPick[]> {
+  const picks: Record<string, PartyPick[]> = {};
   for (const link of project?.party_links ?? []) {
-    picks[link.role]?.push({ value: link.party_id, label: link.name ?? 'Party' });
+    (picks[link.role] ??= []).push({ value: link.party_id, label: link.name ?? 'Party' });
   }
   return picks;
 }
@@ -153,30 +143,26 @@ export function ProjectForm(props: ProjectFormProps) {
   const typed = project?.registration ?? null;
   const [address, setAddress] = React.useState(project?.address ?? '');
   const [adminRef, setAdminRef] = React.useState(project?.admin_ref ?? '');
-  const [architectId, setArchitectId] = React.useState(project?.architect_party_id ?? '');
-  const [architectOption, setArchitectOption] = React.useState<PickOption | null>(
-    project?.architect_party_id
-      ? { value: project.architect_party_id, label: project.architect_name ?? 'Architect' }
-      : null,
-  );
-  const [mainContractorId, setMainContractorId] = React.useState(
-    project?.main_contractor_party_id ?? '',
-  );
-  const [contractorOption, setContractorOption] = React.useState<PickOption | null>(
-    project?.main_contractor_party_id
-      ? {
-          value: project.main_contractor_party_id,
-          label: project.main_contractor_name ?? 'Main contractor',
-        }
-      : null,
-  );
   const [leadSource, setLeadSource] = React.useState(project?.lead_source ?? '');
-  const [linkPicks, setLinkPicks] = React.useState<LinkPicks>(() => linksFrom(project));
-  // Register only: the picked contacts per party id. A party no longer picked drops its picks
-  // (rule 7) because only the picked parties' lists are sent.
+  // Picked parties per role key of the editable role list (PROJECT-PARTY-ROLES).
+  const [partyPicks, setPartyPicks] = React.useState<Record<string, PartyPick[]>>(() =>
+    picksFrom(project),
+  );
+  // Newly picked contacts per party id, on register and edit. A party no longer picked drops its
+  // picks (rule 7) because only the picked parties' lists are sent.
   const [contactPicks, setContactPicks] = React.useState<Record<string, string[]>>({});
-  // Names of party options seen in a multi picker, so a newly ticked party keeps its label.
-  const linkOptionCache = React.useRef<Record<string, PickOption>>({});
+  const partyRoles = usePartyRoles();
+  // Edit: the people already on the project, per party: ticked and fixed in the contacts popup.
+  const partiesOnProject = usePartiesOnProject(mode === 'edit' ? project?.id : null);
+  const fixedContacts = React.useMemo(() => {
+    const out: Record<string, string[]> = {};
+    for (const row of partiesOnProject.data ?? []) {
+      for (const person of row.contacts ?? []) {
+        if (person.party_contact_id) (out[row.party_id] ??= []).push(person.party_contact_id);
+      }
+    }
+    return out;
+  }, [partiesOnProject.data]);
   const [customerId, setCustomerId] = React.useState(project?.customer_id ?? '');
   const [customerOption, setCustomerOption] = React.useState<PickOption | null>(
     project?.customer_id
@@ -203,20 +189,6 @@ export function ProjectForm(props: ProjectFormProps) {
   const [extractOpen, setExtractOpen] = React.useState(false);
 
   const fetchDeveloperOptions = useFetchPartyOptions('developer');
-  const fetchArchitectOptions = useFetchPartyOptions('architect');
-  const fetchContractorOptions = useFetchPartyOptions('main_contractor');
-  const fetchSubcontractorOptions = useFetchPartyOptions('subcontractor');
-  const fetchTradingHouseOptions = useFetchPartyOptions('trading_house');
-  const fetchTenderPartyOptions = useFetchPartyOptions('tender_party');
-  const fetchConsultantOptions = useFetchPartyOptions('consultant');
-  const fetchInteriorDesignerOptions = useFetchPartyOptions('interior_designer');
-  const fetchLinkOptions: Record<PartyLinkRole, (query: string) => Promise<PickOption[]>> = {
-    subcontractor: fetchSubcontractorOptions,
-    trading_house: fetchTradingHouseOptions,
-    tender_party: fetchTenderPartyOptions,
-    consultant: fetchConsultantOptions,
-    interior_designer: fetchInteriorDesignerOptions,
-  };
   const fetchCustomerOptions = useFetchCustomerOptions();
   // Both routes need projects.types.view: without it the type and template show as the
   // project's own text and nothing is requested.
@@ -397,27 +369,32 @@ export function ProjectForm(props: ProjectFormProps) {
     void handleCheck();
   }
 
-  /** The parties picked on the form, each with its role, for the contacts pickers. */
-  const pickedParties: { partyId: string; name: string }[] = [
-    ...(developerId ? [{ partyId: developerId, name: developerOption?.label ?? 'Developer' }] : []),
-    ...(architectId ? [{ partyId: architectId, name: architectOption?.label ?? 'Architect' }] : []),
-    ...(mainContractorId
-      ? [{ partyId: mainContractorId, name: contractorOption?.label ?? 'Main contractor' }]
-      : []),
-    ...LINK_ROLES.flatMap((r) => linkPicks[r.role].map((o) => ({ partyId: o.value, name: o.label }))),
-  ].filter((p, i, all) => all.findIndex((q) => q.partyId === p.partyId) === i);
+  // The parties the project already had when the form opened: a party picked since is "new", and
+  // a new one with a single contact gets it ticked (owner hand test, 10 Nov).
+  const initialPartyIds = React.useRef(
+    new Set([
+      ...(project?.developer_party_id ? [project.developer_party_id] : []),
+      ...(project?.party_links ?? []).map((link) => link.party_id),
+    ]),
+  );
+
+  /** Every party picked on the form, the developer included, for the contacts it may carry. */
+  const pickedPartyIds = new Set([
+    ...(developerId ? [developerId] : []),
+    ...Object.values(partyPicks).flatMap((rows) => rows.map((o) => o.value)),
+  ]);
 
   function buildBody(): ProjectRegisterBody {
-    const partyLinks: PartyLink[] = LINK_ROLES.flatMap((r) =>
-      linkPicks[r.role].map((o) => ({ role: r.role, party_id: o.value })),
+    const partyLinks: PartyLink[] = Object.entries(partyPicks).flatMap(([role, rows]) =>
+      rows.map((o) => ({ role, party_id: o.value })),
     );
     const contactIds = Array.from(
-      new Set(pickedParties.flatMap((p) => contactPicks[p.partyId] ?? [])),
+      new Set([...pickedPartyIds].flatMap((partyId) => contactPicks[partyId] ?? [])),
     );
     return {
       lead_source: leadSource || null,
       party_links: partyLinks,
-      ...(mode === 'create' && contactIds.length ? { contact_ids: contactIds } : {}),
+      ...(contactIds.length ? { contact_ids: contactIds } : {}),
       title: title.trim(),
       name: name.trim() || null,
       developer_party_id: developerId || null,
@@ -430,8 +407,6 @@ export function ProjectForm(props: ProjectFormProps) {
       mukim: mukim || null,
       address: address.trim() || null,
       admin_ref: adminRef.trim() || null,
-      architect_party_id: architectId || null,
-      main_contractor_party_id: mainContractorId || null,
       estimated_sales_value: estimatedValue.trim() || null,
       launch_date: launchDate || null,
       expected_delivery_from: deliveryFrom || null,
@@ -452,13 +427,16 @@ export function ProjectForm(props: ProjectFormProps) {
       setDeveloperId(fill.developer.id);
       setDeveloperOption({ value: fill.developer.id, label: fill.developer.name });
     }
-    if (fill.architect) {
-      setArchitectId(fill.architect.id);
-      setArchitectOption({ value: fill.architect.id, label: fill.architect.name });
-    }
-    if (fill.main_contractor) {
-      setMainContractorId(fill.main_contractor.id);
-      setContractorOption({ value: fill.main_contractor.id, label: fill.main_contractor.name });
+    // The AI reads two fixed fields off a document; each lands on the role of the same key while
+    // that role is active on the list.
+    for (const [role, party] of [
+      ['architect', fill.architect],
+      ['main_contractor', fill.main_contractor],
+    ] as const) {
+      const active = (partyRoles.data ?? []).some((r) => r.value === role && r.is_active);
+      if (party && active) {
+        setPartyPicks((prev) => ({ ...prev, [role]: [{ value: party.id, label: party.name }] }));
+      }
     }
     if (canViewTypes && fill.project_type && fill.project_type.id !== typeId) {
       setTypeId(fill.project_type.id);
@@ -968,138 +946,46 @@ export function ProjectForm(props: ProjectFormProps) {
             open={sectionOpen.parties}
             onOpenChange={(next) => toggleSection('parties', next)}
           >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="project-architect">Architect</Label>
-                <SearchableSelect
-                  id="project-architect"
-                  value={architectId}
-                  onChange={setArchitectId}
-                  onOptionChange={setArchitectOption}
-                  fetchOptions={fetchArchitectOptions}
-                  selectedOption={architectOption ?? undefined}
-                  clearable
-                  placeholder="Search architects"
-                  emptyMessage="No architects found"
-                  createOption={partyCreateOption(
-                    'architect',
-                    'architect',
-                    (id, option) => {
-                      setArchitectId(id);
-                      setArchitectOption(option);
-                    },
-                  )}
-                />
-                <TypedHint typed={typed?.architect_name} picked={architectId} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="project-contractor">Main contractor</Label>
-                <SearchableSelect
-                  id="project-contractor"
-                  value={mainContractorId}
-                  onChange={setMainContractorId}
-                  onOptionChange={setContractorOption}
-                  fetchOptions={fetchContractorOptions}
-                  selectedOption={contractorOption ?? undefined}
-                  clearable
-                  placeholder="Search main contractors"
-                  emptyMessage="No main contractors found"
-                  createOption={partyCreateOption(
-                    'main_contractor',
-                    'main contractor',
-                    (id, option) => {
-                      setMainContractorId(id);
-                      setContractorOption(option);
-                    },
-                  )}
-                />
-                <TypedHint
-                  typed={typed?.main_contractor_name}
-                  picked={mainContractorId}
-                />
-              </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {LINK_ROLES.map(({ role, label, many }) => {
-                const picks = linkPicks[role];
-                const setPicks = (next: PickOption[]) =>
-                  setLinkPicks((prev) => ({ ...prev, [role]: next }));
-                const id = `project-${role.replaceAll('_', '-')}`;
-                const noun = label.toLowerCase();
-                return (
-                  <div key={role} className="space-y-1.5">
-                    <Label htmlFor={id}>{label}</Label>
-                    {many ? (
-                      <SearchableMultiSelect
-                        id={id}
-                        value={picks.map((o) => o.value)}
-                        onChange={(ids) =>
-                          setPicks(
-                            ids.map(
-                              (value) =>
-                                picks.find((o) => o.value === value) ??
-                                linkOptionCache.current[value] ?? { value, label: 'Party' },
-                            ),
-                          )
-                        }
-                        fetchOptions={async (query) => {
-                          const rows = await fetchLinkOptions[role](query);
-                          for (const row of rows) linkOptionCache.current[row.value] = row;
-                          return rows;
-                        }}
-                        selectedOptions={picks}
-                        clearable
-                        placeholder={`Search ${label.toLowerCase()}`}
-                        emptyMessage={`No ${label.toLowerCase()} found`}
-                        createOption={(() => {
-                          const create = partyCreateOption(role, noun.replace(/s$/, '').replace(/ie$/, 'y'), (pid, option) => {
-                            linkOptionCache.current[pid] = { ...option, value: pid };
-                            setPicks([...picks, { ...option, value: pid }]);
-                          });
-                          return create
-                            ? { label: create.label, onCreate: (q: string) => void create.onCreate(q) }
-                            : undefined;
-                        })()}
-                      />
-                    ) : (
-                      <SearchableSelect
-                        id={id}
-                        value={picks[0]?.value ?? ''}
-                        onChange={(value) => {
-                          if (!value) setPicks([]);
-                        }}
-                        onOptionChange={(option) => setPicks(option ? [option] : [])}
-                        fetchOptions={fetchLinkOptions[role]}
-                        selectedOption={picks[0]}
-                        clearable
-                        placeholder={`Search ${noun}s`}
-                        emptyMessage={`No ${noun}s found`}
-                        createOption={partyCreateOption(role, noun, (pid, option) =>
-                          setPicks([{ ...option, value: pid }]),
-                        )}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {mode === 'create' && pickedParties.length > 0 && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {pickedParties.map((party) => (
-                  <PartyContactsPicker
-                    key={party.partyId}
-                    partyId={party.partyId}
-                    partyName={party.name}
-                    value={contactPicks[party.partyId] ?? []}
-                    onChange={(ids) =>
-                      setContactPicks((prev) => ({ ...prev, [party.partyId]: ids }))
-                    }
-                    canCreate={canCreateParty}
-                  />
-                ))}
-              </div>
-            )}
+            <ProjectPartiesSection
+              roles={partyRoles.data ?? []}
+              developer={
+                developerId
+                  ? { value: developerId, label: developerOption?.label ?? 'Developer' }
+                  : undefined
+              }
+              picks={partyPicks}
+              onPicksChange={(role, next) => {
+                // A party that leaves the form drops its contact picks (rule 7) and, picked again,
+                // counts as a new pick: its single contact defaults again (owner re-test, 10 Nov).
+                const kept = new Set(next.map((o) => o.value));
+                for (const gone of (partyPicks[role] ?? []).filter((o) => !kept.has(o.value))) {
+                  initialPartyIds.current.delete(gone.value);
+                  setContactPicks((prev) => {
+                    const rest = { ...prev };
+                    delete rest[gone.value];
+                    return rest;
+                  });
+                }
+                setPartyPicks((prev) => ({ ...prev, [role]: next }));
+              }}
+              contactPicks={contactPicks}
+              onContactPicksChange={setContactPicks}
+              fixedContacts={fixedContacts}
+              canCreateParty={canCreateParty}
+              createParty={async (role, name) => {
+                try {
+                  const party = await createPartyMutation.mutateAsync({ name, party_type: role });
+                  return { value: party.id, label: party.name };
+                } catch {
+                  return null; // toasted by the mutation
+                }
+              }}
+              typedByRole={{
+                architect: typed?.architect_name,
+                main_contractor: typed?.main_contractor_name,
+              }}
+              newPartyIds={[...pickedPartyIds].filter((id) => !initialPartyIds.current.has(id))}
+            />
           </FormSection>
         )}
 

@@ -50,10 +50,10 @@ def _party(db: Session, company_id: str, party_type: str, name: str) -> Dict[str
         db.query(ProjectParty)
         .filter(
             ProjectParty.company_id == company_id,
-            ProjectParty.party_type == party_type,
             _name_expr(ProjectParty.name) == _key(name),
         )
-        .order_by(ProjectParty.created_at, ProjectParty.id)
+        # Any party may fill any role (PROJECT-PARTY-ROLES Q4 b); one usually in this role wins.
+        .order_by((ProjectParty.party_type != party_type), ProjectParty.created_at, ProjectParty.id)
         .first()
     )
     if row:

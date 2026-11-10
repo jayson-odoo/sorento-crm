@@ -61,15 +61,21 @@ function Field({
 function EditField({
   id,
   label,
+  action,
   children,
 }: {
   id: string;
   label: string;
+  /** A small link beside the label (Attn's "Choose contacts"). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="min-w-0 space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -164,6 +170,8 @@ export function QuotationDocumentHeader({
   details = [],
   preparedBy = null,
   onChange,
+  recipientPicker,
+  attnAction,
 }: {
   /**
    * The document as the screen currently stands: the shell hands down the server's row with the
@@ -188,6 +196,10 @@ export function QuotationDocumentHeader({
    * screen's one Save sends it with the lines.
    */
   onChange?: (patch: QuotationDocumentBody) => void;
+  /** PROJECT-PARTY-ROLES PR 2: the Party picker that heads the TO block in an edit session. */
+  recipientPicker?: React.ReactNode;
+  /** Beside the Attn label in an edit session: "Choose contacts". */
+  attnAction?: React.ReactNode;
 }) {
   const lines = addressLines(document.recipient_address_snapshot);
   // `formatDateInMalaysia` answers '' on anything it cannot read, and a blank where a date
@@ -203,6 +215,7 @@ export function QuotationDocumentHeader({
           </p>
           {onChange ? (
             <div className="space-y-3 pt-1">
+              {recipientPicker}
               <EditField id="quotation-recipient-name" label="Name">
                 <Input
                   id="quotation-recipient-name"
@@ -258,7 +271,7 @@ export function QuotationDocumentHeader({
                   placeholder="Their email address"
                 />
               </EditField>
-              <EditField id="quotation-attn-name" label="Attn">
+              <EditField id="quotation-attn-name" label="Attn" action={attnAction}>
                 <Input
                   id="quotation-attn-name"
                   value={document.attn_name ?? ''}

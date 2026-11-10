@@ -54,9 +54,11 @@ import {
   useChangeProjectStatus,
   useSetProjectOutcome,
   useDeleteProject,
+  usePartyRoles,
   useProject,
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
+import { PARTY_ROLE_DEVELOPER } from '../../_shared/lib/partyRoles';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
@@ -138,6 +140,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const activeTab = resolveProjectTab(searchParams.get('tab'));
 
   const { data: project, isLoading, isError, error } = useProject(projectId);
+  const partyRoles = usePartyRoles();
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
   const setOutcome = useSetProjectOutcome();
@@ -554,21 +557,27 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             </Section>
 
             <Section title="Parties">
-              <Fact label="Architect" value={project.architect_name} />
-              <Fact label="Main contractor" value={project.main_contractor_name} />
-              {LINKED_ROLES.map(([role, label]) => (
-                <Fact
-                  key={role}
-                  label={label}
-                  value={
-                    (project.party_links ?? [])
-                      .filter((link) => link.role === role)
-                      .map((link) => link.name)
-                      .filter(Boolean)
-                      .join(', ') || null
-                  }
-                />
-              ))}
+              {/* Same roles, order and labels as the form: the editable role list. */}
+              {(partyRoles.data ?? [])
+                .filter(
+                  (role) =>
+                    role.value !== PARTY_ROLE_DEVELOPER &&
+                    (role.is_active ||
+                      (project.party_links ?? []).some((link) => link.role === role.value)),
+                )
+                .map((role) => (
+                  <Fact
+                    key={role.value}
+                    label={role.is_active ? role.label : `${role.label} (inactive)`}
+                    value={
+                      (project.party_links ?? [])
+                        .filter((link) => link.role === role.value)
+                        .map((link) => link.name)
+                        .filter(Boolean)
+                        .join(', ') || null
+                    }
+                  />
+                ))}
             </Section>
 
             <SourceCard project={project} />
@@ -864,15 +873,6 @@ function formatMyr(value: string): string {
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
 }
-
-/** The roles a project links beyond architect and main contractor, in display order. */
-const LINKED_ROLES: [string, string][] = [
-  ['subcontractor', 'Subcontractors'],
-  ['trading_house', 'Trading houses'],
-  ['tender_party', 'Tender parties'],
-  ['consultant', 'Consultant'],
-  ['interior_designer', 'Interior designer'],
-];
 
 /** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 function labelise(value?: string | null): string | null {

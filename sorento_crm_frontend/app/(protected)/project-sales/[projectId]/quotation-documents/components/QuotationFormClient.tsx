@@ -68,6 +68,8 @@ import {
   type QuotationScopeEditing,
 } from '../../components/QuotationVersionEditor';
 import { QuotationNameDialog } from '../[documentId]/components/QuotationNameDialog';
+import { QuotationAttnChooser, QuotationRecipientPicker } from './QuotationRecipientPicker';
+import { withRecipient } from '../../../_shared/lib/quotationRecipientBody';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
 import {
   useQuotationEditSession,
@@ -449,6 +451,10 @@ export function QuotationFormClient({
         subject_title: project.data.title ?? '',
         recipient_name_snapshot:
           project.data.customer_name ?? project.data.developer_name ?? '',
+        // The "To" party (PROJECT-PARTY-ROLES PR 2): the developer by default, as before.
+        recipient_party_id: project.data.customer_name
+          ? null
+          : (project.data.developer_party_id ?? null),
         recipient_address_snapshot: '',
         recipient_phone_snapshot: project.data.customer_phone ?? '',
         recipient_email_snapshot: project.data.customer_email ?? '',
@@ -470,14 +476,16 @@ export function QuotationFormClient({
         applyState(start);
         return;
       }
-      setHeader(
-        Object.fromEntries(
+      setHeader({
+        ...(Object.fromEntries(
           HEADER_FIELDS.map((field) => [
             field,
             (document[field] as string | null) ?? '',
           ]),
-        ) as QuotationDocumentBody,
-      );
+        ) as QuotationDocumentBody),
+        recipient_party_id: document.recipient_party_id ?? null,
+        recipient_role: document.recipient_role ?? null,
+      });
       setScopes(
         document.scopes.map((scope) => ({
           key: scope.id,
@@ -734,7 +742,12 @@ export function QuotationFormClient({
   }
 
   function headerBody(): QuotationDocumentBody {
-    return headerBodyOf(header);
+    // The "To" party (PROJECT-PARTY-ROLES PR 2): picked, changed or cleared, and its Attn.
+    return withRecipient(
+      headerBodyOf(header),
+      header,
+      isEdit ? (saved.data?.recipient_party_id ?? null) : null,
+    );
   }
 
   function scopesBody(): QuotationFormScopeBody[] {
@@ -868,6 +881,9 @@ export function QuotationFormClient({
     (isEdit && (saved.isLoading || quotations.isLoading)) ||
     !header;
   const failed = isEdit && (saved.isError || (!saved.isLoading && !saved.data));
+
+  // The party is fixed once revision A is issued (owner Q5 a): a new party gets its own proposal.
+  const recipientLocked = isEdit && (saved.data?.issue_count ?? 0) > 0;
 
   const shownDocument: QuotationDocument = {
     ...(saved.data ?? placeholderDocument(projectId)),
@@ -1057,6 +1073,34 @@ export function QuotationFormClient({
                   setDirty(true);
                   setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
                 }}
+                recipientPicker={
+                  <QuotationRecipientPicker
+                    projectId={projectId}
+                    siteAddress={project.data?.address ?? null}
+                    value={header ?? {}}
+                    locked={recipientLocked}
+                    onChange={(patch) => {
+                      setDirty(true);
+                      setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                    }}
+                  />
+                }
+                attnAction={
+                  <QuotationAttnChooser
+                    value={header ?? {}}
+                    partyName={header?.recipient_name_snapshot ?? ''}
+                    locked={recipientLocked}
+                    // A party just picked (or a new proposal): its only contact becomes the Attn.
+                    autoPick={
+                      !isEdit ||
+                      (header?.recipient_party_id ?? null) !== (saved.data?.recipient_party_id ?? null)
+                    }
+                    onChange={(patch) => {
+                      setDirty(true);
+                      setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                    }}
+                  />
+                }
               />
             </FormSection>
 
