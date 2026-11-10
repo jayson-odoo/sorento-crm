@@ -273,12 +273,21 @@ export interface TagPreviewResponse {
  *  `selling` requires a promotion - the server rejects it without one. */
 export type PriceMode = 'list' | 'selling';
 
+/** One customer a request prints for (PRICETAG-REQUEST-LAYOUT). */
+export interface RequestCustomer {
+  code: string | null;
+  name: string;
+}
+
 export interface PriceTagRequestSummary {
   id: string;
   doc_number: string;
   debtor_code: string | null;
   /** Null on a draft: Save Draft validates nothing (D48a). */
   debtor_name: string | null;
+  /** Every customer, in pick order; the first is mirrored into `debtor_*`. Absent from an
+   *  older server; an older request answers its one debtor. */
+  customers?: RequestCustomer[];
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
@@ -527,6 +536,8 @@ async function unwrapNamingFields<T>(res: Response, fallback: string): Promise<T
 export interface CreatePriceTagRequestInput {
   debtor_code: string | null;
   debtor_name: string | null;
+  /** PRICETAG-REQUEST-LAYOUT: every customer; the server mirrors the first into `debtor_*`. */
+  customers?: RequestCustomer[];
   // D1 (S6): no request-level `promotion_id` any more - both `PriceTagRequestCreate`
   // and `...Update` `extra="forbid"` it now; the promotion is a LINE fact
   // (`PriceTagRequestLineInput.promotion_id`).

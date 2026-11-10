@@ -263,6 +263,20 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     expect(screen.getByRole('button', { name: 'Submit revision' })).toBeInTheDocument();
   });
 
+  it('PRICETAG-REQUEST-LAYOUT: Need by is the shared DatePicker, dd/mm/yyyy', async () => {
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
+    );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    fireEvent.click(screen.getByText('Edit'));
+
+    const needBy = (await screen.findByLabelText('Need by')) as HTMLInputElement;
+    expect(needBy.type).toBe('text');
+    expect(needBy.value).toBe('10/09/2026');
+  });
+
   it('Submit revision calls the revise action and returns to the read view', async () => {
     asMock(getRequest).mockResolvedValue(
       baseRequest({ status: 'new', portal_draft_at: null, revision: ALLOWED_POLICY }),
