@@ -6,7 +6,7 @@ provisioned installs keep the admin roles' access the moment the gate ships (PRI
 no other role is granted it.
 
 Revision ID: town_0001_view_perm
-Revises: qcf_0001_fax
+Revises: pfc_0001_line_is_section
 Create Date: 2026-11-10
 """
 import uuid
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "town_0001_view_perm"
-down_revision = "qcf_0001_fax"
+down_revision = "pfc_0001_line_is_section"
 branch_labels = None
 depends_on = None
 
