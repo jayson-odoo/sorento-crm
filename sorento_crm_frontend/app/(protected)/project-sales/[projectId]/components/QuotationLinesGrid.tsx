@@ -116,8 +116,11 @@ interface GridRow {
   key: string;
   /** Position in the WHOLE scope, so a search hides rows without renumbering the rest. */
   index: number;
-  /** The item number: lines only, heading rows take none (PROPOSAL-FORM-COLLAPSE). */
-  number: number | null;
+  /**
+   * The item number: lines only, heading rows take none (PROPOSAL-FORM-COLLAPSE). Optional so a
+   * matrix cell's row (`MatrixGridRow`) still reads as a grid row.
+   */
+  number?: number | null;
   staged: StagedQuotationLine;
 }
 

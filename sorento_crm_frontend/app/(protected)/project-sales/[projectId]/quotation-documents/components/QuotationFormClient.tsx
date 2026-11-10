@@ -826,7 +826,7 @@ export function QuotationFormClient({
 }
 
 /** The folded Header's one line: To, Subject, Date, Total; blanks are left out. */
-function headerSummary(document: QuotationDocument, total: string): string {
+function headerSummary(document: QuotationDocument, total: string | null): string {
   return [
     document.recipient_name_snapshot,
     document.subject_title,
@@ -838,7 +838,7 @@ function headerSummary(document: QuotationDocument, total: string): string {
 }
 
 /** The folded Lines' one line: how many scopes, and their total. */
-function linesSummary(count: number, total: string): string {
+function linesSummary(count: number, total: string | null): string {
   return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
 }
 
