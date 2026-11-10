@@ -436,10 +436,8 @@ def test_a_partial_update_says_what_was_made_and_never_nothing_was_changed(api, 
     body = client.post(_url(world)).json()
 
     assert body["outcome"] == "refused"
-    assert body["message"].startswith("Quantity and price changes were made. ") or body["message"].startswith(
-        "The quotation header was updated. "
-    )
-    assert "AutoCount refused the added lines: Item is not in AutoCount." in body["message"]
+    assert body["message"].startswith("The other changes were made. AutoCount refused the added line ")
+    assert body["message"].endswith(": Item is not in AutoCount.")
     assert "Nothing was changed" not in body["message"]
     db.refresh(world.document)
     assert world.document.autocount_edit_issue_id == issue2.id
@@ -461,7 +459,7 @@ def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key
     assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the PATCH step is done and is not sent again"
     first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
     assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
-    assert first.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-lines"
+    assert first.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-lines-3"
     assert first.content == second.content
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id

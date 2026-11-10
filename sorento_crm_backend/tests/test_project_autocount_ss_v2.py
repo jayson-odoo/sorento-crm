@@ -1,0 +1,481 @@
+"""AC-QTSO-CRM-2: the CRM side of SS AutoCount write API v2 (SS plan 61 section 6).
+
+SS v2 turns on `delete_line` and `cancel_doc` for quotations and sales orders. So:
+
+* the gateway is unchanged (crew, SS 4193fdc4): the PATCH takes changed rows (dtlKey >= 1) only,
+  and a new row is `POST .../lines {line{}}`, ONE per call (the CRM sent `{lines[]}` before);
+* a row AutoCount holds that the accepted revision no longer quotes is removed with the delete-line
+  route when the feed offers `delete_line`, the last line included (owner: no extra guards); with
+  `delete_line` off it still waits;
+* a sales order amendment row CANCEL BALANCE down to 0 removes that line the same way;
+* the new codes read in plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED,
+  ROW_HAS_TRANSFERS (refusals / mismatch). LOCATION_NOT_MOVED / ROW_VALUES_NOT_KEPT come only from
+  link / relink (the Stock Debt lane), never from a QT / SO write.
+
+Everything stays behind the admin switch (the existing switch tests pin that).
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+
+from tests._ac_write_support import (
+    BASE,
+    BOOK,
+    CAPS_PATH,
+    DOC_KEY,
+    DTL_1,
+    EDIT,
+    LAST_MODIFIED,
+    SO_CREATE_PATH,
+    VIEW,
+    WAITING,
+    WRITE,
+    add_amendment,
+    add_issue,
+    api_fixture,
+    cancel_balance_row,
+    caps_with,
+    detail,
+    done_body,
+    fake_ss,  # noqa: F401  (fixture)
+    order_row,
+    put_in_autocount,
+    refused_body,
+)
+from tests.test_project_autocount_qt_send import (
+    QT_DOC_PATH,
+    QT_KEY,
+    _mark_sent,
+    _new_product,
+    _read_back,
+)
+from tests.test_project_autocount_so_update import DTL_3, _third_line
+
+SO_DOC_PATH = f"{SO_CREATE_PATH}/{DOC_KEY}"
+DELETE_ON = {"book": BOOK, "capabilities": caps_with(delete_line=(True, None))}
+CANCEL_ON = {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))}
+TRANSFERRED_LINE = "has already been delivered or copied to another document in AutoCount"
+
+
+def D(value) -> Decimal:
+    return Decimal(str(value))
+
+
+@pytest.fixture
+def qt_api(fake_ss):
+    yield from api_fixture("qt", [VIEW, EDIT, WRITE], switch=True)
+
+
+@pytest.fixture
+def so_api(fake_ss):
+    yield from api_fixture("so", [VIEW, EDIT, WRITE], switch=True)
+
+
+def _qt_url(world) -> str:
+    return f"{BASE}/quotation-documents/{world.document.id}/autocount"
+
+
+def _qt_delete_path(dtl) -> str:
+    return f"{QT_DOC_PATH}/lines/{dtl}/delete"
+
+
+def _so_delete_path(dtl) -> str:
+    return f"{SO_DOC_PATH}/lines/{dtl}/delete"
+
+
+def _issue2(db, world):
+    _mark_sent(db, world)
+    issue2 = add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    return issue2
+
+
+def _answer_qt(fake_ss, world, *, held_extra=(), patch=None, deletes=None):
+    held = _read_back(world) + list(held_extra)
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held))
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = patch or (
+        200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held, last_modified="2026-11-10T09:00:00")
+    )
+    for dtl, answer in (deletes or {}).items():
+        fake_ss.answers[("POST", _qt_delete_path(dtl))] = answer
+    return held
+
+
+def _deleted(doc_no="QT000777", doc_key=QT_KEY, last_modified="2026-11-10T09:05:00"):
+    return (200, done_body(doc_no=doc_no, doc_key=doc_key, details=[], last_modified=last_modified))
+
+
+# =========================================================================== quotation: added lines
+
+
+def _add_new_line(db, world):
+    from app.models.projects import ProjectQuotationLine
+
+    p_new = _new_product(db, world)
+    db.add(
+        ProjectQuotationLine(
+            id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=world.version.id,
+            product_id=p_new.id, product_code_snapshot=p_new.product_code, description_snapshot="New item",
+            unit_price=Decimal("75.00"), quantity=Decimal("3"), uom="UNIT",
+            line_total=Decimal("225.00"), sort_order=9,
+        )
+    )
+    db.commit()
+    return p_new
+
+
+def test_a_new_row_goes_as_one_add_line_call_in_the_gateways_line_shape(qt_api, fake_ss):
+    """Crew, SS 4193fdc4: the PATCH takes dtlKey >= 1 only (0 answers 422); a new row is
+    `POST .../{docKey}/lines {companyCode, line{}}`, one per call."""
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    p_new = _add_new_line(db, world)
+    _answer_qt(fake_ss, world)
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = _deleted(last_modified="2026-11-10T09:01:00")
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "done", body
+    [patch] = fake_ss.to("PATCH", QT_DOC_PATH)
+    assert all(int(l["dtlKey"]) >= 1 for l in fake_ss.body(patch).get("lines", []))
+    [post] = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
+    sent = fake_ss.body(post)
+    assert sent["companyCode"] == "SRT" and "lines" not in sent
+    assert sent["line"]["itemCode"] == p_new.product_code and D(sent["line"]["qty"]) == 3
+    assert post.headers["Idempotency-Key"].startswith(f"crm-qt-{world.document.id}-{issue2.id}-update-lines-")
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+    assert world.document.autocount_last_modified == "2026-11-10T09:01:00"
+
+
+def test_a_refused_added_line_keeps_the_done_patch_and_the_retry_resends_only_that_line(qt_api, fake_ss):
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    p_new = _add_new_line(db, world)
+    _answer_qt(fake_ss, world)
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = (422, refused_body("ITEM_NOT_FOUND", "Item is not in AutoCount"))
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == (
+        f"The other changes were made. AutoCount refused the added line {p_new.product_code}: "
+        "Item is not in AutoCount."
+    )
+    db.refresh(world.document)
+    assert world.document.autocount_edit_issue_id == issue2.id
+    assert world.document.autocount_issue_id != issue2.id
+
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = _deleted()
+    assert client.post(_qt_url(world)).json()["outcome"] == "done"
+    assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1
+    first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
+    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
+
+
+# =========================================================================== quotation: remove line
+
+
+def test_a_row_the_revision_no_longer_quotes_is_removed_when_delete_line_is_on(qt_api, fake_ss):
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _answer_qt(
+        fake_ss, world,
+        held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)],
+        deletes={4: _deleted()},
+    )
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "done", body
+    assert body["waiting"] == []
+    assert "ZZT-OLD-CODE" in body["message"], "the done note names the removed line"
+    [delete] = fake_ss.to("POST", _qt_delete_path(4))
+    assert delete.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-delete-4"
+    assert fake_ss.body(delete)["companyCode"] == "SRT"
+    writes = [r for r in fake_ss.writes() if r.method != "GET"]
+    assert [r.method for r in writes] == ["PATCH", "POST"], "the edit goes first, then the removal"
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+    assert world.document.autocount_last_modified == "2026-11-10T09:05:00"
+
+
+def test_with_delete_line_off_the_row_still_waits_and_nothing_is_removed(qt_api, fake_ss):
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    _answer_qt(fake_ss, world, held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)])
+
+    body = client.post(_qt_url(world)).json()
+
+    assert [w["reason"] for w in body["waiting"]] == [WAITING]
+    assert fake_ss.to("POST", _qt_delete_path(4)) == []
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id != issue2.id
+
+
+def test_removing_every_line_is_allowed_on_an_update(qt_api, fake_ss):
+    """Owner (10 Nov): removing the LAST line is allowed, no extra guards."""
+    from app.models.projects import ProjectQuotationLine
+
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    db.query(ProjectQuotationLine).filter(ProjectQuotationLine.version_id == world.version.id).delete()
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _answer_qt(fake_ss, world, deletes={1: _deleted(), 2: _deleted(), 3: _deleted()})
+
+    response = client.post(_qt_url(world))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "done", response.json()
+    for dtl in (1, 2, 3):
+        assert len(fake_ss.to("POST", _qt_delete_path(dtl))) == 1
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+
+
+def test_a_row_with_transfers_is_refused_in_plain_words_and_the_retry_skips_the_done_patch(qt_api, fake_ss):
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _answer_qt(
+        fake_ss, world,
+        held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)],
+        deletes={4: (409, refused_body("ROW_HAS_TRANSFERS", "row 4 has transfers"))},
+    )
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert "ZZT-OLD-CODE" in body["message"] and TRANSFERRED_LINE in body["message"]
+    assert "row 4 has transfers" not in body["message"], "the code is read, not SS's text"
+    db.refresh(world.document)
+    assert world.document.autocount_edit_issue_id == issue2.id
+    assert world.document.autocount_issue_id != issue2.id
+
+    _answer_qt(
+        fake_ss, world,
+        held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)],
+        deletes={4: _deleted()},
+    )
+    assert client.post(_qt_url(world)).json()["outcome"] == "done"
+    assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the edit is done and not sent again"
+    assert len(fake_ss.to("POST", _qt_delete_path(4))) == 2
+
+
+def test_a_row_already_gone_counts_as_removed(qt_api, fake_ss):
+    client, db, world = qt_api
+    issue2 = _issue2(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _answer_qt(
+        fake_ss, world,
+        held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)],
+        deletes={4: (409, refused_body("ROW_NOT_FOUND", "no row 4"))},
+    )
+
+    assert client.post(_qt_url(world)).json()["outcome"] == "done"
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+
+
+# =========================================================================== sales order: remove line
+
+
+def _so_url(amendment) -> str:
+    return f"{BASE}/sales-orders/amendments/{amendment.id}/autocount"
+
+
+def _so_patch_done(fake_ss):
+    fake_ss.answers[("PATCH", SO_DOC_PATH)] = (200, done_body(last_modified="2026-11-10T10:00:00"))
+
+
+def test_cancel_balance_to_zero_removes_the_line_when_delete_line_is_on(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(
+        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
+    )
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _deleted(
+        doc_no="SO412345", doc_key=DOC_KEY, last_modified="2026-11-10T09:59:00"
+    )
+    _so_patch_done(fake_ss)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "done", body
+    assert body["waiting"] == []
+    [delete] = fake_ss.to("POST", _so_delete_path(DTL_3))
+    assert delete.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-delete-{DTL_3}"
+    [patch] = fake_ss.to("PATCH", SO_DOC_PATH)
+    assert [str(l["dtlKey"]) for l in fake_ss.body(patch)["lines"]] == [str(DTL_1)]
+    assert fake_ss.body(patch)["expectedLastModified"] == "2026-11-10T09:59:00", (
+        "the removal goes first; the edit carries the stamp it answered"
+    )
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is not None
+
+
+def test_a_remove_only_amendment_sends_no_patch(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _deleted(doc_no="SO412345", doc_key=DOC_KEY)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "done", body
+    assert fake_ss.to("PATCH", SO_DOC_PATH) == []
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is not None
+    calls = len(fake_ss.calls)
+    again = client.post(_so_url(amendment)).json()
+    assert again["message"] == "Already in AutoCount."
+    assert [r for r in fake_ss.calls[calls:] if r.url.path != CAPS_PATH] == []
+
+
+def test_a_so_line_with_transfers_is_refused_in_plain_words_and_nothing_else_goes(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(
+        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
+    )
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = (409, refused_body("ROW_HAS_TRANSFERS", "x"))
+    _so_patch_done(fake_ss)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "refused"
+    assert TRANSFERRED_LINE in body["message"]
+    assert fake_ss.to("PATCH", SO_DOC_PATH) == []
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is None
+
+
+def test_cancel_balance_to_a_non_zero_qty_still_waits_with_delete_line_on(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "2")])
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert [w["verb"] for w in body["waiting"]] == ["CANCEL BALANCE"]
+    assert fake_ss.to("POST", _so_delete_path(DTL_3)) == []
+
+
+def test_cancel_balance_to_zero_waits_with_the_feeds_reason_when_delete_line_is_off(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
+    db.commit()
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert [w["reason"] for w in body["waiting"]] == [WAITING]
+    assert [r for r in fake_ss.writes() if r.method != "GET"] == []
+
+
+def test_the_change_list_marks_a_zero_cancel_balance_sendable_when_delete_line_is_on(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+
+    rows = client.get(f"{BASE}/amendments/{amendment.id}/autocount-change-list").json()["rows"]
+
+    assert [(r["verb"], r["autocount_sendable"]) for r in rows] == [("CANCEL BALANCE", True)]
+
+
+# =========================================================================== codes in plain words
+
+
+def _qt_cancel(db, world, fake_ss, answer):
+    _mark_sent(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, CANCEL_ON)
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/cancel")] = answer
+
+
+def _cancel_url(world) -> str:
+    return f"{BASE}/quotation-documents/{world.document.id}/autocount/cancel"
+
+
+def test_doc_has_transfers_on_cancel_reads_in_plain_words(qt_api, fake_ss):
+    client, db, world = qt_api
+    _qt_cancel(db, world, fake_ss, (409, refused_body("DOC_HAS_TRANSFERS", "QT has ToDocType SO")))
+
+    body = client.post(_cancel_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == (
+        "AutoCount will not cancel it: it has already been delivered or copied to another document. "
+        "Nothing was changed."
+    )
+    db.refresh(world.document)
+    assert world.document.autocount_cancelled_at is None
+
+
+def test_doc_cancelled_on_cancel_records_it_as_cancelled(qt_api, fake_ss):
+    client, db, world = qt_api
+    _qt_cancel(db, world, fake_ss, (409, refused_body("DOC_CANCELLED", "cancelled")))
+
+    body = client.post(_cancel_url(world)).json()
+
+    assert body["message"] == "Already cancelled in AutoCount."
+    db.refresh(world.document)
+    assert world.document.autocount_cancelled_at is not None
+
+
+def test_doc_cancelled_on_an_update_reads_in_plain_words(qt_api, fake_ss):
+    client, db, world = qt_api
+    _issue2(db, world)
+    _answer_qt(fake_ss, world, patch=(409, refused_body("DOC_CANCELLED", "cancelled")))
+
+    body = client.post(_qt_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == "It is cancelled in AutoCount, so it cannot be changed. Nothing was changed."
+
+
+def test_cancel_ignored_is_not_cancelled_and_says_so(qt_api, fake_ss):
+    client, db, world = qt_api
+    answer = refused_body("CANCEL_IGNORED", "Cancelled reads F", outcome="mismatch")
+    _qt_cancel(db, world, fake_ss, (502, answer))
+
+    body = client.post(_cancel_url(world)).json()
+
+    assert body["outcome"] != "done"
+    assert body["message"] == "AutoCount did not cancel it. Check it in AutoCount."
+    db.refresh(world.document)
+    assert world.document.autocount_cancelled_at is None
+
+
+def test_an_existing_so_patch_key_and_body_shape_are_unchanged(so_api, fake_ss):
+    """Regression guard: an edit-only amendment is still one PATCH with the stored stamp."""
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
+    db.commit()
+    _so_patch_done(fake_ss)
+
+    client.post(_so_url(amendment))
+
+    [patch] = fake_ss.to("PATCH", SO_DOC_PATH)
+    assert fake_ss.body(patch)["expectedLastModified"] == LAST_MODIFIED
+    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"

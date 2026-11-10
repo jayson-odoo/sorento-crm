@@ -189,7 +189,7 @@ def test_qt_update_steps_use_their_base_keys_at_attempt_zero(qt_api, fake_ss, st
     [patch] = fake_ss.to("PATCH", QT_DOC)
     [lines] = fake_ss.to("POST", f"{QT_DOC}/lines")
     base = f"crm-qt-{world.document.id}-{issue2.id}-update"
-    assert _key(patch) == f"{base}-edit" and _key(lines) == f"{base}-lines"
+    assert _key(patch) == f"{base}-edit" and _key(lines) == f"{base}-lines-3", "one add-line call per new row, keyed by its place"
 
 
 def test_qt_cancel_uses_the_base_key_at_attempt_zero(qt_api, fake_ss, store):

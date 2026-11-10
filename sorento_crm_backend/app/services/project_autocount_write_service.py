@@ -92,6 +92,16 @@ ALREADY_CANCELLED = "Already cancelled in AutoCount."
 #: down to `to_value`? Off, it waits like CHANGE SO NO. One switch, both paths are built.
 _SEND_CANCEL_BALANCE_AS_QTY_EDIT = False
 
+# SS write API v2 (SS plan 61): its codes in plain words. The code is read, never SS's own text.
+DOC_HAS_TRANSFERS_TEXT = (
+    "AutoCount will not cancel it: it has already been delivered or copied to another document. "
+    "Nothing was changed."
+)
+DOC_CANCELLED_TEXT = "It is cancelled in AutoCount, so it cannot be changed. Nothing was changed."
+CANCEL_IGNORED_TEXT = "AutoCount did not cancel it. Check it in AutoCount."
+ROW_TRANSFERRED = "has already been delivered or copied to another document in AutoCount"
+LINE_NOT_DELETED_TEXT = "AutoCount did not remove the line. Check it in AutoCount."
+
 _QTY_VERBS = (VERB_ORDER, VERB_RESERVE_AND_ORDER)
 _DATE_VERBS = (VERB_ADVANCE, VERB_DELAY)
 
@@ -448,6 +458,18 @@ class ProjectAutocountWriteService:
                 f"Changed in AutoCount since {_since(stale_since)}. Nothing was changed; "
                 "check it in AutoCount, then press Update again.",
             )
+        if code == "DOC_HAS_TRANSFERS":
+            return self._blank("refused", DOC_HAS_TRANSFERS_TEXT)
+        if code == "DOC_CANCELLED":
+            return self._blank("refused", DOC_CANCELLED_TEXT)
+        if code == "ROW_HAS_TRANSFERS":
+            return self._blank(
+                "refused", f"A line {ROW_TRANSFERRED}, so it cannot be removed. Nothing was changed."
+            )
+        if code == "CANCEL_IGNORED":
+            return self._blank(str(outcome or "mismatch"), CANCEL_IGNORED_TEXT)
+        if code == "LINE_NOT_DELETED":
+            return self._blank(str(outcome or "mismatch"), LINE_NOT_DELETED_TEXT)
         if outcome == "refused" or outcome is None:
             return self._blank(
                 "refused",
@@ -673,12 +695,15 @@ class ProjectAutocountWriteService:
             amendment, amendment.delta_json or {}
         )
 
-        # Classify first (no gateway): what is sent, and what waits.
-        _flags, edits, edit_rows, waiting = self._classify(order, accepted)
+        # Classify first: what is sent, and what waits. The feed is read here only when a row
+        # would remove a line, so an edit-only amendment classifies with no gateway call.
+        caps = self._so_caps_for_removal(order, accepted)
+        can_delete = bool(caps and caps["delete_line"]["enabled"])
+        _flags, edits, edit_rows, waiting, removals = self._classify(order, accepted, can_delete=can_delete)
 
         result = self._blank("waiting", WAITING, order.autocount_doc_no)
         result["waiting"] = waiting
-        if not edits:
+        if not edits and not removals:
             return result
         if amendment.autocount_edit_sent_at is not None:
             # Sent in full already: a second press replays nothing.
@@ -688,10 +713,12 @@ class ProjectAutocountWriteService:
 
         # R8: nothing is written unless SS names the book this order's key belongs to.
         self._require_book(self._order_book(order), self.read_capabilities(order.company_id)[1])
-        caps = self.capabilities(order.company_id)["sales_orders"]
-        if not caps["edit_doc"]["enabled"]:
+        caps = caps or self.capabilities(order.company_id)["sales_orders"]
+        if edits and not caps["edit_doc"]["enabled"]:
             reason = caps["edit_doc"]["reason"] or WAITING
-            result["waiting"] = waiting + [self._waiting(row, reason) for row in edit_rows]
+            result["waiting"] = waiting + [
+                self._waiting(row, reason) for row in edit_rows + [r for _d, r in removals]
+            ]
             return result
 
         company = self._order_company_code(order)
@@ -710,19 +737,38 @@ class ProjectAutocountWriteService:
                 return failed
             expected = (held.get("document") or held).get("LastModified")
             doc_date = _iso_date((held.get("document") or held).get("DocDate"))
-        body = {
-            "companyCode": company,
-            "expectedLastModified": expected,
-            "lines": list(edits.values()),
-        }
-        if doc_date:
-            # SS finds the document by its own date; with none, it uses the date it staged.
-            body["docDate"] = doc_date
-        path = f"documents/sales-orders/{doc_key}"
-        answer = self._send_attempts(
-            f"crm-amd-{amendment.id}-update-edit",
-            lambda c, key: c.patch(path, body, idempotency_key=key),
-        )
+        # Removals go first: their bodies carry no stamp, so a retry replays them as sent, and
+        # the edit after them carries the stamp the last removal answered.
+        answer: Optional[Dict[str, Any]] = None
+        for dtl, row in removals:
+            gone = self._delete_line(
+                "sales-orders", doc_key, dtl, company, doc_date, f"crm-amd-{amendment.id}-update-delete"
+            )
+            if gone.get("errorCode") == "ROW_NOT_FOUND":
+                continue  # removed by an earlier press
+            if not self._is_done(gone):
+                refused = self._removal_refused(gone, row.get("product_code"), made=answer is not None)
+                refused["waiting"] = waiting
+                return refused
+            answer = gone
+            expected = (gone.get("document") or {}).get("LastModified") or expected
+            order.autocount_last_modified = expected
+            self.db.flush()
+        if edits:
+            body = {
+                "companyCode": company,
+                "expectedLastModified": expected,
+                "lines": list(edits.values()),
+            }
+            if doc_date:
+                # SS finds the document by its own date; with none, it uses the date it staged.
+                body["docDate"] = doc_date
+            path = f"documents/sales-orders/{doc_key}"
+            answer = self._send_attempts(
+                f"crm-amd-{amendment.id}-update-edit",
+                lambda c, key: c.patch(path, body, idempotency_key=key),
+            )
+        answer = answer or {"outcome": "done"}
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
             refused["waiting"] = waiting
@@ -753,12 +799,31 @@ class ProjectAutocountWriteService:
 
     def sendable_flags(self, order: ProjectSalesOrder, accepted: List[dict]) -> List[bool]:
         """Per accepted row: will Update in AutoCount send it? (the change list shows this)"""
-        return self._classify(order, accepted)[0]
+        caps = self._so_caps_for_removal(order, accepted)
+        return self._classify(order, accepted, can_delete=bool(caps and caps["delete_line"]["enabled"]))[0]
 
-    def _classify(self, order: ProjectSalesOrder, accepted: List[dict]):
-        """Split an amendment's accepted rows into the PATCH edits and the rows that wait.
+    @staticmethod
+    def _is_removal(row: dict) -> bool:
+        """CANCEL BALANCE down to 0: the CRM's own cancelled line, removed in AutoCount (SS v2)."""
+        if str(row.get("verb") or "") != VERB_CANCEL_BALANCE:
+            return False
+        try:
+            return _dec(row.get("to_value")) == _ZERO
+        except Exception:
+            return False
 
-        Returns (per-row sendable flags, edits by dtlKey, the rows that ride the PATCH, waiting).
+    def _so_caps_for_removal(self, order: ProjectSalesOrder, accepted: List[dict]):
+        """The sales order feed, read only when a row would remove a line."""
+        if not any(self._is_removal(r) for r in accepted):
+            return None
+        return self.capabilities(order.company_id)["sales_orders"]
+
+    def _classify(self, order: ProjectSalesOrder, accepted: List[dict], *, can_delete: bool = False):
+        """Split an amendment's accepted rows into the PATCH edits, the removals and the rows that wait.
+
+        Returns (per-row sendable flags, edits by dtlKey, the rows that ride the PATCH, waiting,
+        removals as (dtlKey, row)). A CANCEL BALANCE down to 0 is a removal when the feed offers
+        `delete_line`; otherwise it waits like before.
         A quantity row for an item that sits on more than one line waits: AutoCount's lines
         cannot be told apart from the row, so a person changes it by hand. Date rows act per
         line and still go.
@@ -770,16 +835,19 @@ class ProjectAutocountWriteService:
         edits: Dict[int, Dict[str, Any]] = {}
         edit_rows: List[dict] = []
         waiting: List[dict] = []
+        removals: List[tuple] = []
         for row in accepted:
             verb = str(row.get("verb") or "")
-            as_qty = verb in _QTY_VERBS or (
-                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
+            removal = can_delete and self._is_removal(row)
+            as_qty = not removal and (
+                verb in _QTY_VERBS
+                or (verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT)
             )
-            if not (as_qty or verb in _DATE_VERBS):
+            if not (removal or as_qty or verb in _DATE_VERBS):
                 waiting.append(self._waiting(row, WAITING))
                 flags.append(False)
                 continue
-            if as_qty and lines_of_product.get(row.get("product_id"), 0) > 1:
+            if (as_qty or removal) and lines_of_product.get(row.get("product_id"), 0) > 1:
                 waiting.append(self._waiting(row, SPLIT_ITEM))
                 flags.append(False)
                 continue
@@ -795,6 +863,10 @@ class ProjectAutocountWriteService:
                 waiting.append(self._waiting(row, WAITING_SYNC))
                 flags.append(False)
                 continue
+            if removal:
+                removals.append((dtl, row))
+                flags.append(True)
+                continue
             entry = edits.setdefault(dtl, {"dtlKey": dtl})
             if as_qty:
                 entry["qty"] = _num(row.get("to_value"))
@@ -802,7 +874,7 @@ class ProjectAutocountWriteService:
                 entry["deliveryDate"] = _iso_date(row.get("to_value"))
             edit_rows.append(row)
             flags.append(True)
-        return flags, edits, edit_rows, waiting
+        return flags, edits, edit_rows, waiting, removals
 
     @staticmethod
     def _waiting(row: dict, reason: str) -> dict:
@@ -837,17 +909,7 @@ class ProjectAutocountWriteService:
             f"crm-pso-{order.id}-cancel",
             lambda c, key: c.write(path, body, idempotency_key=key),
         )
-        result = self._interpret(answer, verb="cancelled")
-        if self._is_done(answer):
-            result["doc_no"] = result["doc_no"] or order.autocount_doc_no
-            result["message"] = f"{result['doc_no']} cancelled in AutoCount"
-            order.autocount_last_modified = (
-                (answer.get("document") or {}).get("LastModified") or order.autocount_last_modified
-            )
-            order.autocount_cancelled_at = datetime.utcnow()
-            order.autocount_cancelled_by = (actor or {}).get("id")
-            self.db.flush()
-        return result
+        return self._finish_cancel(order, answer, actor)
 
     # ------------------------------------------------------------ quotation
 
@@ -941,7 +1003,8 @@ class ProjectAutocountWriteService:
                 status_code=422, message=f"No location for the quotation lines. {why}", code="ac_missing_location"
             )
         payload = self._issue_lines(issue, location=location)
-        if not payload.lines:
+        if not payload.lines and not document.autocount_doc_key:
+            # Create needs a line; an update may remove every line (owner, 10 Nov).
             raise AppException(
                 status_code=422, message="There are no lines to send.", code="ac_no_lines"
             )
@@ -996,9 +1059,13 @@ class ProjectAutocountWriteService:
     def _update_quotation(self, document, issue, payload, company, remark):
         """Match the revision's lines to what AutoCount holds, by item code in order (Q8).
 
-        Two steps, each with its own stable key and its own progress marker, so a retry sends
-        only what is left and never rebuilds a step that already reached AutoCount:
-        the PATCH (header + changed lines) and the POST of added lines.
+        Three steps, each safe to retry: the PATCH (header + changed rows by DtlKey; rows left
+        out are kept), marked done per issue; one add-line POST per new row (`{line}`, the
+        gateway's shape; its key names the row's place in the revision); then, when the feed
+        offers `delete_line` (SS v2), the removal of each row the revision no longer quotes, the
+        last line included (owner, 10 Nov: no extra guards); with it off the row waits. The
+        document is read on every press, so a row already added matches by item code and a row
+        already removed is not in it: neither is ever sent twice.
         """
         key = _safe_key(document.autocount_doc_key)
         try:
@@ -1011,9 +1078,9 @@ class ProjectAutocountWriteService:
         held = list((held_doc.get("document") or held_doc).get("Details") or [])
         doc_date = _iso_date((held_doc.get("document") or held_doc).get("DocDate"))
         used: set = set()
-        patched: List[dict] = []
-        adds: List[dict] = []
-        for line in payload.lines:
+        rows: List[dict] = []
+        adds: List[tuple] = []
+        for place, line in enumerate(payload.lines):
             match = next(
                 (
                     i
@@ -1023,33 +1090,41 @@ class ProjectAutocountWriteService:
                 None,
             )
             if match is None:
-                adds.append(_wire_line(line))
+                adds.append((place, _wire_line(line)))
                 continue
             used.add(match)
             d = held[match]
             if _dec(d.get("Qty")) != line["qty"] or _dec(d.get("UnitPrice")) != line["unitPrice"]:
-                patched.append(
+                rows.append(
                     {"dtlKey": d.get("DtlKey"), "qty": _num(line["qty"]), "unitPrice": _num(line["unitPrice"])}
                 )
-        waiting = [
-            {
-                "verb": "REMOVE_LINE",
-                "line_no": d.get("Seq"),
-                "item_code": d.get("ItemCode"),
-                "reason": WAITING,
-            }
-            for i, d in enumerate(held)
-            if i not in used
-        ]
+        gone = [d for i, d in enumerate(held) if i not in used]
+        caps = self.capabilities(document.company_id)["quotations"]
+        removing = bool(gone) and caps["delete_line"]["enabled"]
+        waiting = (
+            []
+            if removing
+            else [
+                {
+                    "verb": "REMOVE_LINE",
+                    "line_no": d.get("Seq"),
+                    "item_code": d.get("ItemCode"),
+                    "reason": caps["delete_line"]["reason"] or WAITING,
+                }
+                for d in gone
+            ]
+        )
         edit_done = document.autocount_edit_issue_id == issue.id
-        lines_done = document.autocount_lines_issue_id == issue.id
-        need_patch = not edit_done  # the header (new revision ref) goes once per issue
-        need_adds = bool(adds) and not lines_done
+        if document.autocount_lines_issue_id == issue.id:
+            adds = []
+        removed: List[dict] = []
 
         def finish(answer: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             result = self._interpret(answer or {"outcome": "done"}, verb="updated")
             result["doc_no"] = result["doc_no"] or document.autocount_doc_no
             result["message"] = f"{result['doc_no']} updated in AutoCount"
+            if removed:
+                result["message"] += ". Removed: " + ", ".join(str(d.get("ItemCode") or "") for d in removed) + "."
             result["skipped"] = payload.skipped
             result["exploded"] = payload.exploded
             result["waiting"] = waiting
@@ -1060,7 +1135,7 @@ class ProjectAutocountWriteService:
             self.db.flush()
             return result
 
-        if not need_patch and not need_adds:
+        if edit_done and not adds and not removing:
             if waiting:
                 result = self._blank("waiting", WAITING, document.autocount_doc_no)
                 result["waiting"] = waiting
@@ -1068,17 +1143,15 @@ class ProjectAutocountWriteService:
                 result["exploded"] = payload.exploded
                 return result
             return finish(None)
-
-        caps = self.capabilities(document.company_id)["quotations"]
-        if need_patch and not caps["edit_doc"]["enabled"]:
+        if not edit_done and not caps["edit_doc"]["enabled"]:
             return self._blank("refused", caps["edit_doc"]["reason"] or WAITING)
-        if need_adds and not caps["add_line"]["enabled"]:
+        if adds and not caps["add_line"]["enabled"]:
             return self._blank("refused", caps["add_line"]["reason"] or WAITING)
 
         stale_since = document.autocount_last_modified
         base_key = f"crm-qt-{document.id}-{issue.id}-update"
         last: Optional[Dict[str, Any]] = None
-        if need_patch:
+        if not edit_done:
             body = {
                 "companyCode": company,
                 "header": {"remark1": remark},
@@ -1086,8 +1159,8 @@ class ProjectAutocountWriteService:
             }
             if doc_date:
                 body["docDate"] = doc_date
-            if patched:
-                body["lines"] = patched
+            if rows:
+                body["lines"] = rows
             answer = self._send_attempts(
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
@@ -1105,43 +1178,86 @@ class ProjectAutocountWriteService:
             )
             self.db.flush()
             last = answer
-            edit_done = True
-        if need_adds:
+        for place, wire in adds:
             add_body = {
                 "companyCode": company,
                 "expectedLastModified": document.autocount_last_modified,
-                "lines": adds,
+                "line": wire,
             }
-            add_answer = self._send_attempts(
-                f"{base_key}-lines",
-                lambda c, idem: c.write(
-                    f"documents/quotations/{key}/lines", add_body, idempotency_key=idem
-                ),
+            if doc_date:
+                add_body["docDate"] = doc_date
+            answer = self._send_attempts(
+                f"{base_key}-lines-{place}",
+                lambda c, idem: c.write(f"documents/quotations/{key}/lines", add_body, idempotency_key=idem),
             )
-            if not self._is_done(add_answer):
-                refused = self._interpret(add_answer, verb="updated", stale_since=stale_since)
-                if self._is_stale(add_answer) and last is None:
+            if not self._is_done(answer):
+                refused = self._interpret(answer, verb="updated", stale_since=stale_since)
+                if self._is_stale(answer) and last is None:
                     # Nothing was written this press, so the read before it is the newest stamp.
                     self._keep_held_stamp(document, held_doc)
-                if edit_done and refused["outcome"] == "refused":
+                if refused["outcome"] == "refused" and not self._is_stale(answer):
                     refused["message"] = (
-                        f"{'Quantity and price changes were made' if patched else 'The quotation header was updated'}. "
-                        f"AutoCount refused the added lines: {self._reason_of(add_answer)}."
+                        f"The other changes were made. AutoCount refused the added line "
+                        f"{wire.get('itemCode')}: {self._reason_of(answer)}."
                     )
-                elif edit_done:
-                    refused["message"] = (
-                        f"{'Quantity and price changes were made' if patched else 'The quotation header was updated'}. "
-                        f"{refused['message']}"
-                    )
+                else:
+                    refused["message"] = f"The other changes were made. {refused['message']}"
                 refused["waiting"] = waiting
                 return refused
-            document.autocount_lines_issue_id = issue.id
+            last = answer
             document.autocount_last_modified = (
-                (add_answer.get("document") or {}).get("LastModified")
-                or document.autocount_last_modified
+                (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
             )
-            last = add_answer
+            self.db.flush()
+        if adds:
+            document.autocount_lines_issue_id = issue.id
+            self.db.flush()
+        if removing:
+            for d in gone:
+                answer = self._delete_line(
+                    "quotations", key, d.get("DtlKey"), company, doc_date, f"{base_key}-delete"
+                )
+                if answer.get("errorCode") == "ROW_NOT_FOUND":
+                    removed.append(d)  # already gone (an earlier press): nothing left to do
+                    continue
+                if not self._is_done(answer):
+                    refused = self._removal_refused(answer, d.get("ItemCode"), made=True)
+                    if self._is_stale(answer) and last is None:
+                        self._keep_held_stamp(document, held_doc)
+                    refused["waiting"] = waiting
+                    return refused
+                removed.append(d)
+                last = answer
+                document.autocount_last_modified = (
+                    (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
+                )
+                self.db.flush()
         return finish(last)
+
+    def _delete_line(
+        self, kind: str, doc_key: str, dtl_key: Any, company: str, doc_date: Optional[str], base_key: str
+    ) -> Dict[str, Any]:
+        """SS v2 delete-line route. The body never carries a stamp, so a retry of the same row is
+        the same key and body and SS replays its stored answer instead of answering a conflict."""
+        dtl = _safe_key(dtl_key)
+        body: Dict[str, Any] = {"companyCode": company}
+        if doc_date:
+            body["docDate"] = doc_date
+        return self._send_attempts(
+            f"{base_key}-{dtl}",
+            lambda c, idem: c.write(f"documents/{kind}/{doc_key}/lines/{dtl}/delete", body, idempotency_key=idem),
+        )
+
+    def _removal_refused(self, answer: Dict[str, Any], item: Any, *, made: bool) -> Dict[str, Any]:
+        refused = self._interpret(answer, verb="updated")
+        prefix = "The other changes were made. " if made else ""
+        if answer.get("errorCode") == "ROW_HAS_TRANSFERS":
+            refused["message"] = f"{prefix}Line {item} {ROW_TRANSFERRED}, so it cannot be removed."
+        elif made and refused["outcome"] == "refused" and answer.get("errorCode") != "DOC_STALE":
+            refused["message"] = f"{prefix}AutoCount refused removing line {item}: {self._reason_of(answer)}."
+        elif made:
+            refused["message"] = f"{prefix}{refused['message']}"
+        return refused
 
     def _keep_held_stamp(self, document, held_doc: Optional[dict]) -> None:
         """B10: after DOC_STALE keep the stamp read just before the write (one read, no second)."""
@@ -1175,14 +1291,22 @@ class ProjectAutocountWriteService:
             f"crm-qt-{document.id}-cancel",
             lambda c, key: c.write(path, body, idempotency_key=key),
         )
+        return self._finish_cancel(document, answer, actor)
+
+    def _finish_cancel(self, record, answer: Dict[str, Any], actor: Optional[dict]) -> Dict[str, Any]:
+        """Done, or SS saying it is already cancelled (DOC_CANCELLED), records the cancel."""
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):
-            result["doc_no"] = result["doc_no"] or document.autocount_doc_no
+            result["doc_no"] = result["doc_no"] or record.autocount_doc_no
             result["message"] = f"{result['doc_no']} cancelled in AutoCount"
-            document.autocount_last_modified = (
-                (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
-            )
-            document.autocount_cancelled_at = datetime.utcnow()
-            document.autocount_cancelled_by = (actor or {}).get("id")
-            self.db.flush()
+        elif answer.get("errorCode") == "DOC_CANCELLED":
+            result = self._blank("done", ALREADY_CANCELLED, record.autocount_doc_no)
+        else:
+            return result
+        record.autocount_last_modified = (
+            (answer.get("document") or {}).get("LastModified") or record.autocount_last_modified
+        )
+        record.autocount_cancelled_at = datetime.utcnow()
+        record.autocount_cancelled_by = (actor or {}).get("id")
+        self.db.flush()
         return result
