@@ -78,7 +78,6 @@ import AttachmentPreviewModal, {
 import { priceTagRequestsPagerQuery } from '../lib/listQuery';
 import {
   priceTagStatusLabel,
-  priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import {
   formatDate,
@@ -782,11 +781,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <CardTitle className="text-lg">{request.doc_number}</CardTitle>
                 {request.status && (
-                  <span
-                    className={`${STATUS_PILL_BASE} ${priceTagStatusPillClass(request.status)}`}
-                  >
+                  <Badge status={request.status} appearance="light">
                     {priceTagStatusLabel(request.status)}
-                  </span>
+                  </Badge>
                 )}
                 {/* The product data gate (r9 D18): the tags are drawn from what
                     was pinned, and this says how many of them master data has

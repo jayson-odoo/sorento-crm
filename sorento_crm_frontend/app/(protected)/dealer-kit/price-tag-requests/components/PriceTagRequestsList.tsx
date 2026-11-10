@@ -34,7 +34,6 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   priceTagStatusLabel,
-  priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -244,11 +243,9 @@ function StaffPriceTagRequestsList() {
           const status = displayStatus(row.original);
           if (!status) return '-';
           return (
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(status)}`}
-            >
+            <Badge status={status} appearance="light">
               {priceTagStatusLabel(status)}
-            </span>
+            </Badge>
           );
         },
         meta: {

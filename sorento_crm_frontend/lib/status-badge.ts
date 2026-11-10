@@ -59,6 +59,14 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   partial_received: 'info',
   fully_received: 'success',
 
+  // Price tag requests (UIUX-QUICK-WINS item 4): their own pill now resolves here too.
+  designing: 'warning',
+  proof_ready: 'info',
+  changes_requested: 'warning',
+  ready_for_collection: 'info',
+  collected: 'success',
+  void: 'secondary',
+
   // Info / updated / neutral-positive
   updated: 'info',
   submitted: 'info',
