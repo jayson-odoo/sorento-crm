@@ -1032,6 +1032,36 @@ describe('QuotationFormClient edit', () => {
     );
   });
 
+  // INSERT-SECTION-FIX B1: Save clears the server draft but this tab keeps its claim, so a change
+  // landing after Save (a refetch re-seeding the form while the page navigates away) must not
+  // write the draft back: the read page would then show an unsaved draft nobody made.
+  it('after a successful Save, a later change writes no draft', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/99' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1'));
+    const draftsBefore = saveQuotationFormDraft.mock.calls.length;
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/100' } });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(saveQuotationFormDraft).toHaveBeenCalledTimes(draftsBefore);
+  });
+
+  // INSERT-SECTION-FIX B1 (review): with saving paused after Save, anything typed while the next
+  // page loads would be lost silently, and a second click would send a second PATCH. The form stays
+  // locked from a successful Save until the page has left.
+  it('after a successful Save, the form stays locked while the page leaves', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/99' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
+    expect(screen.getByLabelText('Your Ref').closest('[inert]')).not.toBeNull();
+    expect(updateQuotationDocument).toHaveBeenCalledTimes(1);
+  });
+
   it('QUOTE-AUTOSAVE Q4: the older tab goes view-only, naming who opened it, and cannot Save', async () => {
     const { DraftNotHolderError } = await vi.importActual<
       typeof import('../../../_shared/services/quotationDocumentService')

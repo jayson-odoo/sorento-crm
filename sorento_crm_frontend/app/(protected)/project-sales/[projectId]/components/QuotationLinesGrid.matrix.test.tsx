@@ -7,7 +7,8 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MotionGlobalConfig } from 'motion/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@/lib/toast';
 import type {
@@ -754,6 +755,38 @@ describe('duplicating a column header', () => {
     ]);
     expect(next[1].cols.map((item) => item.label)).toEqual(['1 BH', 'Balcony']);
     expect(next[1].key).not.toBe('a');
+  });
+
+  // INSERT-SECTION-FIX (review): in a browser the menu plays its exit animation, the copy's box
+  // took the caret inside that window, and the pointer leaving the clicked item then made Radix
+  // focus the menu itself (react-menu onItemLeave). The caret must land in the copy and stay.
+  it('right-click Duplicate leaves the caret in the copy once the menu has closed', async () => {
+    MotionGlobalConfig.skipAnimations = false;
+    try {
+      let view: ReturnType<typeof renderGrid> | null = null;
+      const onChange = vi.fn((next: MatrixHeader[]) => {
+        view?.rerenderWith({ matrix: { columns: next, onChange } });
+      });
+      view = renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+      const item = await rightClickHeader('Type A - 1 BH');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        fireEvent.click(item);
+        act(() => {
+          vi.runOnlyPendingTimers();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(item.isConnected).toBe(true);
+      fireEvent.pointerOut(item, { pointerType: 'mouse', relatedTarget: document.body });
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+      await waitFor(() =>
+        expect(screen.getByRole('textbox', { name: 'Column header Type A - 1 BH (copy)' })).toHaveFocus(),
+      );
+    } finally {
+      MotionGlobalConfig.skipAnimations = true;
+    }
   });
 
   it('adds no icon to the header, and a sub-column right-click offers no Duplicate', async () => {
