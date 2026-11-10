@@ -122,7 +122,7 @@ export default function ScheduledTasksList() {
         cell: ({ row }) => <OneLine text={row.original.name} className="font-medium" />,
         size: 240,
         minSize: 140,
-        enableHiding: false,
+        enableHiding: true,
         meta: { headerTitle: 'Name' },
       },
       {
