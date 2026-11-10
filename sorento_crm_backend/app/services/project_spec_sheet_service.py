@@ -361,6 +361,9 @@ def _version_lines(db: Session, version_ids: Sequence[str]) -> List[tuple]:
             heading = (line.band_label or "").strip()
             if heading:
                 section = heading
+            # A heading row sets the section and is never an item itself (PROPOSAL-FORM-COLLAPSE).
+            if line.is_section:
+                continue
             lines.append((line, section))
     return lines
 

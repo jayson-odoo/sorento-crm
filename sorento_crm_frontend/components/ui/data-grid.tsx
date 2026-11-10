@@ -149,7 +149,16 @@ export interface DataGridProps<TData extends object> {
    * The caller owns the grouping rule. Members must already be contiguous -
    * order them server-side - or the same group will render more than once.
    */
-  renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;
+  // Method syntax (bivariant) so a caller's typed row, e.g. `(row: GridRow) => ...`, still fits.
+  renderGroupHeader?(row: unknown, previousRow: unknown | null): ReactNode | null;
+  /**
+   * Optional: draw THIS row as one full-width cell instead of its columns (the quotation
+   * grid's section heading rows). Return null for an ordinary row. Only the draggable-rows
+   * table (`DataGridTableDndRows`) honours it; the row keeps its drag identity.
+   */
+  // `overlay` is set when the row is drawn as the floating drag preview: answer with a static
+  // copy (no inputs, no drag handle of its own).
+  renderFullRow?(row: unknown, options?: { overlay?: boolean }): ReactNode | null;
   /**
    * Optional per-user per-listing key for persisting column visibility/order.
    * Expected to be the RBAC view permission slug (e.g. `order_management.orders.view`).
