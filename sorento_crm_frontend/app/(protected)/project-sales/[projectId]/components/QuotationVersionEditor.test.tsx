@@ -18,6 +18,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MotionGlobalConfig } from 'motion/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@/lib/toast';
 import type {
@@ -2989,5 +2990,87 @@ describe('QuotationVersionEditor: an unsaved line keeps its product code across 
     const picker = await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
     expect(picker).toHaveTextContent('SRT-BASIN-02');
     expect(screen.queryByText('Selected product')).toBeNull();
+  });
+});
+
+describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the closing menu', () => {
+  // vitest.setup skips every animation, so a menu would unmount the instant it closes. A browser
+  // plays the exit, and that window is where the bug lives: run the animations for real here.
+  beforeEach(() => {
+    MotionGlobalConfig.skipAnimations = false;
+  });
+  afterEach(() => {
+    MotionGlobalConfig.skipAnimations = true;
+  });
+
+  /**
+   * Click a menu item the way a real browser plays it out: the menu runs its exit animation (the
+   * content stays mounted until it ends), anything the click queued with a timer (a focus move,
+   * say) runs inside that window, and then the pointer leaving the clicked item makes Radix focus
+   * the menu itself (react-menu onItemLeave). React derives onPointerLeave from pointerout.
+   */
+  async function clickAndLeaveClosingMenu(item: HTMLElement) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fireEvent.click(item);
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(item.isConnected).toBe(true);
+    fireEvent.pointerOut(item, { pointerType: 'mouse', relatedTarget: document.body });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  }
+
+  /** The session's rows in order, headings as `H:<label>`, lines as their id (the write body
+   *  leaves an unnamed heading out, so it is read from the session itself). */
+  function stagedOrder(): string[] {
+    return (session?.scopes[QUOTATION.id]?.lines ?? []).map((l) =>
+      l.draft.is_section ? `H:${l.draft.band_label ?? ''}` : String(l.id),
+    );
+  }
+
+  it('row "..." menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+
+    fireEvent.change(heading, { target: { value: 'PAGE 2' } });
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'H:PAGE 2', 'l2']));
+    expectNothingWritten();
+  });
+
+  it('right-click menu: Insert a section above keeps the heading above that line and gives it the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    fireEvent.contextMenu(rowOf('A-2').querySelector('td') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
+  });
+
+  it('a heading left empty and blurred by the user still goes, and no line moves', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    openTrigger('Line actions on A-2');
+    const item = await screen.findByRole('menuitem', { name: 'Insert a section above' });
+    await clickAndLeaveClosingMenu(item);
+    const heading = await screen.findByRole('textbox', { name: 'Section heading above A-2' });
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.blur(heading);
+    await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'l2']));
+    expect(screen.queryByRole('textbox', { name: 'Section heading above A-2' })).toBeNull();
   });
 });
