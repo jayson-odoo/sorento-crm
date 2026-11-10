@@ -29,6 +29,12 @@ Plan: `PLAN-ac-qtso-crm-04nov.md`. Mock: `ac-qtso-crm-04nov-mockup.html`. Ruling
 - U16. Rate-only lines are not sent; product sets go as components (part qty x set qty, driver at the set rate, others zero); the result note names each skipped line and each exploded set.
 - U17. A later accepted revision of a quotation already in AutoCount shows Update in AutoCount.
 
+## SS write API v2 (AC-QTSO-CRM-2, 10 Nov)
+- U21. Quotation update: the PATCH carries only changed rows (DtlKey >= 1); each new row is one `POST .../lines {line}` call, keyed `-update-lines-{n}`; a refused add says the other changes were made and names the row; a retry resends only what is left.
+- U22. With `delete_line` on, a row the accepted revision no longer quotes is removed (`POST .../lines/{dtlKey}/delete`) after the edit, the last line included; with it off it waits "Waiting for AutoCount". The done note names the removed rows.
+- U23. With `delete_line` on, an amendment row CANCEL BALANCE down to 0 removes that SO line before the PATCH; a non-zero CANCEL BALANCE still waits; the change list marks it sendable.
+- U24. Plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED, LINE_NOT_DELETED, ROW_HAS_TRANSFERS (naming the row). DOC_CANCELLED on a cancel records it as cancelled. ROW_NOT_FOUND on a removal counts as removed.
+
 ## Security
 - U18. New permission slug `projects.autocount.write` (granted to superadmin and admin by migration); without it no action renders and the routes answer 403.
 - U19. companyCode and every docKey are resolved on the server from the CRM record, never taken from the request.

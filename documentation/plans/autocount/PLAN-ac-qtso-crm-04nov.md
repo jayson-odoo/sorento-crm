@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Review (round 7: B5 / B10 / F12 done, reviewer READY).
+Lane: AC-QTSO-CRM. Status: Review (round 8, AC-QTSO-CRM-2: SS write API v2 remove line + plain codes; round 7 reviewer READY).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -250,3 +250,24 @@ main part is more than one per set (set RM100 x 2 sets, main part 2 per set -> 4
   2 sets = 6 units: 5 x 33.33 + 1 x 33.35 = RM200.00. Only `qty` and `unitPrice` are used, so no discount semantics are assumed.
 - The other parts stay at zero. The result note says the set went as its parts (unchanged).
 - The SO draft's set split (`project_so_draft_service.py:1237`) is NOT changed in this lane; crew decides a lane after the proof note.
+
+## SS write API v2 (AC-QTSO-CRM-2, 10 Nov; SS #230 at 4193fdc4, SS plan 61 section 6)
+
+Crew-verified gateway (SS `57-autocount-write-qtso-contract.md:36-52,156-227,341-370`): #230 changed no CRM-facing route,
+body or answer; it switched `delete_line` and `cancel_doc` on for QT / SO / PO. Removing the last line is allowed (owner: no
+extra guards; SS has no ROW_LAST_LINE).
+- Quotation update keeps its steps. The PATCH takes changed rows only (`dtlKey >= 1`; 0 answers 422), omitted rows are kept. A
+  new row is `POST .../{docKey}/lines {companyCode, docDate?, expectedLastModified, line{}}`, ONE per call (the CRM sent
+  `{lines[]}` before), key `crm-qt-{doc}-{issue}-update-lines-{n}` (n = the row's place in the revision).
+- Remove line, quotation: each row AutoCount holds that the accepted revision no longer quotes goes to
+  `POST .../{docKey}/lines/{dtlKey}/delete {companyCode, docDate?}` after the PATCH and the adds, key
+  `...-update-delete-{dtlKey}`, when the feed offers `delete_line`; with it off the row waits as before. The last line too:
+  an update with no sendable line still goes (create still needs one). The done note names the removed rows.
+- Remove line, sales order: an accepted amendment row CANCEL BALANCE down to 0 (the CRM's own cancelled line) is a removal when
+  `delete_line` is on; removals go before the PATCH (their bodies carry no stamp, so a retry replays them), key
+  `crm-amd-{id}-update-delete-{dtlKey}`. A CANCEL BALANCE to a non-zero qty still waits on the pending ruling. The change list
+  reads the feed only when such a row exists. ROW_NOT_FOUND on a removal counts as already removed.
+- Cancel: unchanged route; the Cancel buttons already follow `cancel_doc`, so they light up from the feed. DOC_CANCELLED on a
+  cancel records the cancel ("Already cancelled in AutoCount.").
+- Plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED, LINE_NOT_DELETED, ROW_HAS_TRANSFERS (naming the row on a
+  removal). LOCATION_NOT_MOVED / ROW_VALUES_NOT_KEPT come only from link / relink (Stock Debt), never from a QT / SO write.
