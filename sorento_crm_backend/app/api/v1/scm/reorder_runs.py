@@ -259,16 +259,19 @@ def list_reorder_runs(
         for wid in (r["warehouse_ids"] or []):
             all_ids.add(str(wid))
     code_by_id: dict[str, str] = {}
+    active_ids: set[str] = set()
     if all_ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "SELECT id::text AS id, warehouse_code, is_active FROM warehouses "
             "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": list(all_ids)}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
+            if wr["is_active"]:
+                active_ids.add(wr["id"])
 
     run_ids = [str(r["id"]) for r in rows]
     buy_counts = _costed_buy_counts(db, run_ids)
-    data = [_list_item(r, code_by_id, buy_counts) for r in rows]
+    data = [_list_item(r, code_by_id, buy_counts, active_ids=active_ids) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
@@ -304,6 +307,8 @@ def _list_item(
     buy_counts: dict[str, int] | None = None,
     counts: dict[str, int] | None = None,
     awaiting_rows: int = 0,
+    *,
+    active_ids: set[str] | None = None,
 ) -> dict:
     """One run-history row: scope resolved to warehouse codes + the completed
     summary counts frozen in ``run_log`` (buy_count overridden with the live
@@ -345,7 +350,11 @@ def _list_item(
         "is_scheduled": _key(r, "created_by") is None,
         # A run launched with no warehouse scope stores every ACTIVE warehouse, so "60
         # warehouses" and "all" are the same plan and only one of them is readable.
-        "is_all_warehouses": _covers_every_warehouse(wids, _key(r, "warehouses_then")),
+        # SCM-INACTIVE-LOCATIONS: only ACTIVE ticked ids count, the same reading as the
+        # plan's own header (`reorder_run_service.resolve_run_scope`); a location
+        # deactivated since must not lift a ticked scope to "All". `active_ids` None (a
+        # caller that resolved no activity) keeps the raw count.
+        "is_all_warehouses": _list_is_all(wids, active_ids, _key(r, "warehouses_then")),
         # Null = the whole catalogue (the daily run's own scope), never "unknown": the run
         # stores no product list when none was asked for.
         "product_count": (
@@ -367,6 +376,17 @@ def _list_item(
         # buyer knows why a plan nobody here launched exists.
         "requested_via": _key(r, "requested_via"),
     }
+
+
+def _list_is_all(wids: list[str], active_ids: set[str] | None, warehouses_then) -> bool:
+    """`_covers_every_warehouse` over the ACTIVE ticked ids; a ticked scope whose ids are
+    all inactive is still a ticked scope, never "All"."""
+    if active_ids is None:
+        return _covers_every_warehouse(wids, warehouses_then)
+    active = [w for w in wids if w in active_ids]
+    if wids and not active:
+        return False
+    return _covers_every_warehouse(active, warehouses_then)
 
 
 def _covers_every_warehouse(wids: list[str], warehouses_then) -> bool:
@@ -435,17 +455,21 @@ def get_today_reorder_run(
         return None
     row = picked["row"]
     code_by_id: dict[str, str] = {}
+    active_ids: set[str] = set()
     ids = [str(w) for w in (row["warehouse_ids"] or [])]
     if ids:
         for wr in db.execute(text(
-            "SELECT id::text AS id, warehouse_code FROM warehouses "
+            "SELECT id::text AS id, warehouse_code, is_active FROM warehouses "
             "WHERE id = ANY(CAST(:ids AS uuid[]))"
         ), {"ids": ids}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
+            if wr["is_active"]:
+                active_ids.add(wr["id"])
     item = _list_item(
         row,
         code_by_id,
         _costed_buy_counts(db, [str(row["id"])]),
+        active_ids=active_ids,
     )
     item["is_today"] = picked["is_today"]
     item["in_progress"] = bool(picked.get("in_progress"))

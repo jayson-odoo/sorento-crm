@@ -270,3 +270,41 @@ def test_a_deactivated_ticked_location_does_not_make_the_scope_read_as_all(scm_a
 
     assert scope["is_all_warehouses"] is False
     assert scope["inactive_warehouse_codes"] == [b_code]
+
+
+def test_a_ticked_scope_whose_locations_are_all_inactive_never_reads_as_all(scm_app):
+    """Ticked only B, B deactivated since: still a ticked scope, so Re-plan falls back to
+    nothing ticked WITH its notice (rule 3) rather than silently reading as "All"."""
+    _, db, _, _ = scm_app
+    _, _, b_code = _codes()
+    wb = _mk_warehouse(db, b_code)
+    _deactivate(db, wb)
+
+    scope = svc.resolve_run_scope(db, [wb], None, None)
+
+    assert scope["is_all_warehouses"] is False
+    assert scope["inactive_warehouse_codes"] == [b_code]
+
+
+def test_plans_list_does_not_label_a_scope_all_because_of_a_deactivated_location(scm_app):
+    """The plans list reads "All" the same way the plan header does: active ticked ids only."""
+    app_, db = _client(scm_app, "purchasing")
+    tag, a_code, b_code = _codes()
+    wa = _mk_warehouse(db, a_code)
+    wb = _mk_warehouse(db, b_code)
+    _mk_warehouse(db, f"{tag}-C")
+    others = [r[0] for r in db.execute(text(
+        "SELECT warehouse_code FROM warehouses WHERE is_active "
+        "AND id <> ALL(CAST(:x AS uuid[])) AND warehouse_code <> :c"
+    ), {"x": [wa, wb], "c": f"{tag}-C"}).all()]
+    # A + B + every other active warehouse but C: the raw ticked count equals the active
+    # estate once B is deactivated.
+    created = svc.create_run(db, [a_code, b_code, *others], enqueue=False)
+    _deactivate(db, wb)
+
+    with TestClient(app_) as c:
+        resp = c.get("/api/v1/scm/reorder-runs", params={"limit": 100})
+
+    assert resp.status_code == 200, resp.text
+    row = next(r for r in resp.json()["data"] if r["run_id"] == created["run_id"])
+    assert row["is_all_warehouses"] is False
