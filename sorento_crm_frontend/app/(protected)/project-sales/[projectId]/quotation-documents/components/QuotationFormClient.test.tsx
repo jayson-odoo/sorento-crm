@@ -1907,3 +1907,23 @@ describe('QuotationFormClient: collapsible Header and Lines (PROPOSAL-FORM-COLLA
     expect(within(terms).queryByRole('button', { name: /^(Header|Lines)/ })).toBeNull();
   });
 });
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (review should-fix 4): a saved line that still carries a heading from
+ * before heading rows is shown with that heading as its own row, but merely OPENING the scope is
+ * not an edit: Save sends no lines for it, so nothing is rewritten until somebody changes it.
+ */
+describe('QuotationFormClient: a carried heading leaves an untouched scope clean', () => {
+  it('opens the scope, shows the heading row, and saves without its lines', async () => {
+    listQuotationLines.mockResolvedValue([{ ...LINE, band_label: 'BILL NO 1' }]);
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    expect(
+      await within(card).findByRole('textbox', { name: 'Section heading above SRT-WC-01' }),
+    ).toHaveValue('BILL NO 1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2].scopes[0]).not.toHaveProperty('lines');
+  });
+});

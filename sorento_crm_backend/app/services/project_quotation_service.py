@@ -901,13 +901,16 @@ def _write_line(
     same coercion, snapshotting and guardrails and then recompute the total ONCE. Both
     callers share this body, so the two ways of saving a line cannot drift apart.
     """
+    # None means "not sent" (review should-fix 5): it never turns a heading into a line.
     section = (
         bool(payload["is_section"])
-        if "is_section" in payload
+        if payload.get("is_section") is not None
         else bool(line is not None and line.is_section)
     )
     if section:
         return _write_section(db, version=version, quotation=quotation, payload=payload, line=line)
+    if "is_section" in payload and payload["is_section"] is None:
+        payload = {key: value for key, value in payload.items() if key != "is_section"}
 
     # A different product's photo or drawing cannot be this one's: a product change that does
     # not send picks of its own clears the stored ones, in every path that writes a line.
@@ -1096,10 +1099,9 @@ def _write_section(
     text and its position only: whatever product, set, price or quantity arrives with it is
     dropped, so it adds nothing to any total and no guardrail or approval ever sees it.
     """
-    label = str(
-        payload["band_label"] if "band_label" in payload else (line.band_label if line else "")
-        or ""
-    ).strip()
+    # A null name is no name (review should-fix 1): never the text "None".
+    raw = payload.get("band_label") if "band_label" in payload else (line.band_label if line else None)
+    label = (raw or "").strip()
     if not label:
         raise AppException(
             status_code=422,

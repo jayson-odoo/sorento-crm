@@ -123,12 +123,25 @@ export function sectionDraft(label = ''): LineDraft {
  */
 export function splitCarriedHeadings(lines: StagedQuotationLine[]): StagedQuotationLine[] {
   const out: StagedQuotationLine[] = [];
+  // The section in force, as the PDF reads a carried label: a repeat on the next line is the same
+  // section (printed once), so it opens no second heading (review should-fix 2).
+  let current: string | null = null;
   lines.forEach((line) => {
     const label = (line.draft.band_label ?? '').trim();
-    if (isSectionDraft(line.draft) || !label) {
+    if (isSectionDraft(line.draft)) {
+      current = label || null;
       out.push(line);
       return;
     }
+    if (!label) {
+      out.push(line);
+      return;
+    }
+    if (label === current) {
+      out.push({ ...line, draft: { ...line.draft, band_label: '' } });
+      return;
+    }
+    current = label;
     out.push({
       id: null,
       key: `heading:${line.key}`,

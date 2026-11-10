@@ -265,3 +265,22 @@ describe('one column layout for edit and view, plain and grid scopes', () => {
     expect(description).toHaveAttribute('rowspan', '2');
   });
 });
+
+describe('a saved layout never pins a document\'s own columns (review B1)', () => {
+  const TWO: MatrixHeader[] = [
+    { key: 'a', label: 'Type A', cols: [] },
+    { key: 'b', label: 'Type B', cols: [] },
+  ];
+
+  it('reorders the header groups on screen when the document reorders them', () => {
+    // A saved order that happens to hold this document's quantity columns, A before B.
+    prefs.saved = [...SAVED.slice(0, 11), 'mx-cell:a', 'mx-cell:b', ...SAVED.slice(11)];
+    const view = renderGrid({ lines: [stagedLine(true)], matrix: { columns: TWO } });
+    let texts = headerTexts();
+    expect(texts.indexOf('Type A')).toBeLessThan(texts.indexOf('Type B'));
+
+    view.rerenderWith({ matrix: { columns: [TWO[1], TWO[0]] } });
+    texts = headerTexts();
+    expect(texts.indexOf('Type B')).toBeLessThan(texts.indexOf('Type A'));
+  });
+});

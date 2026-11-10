@@ -191,6 +191,17 @@ describe('heading rows', () => {
     expect(split[0].draft.band_label).toBe('PAGE 1');
     expect(split[1].draft.band_label).toBe('');
     expect(split[2]).toBe(plain);
+    // A label repeated on the next line is the same section, as the PDF reads it: one heading.
+    const repeat: StagedQuotationLine = {
+      id: 'l3',
+      key: 'l3',
+      line: null,
+      draft: { ...emptyDraft(), product_id: 'p3', band_label: 'PAGE 1' },
+      removed: false,
+    };
+    const once = splitCarriedHeadings([carried, repeat]);
+    expect(once.map((row) => row.key)).toEqual(['heading:l1', 'l1', 'l3']);
+    expect(once[2].draft.band_label).toBe('');
     // Idempotent: a set already split is returned as it is.
     expect(splitCarriedHeadings(split).map((row) => row.key)).toEqual(['heading:l1', 'l1', 'l2']);
   });

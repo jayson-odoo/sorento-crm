@@ -375,7 +375,7 @@ export function QuotationDocumentHeader({
                 rows={2}
                 value={document.subject_title ?? ''}
                 onChange={(event) => onChange({ subject_title: event.target.value || null })}
-                placeholder="The project title the quotation names"
+                placeholder="e.g. CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN"
               />
             </EditField>
           </div>

@@ -897,6 +897,15 @@ const FLUSH = 'px-0';
 /** The hidden anchor the quantity block of a grid scope follows (see its column). */
 const QTY_BLOCK = 'qty_block';
 
+/**
+ * The reader's order without any column the DOCUMENT owns (ids `mx-*`: its header columns, their
+ * + buttons, Total qty). Those always follow the hidden anchor in definition order, so a saved
+ * order can never pin them and a header the document moves moves on screen too (review B1).
+ */
+function readerOrder(order: string[]): string[] {
+  return order.filter((id) => !id.startsWith('mx-'));
+}
+
 /** Every leaf column id, in definition order. */
 function leafIds(columns: ColumnDef<GridRow>[]): string[] {
   return columns.flatMap((column) => {
@@ -1856,7 +1865,10 @@ export function QuotationLinesGrid({
         : columnOrder,
     },
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnOrderChange: setColumnOrder,
+    onColumnOrderChange: (updater) =>
+      setColumnOrder((previous) =>
+        readerOrder(typeof updater === 'function' ? updater(previous) : updater),
+      ),
     enableSorting: false,
     columnResizeMode: 'onChange',
   });

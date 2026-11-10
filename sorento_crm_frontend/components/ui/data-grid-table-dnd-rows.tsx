@@ -109,7 +109,7 @@ function DataGridTableDndRow<TData>({
   if (fullRow != null) {
     return (
       <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} dndRef={setNodeRef} dndStyle={style}>
-        <td colSpan={row.getVisibleCells().length} className="bg-muted/50 px-1 py-1">
+        <td colSpan={row.getVisibleCells().length} className="bg-muted/60 px-1 py-1">
           {fullRow}
         </td>
       </DataGridTableBodyRow>

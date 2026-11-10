@@ -115,3 +115,28 @@ def test_a_revision_carries_its_heading_rows(api):
     rows = _stored(client, new_version_id)
     assert [row["is_section"] for row in rows] == [True, False]
     assert rows[0]["band_label"] == f"{MARKER} PAGE 1"
+
+
+def test_a_heading_sent_with_a_null_name_is_refused_not_stored_as_none(api):
+    """Review should-fix 1: a null label must not become the text "None"."""
+    client, _db, _company_id, _user_id, project = api
+    version_id = _quotation(client, project.id)["current_version_id"]
+
+    refused = _bulk(client, version_id, [{"is_section": True, "band_label": None}])
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "quotation_section_label_required"
+
+
+def test_is_section_null_keeps_a_heading_a_heading(api):
+    """Review should-fix 5: null means "not sent", never "make this a product line"."""
+    client, _db, _company_id, _user_id, project = api
+    version_id = _quotation(client, project.id)["current_version_id"]
+    (heading,) = _bulk(client, version_id, [_heading("PAGE 1")]).json()["data"]
+
+    saved = client.put(
+        f"{BASE}/quotation-versions/{version_id}/lines/{heading['id']}",
+        json={"is_section": None, "band_label": f"{MARKER} PAGE 1"},
+    )
+    assert saved.status_code == 200, saved.text
+    row = saved.json()
+    assert row["is_section"] is True and row["band_label"] == f"{MARKER} PAGE 1"
