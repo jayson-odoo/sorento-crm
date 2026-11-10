@@ -29,7 +29,7 @@ import type {
 // STANDARD-HISTORY wave 1: a test may open the page on a tab (`?tab=history`).
 const searchState = vi.hoisted(() => ({ query: '' }));
 const getOrderInquiryHistorySpy = vi.hoisted(() =>
-  vi.fn(async (_id: string) => ({
+  vi.fn(async () => ({
     events: [
       {
         id: 'audit-unconfirm',
@@ -204,7 +204,7 @@ vi.mock(
         purchase_orders: [],
         spos: [],
       })),
-      getOrderInquiryHistory: (...args: unknown[]) => getOrderInquiryHistorySpy(...(args as [string])),
+      getOrderInquiryHistory: (...args: unknown[]) => getOrderInquiryHistorySpy(...(args as [])),
       listOrderInquiryHeaders: vi.fn(async () => ({
         data: [],
         total: 0,

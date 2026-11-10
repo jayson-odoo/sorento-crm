@@ -2077,7 +2077,10 @@ def get_order_inquiry_history(
     """The detail page's History tab (STANDARD-HISTORY wave 1, AC-SH-B1 to B6): every
     raise, Confirm / Unconfirm press, link, release, rejection, cancellation and reserve
     event of this OI's rows, newest first. Read-only. The same read gate as the page itself
-    (owner, 10 Nov: anyone who can open the record sees its history), and the same 404 for
+    (owner, 10 Nov: anyone who can open the record sees its history) for a STAFF session:
+    unlike the header route, an X-API-Key principal is refused on purpose (no
+    `_with_api_key`), the PO-history ruling for audit reads (`audit_logs.py`
+    `_authorize_po_history`) - do not "align" it with the header. The same 404 for
     an unknown id or another company's header: the OI is read through the session's own
     company-scope listener before any trail is."""
     try:

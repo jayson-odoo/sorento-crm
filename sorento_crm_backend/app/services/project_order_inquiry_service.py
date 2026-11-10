@@ -1650,6 +1650,11 @@ def _record_cancel(
     )
 
 
+def _rows_named(rows, row_ids) -> List[Any]:
+    wanted = set(row_ids)
+    return [row for row in rows if str(row.id) in wanted]
+
+
 def _one_inquiry_root(rows) -> Dict[str, Any]:
     """The audit root for one Confirm / Unconfirm press (STANDARD-HISTORY AC-SH-B7): the OI
     when every row is that one OI's, else nothing (`log_audit` keeps its default root, the
@@ -9701,9 +9706,7 @@ class ProjectOrderInquiryService:
                 description=f"Confirm: {len(confirmed_ids)} row(s) marked Done by hand",
                 # STANDARD-HISTORY AC-SH-B7 (owner Q3, 10 Nov): a press on one OI names
                 # it as the root; a press across several keeps the default root.
-                **_one_inquiry_root(
-                    [row for row in rows if str(row.id) in set(confirmed_ids)]
-                ),
+                **_one_inquiry_root(_rows_named(rows, confirmed_ids)),
             )
         if confirmed_ids:
             # Companions bundled to a row just marked Done by hand follow it.

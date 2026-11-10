@@ -201,9 +201,13 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
             )
             continue
         new_state = new.get("ack_state")
+        # Only the one-row-per-press writes carry `row_ids` (`acknowledge_rows` /
+        # `unacknowledge_rows`); anything else on these entity types is not a press.
+        if "row_ids" not in new:
+            continue
         if new_state == ACK_ACKNOWLEDGED:
             kind, verb = "confirmed", "Confirmed"
-        elif new_state == ACK_AWAITING and "row_ids" in new:
+        elif new_state == ACK_AWAITING:
             kind, verb = "unconfirmed", "Unconfirmed"
         else:
             continue
@@ -212,7 +216,7 @@ def _presses(db: Session, rows: _Rows) -> List[dict]:
             for entry in ((audit.old_values or {}).get("rows") or [])
             if isinstance(entry, dict)
         }
-        touched = [str(row_id) for row_id in (new.get("row_ids") or [audit.entity_id])]
+        touched = [str(row_id) for row_id in new.get("row_ids") or []]
         mine = [row_id for row_id in touched if row_id in rows.by_id]
         if not mine:
             continue

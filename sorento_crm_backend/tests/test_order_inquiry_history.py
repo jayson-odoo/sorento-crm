@@ -359,3 +359,39 @@ def test_an_unknown_or_other_company_oi_is_404():
         set_company_scope(db, frozenset({_uid()}))
         response = _get(db, world["buyer"].id, world["inquiry"].id)
         assert response.status_code == 404, response.text
+
+
+def test_an_empty_company_scope_is_404_not_every_company():
+    """AC-SH-B5, fail closed: a session with no company at all reads nothing."""
+    with blank_session() as db:
+        world = _world(db, item_codes=("ZZT-A",))
+        db.commit()
+        from app.models.base import set_company_scope
+
+        set_company_scope(db, frozenset())
+        assert _get(db, world["buyer"].id, world["inquiry"].id).status_code == 404
+
+
+def test_an_api_key_principal_is_refused():
+    """AC-SH-B5: the route takes a staff session only (`require_permission`, not
+    `_with_api_key`), the PO-history ruling for audit reads."""
+    with blank_session() as db:
+        world = _world(db, item_codes=("ZZT-A",))
+        db.commit()
+        from fastapi.testclient import TestClient
+
+        from app.database import get_db
+        from app.dependencies import get_current_user_or_api_key
+        from app.main import app
+
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: {
+            "id": world["buyer"].id, "integration_id": _uid(), "role": "user",
+        }
+        try:
+            response = TestClient(app).get(
+                _url(world["inquiry"].id), headers={"X-API-Key": "zzt-not-a-real-key"}
+            )
+        finally:
+            app.dependency_overrides.clear()
+        assert response.status_code in (401, 403), response.text

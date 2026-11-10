@@ -11,6 +11,9 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import type { RecordHistoryEvent, RecordHistoryLine } from '@/types/recordHistory.types';
+
+export type { RecordHistoryEvent, RecordHistoryLine };
 
 /**
  * STANDARD-HISTORY (`documentation/plans/audit/PLAN-standard-history-10nov.md`): the one
@@ -24,23 +27,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
  * A batch press (one Unconfirm that moved 9 lines) is ONE event whose `lines` name every
  * row; a Product or Line filter narrows the lines shown and keeps the event whole.
  */
-export interface RecordHistoryLine {
-  row_id: string;
-  so_line_no: number | null;
-  item_code: string | null;
-  qty: number | null;
-  change: string;
-}
-
-export interface RecordHistoryEvent {
-  id: string;
-  kind: string;
-  at: string | null;
-  actor: string | null;
-  title: string;
-  lines: RecordHistoryLine[];
-}
-
 type Tone = 'destructive' | 'info' | 'warning' | 'secondary' | 'success';
 
 export interface RecordHistoryProps {
@@ -110,6 +96,7 @@ export function RecordHistory({
     to: null,
   });
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const eventFilterId = React.useId();
 
   const options = React.useMemo(() => {
     const products = new Set<string>();
@@ -228,7 +215,8 @@ export function RecordHistory({
           onChange={setKinds}
           options={options.kind}
           placeholder="Event"
-          id="record-history-event-filter"
+          id={eventFilterId}
+          aria-label="Event"
         />
         <SearchableSelect
           clearable

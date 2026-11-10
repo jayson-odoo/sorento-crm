@@ -1,12 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { MyDownload } from '@/services/myDownloadsService';
-import type { RecordHistoryEvent } from '@/components/history/RecordHistory';
+import type { RecordHistoryEvent } from '@/types/recordHistory.types';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
-
-export interface OrderInquiryHistory {
-  events: RecordHistoryEvent[];
-}
 import type {
   AcknowledgeResult,
   AutoPlaceRequest,
@@ -979,6 +975,10 @@ export async function getOrderInquiryHeaderLines(
  *     `lines` name every row of this OI it touched. Permission `projects.projects.view`;
  *     404 for an unknown id or another company's header.
  */
+export interface OrderInquiryHistory {
+  events: RecordHistoryEvent[];
+}
+
 export async function getOrderInquiryHistory(id: string): Promise<OrderInquiryHistory> {
   const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/history`);
   if (!response.ok)

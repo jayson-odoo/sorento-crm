@@ -75,3 +75,23 @@ Q4 answered by crew: use the real item codes and times; person names stay masked
 - 10/11/2026 10:52 MYT: PO 202611-S0027 linked to SRTSP131, which went Done automatically.
 - Untouched by the Unconfirm: SRT320-CR (10), SRT5674-N, SRT5732, SRTWB246 (raised, request to
   reserve).
+
+## Wave 1 build notes (PR #2299)
+
+- Built only from existing components (owner 12:41). `components/history/RecordHistory.tsx` is
+  the SO History drawer's body (`PlanningHistorySheet.tsx`) lifted out of its Sheet; the swap
+  list from mock v1 is in the PR description.
+- Read gate: `projects.projects.view`, staff sessions only (an X-API-Key principal is refused,
+  the PO-history ruling for audit reads). Admin extras (IP, raw values) are not in wave 1.
+- **Deferred, with its trigger: a GIN index on `audit_logs (new_values->'row_ids')`** (partial,
+  `entity_type IN ('project_order_inquiry_rows','order_inquiry_rows')`). The History read finds a
+  press through that path, which today is a filter over every OI-row audit row (reviewer: 179 ms
+  at 100k such rows on 1M, 0.08 ms with the index). OI rows are `__audit_skip__`, so the set
+  grows only by Confirm / Unconfirm presses and row cancellations. Trigger: when
+  `SELECT count(*) FROM audit_logs WHERE entity_type IN ('project_order_inquiry_rows',
+  'order_inquiry_rows')` passes 50,000 on prod, add the index in its own migration (CREATE INDEX
+  CONCURRENTLY). Nobody in this lane can read prod; the owner or crew runs the count.
+- Wave 2 (SO / Fulfilment Planning): make `PlanningHistorySheet` render `RecordHistory` (it needs
+  an SO filter, per-kind columns, per-event extras such as "Open email", an alert dot tone and
+  item-code line matching), and pull `_ROW_AUDIT_TYPES` / the 5 s raise window / `_iso` into one
+  backend helper shared with `planning_history_service.py`.
