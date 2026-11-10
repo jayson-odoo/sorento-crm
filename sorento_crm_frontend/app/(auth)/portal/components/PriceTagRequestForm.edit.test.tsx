@@ -382,6 +382,8 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     fireEvent.click(screen.getByText('Edit'));
     const reasonField = await screen.findByLabelText(/reason/i);
     fireEvent.change(reasonField, { target: { value: 'Attaching an updated PO' } });
+    // PRICETAG-REQUEST-LAYOUT: Price tags asks upload OR type first; this request has neither.
+    fireEvent.click(screen.getByRole('button', { name: 'Upload a file' }));
 
     const file = new File(['zzt'], 'ZZT-po.pdf', { type: 'application/pdf' });
     expect(capturedOnPendingFilesChange).toBeDefined();

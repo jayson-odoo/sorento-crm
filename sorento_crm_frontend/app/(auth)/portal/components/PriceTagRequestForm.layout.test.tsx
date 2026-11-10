@@ -48,6 +48,7 @@ vi.mock('../lib/portal-client', () => ({
   // mount for a NEW request - granted here so these suites (about
   // something else entirely) are unaffected.
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
+  fetchSubmissionNeighbours: vi.fn().mockResolvedValue(null),
 }));
 
 // Native `<select>` stand-in: the real component is a Radix popover whose
