@@ -74,6 +74,7 @@ LINE_FIELDS = (
     "complete_set",
     "band_label",
     "is_rate_only",
+    "is_section",
 )
 
 _NUMERIC_LINE_FIELDS = ("unit_price", "quantity")
@@ -440,6 +441,7 @@ def copy_line(
         complete_set=line.complete_set,
         band_label=line.band_label,
         is_rate_only=line.is_rate_only,
+        is_section=bool(line.is_section),
         unit_price=line.unit_price,
         quantity=line.quantity,
         qty_cells=line.qty_cells,
@@ -894,6 +896,14 @@ def _write_line(
     same coercion, snapshotting and guardrails and then recompute the total ONCE. Both
     callers share this body, so the two ways of saving a line cannot drift apart.
     """
+    section = (
+        bool(payload["is_section"])
+        if "is_section" in payload
+        else bool(line is not None and line.is_section)
+    )
+    if section:
+        return _write_section(db, version=version, quotation=quotation, payload=payload, line=line)
+
     # A different product's photo or drawing cannot be this one's: a product change that does
     # not send picks of its own clears the stored ones, in every path that writes a line.
     if payload.get("product_id") and payload.get("product_set_id"):
@@ -1063,6 +1073,75 @@ def _write_line(
     )
     setattr(line, _BREACH_ATTR, [event] if event else [])
 
+    db.flush()
+    return line
+
+
+def _write_section(
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    quotation: ProjectQuotation,
+    payload: Dict[str, Any],
+    line: Optional[ProjectQuotationLine] = None,
+) -> ProjectQuotationLine:
+    """A section heading row (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026).
+
+    Its own row, so moving or deleting a line never moves or drops it. It carries the heading
+    text and its position only: whatever product, set, price or quantity arrives with it is
+    dropped, so it adds nothing to any total and no guardrail or approval ever sees it.
+    """
+    label = str(
+        payload["band_label"] if "band_label" in payload else (line.band_label if line else "")
+        or ""
+    ).strip()
+    if not label:
+        raise AppException(
+            status_code=422,
+            message="A section heading needs a name.",
+            code="quotation_section_label_required",
+        )
+    if line is None:
+        line = ProjectQuotationLine(
+            company_id=quotation.company_id,
+            version_id=version.id,
+            sort_order=_next_sort_order(db, version.id),
+        )
+        db.add(line)
+    if "sort_order" in payload and payload["sort_order"] is not None:
+        line.sort_order = payload["sort_order"]
+    if "notes" in payload:
+        line.notes = payload["notes"]
+    line.is_section = True
+    line.band_label = label[:150]
+    for field in (
+        "product_id",
+        "product_set_id",
+        "set_parts_snapshot",
+        "product_code_snapshot",
+        "description_snapshot",
+        "list_price_snapshot",
+        "image_attachment_id",
+        "drawing_attachment_id",
+        "item_label",
+        "brand_snapshot",
+        "technical_spec",
+        "complete_set",
+        "qty_cells",
+        "uom",
+        "unit_type",
+        "floor_value_applied",
+        "floor_level_applied",
+    ):
+        setattr(line, field, None)
+    line.unit_price = Decimal("0.00")
+    line.quantity = Decimal("0.00")
+    line.line_total = Decimal("0.00")
+    line.is_rate_only = False
+    line.is_non_standard = False
+    line.is_below_floor = False
+    line.is_discounted = False
+    setattr(line, _BREACH_ATTR, [])
     db.flush()
     return line
 
@@ -1618,6 +1697,7 @@ def serialize_lines(
             "technical_spec": line.technical_spec,
             "complete_set": line.complete_set,
             "band_label": line.band_label,
+            "is_section": bool(line.is_section),
             "is_non_standard": line.is_non_standard,
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,
