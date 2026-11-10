@@ -47,7 +47,6 @@ function Field({
   );
 }
 
-/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date. */
 /** The Re-plan notice for locations dropped because they were deactivated since the run;
  *  the same words the daily job's run summary uses (`skipped_inactive_message`). Every
  *  ticked location inactive leaves the nothing-ticked rule: every active location. */
@@ -58,6 +57,7 @@ export function skippedInactiveNotice(skipped: string[], fellBack: boolean): str
   return fellBack ? `${msg}, planning every active location instead` : msg;
 }
 
+/** Today, as the `YYYY-MM-DD` a `<input type="date">` needs - local calendar date. */
 function todayDateInputValue(): string {
   const now = new Date();
   const yyyy = now.getFullYear();

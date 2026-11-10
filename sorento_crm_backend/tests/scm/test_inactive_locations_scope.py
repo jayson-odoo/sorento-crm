@@ -213,3 +213,34 @@ def test_daily_job_with_active_codes_carries_no_message(scm_app, monkeypatch):
 
     assert captured["kwargs"]["warehouse_codes"] == [active_code]
     assert "message" not in result
+
+
+# --- the codes path keeps active rows only, across companies ------------------------------
+
+def test_a_code_active_in_one_company_and_inactive_in_another_plans_the_active_one(scm_app):
+    """All-companies scope (the scheduler's): the same code in two companies, one row
+    deactivated. Not refused (an active match exists), and the run stores ONLY the active
+    warehouse, never the other company's inactive row."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.models.inventory import Warehouse
+
+    _, db, _, _ = scm_app
+    set_company_scope(db, None)
+    tag, code, _ = _codes()
+    a = Company(id=str(uuid.uuid4()), code=f"{tag}A"[:20], name=f"{tag} company A")
+    b = Company(id=str(uuid.uuid4()), code=f"{tag}B"[:20], name=f"{tag} company B")
+    db.add_all([a, b])
+    db.flush()
+    live = Warehouse(id=str(uuid.uuid4()), company_id=a.id, warehouse_code=code,
+                     warehouse_name="live", is_active=True)
+    dead = Warehouse(id=str(uuid.uuid4()), company_id=b.id, warehouse_code=code,
+                     warehouse_name="dead", is_active=False)
+    db.add_all([live, dead])
+    db.flush()
+
+    created = svc.create_run(db, [code], enqueue=False)
+
+    stored = db.execute(text("SELECT warehouse_ids FROM scm.reorder_run WHERE id = :r"),
+                        {"r": created["run_id"]}).scalar()
+    assert [str(w) for w in stored] == [live.id]
