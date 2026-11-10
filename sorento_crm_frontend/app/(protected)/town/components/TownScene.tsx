@@ -24,6 +24,9 @@ import type { TownTarget } from './TownLightbox';
 const HINT_KEY = 'town_hint_seen';
 const HINT_MS = 6000;
 const LORRY_CAP = 10;
+const PORT_DEG = 226; // behind the warehouses and the depot: the top of the default view
+const PORT_SHIP_CAP = 6;
+const PORT_BOX_CAP = 12;
 const BOARD_Y = 9.2; // the scoreboard's height above the plaza, and its size
 const BOARD_W = 16.4;
 const BOARD_H = 6.4;
@@ -459,6 +462,74 @@ function mountScene(
     () => ({ kind: 'approve' }),
   ]);
 
+  // (6) the port (TOWN-V2): a plain dock behind the warehouses and the depot. Ships on the water are the
+  // incoming shipments, red containers on the quay the late ones (at most 6 and 12 drawn; the signs keep
+  // the exact counts). Plain shapes on purpose: the look and the motion come with the owner's v6 pick.
+  const incoming = snapshot.incoming;
+  const portMeshes: THREE.InstancedMesh[] = [];
+  if (incoming) {
+    const openPort = () => select({ kind: 'port' });
+    const portTip = (): TipSubject => ({ kind: 'port' });
+    const [qx, qz] = polar(28.6, PORT_DEG);
+    const qry = face(qx, qz);
+    const [wx, wz] = polar(34, PORT_DEG);
+    const water = new THREE.Mesh(merge([part(CYL(9, 9, 0.1, 40), 0x7dd3fc, wx, -0.9, wz)]), lambert());
+    scene.add(water);
+    const quay = new THREE.Mesh(
+      merge([part(BOX, 0xcbd5e1, 0, -0.9, 0, 11, 0.9, 4.2), part(BOX, 0x0e7490, 4.3, 0, 1.2, 0.35, 5.2, 0.35)]),
+      lambert(),
+    );
+    quay.position.set(qx, 0, qz);
+    quay.rotation.y = qry;
+    scene.add(quay);
+    pickables.push([quay, openPort, portTip], [water, openPort, portTip]);
+    const across = new THREE.Vector3(Math.cos(qry), 0, -Math.sin(qry));
+    const inward = new THREE.Vector3(Math.sin(qry), 0, Math.cos(qry));
+    const boxN = Math.min(PORT_BOX_CAP, incoming.late);
+    const boxes = new THREE.InstancedMesh(merge([part(BOX, 0xdc2626, 0, 0, 0, 1.9, 0.8, 0.8)]), lambert(), Math.max(1, boxN));
+    for (let i = 0; i < boxN; i++) {
+      const k = i % 6;
+      const p = new THREE.Vector3(qx, 0.8 * Math.floor(i / 6), qz)
+        .addScaledVector(across, -3.2 + (k % 3) * 2.05)
+        .addScaledVector(inward, k < 3 ? -0.3 : 0.6);
+      M.compose(p, Q.setFromEuler(E.set(0, qry, 0)), S.set(1, 1, 1));
+      boxes.setMatrixAt(i, M);
+    }
+    boxes.count = boxN;
+    const shipN = Math.min(PORT_SHIP_CAP, incoming.incoming);
+    const ships = new THREE.InstancedMesh(
+      merge([
+        part(BOX, 0x1e3a5f, 0, -0.5, 0, 6, 0.9, 1.9),
+        part(BOX, 0xf8fafc, -2.1, 0.4, 0, 1.3, 1.1, 1.5),
+        part(BOX, 0xf97316, 0.6, 0.4, 0, 2.6, 0.6, 1.5),
+      ]),
+      lambert(),
+      Math.max(1, shipN),
+    );
+    for (let i = 0; i < shipN; i++) {
+      const [x, z] = polar(31.5 + (i >= 3 ? 2.6 : 0), PORT_DEG - 14 + (i % 3) * 14 + (i >= 3 ? 7 : 0));
+      M.compose(V.set(x, 0, z), Q.setFromEuler(E.set(0, face(x, z) + Math.PI / 2, 0)), S.setScalar(0.85));
+      ships.setMatrixAt(i, M);
+    }
+    ships.count = shipN;
+    scene.add(boxes, ships);
+    portMeshes.push(boxes, ships);
+    pickables.push([boxes, openPort, portTip], [ships, openPort, portTip]);
+    const total = incoming.incoming + incoming.late;
+    pickables.push([
+      fixed(label(total ? `Incoming: ${count(incoming.incoming)}` : 'Incoming: none', qx, 7.2, qz, '#0e7490', '#ffffff', 340, 0.9)),
+      openPort,
+      portTip,
+    ]);
+    if (incoming.late) {
+      pickables.push([
+        fixed(label(`${count(incoming.late)} late`, qx, 3.4, qz, '#dc2626', '#ffffff', 220, 0.8)),
+        openPort,
+        portTip,
+      ]);
+    }
+  }
+
   // a handful of trees only, for softness
   const treeAt = [[-6, 6], [6, -6], [-6, -6], [6.2, 6.2], ...[0, 72, 144, 216, 288].map((a) => polar(25, a + 30))];
   const trees = new THREE.InstancedMesh(
@@ -604,6 +675,7 @@ function mountScene(
     whMesh.dispose();
     lorries.dispose();
     trees.dispose();
+    portMeshes.forEach((mesh) => mesh.dispose());
     renderer.dispose();
   };
   return { dispose, setView };
@@ -614,6 +686,7 @@ const LEGEND = [
   ['bg-red-600', 'Red ! = low stock'],
   ['bg-blue-600', 'Lorries = to deliver'],
   ['bg-violet-600', 'Badge = waiting approval'],
+  ['bg-cyan-700', 'Ships = incoming, red boxes = late'],
 ] as const;
 
 export function TownScene({

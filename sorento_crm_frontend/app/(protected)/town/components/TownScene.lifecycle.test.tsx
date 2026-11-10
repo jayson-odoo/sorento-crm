@@ -192,3 +192,25 @@ describe('TownScene fixed labels never cover the scoreboard or each other, at an
     expect(bad).toEqual([]);
   });
 });
+
+describe('TownScene draws the port (TOWN-V2)', () => {
+  it('draws at most 6 ships and 12 late containers, and the port signs, for any number of shipments', () => {
+    const busy = { ...SNAPSHOT, incoming: { incoming: 29, late: 70, next_eta: '2026-01-07', shipments: [] } };
+    render(<TownScene snapshot={busy as never} onSelect={() => undefined} />);
+    const counts = made.instanced.map((m) => m.count);
+    expect(counts).toContain(6); // ships on the water: incoming shipments
+    expect(counts).toContain(12); // red containers on the quay: late shipments
+  });
+
+  it('draws no port on a snapshot without incoming shipments', () => {
+    render(<TownScene snapshot={SNAPSHOT as never} onSelect={() => undefined} />);
+    const before = made.instanced.length;
+    const sprites = made.sprites;
+    cleanup();
+    made.instanced.length = 0;
+    made.sprites = 0;
+    render(<TownScene snapshot={{ ...SNAPSHOT, incoming: { incoming: 3, late: 2, next_eta: null, shipments: [] } } as never} onSelect={() => undefined} />);
+    expect(made.instanced.length).toBe(before + 2);
+    expect(made.sprites).toBe(sprites + 2); // "Incoming: 3" and "2 late"
+  });
+});

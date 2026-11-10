@@ -1,9 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Receipt } from 'lucide-react';
+import { Receipt, Ship } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { isPending, type TownPayload } from '@/types/town.types';
 import {
   boughtToday,
@@ -73,7 +74,7 @@ export function TownCards({
       </div>
     );
   }
-  const { today, compare, reorder, deliveries, approvals } = snapshot;
+  const { today, compare, reorder, deliveries, approvals, incoming } = snapshot;
   const { bought, others } = boughtToday(snapshot);
   const pct = changePercent(snapshot);
   const open = (target: TownTarget) => () => onOpen?.(target);
@@ -155,6 +156,26 @@ export function TownCards({
           {approvals.quotation_documents} quotation{approvals.quotation_documents === 1 ? '' : 's'}
         </span>
       </Card>
+      {incoming ? (
+        <Card
+          question="What is coming in?"
+          icon={<Ship className="size-4" />}
+          tone="bg-cyan-700"
+          onClick={open({ kind: 'port' })}
+        >
+          <span className="text-xl font-bold tracking-tight">
+            {incoming.incoming || incoming.late ? `${count(incoming.incoming)} incoming` : 'Nothing on the way'}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            {incoming.late ? (
+              <span className="font-semibold text-destructive">{count(incoming.late)} late</span>
+            ) : null}
+            {incoming.late && incoming.next_eta ? ' · ' : null}
+            {incoming.next_eta ? `next ETA ${formatDateInMalaysia(incoming.next_eta)}` : null}
+            {!incoming.late && !incoming.next_eta ? 'from overseas suppliers' : null}
+          </span>
+        </Card>
+      ) : null}
     </div>
   );
 }
