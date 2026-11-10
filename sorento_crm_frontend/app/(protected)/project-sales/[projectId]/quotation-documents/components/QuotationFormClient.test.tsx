@@ -68,6 +68,12 @@ const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
 const getQuotationLetterTemplates = vi.fn();
 const getQuotationFeedback = vi.fn();
+// QUOTE-AUTOSAVE: the form's draft and History calls.
+const openQuotationFormDraft = vi.fn();
+const getQuotationDraftHolder = vi.fn();
+const saveQuotationFormDraft = vi.fn();
+const restoreQuotationHistoryEntry = vi.fn();
+const listQuotationHistory = vi.fn();
 vi.mock(
   '../../../_shared/services/quotationDocumentService',
   async (importOriginal) => {
@@ -86,6 +92,11 @@ vi.mock(
       getQuotationLetterTemplates: (...args: unknown[]) =>
         getQuotationLetterTemplates(...args),
       getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
+      openQuotationFormDraft: (...args: unknown[]) => openQuotationFormDraft(...args),
+      getQuotationDraftHolder: (...args: unknown[]) => getQuotationDraftHolder(...args),
+      saveQuotationFormDraft: (...args: unknown[]) => saveQuotationFormDraft(...args),
+      restoreQuotationHistoryEntry: (...args: unknown[]) => restoreQuotationHistoryEntry(...args),
+      listQuotationHistory: (...args: unknown[]) => listQuotationHistory(...args),
     };
   },
 );
@@ -243,7 +254,24 @@ vi.mock('../[documentId]/components/useQuotationEditSession', async (importOrigi
   };
 });
 
+// QUOTE-AUTOSAVE crew pass: Discard draft's options are read back (what it refreshes on commit).
+const deferredOptions = vi.fn();
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (options: unknown) => {
+    deferredOptions(options);
+    return {
+      pending: null,
+      isPending: false,
+      isBlocked: false,
+      start: vi.fn(),
+      cancel: vi.fn(),
+      countdown: null,
+    };
+  },
+}));
+
 import { QuotationFormClient } from './QuotationFormClient';
+import { quotationDocumentKey } from '../../../_shared/hooks/useQuotationDocuments';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
 
 function project(overrides: Partial<Project> = {}): Project {
@@ -430,7 +458,14 @@ async function addScope(label: string) {
 /** Add a line on the open scope and wait for its cells. */
 async function addLine(card: HTMLElement, lineNo: number) {
   fireEvent.click(within(card).getByRole('button', { name: 'Add a line' }));
-  return within(card).findByRole('textbox', { name: `Description on line ${lineNo}` });
+  return within(card).findByRole('button', { name: `Description on line ${lineNo}` });
+}
+
+/** Opens a line's Description cell (a popover holding the shared editor, QUOTE-DESC-RICHTEXT)
+ * and hands back the editor's stand-in textarea. */
+async function openDescription(card: HTMLElement, label: string) {
+  fireEvent.click(within(card).getByRole('button', { name: `Description on ${label}` }));
+  return screen.findByRole('textbox', { name: `Description text on ${label}` });
 }
 
 /** Picks the catalogue product fixture on a line; the row's labels then name it by its code. */
@@ -459,6 +494,17 @@ beforeEach(() => {
   getQuotationDocument.mockResolvedValue(document());
   createQuotationDocument.mockResolvedValue(document({ id: 'd-new' }));
   updateQuotationDocument.mockResolvedValue(document());
+  openQuotationFormDraft.mockResolvedValue({
+    draft_id: 'draft-1',
+    token: 'tok-1',
+    doc: null,
+    updated_at: null,
+    updated_by_name: null,
+  });
+  getQuotationDraftHolder.mockResolvedValue({ is_holder: true });
+  saveQuotationFormDraft.mockResolvedValue({ updated_at: '2026-11-10T06:14:00' });
+  listQuotationHistory.mockResolvedValue([]);
+  window.localStorage.clear();
   getQuotationLetterTemplates.mockResolvedValue({
     cover_letter_html: '<p>Dear {{attn_name}}</p>',
     terms_html: '<p>Valid 30 days</p>',
@@ -572,8 +618,8 @@ describe('QuotationFormClient create', () => {
     renderForm();
     const card = await openLines();
 
-    const description = await addLine(card, 1);
-    fireEvent.change(description, { target: { value: 'Grab bar' } });
+    await addLine(card, 1);
+    fireEvent.change(await openDescription(card, 'line 1'), { target: { value: 'Grab bar' } });
     await waitFor(() =>
       expect(stageScopeSpy).toHaveBeenCalledWith(
         expect.stringMatching(/^new-scope:/),
@@ -697,7 +743,10 @@ describe('QuotationFormClient create', () => {
     const card = await openLines();
     await nameScope(card, 'Townhouse');
     const named = scopeCard('Townhouse');
-    fireEvent.change(await addLine(named, 1), { target: { value: 'Bespoke vanity top' } });
+    await addLine(named, 1);
+    fireEvent.change(await openDescription(named, 'line 1'), {
+      target: { value: 'Bespoke vanity top' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
@@ -723,14 +772,18 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByRole('region', { name: 'Scope 1' })).toBeInTheDocument();
   });
 
-  it('AC-QF016: Cancel goes back to the Quotations tab and writes nothing', async () => {
+  it('QUOTE-AUTOSAVE Q5: no Cancel, and an untouched New proposal writes nothing at all', async () => {
     renderForm();
     await openLines();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=quotations');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    // No draft yet, so nothing to discard.
+    expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(saveQuotationFormDraft).not.toHaveBeenCalled();
     expect(createQuotationDocument).not.toHaveBeenCalled();
+    // The person's own private draft was opened: no document, nothing numbered.
+    expect(openQuotationFormDraft).toHaveBeenCalledWith('p1', null);
   });
 
   it('AC-QF040: one primary CTA and no subtitle under the title', async () => {
@@ -740,11 +793,9 @@ describe('QuotationFormClient create', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'New proposal' }),
     ).toBeInTheDocument();
-    // Cancel is an outline button; Save is the only filled one.
+    // Save is the only filled button.
     const save = screen.getByRole('button', { name: 'Save proposal' });
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
     expect(save.className).toMatch(/bg-primary/);
-    expect(cancel.className).not.toMatch(/bg-primary/);
     expect(
       screen
         .getAllByRole('button')
@@ -769,7 +820,7 @@ describe('QuotationFormClient edit', () => {
     );
     expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
     const card = await openSavedLines();
-    expect(within(card).getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+    expect(within(card).getByRole('button', { name: 'Description on SRT-WC-01' }).textContent).toBe(
       'Wall-hung WC',
     );
     // The saved scope's own record reaches the editor, as on the quotation page.
@@ -847,21 +898,123 @@ describe('QuotationFormClient edit', () => {
     });
   });
 
-  it('AC-QF022: Cancel goes back to the quotation page and writes nothing', async () => {
+  it('QUOTE-AUTOSAVE Q1: typing autosaves to the DRAFT with this tab\'s claim, never the record', async () => {
     renderForm('d1');
     await waitFor(() =>
       expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
     );
+    expect(openQuotationFormDraft).toHaveBeenCalledWith('p1', 'd1');
 
     fireEvent.change(screen.getByLabelText('Your Ref'), {
       target: { value: 'changed' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(push).toHaveBeenCalledWith(
-      '/project-sales/p1/quotation-documents/d1',
-    );
+    await waitFor(() => expect(saveQuotationFormDraft).toHaveBeenCalled(), { timeout: 3000 });
+    const [projectId, documentId, state, token] = saveQuotationFormDraft.mock.calls.at(-1)!;
+    expect([projectId, documentId, token]).toEqual(['p1', 'd1', 'tok-1']);
+    expect(state.header.your_ref).toBe('changed');
     expect(updateQuotationDocument).not.toHaveBeenCalled();
+    expect(await screen.findByText(/^Saved/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard draft' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('crew pass step 9: leaving the form refreshes the proposal record, so its page shows the draft', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const view = render(
+      <QueryClientProvider client={client}>
+        <QuotationFormClient projectId="p1" documentId="d1" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'left via Back' } });
+    invalidate.mockClear();
+    view.unmount();
+    // After the leave flush has landed, so the re-read sees the draft.
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: quotationDocumentKey('p1', 'd1') }),
+      ),
+    );
+    expect(saveQuotationFormDraft.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      invalidate.mock.invocationCallOrder.at(-1)!,
+    );
+  });
+
+  it('crew pass step 14: Discard draft refreshes the proposal record when it commits', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    const options = deferredOptions.mock.calls.at(-1)![0] as {
+      actionKey: string;
+      invalidateKeys?: unknown[][];
+    };
+    expect(options.actionKey).toBe('quotation_form_draft.discard');
+    expect(options.invalidateKeys).toEqual(
+      expect.arrayContaining([quotationDocumentKey('p1', 'd1')]),
+    );
+  });
+
+  it('QUOTE-AUTOSAVE: opens on the draft when there is one, not on the record', async () => {
+    openQuotationFormDraft.mockResolvedValue({
+      draft_id: 'draft-1',
+      token: 'tok-1',
+      doc: {
+        v: 1,
+        header: { your_ref: 'FROM-DRAFT', subject_title: 'Draft subject' },
+        letter: {},
+        scopes: [{ key: 'q1', id: 'q1', scope_label: 'Townhouse', series_id: '' }],
+        staged: {},
+        removedIds: [],
+        total: '0',
+      },
+      updated_at: '2026-11-10T06:14:00',
+      updated_by_name: 'Aina',
+    });
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('FROM-DRAFT'));
+    // Opening on a draft is not an edit: nothing is written back.
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(saveQuotationFormDraft).not.toHaveBeenCalled();
+  });
+
+  it('QUOTE-AUTOSAVE: Save carries the form state and this tab\'s claim', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/99' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    const body = updateQuotationDocument.mock.calls[0][2];
+    expect(body.your_ref).toBe('NC/99');
+    expect(body.form_token).toBe('tok-1');
+    expect(body.form_state.header.your_ref).toBe('NC/99');
+    // The autosave was flushed first, so the two cannot land out of order.
+    expect(saveQuotationFormDraft).toHaveBeenCalled();
+    expect(saveQuotationFormDraft.mock.invocationCallOrder[0]).toBeLessThan(
+      updateQuotationDocument.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('QUOTE-AUTOSAVE Q4: the older tab goes view-only, naming who opened it, and cannot Save', async () => {
+    const { DraftNotHolderError } = await vi.importActual<
+      typeof import('../../../_shared/services/quotationDocumentService')
+    >('../../../_shared/services/quotationDocumentService');
+    saveQuotationFormDraft.mockRejectedValue(
+      new DraftNotHolderError('opened elsewhere', { holder_name: 'Ben', holder_at: null }),
+    );
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'older tab' } });
+
+    expect(
+      await screen.findByText(/Opened in another tab \/ by Ben/, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save proposal' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
+    // The fields are locked: the whole form body is inert.
+    expect(screen.getByLabelText('Your Ref').closest('[inert]')).not.toBeNull();
   });
 
   it('AC-QF023: a scope the customer holds shows its lines read-only and never sends them', async () => {
@@ -958,21 +1111,20 @@ describe('QuotationFormClient guards', () => {
     expect(createQuotationDocument).not.toHaveBeenCalled();
   });
 
-  it('warns before the browser throws typed work away, and not before anything is typed', async () => {
-    renderForm();
-    await openLines();
+  it('QUOTE-AUTOSAVE: no leave-the-page prompt; closing the tab sends the draft instead', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/21' } });
 
-    const untouched = new Event('beforeunload', { cancelable: true });
-    window.dispatchEvent(untouched);
-    expect(untouched.defaultPrevented).toBe(false);
+    const leaving = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(false);
 
-    await openTab('Header');
-    fireEvent.change(screen.getByLabelText('Your Ref'), {
-      target: { value: 'NC/21' },
-    });
-    const touched = new Event('beforeunload', { cancelable: true });
-    window.dispatchEvent(touched);
-    expect(touched.defaultPrevented).toBe(true);
+    window.dispatchEvent(new Event('pagehide'));
+    await waitFor(() => expect(saveQuotationFormDraft).toHaveBeenCalled());
+    const call = saveQuotationFormDraft.mock.calls.at(-1)!;
+    expect(call[2].header.your_ref).toBe('NC/21');
+    expect(call[4]).toEqual({ keepalive: true });
   });
 });
 
@@ -1069,7 +1221,8 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
   it('still refuses a scope that has lines but no name, and opens Header (where the lines are) to show it', async () => {
     renderForm();
     const card = await openLines();
-    fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
+    await addLine(card, 1);
+    fireEvent.change(await openDescription(card, 'line 1'), { target: { value: 'Grab bar' } });
     await openTab('Terms');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
@@ -1081,7 +1234,7 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
 });
 
 describe('QuotationFormClient from the Overview (AC-QF061)', () => {
-  it('opens cleanly for a project with no quotation, and Cancel returns to the Quotations tab', async () => {
+  it('opens cleanly for a project with no quotation, with no Cancel (leaving keeps the draft)', async () => {
     listQuotations.mockResolvedValue([]);
     renderForm();
 
@@ -1090,8 +1243,7 @@ describe('QuotationFormClient from the Overview (AC-QF061)', () => {
     expect(getQuotationDocument).not.toHaveBeenCalled();
     expect(screen.queryByText(/could not be loaded/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=quotations');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     expect(createQuotationDocument).not.toHaveBeenCalled();
   });
 });
@@ -1895,19 +2047,25 @@ describe('QuotationFormClient: collapsible Header and Lines (PROPOSAL-FORM-COLLA
   it('a collapsed Lines section reads the scope count and total, and keeps staged lines', async () => {
     renderForm();
     const card = await openLines();
-    const description = await addLine(card, 1);
-    fireEvent.change(description, { target: { value: 'Kept while folded' } });
+    await addLine(card, 1);
+    // The description is typed in the cell's editor popover (QUOTE-DESC-RICHTEXT), then closed.
+    const editor = await openDescription(card, 'line 1');
+    fireEvent.change(editor, { target: { value: 'Kept while folded' } });
+    fireEvent.keyDown(editor, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Description text on line 1' })).toBeNull(),
+    );
 
     fireEvent.click(toggle(/^Lines/));
     const collapsed = toggle(/^Lines/);
     expect(collapsed).toHaveAttribute('aria-expanded', 'false');
     expect(collapsed).toHaveTextContent(/1 scope.*RM [\d,]+\.\d\d/);
-    expect(screen.getByDisplayValue('Kept while folded')).not.toBeVisible();
+    expect(screen.getByText('Kept while folded')).not.toBeVisible();
     // The Header stays open.
     expect(screen.getByRole('textbox', { name: 'Your Ref' })).toBeVisible();
 
     fireEvent.click(collapsed);
-    expect(screen.getByDisplayValue('Kept while folded')).toBeVisible();
+    expect(screen.getByText('Kept while folded')).toBeVisible();
   });
 
   it('leaves the Cover letter and Terms tabs without section toggles', async () => {

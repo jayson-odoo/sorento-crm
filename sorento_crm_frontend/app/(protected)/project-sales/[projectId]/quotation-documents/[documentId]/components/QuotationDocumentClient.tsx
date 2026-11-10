@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { RecordAction } from '@/components/common/recordActions';
 import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
@@ -476,6 +477,22 @@ export function QuotationDocumentClient({
           // Why the screen is in the state it is in, each on its own line (owner: no "·").
           // Visible, not a tooltip: a hover is unreadable on the phone this page works on.
           ...headerHints.map((hint) => <span key={hint}>{hint}</span>),
+          // QUOTE-AUTOSAVE: the form autosaves into a draft that reaches this record only on
+          // Save, so say when one is waiting, and whose.
+          record.has_form_draft ? (
+            <span key="form-draft" className="inline-flex flex-wrap items-center gap-x-1">
+              {formDraftHint(record.form_draft_at, record.form_draft_by_name)}
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs"
+                onClick={startEditing}
+              >
+                Continue editing
+              </Button>
+            </span>
+          ) : null,
         ]}
         actions={
           /* Pager, gear, printer, primary (D6, owner 5 Nov: the printer sits beside the gear). */
@@ -717,4 +734,10 @@ export function QuotationDocumentClient({
       />
     </div>
   );
+}
+
+/** "Unsaved draft, last edited 10/11/2026 2:14 PM by Aina" (QUOTE-AUTOSAVE). */
+export function formDraftHint(at: string | null | undefined, by: string | null | undefined): string {
+  const when = at ? ` ${formatDateTimeInMalaysia(at)}` : '';
+  return `Unsaved draft, last edited${when}${by ? ` by ${by}` : ''}.`;
 }
