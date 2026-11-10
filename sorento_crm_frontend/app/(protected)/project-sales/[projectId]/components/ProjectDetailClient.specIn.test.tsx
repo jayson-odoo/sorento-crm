@@ -1,10 +1,7 @@
 /**
- * PS-REGISTER-CHECK-FIRST AC-G7..G10: a Registered project whose Spec In move is available and that has
- * no document shows "Upload Requirement" in the header instead of Spec In (hidden, not disabled).
- * The button opens an "Upload requirement" dialog; Upload files a Project Document (type code
- * `project_document`) and makes NO status call. Once the documents query (['project-documents', id],
- * same service as ProjectDocumentsPanel) returns a row the header shows Spec In. A server 422
- * `project_requirements_missing` on a stale page is today's error toast, no dialog.
+ * RFQ-GATE-REMOVE (owner, 10 Nov 2026): a Registered project's header shows the status graph's
+ * next step, Spec In, whether or not it has a document. The PS-REGISTER-CHECK-FIRST "Upload
+ * Requirement" button and its dialog are gone; the Documents tab keeps its own upload.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -171,7 +168,6 @@ vi.mock('@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph', (
 }));
 
 import { ProjectDetailClient } from './ProjectDetailClient';
-import { toast } from '@/lib/toast';
 
 function status(
   id: string,
@@ -278,15 +274,6 @@ function renderDetail() {
 }
 
 
-function refuse(code: string | null, message = 'Upload the requirements document before moving this project to Spec In.') {
-  changeStatus.mockImplementation(
-    (_vars: unknown, options?: { onError?: (e: Error) => void }) => {
-      const error = new Error(message) as Error & { code: string | null };
-      error.code = code;
-      options?.onError?.(error);
-    },
-  );
-}
 
 function standRegistered() {
   graphFixture = graph({
@@ -315,101 +302,40 @@ beforeEach(() => {
   standRegistered();
 });
 
-describe('AC-G7 header with no document', () => {
-  it('AC-G7 Registered with 0 documents shows Upload Requirement and no Spec In button at all', async () => {
-    renderDetail();
-    expect(await header().findByRole('button', { name: 'Upload Requirement' })).toBeInTheDocument();
-    expect(header().queryByRole('button', { name: 'Spec In' })).toBeNull();
-    expect(screen.queryByText(/Spec In/, { selector: 'button *' })).toBeNull();
-  });
-
-  it('AC-G7 a user who cannot work on the project sees no Upload Requirement', async () => {
-    projectFixture = project({ status_id: 's-reg', status_key: 'registered', status_label: 'Registered', can_edit: false });
-    renderDetail();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    // Guard: passes before the feature too; it must stay green after it.
-    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
-  });
-
-  it('AC-G9 with one document from the start the header is today: Spec In, no Upload Requirement', async () => {
-    docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
+describe('RFQ-GATE-REMOVE the header follows the status graph', () => {
+  it('AC-1 Registered with 0 documents shows Spec In and no Upload Requirement', async () => {
     renderDetail();
     expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
-    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
-  });
-});
-
-describe('AC-G7 header while the documents query is not answered', () => {
-  const documentsAsked = () => apiCalls.some((c) => c.method === 'GET' && c.url.includes('/attachments'));
-
-  it('AC-G7 while the documents query is pending the header shows neither Spec In nor Upload Requirement', async () => {
-    docsMode = 'pending';
-    renderDetail();
-    await waitFor(() => expect(documentsAsked()).toBe(true));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(header().queryByRole('button', { name: 'Spec In' })).toBeNull();
-    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
   });
 
-  it('AC-G7 when the documents query errors the header shows Spec In and no Upload Requirement', async () => {
-    docsMode = 'error';
-    renderDetail();
-    await waitFor(() => expect(documentsAsked()).toBe(true));
-    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
-    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
-  });
-});
-
-describe('AC-G8 Upload requirement dialog', () => {
-  it('AC-G8 opens the dialog with a file input, Cancel and Upload', async () => {
-    renderDetail();
-    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
-    expect(dialog.querySelector('input[type="file"]')).not.toBeNull();
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Upload' })).toBeInTheDocument();
-  });
-
-  it('AC-G8 Upload files a Project Document, makes no status call, then the header shows Spec In', async () => {
-    renderDetail();
-    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
-    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, {
-      target: { files: [new File(['x'], 'reqs.pdf', { type: 'application/pdf' })] },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Upload' }));
-    await waitFor(() =>
-      expect(apiCalls.filter((c) => c.method === 'POST' && c.url.includes('/attachments'))).toHaveLength(1),
-    );
-    const form = apiCalls.find((c) => c.method === 'POST' && c.url.includes('/attachments'))!.body as FormData;
-    expect(form.get('attachment_type_id')).toBe('ty-doc');
-    expect(form.get('entity_type')).toBe('project');
-    expect(form.get('entity_id')).toBe('p1');
-    expect(changeStatus).not.toHaveBeenCalled();
-    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
-    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
-  });
-
-  it('AC-G8 Cancel closes the dialog and uploads nothing', async () => {
-    renderDetail();
-    fireEvent.click(await header().findByRole('button', { name: 'Upload Requirement' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Upload requirement' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Upload requirement' })).toBeNull());
-    expect(apiCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
-    expect(changeStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('AC-G10 stale page', () => {
-  it('AC-G10 a 422 project_requirements_missing on a Spec In click is the server message as a toast, no dialog', async () => {
-    docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
-    refuse('project_requirements_missing');
+  it('AC-2 clicking Spec In with 0 documents moves the project to Spec In', async () => {
     renderDetail();
     fireEvent.click(await header().findByRole('button', { name: 'Spec In' }));
     await waitFor(() => expect(changeStatus).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(changeStatus.mock.calls[0][0]).toMatchObject({ projectId: 'p1', toStatusId: 's-spec' });
+    expect(screen.queryByRole('dialog', { name: 'Upload requirement' })).toBeNull();
+  });
+
+  it('AC-1 the header does not wait on the documents read', async () => {
+    docsMode = 'pending';
+    renderDetail();
+    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
+  });
+
+  it('AC-1 with documents the header is the same: Spec In', async () => {
+    docs = [{ id: 'd1', original_filename: 'brief.pdf', stored_filename: 'brief.pdf' }];
+    renderDetail();
+    expect(await header().findByRole('button', { name: 'Spec In' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
+  });
+
+  it('AC-1 a user who cannot work on the project gets no move and no Upload Requirement', async () => {
+    projectFixture = project({ status_id: 's-reg', status_key: 'registered', status_label: 'Registered', can_edit: false });
+    renderDetail();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(header().queryByRole('button', { name: 'Spec In' })).toBeNull();
+    expect(header().queryByRole('button', { name: 'Upload Requirement' })).toBeNull();
   });
 });
 

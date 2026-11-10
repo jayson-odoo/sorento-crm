@@ -50,11 +50,10 @@ only from the lead's own page (**Qualify**).
 When you submit, the server runs the same check again. If a clash appeared in the meantime, the
 submit is refused and you are told the project code and title.
 
-## Upload a requirement before Spec In
+## Move a Registered project to Spec In
 
-A **Registered** project needs at least one document before it can move to **Spec In**. Until it
-has one, the header shows **Upload Requirement** instead of **Spec In**. Upload any file (it then
-appears on the **Documents** tab) and **Spec In** comes back.
+A **Registered** project's header shows **Spec In**, whether or not it has documents yet. Upload
+requirement files on the **Documents** tab whenever you have them; they are not needed to move on.
 
 ## Keep each party's contacts
 

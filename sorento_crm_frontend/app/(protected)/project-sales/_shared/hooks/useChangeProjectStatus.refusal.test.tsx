@@ -1,7 +1,5 @@
 /**
- * PS-REGISTER-CHECK-FIRST AC-G10: the status move hook KEEPS today's error toast for
- * `project_requirements_missing` (the server's message), like any other refusal.
- * REGRESSION GUARD: both tests pass before the feature and must stay green.
+ * The status move hook shows a refused move's server message as an error toast.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -44,16 +42,7 @@ function coded(message: string, code: string) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('useChangeProjectStatus refusals', () => {
-  it('AC-G10 project_requirements_missing keeps the error toast with the server message', async () => {
-    changeProjectStatus.mockRejectedValue(coded('Upload the requirements document.', 'project_requirements_missing'));
-    const get = mount();
-    await act(async () => {
-      await get().mutateAsync({ projectId: 'p1', toStatusId: 's-spec' }).catch(() => undefined);
-    });
-    expect(toast.error).toHaveBeenCalledWith('Upload the requirements document.');
-  });
-
-  it('AC-G10 any other refusal keeps the error toast', async () => {
+  it('a refused move shows the server message as an error toast', async () => {
     changeProjectStatus.mockRejectedValue(coded('Not allowed.', 'something_else'));
     const get = mount();
     await act(async () => {
