@@ -1,7 +1,7 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Plan, waiting on the owner. Behaviour card + mock v4 filed for the owner (`crew report --ask`); build waits for the
-owner's OK. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
+Status: Plan. Card questions all answered by the owner (10 Nov ~16:05); mock v5 (motion) + research note
+filed; build waits for the owner's sign-off on v5. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
 no new ingest surface. UAC: `town-v2-acceptance-criteria.md`.
 
 ## Journey (owner, 10 Nov ~15:35 MYT, Dashboards > Town)
@@ -25,6 +25,7 @@ shipments also ... how about purchased from overseas?"
 | Label layout (fixed labels + stacked name tags, re-run on every camera move) | `town/components/TownScene.tsx:119-152`, `town/lib/townFormat.ts` (`separateLabels`, `stackTags`) |
 | Payload types (schema 1) | `sorento_crm_frontend/types/town.types.ts` |
 | Snapshot build (one FULL per company per tick, Redis, gzip) | `sorento_crm_backend/app/services/town/snapshot.py:305-328` (`build_snapshot`) |
+| Due-delivery count (lorries) | `town/snapshot.py:119-133` (`_deliveries`) |
 | Redaction / wallboard strip | `town/snapshot.py:363-390` (`redact`, `strip_names`) |
 | Route (reads Redis only) | `sorento_crm_backend/app/api/v1/town.py` |
 | Incoming shipments source: "still incoming" line rule, not-draft rule | `sorento_crm_backend/app/services/incoming_stock_service.py:71-96` (`_remaining_expr`, `_still_incoming_filter`, `_not_draft_shipment_filter`) |
@@ -34,124 +35,124 @@ shipments also ... how about purchased from overseas?"
 | Lightbox component (centred modal, Esc + click outside close) | `sorento_crm_frontend/components/ui/dialog.tsx` (`Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogBody`) |
 | Tooltip | in-canvas overlay `div` positioned from the hovered object's screen point (Radix `Tooltip` needs a DOM trigger, a 3D object has none) |
 
-## Behaviour card (rules)
+## Behaviour card (rules, owner answers folded in)
 
-1. **Hover = name.** Pointer over a shop, warehouse, depot, office, scoreboard, port or ship shows a
-   small tooltip next to it: name + one key number (shop: `Name [A/C I] · RM 12,340 today`; redacted
-   viewer: `Dealer · 2 invoices today`; port: `Port · 7 on the water · 3 arriving this week`). No click.
-   Cursor turns into a pointer over anything clickable.
-2. **Touch:** first tap on a building shows its tooltip; a second tap on the same building (or a tap on
-   the tooltip) opens its lightbox. A tap on empty ground hides the tooltip.
+1. **Hover = name (mouse only).** Pointer over a shop, warehouse, depot, office, scoreboard, port, ship,
+   container or lorry shows a small tooltip: name + one key number (shop: `Name [A/C I] · RM 12,340 today`;
+   redacted viewer: `Dealer · 2 invoices today`; port: `Port · 29 incoming · 70 late · next ETA Wed 11 Nov`).
+   No click. Cursor turns into a pointer over anything clickable.
+2. **Touch (owner Q4 = b):** a tap opens the lightbox straight away. No tooltip on touch and no
+   "tap again" hint ("don't want so many tips").
 3. **Click = lightbox.** Clicking a building, a label or a stat card opens a centred modal (the app's
-   `Dialog`) over a dimmed town, same content the side panel shows today plus the new port lightbox.
+   `Dialog`) over a dimmed town, with the content the side panel shows today plus the new port lightbox.
    Esc, the close button or a click outside closes it. The side panel (`TownPanel` Sheet) is removed.
 4. **Camera.** Drag left/right turns (as today). Drag up/down tilts between street level (elevation 20
-   degrees) and bird's-eye (80 degrees); default stays today's ~41 degrees. Scroll wheel / pinch zooms
-   0.7x-2.2x. A small "Reset view" icon button (bottom-right of the canvas, labelled) returns to the
-   default angle, tilt and zoom. Still render-on-demand, 30 fps cap while dragging, nothing drawn while
-   hidden: no extra cost on the Mac mini wallboard when idle.
-5. **Port (new).** A dock at the town's edge (outside the ring, toward the sea side): ships on the
-   water for shipments still sailing, containers stacked on the quay for shipments arriving soon. One
-   sign: `Incoming: 10` . Hover = counts + next ETA, click = lightbox listing the shipments.
-6. **Which shipments count** (same rule the assistant's `crm_incoming_stock_shipments` uses, imported,
-   not re-derived): not draft, at least one line still incoming (`line_status != received` and
-   shipped - received > 0). Split by effective ETA (`eta_delay_date` when set, else
-   `estimated_arrival_date`) against today (MYT):
-   - **On the water:** ETA after today + 7 days, or no ETA -> ships.
-   - **Arriving this week:** ETA today .. today + 7 -> containers on the quay.
-   - **Late:** ETA before today and still incoming -> containers with a red tag ("3 late").
+   degrees) and bird's-eye (80 degrees); the default stays today's ~41 degrees. Scroll wheel / pinch zooms
+   0.7x-2.2x. Icon buttons bottom-right: Pause/Play motion, Zoom out, Zoom in, Reset view (each with an
+   `aria-label`).
+5. **Port.** A dock outside the island behind the warehouses and the depot. Ships on the water =
+   INCOMING shipments (at most 6 drawn); red containers on the quay = LATE shipments (at most 12 drawn).
+   The sign reads `Incoming: 29`, plus a red `70 late` tag. Hover = counts + next ETA, click = port lightbox.
+6. **Which shipments count** (owner Q2: "late means late, incoming means incoming", no windows): not draft
+   and at least one line still incoming, using the rule `crm_incoming_stock_shipments` uses
+   (`incoming_stock_service.py:71-96`, imported, not re-derived). Effective ETA = `eta_delay_date` when
+   set, else `estimated_arrival_date`. Two states only:
+   - **Incoming:** ETA today or later, or no ETA.
+   - **Late:** ETA before today (MYT).
 7. **Snapshot.** `build_snapshot` gains `incoming` (schema stays 1, the key is additive; the FE treats
-   a missing key as "no port data yet"):
-   `{"on_water": n, "arriving_soon": n, "late": n, "total": n, "next_eta": "YYYY-MM-DD"|null,
-   "shipments": [{shipment_number, container, supplier, eta, products, quantity, bucket}] (earliest 30 by ETA)}`.
-   Same tick, same 5 s statement timeout, same Redis keys; the route still reads no business table.
-8. **Redaction.** Shipments carry no amounts. The supplier name is stripped from the redacted variant
-   and from the wallboard (same as dealer names); counts, ETAs, shipment/container numbers stay.
-9. **Port lightbox lists** up to 30 shipments, ETA ascending: `Shipment no. · Container · Supplier ·
-   ETA · Products · Qty`, a late row shows a red "Late" badge, and one button "Open packing lists".
-   More than 30: footer "+N more" and the same button.
+   a missing key as "no port yet"):
+   `{"incoming": n, "late": n, "next_eta": "YYYY-MM-DD"|null, "shipments": [{shipment_number, container,
+   supplier, eta, products, quantity, late}]}`, with up to 30 incoming rows (ETA ascending, no ETA last)
+   then up to 30 late rows (most recently late first). Same tick, same 5 s statement timeout, same Redis
+   keys; the route still reads no business table.
+8. **Redaction (owner Q3 = a).** Shipments carry no amounts. `supplier` is stripped from the redacted
+   variant and from the wallboard (same as dealer names); counts, ETAs, shipment/container numbers stay.
+9. **Port lightbox** has two sections, "Incoming, by ETA (29)" and "Late, ETA passed, not received (70)".
+   Columns: Shipment · Container · Supplier · ETA · Products · Qty. Each section ends "+N more" past 30.
+   One button: "Open packing lists" (owner Q5 = a). Phone: Container and Products columns hidden.
+10. **Motion (owner on v4: "doesn't wow me, things won't move"; research: `town-v2-research.md`).**
+    Calm, and every movement stands for a figure:
+    - Lorries (at most 6 of `deliveries.to_deliver`) drive depot -> ring road -> customer -> back, with
+      eased starts and stops. The rest stay parked at the depot.
+    - Ships at anchor bob; one ship sails in every 24 s and the crane lifts two containers onto the quay.
+    - Lit shops breathe (a soft glow on their own phase) and flash when a lorry or a sale arrives.
+    - **New invoice:** when a poll brings a shop more `today_docs` than the last snapshot, a receipt pops
+      above that shop ("+ RM 2,340", or "+1 invoice" when redacted or on the wallboard) and the scoreboard
+      counts up to the new total. This is a pure frontend diff of two snapshots; no backend change.
+    - Trees sway, two flags wave, the water moves (faceted low-poly).
+    - The town assembles on load: buildings rise in a short stagger, then labels fade in.
+    - Time of day: light and sky follow the snapshot's `as_of` hour (warm near 18:00, blue after 20:00).
+    - Guard rails: 30 fps cap, the clock stops while the tab is hidden, `prefers-reduced-motion` = the
+      static town (as today), and a Pause/Play button (WCAG 2.2.2), remembered per viewer in localStorage.
 
 ## Real examples (dev data)
 
 Crew data request answered 10 Nov (dev DB = 4 Nov prod copy; no receipts after 4 Nov, so "late" is
 inflated by shipments received 4-10 Nov). Effective ETA vs 10 Nov, open = not draft + a line still incoming:
 
-| Company | On the water (> 7 d or no ETA) | Arriving <= 7 d | <= 14 d | Late (ETA passed) | No ETA | Total | Next ETA | Oldest ETA |
+| Company | ETA > 7 d or none | ETA <= 7 d | <= 14 d | Late (ETA passed) | No ETA | Total | Next ETA | Oldest ETA |
 |---|---|---|---|---|---|---|---|---|
 | SRT (Sorento) | 3 | 26 | 27 | 70 | 2 | 99 | 10 Nov | 14 Jun |
 | Mocha | 0 | 4 | 4 | 39 | 0 | 43 | 13 Nov | 2 Aug |
 
-What this changes:
-- **Late dominates** (70 of 99 for SRT), with ETAs back to June. Even after removing the 4-10 Nov
-  inflation, many of these are shipments that arrived but whose lines were never closed (data
-  hygiene), not ships still at sea. A port showing "70 late" would bury the real signal. Revised Q2.
-- **Few ships:** only 3 "on the water" past 7 days; most open shipments fall inside the week. The
-  quay draws at most 12 containers, so SRT's port is always "full" on a normal day, and the 30-row
-  lightbox shows "+69 more".
-- 14 days adds only 1 shipment over 7 days, so Q1 (window) barely matters on this data: keep 7.
+Under the owner's two-state rule SRT shows **29 incoming, 70 late**, and Mocha **4 incoming, 39 late**.
 
 ## Edge cases
 
-- **No shipments:** the port is drawn empty (no ship, no container), sign reads `Incoming: none`,
-  tooltip "Nothing on the way", lightbox shows the empty state "Nothing on the way" (heading, no button
-  other than "Open packing lists").
-- **100+ shipments:** at most 6 ships and 12 containers are drawn (the counts on the sign and tooltip
-  stay exact); the snapshot carries only the earliest 30 rows plus the exact totals, so payload size
-  stays bounded (~4 KB).
-- **No ETA:** counts as on the water, sorts last, shown as "No ETA".
-- **Mobile (375 px):** tap-tap rule (2); tooltip clamps inside the canvas; lightbox is the standard
-  `Dialog` (full-width on small screens); one-finger drag turns and tilts, two-finger pinch zooms, so
-  the canvas keeps `touch-none` (the page scrolls from the cards below and the page margins).
-- **Reduced motion / no WebGL:** cards only (as today) plus a sixth card "What is coming in?" -> the
-  same port lightbox.
-- **Old snapshot without `incoming`** (first tick after deploy): port not drawn, sixth card hidden.
+- **No shipments:** the port is drawn empty (no ship, no container, no docking ship), the sign reads
+  `Incoming: none`, and the lightbox shows the empty state "Nothing on the way" plus "Open packing lists".
+- **100+ shipments:** at most 6 ships and 12 containers are drawn (the sign and tooltip counts stay
+  exact); the snapshot carries at most 60 rows plus exact totals (~8 KB before gzip).
+- **No ETA:** counts as incoming, sorts last, shown as "No ETA".
+- **Mobile (375 px):** a tap opens the lightbox; one-finger drag turns and tilts, two-finger pinch zooms,
+  so the canvas keeps `touch-none`; the lightbox is the standard `Dialog`.
+- **Reduced motion:** static town (as today). **No WebGL:** cards only, plus a sixth card "What is coming
+  in?" that opens the same port lightbox.
+- **Old snapshot without `incoming`** (first tick after deploy): no port, no sixth card, no crash.
+- **No lit shop:** lorries stay parked (nowhere to drive); no receipt pops.
 
-## Questions for the owner (each with a recommendation)
+## Questions for the owner
 
-1. **"Arriving soon" window:** (a) 7 days (b) 14 days (c) this calendar month. Rec (a) 7 days: one
-   week is what the warehouse plans collection around; longer windows turn most ships into containers.
-2. **Late shipments** (ETA passed, not yet received). Dev data: 70 of SRT's 99 open shipments, ETAs back
-   to 14 Jun. Options: (a) all of them, one red count; (b) late = ETA passed in the last 30 days, red count;
-   older open shipments are left out of the town and shown in the lightbox as a one-line footer
-   "N older shipments still open (ETA before <date>)" pointing at packing lists; (c) fold into
-   arriving soon. Rec (b): a June ETA still open is almost always a receipt nobody closed, not a ship.
-   Counting it hides the 5-10 shipments purchasing can actually chase, and the footer keeps the cleanup
-   visible without letting it own the port.
-3. **Supplier names in the port lightbox:** (a) shown on the personal view, hidden on wallboard and for
-   viewers without `sales.reports.view` (b) always shown (c) never. Rec (a): same rule as dealer names,
-   one rule to remember.
-4. **Touch:** (a) tap = tooltip, second tap = lightbox (b) tap = lightbox straight away (tooltip only
-   with a mouse). Rec (a): matches "no click needed to learn a name" on the iPad too.
-5. **Lightbox button for the port:** (a) "Open packing lists" (`/procurement-management/packing-lists`)
-   (b) none. Rec (a): every other lightbox has one way out to the real screen.
+Answered 10 Nov ~16:00-16:05: Q1 dropped; Q2 two plain states (incoming / late); Q3 (a) supplier names on
+the personal view only; Q4 (b) a tap opens the lightbox, hover tooltips on desktop only; Q5 (a) "Open
+packing lists".
 
-## Mock (v4, filed for the owner)
+Open with mock v5:
+6. **Where lorries drive.** The snapshot has only a count of due sales orders, not who they are for. (a)
+   Add `deliveries.customers`: the keys of up to 6 shops with an order due today or overdue (one GROUP BY
+   on the existing `_deliveries` query), so a lorry drives to a real customer; on the redacted or
+   wallboard variant the keys stay opaque as they are today. (b) Lorries drive to lit shops (decoration,
+   says nothing true). Rec (a): one small query, and a lorry heading to a shop then means something.
 
-`mock/town-v2-mock.html`, a fork of the approved v3 mock. The scene is real three.js, so its camera,
-hover and port code is the prototype for the build. Screenshots are in `mock/town-v2/`. The shipments
-in it are a SAMPLE until the crew data request is answered.
-Placement: the port sits outside the island behind the warehouses and the depot (angle 226), at the top
-of the default view where there is empty sky. At the side (angle 136) it clipped off the canvas edge.
-On a phone the port lightbox drops the Container and Products columns; they stay in the hover tooltip.
+## Mock
+
+- v4 `mock/town-v2-mock.html` (static: hover, lightbox, tilt, port). Screenshots in `mock/town-v2/`.
+- v5 `mock/town-v2-mock-v5.html` (alive), with a 23 s recording `mock/town-v2/town-v2-mock-v5.mp4` (+ `.gif`).
+  Its shipment counts mirror SRT's dev shape (29 incoming, 70 late); the numbers, suppliers and ETAs are invented.
+- Placement: the port sits outside the island behind the warehouses and the depot (angle 226), at the top
+  of the default view, which v5 centres between the island and the port.
 
 ## Element -> component map
 
 | Mock element | Component (repo path) |
 |---|---|
-| Hover tooltip | new `TownTooltip` overlay in `town/components/TownScene.tsx` (absolutely positioned `div`, token classes from `components/ui/tooltip.tsx` look: `bg-popover text-popover-foreground rounded-md border px-2 py-1 text-xs shadow-md`) |
-| Lightbox | `components/ui/dialog.tsx` `Dialog` + `DialogContent` + `DialogHeader` + `DialogTitle` + `DialogDescription` + `DialogBody`; content from today's `TownPanel.body()` (renamed `TownLightbox`) |
-| Reset view | `components/ui/button.tsx` `Button variant="outline" mode="icon" size="sm"` + lucide `RotateCcw`, `aria-label="Reset view"` |
-| Port, ships, containers | three.js meshes in `TownScene.tsx` (instanced, same `part()`/`merge()` helpers) |
-| Port sign | existing `label()` sprite, a fixed label in `separateLabels` |
-| Late badge in the list | `components/ui/badge.tsx` `Badge variant="destructive"` |
+| Hover tooltip | overlay `div` in `town/components/TownScene.tsx` with the `components/ui/tooltip.tsx` look (`bg-popover text-popover-foreground rounded-md border px-2 py-1 text-xs shadow-md`) |
+| Lightbox | `components/ui/dialog.tsx` `Dialog` + `DialogContent` + `DialogHeader` + `DialogTitle` + `DialogDescription` + `DialogBody`; content from today's `TownPanel.body()`, moved to `TownLightbox.tsx` |
+| Pause / Zoom / Reset | `components/ui/button.tsx` `Button variant="ghost" mode="icon"` + lucide `Pause`/`Play`, `Minus`, `Plus`, `RotateCcw`, each with `aria-label` |
+| Port, ships, containers, crane lift, water, flags | three.js meshes in `TownScene.tsx` (instanced where repeated, same `part()`/`merge()` helpers) |
+| Lorry routes, glow, receipt pop, intro | `TownScene.tsx` animation loop; pure helpers (`route`, `along`, easing, `newSales(prev, next)`) in `town/lib/townMotion.ts` with vitest |
+| Port sign, late tag | existing `label()` sprite, fixed labels in `separateLabels` |
+| Late section chip | `components/ui/badge.tsx` `Badge variant="destructive"` |
 | Sixth card | `town/components/TownCards.tsx` `Card` |
 
-## Build slices (after OK)
+## Build slices (after sign-off)
 
-1. BE: `_incoming(db, company_id, day)` in `town/snapshot.py` reusing `incoming_stock_service`
-   filters; `redact`/`strip_names` drop `supplier`. Tests first in `tests/town/test_town_snapshot_v2_incoming.py`.
-2. FE: `TownPanel` Sheet -> `TownLightbox` Dialog; cards + scene open it. Tests: lightbox role=dialog,
-   Esc closes, no Sheet.
-3. FE: hover/tap tooltip + tilt/zoom/reset camera (pure helpers `clampTilt`, `clampZoom`,
-   `pickTooltip` in `townFormat.ts` with vitest).
+1. BE: `_incoming(db, company_id, day)` in `town/snapshot.py`, reusing the `incoming_stock_service`
+   filters; `redact`/`strip_names` drop `supplier`; (if Q6 = a) `deliveries.customers`. Tests first in
+   `tests/town/test_town_snapshot_v2_incoming.py`.
+2. FE: `TownPanel` Sheet -> `TownLightbox` Dialog; cards + scene open it. Tests: role=dialog, Esc
+   closes, no Sheet rendered.
+3. FE: hover tooltip (mouse) / tap = open (touch) + tilt/zoom/reset camera (pure clamps in `townFormat.ts`).
 4. FE: port + ships + containers + port lightbox + sixth card.
+5. FE: motion layer (`townMotion.ts` + loop in `TownScene.tsx`), pause button, reduced-motion guard,
+   receipt pops from the snapshot diff.
