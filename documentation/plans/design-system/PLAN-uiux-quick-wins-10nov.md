@@ -1,6 +1,6 @@
 # PLAN: UI/UX playbook quick wins (UIUX-QUICK-WINS)
 
-Status: building (small fix track per item, size M overall; no migration, no auth/RBAC change).
+Status: built, in review (small fix track per item, size M overall; no migration, no auth/RBAC change). Item 3 moved to lane PRICETAG-REQUEST-LAYOUT (#2318) by crew, with the price tag form's own status pill.
 
 ## Journey
 
@@ -13,7 +13,7 @@ playbook dialog wording).
 
 1. OI detail: one filled CTA at a time (the one the state waits for), the other outline.
 2. OI list: Reserve filter multi-select + Reserve column sortable server-side.
-3. Price tag "Need by": shared DatePicker (dd/mm/yyyy) instead of native type=date.
+3. Price tag "Need by": shared DatePicker (dd/mm/yyyy) instead of native type=date. MOVED to #2318 (crew, 10 Nov): it lives in `PriceTagRequestForm.tsx`, which that lane rewrites.
 4. Price tag status: shared `<Badge>`.
 5. Blocked quotation primaries (Save/Submit/Approve/Issue) say why under the button.
 6. Confirm dialog wording: shared confirm-dismiss dialog + RCD first, then the "Are you sure" files.
