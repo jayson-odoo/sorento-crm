@@ -1115,6 +1115,10 @@ def _line_slots(
         else {}
     )
 
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    pick_roles = pick_one_groups(combo_row.parts) if combo_row is not None else None
+
     def row(product) -> dict:
         return dict(_part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode))
 
@@ -1127,7 +1131,8 @@ def _line_slots(
             continue
         if role == "Upgrade" or product_id in upgrade_ids:
             picked_upgrade_ids.add(product_id)
-        elif not role:
+        elif not role or (pick_roles is not None and role not in pick_roles):
+            # A one-part group is a fixed part (COMBO-SETTINGS-UX owner round 1).
             fixed.append(row(product))
         else:
             picks_by_role.setdefault(role, []).append(row(product))
@@ -1161,6 +1166,9 @@ def _preview_slots(db: Session, combo, host) -> dict:
     def row(product) -> dict:
         return dict(_part_row(db, product, viewer, None, cache))
 
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    choices = pick_one_groups(combo.parts)
     fixed: list[dict] = []
     picks: dict[str, list[dict]] = {}
     upgrades: list[dict] = []
@@ -1170,7 +1178,7 @@ def _preview_slots(db: Session, combo, host) -> dict:
             continue
         if part.is_upgrade:
             upgrades.append({**row(product), "chosen": False, "topup_amount": part.topup_amount})
-        elif part.choice_group:
+        elif part.choice_group in choices:
             picks.setdefault(part.choice_group, []).append(row(product))
         else:
             fixed.append(row(product))
@@ -1253,6 +1261,9 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
     `picked` follows the dealer's line part or the tag's choices (`picked_ids`)."""
     parts = [part for part in (combo.parts or []) if part.part_product is not None]
     views = resolve_prices(db, [part.part_product for part in parts], viewer, None)
+    from app.services.dealer_kit.template_needs import pick_one_groups
+
+    choices = pick_one_groups(parts)
     groups: dict[str, list[dict]] = {}
     upgrades: list[dict] = []
     for part in parts:
@@ -1268,7 +1279,7 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
                     "picked": picked,
                 }
             )
-        elif part.choice_group:
+        elif part.choice_group in choices:
             view = views.get(product.id)
             groups.setdefault(part.choice_group, []).append(
                 {
