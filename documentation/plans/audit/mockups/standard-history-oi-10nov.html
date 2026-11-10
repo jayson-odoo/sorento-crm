@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standard History tab</title>
+<!-- STANDARD-HISTORY Lavish mock v1. Annotated mockup, not shipped code.
+     Plan: documentation/plans/audit/PLAN-standard-history-10nov.md
+     Scout: documentation/plans/audit/SCOUT-standard-history-10nov.md
+     Data: the real OI-2611-0019 story (owner's prod read-only query). Person names masked. -->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--primary:#1b84ff;--primary-soft:#e9f3ff;
+--green:#15803d;--green-soft:#f0fdf4;--red:#dc2626;--red-soft:#fef2f2;--amber:#b45309;--amber-soft:#fffbeb;
+--violet:#6d28d9;--violet-soft:#f5f3ff;--grey-soft:#f3f4f6;--callout:#e11d74;--radius:8px;
+--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0b0f17;--card:#111827;--fg:#e5e7eb;--muted:#9ca3af;--line:#1f2937;
+--primary-soft:#0c2a4d;--green-soft:#052e16;--red-soft:#3b0a0a;--amber-soft:#3a2405;--violet-soft:#25124d;--grey-soft:#1f2937}}
+:root[data-theme="dark"]{--bg:#0b0f17;--card:#111827;--fg:#e5e7eb;--muted:#9ca3af;--line:#1f2937;
+--primary-soft:#0c2a4d;--green-soft:#052e16;--red-soft:#3b0a0a;--amber-soft:#3a2405;--violet-soft:#25124d;--grey-soft:#1f2937}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1400px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 20px;max-width:960px}
+h2.ft{font-size:15px;margin:36px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden;width:800px;max-width:100%}
+.frame.phone{width:375px}
+.content{padding:18px 22px}
+.notes{flex:1 1 340px;min-width:280px;max-width:540px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px var(--card);vertical-align:middle}
+.hdr{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start}
+.meta{color:var(--muted);font-size:13px;margin-top:6px}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:500;background:var(--grey-soft);color:var(--muted);white-space:nowrap}
+.pill.green{background:var(--green-soft);color:var(--green)}.pill.red{background:var(--red-soft);color:var(--red)}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}.pill.amber{background:var(--amber-soft);color:var(--amber)}
+.pill.violet{background:var(--violet-soft);color:var(--violet)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;padding:5px 10px;font:500 13px var(--font);height:32px;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}.btn.icon{width:32px;justify-content:center;padding:0}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:18px 0 14px;overflow-x:auto;font-size:13px;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted)}.tabs .on{color:var(--fg);font-weight:600;border-bottom:2px solid var(--primary)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.sel{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:13px;height:32px;color:var(--muted);background:var(--card)}
+.sel.set{color:var(--fg);border-color:var(--primary)}.sel .x{color:var(--muted);margin-left:2px}
+.day{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;display:flex;align-items:center;gap:8px}
+.day::after{content:"";flex:1;height:1px;background:var(--line)}
+.ev{display:grid;grid-template-columns:58px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.ev:last-child{border-bottom:0}
+.t{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;padding-top:2px}
+.what{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}.what b{font-weight:600}
+.who{color:var(--muted);font-size:13px}
+.chg{margin:6px 0 0;padding:0;list-style:none;font-size:13px;color:var(--muted)}
+.chg li{border-left:2px solid var(--line);padding-left:8px;margin-top:3px}
+.chg li .new{color:var(--fg)}
+.more{font-size:12px;color:var(--primary);margin-top:6px;display:inline-block}
+table.grid{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px;margin-top:8px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.grid th{background:var(--grey-soft);text-align:left;font-weight:600;color:var(--muted);padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid td{padding:6px 8px;border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid tr.hit td{background:var(--amber-soft)}
+.mono{font-family:var(--mono);font-size:12px}
+.admin{margin-top:8px;border:1px dashed var(--line);border-radius:6px;padding:8px 10px;font-size:12px;color:var(--muted)}
+.admin pre{margin:6px 0 0;font:11.5px/1.4 var(--mono);white-space:pre-wrap;word-break:break-all;color:var(--fg)}
+.empty{padding:28px 0;text-align:center}.empty b{display:block;font-size:15px;margin-bottom:4px}.empty span{color:var(--muted);font-size:13px}
+.dialog{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:760px;max-width:100%;box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.qa{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-width:1100px}
+.qa p{margin:0 0 10px}.qa table{border-collapse:collapse;width:100%;font-size:13px}
+.qa td,.qa th{border-top:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.qa th{color:var(--muted);font-weight:600}
+code{word-break:break-word}
+.ok{color:var(--green);font-weight:600}
+@media (max-width:640px){.content{padding:14px 16px}.ev{grid-template-columns:44px 1fr}}
+</style>
+</head>
+<body><div class="doc">
+<h1>One standard History tab (STANDARD-HISTORY)</h1>
+<p class="sub">Mock v1, 10 Nov 2026, built on the real OI-2611-0019 story. Owner 12:40: History is "1 tab just like SO or PO": a tab on each record's detail page, the same component as the PO detail History tab, not a gear drawer. Anyone who can open the record sees it; IP and raw data are admin-only. Person names are masked in this file (no person names in commits). Pink numbers map to the notes.</p>
+
+<!-- ================================================================ 1 -->
+<h2 class="ft">1. OI detail, new History tab, nothing filtered</h2>
+<div class="layout">
+<div class="frame"><div class="content">
+  <div class="hdr">
+    <div>
+      <span style="color:var(--muted);font-size:13px">OI-2611-0019</span> <span class="pill amber">Outstanding</span>
+      <h2 style="margin:4px 0 0;font-size:20px">SO428916</h2>
+      <div class="meta">Raised by A*** (CS) on 02/11/2026 17:31</div>
+    </div>
+    <div style="display:flex;gap:8px"><span class="btn">‹ 12 / 40 ›</span><span class="btn icon">⚙</span><span class="btn primary">Confirm</span></div>
+  </div>
+
+  <div class="tabs"><span>Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span><span class="on">History <span class="co">1</span></span></div>
+
+  <div class="filters">
+    <span class="sel">Event ▾</span><span class="sel">User ▾</span><span class="sel">Line ▾</span><span class="sel">dd/mm/yyyy to dd/mm/yyyy ▾</span><span class="co">2</span>
+  </div>
+
+  <div class="day">10/11/2026</div>
+  <div class="ev"><div class="t">10:52</div><div>
+    <div class="what"><span class="pill green">Linked</span><b>PO 202611-S0027 linked to SRTSP131</b></div>
+    <div class="who">Automatic, AutoCount link <span class="co">3</span></div>
+    <ul class="chg"><li>SRTSP131 status: To confirm → <span class="new">Done</span> (linked)</li></ul>
+  </div></div>
+
+  <div class="day">09/11/2026</div>
+  <div class="ev"><div class="t">17:15:53</div><div>
+    <div class="what"><span class="pill red">Unconfirmed</span><b>Unconfirmed 9 lines</b> <span class="co">4</span></div>
+    <div class="who">J*** (Purchasing) · one press</div>
+    <table class="grid">
+      <colgroup><col style="width:22%"><col style="width:15%"><col style="width:31%"><col style="width:32%"></colgroup>
+      <thead><tr><th>Item</th><th>Qty</th><th>Link at the time</th><th>Before → after</th></tr></thead>
+      <tbody>
+        <tr><td title="CKS1050">CKS1050</td><td>order back 4</td><td>PO 202609-S0107</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>CKSW015</td><td>order back 4</td><td style="color:var(--muted)">No link</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>SRT61-CR</td><td>10</td><td>PO 202610-S0015</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>SRTHD122</td><td>3</td><td>PO 202609-S0013</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>SRTSH22512-N</td><td>1</td><td>PO 202608-S0015</td><td>Confirmed → To confirm</td></tr>
+        <tr><td title="SRTWC286-SH-NEW">SRTWC286-SH-NEW</td><td>order back 7</td><td title="PO 202609-S0032 (closed) + SPO">PO 202609-S0032 (closed) + SPO</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>SRTWT167</td><td>14</td><td>PO 202610-S0041</td><td>Confirmed → To confirm</td></tr>
+        <tr><td>SRTWT2219</td><td>4</td><td>PO 202610-S0015</td><td>Confirmed → To confirm</td></tr>
+        <tr class="hit"><td>SRTSP131</td><td></td><td style="color:var(--muted)">Done by hand 8 s earlier</td><td>Done by hand → To confirm</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+  <div class="ev"><div class="t">17:15:45</div><div>
+    <div class="what"><span class="pill blue">Confirmed</span><b>Confirmed 1 line</b></div>
+    <div class="who">J*** (Purchasing)</div>
+    <ul class="chg"><li>SRTSP131: To confirm → <span class="new">Done by hand</span></li></ul>
+  </div></div>
+
+  <div class="day">02/11/2026</div>
+  <div class="ev"><div class="t">17:31</div><div>
+    <div class="what"><span class="pill">Raised</span><b>Raised from SO428916, 13 lines</b></div>
+    <div class="who">A*** (CS)</div>
+    <span class="more">Show 13 lines ▾</span> <span class="co">5</span>
+  </div></div>
+</div></div>
+
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>History is the last tab, same component as PO</b>The OI detail gets a fifth line tab, after Related SPO. It renders the same component as the PO detail History tab, which today is <code>AuditTrail</code>. That component becomes <code>RecordHistory</code>, and every page already using AuditTrail gets this look for free.<span class="ref">OrderInquiryDetail.tsx:990-1008 (tabs today) · PurchaseOrderDetail.tsx:1185-1189 (History tab) · components/audit/AuditTrail.tsx:81</span></div></li>
+  <li><span class="co">2</span><div><b>Filters: Event, User, Line, date range</b>These are the SO History drawer's filters, shown only where they mean something: Line appears on records that have lines. Each is a clearable SearchableMultiSelect, and dates are a dd/mm/yyyy range.<span class="ref">PlanningHistorySheet.tsx:509-551 · components/common/SearchableMultiSelect.tsx · components/ui/date-range-picker.tsx</span></div></li>
+  <li><span class="co">3</span><div><b>Who, in plain words</b>A staff member is shown by name with their team. A sync shows as "Automatic", naming the integration. An impersonated action reads "X on behalf of Y" (see 6).<span class="ref">lib/audit-actor.ts actorDisplay · app/services/audit_actor_label.py:36-51</span></div></li>
+  <li><span class="co">4</span><div><b>A batch press is ONE entry, one line per row</b>The 9-row Unconfirm is one audit row today: it is filed under the first row id, and the other ids sit in <code>new_values.row_ids</code>. The History tab expands it into the standard DataGrid with fixed layout, truncate and title. SRTSP131 is highlighted because it is the line confirmed 8 s earlier. Owner Q3 "yes": both Confirm and Unconfirm writes now also stamp the OI as <code>root_entity</code>, and old rows are found through <code>row_ids</code>.<span class="ref">project_order_inquiry_service.py:9678-9688, :9849-9866 · components/ui/data-grid.tsx</span></div></li>
+  <li><span class="co">5</span><div><b>Every row of a long batch, never cut</b>A batch of more than 9 rows starts collapsed ("Show 13 lines"). It opens in place and shows every row. A batch of 9 or fewer starts open.</div></li>
+</ol></div>
+</div>
+
+<!-- ================================================================ 2 -->
+<h2 class="ft">2. Same tab, filtered to Line = SRTSP131</h2>
+<div class="layout">
+<div class="frame"><div class="content">
+  <div class="tabs" style="margin-top:0"><span>Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span><span class="on">History</span></div>
+  <div class="filters">
+    <span class="sel">Event ▾</span><span class="sel">User ▾</span><span class="sel set">Line: SRTSP131 <span class="x">✕</span></span><span class="sel">dd/mm/yyyy to dd/mm/yyyy ▾</span>
+  </div>
+  <div class="day">10/11/2026</div>
+  <div class="ev"><div class="t">10:52</div><div>
+    <div class="what"><span class="pill green">Linked</span><b>PO 202611-S0027 linked to SRTSP131</b></div>
+    <div class="who">Automatic, AutoCount link</div>
+    <ul class="chg"><li>Status: To confirm → <span class="new">Done</span> (linked)</li></ul>
+  </div></div>
+  <div class="day">09/11/2026</div>
+  <div class="ev"><div class="t">17:15:53</div><div>
+    <div class="what"><span class="pill red">Unconfirmed</span><b>Unconfirmed 9 lines</b> <span class="co">6</span></div>
+    <div class="who">J*** (Purchasing) · SRTSP131 was one of 9 <span class="more">Show all 9</span></div>
+    <ul class="chg"><li>SRTSP131: Done by hand → <span class="new">To confirm</span></li></ul>
+  </div></div>
+  <div class="ev"><div class="t">17:15:45</div><div>
+    <div class="what"><span class="pill blue">Confirmed</span><b>Confirmed 1 line</b></div>
+    <div class="who">J*** (Purchasing)</div>
+    <ul class="chg"><li>SRTSP131: To confirm → <span class="new">Done by hand</span></li></ul>
+  </div></div>
+  <div class="day">02/11/2026</div>
+  <div class="ev"><div class="t">17:31</div><div>
+    <div class="what"><span class="pill">Raised</span><b>Raised from SO428916</b></div>
+    <div class="who">A*** (CS)</div>
+  </div></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">6</span><div><b>A batch stays a batch under a filter</b>Filtering by line keeps the press as one entry. The entry shows only the filtered line's change and says "one of 9", so nobody mistakes a 9-row press for a 1-row one. "Show all 9" opens the full grid shown in 1.</div></li>
+  <li><span class="co">7</span><div><b>Untouched rows show only what happened to them</b>SRT320-CR, SRT5674-N, SRT5732 and SRTWB246 were not in the Unconfirm, so filtering to any of them shows "Raised" and nothing from 09/11. SRTWB246 also shows its "Request CS to reserve" entry, which comes from the reserve trail.<span class="ref">order_inquiry_reserve_events (project_so.py:1536)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ================================================================ 3 -->
+<h2 class="ft">3. OI line History dialog gains "All events" as its first tab</h2>
+<div class="layout">
+<div class="dialog">
+  <div class="hdr"><div><b style="font-size:16px">History · SRTSP131</b><div class="meta">OI-2611-0019</div></div><span class="btn icon">✕</span></div>
+  <div class="tabs"><span class="on">All events <span class="co">8</span></span><span>Rows</span><span>Decisions</span><span>Reserve</span></div>
+  <div class="filters"><span class="sel">Event ▾</span><span class="sel">User ▾</span><span class="sel">dd/mm/yyyy to dd/mm/yyyy ▾</span></div>
+  <div class="day">10/11/2026</div>
+  <div class="ev"><div class="t">10:52</div><div><div class="what"><span class="pill green">Linked</span><b>PO 202611-S0027 linked</b></div><div class="who">Automatic, AutoCount link</div><ul class="chg"><li>Status: To confirm → <span class="new">Done</span> (linked)</li></ul></div></div>
+  <div class="day">09/11/2026</div>
+  <div class="ev"><div class="t">17:15:53</div><div><div class="what"><span class="pill red">Unconfirmed</span><b>Unconfirmed, with 8 other lines</b></div><div class="who">J*** (Purchasing)</div><ul class="chg"><li>Done by hand → <span class="new">To confirm</span></li></ul></div></div>
+  <div class="ev"><div class="t">17:15:45</div><div><div class="what"><span class="pill blue">Confirmed</span><b>Marked Done by hand</b></div><div class="who">J*** (Purchasing)</div><ul class="chg"><li>To confirm → <span class="new">Done by hand</span></li></ul></div></div>
+  <div class="day">02/11/2026</div>
+  <div class="ev"><div class="t">17:31</div><div><div class="what"><span class="pill">Raised</span><b>Raised</b></div><div class="who">A*** (CS)</div></div></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">8</span><div><b>Same component, scoped to one line</b>"All events" is <code>RecordHistory</code> scoped to one line: it is the page's History tab with Line fixed, so it has no Line filter. Rows, Decisions and Reserve stay exactly as they are until the owner says to retire them. Their entries (decision revisions, reserve events, Now/Before) also appear here, merged into the same timeline.<span class="ref">OrderInquiryLineHistoryDialog.tsx:226-247 · decision_trail_service.py:126-300 · orderInquiryLineFold.ts:341-369</span></div></li>
+  <li><span class="co">9</span><div><b>The pill tooltip is no longer the only record</b>The status pill keeps its "Unconfirmed by …" hover text, but that text is no longer the only place the press can be seen.<span class="ref">OrderInquiryLineStatusPill.tsx:81</span></div></li>
+</ol></div>
+</div>
+
+<!-- ================================================================ 4 -->
+<h2 class="ft">4. What an admin sees in addition (Q2: IP and raw data are admin-only)</h2>
+<div class="layout">
+<div class="frame"><div class="content">
+  <div class="ev" style="border:0"><div class="t">17:15:53</div><div>
+    <div class="what"><span class="pill red">Unconfirmed</span><b>Unconfirmed 9 lines</b></div>
+    <div class="who">J*** (Purchasing)</div>
+    <span class="more">Details ▾</span> <span class="co">10</span>
+    <div class="admin">Signed in with password · web · IP 10.x.x.x (admin only)
+<pre>{ "ack_state": "awaiting",
+  "row_ids": ["…9 ids…"] }</pre></div>
+  </div></div>
+  <div class="ev"><div class="t">09:02</div><div>
+    <div class="what"><span class="pill violet">Edited</span><b>Changed delivery date</b></div>
+    <div class="who">S*** (Admin) on behalf of A*** (CS) <span class="co">11</span></div>
+    <ul class="chg"><li>Delivery date: 20/11/2026 → <span class="new">27/11/2026</span></li></ul>
+  </div></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">10</span><div><b>Details: admins only</b>Anyone who can open the record sees sections 1 to 3. Admins also get "Details" on each entry, with the sign-in method, source, IP and raw values. This is the rule the per-record trail already applies today, where IP is hidden for non-admins.<span class="ref">app/api/v1/audit/audit_logs.py:362-365</span></div></li>
+  <li><span class="co">11</span><div><b>"On behalf of" (illustrative entry, not part of OI-2611-0019)</b>When an admin acts as someone else, the entry names both people, in the order "admin on behalf of target".<span class="ref">audit_logs.real_user_id · app/services/audit_actor_label.py:11-13</span></div></li>
+</ol></div>
+</div>
+
+<!-- ================================================================ 5 -->
+<h2 class="ft">5. Empty state, and the 375px phone width</h2>
+<div class="layout">
+<div class="frame phone"><div class="content">
+  <div class="tabs" style="margin-top:0"><span>Lines</span><span>General</span><span>Related PO</span><span class="on">History</span></div>
+  <div class="filters"><span class="sel">Event ▾</span><span class="sel">User ▾</span><span class="sel">Line ▾</span><span class="sel">Dates ▾</span></div>
+  <div class="day">09/11/2026</div>
+  <div class="ev"><div class="t">17:15</div><div>
+    <div class="what"><span class="pill red">Unconfirmed</span><b>Unconfirmed 9 lines</b></div>
+    <div class="who">J*** (Purchasing)</div>
+    <table class="grid"><colgroup><col style="width:52%"><col style="width:48%"></colgroup>
+      <thead><tr><th>Item</th><th>Before → after</th></tr></thead>
+      <tbody><tr><td>CKS1050</td><td>Confirmed → To confirm</td></tr><tr><td>CKSW015</td><td>Confirmed → To confirm</td></tr><tr><td colspan="2" style="color:var(--primary)">Show all 9</td></tr></tbody></table>
+  </div></div>
+</div></div>
+<div class="frame phone"><div class="content">
+  <div class="tabs" style="margin-top:0"><span>Lines</span><span>General</span><span class="on">History</span></div>
+  <div class="empty"><b>No history yet</b><span>Changes to this record appear here.</span></div> <span class="co">12</span>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">12</span><div><b>Mandates</b>The empty state is a heading and a hint with no button (DESIGN-LANGUAGE section 6). At 375px the tabs scroll sideways, filters wrap, and the batch grid drops to Item and Before → after (Qty and Link come back at 640px and wider). Every date shows as dd/mm/yyyy, and the time shows to the second only where two entries share the same minute (17:15:45 and 17:15:53).</div></li>
+</ol></div>
+</div>
+
+<!-- ================================================================ 6 -->
+<h2 class="ft">6. Where each record gets its tab (the rollout), and the one record type without tabs</h2>
+<div class="qa"><div style="overflow-x:auto">
+<table style="min-width:640px">
+<thead><tr><th>Wave (own PR)</th><th>Record</th><th>Tabs today</th><th>History tab placement</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Order inquiry detail + OI line dialog</td><td>Lines / General / Related PO / Related SPO (<code>OrderInquiryDetail.tsx:990-1008</code>); dialog Rows / Decisions / Reserve (<code>OrderInquiryLineHistoryDialog.tsx:226-247</code>)</td><td>Last tab; dialog gets "All events" first (sections 1 to 3)</td></tr>
+<tr><td>2</td><td>Sales order detail</td><td>General / Lines / Delivery / Invoices / Transfers / Related (<code>scm/sales-orders/[id]/components/SalesOrderDetail.tsx:1879-1901</code>)</td><td>Last tab</td></tr>
+<tr><td>2</td><td>Fulfilment Planning board</td><td><b>No tabs: it is a board of many orders, not one record's detail page</b></td><td>Smallest fit: keep its History drawer (<code>PlanningHistorySheet.tsx</code>), but render <code>RecordHistory</code> inside it, with the SO filter it already has. Each SO's own History tab is the same view for one order.</td></tr>
+<tr><td>3</td><td>Contact (incl. dealer access)</td><td>Route tabs General / Access / Chat / Chatbot (<code>user-management/contacts/[id]/layout.tsx:100-225</code>)</td><td>New route tab <code>/history</code>; Access changes (dealer access) appear here</td></tr>
+<tr><td>4</td><td>Product, spec registry</td><td>Already have an AuditTrail / History tab (<code>ProductDetail.tsx:669</code>, <code>SpecKeyRecordDetail.tsx:250</code>)</td><td>Same tab, new component; #2295 icon redaction kept</td></tr>
+<tr><td>5</td><td>Price tag request</td><td>Request / Lines / Attachments … (<code>PriceTagRequestDetail.tsx:922-930</code>)</td><td>Last tab</td></tr>
+<tr><td>6</td><td>The rest: complaint, stock inquiry, purchase request, PO, sample request, NPA, customer, user</td><td>Most already have AuditTrail tabs; the customer has tabs (<code>CustomerDetail.tsx</code>)</td><td>Swap in the component; add the tab where it is missing</td></tr>
+</tbody></table>
+</div></div>
+
+<!-- ================================================================ 7 -->
+<h2 class="ft">7. How it reads the data (no new write paths)</h2>
+<div class="qa">
+<p><b>One read endpoint:</b> <code>GET /api/v1/audit/history/{entity_type}/{entity_id}</code>, with event, user, line and date filters. It returns entries already merged and in plain words. Each entity type has one reader entry, which grows one wave at a time. That entry says which trails to merge:</p>
+<ul>
+<li><b>Every record:</b> its audit_logs rows, plus its child rows (<code>root_entity</code>, as the AuditTrail already does).</li>
+<li><b>Order inquiry:</b> also the batch rows whose <code>row_ids</code> include its rows, the decision trail, reserve events, the OI rows' Now/Before, and link events.</li>
+<li><b>Sales order:</b> reuses <code>planning_history_service</code>, which already merges these trails for the SO drawer.</li>
+</ul>
+<p><b>Permission:</b> the record's own view permission (owner Q2). Before any trail is read, the record's company is checked, and a mismatch is refused (fail closed), as <code>_authorize_po_history</code> does (<code>audit_logs.py:101-118</code>). <code>admin_listing_company_filter</code> alone is not used, because it shows rows that have no company. Another company's ids are redacted, as #2295 does. IP and raw values go to admins only.</p>
+<p><b>The one write-side change (owner Q3 "yes"):</b> the two existing Confirm and Unconfirm <code>log_audit</code> calls also pass <code>root_entity_type</code> = the OI and <code>root_entity_id</code> = the OI's id. Nothing else writes.</p>
+<p class="ok">Next, after this mock is approved: write the Part B UAC, then build wave 1 as its own PR, red tests first.</p>
+</div>
+</div></body>
+</html>

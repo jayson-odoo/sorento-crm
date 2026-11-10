@@ -103,6 +103,7 @@ export type QuotationDocument = {
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_fax_snapshot?: string | null;
   recipient_email_snapshot?: string | null;
   quotation_purpose?: string | null;
   payment_terms?: string | null;
@@ -272,6 +273,7 @@ export type QuotationDocumentBody = Partial<{
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_fax_snapshot?: string | null;
   recipient_email_snapshot: string | null;
   quotation_purpose: string | null;
   payment_terms: string | null;
@@ -753,9 +755,11 @@ export type QuotationCoverPreviewBody = Partial<{
   document_id: string;
   doc_date: string | null;
   attn_name: string | null;
+  subject_title: string | null;
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_fax_snapshot?: string | null;
   recipient_email_snapshot: string | null;
   quotation_purpose: string | null;
   payment_terms: string | null;

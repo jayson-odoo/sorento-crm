@@ -85,6 +85,7 @@ export interface ProjectParty {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;
@@ -103,6 +104,7 @@ export interface ProjectPartyBody {
   registration_no?: string | null;
   address?: string | null;
   phone?: string | null;
+  fax?: string | null;
   email?: string | null;
   notes?: string | null;
   customer_id?: string | null;
