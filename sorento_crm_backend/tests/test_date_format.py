@@ -130,6 +130,16 @@ def test_activity_summary_line_shows_dates_in_the_one_shape():
     )
 
 
+def test_fmt_day_label_is_weekday_day_month():
+    """The short day label a chip carries (the Town snapshot's last-week compare): no year."""
+    from app.utils.date_format import fmt_day_label
+
+    assert fmt_day_label(date(2026, 10, 27)) == "Tue 27 Oct"
+    assert fmt_day_label(date(2026, 12, 2)) == "Wed 2 Dec"
+    assert fmt_day_label("2027-01-03") == "Sun 3 Jan"
+    assert fmt_day_label(None, "-") == "-"
+
+
 # --- guard ----------------------------------------------------------------------------------
 
 APP = Path(__file__).resolve().parents[1] / "app"
