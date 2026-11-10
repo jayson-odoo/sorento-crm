@@ -324,7 +324,7 @@ export function PartiesClient() {
                   value={search}
                   onChange={setSearch}
                   isSettling={isSearchInFlight(debouncedSettling, parties.isFetching, debounced)}
-                  placeholder="Search by name or registration no…"
+                  placeholder="Search by name or reg. no."
                   aria-label="Search parties"
                   className="w-full max-w-xs"
                 />
