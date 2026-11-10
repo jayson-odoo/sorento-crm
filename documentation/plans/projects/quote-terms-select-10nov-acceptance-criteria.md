@@ -21,7 +21,8 @@ Plan: `PLAN-quote-terms-select-10nov.md`. Lane PR #2305.
 
 - **B1** Terms template dialog and the quotation's Terms tab show Payment Terms as a clearable
   searchable select of this company's ACTIVE terms, one line per term: the AutoCount DisplayTerm
-  only. Asterisk-prefixed variants are listed after the plain ones.
+  only. A DisplayTerm starting with "*" is never offered and is refused as a new pick (owner,
+  10 Nov); one already carried still prints, and a "*" debtor default arrives as text only.
 - **B2** Picking a term saves `payment_term_id` and prints the label; clearing clears both.
 - **B3** A term of another company, an unknown id or an inactive term is refused with 422
   `payment_term_unknown`.

@@ -81,4 +81,7 @@ Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templa
 - Owner: Master Data > Reference Data > Payment Terms, a read-only DataGrid (Term, Rule, Company,
   Status; search over term and rule; sortable). `GET /api/v1/master-data/payment-terms/`, gated
   `master_data.payment_terms.view`, `# ai: not-for-assistant`.
-- Open: asterisk-prefixed DisplayTerms (crew-ask on the PR); built as "offered, listed last".
+- Owner, 10 Nov ~16:10: "*"-prefixed DisplayTerms are never offered for a new pick (select,
+  `resolve`, template default, legacy link). One already carried still prints; a "*" debtor
+  default is handed on as text only (shown as "Current: ..."). The list page shows every row.
+- SS-PAYMENT-TERMS: `customers.payment_terms_code` is VARCHAR(100), the same cap as the term.
