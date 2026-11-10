@@ -3060,6 +3060,19 @@ describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the 
     expect(stagedOrder()).toEqual(['l1', 'H:', 'l2']);
   });
 
+  it('right-click Rename on a heading keeps the caret in it after the menu has closed', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    const heading = screen.getByRole('textbox', { name: 'Section heading above A-1' });
+    fireEvent.contextMenu(heading.closest('[data-section-key]') as HTMLElement);
+    const item = await screen.findByRole('menuitem', { name: 'Rename' });
+    await clickAndLeaveClosingMenu(item);
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
   it('a heading left empty and blurred by the user still goes, and no line moves', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
