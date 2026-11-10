@@ -95,7 +95,10 @@ def test_project_preview_uses_the_active_design_and_the_unsaved_values(api):
     assert out["cover_title"] == d["title"]
     assert out["cover_show_letterhead"] is True
     rows = out["cover_rows"]
-    assert [r["key"] for r in rows] == [r["key"] for r in d["rows"] if r["shown"]]
+    # Quotation Purpose never prints (owner, 10 Nov 2026), even though the body sends one.
+    assert [r["key"] for r in rows] == [
+        r["key"] for r in d["rows"] if r["shown"] and r["key"] != "purpose"
+    ]
     assert "email" not in [r["key"] for r in rows]
     by = {r["key"]: r for r in rows}
     assert by["reference"]["label"] == "Offer Number"
@@ -192,7 +195,9 @@ def test_design_preview_returns_the_cover_shape_with_sample_values_and_stores_no
     out = res.json()
     assert counts(db) == before
     assert out["cover_title"] == d["title"] and out["cover_show_letterhead"] is False
-    assert [r["key"] for r in out["cover_rows"]] == [r["key"] for r in d["rows"] if r["shown"]]
+    assert [r["key"] for r in out["cover_rows"]] == [
+        r["key"] for r in d["rows"] if r["shown"] and r["key"] != "purpose"
+    ]
     assert out["cover_rows"][0]["label"] == "Our Ref"
     for row in out["cover_rows"]:
         assert row.get("text") or row.get("html"), row["key"]

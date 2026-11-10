@@ -1352,7 +1352,8 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
     );
-    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('');
+    // Quotation Purpose is gone from the form (owner, 10 Nov 2026).
+    expect(screen.queryByLabelText('Quotation Purpose')).toBeNull();
   });
 
   it('create prefills Payment Terms and Validity from the letter templates', async () => {
@@ -1375,7 +1376,7 @@ describe('QuotationFormClient cover page fields', () => {
     expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
   });
 
-  it('Save sends recipient_email_snapshot, quotation_purpose, payment_terms and validity', async () => {
+  it('Save sends recipient_email_snapshot, payment_terms and validity, and no quotation_purpose', async () => {
     getProject.mockResolvedValue(withEmail());
     getQuotationLetterTemplates.mockResolvedValue(templates);
     renderForm();
@@ -1383,9 +1384,6 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
     );
-    fireEvent.change(screen.getByLabelText('Quotation Purpose'), {
-      target: { value: 'Supply of sanitary ware' },
-    });
     await openTab('Terms');
     fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
 
@@ -1393,10 +1391,10 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       recipient_email_snapshot: 'lim.weiming@example.test',
-      quotation_purpose: 'Supply of sanitary ware',
       payment_terms: '30 days net',
       validity: '90 days',
     });
+    expect(createQuotationDocument.mock.calls[0][1]).not.toHaveProperty('quotation_purpose');
   });
 
   it('with no active template Payment Terms and Validity start empty and Save still works', async () => {
@@ -1425,7 +1423,9 @@ describe('QuotationFormClient cover page fields', () => {
     renderForm('d1');
 
     await waitFor(() => expect(screen.getByLabelText('Email')).toHaveValue('saved@example.test'));
-    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('Saved purpose');
+    // A stored purpose stays in the column but is no longer shown or sent.
+    expect(screen.queryByLabelText('Quotation Purpose')).toBeNull();
+    expect(screen.queryByText('Saved purpose')).toBeNull();
     await openTab('Terms');
     const pay = await screen.findByLabelText('Payment Terms');
     expect(pay).toHaveValue('Saved payment');

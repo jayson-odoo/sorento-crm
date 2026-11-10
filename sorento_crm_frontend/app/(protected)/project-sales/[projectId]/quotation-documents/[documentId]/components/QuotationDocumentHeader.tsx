@@ -380,21 +380,8 @@ export function QuotationDocumentHeader({
             </EditField>
           </div>
         ) : null}
-        {onChange ? (
-          <div className="min-w-0 md:col-span-2">
-            <EditField id="quotation-purpose" label="Quotation Purpose">
-              <Input
-                id="quotation-purpose"
-                value={document.quotation_purpose ?? ''}
-                onChange={(event) => onChange({ quotation_purpose: event.target.value || null })}
-              />
-            </EditField>
-          </div>
-        ) : document.quotation_purpose ? (
-          <div className="min-w-0 md:col-span-2">
-            <Field label="Quotation Purpose" wide value={document.quotation_purpose} />
-          </div>
-        ) : null}
+        {/* No Quotation Purpose: removed from the form and from every printout (owner, 10 Nov
+            2026). The column stays, so a stored value is kept but no longer shown or sent. */}
         {document.prepared_by ?? preparedBy ? (
           <div className="min-w-0 md:col-span-2">
             <Field label="Prepared By" wide value={document.prepared_by ?? preparedBy} />

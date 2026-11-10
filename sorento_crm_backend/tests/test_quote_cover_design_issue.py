@@ -10,6 +10,8 @@ from ._pg_fixture import blank_session
 from .test_project_quotation_cover_page import (  # noqa: F401  (helpers, not tests)
     KEYS,
     LABELS,
+    PRINTED_KEYS,
+    PRINTED_LABELS,
     MARKER as COVER_MARKER,
     TERMS,
     _full_document,
@@ -163,7 +165,8 @@ def test_pdf_layout_3_title_rows_order_labels_hidden_and_intro_closing_placement
         for gone in ("EMAIL:", "CONTACT:", f"{MARKER}@zzt.test"):
             assert gone not in html, gone
         order = ["PREPARED BY:", "OFFER NUMBER:", "DATE:", "SENT TO:", "ATTN:", "TERMS &amp; CONDITIONS:",
-                 "PAYMENT TERMS:", "VALIDITY:", "PROPOSAL PURPOSE:", "ADD:"]
+                 "PAYMENT TERMS:", "VALIDITY:", "ADD:"]
+        assert "PROPOSAL PURPOSE:" not in html
         positions = [html.index(label) for label in order]
         assert positions == sorted(positions)
         assert "REFERENCE NO.:" not in html and "COMPANY:" not in html
@@ -263,7 +266,7 @@ def test_countersign_layout_3_follows_the_design():
         rows = body["cover_rows"]
         assert [r["key"] for r in rows] == [
             "prepared_by", "reference", "date", "company", "attn", "terms", "payment_terms",
-            "validity", "purpose", "address",
+            "validity", "address",
         ]
         by = {r["key"]: r for r in rows}
         assert by["reference"]["label"] == "Offer Number" and by["company"]["label"] == "Sent To"
@@ -291,10 +294,8 @@ def test_countersign_default_design_matches_the_2088_rows_and_title():
         env = _setup(db)
         record = _issue(db, prepared(db, env), env["owner"])
         body = sign_body(db, record)
-        assert [r["key"] for r in body["cover_rows"]] == KEYS
-        assert [r["label"] for r in body["cover_rows"]] == [
-            "Quotation Purpose" if label == "Proposal Purpose" else label for label in LABELS
-        ]
+        assert [r["key"] for r in body["cover_rows"]] == PRINTED_KEYS
+        assert [r["label"] for r in body["cover_rows"]] == PRINTED_LABELS
         assert body["cover_title"] == "QUOTATION" and body["cover_show_letterhead"] is True
 
 
@@ -365,7 +366,8 @@ def test_unchanged_default_design_prints_the_documents_noun_on_the_pdf_cover():
         env = _setup(db)
         record, html, body = _cover_of(db, env, "proposal")
         assert body["cover_title"] == "PROPOSAL"
-        assert "PROPOSAL" in html and "PROPOSAL PURPOSE:" in html and "QUOTATION PURPOSE:" not in html
+        assert "PROPOSAL" in html
+        assert "PROPOSAL PURPOSE:" not in html and "QUOTATION PURPOSE:" not in html
         assert record.revision_label == "A"
         ref = next(r for r in body["cover_rows"] if r["key"] == "reference")["text"]
         assert ref.split(" ")[0].endswith("-A")
@@ -373,13 +375,13 @@ def test_unchanged_default_design_prints_the_documents_noun_on_the_pdf_cover():
         env = _setup(db)
         record, html, body = _cover_of(db, env, "quotation")
         assert body["cover_title"] == "QUOTATION"
-        assert "QUOTATION PURPOSE:" in html and "PROPOSAL PURPOSE:" not in html
+        assert "QUOTATION PURPOSE:" not in html and "PROPOSAL PURPOSE:" not in html
         assert record.revision_label == "R1"
         ref = next(r for r in body["cover_rows"] if r["key"] == "reference")["text"]
         assert ref.split(" ")[0].endswith("-R1")
 
 
-def test_a_designs_own_title_and_purpose_label_print_as_written_for_a_proposal():
+def test_a_designs_own_title_prints_and_its_purpose_row_never_does_for_a_proposal():
     d = make_design(title="OFFER SHEET")
     for row in d["rows"]:
         if row["key"] == "purpose":
@@ -388,6 +390,6 @@ def test_a_designs_own_title_and_purpose_label_print_as_written_for_a_proposal()
         env = _setup(db)
         _record, html, body = _cover_of(db, env, "proposal", d)
         assert body["cover_title"] == "OFFER SHEET"
-        assert "OFFER SHEET" in html and "SCOPE:" in html
+        assert "OFFER SHEET" in html and "SCOPE:" not in html
         assert "PROPOSAL PURPOSE" not in html and "QUOTATION PURPOSE" not in html
         assert "PROPOSAL" not in html.replace("PROPOSAL FROM", "")

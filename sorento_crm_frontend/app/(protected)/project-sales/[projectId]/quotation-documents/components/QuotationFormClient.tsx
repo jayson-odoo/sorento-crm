@@ -114,7 +114,6 @@ const HEADER_FIELDS = [
   'recipient_address_snapshot',
   'recipient_phone_snapshot',
   'recipient_email_snapshot',
-  'quotation_purpose',
   'payment_terms',
   'validity',
 ] as const;
@@ -309,7 +308,6 @@ export function QuotationFormClient({
         recipient_address_snapshot: '',
         recipient_phone_snapshot: project.data.customer_phone ?? '',
         recipient_email_snapshot: project.data.customer_email ?? '',
-        quotation_purpose: '',
         payment_terms: '',
         validity: '',
       });
@@ -425,7 +423,6 @@ export function QuotationFormClient({
       recipient_address_snapshot: h.recipient_address_snapshot ?? null,
       recipient_phone_snapshot: h.recipient_phone_snapshot ?? null,
       recipient_email_snapshot: h.recipient_email_snapshot ?? null,
-      quotation_purpose: h.quotation_purpose ?? null,
       payment_terms: h.payment_terms ?? null,
       validity: h.validity ?? null,
       terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,

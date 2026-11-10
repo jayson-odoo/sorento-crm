@@ -2015,7 +2015,7 @@ describe('QuotationDocumentClient cover page fields', () => {
       } as unknown as Partial<QuotationDocument>),
     });
 
-  it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
+  it('the Header tab shows Email and Prepared By, and no Quotation Purpose', async () => {
     getQuotationDocument.mockResolvedValue(coverDocument());
     getProject.mockResolvedValue(project({ owner_name: 'Wrong Project Owner' }));
     renderScreen(<QuotationHeaderTab />);
@@ -2023,8 +2023,9 @@ describe('QuotationDocumentClient cover page fields', () => {
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('kelly@example.test'));
     expect(card).toHaveTextContent('Email');
-    expect(card).toHaveTextContent('Quotation Purpose');
-    expect(card).toHaveTextContent('Supply of sanitary ware');
+    // Removed (owner, 10 Nov 2026): a stored value no longer shows.
+    expect(card).not.toHaveTextContent('Quotation Purpose');
+    expect(card).not.toHaveTextContent('Supply of sanitary ware');
     expect(card).toHaveTextContent('Prepared By');
     expect(card).toHaveTextContent('Ahmad Faizal');
     expect(card).not.toHaveTextContent('Wrong Project Owner');
