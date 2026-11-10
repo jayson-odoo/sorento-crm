@@ -78,6 +78,7 @@ def list_options_public(
             "value": o.value, "label": o.label,
             "keywords": [k.keyword for k in kws],
             "is_active": o.is_active,
+            "allows_many": bool(o.allows_many),
         })
     return out
 

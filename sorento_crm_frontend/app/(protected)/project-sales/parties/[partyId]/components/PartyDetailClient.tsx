@@ -12,8 +12,9 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useParty, usePartyMutations } from '../../../_shared/hooks/useProjects';
 import type { ProjectParty } from '../../../_shared/types/project.types';
 import { PartyFormDialog } from '../../components/PartyFormDialog';
-import { TYPE_HINT, TYPE_LABEL } from '../../components/partyTypes';
+import { usePartyRoleLabel } from '../../components/partyTypes';
 import { PartyContactsPanel } from './PartyContactsPanel';
+import { formatPhone } from '../../../_shared/lib/phoneDisplay';
 
 /**
  * One organisation, read in full.
@@ -31,6 +32,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
   const [deleting, setDeleting] = React.useState(false);
 
   const parties = useParty(partyId);
+  const roleLabel = usePartyRoleLabel();
   const { remove } = usePartyMutations();
 
   const party: ProjectParty | null = parties.data ?? null;
@@ -81,8 +83,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
     );
   }
 
-  const typeLabel = TYPE_LABEL[party.party_type] ?? party.party_type;
-  const typeHint = TYPE_HINT[party.party_type];
+  const typeLabel = roleLabel(party.party_type);
   const projectCount = party.project_count ?? 0;
 
   return (
@@ -123,7 +124,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
             <CardTitle className="text-sm">Identity</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Field label="Type" value={typeLabel} hint={typeHint} />
+            <Field label="Type" value={typeLabel} />
             <Field
               label="Registration no."
               value={party.registration_no}
@@ -147,7 +148,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
           <CardContent className="space-y-3">
             <Field
               label="Phone"
-              value={party.phone}
+              value={formatPhone(party.phone) || null}
             />
             <Field label="Fax" value={party.fax} />
             <Field label="Email" value={party.email} />

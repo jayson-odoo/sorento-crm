@@ -413,6 +413,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Item Classes",
           },
           {
+            "path": "/master-data-management/payment-terms",
+            "title": "Payment Terms",
+          },
+          {
             "path": "/master-data-management/units-of-measure",
             "title": "Units of Measure",
           },
@@ -881,10 +885,6 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
     "heading": "OVERVIEW",
   },
   {
-    "path": "/town",
-    "title": "Town",
-  },
-  {
     "children": [
       {
         "path": "/ideas",
@@ -1000,13 +1000,6 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
 exports[`MENU_SIDEBAR for staff is unchanged > role with projects.projects.view: filtered menu matches the pre-change snapshot > role with projects.projects.view 1`] = `
 [
   {
-    "heading": "OVERVIEW",
-  },
-  {
-    "path": "/town",
-    "title": "Town",
-  },
-  {
     "heading": "SALES",
   },
   {
@@ -1100,13 +1093,6 @@ exports[`MENU_SIDEBAR for staff is unchanged > role with projects.projects.view:
 exports[`MENU_SIDEBAR for staff is unchanged > role without projects.projects.view: filtered menu matches the pre-change snapshot > role without projects.projects.view 1`] = `
 [
   {
-    "heading": "OVERVIEW",
-  },
-  {
-    "path": "/town",
-    "title": "Town",
-  },
-  {
     "heading": "SALES",
   },
   {
@@ -1123,13 +1109,6 @@ exports[`MENU_SIDEBAR for staff is unchanged > role without projects.projects.vi
 
 exports[`MENU_SIDEBAR for staff is unchanged > superadmin: filtered menu matches the pre-change snapshot > superadmin 1`] = `
 [
-  {
-    "heading": "OVERVIEW",
-  },
-  {
-    "path": "/town",
-    "title": "Town",
-  },
   {
     "heading": "ADMINISTRATION",
   },

@@ -132,6 +132,35 @@ interface GridRow {
 
 type MenuAction = 'below' | 'section' | 'remove';
 
+/** Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping. */
+function focusHeadingInput(key: string) {
+  document.querySelector<HTMLElement>(`[data-band-key="${key}"]`)?.focus();
+}
+
+/**
+ * Where focus goes as a grid menu closes: an action that puts the caret somewhere keeps it there,
+ * and the box it is for (a new heading, a renamed one, a duplicated header) takes it NOW, never
+ * earlier (INSERT-SECTION-FIX). While the menu plays its exit animation the pointer leaving the
+ * clicked item makes Radix focus the menu itself, which would take the caret back, and an empty
+ * heading that loses it goes.
+ */
+function settleMenuFocus(
+  event: Event,
+  keepFocus: React.RefObject<boolean>,
+  focusAfterClose: React.RefObject<(() => void) | null>,
+) {
+  if (keepFocus.current) event.preventDefault();
+  keepFocus.current = false;
+  const focus = focusAfterClose.current;
+  focusAfterClose.current = null;
+  focus?.();
+}
+
+/** Runs once the menu has closed: the new heading's box takes the caret. */
+function focusAddedHeading(key: string | null): (() => void) | null {
+  return key ? () => focusHeadingInput(key) : null;
+}
+
 /**
  * Everything a cell needs beyond its own row, handed down by context rather than closed over.
  *
@@ -156,7 +185,8 @@ interface GridContextValue {
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
-  act: (key: string, action: MenuAction) => void;
+  /** Returns the key of a heading the action added, for the menu to focus once it has closed. */
+  act: (key: string, action: MenuAction) => string | null;
   /** Drops a heading row left without a name (blurred empty). */
   closeEmptyBand: (key: string) => void;
   /** The name a heading row's box goes by: the line under it, else the end of the table. */
@@ -848,6 +878,8 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const [open, setOpen] = React.useState(false);
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocus = React.useRef(false);
+  /** A heading the action added: it takes the caret once the menu has closed. */
+  const focusAfterClose = React.useRef<(() => void) | null>(null);
 
   if (!grid.editing) return null;
 
@@ -868,7 +900,7 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
 
   const run = (action: MenuAction) => {
     keepFocus.current = action === 'section' || action === 'below';
-    grid.act(row.key, action);
+    focusAfterClose.current = focusAddedHeading(grid.act(row.key, action));
   };
 
   return (
@@ -892,10 +924,7 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          onCloseAutoFocus={(event) => {
-            if (keepFocus.current) event.preventDefault();
-            keepFocus.current = false;
-          }}
+          onCloseAutoFocus={(event) => settleMenuFocus(event, keepFocus, focusAfterClose)}
         >
           <DropdownMenuItem onSelect={() => run('below')}>
             Insert a line below
@@ -1489,7 +1518,6 @@ export function QuotationLinesGrid({
   }, [instanceKey]);
 
   const focusHeading = React.useCallback(
-    // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
     (key: string) => focusSoon(`[data-band-key="${key}"]`),
     [focusSoon],
   );
@@ -1521,10 +1549,10 @@ export function QuotationLinesGrid({
   );
 
   const act = React.useCallback(
-    (key: string, action: MenuAction) => {
+    (key: string, action: MenuAction): string | null => {
       const current = linesRef.current;
       const index = current.findIndex((line) => line.key === key);
-      if (index < 0) return;
+      if (index < 0) return null;
       switch (action) {
         case 'below': {
           const added = newLine();
@@ -1533,21 +1561,21 @@ export function QuotationLinesGrid({
             added,
             ...current.slice(index + 1),
           ]);
-          return;
+          return null;
         }
         case 'section': {
-          // Insert a section above: a heading row of its own, before this line.
+          // Insert a section above: a heading row of its own, before this line. Its box takes the
+          // caret from the menu, once that has closed (settleMenuFocus).
           const heading = newHeading();
           commit([...current.slice(0, index), heading, ...current.slice(index)]);
-          focusHeading(heading.key);
-          return;
+          return heading.key;
         }
         case 'remove':
           onToggleRemoved?.(key);
-          return;
+          return null;
       }
     },
-    [commit, focusHeading, newHeading, newLine, onToggleRemoved],
+    [commit, newHeading, newLine, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -1796,15 +1824,17 @@ export function QuotationLinesGrid({
       ),
     [changeAndFocus],
   );
+  /** Returns the copy's key; its menu hands the copy the caret once it has closed. */
   const duplicateHeader = React.useCallback(
-    (headerKey: string) => {
+    (headerKey: string): string | null => {
       const header = headersRef.current.find((row) => row.key === headerKey);
-      if (!header) return;
-      changeAndFocus(
-        duplicateMatrixHeader(headersRef.current, headerKey, `${header.label} (copy)`),
-      );
+      if (!header) return null;
+      const before = usedKeys(headersRef.current);
+      const next = duplicateMatrixHeader(headersRef.current, headerKey, `${header.label} (copy)`);
+      change(next);
+      return Array.from(usedKeys(next)).find((key) => !before.has(key)) ?? null;
     },
-    [changeAndFocus],
+    [change],
   );
   const startRemoval = React.useCallback((key: string) => {
     const all = headersRef.current.flatMap((header) => [
@@ -2055,6 +2085,8 @@ export function QuotationLinesGrid({
   };
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocusAfterMenu = React.useRef(false);
+  /** Puts the caret where the chosen item asked, once the menu has closed. */
+  const focusAfterMenu = React.useRef<(() => void) | null>(null);
   const menuLine = menuTarget
     ? (lines.find((line) => line.key === menuTarget.key) ?? null)
     : null;
@@ -2074,9 +2106,7 @@ export function QuotationLinesGrid({
 
   const renameSection = (key: string) => {
     keepFocusAfterMenu.current = true;
-    window.setTimeout(() => {
-      document.querySelector<HTMLElement>(`[data-band-key="${key}"]`)?.focus();
-    }, 0);
+    focusAfterMenu.current = () => focusHeadingInput(key);
   };
   const removeSection = (key: string) => {
     // The heading row alone: no line moves (PROPOSAL-FORM-COLLAPSE).
@@ -2207,17 +2237,17 @@ export function QuotationLinesGrid({
             </ContextMenuTrigger>
             <ContextMenuContent
               className="w-52"
-              onCloseAutoFocus={(event) => {
-                if (keepFocusAfterMenu.current) event.preventDefault();
-                keepFocusAfterMenu.current = false;
-              }}
+              onCloseAutoFocus={(event) =>
+                settleMenuFocus(event, keepFocusAfterMenu, focusAfterMenu)
+              }
             >
               {menuTarget?.kind === 'header' ? (
                 <ContextMenuItem
                   disabled={Boolean(matrix?.saving) || pending !== null}
                   onSelect={() => {
                     keepFocusAfterMenu.current = true;
-                    duplicateHeader(menuTarget.key);
+                    const copy = duplicateHeader(menuTarget.key);
+                    focusAfterMenu.current = copy ? () => setFocusKey(copy) : null;
                   }}
                 >
                   Duplicate
@@ -2251,7 +2281,7 @@ export function QuotationLinesGrid({
                     disabled={Boolean(menuLine?.removed)}
                     onSelect={() => {
                       keepFocusAfterMenu.current = true;
-                      act(menuTarget.key, 'section');
+                      focusAfterMenu.current = focusAddedHeading(act(menuTarget.key, 'section'));
                     }}
                   >
                     Insert a section above

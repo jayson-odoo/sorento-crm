@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import KeywordChipInput from './KeywordChipInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useAliasTargets, useCreateOption, useUpdateOption } from '../hooks/useLookupSets';
-import type { LookupKeyword, LookupOption } from '../types/lookup.types';
+import { PARTY_ROLE_SET_KEY, type LookupKeyword, type LookupOption } from '../types/lookup.types';
 
 /** Fallback for a caller that has not read the set's `alias_set` flag yet. */
 const KNOWN_ALIAS_KEYS: ReadonlySet<string> = new Set([
@@ -36,6 +36,8 @@ export default function OptionFormDialog({
   const [sortOrder, setSortOrder] = useState<number | null>(0);
   const [checked, setChecked] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [allowsMany, setAllowsMany] = useState(false);
+  const isPartyRoles = setKey === PARTY_ROLE_SET_KEY;
   const [description, setDescription] = useState('');
   const [keywords, setKeywords] = useState<LookupKeyword[]>([]);
 
@@ -43,11 +45,12 @@ export default function OptionFormDialog({
     if (editing) {
       setValue(editing.value); setLabel(editing.label);
       setSortOrder(editing.sort_order); setIsActive(editing.is_active);
+      setAllowsMany(Boolean(editing.allows_many));
       setChecked(false);
       setDescription(editing.description ?? '');
       setKeywords(editing.keywords.map((k) => ({ keyword: k.keyword, locale: k.locale ?? null })));
     } else {
-      setValue(''); setLabel(''); setSortOrder(0); setIsActive(true);
+      setValue(''); setLabel(''); setSortOrder(0); setIsActive(true); setAllowsMany(false);
       setDescription(''); setKeywords([]); setChecked(false);
     }
   }, [editing, open]);
@@ -57,7 +60,10 @@ export default function OptionFormDialog({
   async function submit() {
     setChecked(true);
     if (sortOrder === null || numberFieldError(sortOrder, { integer: true })) return;
-    const payload = { value, label, sort_order: sortOrder, is_active: isActive, description, keywords };
+    const payload = {
+      value, label, sort_order: sortOrder, is_active: isActive, description, keywords,
+      ...(isPartyRoles ? { allows_many: allowsMany } : {}),
+    };
     if (editing) await update.mutateAsync({ id: editing.id, data: payload });
     else await create.mutateAsync(payload);
     onOpenChange(false);
@@ -96,6 +102,12 @@ export default function OptionFormDialog({
               <Label>Active</Label>
             </div>
           </div>
+          {isPartyRoles && (
+            <div className="flex items-center gap-2">
+              <Switch id="option-allows-many" checked={allowsMany} onCheckedChange={setAllowsMany} />
+              <Label htmlFor="option-allows-many">Many parties</Label>
+            </div>
+          )}
           <div><Label>Description</Label><Textarea value={description} onChange={(e) => setDescription(e.target.value)} /></div>
           <div><Label>Keywords (synonyms for n8n / resolve)</Label>
             <KeywordChipInput value={keywords} onChange={setKeywords} />

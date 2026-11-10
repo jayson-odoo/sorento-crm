@@ -282,8 +282,9 @@ api_router.include_router(
     tags=["list-query"],
 )
 api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
-# SORENTO-TOWN: a signed-in staff session is the only gate (no module guard, no new slug); the
-# amounts are redacted server-side for anyone without `sales.reports.view`.
+# SORENTO-TOWN: admin-only through `dashboards.town.view` (TOWN-V2, owner 10 Nov 2026; granted to admin and
+# superadmin by migration town_0001_view_perm), checked on the route; no module guard. The amounts are
+# redacted server-side for anyone without `sales.reports.view`.
 api_router.include_router(town.router, prefix="/town", tags=["town"])
 
 # Form comments span five kinds in three modules (complaints, procurement, projects), so the module guard is

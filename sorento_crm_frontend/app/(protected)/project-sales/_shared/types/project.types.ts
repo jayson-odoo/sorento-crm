@@ -16,23 +16,23 @@ import type { MatrixCells, MatrixHeader } from '../lib/quotationMatrix';
 
 export type ProjectOutcome = 'open' | 'won' | 'lost' | 'dormant';
 
-export type PartyType =
-  | 'developer'
-  | 'architect'
-  | 'main_contractor'
-  | 'trading_house'
-  | 'consultant'
-  | 'subcontractor'
-  | 'interior_designer'
-  | 'tender_party';
+/**
+ * A key of the editable lookup set `project_party_role` (PROJECT-PARTY-ROLES, owner 10 Nov 2026).
+ * The list is data: an admin adds, renames and deactivates roles on Lookup sets.
+ */
+export type PartyType = string;
 
-/** Roles a project links beyond developer, architect and main contractor (PS-REGISTRATION-V3). */
-export type PartyLinkRole =
-  | 'subcontractor'
-  | 'trading_house'
-  | 'tender_party'
-  | 'consultant'
-  | 'interior_designer';
+/** A role a project links a party in: any role of the list except the developer (a column). */
+export type PartyLinkRole = string;
+
+/** One role of the list as the public lookup read returns it. */
+export interface PartyRole {
+  value: string;
+  label: string;
+  is_active: boolean;
+  /** Several parties may fill the role on one project (several trading houses). */
+  allows_many: boolean;
+}
 
 export interface PartyLink {
   role: PartyLinkRole;
@@ -66,6 +66,10 @@ export interface PartyOnProject {
   role: string;
   name: string;
   phone: string | null;
+  /** The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2). */
+  address?: string | null;
+  email?: string | null;
+  fax?: string | null;
   contacts: {
     stakeholder_id: string;
     party_contact_id: string | null;
@@ -234,10 +238,6 @@ export interface Project {
   /** Malaysian state (lookup set my_state) and mukim; both optional (PROJECT-REG-PORTAL D12). */
   state?: string | null;
   mukim?: string | null;
-  architect_party_id?: string | null;
-  architect_name?: string | null;
-  main_contractor_party_id?: string | null;
-  main_contractor_name?: string | null;
   /** Several trading houses, subcontractors, tender parties; one consultant / ID (PS-REGISTRATION-V3). */
   party_links?: PartyLink[];
   estimated_sales_value?: string | null;
@@ -312,8 +312,6 @@ export interface ProjectRegisterBody {
   mukim?: string | null;
   /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
   admin_ref?: string | null;
-  architect_party_id?: string | null;
-  main_contractor_party_id?: string | null;
   estimated_sales_value?: string | null;
   launch_date?: string | null;
   expected_delivery_from?: string | null;
@@ -324,7 +322,10 @@ export interface ProjectRegisterBody {
   lead_source?: string | null;
   /** Present replaces every link; absent keeps them. */
   party_links?: PartyLink[];
-  /** Register only: party contacts copied into the project's stakeholders. */
+  /**
+   * Party contacts copied into the project's stakeholders, on register and on edit. Edit only
+   * ADDS (PROJECT-PARTY-ROLES Q6 b): removal stays on the Stakeholders tab.
+   */
   contact_ids?: string[];
   /**
    * Only for a user holding `projects.registrations.submit` without edit: false saves a

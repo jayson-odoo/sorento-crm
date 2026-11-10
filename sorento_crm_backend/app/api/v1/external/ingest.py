@@ -125,6 +125,8 @@ INGEST_PERMISSIONS = {
     "brands": "master_data.brands.edit",
     # ITEM-CLASS-MASTER (contract 2.11): the brands rule.
     "item_classes": "master_data.item_classes.edit",
+    # QUOTE-TERMS-SELECT (contract 2.14): the item classes rule.
+    "payment_terms": "master_data.payment_terms.edit",
     # Documents (group A3). Pushing an order through the ESB is the same act as
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
@@ -163,6 +165,7 @@ READ_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.view",
     "brands": "master_data.brands.view",
     "item_classes": "master_data.item_classes.view",
+    "payment_terms": "master_data.payment_terms.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
@@ -196,6 +199,7 @@ DELETE_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.delete",
     "brands": "master_data.brands.delete",
     "item_classes": "master_data.item_classes.delete",
+    "payment_terms": "master_data.payment_terms.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
@@ -369,7 +373,11 @@ SUPPORTED_ENTITIES = (
 # "2.13" (SS-PACKAGE-LINES, ss PR #226; 2.12 left to the lane that took it): `billing_documents`
 # lines accept `parent_line_ref` (an item-package child names its parent line's source_ref) and
 # `line_type` (AutoCount's raw DtlType). Optional; a 2.11 payload ingests unchanged.
-CONTRACT_VERSION = "2.13"
+# "2.14" (QUOTE-TERMS-SELECT, PR #2305): `payment_terms` joins ENTITY_SPECS as a master (AutoCount
+# Terms: code = DisplayTerm, rule = Terms), the item classes shape with its own
+# INGEST/READ/DELETE slugs; deletions only deactivate, and a non-dry push links quotations whose
+# legacy payment-terms text equals a term. Additive.
+CONTRACT_VERSION = "2.14"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -386,6 +394,22 @@ def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
     if not slug or not user_id:
         return False
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
+
+
+def _run_payment_terms_link_hook(db: Session, company_id: str) -> None:
+    """QUOTE-TERMS-SELECT: after a committed `payment_terms` push, link the terms templates and
+    quotations whose legacy free text equals a term. Its own commit and its own failure, like
+    every hook here: the push already landed and the next push links again."""
+    from app.services import quote_terms_service
+
+    try:
+        linked = quote_terms_service.link_legacy_terms(db, company_id=company_id)
+        db.commit()
+        if linked:
+            logger.info("ingest.payment_terms_linked company=%s rows=%d", company_id, linked)
+    except Exception as exc:  # noqa: BLE001 - a reaction never fails the ingest
+        db.rollback()
+        logger.warning("ingest.payment_terms_link_failed company=%s error=%s", company_id, exc)
 
 
 def _run_document_hooks(
@@ -1174,6 +1198,8 @@ def ingest_masters(
             _run_consignment_order_hooks(db, service, actor=current_user.get("id"))
         if entity == GOODS_RECEIVE_NOTES_ENTITY:
             _run_grn_receipt_hook(db, service)
+        if entity == "payment_terms":
+            _run_payment_terms_link_hook(db, company_id)
         # DO-BACKFILL-CRM (plan section 0b.3, Q4 (a)): old DO quantities must not re-decide
         # key-less Cancel SO groups, so a backfill batch starts no relink and none of its
         # reactions (OI retirement, handover, purchasing email, planning change).

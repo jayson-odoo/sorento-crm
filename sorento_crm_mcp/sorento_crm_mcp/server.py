@@ -1451,9 +1451,28 @@ def _slim_rows(data: Any, drop_keys: frozenset) -> Any:
     return data
 
 
+def _slim_party_links(row: Any) -> Any:
+    """`party_links` keep who plays which role, never the party's UUID (PROJECT-PARTY-ROLES:
+    architect and main contractor moved here from the dropped `*_party_id` columns)."""
+    if not isinstance(row, dict) or not isinstance(row.get("party_links"), list):
+        return row
+    return {
+        **row,
+        "party_links": [
+            {k: v for k, v in link.items() if k != "party_id"} if isinstance(link, dict) else link
+            for link in row["party_links"]
+        ],
+    }
+
+
 def _slim_projects_response(data: Any) -> Any:
     """Same rule for a list payload, a bare list, and one detail row."""
-    return _slim_rows(data, _PROJECT_DROP_KEYS)
+    data = _slim_rows(data, _PROJECT_DROP_KEYS)
+    if isinstance(data, list):
+        return [_slim_party_links(r) for r in data]
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        return {**data, "data": [_slim_party_links(r) for r in data["data"]]}
+    return _slim_party_links(data)
 
 
 def _sanitize_tool_response(

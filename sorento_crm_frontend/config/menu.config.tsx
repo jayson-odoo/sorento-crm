@@ -113,10 +113,12 @@ const STAFF_SIDEBAR: MenuConfig = [
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
   },
   {
-    // SORENTO-TOWN: open to every signed-in staff user; the amounts are redacted server-side.
+    // SORENTO-TOWN: admin-only (owner, 10 Nov 2026, TOWN-V2) through its own permission, granted to the
+    // admin and superadmin roles; amounts are still redacted server-side for anyone else granted it.
     title: 'Town',
     icon: Store,
     path: '/town',
+    permission: 'dashboards.town.view',
   },
   {
     title: 'Ideas',
@@ -644,6 +646,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'Item Classes',
             path: '/master-data-management/item-classes',
             permission: 'master_data.item_classes.view',
+          },
+          {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
           },
           {
             title: 'Units of Measure',
@@ -2082,6 +2089,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Item Classes',
       path: '/master-data-management/item-classes',
       permission: 'master_data.item_classes.view',
+    },
+    {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
     },
     {
       title: 'Units of Measure',

@@ -48,6 +48,17 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    // PROJECT-PARTY-ROLES: the types are the editable role list.
+    listPartyRoles: async () => [
+      { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+      { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+      { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+      { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+      { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+      { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+      { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+      { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+    ],
     createParty: vi.fn(),
     updateParty: vi.fn(),
     deleteParty: vi.fn(async () => undefined),

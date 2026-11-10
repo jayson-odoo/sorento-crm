@@ -222,6 +222,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 # ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
 # to every role holding the matching brands slug).
 PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
+# QUOTE-TERMS-SELECT: AutoCount Terms, ingest-only reference data (migration
+# qts_0001_quote_terms_select grants each slug to every role holding the item classes one).
+PERMISSION_REGISTRY.extend(_crud("master_data", "payment_terms", "Payment Terms"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))
@@ -712,6 +715,18 @@ PERMISSION_REGISTRY.extend([
             "Create and edit project types, templates and the stakeholder roles a "
             "template offers."
         ),
+    },
+])
+
+
+# Town (Dashboards > Town): admin-only by owner ruling, 10 Nov 2026 (TOWN-V2). Granted to `admin` and
+# `superadmin` (migration town_0001_view_perm + the admin grant seed); any other role only when an
+# admin grants it on the Roles screen.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dashboards.town.view",
+        "name": "View the Town",
+        "description": "See the Town: today's sales, dealers, stock, deliveries, approvals and incoming shipments, and its wallboard mode.",
     },
 ])
 

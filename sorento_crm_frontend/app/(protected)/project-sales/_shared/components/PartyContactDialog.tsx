@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PhoneInput } from '@/components/common/PhoneInput';
 import { usePartyContactMutations } from '../hooks/useProjects';
 import type { PartyContact } from '../types/project.types';
 
@@ -32,17 +33,20 @@ export function PartyContactDialog({
   const { create, update } = usePartyContactMutations(partyId);
   const [name, setName] = React.useState(contact?.name ?? initialName ?? '');
   const [jobTitle, setJobTitle] = React.useState(contact?.job_title ?? '');
-  const [phone, setPhone] = React.useState(contact?.phone ?? '');
+  // E.164 from the app's PhoneInput; optional, but a typed number must be a complete one.
+  const [phone, setPhone] = React.useState({ e164: contact?.phone ?? '', valid: true });
+  const [tried, setTried] = React.useState(false);
   const [email, setEmail] = React.useState(contact?.email ?? '');
   const pending = create.isPending || update.isPending;
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return;
+    setTried(true);
+    if (!name.trim() || !phone.valid) return;
     const body = {
       name: name.trim(),
       job_title: jobTitle.trim() || null,
-      phone: phone.trim() || null,
+      phone: phone.e164 || null,
       email: email.trim() || null,
     };
     try {
@@ -76,6 +80,7 @@ export function PartyContactDialog({
                 maxLength={255}
                 onChange={(event) => setName(event.target.value)}
               />
+              {tried && !name.trim() && <p className="text-xs text-destructive">Enter a name.</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="party-contact-job">Job title</Label>
@@ -90,14 +95,12 @@ export function PartyContactDialog({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="party-contact-phone">Phone</Label>
-                <Input
+                <PhoneInput
                   id="party-contact-phone"
-                  type="tel"
-                  inputMode="tel"
-                  value={phone}
-                  maxLength={50}
-                  onChange={(event) => setPhone(event.target.value)}
-                  placeholder="Optional"
+                  value={phone.e164}
+                  showError={tried}
+                  errorMessage="Enter a valid phone number, e.g. 12-345 6789."
+                  onChange={(e164, meta) => setPhone({ e164, valid: !e164 || meta.valid })}
                 />
               </div>
               <div className="space-y-1.5">
@@ -117,7 +120,7 @@ export function PartyContactDialog({
             <Button type="button" variant="ghost" onClick={onDone}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || pending}>
+            <Button type="submit" disabled={pending}>
               {contact ? 'Save' : 'Add contact'}
             </Button>
           </DialogFooter>

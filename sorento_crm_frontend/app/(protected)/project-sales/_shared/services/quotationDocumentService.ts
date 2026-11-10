@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { codedError, extractApiError } from '@/lib/api-client';
+import type { ValidityUnit } from './paymentTermService';
 import type { CoverPageData } from '@/lib/quotation-cover';
 import type {
   QuotationFeedback,
@@ -116,6 +117,10 @@ export type QuotationDocument = {
   quotation_purpose?: string | null;
   payment_terms?: string | null;
   validity?: string | null;
+  /** QUOTE-TERMS-SELECT: the picks the two texts above print from (null on a legacy text). */
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
   /** The project's salesperson, as the cover page prints it. */
   prepared_by?: string | null;
   attn_name: string | null;
@@ -189,6 +194,8 @@ export type QuotationDocument = {
   /** On a proposal: the quotation made from one of its revisions, when there is one. */
   quotation_document_id?: string | null;
   recipient_party_type?: string | null;
+  /** The role the recipient plays on this project (PROJECT-PARTY-ROLES PR 2). */
+  recipient_role?: string | null;
   current_revision_label?: string | null;
   /** What the next Send prints: "C" on a proposal, "R2" on a quotation or a legacy proposal. */
   next_revision_label?: string | null;
@@ -279,9 +286,21 @@ export type QuotationDocumentBody = Partial<{
   recipient_phone_snapshot: string | null;
   recipient_fax_snapshot?: string | null;
   recipient_email_snapshot: string | null;
+  /**
+   * PROJECT-PARTY-ROLES PR 2: the "To" chosen from the parties. A party not on the project yet is
+   * linked to it in `recipient_role`; `attn_contact_ids` join the project's stakeholders. Fixed
+   * once revision A is issued.
+   */
+  recipient_party_id: string | null;
+  recipient_role: string | null;
+  attn_contact_ids: string[];
   quotation_purpose: string | null;
   payment_terms: string | null;
   validity: string | null;
+  /** QUOTE-TERMS-SELECT: sent only when changed; the server sets the two texts from them. */
+  payment_term_id: string | null;
+  validity_value: number | null;
+  validity_unit: ValidityUnit | null;
   /**
    * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
    * the document, these scopes and their lines in ONE transaction; the edit applies them in one
@@ -308,6 +327,9 @@ export type QuotationLetterTemplates = {
   /** Defaults of the active terms template. */
   payment_terms?: string | null;
   validity?: string | null;
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
 };
 
 /**
@@ -765,6 +787,9 @@ export type QuotationCoverPreviewBody = Partial<{
   quotation_purpose: string | null;
   payment_terms: string | null;
   validity: string | null;
+  payment_term_id: string | null;
+  validity_value: number | null;
+  validity_unit: ValidityUnit | null;
   terms_html: string | null;
   cover_letter_html: string | null;
   cover_closing_html: string | null;
@@ -809,6 +834,14 @@ export type QuotationFormState = {
   removedIds: string[];
   /** The form's live grand total, for the History list. */
   total: string;
+  /**
+   * QUOTE-TERMS-SELECT: the picked payment term and validity (`picks`) and what changed since the
+   * form opened (`patch`, the only part Save sends). Absent on a draft saved before the lane.
+   */
+  terms?: {
+    picks: { payment_term_id?: string | null; validity_value?: number | null; validity_unit?: ValidityUnit | null };
+    patch: { payment_term_id?: string | null; validity_value?: number | null; validity_unit?: ValidityUnit | null };
+  };
   /**
    * History entries only: every scope the entry carried no staged lines for, as the record held
    * it then (the lines route's shape), keyed by the form's scope key. Restore stages these too.
