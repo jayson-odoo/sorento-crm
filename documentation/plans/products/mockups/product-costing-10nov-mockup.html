@@ -87,7 +87,7 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
 <body>
 <div class="page">
 <h1>Product costing: the workbook in the system</h1>
-<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v5 on the owner's note of 11 Nov (00:2x): one costing page that is the owner's Internal_Costing_Formula workbook (Sheet1) inside the system, delivered the way Sales &gt; Targets was. One grid, the same toolbar, Edit / Save in place, Excel export and import, history per row.</p>
+<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v5 on the owner's note of 11 Nov (00:2x): one costing page that is the owner's Internal_Costing_Formula workbook (Sheet1) inside the system, delivered the way Sales &gt; Targets was. One grid, the same toolbar, Edit then one Save (as Sales &gt; Targets), Excel export, history per row. Amended 11 Nov 00:3x: mark-up per row per party (QA), no Excel import (QC), Edit / Save (QD), "Has cost" on by default (QE, working answer).</p>
 <p class="lead">WB 245 (CGB9032B, RMB 34.50, +RM 8, 8%) is the workbook's own row. The other rows use the workbook's category rules with masked codes and illustrative prices. Party = the customer (debtor) record. Bath Plus = 304-R017 "RELATED - BATHPLUS SDN BHD". Management only (<code>products.cost.view</code>). Nothing is written back to AutoCount.</p>
 
 <!-- Frame 1 -->
@@ -95,12 +95,12 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
 <h2>1. Products &gt; Costing <small class="muted">(the page; Bath Plus picked)</small></h2>
 <p class="note">The party picker defaults to <b>Company standard</b>. In that view Mark-up is the achieved mark-up and Final is the AutoCount selling price, both read-only. Picking a party (here Bath Plus) shows its products at its mark-up. A row opens to its suppliers ("margin if bought from this supplier"). Columns follow Sheet1 left to right.</p>
 <div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Costing</span><span class="sp"></span><button class="btn">Settings</button><button class="btn">Import from Excel</button><button class="btn pri">Edit</button></div>
+  <div class="ph"><span class="t">Costing</span><span class="sp"></span><button class="btn">Settings</button><button class="btn pri">Edit</button></div>
   <div class="party">
     <div class="sel">Pricing for: RELATED - BATHPLUS SDN BHD (304-R017)<span class="x">&#x2715; &#9662;</span></div>
     <div class="chips"><span>Party mark-up <b>8%</b></span><span>Cost method <b>Company default (Primary supplier)</b></span><span>Rates <b>as of 11 Nov 2026</b></span><span>Products <b>8</b></span></div>
   </div>
-  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Filters</button><button class="btn">Columns</button><button class="btn">Add products</button><button class="btn">Export</button></div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Filters (Has cost)</button><button class="btn">Columns</button><button class="btn">Add products</button><button class="btn">Export</button></div>
   <div class="tw"><table style="min-width:1480px">
     <colgroup><col style="width:120px"><col style="width:110px"><col style="width:150px"><col style="width:90px"><col style="width:110px"><col style="width:80px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:170px"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:90px"></colgroup>
     <thead><tr><th>Category</th><th>Code</th><th>Name</th><th>Supplier</th><th class="n">Cost</th><th class="n">Rate</th><th class="n">SST</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th><th class="n">Selling (RM)</th><th class="n">Margin</th></tr></thead>
@@ -122,9 +122,9 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
       <tr><td>Hose</td><td>H-0xx</td><td>Hose (masked)</td><td>SUP-A01</td><td class="n">RMB 6.80</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.07</td><td class="n">5.00</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>5.40</b></td><td class="n">15.00</td><td class="n">177.65%</td></tr>
       <tr><td>Accessories</td><td>A-4xx</td><td>Accessory (masked)</td><td class="muted">-</td><td class="n muted">-</td><td class="n muted">-</td><td class="n">1.10</td><td>x 1.07</td><td class="n muted">-</td><td>Primary supplier</td><td class="n">8%</td><td class="n muted">-</td><td class="n">25.00</td><td><span class="pill warn">No cost</span></td></tr>
     </tbody></table></div>
-  <p class="ann">Workbook formula, one row: 34.50 / 1.6 = 21.5625, x 1.10 = 23.71875, + 8 = 31.71875 landing, x 1.08 = 34.25625 final. Rate is units per MYR 1, as the workbook writes it, taken from the dated rate in force on the "as of" day. Margin = (selling - final) / final. A dot marks a value set on that row rather than inherited. Filters: Category, Brand, Cost method, Has cost. Each row's menu has <b>History</b>, showing who changed its mark-up, transport or method, when, and from what.</p>
+  <p class="ann">Workbook formula, one row: 34.50 / 1.6 = 21.5625, x 1.10 = 23.71875, + 8 = 31.71875 landing, x 1.08 = 34.25625 final. Rate is units per MYR 1, as the workbook writes it, taken from the dated rate in force on the "as of" day. Margin = (selling - final) / final. A dot marks a value set on that row rather than inherited. Filters: Category, Brand, Cost method, Has cost. "Has cost" is on when the page opens, so it shows the costed products the way the workbook does; turn it off to see the gaps. Each row's menu has <b>History</b>, showing who changed its mark-up, transport or method, when, and from what.</p>
 
-  <h3 style="font-size:13px;margin:18px 0 8px">Edit (same grid, cells become inputs; one Save for the page)</h3>
+  <h3 style="font-size:13px;margin:18px 0 8px">After pressing Edit (same grid, cells become inputs; Cancel and Save replace Edit in the header; one Save)</h3>
   <div class="tw"><table style="min-width:900px">
     <colgroup><col style="width:110px"><col style="width:150px"><col style="width:160px"><col style="width:110px"><col style="width:210px"><col style="width:90px"><col style="width:100px"></colgroup>
     <thead><tr><th>Code</th><th>Name</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th></tr></thead>
@@ -154,28 +154,6 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
 </div></div>
 </section>
 
-<!-- Frame 3 -->
-<section class="frame">
-<h2>3. Import from Excel <small class="muted">(the Sales &gt; Targets import, same shape)</small></h2>
-<div class="screen" style="max-width:760px"><div class="inner">
-  <div class="sel muted" style="margin-bottom:10px">costing-bath-plus-2026-11-11.xlsx (exported from this page, edited)</div>
-  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px">
-    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Rows</div><b>8</b></div>
-    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Will change</div><b>2</b></div>
-    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Unchanged</div><b>5</b></div>
-    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Skipped</div><b>1</b></div>
-  </div>
-  <div class="tw"><table><colgroup><col style="width:110px"><col style="width:130px"><col style="width:130px"><col></colgroup>
-    <thead><tr><th>Code</th><th>Column</th><th>Change</th><th>Why</th></tr></thead>
-    <tbody>
-      <tr><td>JZ-1xx</td><td>Mark-up</td><td>8% -&gt; 10%</td><td></td></tr>
-      <tr><td>H-0xx</td><td>Transport</td><td>x 1.07 -&gt; x 1.10</td><td>Product override</td></tr>
-      <tr><td>A-4xx</td><td>Cost</td><td class="muted">ignored</td><td>Supplier costs come in through Upload cost price</td></tr>
-    </tbody></table></div>
-  <div class="toolbar" style="margin-top:10px"><span class="muted">Test writes nothing. Import is enabled after a Test of the same file.</span><span style="flex:1"></span><button class="btn">Test</button><button class="btn pri">Import 2 changes</button></div>
-</div></div>
-</section>
-
 <!-- Map -->
 <section class="frame">
 <h2>Element to component map <small class="muted">(reused from Sales &gt; Targets first)</small></h2>
@@ -185,8 +163,8 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
 <tbody>
 <tr><td>Page shell, grid card, toolbar (search, Filters, Columns, Export), pager</td><td>The Sales &gt; Targets list: <code>app/(protected)/sales/targets/components/SalesTargetsView.tsx:439-537</code> = <code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> + <code>components/ui/data-grid-table.tsx</code> + <code>components/ui/data-grid-pagination.tsx</code> in <code>components/ui/card.tsx</code>, header from <code>components/common/PageHeader.tsx</code>, search from <code>components/common/ListSearchInput.tsx</code>, fixed + resizable columns, <code>listingKey</code> for saved column choices</td></tr>
 <tr><td>Export</td><td><code>DataGridListToolbar exportConfig={{kind:'listQuery'}}</code> (server export of the whole filtered set, as <code>master-data-management/products/components/ProductsList.tsx:1170</code>); the sheet keeps Sheet1's column order</td></tr>
-<tr><td>Import from Excel (Test, then Import; per-row report)</td><td>The same shape as <code>sales/targets/components/DealerTargetImportDialog.tsx</code>: <code>components/common/FileDropzone.tsx</code> + <code>components/common/CountTile.tsx</code> + report table; backend shape <code>sorento_crm_backend/app/services/sales/dealer_target_import.py</code> (pure parse + dry run in a rolled-back savepoint) and <code>app/api/v1/sales/targets.py:209-226</code> (template + import routes)</td></tr>
-<tr><td>Edit / Save in place</td><td>The Sales &gt; Targets record's edit mode (<code>sales/targets/components/TargetRecord.tsx</code> <code>TeamFigures</code> / <code>FigureInput</code>, NumberInput in cells, one Save); cell inputs <code>components/ui/number-input.tsx</code> (<code>NumberInput</code> / <code>LiveNumberInput</code>, as in <code>scm/components/SupplierSheet.tsx</code>) and <code>components/common/SearchableSelect.tsx</code> (clearable)</td></tr>
+
+<tr><td>Edit / Save in place</td><td>The Sales &gt; Targets record's edit mode (<code>sales/targets/components/TargetRecord.tsx:536-551</code>: Edit as the one primary button, Cancel and Save in the header, one PATCH of changed values, a failed save keeps the edit open; <code>TeamFigures</code> / <code>FigureInput</code>, NumberInput in cells, one Save); cell inputs <code>components/ui/number-input.tsx</code> (<code>NumberInput</code> / <code>LiveNumberInput</code>, as in <code>scm/components/SupplierSheet.tsx</code>) and <code>components/common/SearchableSelect.tsx</code> (clearable)</td></tr>
 <tr><td>Party picker</td><td><code>components/common/CustomerDebtorCombobox.tsx</code> with <code>pickOnly</code> (the stock inquiry / new product application customer picker); cleared = "Company standard"</td></tr>
 <tr><td>Row expand (suppliers)</td><td>A grid under an open row, as <code>products/[id]/components/ProductSuppliersTab.tsx:99</code> already draws its cost list (<code>components/common/PanelDataGrid.tsx</code> <code>expanded</code>; nested-grid rules in <code>components/ui/data-grid.nested.test.tsx</code>)</td></tr>
 <tr><td>Add products to a party</td><td><code>products/[id]/components/ProductTargetPicker.tsx</code> (<code>useProductTargetPicker</code>, made to work without a source product)</td></tr>
@@ -194,7 +172,7 @@ tr.exp td{background:var(--muted-bg);white-space:normal}
 <tr><td>Settings dialog</td><td><code>components/common/FormDialogScaffold.tsx</code> + line tabs <code>components/ui/tabs.tsx</code>; the rates tab extends <code>app/(protected)/scm/policies/components/CurrencyRatesPanel.tsx</code> to dated rows</td></tr>
 <tr><td>No cost, Primary pills</td><td><code>components/ui/badge.tsx</code></td></tr>
 </tbody></table></div>
-<p class="ann">Dropped from v4 because this page covers them: the product Pricing tab, the Purchasing tab extension (now the row expand), the customer Costing tab, the Party costing index, and the separate settings page.</p>
+<p class="ann">Dropped: Excel import (owner, 00:3x). Dropped from v4 because this page covers them: the product Pricing tab, the Purchasing tab extension (now the row expand), the customer Costing tab, the Party costing index, and the separate settings page.</p>
 </section>
 </div>
 </body>

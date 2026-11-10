@@ -1,6 +1,6 @@
 # PLAN: Product costing - Purchasing vs Pricing tabs + party costing (Bath Plus, dealers)
 
-Status: Plan v5 (owner 11 Nov 00:2x: one costing page = the workbook in the system, Sales > Targets pattern); mock v5 + questions QA-QE on PR #2321; build after owner approval. Track: full (migration + new permission + cost gating).
+Status: Plan v5 as amended by the owner 11 Nov 00:3x (QA a, no import, QD a); QB / QE working answers until the owner confirms; red-first test list final (section 10). Build after the owner confirms QB / QE. Track: full (migration + new permission + cost gating).
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
 owner's workbook Internal_Costing_Formula.xls (numbers are the owner's draft). Depends on
@@ -29,13 +29,29 @@ History panel; history elsewhere is `components/audit/AuditTrail.tsx`.
 v5 therefore centres the lane on ONE page, **Products > Costing** (UAC section CG): Sheet1's
 columns left to right, a party picker (Company standard by default, or a customer such as Bath
 Plus 304-R017), a row expand for per-supplier margin, Edit / Save in place on mark-up / transport /
-cost method, Excel export and Test-then-Import, row History, and a Settings dialog (dated rates,
+cost method, Excel export, row History, and a Settings dialog (dated rates,
 SST + default method, transport by category). Dropped because the page covers them: the product
 Pricing tab, the Purchasing tab extension, the customer Costing tab, the Party costing index and
 the separate settings page. Kept: rules (section 3), rates (3.1), methods (3.2), party on
 `customers` with profile tables (3.3 data model, plus a nullable per-row mark-up on the party's
 product row, needed for inline mark-up edits), Bath Plus = 304-R017, management-only, no AutoCount
 write-back.
+
+Owner answers on mock v5 (11 Nov 00:3x):
+
+- QA (a): a party can carry its own mark-up per row, like the Excel (nullable `markup_pct` on the
+  party's product row; cleared = the party's default).
+- QC: NO Excel import ("so little data, we can just see it first time and maintain it in the
+  system"). Import action, dialog, route and service are dropped; Export stays.
+- QD (a): press Edit on the page, then Save once, exactly like Sales > Targets
+  (`sales/targets/components/TargetRecord.tsx:536-551`: Edit is the one primary button; the same
+  view swaps each value for its input in place; Cancel and Save in the header; one PATCH of the
+  changed values; a failed save keeps the edit open, `:700-730`).
+- Route and menu: `/master-data-management/costing`, a "Costing" child of the Products menu
+  (`sorento_crm_frontend/config/menu.config.tsx:583`) with `permission: 'products.cost.view'`.
+- Working answers until the owner confirms (crew is explaining): QB (a) Company standard view
+  read-only (achieved mark-up vs AutoCount selling); QE all active products with the "Has cost"
+  filter ON by default, so the page opens on the costed products.
 
 ## 1. What exists today (measured, file:line)
 
@@ -303,45 +319,51 @@ revision id <= 32 chars, re-parented with `scripts/alembic-reparent.sh` before t
 ready. Checked on a scratch copy in this sandbox (upgrade, downgrade, upgrade); the shared dev DB
 gets a `crew-migration:` block of `IF NOT EXISTS` DDL.
 
-## 10. Red-first test list (tester writes these before any implementation)
+## 10. Red-first test list (final for v5 as amended; tester writes these before any code)
 
-Backend, pytest on Postgres only (`tests/_pg_fixture.py`), each seeding its own chain (CI's DB is
-empty). Every row names the AC it pins.
+Backend: pytest on Postgres only (`tests/_pg_fixture.py`), each test seeding its own chain (CI's
+database is empty). Fixtures mirror the workbook: RMB 0.617284 from 1 Sep and 0.625 (1.6) from
+1 Nov, USD 4.40, SST 1.10, category rules Ceramics/WC/Jacuzzi ADD 8, Taps/Hose/Shower/Accessories
+x1.07, Kitchen sinks x1.10; product CGB9032B (WB 245, list price 79.00) with links A (primary, RMB
+34.50), B (RMB 38.00), L (MYR 42.00), D (EUR 7.50, no EUR rate); a customer shaped like Bath Plus
+(code 304-R017, profile 8%).
 
-| File | Tests (AC) |
-|---|---|
-| `tests/test_costing_exchange_rates.py` | unique (currency, effective_from) -> 409 (ER-01); rate <= 0 refused (ER-01); in force on 31 Oct / 1 Nov / 1 Dec boundaries (ER-02); no row before D -> no-rate result, never 1 (ER-03); MYR row refused (ER-03); entry 1.6 units-per-MYR -> 0.625 stored, both directions returned (ER-07); add / edit / delete each write an audit row (ER-06); delete goes through the deferred-action registry (ER-06); routes keep `scm.dashboard.view` / `scm.config.manage` (ER-07) |
-| `tests/test_scm_load_rates_dated.py` | `load_rates` returns today's in-force row with `as_of` = effective_from; a future row is ignored until its day (freeze date) (ER-04); an existing planner caller (`reorder_engine` conversion) gets the same number it got from `scm.currency_rate` for the seeded rows (ER-04) |
-| `tests/test_costing_landing.py` (pure, no DB) | the five AC-LC-01 figures to full precision; 2 dp half-up only in the display helper (31.71875 -> 31.72, 212.355 -> 212.36); ADD applied after SST (kill: ADD before SST gives 32.51875); no transport rule -> +0 and flag (ST-03); product override beats category rule (ST-02) |
-| `tests/test_costing_methods.py` | primary: in-force row by date, `standard` packaging first, else cheapest named (LC-02); no primary -> "Set a primary supplier" (LC-03); selected supplier + its link deleted -> "no longer linked" (LC-03); average 40.014583 with EUR link skipped and named (LC-03; kill: counting the skipped link as 0 gives 30.01); last PO at the PO-date rate -> 31.425926 (LC-03; kill: today's rate gives 31.71875); precedence product > party > company, with source named (LC-04; kill: swapped order); no fallback (LC-05); selected supplier refused on a party profile and as company default (LC-06) |
-| `tests/test_costing_settings.py` | SST and default method read with defaults 1.10 / primary, write audited (ST-01); category rule and product override CRUD, mode in (add, multiply), value > 0 (ST-02) |
-| `tests/test_costing_page_routes.py` (v5) | page rows in Company standard and party views with the CG-03 / CG-04 figures; batch save writes only changed cells, one audit row each, refused without manage (CG-08); import dry run writes nothing, apply writes only mark-up / transport / method, cost column ignored (CG-10); row history (CG-11); `list_price` unchanged and no AutoCount client called (CG-14). Older rows below kept for the costing core: |
-| `tests/test_product_costing_routes.py` | Purchasing rows: per-link landing, selling = list_price on every row, mark-up 149.06 / 131.50 / 45.76, EUR link "no rate" (PT-01); Pricing payload: breakdown steps, method + source, last PO check, achieved mark-up (PT-02); Party prices card lists each party holding the product with party price + margin (PT-03); `products.list_price` unchanged after every costing write and no AutoCount client is called (monkeypatched to fail) (PT-04); 403 without `products.cost.view` (PT-05) |
-| `tests/test_party_costing_profiles.py` | one profile per customer, markup >= 0, method enum without selected (PC-01, LC-06); add 2 then same 2 -> 2 rows; 501 ids -> 422; one product on two parties (PC-02); Bath Plus-shaped fixture (code 304-R017, 8%) WB 245 -> 34.25625 / 130.61% (PC-03); manage permission required for create / edit / link / unlink, view permission alone -> 403 (PC-08); unlink goes through the deferred-action registry (PC-08); profile + link audit rows, `markup_pct` masked for a reader without cost view (PC-09) |
-| `tests/test_party_costing_list_export.py` | per-party list-query resource: columns, filters (category, brand, method), search, as-of date changes the rate used (PC-05); export workbook read back with openpyxl: header names party + as-of, numeric cells are numbers, no-cost row blank + note (PC-06); index resource lists only customers with a profile, with debtor type + group (PC-07) |
-| `tests/test_party_costing_access.py` | every costing route: no cost view -> 403, admin bypass -> 200 (AX-01); bare `X-API-Key` -> 401/403, contact portal session -> 401/403 (AX-02); customer detail / list / list-query export / portal order payloads carry no `markup`/`costing` key (AX-03); MCP catalog (`sorento_crm_mcp`) exposes no costing tool or path (AX-02) |
-| `tests/test_party_costing_customer_merge.py` | merge with profile on retired only -> moves; on both -> survivor's kept, products unioned, logged (PC-10) |
-| `tests/test_costing_migration.py` | upgrade on a scratch schema: tables, constraints, seed of one dated row per `scm.currency_rate` row, rerun adds nothing (ER-05); `products.party_costing.manage` granted to admin + director only (AX-04); downgrade drops only what it added |
+| # | File | Tests (AC) |
+|---|---|---|
+| B1 | `tests/test_costing_exchange_rates.py` | unique (currency, effective_from) -> 409; rate <= 0 refused (ER-01); in force on 31 Oct / 1 Nov / 1 Dec (ER-02); no row before D -> no-rate, never 1; MYR row refused (ER-03); entry 1.6 units-per-MYR stores 0.625 and both directions return (ER-07); add / edit / delete each audited, delete via the deferred-action registry (ER-06); read keeps `scm.dashboard.view`, write keeps `scm.config.manage` (ER-07) |
+| B2 | `tests/test_scm_load_rates_dated.py` | `load_rates` returns today's in-force row, `as_of` = effective_from; a future row ignored until its day (frozen date); a planner conversion gives the same number as before for seeded rows (ER-04) |
+| B3 | `tests/test_costing_migration.py` | scratch-schema upgrade: tables, constraints, one dated row per `scm.currency_rate` row, rerun adds nothing (ER-05); `products.party_costing.manage` granted to admin + director only (AX-04); downgrade removes only what it added |
+| B4 | `tests/test_costing_landing.py` (pure) | AC-LC-01 five figures at full precision; display rounding half-up only (31.71875 -> 31.72, 212.355 -> 212.36, 238.815 -> 238.82); ADD after SST; no rule -> +0 + flag (ST-03); product override beats category rule (ST-02) |
+| B5 | `tests/test_costing_methods.py` | in-force cost by date, `standard` packaging first else cheapest named (LC-02); primary / no primary; selected supplier / link removed; average 40.014583 with D skipped and named; last PO at the PO-date rate 31.425926 (LC-03); precedence product > party > company with source named (LC-04); no fallback (LC-05); selected supplier refused on a party and as company default (LC-06) |
+| B6 | `tests/test_costing_settings.py` | SST + default method defaults 1.10 / primary, writes audited (ST-01); category rule CRUD, mode in (add, multiply), value > 0 (ST-02) |
+| B7 | `tests/test_costing_page_rows.py` | Company standard: every active product, achieved mark-up 149.06, Final = Selling, no margin field (CG-03); `has_cost=true` returns only costed rows, `has_cost=false` adds the gaps with their reasons (CG-07, QE); party 304-R017: only its products, WB 245 34.25625 / 130.61, a row mark-up of 10% on the Jacuzzi row -> 1861.6125 / 114.81 and a row marker (CG-04, QA); reasons never 0 (CG-05); supplier expand rows A 130.61 / B 114.35 / L 34.96 (CG-06); category / brand / method / search filters; `as_of` 31 Oct uses 1.62 (CG-07) |
+| B8 | `tests/test_costing_page_save.py` | one batch: only changed cells written, one audit row per cell with old -> new (CG-08); clearing a row mark-up / transport / method restores the inherited value; a mark-up cell in Company standard -> 422; cost / rate / SST fields -> 422; one invalid cell -> nothing written (atomic); manage permission required, view alone -> 403 (CG-08); `products.list_price` unchanged and no AutoCount client called (monkeypatched to fail) (CG-14) |
+| B9 | `tests/test_costing_export.py` | list-query export of the filtered set read back with openpyxl: Sheet1 column order, numbers are numbers, header names the view and the "as of" date, no-cost row blank + reason (CG-09) |
+| B10 | `tests/test_party_costing_profiles.py` | one profile per customer, mark-up >= 0, method enum without selected (PC-01, LC-06); add twice = no-op, 501 ids -> 422, one product on two parties (PC-02, CG-12); unlink via the deferred-action registry; header profile edit needs manage (CG-12); profile / row mark-up / link changes audited, mark-up masked in History for a reader without cost view (PC-09) |
+| B11 | `tests/test_costing_history.py` | a row's history lists its mark-up, transport and method changes with who / when / old -> new, and nothing from other rows (CG-11) |
+| B12 | `tests/test_party_costing_access.py` | every costing route: no cost view -> 403, admin bypass -> 200 (AX-01, CG-01); bare `X-API-Key` and a contact portal session -> 401/403 (AX-02); customer list / detail / export, product payloads and portal orders carry no costing key (AX-03); MCP catalog exposes no costing tool (AX-02); no route path under the costing router contains `import` (CG-10) |
+| B13 | `tests/test_party_costing_customer_merge.py` | profile on the retired row only -> moves; on both -> survivor's kept, product sets unioned, survivor's row mark-up wins, logged (PC-10) |
 
-Frontend, vitest (jsdom), next to the component (v5):
+Frontend: vitest (jsdom), next to the component.
 
-| File | Tests (AC) |
-|---|---|
-| `products/costing/components/CostingView.test.tsx` | hidden without cost view, menu item absent (CG-01); Sheet1 column order, explicit sizes, fixed resizable layout, `listingKey` (CG-01); party picker empty = Company standard, value in URL (CG-02); Company standard shows achieved mark-up and Final = Selling, no Margin (CG-03); party view Final / Margin and header chips (CG-04); reason pills, never "0.00" for unknown, row marker (CG-05); row expand supplier columns (CG-06); filters + As of in URL (CG-07); export config kind listQuery (CG-09) |
-| `products/costing/components/CostingView.edit.test.tsx` | Edit swaps the three cells to inputs in the same columns, others stay text; mark-up input absent in Company standard (CG-08); clearing restores the inherited value; "applies to every party" on transport / method; Final recomputes while typing; Save sends one batch with only changed cells; Edit hidden without manage (CG-08) |
-| `products/costing/components/CostingImportDialog.test.tsx` | Import disabled until a Test of the same file; report counts and reasons; Cost column reported as ignored (CG-10) |
-| `products/costing/components/CostingSettingsDialog.test.tsx` | three line tabs; dated rates with status and both directions, entry in units per MYR converts, delete deferred (ER-06, ER-07, CG-13) |
-| `products/[id]/components/ProductTargetPicker.noSource.test.tsx` | the hook works with no source product and marks already-added ids (CG-12) |
+| # | File | Tests (AC) |
+|---|---|---|
+| F1 | `app/(protected)/master-data-management/costing/components/CostingView.test.tsx` | no menu item / no page without cost view (CG-01); Sheet1 column order, explicit `size`, fixed resizable layout, `listingKey` (CG-01); party picker empty = Company standard, picked party in the URL (CG-02); standard view: achieved mark-up, Final = Selling, no Margin column (CG-03); party view Final / Margin, header chips, row marker (CG-04); reason pills, never "0.00" for unknown (CG-05); row expand supplier columns (CG-06); "Has cost" ON on first open, off shows gaps, both in the URL (CG-07); export config kind listQuery, no Import action anywhere (CG-09, CG-10) |
+| F2 | `app/(protected)/master-data-management/costing/components/CostingView.edit.test.tsx` | Edit is the one primary button and hidden without manage; Edit swaps Mark-up / Transport / Method cells for inputs in the same columns, other cells stay text; Mark-up input absent in Company standard; Cancel discards; Final and Margin recompute while typing; Save sends ONE request with only the changed cells; a failed Save keeps the edit open with what was typed; "applies to every party" on transport / method (CG-08) |
+| F3 | `app/(protected)/master-data-management/costing/components/CostingSettingsDialog.test.tsx` | three line tabs; dated rates with Scheduled / In force / Past and both directions; units-per-MYR entry converts; delete is a deferred action, no confirm (CG-13, ER-06, ER-07) |
+| F4 | `app/(protected)/master-data-management/products/[id]/components/ProductTargetPicker.noSource.test.tsx` | the hook works with no source product and marks already-added ids (CG-12) |
 
 Browser pass (agent-browser, cloud): sidebar from `/` to Products > Costing; Company standard
-view; pick 304-R017; set up 8%, add WB 245 via the picker; Edit a mark-up and a transport, Save,
-open the row History; export, edit the file, Test, Import; Settings: add a 1 Dec RMB rate; a user
-without cost view sees no menu item and gets 403; 375 px and 1280 px.
+opens with Has cost on; turn it off to see gaps; pick 304-R017; add WB 245 via the picker; Edit,
+set the Jacuzzi row to 10% and a transport override, Save once, open that row's History; Export;
+Settings: add a 1 Dec RMB rate; a user without cost view sees no menu item and gets 403 on the
+route; 375 px and 1280 px.
 
-Kill tests (reviewer): ADD before SST; average counting a skipped link as 0; last PO at today's
-rate; rate lookup with `<` instead of `<=`; precedence party > product; removing
-`require_cost_view` from any one costing route; `markup_pct` dropped from `COST_AUDIT_KEYS`. Each
-must turn at least one test red.
+Kill tests (reviewer; each must turn at least one test red): ADD before SST; average counting a
+skipped link as 0; last PO at today's rate; rate lookup `<` instead of `<=`; precedence party >
+product; the row mark-up ignored (Jacuzzi 1827.77 instead of 1861.61); Save sending every row
+instead of the changed cells; "Has cost" default off; `require_cost_view` removed from one route;
+mark-up dropped from History masking.
 
 ## Status log
 
@@ -353,3 +375,4 @@ must turn at least one test red.
 - 10 Nov 23:5x: costing moves onto the party (customers row + profile table), card v4 (3.3, 6, 7) + mock v4, Q8-Q9 asked.
 - 11 Nov: Q8 (a), Q9 (a) answered (Bath Plus = 304-R017); plan final, UAC file, red-first test list (section 10). Waiting on owner approval of mock v4.
 - 11 Nov 00:2x: owner reshaped the lane to one costing page (Sales > Targets pattern); plan v5 (section 0), UAC section CG, mock v5, questions QA-QE.
+- 11 Nov 00:3x: owner QA (a), no import, QD (a); QB / QE working answers; UAC + test list final for v5.
