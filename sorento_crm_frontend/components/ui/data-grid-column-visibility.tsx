@@ -11,7 +11,6 @@ import {
 import { Column, Table } from '@tanstack/react-table';
 import { DataGridContext } from '@/components/ui/data-grid';
 import { isFixedUtilityColumn } from '@/components/ui/data-grid-table-dnd';
-import { Lock } from 'lucide-react';
 
 /**
  * Every leaf column, group members and hidden columns included, in the order the grid DRAWS
@@ -59,35 +58,34 @@ export function isColumnsMenuColumn<TData>(column: Column<TData, unknown>): bool
  * The menu's checkbox rows, shared by every Columns menu (the toolbar button here and the
  * column header's own submenu), so no two menus can disagree about the grid.
  *
- * A column the list locks (`enableHiding: false`, the one identifying key column per list)
- * is still a row: ticked, disabled, with a lock - so the menu never omits a column the grid
- * draws.
+ * Every data column can be hidden (owner rule, 10 Nov 2026), with one guard: the LAST
+ * visible one cannot, so the grid is never left with no columns. That row stays ticked and
+ * is disabled until another column is shown. A column a list marks `enableHiding: false` is
+ * still listed (ticked, disabled), so the menu never omits a column the grid draws.
  */
 export function DataGridColumnVisibilityItems<TData>({ table }: { table: Table<TData> }) {
+  const columns = leafColumnsInScreenOrder(table).filter(isColumnsMenuColumn);
+  const visibleCount = columns.filter((column) => column.getIsVisible()).length;
   return (
     <>
-      {leafColumnsInScreenOrder(table)
-        .filter(isColumnsMenuColumn)
-        .map((column) => {
-          const locked = !column.getCanHide();
-          return (
-            <DropdownMenuCheckboxItem
-              key={column.id}
-              className="capitalize"
-              checked={locked || column.getIsVisible()}
-              disabled={locked}
-              onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(value) => {
-                if (!locked) column.toggleVisibility(!!value);
-              }}
-            >
-              {columnTitle(column) || column.id}
-              {locked && (
-                <Lock aria-hidden="true" data-testid="column-locked" className="ms-auto size-3.5 opacity-60" />
-              )}
-            </DropdownMenuCheckboxItem>
-          );
-        })}
+      {columns.map((column) => {
+        const visible = !column.getCanHide() || column.getIsVisible();
+        const fixed = !column.getCanHide() || (visible && visibleCount <= 1);
+        return (
+          <DropdownMenuCheckboxItem
+            key={column.id}
+            className="capitalize"
+            checked={visible}
+            disabled={fixed}
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={(value) => {
+              if (!fixed) column.toggleVisibility(!!value);
+            }}
+          >
+            {columnTitle(column) || column.id}
+          </DropdownMenuCheckboxItem>
+        );
+      })}
     </>
   );
 }

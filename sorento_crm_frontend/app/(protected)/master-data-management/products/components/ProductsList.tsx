@@ -474,7 +474,7 @@ const ProductsList = () => {
           skeleton: <Skeleton className="h-4 w-24" />,
         },
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'product_name',

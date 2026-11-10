@@ -190,7 +190,7 @@ const PermissionList = () => {
         cell: (info) => info.getValue(),
         size: 150,
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
         meta: {
           headerTitle: 'Permission',
           skeleton: <Skeleton className="w-28 h-8" />,

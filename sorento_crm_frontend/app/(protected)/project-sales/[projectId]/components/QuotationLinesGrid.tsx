@@ -905,7 +905,7 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     cell: ItemCell,
     size: 24,
     minSize: 24,
-    enableHiding: false,
+    enableHiding: true,
     meta: {
       headerTitle: '#',
       headerClassName: TIGHT,

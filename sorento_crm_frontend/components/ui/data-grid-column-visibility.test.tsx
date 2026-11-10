@@ -139,8 +139,6 @@ const PRODUCT_IDS = [
   'created_at',
   'updated_at',
 ];
-/** The one identifying key column a list locks (owner rule, 10 Nov 2026). */
-const NOT_HIDEABLE = new Set(['product_code']);
 
 const PRODUCT_COLUMNS = [
   // Grid chrome, never a menu row: the row-select checkbox (as `data-grid-select-column`
@@ -157,7 +155,7 @@ const PRODUCT_COLUMNS = [
     id,
     header: `H:${id}`,
     size: 100,
-    enableHiding: !NOT_HIDEABLE.has(id),
+    enableHiding: true,
     meta: { headerTitle: `T:${id}` },
   })),
   { accessorKey: 'actions', id: 'actions', header: '', size: 60, enableHiding: false },
@@ -315,35 +313,51 @@ describe('Columns menu == rendered columns', () => {
     expect(rendered[0]).toBe('product_code');
   });
 
-  it('the key column is listed ticked and locked; every other column can be unticked', async () => {
+  it('every data column can be unticked, Product Code included; chrome is not listed', async () => {
     const { menu } = await readGridAndMenu(OWNER_SAVED_CONFIG);
 
-    expect(menu.filter((item) => item.locked).map((item) => item.id)).toEqual(['product_code']);
+    // Owner rule (10 Nov 2026, 17:02): no locked columns. Nothing is disabled while more
+    // than one data column is showing.
+    expect(menu.filter((item) => item.locked)).toEqual([]);
     expect(menu.find((item) => item.id === 'product_code')?.ticked).toBe(true);
-    expect(menu.find((item) => item.id === 'product_name')?.locked).toBe(false);
     // Grid chrome is not a column the reader chooses.
     expect(menu.map((item) => item.id)).not.toContain('select');
     expect(menu.map((item) => item.id)).not.toContain('actions');
     expect(menu.map((item) => item.id)).not.toContain('');
   });
 
-  it('unticking the key column does nothing; unticking Product Name hides it', async () => {
+  it('unticking Product Code hides it', async () => {
     const { items } = await readGridAndMenu(OWNER_SAVED_CONFIG);
-    const byId = (id: string) => items.find((item) => item.textContent === `T:${id}`)!;
+    const code = items.find((item) => item.textContent === 'T:product_code')!;
 
-    // The locked row is disabled (pointer-events: none); click it anyway, as a reader would.
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
-    await user.click(byId('product_code'));
-    await user.click(byId('product_name'));
+    await userEvent.click(code);
 
     // The open menu marks the page behind it aria-hidden, so read past that.
     const headers = screen
       .getAllByRole('columnheader', { hidden: true })
       .map((h) => h.textContent);
-    expect(headers).toContain('H:product_code');
-    expect(headers).not.toContain('H:product_name');
-    expect(byId('product_code').getAttribute('aria-checked')).toBe('true');
-    expect(byId('product_name').getAttribute('aria-checked')).toBe('false');
+    expect(headers).not.toContain('H:product_code');
+    expect(code.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('the last visible data column cannot be unticked, so the grid is never empty', async () => {
+    const onlyCode = Object.fromEntries(PRODUCT_IDS.map((id) => [id, id === 'product_code']));
+    const { menu, items } = await readGridAndMenu({ ...OWNER_SAVED_CONFIG, columnVisibility: onlyCode });
+
+    expect(menu.filter((item) => item.ticked).map((item) => item.id)).toEqual(['product_code']);
+    expect(menu.filter((item) => item.locked).map((item) => item.id)).toEqual(['product_code']);
+
+    // The row is disabled (pointer-events: none); click it anyway, as a reader would.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    const code = items.find((item) => item.textContent === 'T:product_code')!;
+    await user.click(code);
+    expect(
+      screen.getAllByRole('columnheader', { hidden: true }).map((h) => h.textContent),
+    ).toContain('H:product_code');
+
+    // Showing a second column frees the first again.
+    await user.click(items.find((item) => item.textContent === 'T:brand_name')!);
+    expect(code.getAttribute('aria-disabled')).not.toBe('true');
   });
 
   it('a saved row with stale keys (renamed or removed columns) still matches the grid', async () => {

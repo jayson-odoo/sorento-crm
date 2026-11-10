@@ -1,6 +1,6 @@
 # PLAN: Columns menu is the truth for every DataGrid list (COLUMNS-TOGGLE-TRUTH)
 
-Status: built, in review (small fix track, bug; no migration, no auth/RBAC, no new ingest)
+Status: built, owner hand test passed, round 2 in review (small fix track, bug; no migration, no auth/RBAC, no new ingest)
 
 ## Problem
 
@@ -81,3 +81,21 @@ direct `DataGridColumnVisibility` call sites, so they all had the same definitio
 all get this fix. A list shows the mismatch only when the reader's saved order differs from the
 definition order (a drag, a Move Left/Right, or a pre-17-Aug saved row that got new columns
 appended). The header dropdown's Columns submenu (not mounted today) now shares the same items.
+
+## Round 2 (owner hand test, 10 Nov 16:35 to 17:02)
+
+Owner: Product Code and Product Name were drawn but missing from the menu. Final rule (owner,
+17:02): EVERY data column in every DataGrid list can be hidden, Product Code included. The only
+guard is that the LAST visible data column cannot be unticked, so the grid is never empty. No
+key-column locks (the COLUMNS-KEY-LOCK follow-up is cancelled).
+
+- `DataGridColumnVisibilityItems` lists every data column (`isColumnsMenuColumn`): grid chrome is
+  left out (fixed utility columns, `select`, `actions`, and an untitled column a list marks
+  `enableHiding: false`). The last visible row is ticked and disabled until another column shows.
+- Unlocked the titled data columns that were `enableHiding: false`: Products (Product Code,
+  Product Name), Spec Verification (Code), Quotation lines (#), reorder Plan lines (Product,
+  Decision), AI Prompts (Prompt), Scheduled Tasks (Name), Logs (User), Permissions (Permission,
+  Slug, Description, Created At), Roles (Role), Users (Name). What stays `enableHiding: false`
+  is untitled chrome only (select-all checkboxes, a row toggle, an expander), never listed.
+- Order Inquiries "Reserve" (`reserve_status`) is a status column (badge plus who parked it),
+  not a row action, so it stays a hideable menu row.
