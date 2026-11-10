@@ -210,6 +210,13 @@ function DescriptionField({
     [productCode, combo.main_label],
   );
   const partFields = useMemo(() => partFieldCatalog(combo.parts, main), [combo.parts, main]);
+  // The editor draws a chip once; a renamed or removed part must re-draw it, so the editor is
+  // keyed on what the chip names depend on (review S7). The draft is its value, so nothing is lost.
+  const chipKey = [
+    productCode ?? '',
+    combo.main_label ?? '',
+    ...combo.parts.map((p) => `${p.product_id}:${p.label ?? ''}:${p.choice_group ?? ''}:${p.is_upgrade ? 1 : 0}`),
+  ].join('|');
   const chipLabel = useCallback(
     (path: string) => partChipLabel(path, combo.parts, main),
     [combo.parts, main],
@@ -224,11 +231,12 @@ function DescriptionField({
     setInsertOpen(false);
     const editor = editorRef.current;
     if (!content || !editor) return;
-    if (content.includes(`{{${ALL_PARTS_PATH}}}`)) {
-      editor.chain().focus().insertContent(allPartsHtml(combo.parts, main)).run();
-    } else {
-      insertMergeFieldText(editor, content);
-    }
+    // "All parts" becomes one line per part where it stands; text around it goes in as it is.
+    const pieces = content.split(`{{${ALL_PARTS_PATH}}}`);
+    pieces.forEach((piece, index) => {
+      if (index > 0) editor.chain().focus().insertContent(allPartsHtml(combo.parts, main)).run();
+      if (piece) insertMergeFieldText(editor, piece);
+    });
     const html = unwrapMergeFieldTokens(editor.getHTML());
     setDraft(html);
     if (html !== saved) onSave(html, () => setDraft(saved));
@@ -242,6 +250,7 @@ function DescriptionField({
         <Label id={labelId}>Description</Label>
         <div onBlur={commit}>
           <RichTextEditor
+            key={chipKey}
             aria-labelledby={labelId}
             value={toEditorHtml(draft)}
             onChange={setDraft}

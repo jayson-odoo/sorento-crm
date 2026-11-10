@@ -1,6 +1,6 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Owner round 1 fixed (10 Nov 18:2x); awaiting crew re-run and owner re-test.
+Status: Owner ruling 20:1x built (ONE description box), reviewer round fixed; awaiting crew re-run and owner re-test.
 Track: LEAD, size M, one additive migration (`combo_0001_part_labels`), no auth/RBAC change.
 Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
 
@@ -207,3 +207,24 @@ tokens and one plain-text gap. No backend change is needed.
   not price tag description, for the main product; the field stays offered for parts that need it.
 - D4: `dimensions_lwh` reads the reviewed spec values first, else the product master columns (same
   source as every tag's dimensions, `_measured_dimensions`): intended; the script says so.
+
+## Owner ruling 10 Nov 20:1x: ONE description box
+
+- "Each part prints as" leaves the Combos tab; the Description is the only text box.
+- Insert field: Combo fields + a Parts group (`lib/dealer-kit/combo-part-fields.ts`): the main product
+  and each part by name ("CABINET - SRTBF11829", code alone with no label), each with code, label,
+  name, dimensions (LxWxH), price tag description, list price; a choice group (2+ parts) once as
+  "TAP (picked)" with sell price (if picked); a one-part group as a plain part.
+- Tokens are tied to the part's PRODUCT (`{{part.main.f}}`, `{{part.<product id alnum>.f}}`,
+  `{{group.<hex name>.f}}`), not its position or its combo-part row: reorder never moves text, a
+  copy to a colour sibling keeps working (same parts, new rows), a removed part prints blank.
+  Resolved by `combo-parts.ts comboPartField`. The editor shows each as a chip named by its part
+  (`RichTextEditor mergeFieldLabel`), "Removed part" once gone; the saved value keeps plain tokens.
+- "All parts (one line each)" drops one editable line per part (bold "code (label)", then
+  dimensions); parts added later are not added.
+- Legacy: `{{combo.parts}}` + a stored `parts_line` print as before (`comboPartsHtml` untouched);
+  `{{combo.parts}}` is no longer offered. No column dropped.
+- Review: B2 test with the real editor (insert saves plain tokens), S7 editor keyed on the chip
+  names (a removed or renamed part re-draws its chip), S8 "All parts" keeps text composed with it.
+  Nits not changed: the designer's product preview shows a group's first option as picked (as
+  `slot.pick.G.1` already does); a group shrunk to one part shows "Removed group".
