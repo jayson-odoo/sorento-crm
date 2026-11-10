@@ -205,7 +205,7 @@ def _design(client, name):
 
 def test_deactivate_the_only_cover_design_then_issue_copies_the_default_and_it_can_be_deleted(api):
     from app.models.projects import ProjectQuotationIssue
-    from app.services.quotation_cover_service import DEFAULT_DESIGN
+    from app.services.quotation_cover_service import default_design
 
     client, db, _c, _u, project, _party = api
     made = _design(client, "only")
@@ -222,7 +222,7 @@ def test_deactivate_the_only_cover_design_then_issue_copies_the_default_and_it_c
     assert client.post(f"{root(project)}/{created['id']}/issue").status_code == 201
     db.expire_all()
     record = db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.document_id == created["id"]).one()
-    assert record.cover_design == DEFAULT_DESIGN
+    assert record.cover_design == default_design()
 
     assert client.delete(f"{TEMPLATES}/{made['id']}").status_code in (200, 204)
 
