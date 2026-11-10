@@ -2,13 +2,16 @@
 
 import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { TERMS_HTML_CLASS } from '@/lib/terms-html';
 import { CoverPagePreview } from '@/components/quotation/CoverPagePreview';
 import type { CoverPageData } from '@/lib/quotation-cover';
+import {
+  QuoteTermsFields,
+  type QuoteTermsPatch,
+} from '../../../../_shared/components/QuoteTermsFields';
 
 /**
  * The prose half of the quotation: the letter the customer reads before the prices, and the
@@ -146,44 +149,62 @@ export function QuotationTermsPanel({
   onChange,
   paymentTerms = null,
   validity = null,
+  paymentTermId = null,
+  validityValue = null,
+  validityUnit = null,
+  projectId,
   onFieldChange,
 }: {
   html: string | null;
   onChange?: (html: string) => void;
+  /** The printed texts (a pick's label, or a legacy free text nobody has picked over yet). */
   paymentTerms?: string | null;
   validity?: string | null;
+  /** QUOTE-TERMS-SELECT: the picks behind the texts. */
+  paymentTermId?: string | null;
+  validityValue?: number | null;
+  validityUnit?: string | null;
+  projectId?: string;
   /** Set only in an edit session, with `onChange`. */
-  onFieldChange?: (patch: { payment_terms?: string | null; validity?: string | null }) => void;
+  onFieldChange?: (patch: QuoteTermsPatch) => void;
 }) {
   const fields = [
-    { id: 'quotation-payment-terms', label: 'Payment Terms', key: 'payment_terms', value: paymentTerms },
-    { id: 'quotation-validity', label: 'Validity', key: 'validity', value: validity },
+    { key: 'payment_terms', label: 'Payment Terms', value: paymentTerms },
+    { key: 'validity', label: 'Validity', value: validity },
   ] as const;
-  const shown = onFieldChange ? fields : fields.filter((field) => (field.value ?? '').trim());
+  const shown = fields.filter((field) => (field.value ?? '').trim());
   return (
     <div className="space-y-4">
-      {shown.length > 0 && (
+      {onFieldChange ? (
         <Card>
-          <CardContent className="grid gap-4 py-5 sm:grid-cols-2">
-            {shown.map((field) =>
-              onFieldChange ? (
-                <div key={field.key} className="min-w-0 space-y-1.5">
-                  <Label htmlFor={field.id}>{field.label}</Label>
-                  <Input
-                    id={field.id}
-                    value={field.value ?? ''}
-                    onChange={(event) => onFieldChange({ [field.key]: event.target.value || null })}
-                  />
-                </div>
-              ) : (
+          <CardContent className="py-5">
+            <QuoteTermsFields
+              idPrefix="quotation"
+              projectId={projectId}
+              values={{
+                payment_term_id: paymentTermId,
+                payment_terms: paymentTerms,
+                validity_value: validityValue,
+                validity_unit: validityUnit,
+                validity,
+              }}
+              onChange={onFieldChange}
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        shown.length > 0 && (
+          <Card>
+            <CardContent className="grid gap-4 py-5 sm:grid-cols-2">
+              {shown.map((field) => (
                 <div key={field.key} className="min-w-0 space-y-1">
                   <p className="text-sm text-muted-foreground">{field.label}</p>
                   <p className="min-w-0 break-words text-sm font-medium">{field.value}</p>
                 </div>
-              ),
-            )}
-          </CardContent>
-        </Card>
+              ))}
+            </CardContent>
+          </Card>
+        )
       )}
       <LetterPanel
         title="Terms and conditions"

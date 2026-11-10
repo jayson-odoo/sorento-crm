@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { CoverDesign, CoverPageData } from '@/lib/quotation-cover';
+import type { ValidityUnit } from './paymentTermService';
 
 /**
  * Cover letter and terms templates, matching `app/api/v1/projects/quotation_templates.py`
@@ -28,6 +29,10 @@ export interface QuotationTemplate {
   body_html: string;
   payment_terms?: string | null;
   validity?: string | null;
+  /** QUOTE-TERMS-SELECT: the picks the two texts above print from. */
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
   /** kind cover_page only. */
   design?: CoverDesign | null;
   is_active: boolean;
@@ -40,6 +45,9 @@ export interface QuotationTemplateBody {
   body_html: string;
   payment_terms?: string | null;
   validity?: string | null;
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
   design?: CoverDesign;
 }
 

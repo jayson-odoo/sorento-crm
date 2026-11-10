@@ -62,6 +62,7 @@ import {
   QuotationCoverLetterPanel,
   QuotationTermsPanel,
 } from '../[documentId]/components/QuotationLetterPanels';
+import type { QuoteTermsPatch } from '../../../_shared/components/QuoteTermsFields';
 
 /**
  * One scope as the form holds it until Save: its name, series and notes. Its LINES are not held
@@ -276,6 +277,12 @@ export function QuotationFormClient({
   );
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
+  /**
+   * QUOTE-TERMS-SELECT: the picked term and validity, and what changed since the page opened.
+   * Only the changes are sent, so a legacy free text nobody picked over keeps printing.
+   */
+  const [termsPicks, setTermsPicks] = React.useState<QuoteTermsPatch>({});
+  const [termsPatch, setTermsPatch] = React.useState<QuoteTermsPatch>({});
 
   // Everything on this page lives only in the browser until Save, so a refresh or a closed tab
   // would lose it silently. Warn while there is something to lose.
@@ -315,6 +322,11 @@ export function QuotationFormClient({
     }
     if (isEdit && saved.data && quotations.data) {
       const document = saved.data;
+      setTermsPicks({
+        payment_term_id: document.payment_term_id ?? null,
+        validity_value: document.validity_value ?? null,
+        validity_unit: document.validity_unit ?? null,
+      });
       setHeader(
         Object.fromEntries(
           HEADER_FIELDS.map((field) => [
@@ -358,6 +370,16 @@ export function QuotationFormClient({
       payment_terms: letterTemplates.data?.payment_terms ?? '',
       validity: letterTemplates.data?.validity ?? '',
     }));
+    // The template's picks ride with the create, so the new quotation keeps them.
+    const defaults: QuoteTermsPatch = {};
+    if (letterTemplates.data?.payment_term_id)
+      defaults.payment_term_id = letterTemplates.data.payment_term_id;
+    if (letterTemplates.data?.validity_value != null && letterTemplates.data?.validity_unit) {
+      defaults.validity_value = letterTemplates.data.validity_value;
+      defaults.validity_unit = letterTemplates.data.validity_unit;
+    }
+    setTermsPicks(defaults);
+    setTermsPatch(defaults);
     setTermsDefaulted(true);
   }, [isEdit, termsDefaulted, letterSeeded, header, letterTemplates.data]);
 
@@ -422,11 +444,12 @@ export function QuotationFormClient({
       quotation_purpose: h.quotation_purpose ?? null,
       payment_terms: h.payment_terms ?? null,
       validity: h.validity ?? null,
+      ...termsPatch,
       terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,
       cover_letter_html: letter.cover_letter_html ?? saved.data?.cover_letter_html ?? null,
       cover_closing_html: letter.cover_closing_html ?? saved.data?.cover_closing_html ?? null,
     };
-  }, [documentId, header, letter, saved.data]);
+  }, [documentId, header, letter, saved.data, termsPatch]);
   const coverPreview = useQuotationCoverPreview(
     projectId,
     coverPreviewBody,
@@ -522,6 +545,7 @@ export function QuotationFormClient({
           id: documentId,
           body: {
             ...headerBody(),
+            ...termsPatch,
             ...letter,
             scopes: scopesBody(),
             ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
@@ -533,6 +557,7 @@ export function QuotationFormClient({
       } else {
         const created = await mutations.create.mutateAsync({
           ...headerBody(),
+          ...termsPatch,
           ...createLetterBody(),
           scopes: scopesBody(),
         });
@@ -784,9 +809,20 @@ export function QuotationFormClient({
                 html={letter.terms_html ?? saved.data?.terms_html ?? ''}
                 paymentTerms={header?.payment_terms ?? ''}
                 validity={header?.validity ?? ''}
+                paymentTermId={termsPicks.payment_term_id ?? null}
+                validityValue={termsPicks.validity_value ?? null}
+                validityUnit={termsPicks.validity_unit ?? null}
+                projectId={projectId}
                 onFieldChange={(patch) => {
                   setDirty(true);
-                  setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                  const { payment_terms, validity, ...picks } = patch;
+                  setHeader((previous) => ({
+                    ...(previous ?? {}),
+                    ...('payment_terms' in patch ? { payment_terms: payment_terms ?? '' } : {}),
+                    ...('validity' in patch ? { validity: validity ?? '' } : {}),
+                  }));
+                  setTermsPicks((previous) => ({ ...previous, ...picks }));
+                  setTermsPatch((previous) => ({ ...previous, ...picks }));
                 }}
                 onChange={(html) => {
                   setDirty(true);

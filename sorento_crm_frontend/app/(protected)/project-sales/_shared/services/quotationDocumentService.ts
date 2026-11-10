@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { ValidityUnit } from './paymentTermService';
 import type { CoverPageData } from '@/lib/quotation-cover';
 import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
 import type { MatrixHeader } from '../lib/quotationMatrix';
@@ -106,6 +107,10 @@ export type QuotationDocument = {
   quotation_purpose?: string | null;
   payment_terms?: string | null;
   validity?: string | null;
+  /** QUOTE-TERMS-SELECT: the picks the two texts above print from (null on a legacy text). */
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
   /** The project's salesperson, as the cover page prints it. */
   prepared_by?: string | null;
   attn_name: string | null;
@@ -271,6 +276,10 @@ export type QuotationDocumentBody = Partial<{
   quotation_purpose: string | null;
   payment_terms: string | null;
   validity: string | null;
+  /** QUOTE-TERMS-SELECT: sent only when changed; the server sets the two texts from them. */
+  payment_term_id: string | null;
+  validity_value: number | null;
+  validity_unit: ValidityUnit | null;
   /**
    * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
    * the document, these scopes and their lines in ONE transaction; the edit applies them in one
@@ -293,6 +302,9 @@ export type QuotationLetterTemplates = {
   /** Defaults of the active terms template. */
   payment_terms?: string | null;
   validity?: string | null;
+  payment_term_id?: string | null;
+  validity_value?: number | null;
+  validity_unit?: ValidityUnit | null;
 };
 
 /**
@@ -748,6 +760,9 @@ export type QuotationCoverPreviewBody = Partial<{
   quotation_purpose: string | null;
   payment_terms: string | null;
   validity: string | null;
+  payment_term_id: string | null;
+  validity_value: number | null;
+  validity_unit: ValidityUnit | null;
   terms_html: string | null;
   cover_letter_html: string | null;
   cover_closing_html: string | null;
