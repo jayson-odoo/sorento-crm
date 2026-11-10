@@ -747,6 +747,7 @@ class ProjectAutocountWriteService:
         # Removals go first, then the edit carries the stamp the last removal answered.
         answer: Optional[Dict[str, Any]] = None
         removed: List[str] = []
+        held_back = False
         for dtl, row in removals:
             gone = self._delete_line(
                 "sales-orders", doc_key, dtl, company, doc_date, f"crm-amd-{amendment.id}-update-delete"
@@ -756,6 +757,7 @@ class ProjectAutocountWriteService:
             if gone.get("errorCode") == "ROW_HAS_TRANSFERS":
                 # A definite refusal that changed nothing: this row waits, the edits still go.
                 waiting.append(self._waiting(row, f"This line {ROW_TRANSFERRED}, so it cannot be removed"))
+                held_back = True
                 continue
             if not self._is_done(gone):
                 refused = self._removal_refused(gone, row.get("product_code"), made=False)
@@ -784,6 +786,10 @@ class ProjectAutocountWriteService:
                 f"crm-amd-{amendment.id}-update-edit",
                 lambda c, key: c.patch(path, body, idempotency_key=key),
             )
+        if answer is None and held_back:
+            # Nothing was written this press and a row waits: never shown or stored as done.
+            result["waiting"] = waiting
+            return result
         answer = answer or {"outcome": "done"}
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)

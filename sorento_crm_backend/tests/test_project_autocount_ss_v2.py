@@ -623,3 +623,20 @@ def test_an_existing_so_patch_key_and_body_shape_are_unchanged(so_api, fake_ss):
     [patch] = fake_ss.to("PATCH", SO_DOC_PATH)
     assert fake_ss.body(patch)["expectedLastModified"] == LAST_MODIFIED
     assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
+
+
+def test_a_remove_only_amendment_refused_for_transfers_is_waiting_not_done(so_api, fake_ss):
+    """Re-review blocker: nothing was written, so the press is never shown or stored as done."""
+    client, db, world = so_api
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "0")])
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = (409, refused_body("ROW_HAS_TRANSFERS", "x"))
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "waiting", body
+    assert "updated in AutoCount" not in body["message"]
+    assert [w["verb"] for w in body["waiting"]] == ["CANCEL BALANCE"]
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is None
