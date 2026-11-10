@@ -345,3 +345,14 @@ def test_the_backfill_apply_writes_only_reviewed_unnamed_rows(v2, monkeypatch):
     assert _stored(v2, unnamed["id"]).name == "Taman Contoh"
     assert _stored(v2, refused["id"]).name is None
     assert _stored(v2, named["id"]).name == "Keep me"
+
+
+def test_the_clash_preview_names_the_candidate(v2):
+    dev = developer(v2.db, v2.company_id, f"CONTOH Dev {uuid.uuid4().hex[:6]}")
+    text = title("Clash")
+    _register(v2, title=text, developer_party_id=dev.id, name=NAME)
+    res = as_user(v2, v2.owner).post(
+        f"{STAFF}/clash-preview", json={"title": text, "developer_party_id": dev.id}
+    )
+    assert res.status_code == 200, res.text
+    assert NAME in [c.get("name") for c in res.json()["candidates"]]

@@ -139,7 +139,7 @@ def preview_clashes(
         if VIEW not in permission_slugs(db, _user["id"]):
             # A salesperson with the submit grant only learns that a project exists (D8).
             rows = [
-                {k: row.get(k) for k in ("project_id", "project_code", "title", "blocks")}
+                {k: row.get(k) for k in ("project_id", "project_code", "title", "name", "blocks")}
                 for row in rows
             ]
         return {

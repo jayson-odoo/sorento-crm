@@ -117,6 +117,10 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import {
+  PROJECT_NAME_MAX_LENGTH,
+  projectDisplayName,
+} from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import { complaintStatusLabel } from '@/lib/complaint-status';
 import {
   InquiryApplicationsList,
@@ -142,6 +146,8 @@ type ComplaintLine = {
 type WidgetKind =
   | 'text'
   | 'textarea'
+  /** One short line (an `Input`), not the auto-growing text area; honours `maxLength`. */
+  | 'line'
   | 'date'
   | 'number'
   | 'lookup-select'
@@ -166,6 +172,7 @@ interface FieldDef {
   defaultFromContact?: 'fullname' | 'first_name' | 'contact_id';
   defaultToday?: boolean;
   placeholder?: string;
+  maxLength?: number;
   required?: boolean;
   /** Render this field only when the predicate (given the current field values)
    *  returns true. Used e.g. for the sponsor-subject "Others" companion input. */
@@ -238,6 +245,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   // agent, set by the server on create; required on submit: title, state, developer.
   project_registration: [
     { name: 'title', label: 'Project title', widget: 'textarea', required: true },
+    { name: 'name', label: 'Project name', widget: 'line', maxLength: PROJECT_NAME_MAX_LENGTH },
     { name: 'distributor_name', label: 'Distributor name' },
     {
       name: 'sales_agent_name',
@@ -3314,6 +3322,17 @@ function FieldControl({
           disabled={disabled}
         />
       );
+    case 'line':
+      return (
+        <Input
+          id={field.name}
+          value={stringValue}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={field.maxLength}
+          placeholder={field.placeholder}
+          disabled={disabled}
+        />
+      );
     case 'date':
       return (
         <Input
@@ -3390,7 +3409,7 @@ function FieldControl({
           onChange={(v) => onChange(v)}
           fetchOptions={(q) => client.lookupProjects(q)}
           optionValue={(o) => o.id}
-          optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
+          optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
           // free text would reach the server as an id and fail there instead of here.
           allowFreeText={false}

@@ -165,6 +165,7 @@ class ClashCandidateResponse(BaseModel):
     project_id: str
     project_code: Optional[str] = None
     title: str
+    name: Optional[str] = None
     outcome: Optional[str] = None
     status_label: Optional[str] = None
     owner_user_id: Optional[str] = None

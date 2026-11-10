@@ -17,6 +17,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { PROJECT_NAME_MAX_LENGTH } from '../../_shared/lib/projectName';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -78,6 +79,7 @@ export function LeadWizardDialog({
   const submitOnly = !canEdit && canSubmit;
 
   const [title, setTitle] = React.useState(initialTitle);
+  const [name, setName] = React.useState('');
   const [developerPartyId, setDeveloperPartyId] = React.useState('');
   const [location, setLocation] = React.useState('');
 
@@ -132,6 +134,7 @@ export function LeadWizardDialog({
   async function submit() {
     const body: ProjectLeadBody & LeadInformantBody = {
       title: title.trim(),
+      name: name.trim() || null,
       customer_id: customerId,
       developer_party_id: developerPartyId || null,
       estimated_value: estimatedValue.trim() || null,
@@ -221,6 +224,15 @@ export function LeadWizardDialog({
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                     placeholder="e.g. Tower behind the Setia showroom"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="lead-name">Project name</Label>
+                  <Input
+                    id="lead-name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    maxLength={PROJECT_NAME_MAX_LENGTH}
                   />
                 </div>
                 <div className="space-y-1.5">

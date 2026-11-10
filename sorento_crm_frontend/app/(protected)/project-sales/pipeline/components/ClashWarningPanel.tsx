@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import type { ClashCandidate } from '../../_shared/types/project.types';
 
 /**
@@ -87,7 +88,8 @@ function ClashLine({
         }
         aria-hidden
       />
-      <p className="flex min-w-0 flex-1 flex-wrap sm:flex-nowrap items-baseline gap-x-1 text-sm">
+      <div className="min-w-0 flex-1">
+      <p className="flex min-w-0 flex-wrap sm:flex-nowrap items-baseline gap-x-1 text-sm">
         <span className="shrink-0">{label}</span>{' '}
         <Link
           href={`/project-sales/${candidate.project_id}`}
@@ -96,7 +98,7 @@ function ClashLine({
           {candidate.project_code}
         </Link>{' '}
         <span className="min-w-0 basis-full truncate sm:basis-auto" title={candidate.title}>
-          {candidate.title}
+          {projectDisplayName(candidate)}
         </span>
         {candidate.outcome && candidate.outcome !== 'open' && (
           <Badge variant="secondary" className="shrink-0 capitalize">
@@ -104,6 +106,12 @@ function ClashLine({
           </Badge>
         )}
       </p>
+      {candidate.name?.trim() && (
+        <p className="line-clamp-2 text-xs text-muted-foreground" title={candidate.title}>
+          {candidate.title}
+        </p>
+      )}
+      </div>
     </div>
   );
 }

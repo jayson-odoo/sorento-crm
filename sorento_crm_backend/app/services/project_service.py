@@ -1903,6 +1903,7 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "project_id": candidate.project_id,
                 "project_code": candidate.project_code,
                 "title": candidate.title,
+                "name": row.get("name"),
                 "outcome": candidate.outcome,
                 "status_label": row.get("status_label"),
                 "owner_user_id": candidate.owner_user_id,
