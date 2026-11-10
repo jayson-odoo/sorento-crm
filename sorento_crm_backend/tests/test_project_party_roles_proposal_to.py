@@ -357,3 +357,11 @@ def test_ac16_the_response_names_the_role_on_the_project():
         body = qdocs.serialize_document(db, doc, viewer_id=w.owner)
         assert body["recipient_role"] == "main_contractor"
         assert body["recipient_party_type"] == "consultant"
+
+
+def test_n3_a_malformed_attn_contact_id_is_refused_not_a_500():
+    with blank_session() as db:
+        w = _world(db)
+        with pytest.raises(AppException) as exc:
+            _create(w, recipient_party_id=w.developer.id, attn_contact_ids=["not-a-uuid"])
+        assert exc.value.status_code == 422

@@ -201,6 +201,34 @@ describe('Attn from the contacts popup', () => {
     );
   });
 
+  it('a contact without a number or email keeps the party ones the pick loaded', async () => {
+    listPartyContacts.mockResolvedValue([
+      { id: 'c2', party_id: 'p-pgb', name: 'MS IIYANA CONTOH', phone: null, email: null, is_active: true },
+    ]);
+    const onChange = vi.fn();
+    wrap(
+      <QuotationAttnChooser
+        value={{ recipient_party_id: 'p-pgb', recipient_phone_snapshot: '03-1111', recipient_email_snapshot: 'info@pgb.example' }}
+        partyName="PGB CONTOH SDN BHD"
+        locked={false}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(await within(dialog).findByLabelText(/MS IIYANA CONTOH/));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attn_name: 'MS IIYANA CONTOH',
+          recipient_phone_snapshot: '03-1111',
+          recipient_email_snapshot: 'info@pgb.example',
+        }),
+      ),
+    );
+  });
+
   it('is not offered before a party is picked, nor once issued', () => {
     const { rerender } = wrap(
       <QuotationAttnChooser value={{}} partyName="" locked={false} onChange={vi.fn()} />,

@@ -241,6 +241,17 @@ export function QuotationAttnChooser({
   const canEdit = useHasPermission('projects.parties.edit');
   const contacts = usePartyContacts(partyId || null);
   const [open, setOpen] = React.useState(false);
+  // What the party pick loaded, held per party so re-choosing contacts never loses it.
+  const partyFallback = React.useRef<{ party: string; phone?: string | null; email?: string | null }>({
+    party: '',
+  });
+  if (partyFallback.current.party !== partyId) {
+    partyFallback.current = {
+      party: partyId,
+      phone: value.recipient_phone_snapshot,
+      email: value.recipient_email_snapshot,
+    };
+  }
   if (!partyId || locked) return null;
 
   async function apply(ids: string[]) {
@@ -256,8 +267,11 @@ export function QuotationAttnChooser({
     onChange({
       attn_contact_ids: ids,
       attn_name: rows.map((c) => c.name).join(' & ') || null,
-      recipient_phone_snapshot: first?.phone || partyPhone || null,
-      recipient_email_snapshot: first?.email || partyEmail || null,
+      // A contact without one keeps the party's own, which the pick loaded into the block.
+      recipient_phone_snapshot:
+        first?.phone || partyPhone || partyFallback.current.phone || null,
+      recipient_email_snapshot:
+        first?.email || partyEmail || partyFallback.current.email || null,
     });
   }
 

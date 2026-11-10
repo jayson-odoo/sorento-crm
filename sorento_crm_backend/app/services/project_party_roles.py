@@ -153,12 +153,28 @@ def assert_option_change(db: Session, option, *, new_value: Optional[str] = None
             message="Developer is always a party role. Rename it if you need to.",
             code="project_party_role_locked",
         )
-    rewriting = bool(new_value) and new_value.lower() != (option.value or "").lower()
+    # Any change of the stored key is a rewrite, case included: links and party types match it
+    # exactly (security review S2).
+    rewriting = new_value is not None and new_value != option.value
     if (delete or rewriting) and _in_use(db, option.value):
         raise AppException(
             status_code=409,
             message="This role is in use by parties or projects. Deactivate it instead.",
             code="project_party_role_in_use",
+        )
+
+
+def assert_set_change(db: Session, lookup_set, *, new_key: Optional[str] = None,
+                      deactivate: bool = False, delete: bool = False) -> None:
+    """The role list itself is locked: re-keying, deactivating or deleting the set would orphan
+    every party type and project link at once (security review S1). Its name can change."""
+    if lookup_set.set_key != SET_KEY or lookup_set.tenant_id is not None:
+        return
+    if delete or deactivate or (new_key is not None and new_key != SET_KEY):
+        raise AppException(
+            status_code=422,
+            message="The party role list is always on. Change its roles instead.",
+            code="project_party_role_locked",
         )
 
 

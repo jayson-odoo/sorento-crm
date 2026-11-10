@@ -448,3 +448,62 @@ def test_ac10_a_contact_of_a_party_not_on_the_project_is_refused_on_edit(v2):
     res = as_user(v2, v2.owner).put(f"{PROJECTS}/{pid}", json={"contact_ids": [person.id]})
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "project_contact_not_on_party"
+
+
+# ------------------------------------------------------------------ security review round (S1, S2, N1, N3)
+
+
+def test_s1_the_role_set_cannot_be_rekeyed_deactivated_or_deleted(v2):
+    from app.schemas.lookup import LookupSetUpdate
+    from app.services.error_handler import AppException
+    from app.services.lookup_set_service import LookupSetService
+
+    svc = LookupSetService(v2.db)
+    for change in ({"set_key": "project_party_role_x"}, {"is_active": False}):
+        with pytest.raises(AppException) as exc:
+            svc.update(_role_set(v2).id, LookupSetUpdate(**change))
+        assert exc.value.code == "project_party_role_locked"
+    with pytest.raises(AppException) as exc:
+        svc.delete(_role_set(v2).id)
+    assert exc.value.code == "project_party_role_locked"
+
+
+def test_s1_the_role_set_can_still_be_renamed(v2):
+    from app.schemas.lookup import LookupSetUpdate
+    from app.services.lookup_set_service import LookupSetService
+
+    row = LookupSetService(v2.db).update(_role_set(v2).id, LookupSetUpdate(name="Project - Party roles"))
+    assert row.name == "Project - Party roles"
+
+
+def test_s2_a_case_only_rekey_of_a_role_in_use_is_refused(v2):
+    from app.schemas.lookup import LookupOptionUpdate
+    from app.services.error_handler import AppException
+    from app.services.lookup_option_service import LookupOptionService
+
+    _party(v2, "architect")
+    with pytest.raises(AppException) as exc:
+        LookupOptionService(v2.db).update(_option(v2, "architect").id, LookupOptionUpdate(value="Architect"))
+    assert exc.value.code == "project_party_role_in_use"
+
+
+def test_n1_an_option_is_only_found_through_its_own_set(v2):
+    from fastapi import HTTPException
+
+    from app.models.lookup import LookupSet
+    from app.schemas.lookup import LookupOptionUpdate
+    from app.services.error_handler import AppException
+    from app.services.lookup_option_service import LookupOptionService
+
+    other = LookupSet(set_key=f"zzt_other_{uid()[:6]}", name="Other", is_active=True)
+    v2.db.add(other)
+    v2.db.flush()
+    with pytest.raises((AppException, HTTPException)) as exc:
+        LookupOptionService(v2.db).update(_option(v2, "consultant").id, LookupOptionUpdate(label="X"), set_id=other.id)
+    assert exc.value.status_code == 404
+
+
+def test_n3_a_malformed_contact_id_on_edit_is_422_not_500(v2):
+    pid = _register(v2).json()["id"]
+    res = as_user(v2, v2.owner).put(f"{PROJECTS}/{pid}", json={"contact_ids": ["not-a-uuid"]})
+    assert res.status_code == 422, res.text

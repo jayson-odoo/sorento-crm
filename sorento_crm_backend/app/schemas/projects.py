@@ -14,6 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from app.services.uuid_path_param import UUID_PATTERN
 
+from typing import Annotated as _Annotated
+
+#: A UUID-shaped id in a list body: a malformed one is a 422, never a database error.
+UUID4Str = _Annotated[str, Field(pattern=UUID_PATTERN)]
+
 # A pure, dependency-free lookup table (no DB, no network), so a schema importing it introduces
 # no cycle. It lives in services because the PDF renderer needs the same answer.
 from app.services import geo_places
@@ -255,8 +260,9 @@ class ProjectUpdateRequest(BaseModel):
     # Present = replace every link; absent = keep them.
     party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
     # Party contacts picked on edit (PROJECT-PARTY-ROLES rule 13): ADDED as stakeholders, never
-    # removed here (owner Q6 b: removal stays on the Stakeholders tab).
-    contact_ids: Optional[List[str]] = Field(None, max_length=200)
+    # removed here (owner Q6 b: removal stays on the Stakeholders tab). UUIDs, so a malformed id
+    # is a 422 rather than a database error.
+    contact_ids: Optional[List[UUID4Str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -2019,7 +2025,7 @@ class ProjectQuotationRecipientPick(BaseModel):
 
     recipient_party_id: Optional[str] = Field(default=None, max_length=64)
     recipient_role: Optional[str] = Field(default=None, max_length=32)
-    attn_contact_ids: Optional[List[str]] = Field(default=None, max_length=20)
+    attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
 
 
 class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):

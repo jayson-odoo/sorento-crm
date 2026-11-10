@@ -294,6 +294,14 @@ def apply_recipient_pick(
     contacts: List[Any] = []
     if attn_ids:
         from app.models.projects import ProjectPartyContact
+        from app.services.uuid_path_param import UUID_PATTERN
+
+        if any(not re.fullmatch(UUID_PATTERN, c) for c in attn_ids):
+            raise AppException(
+                status_code=422,
+                message=f"Pick Attn from the people at {party.name}.",
+                code="quotation_attn_not_of_party",
+            )
 
         rows = {
             row.id: row
