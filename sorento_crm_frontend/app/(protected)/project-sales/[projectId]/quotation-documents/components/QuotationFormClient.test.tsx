@@ -195,6 +195,37 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
   ),
 }));
 
+// QUOTE-TERMS-SELECT: the terms fields have their own spec (QuoteTermsFields.test.tsx); here a
+// stub shows what the form hands them and emits the patches the real one would.
+vi.mock('../../../_shared/components/QuoteTermsFields', () => ({
+  QuoteTermsFields: ({
+    values,
+    onChange,
+    projectId,
+  }: {
+    values: Record<string, unknown>;
+    onChange: (patch: Record<string, unknown>) => void;
+    projectId?: string;
+  }) => (
+    <div>
+      <output aria-label="Terms values">{JSON.stringify(values)}</output>
+      <output aria-label="Terms project">{projectId ?? ''}</output>
+      <button
+        type="button"
+        onClick={() => onChange({ payment_term_id: 'pt-cbd', payment_terms: 'CASH BEFORE DELIVERY' })}
+      >
+        Pick CBD
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange({ validity_value: 90, validity_unit: 'day', validity: '90 DAYS' })}
+      >
+        Pick 90 days
+      </button>
+    </div>
+  ),
+}));
+
 /**
  * The quotation page's own editor and edit session, spied rather than replaced: the real ones
  * render, and the specs can prove the form's lines go through them and nowhere else.
@@ -1342,6 +1373,9 @@ describe('QuotationFormClient cover page fields', () => {
     terms_html: '<p>Valid 30 days</p>',
     payment_terms: '30 days net',
     validity: '60 days',
+    payment_term_id: 'pt-cbd',
+    validity_value: 2,
+    validity_unit: 'week',
   };
 
   it('create prefills Email from the project customer email', async () => {
@@ -1361,8 +1395,16 @@ describe('QuotationFormClient cover page fields', () => {
     renderForm();
 
     await openTab('Terms');
-    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('30 days net');
-    expect(screen.getByLabelText('Validity')).toHaveValue('60 days');
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText('Terms values').textContent ?? '{}')).toMatchObject({
+        payment_term_id: 'pt-cbd',
+        payment_terms: '30 days net',
+        validity_value: 2,
+        validity_unit: 'week',
+        validity: '60 days',
+      }),
+    );
+    expect(screen.getByLabelText('Terms project')).toHaveTextContent('p1');
   });
 
   it('shows Prepared By read-only on the Header tab as the project salesperson', async () => {
@@ -1375,7 +1417,7 @@ describe('QuotationFormClient cover page fields', () => {
     expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
   });
 
-  it('Save sends recipient_email_snapshot, quotation_purpose, payment_terms and validity', async () => {
+  it('Save sends recipient_email_snapshot, quotation_purpose, the terms and their picks', async () => {
     getProject.mockResolvedValue(withEmail());
     getQuotationLetterTemplates.mockResolvedValue(templates);
     renderForm();
@@ -1387,7 +1429,7 @@ describe('QuotationFormClient cover page fields', () => {
       target: { value: 'Supply of sanitary ware' },
     });
     await openTab('Terms');
-    fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Pick 90 days' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
@@ -1395,23 +1437,34 @@ describe('QuotationFormClient cover page fields', () => {
       recipient_email_snapshot: 'lim.weiming@example.test',
       quotation_purpose: 'Supply of sanitary ware',
       payment_terms: '30 days net',
-      validity: '90 days',
+      // The template's pick rides with the create.
+      payment_term_id: 'pt-cbd',
+      validity: '90 DAYS',
+      validity_value: 90,
+      validity_unit: 'day',
     });
   });
 
-  it('with no active template Payment Terms and Validity start empty and Save still works', async () => {
+  it('with no active template the terms start empty and Save sends no picks', async () => {
     getProject.mockResolvedValue(withEmail());
     getQuotationLetterTemplates.mockResolvedValue({ cover_letter_html: null, terms_html: null });
     renderForm();
 
     await openTab('Terms');
-    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('');
-    expect(screen.getByLabelText('Validity')).toHaveValue('');
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByLabelText('Terms values').textContent ?? '{}')).toMatchObject({
+        payment_terms: '',
+        validity: '',
+      }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const body = createQuotationDocument.mock.calls[0][1];
+    expect(body).not.toHaveProperty('payment_term_id');
+    expect(body).not.toHaveProperty('validity_value');
   });
 
-  it('edit opens with the saved values and PATCH carries a changed Payment Terms', async () => {
+  it('edit keeps a legacy validity untouched and PATCH carries a picked Payment Term', async () => {
     getQuotationDocument.mockResolvedValue(
       document({
         ...({
@@ -1427,15 +1480,19 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() => expect(screen.getByLabelText('Email')).toHaveValue('saved@example.test'));
     expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('Saved purpose');
     await openTab('Terms');
-    const pay = await screen.findByLabelText('Payment Terms');
-    expect(pay).toHaveValue('Saved payment');
-    fireEvent.change(pay, { target: { value: 'Changed payment' } });
+    expect(
+      JSON.parse((await screen.findByLabelText('Terms values')).textContent ?? '{}'),
+    ).toMatchObject({ payment_term_id: null, payment_terms: 'Saved payment', validity: 'Saved validity' });
+    fireEvent.click(screen.getByRole('button', { name: 'Pick CBD' }));
     fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
-    expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({
-      payment_terms: 'Changed payment',
+    const body = updateQuotationDocument.mock.calls[0][2];
+    expect(body).toMatchObject({
+      payment_term_id: 'pt-cbd',
+      payment_terms: 'CASH BEFORE DELIVERY',
       validity: 'Saved validity',
     });
+    expect(body).not.toHaveProperty('validity_value');
   });
 
   it('edit shows Prepared By from the saved quotation, not the project owner', async () => {

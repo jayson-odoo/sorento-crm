@@ -59,6 +59,39 @@ vi.mock('../../_shared/hooks/useQuotationTemplates', () => ({
   }),
 }));
 
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    'aria-label'?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+  }) => (
+    <select
+      id={props.id}
+      aria-label={props['aria-label']}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+    >
+      <option value="">none</option>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+vi.mock('../../_shared/hooks/usePaymentTerms', () => ({
+  usePaymentTermOptions: () => ({
+    data: [{ id: 'pt-cbd', code: 'C.B.D.', description: 'CASH BEFORE DELIVERY', label: 'CASH BEFORE DELIVERY' }],
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
 import { QuotationTemplatesClient } from './QuotationTemplatesClient';
 
 beforeEach(() => {
@@ -89,30 +122,48 @@ describe('QuotationTemplatesClient', () => {
   });
 });
 
-/** QUOTE-COVER-PAGE (UAC D2): Payment Terms and Validity beside the terms text. */
+/** QUOTE-COVER-PAGE (UAC D2) + QUOTE-TERMS-SELECT: Payment Terms (a synced AutoCount term) and
+ *  Validity (number + unit) beside the terms text; a legacy text is kept until someone picks. */
 describe('QuotationTemplatesClient payment terms and validity', () => {
-  it('the add dialog has Payment Terms and Validity inputs, empty', () => {
+  it('the add dialog has an empty Payment Terms select and an empty Validity', () => {
     render(<QuotationTemplatesClient />);
     fireEvent.click(screen.getByRole('button', { name: /Add template/i }));
     expect(screen.getByLabelText('Payment Terms')).toHaveValue('');
-    expect(screen.getByLabelText('Validity')).toHaveValue('');
+    expect(screen.getByLabelText('Validity')).toHaveValue(null);
   });
 
-  it('the edit dialog opens with the saved values and save sends the changed ones', async () => {
+  it('the edit dialog shows the legacy texts and save sends only what was picked', async () => {
     render(<QuotationTemplatesClient />);
     fireEvent.click(screen.getByText('Standard 2026'));
 
-    const payment = await screen.findByLabelText('Payment Terms');
-    expect(payment).toHaveValue('30 days net');
-    expect(screen.getByLabelText('Validity')).toHaveValue('60 days');
-    fireEvent.change(payment, { target: { value: '14 days net' } });
-    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '30 days' } });
+    await screen.findByLabelText('Payment Terms');
+    expect(screen.getByText('Current: 30 days net')).toBeTruthy();
+    expect(screen.getByText('Current: 60 days')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Payment Terms'), { target: { value: 'pt-cbd' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
+    const call = (updateAsync.mock.calls as unknown as [{ id: string; body: Record<string, unknown> }][])[0][0];
+    expect(call.id).toBe('t1');
+    expect(call.body).toMatchObject({
+      payment_term_id: 'pt-cbd',
+      payment_terms: 'CASH BEFORE DELIVERY',
+    });
+    // The untouched legacy validity is not sent, so it keeps printing.
+    expect(call.body).not.toHaveProperty('validity');
+    expect(call.body).not.toHaveProperty('validity_value');
+  });
+
+  it('save sends a validity as a number and a unit', async () => {
+    render(<QuotationTemplatesClient />);
+    fireEvent.click(screen.getByText('Standard 2026'));
+    fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Validity unit'), { target: { value: 'week' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
     expect(updateAsync).toHaveBeenCalledWith({
       id: 't1',
-      body: expect.objectContaining({ payment_terms: '14 days net', validity: '30 days' }),
+      body: expect.objectContaining({ validity_value: 2, validity_unit: 'week', validity: '2 WEEKS' }),
     });
   });
 });
