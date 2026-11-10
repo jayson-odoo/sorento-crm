@@ -27,8 +27,8 @@ type KnownParty = {
   address?: string | null;
   phone?: string | null;
   email?: string | null;
-  /** The role it plays on this project, when it is on it. */
-  role?: string | null;
+  /** Address / phone / email were read (a names-only search leaves them unknown). */
+  detailed: boolean;
 };
 
 /**
@@ -57,23 +57,35 @@ export function QuotationRecipientPicker({
   const roles = usePartyRoles();
   const roleLabel = usePartyRoleLabel();
   const canCreateParty = useHasPermission('projects.parties.edit');
-  const { create: createParty } = usePartyMutations();
+  const { create: createParty, update: updateParty } = usePartyMutations();
   const known = React.useRef<Record<string, KnownParty>>({});
+  // Parties made on the spot here: their usual role follows the role picked under "Add as".
+  const createdHere = React.useRef<Set<string>>(new Set());
 
   const onProjectRows = React.useMemo(() => onProject.data ?? [], [onProject.data]);
-  for (const row of onProjectRows) {
-    known.current[row.party_id] = {
-      ...known.current[row.party_id],
+  // The role each party plays on THIS project, read fresh each render (a party can leave it).
+  const roleOnProject = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const row of onProjectRows) if (!out.has(row.party_id)) out.set(row.party_id, row.role);
+    return out;
+  }, [onProjectRows]);
+  const fromProject = React.useCallback(
+    (row: (typeof onProjectRows)[number]): KnownParty => ({
       id: row.party_id,
       name: row.name,
       partyType: row.party_type,
-      phone: known.current[row.party_id]?.phone ?? row.phone,
-      role: row.role,
-    };
-  }
+      address: row.address,
+      phone: row.phone,
+      email: row.email,
+      detailed: true,
+    }),
+    [],
+  );
 
   const partyId = value.recipient_party_id ?? '';
-  const picked = partyId ? known.current[partyId] : undefined;
+  const pickedRow = onProjectRows.find((row) => row.party_id === partyId);
+  const picked = partyId ? (pickedRow ? fromProject(pickedRow) : known.current[partyId]) : undefined;
+  const pickedRole = partyId ? roleOnProject.get(partyId) : undefined;
   const onProjectIds = new Set(onProjectRows.map((row) => row.party_id));
   const needsRole = Boolean(partyId) && onProject.isSuccess && !onProjectIds.has(partyId);
 
@@ -82,6 +94,7 @@ export function QuotationRecipientPicker({
       const q = query.trim().toLowerCase();
       const mine = onProjectRows
         .filter((row) => !q || row.name.toLowerCase().includes(q))
+        .filter((row, i, all) => all.findIndex((r) => r.party_id === row.party_id) === i)
         .map((row) => ({
           value: row.party_id,
           label: row.name,
@@ -92,13 +105,14 @@ export function QuotationRecipientPicker({
       const ids = new Set(onProjectRows.map((row) => row.party_id));
       for (const party of result.data) {
         known.current[party.id] = {
-          ...known.current[party.id],
           id: party.id,
           name: party.name,
           partyType: party.party_type,
           address: party.address,
-          phone: party.phone ?? known.current[party.id]?.phone,
+          phone: party.phone,
           email: party.email,
+          // A caller without the parties view grant gets names only: nothing else is known.
+          detailed: 'address' in party || 'phone' in party,
         };
       }
       const others = result.data
@@ -130,14 +144,18 @@ export function QuotationRecipientPicker({
       onChange({ recipient_party_id: null, recipient_role: null, attn_contact_ids: [] });
       return;
     }
-    const role = party.role ?? (roleOptions.some((r) => r.value === party.partyType) ? party.partyType : null);
+    const role =
+      roleOnProject.get(party.id) ??
+      (roleOptions.some((r) => r.value === party.partyType) ? party.partyType : null);
+    // Unknown details go as null: the save leaves them out and the server fills them from the
+    // party, so a guess (the site address) never stands in for the party's own address.
     onChange({
       recipient_party_id: party.id,
       recipient_role: role,
       recipient_name_snapshot: party.name,
-      recipient_address_snapshot: party.address || siteAddress || null,
-      recipient_phone_snapshot: party.phone || null,
-      recipient_email_snapshot: party.email || null,
+      recipient_address_snapshot: party.detailed ? party.address || siteAddress || null : null,
+      recipient_phone_snapshot: party.detailed ? party.phone || null : null,
+      recipient_email_snapshot: party.detailed ? party.email || null : null,
       attn_name: null,
       attn_contact_ids: [],
     });
@@ -149,7 +167,7 @@ export function QuotationRecipientPicker({
         <span className="truncate font-medium" title={value.recipient_name_snapshot ?? ''}>
           {value.recipient_name_snapshot ?? '-'}
         </span>
-        {picked?.role && <Badge variant="secondary">{roleLabel(picked.role)}</Badge>}
+        {pickedRole && <Badge variant="secondary">{roleLabel(pickedRole)}</Badge>}
       </div>
     );
   }
@@ -163,14 +181,18 @@ export function QuotationRecipientPicker({
         onChange={(next) => {
           if (!next) pick(null);
         }}
-        onOptionChange={(option) => pick(option ? (known.current[option.value] ?? null) : null)}
+        onOptionChange={(option) => {
+          if (!option) return pick(null);
+          const row = onProjectRows.find((r) => r.party_id === option.value);
+          pick(row ? fromProject(row) : (known.current[option.value] ?? null));
+        }}
         fetchOptions={fetchOptions}
         selectedOption={
           partyId
             ? {
                 value: partyId,
                 label: picked?.name ?? value.recipient_name_snapshot ?? '',
-                description: picked?.role ? roleLabel(picked.role) : undefined,
+                description: pickedRole ? roleLabel(pickedRole) : undefined,
               }
             : undefined
         }
@@ -188,8 +210,17 @@ export function QuotationRecipientPicker({
                   if (!type) return;
                   try {
                     const party = await createParty.mutateAsync({ name: query.trim(), party_type: type });
-                    const row: KnownParty = { id: party.id, name: party.name, partyType: party.party_type };
+                    const row: KnownParty = {
+                      id: party.id,
+                      name: party.name,
+                      partyType: party.party_type,
+                      address: party.address,
+                      phone: party.phone,
+                      email: party.email,
+                      detailed: true,
+                    };
                     known.current[party.id] = row;
+                    if (party.party_type === type) createdHere.current.add(party.id);
                     pick(row);
                   } catch {
                     // toasted by the mutation
@@ -206,7 +237,14 @@ export function QuotationRecipientPicker({
             <SearchableSelect
               id="quotation-recipient-role"
               value={value.recipient_role ?? ''}
-              onChange={(role) => onChange({ recipient_role: role || null })}
+              onChange={(role) => {
+                onChange({ recipient_role: role || null });
+                // A party made here takes the role it is first added in as its usual role
+                // (card rule B), not whichever role the list happened to start with.
+                if (role && createdHere.current.has(partyId)) {
+                  updateParty.mutate({ id: partyId, body: { party_type: role } });
+                }
+              }}
               options={roleOptions}
               placeholder="Pick a role"
             />

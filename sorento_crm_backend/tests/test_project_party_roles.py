@@ -507,3 +507,63 @@ def test_n3_a_malformed_contact_id_on_edit_is_422_not_500(v2):
     pid = _register(v2).json()["id"]
     res = as_user(v2, v2.owner).put(f"{PROJECTS}/{pid}", json={"contact_ids": ["not-a-uuid"]})
     assert res.status_code == 422, res.text
+
+
+# ------------------------------------------------------------------ review round 1 (kill-test gaps)
+
+
+def test_rv_the_migration_seeds_exactly_the_app_seed():
+    """The migration keeps its own frozen copy: it must say what SEED_ROLES says."""
+    import importlib.util
+    import pathlib
+
+    from app.services.project_party_roles import SEED_ROLES, SET_KEY
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions" / "ppr_0001_party_roles.py"
+    spec = importlib.util.spec_from_file_location("ppr_0001_party_roles", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert tuple(module.ROLES) == tuple(SEED_ROLES)
+    assert module.SET_KEY == SET_KEY
+    assert module.down_revision and len(module.revision) <= 32
+
+
+def test_rv_a_party_keeps_its_since_deactivated_type_on_save(v2):
+    p = _party(v2, "interior_designer")
+    _option(v2, "interior_designer").is_active = False
+    v2.db.flush()
+    res = as_user(v2, v2.owner).put(f"{PARTIES}/{p.id}", json={"party_type": "interior_designer", "name": p.name})
+    assert res.status_code == 200, res.text
+
+
+def test_rv_option_update_without_allows_many_keeps_it(v2):
+    from app.schemas.lookup import LookupOptionUpdate
+    from app.services.lookup_option_service import LookupOptionService
+
+    row = LookupOptionService(v2.db).update(_option(v2, "trading_house").id, LookupOptionUpdate(label="Trading co"))
+    assert row.allows_many is True
+    row = LookupOptionService(v2.db).update(_option(v2, "trading_house").id, LookupOptionUpdate(allows_many=None))
+    assert row.allows_many is True
+
+
+def test_rv_ai_extract_prefers_the_party_usual_in_the_role(v2):
+    from app.services import project_ai_extract_service as extract
+
+    name = f"CONTOH TWIN {uid()[:6]}"
+    dev = _party(v2, "developer", name)
+    arch = _party(v2, "architect", name)
+    assert extract._party(v2.db, v2.company_id, "architect", name)["id"] == arch.id
+    assert extract._party(v2.db, v2.company_id, "developer", name)["id"] == dev.id
+
+
+def test_rv_the_project_parties_read_carries_address_and_email(v2):
+    from app.models.projects import ProjectParty
+
+    arch = ProjectParty(id=uid(), company_id=v2.company_id, party_type="architect",
+                        name=f"CONTOH ARCH {uid()[:6]}", address="Lot 9", email="a@arch.example")
+    v2.db.add(arch)
+    v2.db.flush()
+    pid = _register(v2, party_links=[{"role": "architect", "party_id": arch.id}]).json()["id"]
+    rows = as_user(v2, v2.owner).get(f"{PROJECTS}/{pid}/parties").json()["data"]
+    row = next(r for r in rows if r["party_id"] == arch.id)
+    assert (row["address"], row["email"]) == ("Lot 9", "a@arch.example")

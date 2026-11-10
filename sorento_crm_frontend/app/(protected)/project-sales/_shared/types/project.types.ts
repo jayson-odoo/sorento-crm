@@ -66,6 +66,9 @@ export interface PartyOnProject {
   role: string;
   name: string;
   phone: string | null;
+  /** The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2). */
+  address?: string | null;
+  email?: string | null;
   contacts: {
     stakeholder_id: string;
     party_contact_id: string | null;

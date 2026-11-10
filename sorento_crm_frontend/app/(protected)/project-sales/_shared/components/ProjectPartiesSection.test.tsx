@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PartyContact, PartyRole } from '../types/project.types';
 
@@ -29,10 +29,17 @@ vi.mock('../services/projectService', async (importOriginal) => {
 
 type Opt = { value: string; label: string };
 // A static stand-in for the async pickers: lists what fetchOptions returns.
+const selectProps: Record<string, { fetchOptions?: (q: string) => Promise<Opt[]>; createOption?: { onCreate: (q: string) => unknown } }> = {};
 vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({ id, selectedOption }: { id?: string; selectedOption?: Opt }) => (
-    <span data-testid={id}>{selectedOption?.label ?? ''}</span>
-  ),
+  SearchableSelect: (props: {
+    id?: string;
+    selectedOption?: Opt;
+    fetchOptions?: (q: string) => Promise<Opt[]>;
+    createOption?: { onCreate: (q: string) => unknown };
+  }) => {
+    selectProps[props.id ?? ''] = props;
+    return <span data-testid={props.id}>{props.selectedOption?.label ?? ''}</span>;
+  },
 }));
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: ({ id, selectedOptions }: { id?: string; selectedOptions?: Opt[] }) => (
@@ -140,6 +147,47 @@ describe('Parties section from the role list', () => {
     renderSection({ developer: { value: 'p-dev', label: 'CONTOH DEVELOPER BHD' } });
     expect(screen.getByText('CONTOH DEVELOPER BHD')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add contacts' })).toBeInTheDocument();
+  });
+});
+
+describe('inactive roles and create on the spot', () => {
+  it('an inactive role still on the project offers no search and no create', async () => {
+    renderSection({ picks: { interior_designer: [{ value: 'p-id', label: 'CONTOH ID' }] } });
+    const props = selectProps['project-party-interior-designer'];
+    expect(props.createOption).toBeUndefined();
+    expect(await props.fetchOptions!('contoh')).toEqual([]);
+    expect(listParties).not.toHaveBeenCalled();
+  });
+
+  it('a party made on the spot opens its contacts popup straight away', async () => {
+    listPartyContacts.mockResolvedValue([]);
+    const createParty = vi.fn(async () => ({ value: 'p-new', label: 'CONTOH BARU' }));
+    function Harness() {
+      const [picks, setPicks] = React.useState<Record<string, PartyPick[]>>({});
+      return (
+        <ProjectPartiesSection
+          roles={ROLES}
+          picks={picks}
+          onPicksChange={(role, next) => setPicks((prev) => ({ ...prev, [role]: next }))}
+          contactPicks={{}}
+          onContactPicksChange={vi.fn()}
+          canCreateParty
+          createParty={createParty}
+        />
+      );
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+    await act(async () => {
+      await selectProps['project-party-architect'].createOption!.onCreate('CONTOH BARU');
+    });
+    expect(createParty).toHaveBeenCalledWith('architect', 'CONTOH BARU');
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Contacts at CONTOH BARU')).toBeInTheDocument();
   });
 });
 

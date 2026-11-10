@@ -365,3 +365,42 @@ def test_n3_a_malformed_attn_contact_id_is_refused_not_a_500():
         with pytest.raises(AppException) as exc:
             _create(w, recipient_party_id=w.developer.id, attn_contact_ids=["not-a-uuid"])
         assert exc.value.status_code == 422
+
+
+def test_rv_a_new_proposal_carries_the_developer_email():
+    with blank_session() as db:
+        w = _world(db)
+        w.developer.email = "info@paragon.example"
+        db.flush()
+        doc = _create(w)
+        assert doc.recipient_email_snapshot == "info@paragon.example"
+
+
+def test_rv_a_typed_email_wins_over_the_developer_email():
+    with blank_session() as db:
+        w = _world(db)
+        w.developer.email = "info@paragon.example"
+        db.flush()
+        doc = _create(w, recipient_email_snapshot="finance@paragon.example")
+        assert doc.recipient_email_snapshot == "finance@paragon.example"
+
+
+def test_rv_an_inactive_attn_contact_is_refused():
+    with blank_session() as db:
+        w = _world(db)
+        gone = _contact(db, w.developer, "EN. RETIRED")
+        gone.is_active = False
+        db.flush()
+        with pytest.raises(AppException) as exc:
+            _create(w, recipient_party_id=w.developer.id, attn_contact_ids=[gone.id])
+        assert exc.value.code == "quotation_attn_not_of_party"
+
+
+def test_rv_clearing_the_party_on_a_draft_saves_no_party():
+    with blank_session() as db:
+        w = _world(db)
+        doc = _create(w)
+        doc = _update(w, doc, recipient_party_id=None)
+        assert doc.recipient_party_id is None
+        # The typed block stays: clearing the party is not blanking the letter.
+        assert doc.recipient_name_snapshot == w.developer.name

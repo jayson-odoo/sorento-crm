@@ -159,6 +159,11 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     queryClient.invalidateQueries({ queryKey: [ISSUES_KEY, projectId] });
     queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
     queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
+    // A save may link the To party to the project and add its Attn people as stakeholders
+    // (PROJECT-PARTY-ROLES PR 2): the project's parties, people and record are fresh again.
+    queryClient.invalidateQueries({ queryKey: ['projects', 'parties', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['projects', 'stakeholders', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['projects', 'detail', projectId] });
   };
 
   /**

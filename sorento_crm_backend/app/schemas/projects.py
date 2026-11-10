@@ -2651,6 +2651,9 @@ class ProjectPartyOnProject(BaseModel):
     role: str
     name: str
     phone: Optional[str] = None
+    # The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2).
+    address: Optional[str] = None
+    email: Optional[str] = None
     contacts: List[ProjectPartyPerson] = Field(default_factory=list)
 
 

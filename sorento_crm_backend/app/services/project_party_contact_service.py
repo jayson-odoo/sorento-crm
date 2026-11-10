@@ -353,6 +353,8 @@ def list_project_parties(db: Session, project: Project) -> List[Dict[str, Any]]:
                 "role": role,
                 "name": party.name,
                 "phone": party.phone,
+                "address": party.address,
+                "email": party.email,
                 "contacts": people.get(party.id, []),
             }
         )

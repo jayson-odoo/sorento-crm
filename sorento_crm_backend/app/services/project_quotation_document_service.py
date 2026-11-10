@@ -236,12 +236,14 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
             "recipient_name_snapshot": None,
             "recipient_address_snapshot": None,
             "recipient_phone_snapshot": None,
+            "recipient_email_snapshot": None,
         }
     return {
         "recipient_party_id": party.id,
         "recipient_name_snapshot": party.name,
         "recipient_address_snapshot": party.address or _site_address(db, project),
         "recipient_phone_snapshot": party.phone,
+        "recipient_email_snapshot": party.email,
     }
 
 
@@ -365,7 +367,6 @@ def create_document(
         your_ref=payload.get("your_ref"),
         doc_date=payload.get("doc_date") or date.today(),
         attn_name=payload.get("attn_name"),
-        recipient_email_snapshot=payload.get("recipient_email_snapshot"),
         quotation_purpose=payload.get("quotation_purpose"),
         payment_terms=payload.get("payment_terms"),
         validity=payload.get("validity"),
@@ -376,7 +377,15 @@ def create_document(
         signatory_name=payload.get("signatory_name"),
         signatory_phone=payload.get("signatory_phone"),
         created_by=actor_user_id,
-        **_recipient_from_project(db, project),
+        **{
+            **_recipient_from_project(db, project),
+            # A typed email wins over the developer's own (PROJECT-PARTY-ROLES AC-12).
+            **(
+                {"recipient_email_snapshot": payload["recipient_email_snapshot"]}
+                if payload.get("recipient_email_snapshot")
+                else {}
+            ),
+        },
     )
     db.add(document)
     db.flush()

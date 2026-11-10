@@ -202,7 +202,7 @@ function PartyRoleField({
             onChange(
               ids.map(
                 (value) =>
-                  picks.find((p) => p.value === value) ?? seen.current[value] ?? { value, label: value },
+                  picks.find((p) => p.value === value) ?? seen.current[value] ?? { value, label: 'Party' },
               ),
             )
           }

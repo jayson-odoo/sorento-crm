@@ -53,6 +53,7 @@ import {
 } from '../../components/QuotationVersionEditor';
 import { QuotationNameDialog } from '../[documentId]/components/QuotationNameDialog';
 import { QuotationAttnChooser, QuotationRecipientPicker } from './QuotationRecipientPicker';
+import { withRecipient } from '../../../_shared/lib/quotationRecipientBody';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
 import { useQuotationEditSession } from '../[documentId]/components/useQuotationEditSession';
 import {
@@ -482,28 +483,8 @@ export function QuotationFormClient({
         ? value
         : null;
     });
-    // The "To" party (PROJECT-PARTY-ROLES PR 2): sent when picked or changed. A field the picked
-    // party could not fill here is left out, so the server fills it from the party (and the
-    // project's site address) rather than blanking it.
-    const partyId = header?.recipient_party_id ?? null;
-    const partyChanged = partyId !== (isEdit ? (saved.data?.recipient_party_id ?? null) : null);
-    if (partyId && partyChanged) {
-      body.recipient_party_id = partyId;
-      if (header?.recipient_role) body.recipient_role = header.recipient_role;
-      for (const field of [
-        'recipient_name_snapshot',
-        'recipient_address_snapshot',
-        'recipient_phone_snapshot',
-        'recipient_email_snapshot',
-      ] as const) {
-        if (body[field] === null) delete body[field];
-      }
-    }
-    if (partyId && (header?.attn_contact_ids ?? []).length > 0) {
-      body.recipient_party_id = partyId;
-      body.attn_contact_ids = header?.attn_contact_ids;
-    }
-    return body;
+    // The "To" party (PROJECT-PARTY-ROLES PR 2): picked, changed or cleared, and its Attn.
+    return withRecipient(body, header, isEdit ? (saved.data?.recipient_party_id ?? null) : null);
   }
 
   function scopesBody(): QuotationFormScopeBody[] {

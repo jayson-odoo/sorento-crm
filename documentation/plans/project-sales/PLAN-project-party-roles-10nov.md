@@ -1,6 +1,6 @@
 # PLAN: configurable project party roles + proposal To picker (lane PROJECT-PARTY-ROLES)
 
-Status: Plan (owner answered Q1-Q7 10 Nov 15:10; mock v4 posted, waiting on approval). Track: full
+Status: Review round 1 fixed (owner approved mock v4 + Q1-Q7, 10 Nov). Track: full
 (migration + permission surface + external-facing proposal header).
 
 Card (behaviour, owner answers): `CARD-project-party-roles-10nov.md`. UAC:

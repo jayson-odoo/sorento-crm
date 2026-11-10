@@ -20,7 +20,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
     listParties: (...a: unknown[]) => listParties(...a),
     listPartyContacts: (...a: unknown[]) => listPartyContacts(...a),
     getPartiesOnProject: async () => [
-      { party_id: 'p-dev', party_type: 'developer', role: 'developer', name: 'PARAGON CONTOH SDN BHD', phone: '03-0001', contacts: [] },
+      { party_id: 'p-dev', party_type: 'developer', role: 'developer', name: 'PARAGON CONTOH SDN BHD', phone: '03-0001', address: 'No 1, Jalan Paragon', email: 'info@paragon.example', contacts: [] },
       { party_id: 'p-arch', party_type: 'architect', role: 'architect', name: 'ARKITEK CONTOH', phone: null, contacts: [] },
     ],
     listPartyRoles: async () => [
@@ -92,6 +92,37 @@ const OTHER = {
 };
 
 describe('the To party picker', () => {
+  it('a party on the project autoloads its own address and email, even when the search misses it', async () => {
+    listParties.mockResolvedValue({ data: [] });
+    const onChange = vi.fn();
+    wrap(<QuotationRecipientPicker projectId="pr1" siteAddress="Lot 1, Kuantan" value={{}} locked={false} onChange={onChange} />);
+    fireEvent.click(await screen.findByRole('button', { name: /PARAGON CONTOH/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipient_party_id: 'p-dev',
+        recipient_role: 'developer',
+        recipient_address_snapshot: 'No 1, Jalan Paragon',
+        recipient_phone_snapshot: '03-0001',
+        recipient_email_snapshot: 'info@paragon.example',
+      }),
+    );
+  });
+
+  it('a party found by name only leaves its details to the server, never the site address', async () => {
+    listParties.mockResolvedValue({ data: [{ id: 'p-x', party_type: 'consultant', name: 'NAMES ONLY CONTOH' }] });
+    const onChange = vi.fn();
+    wrap(<QuotationRecipientPicker projectId="pr1" siteAddress="Lot 1, Kuantan" value={{}} locked={false} onChange={onChange} />);
+    fireEvent.click(await screen.findByRole('button', { name: /NAMES ONLY CONTOH/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipient_party_id: 'p-x',
+        recipient_address_snapshot: null,
+        recipient_phone_snapshot: null,
+        recipient_email_snapshot: null,
+      }),
+    );
+  });
+
   it('offers the project parties first with their role, then the other parties', async () => {
     listParties.mockResolvedValue({ data: [OTHER, { id: 'p-arch', party_type: 'architect', name: 'ARKITEK CONTOH', is_active: true }] });
     wrap(<QuotationRecipientPicker projectId="pr1" value={{}} locked={false} onChange={vi.fn()} />);
