@@ -26,6 +26,7 @@ class SystemSettingUpdate(BaseModel):
     website_url: Optional[str] = None
     support_email: Optional[str] = None
     support_phone: Optional[str] = None
+    fax: Optional[str] = None
     language: Optional[str] = None
     timezone: Optional[str] = None
     currency: Optional[str] = None
@@ -357,6 +358,7 @@ def get_settings(
                 "website_url": settings.website_url if settings else None,
                 "support_email": settings.support_email if settings else None,
                 "support_phone": settings.support_phone if settings else None,
+                "fax": settings.fax if settings else None,
                 "language": settings.language if settings else None,
                 "timezone": settings.timezone if settings else None,
                 "currency": settings.currency if settings else None,
