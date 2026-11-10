@@ -4,13 +4,13 @@ Additive and nullable: `product_combo_parts.label`, `product_combos.main_label` 
 `product_combos.parts_line`.
 
 Revision ID: combo_0001_part_labels
-Revises: qcf_0001_fax
+Revises: pfc_0001_line_is_section
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "combo_0001_part_labels"
-down_revision = "qcf_0001_fax"
+down_revision = "pfc_0001_line_is_section"
 branch_labels = None
 depends_on = None
 
