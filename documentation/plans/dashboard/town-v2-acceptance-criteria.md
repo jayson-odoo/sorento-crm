@@ -23,3 +23,7 @@ Plan: `PLAN-town-v2-10nov.md`. Each line is checked by a test (T) or the browser
    loop stops; a hidden tab advances nothing.
 13. (T) A poll whose snapshot gives a shop more `today_docs` than the previous one yields one receipt pop
    for that shop (`newSales(prev, next)`), none on the first load.
+14. (T) `GET /api/v1/town/snapshot` answers 403 to a staff user without `dashboards.town.view`, wallboard
+   mode included; 200 to admin, superadmin and any role granted the permission.
+15. (T) The Town menu item is gated on `dashboards.town.view`; `/town` renders Access denied without it.
+16. (T) Migration `town_0001_view_perm` seeds the permission and grants it to `admin` and `superadmin` only.

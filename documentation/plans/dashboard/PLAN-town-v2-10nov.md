@@ -1,8 +1,9 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Build (look-independent slices). All card questions answered (Q1-Q6, 10 Nov). The look and motion
-are reworked in the separate local lane TOWN-LOOK (v6); visuals wait for the owner's pick. Slice 1 done. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
-no new ingest surface. UAC: `town-v2-acceptance-criteria.md`.
+Status: Build. Track L (since 10 Nov ~16:55: a permission migration + an RBAC gate; security reviewer
+joins Phase 3). All card questions answered (Q1-Q6). Look and motion: the owner approved TOWN-LOOK v6
+(#2316, `documentation/mockups/TOWN-LOOK/`), being ported into `TownScene.tsx`. Done: snapshot `incoming`
++ `deliveries.customers`, lightbox, hover/tilt/zoom/reset, plain port + sixth card, admin-only access.
 
 ## Journey (owner, 10 Nov ~15:35 MYT, Dashboards > Town)
 
@@ -84,6 +85,16 @@ shipments also ... how about purchased from overseas?"
     - Time of day: light and sky follow the snapshot's `as_of` hour (warm near 18:00, blue after 20:00).
     - Guard rails: 30 fps cap, the clock stops while the tab is hidden, `prefers-reduced-motion` = the
       static town (as today), and a Pause/Play button (WCAG 2.2.2), remembered per viewer in localStorage.
+
+11. **Admin-only (owner, 10 Nov ~16:55).** Only admins see the Town, through the app's permission system:
+    `dashboards.town.view` (`app/rbac/permission_registry.py`), granted to `admin` and `superadmin` by
+    migration `town_0001_view_perm` (and the existing admin grant seed), never a role-name check. The Town
+    menu item is gated on it, `/town` renders Access denied without it (`town/layout.tsx`), and
+    `GET /api/v1/town/snapshot` (the only Town API) answers 403 without it, wallboard mode included.
+    The wallboard has no credential of its own: it is `/town` with the Wallboard toggle in a signed-in
+    browser (`TownPage.tsx:35-47` -> `useTownSnapshot({mode:'wallboard'})` -> `townService.ts:10-12`
+    `apiFetch` with the user's bearer session -> `town.py` `get_current_user`). The Mac mini keeps working
+    while that browser is signed in as an admin (30-day sliding session).
 
 ## Real examples (dev data)
 
