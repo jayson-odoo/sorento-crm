@@ -9,6 +9,7 @@ import {
   Bookmark,
   Download,
   FileText,
+  History,
   Link2,
   ListOrdered,
   Printer,
@@ -38,6 +39,7 @@ import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
+import { OrderInquiryHistory } from './OrderInquiryHistory';
 import { OrderSplitsDialog } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
 import { HandoverResendDialog } from '../../../_shared/components/HandoverResendDialog';
@@ -1012,6 +1014,12 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             <Ship />
             <span>Related SPO</span>
           </TabsTrigger>
+          {/* STANDARD-HISTORY (AC-SH-B8): last, with the PO detail page's own History icon
+              and label. */}
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
@@ -1068,6 +1076,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             error={relatedQuery.error}
             onRetry={() => void relatedQuery.refetch()}
           />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+          {/* STANDARD-HISTORY v2: the PO / product History tab's own component. */}
+          <OrderInquiryHistory inquiryId={id} />
         </TabsContent>
       </Tabs>
 
