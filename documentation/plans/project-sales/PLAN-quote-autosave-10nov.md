@@ -1,7 +1,39 @@
 # PLAN: Proposal / quotation autosave with history (QUOTE-AUTOSAVE)
 
-Status: Plan (behaviour card posted to the owner, waiting on Q1 to Q5). Track: full (size L,
-migration).
+Status: Review (built to the owner's answers below; reviewer + security review running). Track:
+full (size L, migration). UAC: `quote-autosave-10nov-acceptance-criteria.md`.
+
+## Owner answers (10 Nov 2026 ~15:10 MYT, via crew). These supersede the card where they differ.
+
+- **Q1 (a)**: autosave writes a DRAFT; Save applies it (the tag designer split).
+- **Q2 (b)**: a NEW proposal's draft is PRIVATE per person per project and numbered on its first
+  Save, so an abandoned draft uses up no number.
+- **Q3**: "follow price tag setting": History copies the tag designer's rule exactly. An entry per
+  Save; Restore first keeps the state being left as "Before restore to version N" (the draft, else
+  the latest Save, `price_tag_requests.py:941-997`), then the entry becomes the draft. Autosave
+  writes no History.
+- **Q4**: the OLDER tab / session becomes VIEW-ONLY ("I worry the user open 2 tabs at once"):
+  banner "Opened in another tab / by <name> at <time>", fields locked, Reload; its unsent text
+  goes to History.
+- **Q5 (a)**: Cancel becomes "Discard draft" with a 5 s undo (the reversible pending action).
+
+## As built
+
+- `projects.quotation_document_drafts` (audit-skipped): one shared row per document, or a private
+  row per person per project for a new proposal (`document_id` NULL, `owner_user_id`). Every open
+  of the form claims it (`holder_token`); only the holder writes.
+- `projects.quotation_document_snapshots` (insert-only, audit-skipped): kinds `saved`,
+  `before_restore`, `conflict`. Numbered oldest = 1 at read time ("Version N").
+- Routes (`api/v1/projects/quotation_documents.py`): `.../{id}/form-draft/open`, `.../holder`,
+  `PUT .../form-draft`, `.../history`, `.../history/{entry}`, `.../history/{entry}/restore`;
+  `.../new-draft/open`, `.../new-draft/holder`, `PUT .../new-draft`. Create / PATCH take
+  `form_state` + `form_token`. Issue and Request approval refuse 409 `quotation_draft_pending`.
+- Discard draft: record action `quotation_form_draft.discard` (`record_actions.py`, 5 s).
+- FE: `useQuotationFormAutosave.ts` (the tag designer's `useAutosave` + `AutosaveIndicator`, flush
+  on unmount and `pagehide`, retry on `online`, local mirror, holder check every 15 s and on
+  focus), `QuotationFormClient.tsx` (opens on the draft, Save carries the state and claim, view-only
+  banner and `inert` body, Discard draft countdown, History button), `QuotationHistorySheet.tsx`,
+  the read page's draft hint (`QuotationDocumentClient.tsx`).
 
 Owner ruling, 10 Nov 2026 ~14:15 MYT: "I think the quotation should be always saved instead of
 needing me to click 'Save' otherwise if I click outside then all the data will be gone, should be
