@@ -370,12 +370,13 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
     wids = [str(w) for w in (warehouse_ids or [])]
     codes: list[str] = []
     inactive_codes: list[str] = []
+    active_wids: list[str] = []
     if wids:
         wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cws",
                                                      shared=True)
         wh_co_sql = ("AND " + wh_co) if wh_co else ""
         rows = db.execute(text(
-            "SELECT warehouse_code, is_active FROM warehouses w "
+            "SELECT warehouse_code, is_active, id FROM warehouses w "
             "WHERE id = ANY(CAST(:ids AS uuid[])) "
             f"{wh_co_sql} "
             "ORDER BY warehouse_code"
@@ -386,6 +387,7 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
         # refuses an inactive code) and the header can say which.
         active_codes = {r[0] for r in rows if r[1]}
         inactive_codes = sorted({r[0] for r in rows if not r[1]} - active_codes)
+        active_wids = [str(r[2]) for r in rows if r[1]]
     wh_co2, wh_co2_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt2",
                                                    shared=True)
     wh_co2_sql = ("AND " + wh_co2) if wh_co2 else ""
@@ -410,7 +412,12 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
             product_codes = [r[0] for r in rows]
     return {
         "warehouse_codes": codes,
-        "is_all_warehouses": _covers_every_warehouse(wids, warehouses_then),
+        # Only ACTIVE ticked ids count toward "nothing ticked": a location deactivated since
+        # would otherwise lift a ticked scope to the active estate's size and read it as
+        # "All", so a Re-plan would widen to every location. A ticked scope whose locations
+        # are ALL inactive is still a ticked scope (its Re-plan says it falls back).
+        "is_all_warehouses": (bool(active_wids) or not wids)
+        and _covers_every_warehouse(active_wids, warehouses_then),
         "product_codes": product_codes,
         "inactive_warehouse_codes": inactive_codes,
     }

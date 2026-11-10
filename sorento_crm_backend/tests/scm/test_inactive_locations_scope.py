@@ -244,3 +244,29 @@ def test_a_code_active_in_one_company_and_inactive_in_another_plans_the_active_o
     stored = db.execute(text("SELECT warehouse_ids FROM scm.reorder_run WHERE id = :r"),
                         {"r": created["run_id"]}).scalar()
     assert [str(w) for w in stored] == [live.id]
+
+
+def test_a_deactivated_ticked_location_does_not_make_the_scope_read_as_all(scm_app):
+    """Ticked A + B, B deactivated since, C active and never ticked. Counting B would lift
+    the ticked count to the active estate's size and read the run as "All", so a Re-plan
+    would widen to every location (C included). Only active ticked ids count."""
+    _, db, _, _ = scm_app
+    tag, a_code, b_code = _codes()
+    wa = _mk_warehouse(db, a_code)
+    wb = _mk_warehouse(db, b_code)
+    _mk_warehouse(db, f"{tag}-C")
+    active_now = db.execute(text("SELECT count(*) FROM warehouses WHERE is_active")).scalar()
+    _deactivate(db, wb)
+    # Pad the ticked list with the estate's other active warehouses minus one, so that
+    # A + B together equal the active count: the case the raw count gets wrong.
+    others = [str(r[0]) for r in db.execute(text(
+        "SELECT id FROM warehouses WHERE is_active AND id <> ALL(CAST(:x AS uuid[])) "
+        "AND warehouse_code <> :c ORDER BY id"
+    ), {"x": [wa, wb], "c": f"{tag}-C"}).all()]
+    assert len(others) == active_now - 3
+    ticked = [wa, wb, *others]
+
+    scope = svc.resolve_run_scope(db, ticked, None, None)
+
+    assert scope["is_all_warehouses"] is False
+    assert scope["inactive_warehouse_codes"] == [b_code]

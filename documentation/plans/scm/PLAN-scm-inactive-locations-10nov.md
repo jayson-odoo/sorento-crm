@@ -29,6 +29,9 @@ the first place?" and "make sure our SCM reorder plan now used locations are all
      site pool) and the line adds `, planning every active location instead`.
    - Daily job: the handler drops inactive codes before `create_run` and the run summary carries
      `message: "Skipped inactive location X"` (same fallback wording when all are inactive).
+   - "Nothing ticked" (`resolve_run_scope.is_all_warehouses`) counts only ACTIVE ticked ids:
+     ticked A + B with B deactivated since must not read as "All" (a Re-plan would widen to
+     every location). Found in the browser pass; the same seam #2309 fixed for the report.
 4. Unchanged: owner ruling 9 Nov (report columns = selected locations), #2309 (inactive never
    counts).
 
