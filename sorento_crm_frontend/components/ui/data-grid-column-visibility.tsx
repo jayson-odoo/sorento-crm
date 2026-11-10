@@ -12,18 +12,45 @@ import { Column, Table } from '@tanstack/react-table';
 import { DataGridContext } from '@/components/ui/data-grid';
 
 /**
- * Every leaf column, group members included, in the order the grid DECLARES them.
+ * Every leaf column, group members and hidden columns included, in the order the grid DRAWS
+ * them: left-pinned, then the centre in the reader's column order, then right-pinned.
  *
- * `getAllLeafColumns()` is the same list in VISUAL order, so on any listing where the user
- * had dragged a column this panel silently re-sorted itself and the checkbox they were
- * looking for had moved. `getAllColumns()` keeps definition order but stops at a group,
- * whose members would then be unreachable, so it is flattened here instead.
+ * The Columns menu reads top to bottom exactly as the grid reads left to right, so it is the
+ * truth about the screen (COLUMNS-TOGGLE-TRUTH, 10 Nov 2026). It used to list DEFINITION
+ * order, so a column the reader's saved order had moved sat ticked at the top of the menu
+ * while the grid drew it far right, off-screen: Products' Type, Variant Of and Variants,
+ * parked past Updated by the old append-at-the-end merge, read as "ticked but not shown".
+ * A hidden column keeps its slot, so ticking it back shows it where the menu said it was.
  */
-export function leafColumnsInDefinitionOrder<TData>(
-  columns: Column<TData, unknown>[],
-): Column<TData, unknown>[] {
-  return columns.flatMap((column) =>
-    column.columns?.length ? leafColumnsInDefinitionOrder(column.columns) : [column],
+export function leafColumnsInScreenOrder<TData>(table: Table<TData>): Column<TData, unknown>[] {
+  return [
+    ...table.getLeftLeafColumns(),
+    ...table.getCenterLeafColumns(),
+    ...table.getRightLeafColumns(),
+  ];
+}
+
+/**
+ * The menu's checkbox rows, shared by every Columns menu (the toolbar button here and the
+ * column header's own submenu), so no two menus can disagree about the grid.
+ */
+export function DataGridColumnVisibilityItems<TData>({ table }: { table: Table<TData> }) {
+  return (
+    <>
+      {leafColumnsInScreenOrder(table)
+        .filter((column) => typeof column.accessorFn !== 'undefined' && column.getCanHide())
+        .map((column) => (
+          <DropdownMenuCheckboxItem
+            key={column.id}
+            className="capitalize"
+            checked={column.getIsVisible()}
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={(value) => column.toggleVisibility(!!value)}
+          >
+            {column.columnDef.meta?.headerTitle || column.id}
+          </DropdownMenuCheckboxItem>
+        ))}
+    </>
   );
 }
 
@@ -35,21 +62,7 @@ function DataGridColumnVisibility<TData>({ table, trigger }: { table: Table<TDat
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[150px] max-h-[60vh] overflow-y-auto">
         <DropdownMenuLabel className="font-medium">Toggle Columns</DropdownMenuLabel>
-        {leafColumnsInDefinitionOrder(table.getAllColumns())
-          .filter((column) => typeof column.accessorFn !== 'undefined' && column.getCanHide())
-          .map((column) => {
-            return (
-              <DropdownMenuCheckboxItem
-                key={column.id}
-                className="capitalize"
-                checked={column.getIsVisible()}
-                onSelect={(event) => event.preventDefault()}
-                onCheckedChange={(value) => column.toggleVisibility(!!value)}
-              >
-                {column.columnDef.meta?.headerTitle || column.id}
-              </DropdownMenuCheckboxItem>
-            );
-          })}
+        <DataGridColumnVisibilityItems table={table} />
         {columnPreferences?.resetToDefaults && <DropdownMenuSeparator />}
         {columnPreferences?.resetToDefaults && (
           <DropdownMenuItem
