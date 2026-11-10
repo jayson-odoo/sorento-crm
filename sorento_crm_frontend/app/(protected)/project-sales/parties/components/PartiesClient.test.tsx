@@ -233,6 +233,29 @@ describe('PartiesClient', () => {
     );
   });
 
+  // PARTIES-LIST-ONE-LINE (owner 10 Nov): one line per row; the registration no. is its
+  // own column, never a second line under the name.
+  it('keeps the name on one line and gives the registration no. its own sortable column', async () => {
+    listParties.mockResolvedValue(
+      envelope([party({ id: 'pt1', name: 'A. Example Architect', registration_no: 'SP/A 95' })]),
+    );
+    renderClient();
+
+    const name = await screen.findByText('A. Example Architect');
+    const reg = screen.getByText('SP/A 95');
+    expect(name.closest('td')).not.toBe(reg.closest('td'));
+    expect(name.closest('td')?.textContent).toBe('A. Example Architect');
+    expect(name).toHaveClass('truncate');
+    expect(name).toHaveAttribute('title', 'A. Example Architect');
+
+    fireEvent.click(screen.getByRole('button', { name: /^registration no\.$/i }));
+    await waitFor(() =>
+      expect(listParties).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'registration_no' }),
+      ),
+    );
+  });
+
   it('shows the contacts count per party', async () => {
     listParties.mockResolvedValue(
       envelope([party({ id: 'pt1', contact_count: 3 }), party({ id: 'pt2', name: 'Other', contact_count: 0 })]),
