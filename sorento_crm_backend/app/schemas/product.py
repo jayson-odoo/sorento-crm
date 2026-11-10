@@ -417,8 +417,9 @@ class ProductResponse(ProductBase):
     @field_serializer("cost_price")
     def _cost_for_reader(self, value: Optional[Decimal]) -> Optional[Decimal]:
         """Null unless the request's user holds `products.cost.view` (SUPPLIER-COST-ACCESS,
-        `app/services/cost_access.py`). Every route that returns a product, nested ones
-        (promotions, certificates, incoming stock) included, goes through here."""
+        `app/services/cost_access.py`). Every staff route that returns this schema, nested
+        or not, goes through here. Integration-only doors (`get_external_api_user`) are not
+        stamped and keep cost: the MCP server strips it before chat."""
         from app.services.cost_access import cost_hidden
 
         return None if cost_hidden() else value

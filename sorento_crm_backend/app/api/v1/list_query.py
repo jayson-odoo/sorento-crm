@@ -399,9 +399,11 @@ def advanced_search(
     require_adapter(body.resource)
     if not _can_view(db, current_user["id"], body.resource):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
-    _refuse_cost_fields(
-        db, current_user["id"], body.resource, _filter_keys(body.filter) | {body.sort or ""}
-    )
+    # A saved column sort on cost (an older view, a published one) falls back to the default
+    # order rather than breaking the grid; a filter on cost is refused (it would read it back).
+    if body.sort and body.sort in _cost_fields_hidden(db, current_user["id"], body.resource):
+        body.sort = None
+    _refuse_cost_fields(db, current_user["id"], body.resource, _filter_keys(body.filter))
     _t1 = time.perf_counter() if _profile else 0.0
     try:
         result = ListQuerySearchService(db).search(body)

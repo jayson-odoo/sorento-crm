@@ -205,8 +205,11 @@ def test_list_query_search_masks_cost_and_refuses_cost_sort(env):
     r = env.post(sales, f"{LIST_QUERY}/search", body)
     assert r.status_code == 200, r.text
     assert r.json()["data"] and r.json()["data"][0]["cost_price"] is None
-    sorted_body = {**body, "sort": "cost_price"}
-    assert env.post(sales, f"{LIST_QUERY}/search", sorted_body).status_code == 403
+    # A saved sort on cost falls back to the default order instead of breaking the grid.
+    sorted_body = {**body, "sort": "cost_price", "dir": "desc"}
+    r_sorted = env.post(sales, f"{LIST_QUERY}/search", sorted_body)
+    assert r_sorted.status_code == 200, r_sorted.text
+    assert r_sorted.json()["data"][0]["cost_price"] is None
     filtered = {
         **body,
         "filter": {"op": "and", "children": [{"field_key": "cost_price", "op": "gt", "value": 1}]},
@@ -452,24 +455,28 @@ def test_cost_price_change_screens_refused_without_cost_permission(env):
     assert r.status_code == 200, r.text
 
 
-def test_procurement_line_schemas_null_unit_cost_when_hidden():
-    from app.schemas.procurement import (
-        InboundShipmentLineResponse,
-        PickingLineResponse,
-        SPOAllocationResponse,
-    )
+@pytest.mark.parametrize("schema_path,field", [
+    ("app.schemas.procurement:InboundShipmentLineResponse", "unit_cost"),
+    ("app.schemas.procurement:PickingLineResponse", "unit_cost"),
+    ("app.schemas.procurement:SPOAllocationResponse", "unit_cost"),
+    ("app.schemas.marketing:ProductSimple", "cost_price"),
+    ("app.schemas.product:ProductResponse", "cost_price"),
+])
+def test_cost_fields_serialize_null_when_hidden(schema_path, field):
+    import importlib
+
     from app.services import cost_access
 
-    for schema in (InboundShipmentLineResponse, PickingLineResponse, SPOAllocationResponse):
-        assert "unit_cost" in schema.model_fields, schema
-        ser = schema.__pydantic_decorators__.field_serializers
-        assert any("unit_cost" in d.info.fields for d in ser.values()), schema
+    module, name = schema_path.split(":")
+    schema = getattr(importlib.import_module(module), name)
+    row = schema.model_construct(**{field: Decimal("9.99")})
     token = cost_access._COST_HIDDEN.set(True)
     try:
-        assert cost_access.cost_for_reader(Decimal("9.99")) is None
+        assert row.model_dump(include={field})[field] is None
+        assert row.model_dump(include={field}, mode="json")[field] is None
     finally:
         cost_access._COST_HIDDEN.reset(token)
-    assert cost_access.cost_for_reader(Decimal("9.99")) == Decimal("9.99")
+    assert row.model_dump(include={field})[field] == Decimal("9.99")
 
 
 def test_oi_po_candidates_null_unit_cost_without_permission(env, monkeypatch):
@@ -499,8 +506,13 @@ def test_oi_po_candidates_null_unit_cost_without_permission(env, monkeypatch):
 
 
 def test_plain_product_list_cannot_be_ordered_by_cost_without_permission(env):
-    cheap = _costed_product(env, cost="1.00")
+    # The dear one is created FIRST, so creation order and cost order disagree both ways.
+    from datetime import datetime
+
     dear = _costed_product(env, cost="999.00")
+    cheap = _costed_product(env, cost="1.00")
+    dear.created_at, cheap.created_at = datetime(2026, 1, 1), datetime(2026, 1, 2)
+    env.db.commit()
     ids = f"{cheap.id},{dear.id}"
     sales = env.user(PRODUCTS_VIEW)
     buyer = env.user(PRODUCTS_VIEW, COST_PERM)
@@ -512,6 +524,7 @@ def test_plain_product_list_cannot_be_ordered_by_cost_without_permission(env):
 
     default = order(sales)
     assert order(sales, sort="cost_price", dir="desc") == order(sales, sort="created_at", dir="desc")
+    assert order(sales, sort="cost_price", dir="asc") == [str(dear.id), str(cheap.id)]  # created order
     assert order(buyer, sort="cost_price", dir="desc") == [str(dear.id), str(cheap.id)]
     assert order(buyer, sort="cost_price", dir="asc") == [str(cheap.id), str(dear.id)]
     assert len(default) == 2
@@ -579,3 +592,152 @@ def test_packing_list_history_masks_unit_cost_without_permission(env):
     r = env.get(buyer, AUDIT_URL, **params)
     (entry,) = [e for e in r.json()["data"] if e["id"] == str(row.id)]
     assert entry["new_values"]["unit_cost"] == "9.99"
+
+
+# --------------------------------------------------------------------------- review round: writes
+
+
+def _packing_list(e: _Env, unit_cost: str = "9.99"):
+    from datetime import date
+
+    from app.models.procurement import InboundShipment, InboundShipmentLine
+
+    product, supplier = e.product(), e.supplier()
+    shipment = InboundShipment(
+        id=str(uuid.uuid4()), shipment_number=f"ZZT-SHP-{uuid.uuid4().hex[:8]}",
+        shipping_container_number=f"ZZT-CTN-{uuid.uuid4().hex[:8]}",
+        shipment_date=date(2026, 7, 30), shipment_status="draft",
+    )
+    e.db.add(shipment)
+    e.db.flush()
+    line = InboundShipmentLine(
+        id=str(uuid.uuid4()), shipment_id=shipment.id, product_id=product.id, supplier_id=supplier.id,
+        quantity_shipped=50, cartons_count=1, unit_cost=Decimal(unit_cost), currency="MYR",
+    )
+    e.db.add(line)
+    e.db.commit()
+    return shipment, line
+
+
+def _save_packing_list(e: _Env, user: dict, shipment, line, unit_cost):
+    body = {"shipment_lines": [{
+        "id": str(line.id), "product_id": str(line.product_id), "supplier_id": str(line.supplier_id),
+        "quantity_shipped": 50, "cartons_count": 1, "unit_cost": unit_cost, "currency": "MYR",
+    }]}
+    return e.client.put(
+        f"/api/v1/procurement/packing-lists/{shipment.id}", headers=e.bearer(user), json=body
+    )
+
+
+def test_packing_list_save_without_permission_keeps_line_costs(env):
+    """Reviewer blocker 1: the line's unit cost is served as null, and the edit form sends it
+    back on every save; a warehouse save must not wipe (or set) it."""
+    shipment, line = _packing_list(env)
+    warehouse = env.user("procurement.packing_lists.view", "procurement.packing_lists.edit")
+    got = env.get(warehouse, f"/api/v1/procurement/packing-lists/{shipment.id}")
+    assert got.status_code == 200, got.text
+    assert "9.99" not in got.text
+    for sent in (None, "1.00"):
+        r = _save_packing_list(env, warehouse, shipment, line, sent)
+        assert r.status_code == 200, r.text
+        env.db.expire_all()
+        env.db.refresh(line)
+        assert line.unit_cost == Decimal("9.99"), sent
+
+
+def test_packing_list_save_with_permission_changes_line_costs(env):
+    shipment, line = _packing_list(env)
+    buyer = env.user("procurement.packing_lists.view", "procurement.packing_lists.edit", COST_PERM)
+    r = _save_packing_list(env, buyer, shipment, line, "12.34")
+    assert r.status_code == 200, r.text
+    assert "12.34" in r.text
+    env.db.expire_all()
+    env.db.refresh(line)
+    assert line.unit_cost == Decimal("12.34")
+
+
+def test_product_create_without_permission_stores_no_cost(env):
+    """Reviewer should-fix 2: the create-path strip."""
+    template = env.product()
+    body = {
+        "product_code": f"ZZT-NEW-{uuid.uuid4().hex[:6]}", "product_name": "ZZT new",
+        "category_id": str(template.category_id), "base_uom_id": str(template.base_uom_id),
+        "list_price": "10.00", "cost_price": "7.00",
+    }
+    env.db.commit()
+    from app.models.product import Product
+
+    for user, expected in (
+        (env.user(PRODUCTS_VIEW, "master_data.products.add"), None),
+        (env.user(PRODUCTS_VIEW, "master_data.products.add", COST_PERM), Decimal("7.00")),
+    ):
+        code = f"ZZT-NEW-{uuid.uuid4().hex[:6]}"
+        r = env.client.post(f"{PRODUCTS_URL}/", headers=env.bearer(user), json={**body, "product_code": code})
+        assert r.status_code == 201, r.text
+        env.db.expire_all()
+        assert env.db.query(Product).filter_by(product_code=code).one().cost_price == expected
+
+
+def test_supplier_cost_lists_need_the_cost_permission(env):
+    """Reviewer blocker 4 (crew Q5): the supplier Costs tab's read."""
+    supplier = env.supplier()
+    env.db.commit()
+    url = f"/api/v1/procurement/suppliers/{supplier.id}/cost-lists"
+    sales = env.user(PS_VIEW_PERM)
+    buyer = env.user(PS_VIEW_PERM, COST_PERM)
+    assert env.get(sales, url).status_code == 403
+    r = env.get(buyer, url)
+    assert r.status_code == 200, r.text
+
+
+def _as_principal(principal: dict):
+    from app.dependencies import get_current_user_or_api_key
+
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+
+def test_po_last_cost_plain_key_keeps_its_field_reveal_path(env):
+    """A plain integration key (the contact chatbot, gated per contact by the reveal) is not
+    asked for the cost permission; its act-as user holds none here."""
+    act_as = env.user()
+    _as_principal({"id": act_as["id"], "integration_id": str(uuid.uuid4())})
+    r = env.client.get(LAST_COST_URL)
+    assert r.status_code == 200, r.text
+
+
+def test_po_last_cost_staff_key_needs_the_cost_permission(env):
+    """A key naming a staff member: both the staff member and the act-as user must hold it."""
+    staff = env.user("scm.purchase_orders.view", name="Staff")
+    act_as = env.user("scm.purchase_orders.view", COST_PERM, name="Key user")
+    _as_principal({"id": staff["id"], "key_user_id": act_as["id"], "integration_id": str(uuid.uuid4())})
+    assert env.client.get(LAST_COST_URL).status_code == 403
+    env.grant(staff, COST_PERM)
+    from app.services import user_service
+
+    user_service._rbac_cache.invalidate()
+    r = env.client.get(LAST_COST_URL)
+    assert r.status_code == 200, r.text
+
+
+def test_list_query_cost_sort_falls_back_to_default_order_without_permission(env):
+    from datetime import datetime
+
+    _seed_product_fields(env.db)
+    dear = _costed_product(env, cost="999.00")
+    cheap = _costed_product(env, cost="1.00")
+    dear.created_at, cheap.created_at = datetime(2026, 1, 1), datetime(2026, 1, 2)
+    env.db.commit()
+    ids = {str(dear.id), str(cheap.id)}
+
+    def order(user, **extra):
+        r = env.post(user, f"{LIST_QUERY}/search", {"resource": "products", "limit": 1000, **extra})
+        assert r.status_code == 200, r.text
+        return [row["id"] for row in r.json()["data"] if row["id"] in ids]
+
+    sales = env.user(PRODUCTS_VIEW)
+    buyer = env.user(PRODUCTS_VIEW, COST_PERM)
+    assert order(buyer, sort="cost_price", dir="asc") == [str(cheap.id), str(dear.id)]
+    # Whichever way the default order runs, a cost sort must not change it in either direction
+    # (a kept cost sort gives opposite orders for asc and desc, so one of these goes red).
+    for direction in ("asc", "desc"):
+        assert order(sales, sort="cost_price", dir=direction) == order(sales, dir=direction)
