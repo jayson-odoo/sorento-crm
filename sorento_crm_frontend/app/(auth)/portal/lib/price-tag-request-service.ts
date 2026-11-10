@@ -764,6 +764,7 @@ export function makePriceTagRequestService(
         is_draft: isDraft,
         created_at: r.created_at,
         customer_name: customersLabel(requestCustomers(r)),
+        customer_names: requestCustomers(r).map((c) => c.name).join(', ') || null,
         needed_by_date: r.needed_by_date,
         // AC-R7: the same revision fields the legacy kinds' own summaries carry
         // (D45's landing card reads these for the "Rev N" / "Revising" badges) -
