@@ -33,7 +33,10 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const { actions, dialogs } = useSupplierActions(supplier, {
     onDeleted: () => router.push(backHref),
   });
-  const canViewPrices = useHasPermission('procurement.product_suppliers.view');
+  // SUPPLIER-COST-ACCESS: the Costs tab is supplier unit costs, purchasing and management only.
+  const canViewCost = useHasPermission('products.cost.view');
+  const canViewSupplierLinks = useHasPermission('procurement.product_suppliers.view');
+  const canViewPrices = canViewCost && canViewSupplierLinks;
 
   // Same URL-held tab as the product record (ProductDetail.tsx): a tab survives
   // stepping to the next supplier with the pager above.
