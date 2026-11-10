@@ -433,6 +433,45 @@ function AddHeaderHeader() {
   );
 }
 
+/**
+ * How a grid starts (R11, R12): the first column header, offered at the end of a plain scope's
+ * header row, right after Total (RM) (PROPOSAL-FORM-COLLAPSE, owner 10 Nov: "the column header
+ * supposed to be here"). Same handler as the in-row + Column header of a scope with headers.
+ */
+function AddFirstHeaderHeader() {
+  const matrix = useMatrix();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-auto w-full gap-1 whitespace-nowrap px-1 py-0.5 text-xs text-primary normal-case"
+      disabled={matrix.saving || matrix.pending !== null}
+      onClick={matrix.addHeader}
+    >
+      <Plus className="size-3.5" aria-hidden />
+      Column header
+    </Button>
+  );
+}
+
+/** The column that carries `AddFirstHeaderHeader`: editing only, never hidden or dragged. */
+export const ADD_FIRST_HEADER_COLUMN: ColumnDef<MatrixGridRow> = {
+  id: 'mx-add-first-header',
+  header: AddFirstHeaderHeader,
+  cell: EmptyCell,
+  size: 124,
+  minSize: 112,
+  enableResizing: false,
+  enableHiding: false,
+  meta: {
+    headerTitle: 'Add a column header',
+    draggable: false,
+    headerClassName: 'px-1 text-center',
+    cellClassName: 'px-0',
+  },
+};
+
 // ---------------------------------------------------------------------------- cells
 
 function rowCells(row: MatrixGridRow) {

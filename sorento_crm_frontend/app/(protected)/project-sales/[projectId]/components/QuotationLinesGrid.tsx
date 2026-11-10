@@ -69,6 +69,7 @@ import {
   MATRIX_LABEL_FOOTER,
   MatrixAmountFooterLines,
   MatrixGridProvider,
+  ADD_FIRST_HEADER_COLUMN,
   buildMatrixColumns,
   type MatrixGridContextValue,
   type PendingRemoval,
@@ -1042,6 +1043,18 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 ];
 
 /**
+ * A plain scope in an edit session: + Column header right after Total (RM), at the end of the
+ * header row where the owner pointed (PROPOSAL-FORM-COLLAPSE, 10 Nov), ahead of the row menu.
+ */
+function withFirstHeaderColumn(columns: ColumnDef<GridRow>[]): ColumnDef<GridRow>[] {
+  return columns.flatMap((column) =>
+    column.id === 'total'
+      ? [column, ADD_FIRST_HEADER_COLUMN as ColumnDef<GridRow>]
+      : [column],
+  );
+}
+
+/**
  * The columns for a scope WITH column headers (PS-QUOTE-MATRIX, mock v3 frame 1): every column
  * above stays where it is except Qty, whose place goes to the quantity columns after Rate; Total
  * becomes Amount, and the description column carries the two footer labels.
@@ -1731,7 +1744,12 @@ export function QuotationLinesGrid({
   );
 
   const columns = React.useMemo(
-    () => (isMatrix ? matrixColumns(headers, columnsEditable) : COLUMNS),
+    () =>
+      isMatrix
+        ? matrixColumns(headers, columnsEditable)
+        : columnsEditable
+          ? withFirstHeaderColumn(COLUMNS)
+          : COLUMNS,
     [columnsEditable, headers, isMatrix],
   );
   const copySources = matrix?.copySources ?? [];
@@ -1932,21 +1950,6 @@ export function QuotationLinesGrid({
                       <Plus className="size-4" aria-hidden />
                       Add a section
                     </Button>
-                    {/* How a grid starts: the first column header (R11, R12). Once there is
-                        one, + Column header sits at the end of the header row instead. */}
-                    {columnsEditable && !isMatrix && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-primary hover:text-primary"
-                        disabled={Boolean(matrix?.saving)}
-                        onClick={addHeader}
-                      >
-                        <Plus className="size-4" aria-hidden />
-                        Column header
-                      </Button>
-                    )}
                   </div>
                 )}
               </div>
