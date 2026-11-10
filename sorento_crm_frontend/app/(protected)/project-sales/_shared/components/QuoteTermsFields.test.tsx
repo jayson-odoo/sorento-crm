@@ -113,10 +113,18 @@ describe('QuoteTermsFields', () => {
     });
   });
 
-  it('a number out of 1..999 is not sent', () => {
+  it('a number out of 1..999 is not sent and says why', () => {
     renderFields({ validity_value: 2, validity_unit: 'week', validity: '2 WEEKS' });
     fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '0' } });
+    expect(screen.getByText('Enter a whole number from 1 to 999.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '1000' } });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('a number with no unit asks for the unit', () => {
+    renderFields({});
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '3' } });
+    expect(screen.getByText('Pick a unit.')).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
   });
 

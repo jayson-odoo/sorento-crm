@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { usePaymentTermOptions } from '../hooks/usePaymentTerms';
 import {
@@ -93,6 +93,14 @@ export function QuoteTermsFields({
   const legacyValidity =
     values.validity_value == null && (values.validity ?? '').trim() ? values.validity : null;
 
+  const typedNumber = Number(value);
+  const validityError =
+    value && !(Number.isInteger(typedNumber) && typedNumber >= 1 && typedNumber <= 999)
+      ? 'Enter a whole number from 1 to 999.'
+      : value && !unit
+        ? 'Pick a unit.'
+        : undefined;
+
   function emitValidity(nextValue: string, nextUnit: string) {
     const number = Number(nextValue);
     // An emptied number clears the validity, whatever the unit says.
@@ -143,20 +151,22 @@ export function QuoteTermsFields({
       <div className="min-w-0 space-y-1.5">
         <Label htmlFor={`${idPrefix}-validity`}>Validity</Label>
         <div className="flex min-w-0 gap-2">
-          <Input
-            id={`${idPrefix}-validity`}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={999}
-            step={1}
-            className="w-24 shrink-0"
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value);
-              emitValidity(event.target.value, unit);
-            }}
-          />
+          <div className="w-24 shrink-0">
+            <NumberInput
+              id={`${idPrefix}-validity`}
+              inputMode="numeric"
+              min={1}
+              max={999}
+              step={1}
+              value={value}
+              aria-invalid={validityError ? true : undefined}
+              aria-describedby={validityError ? `${idPrefix}-validity-error` : undefined}
+              onChange={(event) => {
+                setValue(event.target.value);
+                emitValidity(event.target.value, unit);
+              }}
+            />
+          </div>
           <SearchableSelect
             id={`${idPrefix}-validity-unit`}
             aria-label="Validity unit"
@@ -171,6 +181,11 @@ export function QuoteTermsFields({
             }}
           />
         </div>
+        {validityError && (
+          <p id={`${idPrefix}-validity-error`} className="text-xs text-destructive">
+            {validityError}
+          </p>
+        )}
         {legacyValidity && (
           <p className="min-w-0 truncate text-xs text-muted-foreground" title={legacyValidity}>
             Current: {legacyValidity}
