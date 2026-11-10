@@ -466,8 +466,15 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const caretAt = React.useRef<number | null>(null);
   /** A pointer is pressing the cell: its click, not the focus it causes, opens the editor. */
   const pressing = React.useRef(false);
-  /** Focus coming back to the cell as the editor closes must not open it again. */
+  /**
+   * Focus coming back to the cell as the editor closes must not open it again. Held until that
+   * focus arrives (the close animation hands it back late, crew re-pass on 6b7c3dac) or until the
+   * person moves on: a focus or a press anywhere else.
+   */
   const justClosed = React.useRef(false);
+  const cellRef = React.useRef<HTMLDivElement | null>(null);
+  const releaseGuard = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => releaseGuard.current?.(), []);
   /** The editor while it is open, so a second click on the cell moves its caret. */
   const editorRef = React.useRef<Editor | null>(null);
 
@@ -488,10 +495,23 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   };
   const onOpenChange = (next: boolean) => {
     if (next) return; // Opening is the click / focus / key handlers' job, with the caret placed.
+    releaseGuard.current?.();
     justClosed.current = true;
-    window.setTimeout(() => {
+    const elsewhere = (event: Event) => {
+      if (cellRef.current && event.target instanceof Node && cellRef.current.contains(event.target)) {
+        return;
+      }
+      release();
+    };
+    const release = () => {
       justClosed.current = false;
-    }, 100);
+      document.removeEventListener('focusin', elsewhere, true);
+      document.removeEventListener('pointerdown', elsewhere, true);
+      releaseGuard.current = null;
+    };
+    document.addEventListener('focusin', elsewhere, true);
+    document.addEventListener('pointerdown', elsewhere, true);
+    releaseGuard.current = release;
     setOpen(false);
     editorRef.current = null;
     grid.markVisited(row.key);
@@ -514,8 +534,14 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           onPointerDown={() => {
             pressing.current = true;
           }}
+          ref={cellRef}
           onFocus={() => {
-            if (pressing.current || justClosed.current || open) return;
+            if (justClosed.current) {
+              // The focus handed back by the close: used up, the next one opens again.
+              releaseGuard.current?.();
+              return;
+            }
+            if (pressing.current || open) return;
             openAt(null);
           }}
           onBlur={() => {

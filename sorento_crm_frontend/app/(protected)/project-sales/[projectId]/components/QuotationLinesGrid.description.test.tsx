@@ -267,3 +267,183 @@ describe('click point to editor position', () => {
     }
   });
 });
+
+describe('colour picker inside the description editor (owner hand test round 1)', () => {
+  // jsdom has no pointer capture; the picker's map and hue slider call it on every press.
+  for (const name of ['setPointerCapture', 'releasePointerCapture'] as const) {
+    if (!(name in Element.prototype)) {
+      (Element.prototype as unknown as Record<string, () => void>)[name] = () => {};
+    }
+  }
+
+  async function openPicker(kind: RegExp) {
+    renderGrid([staged({ ...BASE, description: STYLED })], true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Description on ZZT8518/ }));
+    });
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: kind }));
+    });
+    // The toolbar popover holds the shared ColorPicker; its swatch opens the map and hue slider.
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Colour' }));
+    });
+    await screen.findByRole('slider', { name: 'Hue' });
+  }
+
+  /** A press and release on a picker control, as the browser sends it. */
+  async function press(control: Element) {
+    await act(async () => {
+      fireEvent.pointerDown(control, { pointerId: 1, clientX: 5, clientY: 5, button: 0 });
+    });
+    await act(async () => {
+      control.dispatchEvent(new Event('pointerup', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+
+  function stillOpen() {
+    expect(document.querySelector('[contenteditable="true"]')).not.toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Hue' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove colour' })).not.toBeNull();
+  }
+
+  for (const kind of [/^text colour$/i, /^highlight$/i]) {
+    it(`a press on the hue slider keeps every popup open (${kind.source})`, async () => {
+      await openPicker(kind);
+      await press(screen.getByRole('slider', { name: 'Hue' }));
+      stillOpen();
+    });
+
+    it(`a press on the colour map keeps every popup open (${kind.source})`, async () => {
+      await openPicker(kind);
+      await press(screen.getByRole('slider', { name: 'Saturation and brightness' }));
+      stillOpen();
+    });
+  }
+
+  it('the picked colour still lands on the selected text', async () => {
+    const { onStage } = renderGrid([staged({ ...BASE, description: STYLED })], true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Description on ZZT8518/ }));
+    });
+    const editable = await waitFor(() => {
+      const el = document.querySelector('[contenteditable="true"]');
+      expect(el).not.toBeNull();
+      return el as Element;
+    });
+    const editor = (editable as unknown as {
+      editor: { commands: { setTextSelection: (r: { from: number; to: number }) => void } };
+    }).editor;
+    await act(async () => {
+      editor.commands.setTextSelection({ from: 1, to: 4 }); // "ZZT"
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^text colour$/i }));
+    });
+    const hex = await screen.findByRole('textbox', { name: 'Hex colour' });
+    await act(async () => {
+      fireEvent.change(hex, { target: { value: '#fde047' } });
+      fireEvent.keyDown(hex, { key: 'Enter' });
+    });
+    await waitFor(() => {
+      const staged = onStage.mock.calls.at(-1)?.[0] as StagedQuotationLine[] | undefined;
+      expect(staged?.[0].draft.description).toContain('<span style="color: #fde047"><strong>ZZT</strong></span>');
+    });
+  });
+
+  it('typing a hex keeps every popup open', async () => {
+    await openPicker(/^text colour$/i);
+    const hex = screen.getByRole('textbox', { name: 'Hex' });
+    await act(async () => {
+      hex.focus();
+      fireEvent.change(hex, { target: { value: '#fde047' } });
+      fireEvent.keyDown(hex, { key: 'Enter' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    stillOpen();
+  });
+});
+
+describe('crew re-pass on 6b7c3dac', () => {
+  for (const name of ['setPointerCapture', 'releasePointerCapture'] as const) {
+    if (!(name in Element.prototype)) {
+      (Element.prototype as unknown as Record<string, () => void>)[name] = () => {};
+    }
+  }
+
+  it('Escape closes the editor for good, even when focus comes back to the cell late', async () => {
+    renderGrid([staged({ ...BASE, description: STYLED })], true);
+    const trigger = screen.getByRole('button', { name: /Description on ZZT8518/ });
+    await act(async () => {
+      fireEvent.click(trigger);
+    });
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).not.toBeNull());
+    // In the browser the close animation hands focus back to the cell ~1 s after Escape; jsdom
+    // has no animation, so the hand-back is deferred here to the same effect.
+    const realFocus = trigger.focus.bind(trigger);
+    trigger.focus = (options?: FocusOptions) => {
+      window.setTimeout(() => realFocus(options), 400);
+    };
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+    });
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).toBeNull());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+    expect(document.activeElement).toBe(trigger);
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull();
+    trigger.focus = realFocus;
+    // Leaving the cell and tabbing back in opens it again.
+    await act(async () => {
+      trigger.blur();
+    });
+    await act(async () => {
+      trigger.focus();
+    });
+    await waitFor(() => expect(document.querySelector('[contenteditable="true"]')).not.toBeNull());
+  });
+
+  it('a hue picked with no colour set yet applies that hue, not black', async () => {
+    const { onStage } = renderGrid([staged({ ...BASE, description: STYLED })], true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Description on ZZT8518/ }));
+    });
+    const editable = await waitFor(() => {
+      const el = document.querySelector('[contenteditable="true"]');
+      expect(el).not.toBeNull();
+      return el as Element;
+    });
+    await act(async () => {
+      (editable as unknown as {
+        editor: { commands: { setTextSelection: (r: { from: number; to: number }) => void } };
+      }).editor.commands.setTextSelection({ from: 1, to: 4 });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^text colour$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Colour' }));
+    });
+    const hue = await screen.findByRole('slider', { name: 'Hue' });
+    // A yellow-ish hue: the slider reads the click across its width (jsdom rects are 0 wide, so
+    // stub one 360 px wide and click at 60 px = hue 60).
+    hue.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 360, height: 10, right: 360, bottom: 10, x: 0, y: 0, toJSON() {} }) as DOMRect;
+    await act(async () => {
+      fireEvent.pointerDown(hue, { pointerId: 1, clientX: 60, clientY: 5, button: 0 });
+    });
+    await act(async () => {
+      hue.dispatchEvent(new Event('pointerup', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await waitFor(() => {
+      const lines = onStage.mock.calls.at(-1)?.[0] as StagedQuotationLine[] | undefined;
+      const description = lines?.[0].draft.description ?? '';
+      expect(description).toContain('color: #ffff00');
+      expect(description).not.toContain('color: #000000');
+    });
+  });
+});
