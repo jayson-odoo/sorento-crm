@@ -10,23 +10,23 @@ import { useTownSnapshot } from '@/hooks/useTownSnapshot';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { isPending } from '@/types/town.types';
 import { TownCards } from './TownCards';
-import { TownPanel, type TownTarget } from './TownPanel';
+import { TownLightbox, type TownTarget } from './TownLightbox';
 
 // The scene (and three.js with it) is fetched only when this page shows it.
 const TownScene = dynamic(() => import('./TownScene').then((m) => m.TownScene), { ssr: false });
 
-/** WebGL present and the user not asking for reduced motion. Decided after mount (no SSR guess). */
+/** WebGL present. Decided after mount (no SSR guess). Reduced motion still shows the town, static
+ * (the scene itself skips the fly-in and parks everything). */
 function useSceneAvailable(): boolean {
   const [available, setAvailable] = useState(false);
   useEffect(() => {
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     let webgl = false;
     try {
       webgl = !!document.createElement('canvas').getContext('webgl2');
     } catch {
       webgl = false;
     }
-    setAvailable(webgl && !reduced);
+    setAvailable(webgl);
   }, []);
   return available;
 }
@@ -62,7 +62,7 @@ export function TownPage() {
       {isLoading && !snapshot ? <SectionSkeleton rows={5} className="mt-4" label="Loading town" /> : null}
       {snapshot ? (
         <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 pb-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          {ready && sceneAvailable ? <TownScene snapshot={ready} onSelect={setTarget} /> : null}
+          {ready && sceneAvailable ? <TownScene snapshot={ready} mode={wallboard ? 'wallboard' : undefined} onSelect={setTarget} /> : null}
           <div
             className={
               ready && sceneAvailable
@@ -74,7 +74,7 @@ export function TownPage() {
           </div>
         </div>
       ) : null}
-      {snapshot ? <TownPanel snapshot={snapshot} target={target} onClose={() => setTarget(null)} /> : null}
+      {snapshot ? <TownLightbox snapshot={snapshot} target={target} onClose={() => setTarget(null)} /> : null}
     </div>
   );
 }

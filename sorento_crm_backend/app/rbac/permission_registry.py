@@ -719,6 +719,18 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Town (Dashboards > Town): admin-only by owner ruling, 10 Nov 2026 (TOWN-V2). Granted to `admin` and
+# `superadmin` (migration town_0001_view_perm + the admin grant seed); any other role only when an
+# admin grants it on the Roles screen.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "dashboards.town.view",
+        "name": "View the Town",
+        "description": "See the Town: today's sales, dealers, stock, deliveries, approvals and incoming shipments, and its wallboard mode.",
+    },
+])
+
+
 # Ideation (Ideas board embed, shared-service SSO)
 PERMISSION_REGISTRY.extend([
     {

@@ -157,10 +157,10 @@ def test_endpoint_serves_the_v3_keys_per_variant():
         from tests.town.test_town_snapshot_endpoint import _user
 
         principal = _user(db, DEFAULT_COMPANY_ID)
-        with _client(db, principal, allow=("sales.reports.view",)) as client:
+        with _client(db, principal, allow=("dashboards.town.view", "sales.reports.view")) as client:
             holder = client.get(URL).json()
             holder_wb = client.get(URL, params={"mode": "wallboard"}).json()
-        with _client(db, principal, allow=()) as client:
+        with _client(db, principal, allow=("dashboards.town.view",)) as client:
             plain = client.get(URL).json()
             plain_wb = client.get(URL, params={"mode": "wallboard"}).json()
     assert holder["compare"]["last_week_amount"] == "123456.78"
@@ -244,14 +244,15 @@ def test_to_deliver_counts_distinct_open_overdue_orders(db):
         _order(db, [{"required": DAY - timedelta(days=5)}], company_id=MOCHA_ID),  # other company
     ]
     assert len(counted) == 6 and len(not_counted) == 8
-    assert _build(db)["deliveries"] == {"to_deliver": 6}
-    assert _build(db, MOCHA_ID)["deliveries"] == {"to_deliver": 1}
+    assert _build(db)["deliveries"]["to_deliver"] == 6
+    assert _build(db, MOCHA_ID)["deliveries"]["to_deliver"] == 1
 
 
 def test_to_deliver_is_zero_with_no_orders_not_missing(db):
-    assert _build(db)["deliveries"] == {"to_deliver": 0}
+    assert _build(db)["deliveries"] == {"to_deliver": 0, "customers": []}
 
 
 def test_deliveries_is_a_count_only_no_names_or_amounts(db):
+    # TOWN-V2 Q6 adds `customers` (shop keys only, test_town_snapshot_v2_lorries.py); still no names or amounts.
     _order(db, [{"required": DAY}])
-    assert set(_build(db)["deliveries"]) == {"to_deliver"}
+    assert set(_build(db)["deliveries"]) == {"to_deliver", "customers"}
