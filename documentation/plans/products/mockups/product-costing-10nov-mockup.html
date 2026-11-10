@@ -77,8 +77,8 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 </head>
 <body>
 <div class="page">
-<h1>Product costing: Purchasing, Pricing, Bath Plus</h1>
-<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v2 on the owner's answers of 10 Nov (23:3x).</p>
+<h1>Product costing: Purchasing, Pricing, partners</h1>
+<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v3 on the owner's answers of 10 Nov (23:3x and 23:4x).</p>
 <ul class="lead" style="padding-left:20px">
 <li>Exchange rates are dated, with history.</li>
 <li>SST is one company setting.</li>
@@ -86,9 +86,9 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 <li>Mark-up is the achieved mark-up, read-only.</li>
 <li>The selling price is AutoCount's list price and is never written back.</li>
 <li>The cost basis is a method: company default, with a per-product override.</li>
-<li>"B Plus" is <b>Bath Plus</b> (AutoCount AED_BATHPLUS).</li>
+<li>Partner costing is generic: <b>business partners</b>, each with its own products, mark-up and optional cost method. Bath Plus (AutoCount AED_BATHPLUS) is the first partner, at 8%.</li>
 </ul>
-<p class="lead">Case: WB 245 basin (CGB9032B) from the owner's workbook. The RM 79.00 selling price, suppliers B, L and D, and the September rate are illustrative inputs. Items tagged <span class="v2">v2</span> are new since the first mock.</p>
+<p class="lead">Case: WB 245 basin (CGB9032B) from the owner's workbook. The RM 79.00 selling price, suppliers B, L and D, and the September rate are illustrative inputs. Items tagged <span class="v2">v2</span> changed on 23:3x and <span class="v2">v3</span> on 23:4x. "Example partner" is illustrative, to show more than one partner.</p>
 
 <!-- Frame 1 -->
 <section class="frame">
@@ -134,12 +134,18 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
       <dl class="dl">
         <dt>Selling price (AutoCount list price)</dt><dd class="big">RM 79.00</dd>
         <dt>Mark-up on landing cost</dt><dd><b>149.06%</b></dd>
-        <div class="rule"></div>
-        <dt>In Bath Plus costing list</dt><dd><span class="sw"><i></i>Yes</span></dd>
-        <dt>Bath Plus mark-up (setting)</dt><dd>8%</dd>
-        <dt><b>Bath Plus cost price</b></dt><dd class="big">RM 34.26</dd>
       </dl>
     </div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>Partner prices <span class="v2">v3</span></h3>
+    <div class="tw"><table>
+      <colgroup><col style="width:150px"><col style="width:90px"><col style="width:230px"><col style="width:130px"><col style="width:170px"></colgroup>
+      <thead><tr><th>Partner</th><th class="n">Mark-up</th><th>Cost method used</th><th class="n">Partner price (RM)</th><th class="n">Partner margin at RM 79.00</th></tr></thead>
+      <tbody>
+        <tr><td>Bath Plus</td><td class="n">8%</td><td>Primary supplier, SUP-A01 <span class="muted">(company default)</span></td><td class="n"><b>34.26</b></td><td class="n">130.61%</td></tr>
+        <tr><td title="Illustrative">Example partner</td><td class="n">12%</td><td>Average of supplier prices <span class="muted">(partner override)</span></td><td class="n"><b>44.82</b></td><td class="n">76.28%</td></tr>
+      </tbody></table></div>
+    <p class="ann">Read-only here. A product joins or leaves a partner from that partner's page. Partner margin = (selling - partner price) / partner price <span class="q">Q7</span>. Method precedence: product override, then partner override, then company default <span class="q">Q6</span>.</p>
   </div>
   <p class="ann">Empty states: "No cost (method: Primary supplier)", "Set a primary supplier", "No rate for EUR on 10 Nov", "Selected supplier no longer linked", and "No transport rule" (adds + 0 and stays flagged). An unknown cost is never shown as 0. A method never silently falls back to another.</p>
 </div></div>
@@ -175,28 +181,64 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 
 <!-- Frame 4 -->
 <section class="frame">
-<h2>4. Bath Plus costing list + Excel export <small class="muted">(Products &gt; Bath Plus costing)</small></h2>
-<p class="note">Who sees it: <code>products.cost.view</code>. It lists products switched "In Bath Plus costing list" (working assumption, Q5 re-asked). The "As of" date re-runs the costs with the supplier costs and rates in force on that day. Export uses the toolbar's existing Excel export.</p>
+<h2>4. Business partners list <span class="v2">v3</span> <small class="muted">(Master data &gt; Business partners)</small></h2>
+<p class="note">Who sees it: <code>products.cost.view</code>. Add and edit (a modal) need the new <code>master_data.business_partners.manage</code>, held by management + admin. Bath Plus is seeded as the first partner. A partner with history is archived, not deleted.</p>
 <div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Bath Plus costing</span><span class="sp"></span><button class="btn pri">Add products</button></div>
-  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Category</button><button class="btn">Cost method</button><button class="btn">As of 10 Nov 2026</button><span class="pill">Mark-up 8%</span><button class="btn">Export</button></div>
+  <div class="ph"><span class="t">Business partners</span><span class="sp"></span><button class="btn pri">Add partner</button></div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Status</button><button class="btn">Export</button></div>
   <div class="tw"><table>
-    <colgroup><col style="width:100px"><col style="width:140px"><col style="width:100px"><col style="width:170px"><col style="width:100px"><col style="width:90px"><col style="width:100px"><col style="width:100px"><col style="width:140px"></colgroup>
-    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Cost method <span class="v2">v2</span></th><th class="n">Unit cost</th><th>Transport</th><th class="n">Landing (RM)</th><th class="n">Bath Plus (RM)</th><th>Note</th></tr></thead>
+    <colgroup><col style="width:90px"><col style="width:150px"><col style="width:170px"><col style="width:140px"><col style="width:90px"><col style="width:220px"><col style="width:90px"><col style="width:90px"></colgroup>
+    <thead><tr><th>Code</th><th>Name</th><th>Debtor</th><th>AutoCount DB</th><th class="n">Mark-up</th><th>Cost method</th><th class="n">Products</th><th>Status</th></tr></thead>
     <tbody>
-      <tr><td>CGB9032B</td><td title="WB 245 Basin">WB 245 Basin</td><td>Ceramics</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 34.50</td><td>+ RM 8.00</td><td class="n">31.72</td><td class="n"><b>34.26</b></td><td></td></tr>
-      <tr><td>T-1xx</td><td>Basin tap (masked)</td><td>Taps</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 120.00</td><td>x 1.07</td><td class="n">88.28</td><td class="n"><b>95.34</b></td><td></td></tr>
-      <tr><td>K-2xx</td><td>Kitchen sink (masked)</td><td>Kitchen sinks</td><td title="Product override">Selected supplier, SUP-B07</td><td class="n">RMB 260.00</td><td>x 1.10</td><td class="n">196.63</td><td class="n"><b>212.36</b></td><td class="muted">Method: product override</td></tr>
-      <tr><td>S-3xx</td><td>Shower set (masked)</td><td>Shower</td><td>Primary supplier, SUP-E05</td><td class="n">USD 20.00</td><td>x 1.07</td><td class="n">103.58</td><td class="n"><b>111.86</b></td><td class="muted">USD 4.40 from 1 Nov</td></tr>
-      <tr><td>A-4xx</td><td>Accessory (masked)</td><td>Accessories</td><td>Primary supplier</td><td class="n muted">-</td><td>x 1.07</td><td class="n muted">-</td><td class="n muted">-</td><td><span class="pill warn">No cost</span></td></tr>
+      <tr><td>BP-001</td><td>Bath Plus</td><td title="masked">300-B0xx Bath Plus Sdn Bhd</td><td>AED_BATHPLUS</td><td class="n">8%</td><td class="muted">Company default (Primary supplier)</td><td class="n">5</td><td><span class="pill ok">Active</span></td></tr>
+      <tr><td>BP-002</td><td title="Illustrative">Example partner</td><td class="muted">-</td><td class="muted">-</td><td class="n">12%</td><td>Average of supplier prices</td><td class="n">2</td><td><span class="pill ok">Active</span></td></tr>
     </tbody></table></div>
-  <p class="ann">Excel columns: Code, Name, Category, Cost method, Supplier code, Currency, Unit cost, Rate (MYR per unit), Rate effective from, SST, Transport mode, Transport value, Transport source (category / product), Landing cost (MYR), Mark-up %, Bath Plus cost price (MYR), Note. Values are numbers, not text. The sheet header states the "as of" date.</p>
+  <p class="ann">Add / edit partner modal fields: Code, Name, Debtor (searchable, clearable), AutoCount DB (text, clearable), Mark-up %, Cost method (clearable to "Company default"; offers Primary supplier, Average, Last PO price, and not Selected supplier, which is a per-product choice), Active.</p>
+</div></div>
+</section>
+
+<section class="frame">
+<h2>5. Partner detail: costing list + Excel export <span class="v2">v3</span> <small class="muted">(/master-data-management/business-partners/BP-001)</small></h2>
+<p class="note">The header carries the partner's metadata. The list is the products this partner sells, with the costing formula applied as of the chosen date. "Add products" opens the shared product picker. Removing a row is an Unlink with a countdown, no confirm dialog.</p>
+<div class="screen"><div class="inner">
+  <div class="ph"><span class="t">Bath Plus</span><span class="sub">BP-001</span><span class="sp"></span><button class="btn">&#8249;</button><button class="btn">&#8250;</button><button class="btn">Edit</button><button class="btn pri">Add products</button></div>
+  <div class="meta"><span>Debtor <b>300-B0xx</b></span><span>AutoCount DB <b>AED_BATHPLUS</b></span><span>Mark-up <b>8%</b></span><span>Cost method <b>Company default (Primary supplier)</b></span><span>Status <b>Active</b></span></div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Category</button><button class="btn">Brand</button><button class="btn">Cost method</button><button class="btn">As of 10 Nov 2026</button><button class="btn">Export</button></div>
+  <div class="tw"><table style="min-width:1350px">
+    <colgroup><col style="width:100px"><col style="width:140px"><col style="width:100px"><col style="width:190px"><col style="width:100px"><col style="width:80px"><col style="width:100px"><col style="width:110px"><col style="width:90px"><col style="width:120px"><col style="width:120px"></colgroup>
+    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Cost method</th><th class="n">Unit cost</th><th>Transport</th><th class="n">Landing (RM)</th><th class="n">Partner price (RM)</th><th class="n">Selling (RM)</th><th class="n">Partner margin</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>CGB9032B</td><td title="WB 245 Basin">WB 245 Basin</td><td>Ceramics</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 34.50</td><td>+ RM 8.00</td><td class="n">31.72</td><td class="n"><b>34.26</b></td><td class="n">79.00</td><td class="n">130.61%</td><td></td></tr>
+      <tr><td>T-1xx</td><td>Basin tap (masked)</td><td>Taps</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 120.00</td><td>x 1.07</td><td class="n">88.28</td><td class="n"><b>95.34</b></td><td class="n">189.00</td><td class="n">98.24%</td><td></td></tr>
+      <tr><td>K-2xx</td><td>Kitchen sink (masked)</td><td>Kitchen sinks</td><td>Selected supplier, SUP-B07</td><td class="n">RMB 260.00</td><td>x 1.10</td><td class="n">196.63</td><td class="n"><b>212.36</b></td><td class="n">459.00</td><td class="n">116.15%</td><td class="muted">Product override</td></tr>
+      <tr><td>S-3xx</td><td>Shower set (masked)</td><td>Shower</td><td>Primary supplier, SUP-E05</td><td class="n">USD 20.00</td><td>x 1.07</td><td class="n">103.58</td><td class="n"><b>111.86</b></td><td class="n">239.00</td><td class="n">113.66%</td><td class="muted">USD 4.40 from 1 Nov</td></tr>
+      <tr><td>A-4xx</td><td>Accessory (masked)</td><td>Accessories</td><td>Primary supplier</td><td class="n muted">-</td><td>x 1.07</td><td class="n muted">-</td><td class="n muted">-</td><td class="n">25.00</td><td class="n muted">-</td><td><span class="pill warn">No cost</span></td></tr>
+    </tbody></table></div>
+  <p class="ann">Excel columns: Partner, Code, Name, Category, Cost method, Method source (product / partner / company), Supplier code, Currency, Unit cost, Rate (MYR per unit), Rate effective from, SST, Transport mode, Transport value, Transport source, Landing cost (MYR), Partner mark-up %, Partner price (MYR), Selling price (MYR), Partner margin %, Note. Values are numbers, not text. The sheet header states the partner and the "as of" date. Empty partner state: "No products yet" under the header, and the only CTA is the header's Add products.</p>
+</div></div>
+</section>
+
+<section class="frame">
+<h2>6. Add products to a partner <span class="v2">v3</span> <small class="muted">(modal, the shared product picker)</small></h2>
+<p class="note">This is the same picker the "Copy to other products" dialogs use: search, Category / Brand filters, shift-tick, and "Select all N" for the filtered set (up to 500 per add). Products already on the partner show as already added. The selection is a fixed set: a new product does not join on its own.</p>
+<div class="screen" style="max-width:640px"><div class="inner">
+  <div class="ph"><span class="t">Add products to Bath Plus</span></div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Category: Ceramics</button><button class="btn">Brand</button></div>
+  <div class="tw"><table>
+    <colgroup><col style="width:40px"><col style="width:110px"><col><col style="width:110px"></colgroup>
+    <thead><tr><th></th><th>Code</th><th>Name</th><th>Category</th></tr></thead>
+    <tbody>
+      <tr><td>&#9745;</td><td>CGB9032B</td><td>WB 245 Basin</td><td class="muted">Already added</td></tr>
+      <tr><td>&#9745;</td><td>CGB90xxA</td><td>Basin (masked)</td><td>Ceramics</td></tr>
+      <tr><td>&#9744;</td><td>WC-5xx</td><td>WC (masked)</td><td>Ceramics</td></tr>
+    </tbody></table></div>
+  <div class="toolbar" style="margin-top:10px"><span class="muted">1 selected &middot; Select all 48</span><span class="sp" style="flex:1"></span><button class="btn">Cancel</button><button class="btn pri">Add 1 product</button></div>
 </div></div>
 </section>
 
 <!-- Frame 5 -->
 <section class="frame">
-<h2>5. Exchange rates, dated with history <span class="v2">v2</span> <small class="muted">(the existing SCM Currency rates panel, extended)</small></h2>
+<h2>7. Exchange rates, dated with history <span class="v2">v2</span> <small class="muted">(the existing SCM Currency rates panel, extended)</small></h2>
 <p class="note">One row per currency per effective date. The rate used for a date is the latest row on or before it. Future-dated rows take effect on their day. Every add, edit and delete is audited. MYR is 1 by definition and has no row. Existing rates are carried over as their first row.</p>
 <div class="screen"><div class="inner">
   <div class="ph"><span class="t">Exchange rates</span><span class="sp"></span><button class="btn pri">Add rate</button></div>
@@ -215,10 +257,10 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 
 <!-- Frame 6 -->
 <section class="frame">
-<h2>6. Costing settings <small class="muted">(System Settings, Costing section)</small></h2>
+<h2>8. Costing settings <small class="muted">(System Settings, Costing section)</small></h2>
 <div class="screen"><div class="inner">
   <div class="grid2">
-    <div class="card"><h3>Company settings</h3><dl class="dl"><dt>SST</dt><dd>10% (x 1.10)</dd><dt>Default cost method <span class="v2">v2</span></dt><dd>Primary supplier</dd><dt>Bath Plus mark-up</dt><dd>8%</dd></dl></div>
+    <div class="card"><h3>Company settings</h3><dl class="dl"><dt>SST</dt><dd>10% (x 1.10)</dd><dt>Default cost method <span class="v2">v2</span></dt><dd>Primary supplier</dd><dt>Partner mark-ups</dt><dd class="muted">on each partner <span class="v2">v3</span></dd></dl></div>
     <div class="card"><h3>Transport by category</h3>
       <div class="tw"><table><thead><tr><th>Category</th><th>Mode</th><th class="n">Value</th></tr></thead><tbody>
         <tr><td>Ceramics / WC / Jacuzzi</td><td>Add per unit</td><td class="n">RM 8.00</td></tr>
@@ -242,9 +284,11 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 <tr><td>Purchasing grid + open row cost list</td><td><code>components/common/PanelDataGrid.tsx</code>, extended from <code>products/[id]/components/ProductSuppliersTab.tsx</code></td></tr>
 <tr><td>Method chip, Primary pill, warnings</td><td><code>components/ui/badge.tsx</code></td></tr>
 <tr><td>Pricing cards, breakdown</td><td><code>components/ui/card.tsx</code> + <code>components/common/Field.tsx</code></td></tr>
-<tr><td>Cost method select, supplier select, transport override mode</td><td><code>components/common/SearchableSelect.tsx</code> (clearable; option label carries the preview figure), <code>components/ui/number-input.tsx</code> for the transport value, <code>components/ui/switch.tsx</code> for the Bath Plus flag</td></tr>
-<tr><td>Bath Plus list, toolbar, As of, Excel export</td><td><code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> <code>exportConfig={{kind:'listQuery'}}</code> (as in <code>products/components/ProductsList.tsx:1170</code>), resource in <code>sorento_crm_backend/app/services/list_query_registry.py</code></td></tr>
-<tr><td>Add products to Bath Plus</td><td><code>components/common/SearchableMultiSelect.tsx</code> in <code>components/common/FormDialogScaffold.tsx</code>. Remove = Unlink via <code>components/common/DeferredActionButton.tsx</code></td></tr>
+<tr><td>Cost method select, supplier select, transport override mode</td><td><code>components/common/SearchableSelect.tsx</code> (clearable; option label carries the preview figure), <code>components/ui/number-input.tsx</code> for the transport value</td></tr>
+<tr><td>Business partners list, partner costing list, toolbar, As of, Excel export</td><td><code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> <code>exportConfig={{kind:'listQuery'}}</code> (as in <code>products/components/ProductsList.tsx:1170</code>), resource in <code>sorento_crm_backend/app/services/list_query_registry.py</code></td></tr>
+<tr><td>Add / edit partner modal</td><td><code>components/common/FormDialogScaffold.tsx</code>; debtor via <code>components/common/CustomerDebtorCombobox.tsx</code>; cost method via <code>SearchableSelect.tsx</code> (clearable); mark-up via <code>components/ui/number-input.tsx</code></td></tr>
+<tr><td>Add products to a partner</td><td><code>products/[id]/components/ProductTargetPicker.tsx</code> (<code>useProductTargetPicker</code>, made to work without a source product) in a <code>FormDialogScaffold.tsx</code> modal. Remove = Unlink via <code>components/common/DeferredActionButton.tsx</code></td></tr>
+<tr><td>Partner detail header</td><td><code>components/common/PageHeader.tsx</code> + <code>components/common/RecordNavigation.tsx</code>, metadata directly under the header</td></tr>
 <tr><td>Exchange rates (dated)</td><td><code>app/(protected)/scm/policies/components/CurrencyRatesPanel.tsx</code> extended to a dated list; add/edit in <code>FormDialogScaffold.tsx</code>; delete via <code>DeferredActionButton.tsx</code></td></tr>
 <tr><td>Costing settings</td><td>A new section on <code>app/(protected)/user-management/settings</code></td></tr>
 </tbody></table></div>

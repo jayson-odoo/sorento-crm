@@ -1,6 +1,6 @@
-# PLAN: Product costing - Purchasing vs Pricing tabs + Bath Plus costing view
+# PLAN: Product costing - Purchasing vs Pricing tabs + business partner costing (Bath Plus first)
 
-Status: Plan, owner answered Q1-Q4 (10 Nov 23:3x), Q5 being re-asked; card + mock v2 (`mockups/product-costing-10nov-mockup.html`) on PR #2321. Build only after approval.
+Status: Plan, owner answered Q1-Q4 (10 Nov 23:3x), Q5 answered 23:4x (business partners); card + mock v3 (`mockups/product-costing-10nov-mockup.html`) on PR #2321. Build only after approval.
 Track: full (migration + cost permission gating).
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
@@ -37,18 +37,18 @@ costing mark-up, landing cost, any "B Plus" company/list (repo grep: no hit), a 
 - Q4: cost basis is a selectable METHOD (primary supplier, selected supplier, average, last PO
   price). Default primary supplier (last PO fluctuates). Company default + per-product override;
   the method used is shown next to the cost.
-- Q5: "B Plus" was a mishearing: it is **Bath Plus** (workbook "Bath+ cost price"; AutoCount
-  company DB `AED_BATHPLUS`), the sister company that sells Sorento products. Crew re-asks Q5;
-  working assumption stays (a): a per-product "In Bath Plus costing list" flag + one Bath Plus
-  mark-up setting (8%), list + Excel export, no company/price-list module.
-
+- Q5: "B Plus" = **Bath Plus** (workbook "Bath+ cost price"; AutoCount company DB `AED_BATHPLUS`).
+  Owner 23:4x: "Bath Plus is like a business partner, and we will have more business partners in
+  the future ... design with scale in mind." So: a generic BUSINESS PARTNER model (section 3.3);
+  Bath Plus is the first partner (8%). Later dealer tiers can reuse it.
 ## 3. Rules
 
 - Landing cost (MYR) = supplier unit cost x rate (MYR per unit, in force on the date) x SST, then
   transport (category rule, or the product's override):
   - ADD (ceramics, WCs, jacuzzi): + flat MYR per unit (e.g. 8).
   - MULTIPLY (accessories, sinks, taps, hose, valves, shower): x 1.07; kitchen sinks x 1.1.
-- Bath Plus cost price = landing cost x (1 + Bath Plus mark-up 8%).
+- Partner price = landing cost x (1 + that partner's mark-up); Bath Plus 8%.
+- Partner margin at standard selling price = (selling - partner price) / partner price (Q7).
 - Selling price = AutoCount `list_price`, read-only, standard per product, never written back.
 - Purchasing tab, per supplier: mark-up if bought here = (selling - that supplier's landing) /
   that landing, all MYR.
@@ -66,7 +66,7 @@ It does not fit a dated table on its own, so:
 - New table `exchange_rates`: `currency`, `rate_to_base` (MYR per 1 unit, Numeric(18,6), same
   direction as today), `effective_from` (date, required), `note`, `created_by`, timestamps;
   unique (`currency`, `effective_from`); `rate_to_base > 0`; `__audit_track__ = True`. Group-wide,
-  not company-scoped, like `scm.currency_rate` today (Bath Plus buys in the same currencies).
+  not company-scoped, like `scm.currency_rate` today (every partner's costs come from Sorento's own suppliers).
 - Rate in force on date D = the row with the latest `effective_from <= D`. None -> "No rate for X
   on D", never 1. MYR is 1 by definition and has no row.
 - One source of truth: `load_rates` (`money.py:99`, the single read the planner uses) reads the
@@ -81,7 +81,7 @@ It does not fit a dated table on its own, so:
   both directions: "1 RMB = 0.625000 MYR (1 MYR = 1.6000 RMB)", and accepts entry as "MYR 1 = x RMB"
   since that is how the workbook states it.
 - Which date: supplier price-list costs are converted at the costing date (today by default; the
-  Bath Plus list has an "As of" date). A last-PO cost is converted at the rate in force on the PO's
+  partner costing list has an "As of" date). A last-PO cost is converted at the rate in force on the PO's
   issue date.
 
 ### 3.2 Cost basis method (Q4)
@@ -96,8 +96,54 @@ It does not fit a dated table on its own, so:
 - Company default = a setting (Primary supplier). Product override = method (+ supplier for
   Selected supplier), clearable back to "Company default".
 - No silent fallback: a method that yields nothing shows "No cost (method: X)".
-- The method is shown next to every cost: Pricing tab ("Primary supplier, SUP-A01"), Bath Plus
-  grid column "Cost method", export column "Cost method".
+- The method is shown next to every cost: Pricing tab ("Primary supplier, SUP-A01"), partner
+  costing grid column "Cost method", export column "Cost method".
+- Precedence (Q6): product override > partner override > company default.
+
+### 3.3 Business partners (Q5, owner 23:4x)
+
+Measured: there is no partner concept today. A debtor is a `customers` row (`app/models/order.py:77`,
+`customer_code`); whether Bath Plus already exists as a debtor is not checkable from this sandbox (no
+data), so the link is optional; `companies.autocount_ref` (`app/models/company.py:32`)
+names a CRM company's AutoCount DB (code mentions `AED_SORENTO`, `AED_V2_MOCHA`; nothing in the repo names
+`AED_BATHPLUS`, the live rows are not readable here).
+
+Tables (company-scoped, `__audit_track__ = True`):
+
+- `business_partners`: `code` (unique per company), `name`, `customer_id` -> `customers` (nullable:
+  the debtor Sorento bills), `autocount_company_ref` (nullable text, e.g. `AED_BATHPLUS`, the
+  partner's own AutoCount DB, display only), `markup_pct` (required, >= 0), `cost_method_override`
+  (nullable: primary / average / last PO; "selected supplier" is a per-product choice so it is not
+  offered here), `is_active`, timestamps, `created_by`.
+- `business_partner_products`: `partner_id`, `product_id`, `added_by`, `added_at`; unique (partner,
+  product). One product can be on many partners.
+
+What a partner row does NOT carry yet, each with its trigger: a per-product mark-up override
+(first partner that asks for one product at a different mark-up), price tiers / quantity breaks
+(dealer tiers phase), a dynamic "every product in category X" rule (a partner whose range changes
+faster than staff can tick it). The selection is a static set of products.
+
+Screens:
+
+- Master data > Business partners: DataGrid list (code, name, debtor, mark-up, cost method,
+  products count, active) + "Add partner" modal; edit in the same modal; Archive = `is_active` off
+  (a partner with history is archived, not deleted; a partner with no products can be deleted, a
+  deferred action).
+- Partner detail `/master-data-management/business-partners/{id}`: header metadata (debtor, AutoCount
+  DB, mark-up, method) + the partner costing list: Code, Name, Category, Cost method, Unit cost,
+  Transport, Landing (RM), Partner price (RM), Selling (RM), Partner margin at selling, Note; search,
+  Category / Brand / Cost method filters, "As of" date, Excel export (list-query export, same path as
+  `ProductsList.tsx:1170`). "Add products" opens the shared picker
+  (`products/[id]/components/ProductTargetPicker.tsx`, the `useProductTargetPicker` hook: search,
+  Category / Brand filters, "Select all N", 500 per add); its `sourceProductId` becomes optional.
+  "Remove" on a row = Unlink, a deferred action.
+- Product Pricing tab: a "Partner prices" card listing every partner carrying the product (partner,
+  mark-up, method used, partner price, partner margin), replacing the single Bath Plus switch.
+- Gates: list, detail, export and the Pricing tab card need `products.cost.view`. Creating/editing a
+  partner and its products needs a new `master_data.business_partners.manage`, granted to the
+  management set + admin (not purchasing: a partner's mark-up is a pricing decision). Dealers never.
+- Dealer tiers later: a tier is a partner with no debtor and its own mark-up; reuse, no new table,
+  until tiers need something a partner row cannot hold.
 
 ## 4. Worked cases
 
@@ -105,7 +151,7 @@ Dev data is not reachable from the cloud sandbox; case 1 is the owner's workbook
 illustrative inputs (crew can swap in dev rows on the test copy). Rate RMB: 0.625 MYR (1.6) from
 1 Nov 2026, 0.617284 (1.62) from 1 Sep 2026; USD 4.40.
 
-| # | Product | Rule | Supplier cost | Landing | Bath Plus (x1.08) |
+| # | Product | Rule | Supplier cost | Landing | Bath Plus partner price (x1.08) |
 |---|---|---|---|---|---|
 | 1 | WB 245 basin (CGB9032B, workbook) | + RM 8 | RMB 34.50 | 21.5625; 23.71875; **31.71875** -> RM 31.72 | **RM 34.26** |
 | 2 | Tap T-1xx | x 1.07 | RMB 120.00 | RM 88.28 (88.275) | RM 95.34 |
@@ -116,7 +162,7 @@ illustrative inputs (crew can swap in dev rows on the test copy). Rate RMB: 0.62
 WB 245, selling RM 79.00, one product under each method (suppliers A primary RMB 34.50, B RMB
 38.00, L MYR 42.00, D EUR 7.50 with no EUR rate on file):
 
-| Method | Basis | Achieved mark-up | Bath Plus |
+| Method | Basis | Achieved mark-up | Bath Plus partner price |
 |---|---|---|---|
 | Primary supplier (SUP-A01) | RM 31.72 | 149.06% | RM 34.26 |
 | Selected supplier (SUP-B07) | RM 34.13 (34.125) | 131.50% | RM 36.86 (36.855) |
@@ -136,22 +182,34 @@ WB 245, selling RM 79.00, one product under each method (suppliers A primary RMB
 - Product override "Selected supplier" whose link is later deleted: "Selected supplier no longer
   linked", no fallback.
 
-## 6. Open (crew re-asks Q5 as Bath Plus)
+## 6. Open questions (card v3)
 
-Working assumption (a). Nothing else open; two calls made on the owner's answers and flagged for
-veto: exchange rates are group-wide (not per company), and the "average" is the mean of current
-supplier prices, not a PO-weighted average.
+- Q6 Cost method precedence when a product and a partner both override. (a) product > partner >
+  company default; (b) partner > product > company default. Rec (a): a product override records a
+  fact about that product's cost (e.g. its primary supplier's price is not representative); a
+  partner override is a blanket policy and should not undo it.
+- Q7 "Achieved margin" on the partner list. Sorento's own mark-up on a partner row is the
+  partner's mark-up by definition (always 8% for Bath Plus), so (a) show "Partner margin at
+  standard selling price" = (selling - partner price) / partner price, the headroom the partner has
+  if it sells at Sorento's standard price (WB 245: (79 - 34.26) / 34.26 = 130.61%), plus the
+  partner mark-up as a header figure; (b) show only Sorento's mark-up. Rec (a): it is the
+  visibility the meeting asked for ("B Plus needs margin visibility on the products it sells").
+- Calls flagged for veto (no question): exchange rates group-wide; "Average" = mean of current
+  supplier prices; partner selection is static (no category rule yet); partner editing needs a new
+  manage permission held by management + admin only.
 
 ## 7. Build shape (after approval)
 
-- One additive migration: `exchange_rates` (+ seed from `scm.currency_rate`); company settings
-  `costing_sst_factor`, `costing_default_method`, `bath_plus_markup_pct`; product category
-  `transport_mode`/`transport_value`; product `transport_mode_override`/`transport_value_override`,
-  `cost_method_override`, `cost_method_supplier_id`, `in_bath_plus_costing`.
-- BE: `costing_service` (one pure function per step, dated), rate service writes dated rows, `load_rates`
-  reads the row in force today, product costing endpoint, Bath Plus list-query resource + export.
-- FE: Purchasing tab (extend `ProductSuppliersTab.tsx`), Pricing tab, Bath Plus list page, dated
-  Currency rates panel, Costing section on System Settings.
+- One additive migration: `exchange_rates` (+ seed from `scm.currency_rate`); `business_partners`
+  + `business_partner_products` (+ seed partner "Bath Plus", 8%, no products); company settings
+  `costing_sst_factor`, `costing_default_method`; product category `transport_mode` /
+  `transport_value`; product `transport_mode_override` / `transport_value_override`,
+  `cost_method_override`, `cost_method_supplier_id`; permission `master_data.business_partners.manage`.
+- BE: `costing_service` (pure, dated steps), rate service writes dated rows and `load_rates` reads
+  the row in force today, product costing endpoint, business partner CRUD + product link/unlink,
+  partner costing list-query resource + export.
+- FE: Purchasing tab (extend `ProductSuppliersTab.tsx`), Pricing tab (+ Partner prices card),
+  Business partners list + detail, dated Currency rates panel, Costing section on System Settings.
 
 ## Status log
 
@@ -159,3 +217,4 @@ supplier prices, not a PO-weighted average.
 - 10 Nov: lane opened, data mapped (section 1), behaviour card posted on PR #2321.
 - 10 Nov: mock written (4 frames + element map), checked at 375 and 1280 px, no horizontal scroll.
 - 10 Nov 23:3x: owner answered Q1-Q4; card v2 (sections 2-7) + mock v2. Q5 renamed Bath Plus, being re-asked by crew.
+- 10 Nov 23:4x: Q5 answered as a generic business partner model; card v3 (3.3, 6, 7) + mock v3, Q6-Q7 asked.
