@@ -295,7 +295,7 @@ def test_values_salesperson_prepared_by_fax_and_company_footer():
         owner.email = f"{MARKER}-owner@zzt.test"
         owner.contact_number = "+60 12-000 0099"
         _system_settings(
-            db, address=f"{MARKER} Lot 1, Jalan Satu", support_phone="03-1111 0000", fax="03-1111 0001"
+            db, address=f"{MARKER} Lot 1, Jalan Satu", support_phone="+60 17-000 0501", fax="+60 17-000 0502"
         )
         document = _document(db, env)
         record = _issue(db, document, env["owner"])
@@ -307,8 +307,8 @@ def test_values_salesperson_prepared_by_fax_and_company_footer():
         assert values["prepared_by_phone"] == "012-000 0001"
         assert values["to_fax"] == "03-0000 0001"
         assert values["company_address"] == f"{MARKER} Lot 1, Jalan Satu"
-        assert values["company_tel"] == "03-1111 0000"
-        assert values["company_fax"] == "03-1111 0001"
+        assert values["company_tel"] == "+60 17-000 0501"
+        assert values["company_fax"] == "+60 17-000 0502"
         assert values["company_name"]
         assert values["total_pages"] == ""  # only the PDF knows its pages
 
