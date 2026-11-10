@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import uuid
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -90,14 +92,6 @@ APPROVAL_REJECTED = "rejected"
 APPROVAL_APPROVED = "approved"
 UNAPPROVED_STATES = (APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_RESUBMITTED, APPROVAL_REJECTED)
 
-PARTY_DEVELOPER = "developer"
-PARTY_ARCHITECT = "architect"
-PARTY_MAIN_CONTRACTOR = "main_contractor"
-PARTY_TRADING_HOUSE = "trading_house"
-PARTY_CONSULTANT = "consultant"
-PARTY_SUBCONTRACTOR = "subcontractor"
-PARTY_INTERIOR_DESIGNER = "interior_designer"
-PARTY_TENDER_PARTY = "tender_party"
 
 
 class ProjectParty(Base, CompanyScopedMixin):
@@ -123,6 +117,7 @@ class ProjectParty(Base, CompanyScopedMixin):
     registration_no = Column(String(100), nullable=True)
     address = Column(Text, nullable=True)
     phone = Column(String(50), nullable=True)
+    fax = Column(String(50), nullable=True)
     email = Column(String(150), nullable=True)
     notes = Column(Text, nullable=True)
     customer_id = Column(
@@ -172,17 +167,9 @@ class ProjectPartyContact(Base, CompanyScopedMixin):
     )
 
 
-#: The roles a project links to through `party_links`; the role IS the party's type. Developer,
-#: architect and main contractor stay single columns where they always were. Owner 2 Nov ~21:40
-#: (Q5 b): several trading houses, subcontractors and tender parties; one of each other role.
-PARTY_LINK_SINGLE_ROLES = ("consultant", "interior_designer")
-PARTY_LINK_ROLES = (
-    PARTY_SUBCONTRACTOR,
-    PARTY_TRADING_HOUSE,
-    PARTY_CONSULTANT,
-    PARTY_INTERIOR_DESIGNER,
-    PARTY_TENDER_PARTY,
-)
+#: A party playing a role on a project. The roles, and whether a role takes one party or several,
+#: are the editable lookup set `project_party_role` (PROJECT-PARTY-ROLES, owner 10 Nov 2026); see
+#: app/services/project_party_roles.py. Developer stays the `projects.developer_party_id` column.
 
 
 class ProjectPartyLink(Base):
@@ -317,6 +304,10 @@ class Project(Base, CompanyScopedMixin):
     # Comparison key for the registration lock. Minimal normalisation (casefold +
     # whitespace collapse) so "Phase 3A" and "Phase 3B" stay distinct.
     normalised_title = Column(Text, nullable=False)
+    # The short name people call the development (PROJECT-NAME, owner 10 Nov): shown in the
+    # header and pickers so the legal title stops bloating them. Optional, never unique and never
+    # part of the registration lock; a blank name shows the title instead (`project_display_name`).
+    name = Column(String(80), nullable=True)
 
     developer_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), nullable=True
@@ -459,6 +450,9 @@ class ProjectSalesProfile(Base):
     developer_name = Column(String(255), nullable=True)
     main_contractor_name = Column(String(255), nullable=True)
     architect_name = Column(String(255), nullable=True)
+    # RETIRED (PROJECT-PARTY-ROLES, owner Q2 a, 10 Nov 2026): architect and main contractor are
+    # ordinary `party_links` roles now, backfilled by migration ppr_0001. Nothing reads or writes
+    # these two columns; they stay until the owner OKs the drop.
     architect_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
@@ -832,6 +826,8 @@ class ProjectLead(Base, CompanyScopedMixin):
     )
 
     title = Column(Text, nullable=False)
+    # Short name, carried onto the project it qualifies into (PROJECT-NAME Q5).
+    name = Column(String(80), nullable=True)
     # Kept for the informational near-duplicate hint on the list (AC-O3). Same
     # normalisation as `projects.normalised_title` so a lead can be compared against
     # registered projects with the one shared helper, NOT to enforce anything.
@@ -1216,12 +1212,20 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_fax_snapshot = Column(String(200), nullable=True)
     recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
     # Cover page (QUOTE-COVER-PAGE): free text, per quotation.
     quotation_purpose = Column(Text, nullable=True)
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # QUOTE-TERMS-SELECT: what was picked; ``payment_terms`` / ``validity`` above stay the
+    # printed text (set from these on save, or legacy free text nobody has picked over yet).
+    payment_term_id = Column(
+        UUID(as_uuid=False), ForeignKey("payment_terms.id", ondelete="SET NULL"), nullable=True
+    )
+    validity_value = Column(Integer, nullable=True)
+    validity_unit = Column(String(8), nullable=True)
     subject_title = Column(Text, nullable=True)
 
     # The document's OWN editable copy, rendered from the company template at create. Editing it
@@ -1307,6 +1311,124 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     )
 
 
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+class QuotationDocumentDraft(Base):
+    """A proposal / quotation form's work in progress (QUOTE-AUTOSAVE).
+
+    The tag designer's ``page.draft_doc`` split (``models/dealer_kit.py:132``): the form autosaves
+    its whole state into ``doc`` about once a second, overwritten in place and never history. Save
+    applies it through the ordinary POST / PATCH, so the floor-breach alert and audit fire once per
+    Save rather than once per keystroke burst, writes a ``QuotationDocumentSnapshot`` and sets
+    ``doc`` back to NULL.
+
+    Two kinds of row (owner, 10 Nov, card Q2):
+
+    - ``document_id`` set: the draft of an existing document, one per document, shared by everyone
+      who can edit it;
+    - ``document_id`` NULL: a NEW proposal, private to ``owner_user_id`` and numbered only on its
+      first Save, so an abandoned one uses up no number. One per person per project.
+
+    ``holder_token`` (card Q4): every open of the form claims the draft with a fresh token, and only
+    the holder may write. The tab opened earlier is told it no longer holds the draft and goes
+    view-only; what it had not sent is kept as a ``conflict`` History entry.
+
+    Its own table rather than columns on the document: the document is audited, and a column there
+    would write an audit row carrying the whole form every second; and an autosave must not move
+    the document's ``updated_at``, which reads as "the record changed".
+    """
+
+    __tablename__ = "quotation_document_drafts"
+    __audit_skip__ = "autosave work in progress, overwritten about once a second"
+    __table_args__ = (
+        Index(
+            "uq_quotation_document_drafts_document",
+            "document_id",
+            unique=True,
+            postgresql_where=text("document_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_quotation_document_drafts_new",
+            "project_id",
+            "owner_user_id",
+            unique=True,
+            postgresql_where=text("document_id IS NULL"),
+        ),
+        {"schema": "projects"},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    owner_user_id = Column(String(100), nullable=True)
+    # `none_as_null` so "no draft" is one SQL NULL, never the JSON value null (dealer_kit.py:127).
+    doc = Column(JSONB(none_as_null=True), nullable=True)
+    holder_token = Column(String(64), nullable=True)
+    holder_by = Column(String(100), nullable=True)
+    holder_at = Column(DateTime(timezone=False), nullable=True)
+    updated_by = Column(String(100), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+
+class QuotationDocumentSnapshot(Base):
+    """One entry in a proposal / quotation's History (QUOTE-AUTOSAVE).
+
+    The tag designer's rule (owner, card Q3): an entry per Save, and Restore first keeps the state
+    being left as "Before restore", then puts the entry into the draft. Plus ``conflict`` (card Q4):
+    what a tab that lost the draft had not sent yet, so a second tab never loses typing.
+
+    The form's whole state, in the shape the form holds it, so Restore can load it straight back.
+    Immutable once written (``PageVersion``'s rule). ``draft_id`` carries an entry made before its
+    proposal had a number; the first Save moves it onto the new document.
+
+    Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only
+    through its document (or its owner's private draft), and every read goes through that first.
+    """
+
+    __tablename__ = "quotation_document_snapshots"
+    __audit_skip__ = "insert-only form history, itself a trail"
+    __table_args__ = (
+        Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
+        CheckConstraint(
+            "kind IN ('saved', 'before_restore', 'conflict')",
+            name="ck_quotation_document_snapshots_kind",
+        ),
+        {"schema": "projects"},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    draft_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_document_drafts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    kind = Column(String(20), nullable=False)
+    note = Column(Text, nullable=True)
+    # A ``conflict`` entry's lost claim, hashed: one entry per lost claim, updated in place.
+    source_key = Column(String(64), nullable=True)
+    doc = Column(JSONB, nullable=False)
+    grand_total = Column(Numeric(18, 2), nullable=True)
+    created_by = Column(String(100), nullable=True)
+    # Python's clock, not the transaction's: History is ordered by this, and `now()` is the same
+    # for every row one transaction writes (a Restore writes two).
+    created_at = Column(
+        DateTime(timezone=False), default=_utcnow, server_default=func.now(), nullable=False
+    )
+
+
 class QuotationTemplate(Base, CompanyScopedMixin):
     """The company's standing cover letter and terms, as prose with merge fields in it.
 
@@ -1340,6 +1462,12 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     # Defaults beside the terms template, copied onto a new quotation (kind terms only).
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # QUOTE-TERMS-SELECT: the picked term and validity behind the two texts above.
+    payment_term_id = Column(
+        UUID(as_uuid=False), ForeignKey("payment_terms.id", ondelete="SET NULL"), nullable=True
+    )
+    validity_value = Column(Integer, nullable=True)
+    validity_unit = Column(String(8), nullable=True)
     # kind cover_page only: {show_letterhead, title, rows: [{key, shown, label}], closing_html}.
     design = Column(JSONB, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
@@ -1967,6 +2095,11 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     # ("BILL NO 3 PAGE 15/4", "OPTION"). Carried by the line that OPENS the band rather than in a
     # table of its own, so a band cannot orphan itself from the lines under it.
     band_label = Column(String(150), nullable=True)
+    # The row IS a section heading (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026: "a heading
+    # shouldnt be tied to line"): it carries `band_label` only (no product, set, quantity or
+    # price) and its own `sort_order`, so moving or deleting a line never moves or drops it.
+    # Every reader of quotation lines skips it or draws it as the band row.
+    is_section = Column(Boolean, nullable=False, server_default="false", default=False)
 
     unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
     quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)

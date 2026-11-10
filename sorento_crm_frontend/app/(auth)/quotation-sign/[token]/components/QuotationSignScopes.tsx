@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { RichDescription } from '@/components/common/RichDescription';
+import { isRich, richOneLine } from '@/lib/dealer-kit/rich-text';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
@@ -76,7 +78,12 @@ function withUom(line: QuotationSignLine): string {
 function Description({ line }: { line: QuotationSignLine }) {
   return (
     <>
-      {cell(line.description)}
+      {/* Styled text as the PDF prints it; plain text exactly as this page always showed it. */}
+      {isRich(line.description) ? (
+        <RichDescription value={line.description} empty="" />
+      ) : (
+        cell(line.description)
+      )}
       {line.technical_spec?.trim() ? (
         <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
           {line.technical_spec}
@@ -184,7 +191,7 @@ function LineAmount({ line }: { line: QuotationSignLine }) {
 function itemName(line: QuotationSignLine, position: number): string {
   // Not `item_label`: since #2106 that is the printed item NUMBER ("1"), which the ITEM column
   // shows, and "Feedback on 1" names nothing a customer would recognise (fix round 2, B2).
-  return line.description?.trim() || line.product_code?.trim() || `Item ${position + 1}`;
+  return richOneLine(line.description).trim() || line.product_code?.trim() || `Item ${position + 1}`;
 }
 
 /** Brand and code under the item's name in the grid, muted (mock v3 frame 4). */
@@ -220,17 +227,46 @@ function FeedbackButton({ name, onClick }: { name: string; onClick: () => void }
   );
 }
 
-/** A band label heads its section ONCE, above the line that opens it. */
+/**
+ * A band label heads its section ONCE, above the line that opens it. A heading row
+ * (PROPOSAL-FORM-COLLAPSE) is drawn as its own band row, so it opens the section here.
+ */
 function bandsOf(lines: QuotationSignLine[]): (string | null)[] {
   let current: string | null = null;
   return lines.map((line) => {
     const band = line.band_label?.trim() ? line.band_label.trim() : null;
+    if (line.is_section) {
+      current = band;
+      return null;
+    }
     if (band !== null && band !== current) {
       current = band;
       return band;
     }
     return null;
   });
+}
+
+/** Each line's position among the LINES, heading rows skipped (they take no number). */
+function linePositions(lines: QuotationSignLine[]): number[] {
+  let counted = -1;
+  return lines.map((line) => (line.is_section ? counted : (counted += 1)));
+}
+
+/** How many items a scope holds: heading rows are not items. */
+function itemCount(lines: QuotationSignLine[]): number {
+  return lines.filter((line) => !line.is_section).length;
+}
+
+/** A heading row, drawn as the band the PDF prints. Never a feedback target. */
+function HeadingRow({ label, span }: { label: string | null; span: number }) {
+  return (
+    <tr className="bg-muted/60">
+      <td colSpan={span} className="px-2 py-2 text-xs font-semibold uppercase tracking-wide">
+        {label}
+      </td>
+    </tr>
+  );
 }
 
 function ScopeTable({
@@ -249,6 +285,7 @@ function ScopeTable({
 }) {
   const span = onFeedback ? columns.length + 1 : columns.length;
   const bands = bandsOf(lines);
+  const positions = linePositions(lines);
 
   return (
     // Hand-rolled and read-only on purpose: this is a printed quotation being read by a stranger
@@ -282,8 +319,9 @@ function ScopeTable({
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const name = itemName(line, index);
-            const common = commonCells(line, index);
+            if (line.is_section) return <HeadingRow key={index} label={line.band_label} span={span} />;
+            const name = itemName(line, positions[index]);
+            const common = commonCells(line, positions[index]);
             return (
               <React.Fragment key={index}>
                 {bands[index] !== null && (
@@ -356,6 +394,7 @@ function MatrixScopeTable({
   const photo = columns.find((column) => column.key === 'image');
   const span = 1 + (photo ? 1 : 0) + allLeaves.length + 3 + (onFeedback ? 1 : 0);
   const bands = bandsOf(lines);
+  const positions = linePositions(lines);
   const pinned = 'sticky left-0 z-10 bg-background';
 
   return (
@@ -414,7 +453,8 @@ function MatrixScopeTable({
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const name = itemName(line, index);
+            if (line.is_section) return <HeadingRow key={index} label={line.band_label} span={span} />;
+            const name = itemName(line, positions[index]);
             const cells = line.qty_cells ?? {};
             return (
               <React.Fragment key={index}>
@@ -442,7 +482,7 @@ function MatrixScopeTable({
                   </td>
                   {photo && (
                     <td className="border-t border-border px-2 py-2">
-                      {commonCells(line, index).image}
+                      {commonCells(line, positions[index]).image}
                     </td>
                   )}
                   {allLeaves.map((leaf) => {
@@ -573,9 +613,9 @@ export function QuotationSignScopes({
                     </span>
                     <span className="flex items-center gap-3">
                       <span className="text-muted-foreground">
-                        {scope.lines.length === 1
+                        {itemCount(scope.lines) === 1
                           ? '1 item'
-                          : `${scope.lines.length} items`}
+                          : `${itemCount(scope.lines)} items`}
                       </span>
                       <span className="font-semibold tabular-nums">
                         {formatMyrExact(scope.scope_total)}
@@ -586,7 +626,7 @@ export function QuotationSignScopes({
                 {/* min-w-0 on the content, or the wide table refuses to shrink and the page
                     itself scrolls sideways on a phone. */}
                 <AccordionContent className="min-w-0">
-                  {scope.lines.length === 0 ? (
+                  {itemCount(scope.lines) === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No items under this section.
                     </p>

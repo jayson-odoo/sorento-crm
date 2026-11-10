@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type {
   ImpositionConfig,
@@ -61,7 +61,7 @@ import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
-import { featureIconRow, featureIconsFor, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import { featureIconRow, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoriesOf,
   accessoryBoxLayout,
@@ -71,23 +71,26 @@ import {
   accessoryLineCount,
   accessoryLineStyle,
   fitLinePt,
+  headerLineCap,
+  type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
-  accessoryBoxStyleOf,
   boxColours,
-  effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
+  cardIconLayout,
+  cardTextBox,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
+  drawableFeatureIcons,
   fitCardTextProps,
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
 import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
-import { subjectSpecs } from '@/lib/dealer-kit/product-block';
+import { layerFeatureIcons } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1308,7 +1311,7 @@ function renderFeatureIconsLayer(
   const props = layer.props;
   if (props.kind !== 'feature_icons') return null;
 
-  const icons = featureIconsFor(subjectSpecs(binding, layer), media.featureIcons ?? []).filter(
+  const icons = layerFeatureIcons(binding, layer, media.featureIcons).filter(
     (icon) => media.assets?.[icon.id],
   );
   const xs = featureIconRow(icons.length, props, layer.width_mm);
@@ -1347,6 +1350,63 @@ function renderFeatureIconsLayer(
   );
 }
 
+/** A resized header's text, cut to the lines the canvas keeps (`headerLineCap`), never with "...". */
+function HeaderLines({
+  header,
+  lineHeight,
+  children,
+}: {
+  header: NonNullable<AccessoryBoxLayout['header']>;
+  lineHeight: number | undefined;
+  children: ReactNode;
+}) {
+  const cap = headerLineCap(header, lineHeight);
+  return (
+    <div
+      style={{
+        maxHeight: `${cap.lines * cap.lineHeight_mm}mm`,
+        overflow: 'hidden',
+        flexShrink: 0,
+        // A single word wider than the band breaks inside the word, as Konva's word wrap does.
+        overflowWrap: 'anywhere',
+      }}
+      data-testid="accessories-header-lines"
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * PRICETAG-HEADER-DRAG round 2: the header band's box CSS, matching the canvas (`KonvaTagLayer`):
+ * corners, padding inside the band, and the text as one line (unresized: shrunk to fit by the
+ * layout, never cut with an ellipsis) or wrapping, centred top to bottom (resized). Nothing extra is
+ * set for a header with no stored style, so it prints as before.
+ */
+function headerBoxCss(
+  header: NonNullable<AccessoryBoxLayout['header']>,
+  lineHeight: number | undefined,
+): CSSProperties {
+  const { top, right, bottom, left } = header.padding;
+  const padded = top > 0 || right > 0 || bottom > 0 || left > 0;
+  const innerH = Math.max(0, header.height_mm - top - bottom);
+  return {
+    ...(header.radius_mm > 0 ? { borderRadius: `${header.radius_mm}mm` } : {}),
+    ...(padded ? { padding: `${top}mm ${right}mm ${bottom}mm ${left}mm`, boxSizing: 'border-box' as const } : {}),
+    ...(header.wrap
+      ? {
+          whiteSpace: 'normal' as const,
+          lineHeight: lineHeight ?? 1,
+          display: 'flex',
+          flexDirection: 'column' as const,
+          justifyContent: 'center',
+          // The kept lines (`headerLineCap`, the canvas's rule) are centred; a single line taller than
+          // the band spills evenly above and below it, as on the canvas, never cut.
+        }
+      : { whiteSpace: 'nowrap' as const, lineHeight: `${innerH}mm` }),
+  };
+}
+
 /**
  * PRICETAG-ACCESSORIES: the "Accessories" box, laid out by `accessoryBoxLayout` - the SAME function
  * the editor canvas and the request preview draw with (card rule A10). No list, or nothing fits:
@@ -1357,10 +1417,8 @@ function renderAccessoriesLayer(
   media: TagSheetMedia,
   binding: TagBindingData | null,
 ) {
-  const own = layer.props;
-  if (own.kind !== 'accessories') return null;
-  // The product / combo on this tag may name its own box style (S6): it replaces the design, not the place.
-  const props = effectiveBoxProps(own, accessoryBoxStyleOf(binding, layer));
+  const props = layer.props;
+  if (props.kind !== 'accessories') return null;
   const items = accessoriesOf(binding, layer);
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
   if (props.card) return renderDesignedAccessories({ ...layer, props }, media, items);
@@ -1378,6 +1436,35 @@ function renderAccessoriesLayer(
     : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        // The band's background (round 2), or the legend break behind a header on the border.
+        backgroundColor: box.header.fill ?? undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
+        fontSize: `${box.header.fontSize_pt}pt`,
+      }}
+      data-testid="accessories-header"
+    >
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1413,27 +1500,7 @@ function renderAccessoriesLayer(
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            // On the border: the header background breaks the border behind the text (legend).
-            backgroundColor: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         const url = item.image
@@ -1496,6 +1563,7 @@ function renderAccessoriesLayer(
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.badge && (
         <div
           style={{
@@ -1529,10 +1597,39 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
   const props = layer.props;
   if (props.kind !== 'accessories' || !props.card) return null;
   const box = cardBoxLayout(items.length, props, layer.width_mm, layer.height_mm);
+  const cardIcons = drawableFeatureIcons(media.featureIcons, media.assets);
   if (box.shown === 0) return null;
   const font = props.fontFamily ? `'${props.fontFamily}', sans-serif` : undefined;
   const headerStyle = accessoryHeaderStyle(props);
 
+  // PRICETAG-HEADER-DRAG: one header node; a dragged one draws over the cards (it may sit on one).
+  const headerNode = box.header && (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${box.header.x_mm}mm`,
+        top: `${box.header.y_mm}mm`,
+        width: `${box.header.width_mm}mm`,
+        height: `${box.header.height_mm}mm`,
+        backgroundColor: box.header.fill ? safeColour(box.header.fill) : undefined,
+        ...accessoryTextCss(
+          headerStyle,
+          box.header.onBorder || (box.header.moved && !box.header.wrap) ? 'center' : headerStyle.align,
+        ),
+        ...headerBoxCss(box.header, props.headerStyle?.lineHeight),
+        fontSize: `${box.header.fontSize_pt}pt`,
+      }}
+      data-testid="accessories-header"
+    >
+      {box.header.wrap ? (
+        <HeaderLines header={box.header} lineHeight={props.headerStyle?.lineHeight}>
+          {props.headerText}
+        </HeaderLines>
+      ) : (
+        props.headerText
+      )}
+    </div>
+  );
   return (
     <div
       style={{
@@ -1544,6 +1641,8 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: font,
+        // TAG-ACC-CARD-RESIZE Q1: a card below the readable floor is clipped to the box, as on the canvas.
+        overflow: box.clipped ? 'hidden' : undefined,
       }}
       data-testid="accessories-box"
     >
@@ -1563,25 +1662,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           data-testid="accessories-frame"
         />
       )}
-      {box.header && (
-        <div
-          style={{
-            position: 'absolute',
-            left: `${box.header.x_mm}mm`,
-            top: `${box.header.y_mm}mm`,
-            width: `${box.header.width_mm}mm`,
-            height: `${box.header.height_mm}mm`,
-            lineHeight: `${box.header.height_mm}mm`,
-            backgroundColor: box.header.onBorder ? safeColour(props.headerBackground || '#ffffff') : undefined,
-            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
-            fontSize: `${box.header.fontSize_pt}pt`,
-            whiteSpace: 'nowrap',
-          }}
-          data-testid="accessories-header"
-        >
-          {props.headerText}
-        </div>
-      )}
+      {!box.header?.moved && headerNode}
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
@@ -1598,12 +1679,13 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
             }}
             data-testid="accessories-card"
           >
-            {cardElementsFor(item, props.card!).map((element) => (
+            {cardElementsFor(item, props.card!, cardIcons).map((element) => (
               <CardElementView
                 key={element.id}
                 element={element}
                 factor={box.scale}
                 boxFont={props.fontFamily}
+                iconUrls={media.assets}
                 src={
                   element.kind === 'picture' && item.image
                     ? (media.images?.[item.image.attachment_id] ?? item.image.url)
@@ -1615,6 +1697,7 @@ function renderDesignedAccessories(layer: TagLayer, media: TagSheetMedia, items:
           </div>
         );
       })}
+      {box.header?.moved && headerNode}
       {box.footer && props.footer && (
         <div
           style={{
@@ -1669,12 +1752,14 @@ function CardElementView({
   boxFont,
   src,
   alt,
+  iconUrls,
 }: {
   element: ResolvedCardElement;
   factor: number;
   boxFont?: string;
   src: string | null | undefined;
   alt: string;
+  iconUrls?: Record<string, string>;
 }) {
   const frame: CSSProperties = {
     position: 'absolute',
@@ -1695,6 +1780,30 @@ function CardElementView({
       ) : null;
     case 'text':
       return <CardTextBlock element={element} frame={frame} factor={factor} boxFont={boxFont} />;
+    case 'feature_icons': {
+      // PRICETAG-UPGRADE-VARIANTS S1: the item's own icons, packed like the feature icons layer.
+      const icons = element.icons ?? [];
+      const row = cardIconLayout(element, icons.length, factor);
+      return (
+        <div style={{ ...frame, overflow: 'hidden' }} data-testid="accessories-icons">
+          {row.map((cell, i) => (
+            <img
+              key={`${icons[i].id}-${i}`}
+              src={iconUrls?.[icons[i].id]}
+              alt={icons[i].name}
+              style={{
+                position: 'absolute',
+                left: `${cell.x_mm}mm`,
+                top: `${cell.y_mm}mm`,
+                width: `${cell.size_mm}mm`,
+                height: `${cell.size_mm}mm`,
+                objectFit: 'contain',
+              }}
+            />
+          ))}
+        </div>
+      );
+    }
     case 'colour_dots': {
       const colours = element.colours ?? [];
       const dots = colourDotLayout(element, colours.length, factor);
@@ -1772,8 +1881,10 @@ function CardTextBlock({
 }) {
   const epoch = useFontsEpoch();
   const text = element.text ?? '';
-  const widthMm = element.width_mm * factor;
-  const heightMm = element.height_mm * factor;
+  // Owner 22:30: background, corner radius and padding like the header (`cardTextBox`, as the canvas).
+  const boxed = cardTextBox(element, factor);
+  const widthMm = boxed.text.width_mm;
+  const heightMm = boxed.text.height_mm;
   const props = useMemo(() => {
     void epoch; // re-measure once a face has loaded
     return fitCardTextProps(cardTextProps(element, factor, boxFont), text, widthMm, heightMm);
@@ -1802,6 +1913,21 @@ function CardTextBlock({
         lineHeight: props.lineHeight,
         boxSizing: 'border-box',
         whiteSpace: 'pre',
+        ...(boxed.background
+          ? {
+              backgroundColor: safeColour(boxed.background.fill),
+              borderRadius: `${boxed.background.radius_mm}mm`,
+            }
+          : {}),
+        ...(element.padding
+          ? {
+              // Each side clamped at 0 (CSS drops the whole declaration on a negative side).
+              padding: `${boxed.text.y_mm}mm ${Math.max(0, element.width_mm * factor - boxed.text.x_mm - widthMm)}mm ${Math.max(
+                0,
+                element.height_mm * factor - boxed.text.y_mm - heightMm,
+              )}mm ${boxed.text.x_mm}mm`,
+            }
+          : {}),
       }}
       data-testid="accessories-element-text"
     >

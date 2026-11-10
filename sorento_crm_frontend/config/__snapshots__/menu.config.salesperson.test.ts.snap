@@ -10,6 +10,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
     "title": "Dashboards",
   },
   {
+    "path": "/town",
+    "title": "Town",
+  },
+  {
     "children": [
       {
         "path": "/ideas",
@@ -407,6 +411,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/master-data-management/item-classes",
             "title": "Item Classes",
+          },
+          {
+            "path": "/master-data-management/payment-terms",
+            "title": "Payment Terms",
           },
           {
             "path": "/master-data-management/units-of-measure",

@@ -101,4 +101,10 @@ describe('ClashWarningPanel', () => {
     );
     expect(screen.getByText('lost')).toBeInTheDocument();
   });
+
+  it('leads with the short name and keeps the compared title visible under it (PROJECT-NAME)', () => {
+    render(<ClashWarningPanel candidates={[candidate({ name: 'Setia Tower', title: 'Cadangan Blok Setia' })]} />);
+    expect(screen.getByText('Setia Tower')).toBeInTheDocument();
+    expect(screen.getByText('Cadangan Blok Setia')).toHaveAttribute('title', 'Cadangan Blok Setia');
+  });
 });

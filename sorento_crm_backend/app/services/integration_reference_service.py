@@ -76,6 +76,8 @@ SUPPORTED_ENTITY_TYPES = {
     "brands",
     # ITEM-CLASS-MASTER (contract 2.11).
     "item_classes",
+    # QUOTE-TERMS-SELECT (contract 2.14): AutoCount Terms.
+    "payment_terms",
     # Finance S0 (#1309, contract 2.6): `finance.billing_documents`. The one entity type
     # whose table is not in `public`; see `_module_table`.
     "billing_documents",

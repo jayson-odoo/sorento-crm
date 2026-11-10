@@ -7,15 +7,18 @@ import {
   getScheduledTaskRuns,
   updateScheduledTask,
   runScheduledTaskNow,
+  type ScheduledTaskListParams,
 } from '../services/scheduledTaskService';
 import type { ScheduledTaskUpdateBody } from '../types/scheduledTask.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
-export function useScheduledTasks() {
+export function useScheduledTasks(params: ScheduledTaskListParams) {
   return useQuery({
-    queryKey: ['scheduled-tasks'],
-    queryFn: getScheduledTasks,
-    staleTime: 1000 * 60 * 2,
+    ...LIST_QUERY_OPTIONS,
+    // ['scheduled-tasks', ...] so the mutations' prefix invalidation still refreshes the grid.
+    queryKey: ['scheduled-tasks', params],
+    queryFn: () => getScheduledTasks(params),
+    staleTime: 1000 * 30,
   });
 }
 

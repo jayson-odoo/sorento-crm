@@ -33,6 +33,8 @@ export function PurchasingResponseDialog({
   saveDisabled = false,
   replyDisabled = false,
   replyTitle,
+  noReplyReason,
+  replySentence = 'Update & Reply saves your text and sends it to the contact.',
   saveGuideTarget,
   replyGuideTarget,
   children,
@@ -52,6 +54,10 @@ export function PurchasingResponseDialog({
   replyDisabled?: boolean;
   /** Why Update & Reply is off, when the text is not the reason. */
   replyTitle?: string;
+  /** Owner re-test 9 Nov: with no Update & Reply, the subtitle says why (one sentence, or nothing). */
+  noReplyReason?: string;
+  /** What Update & Reply does, when it does not message the contact (an NPA raised in the portal). */
+  replySentence?: string;
   saveGuideTarget?: string;
   replyGuideTarget?: string;
   children?: ReactNode;
@@ -67,8 +73,9 @@ export function PurchasingResponseDialog({
         <DialogHeader>
           <DialogTitle>Edit purchasing response</DialogTitle>
           <DialogDescription>
-            Save updates the record only. Update &amp; Reply saves your text
-            and sends it to the contact.
+            {canReply
+              ? `Save updates the record only. ${replySentence}`
+              : `Save updates the record only.${noReplyReason ? ` ${noReplyReason}` : ''}`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

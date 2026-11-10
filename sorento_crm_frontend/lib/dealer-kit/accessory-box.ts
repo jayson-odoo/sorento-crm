@@ -9,6 +9,7 @@
  */
 import { formatTagPrice } from './price-badge';
 import { richOneLine } from './rich-text';
+import { upgradesOf } from './upgrade-items';
 import type {
   AccessoriesLayerProps,
   AccessoryTextStyle,
@@ -84,6 +85,8 @@ export function partAtSlot(
       return slots.groups[slot.group]?.picks[slot.index] ?? null;
     case 'upgrade':
       return slots.upgrades[slot.index] ?? null;
+    case 'variants':
+      return slots.main ?? null;
   }
 }
 
@@ -102,6 +105,9 @@ export function accessoriesOf(
 ): TagAccessory[] {
   if (!data) return [];
   const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
+  // PRICETAG-UPGRADE-VARIANTS S1: an Upgrades box lists the combo's upgrades on offer, whatever
+  // position it names.
+  if (props?.list === 'upgrades') return upgradesOf(data);
   const slot = props?.subjectSlot;
   if (slot && (data.kind === 'line' || data.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
@@ -156,7 +162,24 @@ export interface AccessoryBoxLayout {
   frame: AccessoryRect | null;
   /** The header band; null when hidden or blank. `onBorder`: drawn over the frame's top edge, on
    *  the header background, breaking the border behind it. */
-  header: (AccessoryRect & { fontSize_pt: number; onBorder: boolean }) | null;
+  header:
+    | (AccessoryRect & {
+        fontSize_pt: number;
+        onBorder: boolean;
+        moved: boolean;
+        /** Round 2: a resized header wraps its text inside the band (no shrink). */
+        wrap: boolean;
+        /** The band's background; null = none. */
+        fill: string | null;
+        radius_mm: number;
+        /** Inner margin between band and text. */
+        padding: { top: number; right: number; bottom: number; left: number };
+        /** Where the text itself draws (as wide as the text): the band on the border or once moved;
+         *  inside the frame the text's own span in the band, per the header's alignment. The header
+         *  drag handle starts from this, so a first drag never jumps. */
+        text: AccessoryRect;
+      })
+    | null;
   /** The round "+" badge, null when switched off. */
   badge: AccessoryRect | null;
 }
@@ -176,6 +199,12 @@ export type LayoutProps = Pick<
   | 'showHeader'
   | 'showFrame'
   | 'headerOnBorder'
+  | 'headerPos'
+  | 'headerSize'
+  | 'headerFill'
+  | 'headerRadius_mm'
+  | 'headerPadding'
+  | 'headerBackground'
   | 'headerStyle'
 >;
 
@@ -387,6 +416,23 @@ export function accessoryBoxLayout(
 }
 
 /**
+ * PRICETAG-HEADER-DRAG round 2: how many wrapped lines a resized header shows, Konva's own rule
+ * (`Text._setTextData`, konva 10: a line is kept while the next one still fits the text height, and
+ * the first line always is). The print sheet caps its header text to this many lines so canvas and
+ * print agree; the kept lines are centred in the band on both (and may spill when even one does
+ * not fit).
+ */
+export function headerLineCap(
+  header: { height_mm: number; fontSize_pt: number; padding: { top: number; bottom: number } },
+  lineHeight = 1,
+): { lines: number; lineHeight_mm: number } {
+  const lineHeight_mm = Math.max(0, header.fontSize_pt) * PT_TO_MM * (lineHeight > 0 ? lineHeight : 1);
+  const innerH = Math.max(0, header.height_mm - header.padding.top - header.padding.bottom);
+  const lines = lineHeight_mm > 0 ? Math.max(1, Math.floor(innerH / lineHeight_mm + 1e-9)) : 1;
+  return { lines, lineHeight_mm };
+}
+
+/**
  * The box's frame, header band and "+" badge for a box closed up to `outW` x `outH`. Shared by the
  * legacy layout and the designed-card layout (`cardBoxLayout`) so the two draw the same chrome.
  */
@@ -413,16 +459,87 @@ export function accessoryChrome(
       : props.headerFontSize;
   // On the border the band is only as wide as its text (plus a little air either side), so the
   // border shows left and right of it; inside the frame it spans the room it has.
-  const bandW = onBorder
-    ? Math.min(room, estimateLineWidth(props.headerText ?? '', headerPt, bold) + 2 * pad)
-    : room;
+  const tight = Math.min(room, estimateLineWidth(props.headerText ?? '', headerPt, bold) + 2 * pad);
+  const bandW = onBorder ? tight : room;
+  // Dragged (PRICETAG-HEADER-DRAG): plain text, as wide as its text, at its stored spot, pulled back
+  // inside a box that closed up. The frame, cards and footer stay where they are (owner Q2).
+  const pos = headerH > 0 ? props.headerPos : null;
+  const clamp = (v: number, max: number) => Math.min(Math.max(0, max), Math.max(0, v));
+  // The header style's alignment (`accessoryHeaderStyle`: centred unless the box sets otherwise).
+  const align = props.headerStyle?.align ?? 'center';
+  // The text-wide band is the text plus a pad of air either side, so left / right aligned text
+  // starts / ends a pad outside it: the letters stay where they are drawn now (no first-drop shift).
+  const textX = onBorder
+    ? (outW - bandW) / 2
+    : clamp(
+        align === 'left'
+          ? headerInset - pad
+          : align === 'right'
+            ? headerInset + room - tight + pad
+            : headerInset + (room - tight) / 2,
+        outW - tight,
+      );
+  // Round 2: background, corners and padding, the same for every header; absent = today's look.
+  const placedOnBorder = onBorder && !pos;
+  const fill =
+    props.headerFill != null
+      ? props.headerFill === 'transparent'
+        ? null
+        : props.headerFill
+      : placedOnBorder
+        ? props.headerBackground || '#ffffff'
+        : null;
+  const style = {
+    fill,
+    radius_mm: Math.max(0, props.headerRadius_mm ?? 0),
+    padding: { top: 0, right: 0, bottom: 0, left: 0, ...(props.headerPadding ?? {}) },
+  };
+  // A resized header: its stored size (never past the box), its set font size, wrapping inside.
+  const size = pos && props.headerSize ? props.headerSize : null;
+  const sizedW = size ? Math.min(Math.max(0, size.width_mm), outW) : 0;
+  const sizedH = size ? Math.min(Math.max(0, size.height_mm), outH) : 0;
+  const sizedRect = size
+    ? {
+        x_mm: clamp(pos!.x_mm, outW - sizedW),
+        y_mm: clamp(pos!.y_mm, outH - sizedH),
+        width_mm: sizedW,
+        height_mm: sizedH,
+      }
+    : null;
   return {
     frame:
       props.showFrame === false
         ? null
         : { x_mm: 0, y_mm: frameTop, width_mm: outW, height_mm: outH - frameTop },
-    header:
-      headerH > 0
+    header: sizedRect
+      ? {
+          ...sizedRect,
+          fontSize_pt: props.headerFontSize,
+          onBorder: false,
+          moved: true,
+          wrap: true,
+          ...style,
+          text: { ...sizedRect },
+        }
+      : pos
+      ? {
+          x_mm: clamp(pos.x_mm, outW - tight),
+          y_mm: clamp(pos.y_mm, outH - headerH),
+          width_mm: tight,
+          height_mm: headerH,
+          fontSize_pt: headerPt,
+          onBorder: false,
+          moved: true,
+          wrap: false,
+          ...style,
+          text: {
+            x_mm: clamp(pos.x_mm, outW - tight),
+            y_mm: clamp(pos.y_mm, outH - headerH),
+            width_mm: tight,
+            height_mm: headerH,
+          },
+        }
+      : headerH > 0
         ? {
             x_mm: onBorder ? (outW - bandW) / 2 : headerInset,
             y_mm: onBorder ? 0 : pad * 0.5,
@@ -430,6 +547,10 @@ export function accessoryChrome(
             height_mm: headerH,
             fontSize_pt: headerPt,
             onBorder,
+            moved: false,
+            wrap: false,
+            ...style,
+            text: { x_mm: textX, y_mm: onBorder ? 0 : pad * 0.5, width_mm: tight, height_mm: headerH },
           }
         : null,
     badge: props.showBadge

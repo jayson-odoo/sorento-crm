@@ -70,7 +70,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 }));
 
 vi.mock('../../hooks/useScmOptions', () => ({
-  useWarehouseOptions: () => ({
+  useActiveWarehouseOptions: () => ({
     data: [
       { value: 'BRW', label: 'Butterworth' },
       { value: 'MWH', label: 'Main WH' },

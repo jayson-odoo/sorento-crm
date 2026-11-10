@@ -646,3 +646,14 @@ def test_portal_file_download_is_own_application_only(portal, store):
     assert own.status_code == 200, own.text
     assert own.content == b"%PDF-1.4 zzt-bytes"
     assert _as(portal, portal.granted_b).get(f"{ATT}/{att}/download").status_code == 404
+
+
+def test_the_portal_list_names_no_staff_on_the_stage(portal):
+    """NPA-FORM-SLA security S3: the staff list's Assigned To / Handled By (the stock inquiry list's
+    columns) are staff names; a portal contact's own list carries neither, as its detail hides the
+    purchasing person's name."""
+    d = _create(portal)
+    rows = _as(portal, portal.granted).get(BASE).json()["data"]
+    (row,) = [r for r in rows if r["id"] == d["id"]]
+    assert "assigned_to_name" not in row
+    assert "handled_by_name" not in row

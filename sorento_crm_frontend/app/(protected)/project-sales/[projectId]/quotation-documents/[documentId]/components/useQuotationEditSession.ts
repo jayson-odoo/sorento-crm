@@ -5,7 +5,7 @@ import type { InlineDraft } from '../../../../_shared/components/InlineLineTable
 import type { StagedQuotationLine } from '../../../../_shared/types/project.types';
 import type { QuotationDocumentBody } from '../../../../_shared/services/quotationDocumentService';
 
-type StagedScope = {
+export type StagedScope = {
   versionId: string;
   /** The lines as the server had them when this scope was opened. What Cancel and dirty compare. */
   seeded: StagedQuotationLine[];
@@ -38,6 +38,11 @@ export type QuotationEditSession = {
   stageScope: (scopeId: string, lines: StagedQuotationLine[]) => void;
   /** Stage or unstage one line's removal. Reversible until Save, which is the commit point. */
   toggleRemoved: (scopeId: string, key: string) => void;
+  /**
+   * QUOTE-AUTOSAVE: replace every staged scope at once, from a draft or a restored History entry.
+   * A scope left out is seeded from the server again when it is next opened.
+   */
+  hydrate: (scopes: Record<string, StagedScope>) => void;
   /** The letterhead prose and header fields, staged for the one document PATCH. */
   documentDraft: QuotationDocumentBody;
   stageDocument: (patch: QuotationDocumentBody) => void;
@@ -129,6 +134,10 @@ export function useQuotationEditSession(): QuotationEditSession {
     });
   }, []);
 
+  const hydrate = React.useCallback((next: Record<string, StagedScope>) => {
+    setScopes({ ...next });
+  }, []);
+
   const stageDocument = React.useCallback((patch: QuotationDocumentBody) => {
     setDocumentDraft((previous) => ({ ...previous, ...patch }));
   }, []);
@@ -165,6 +174,7 @@ export function useQuotationEditSession(): QuotationEditSession {
     seedScope,
     stageScope,
     toggleRemoved,
+    hydrate,
     documentDraft,
     stageDocument,
     changedScopes,

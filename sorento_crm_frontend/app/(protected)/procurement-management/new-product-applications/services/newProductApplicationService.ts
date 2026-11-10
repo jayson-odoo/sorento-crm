@@ -1,6 +1,4 @@
 import { apiFetch } from '@/lib/api';
-import { filenameFromContentDisposition } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import { saveBlobAs } from '@/lib/save-blob';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { stockInquiryLabel } from '@/lib/new-product-application-form';
@@ -286,15 +284,17 @@ export async function linkNewProductApplicationAttachment(
 }
 
 /** The paper sheet as a workbook; the name comes from the server so file and sheet agree. */
-export async function downloadNewProductApplicationExcel(
+/**
+ * Queue the application's workbook in My Downloads (NPA-FORM-SLA, owner 9 Nov), the stock inquiry
+ * PDF's way: POST {id}/export/xlsx -> { id, kind: 'new_product_application_xlsx', status: 'pending' }.
+ * The RQ worker fills it; the list's Print Count counts these rows.
+ */
+export async function exportNewProductApplicationXlsx(
   id: string,
-): Promise<void> {
-  const res = await apiFetch(`${BASE}/${at(id)}/download`);
-  if (!res.ok) return fail(res, 'Failed to download the application');
-  const filename =
-    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
-    'new-product-application.xlsx';
-  saveBlobAs(await res.blob(), filename);
+): Promise<{ id: string; kind: string; status: string; filename?: string | null }> {
+  const res = await apiFetch(`${BASE}/${at(id)}/export/xlsx`, { method: 'POST' });
+  if (!res.ok) return fail(res, 'Failed to start the download');
+  return res.json();
 }
 
 /** Stock inquiries for the header picker, labelled "SI26-0412 - <product code>". */

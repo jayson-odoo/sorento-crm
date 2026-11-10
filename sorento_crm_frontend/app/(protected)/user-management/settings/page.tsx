@@ -278,6 +278,7 @@ export default function Page() {
     language: settings?.language || 'en',
     supportEmail: settings?.supportEmail || '',
     supportPhone: settings?.supportPhone || '',
+    fax: settings?.fax || '',
     currency: settings?.currency || 'MYR',
     currencyFormat: settings?.currencyFormat || 'RM {value}',
     timezone: settings?.timezone || 'Europe/London',
@@ -359,6 +360,7 @@ export default function Page() {
       language: settings.language ?? 'en',
       supportEmail: settings.supportEmail ?? '',
       supportPhone: settings.supportPhone ?? '',
+      fax: settings.fax ?? '',
       currency: settings.currency ?? 'MYR',
       currencyFormat: settings.currencyFormat ?? 'RM {value}',
       timezone: settings.timezone ?? 'Europe/London',
@@ -418,6 +420,7 @@ export default function Page() {
         website_url: values.websiteURL ?? null,
         support_email: values.supportEmail,
         support_phone: values.supportPhone ?? null,
+        fax: values.fax ?? null,
         language: values.language,
         timezone: values.timezone,
         currency: values.currency,
@@ -847,6 +850,27 @@ export default function Page() {
                         id="supportPhone"
                         type="tel"
                         placeholder="Enter support phone"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Fax */}
+              <FormField
+                control={form.control}
+                name="fax"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fax</FormLabel>
+                    <FormControl>
+                      <Input
+                        id="fax"
+                        type="tel"
+                        placeholder="Enter fax number"
                         value={field.value || ''}
                         onChange={field.onChange}
                       />

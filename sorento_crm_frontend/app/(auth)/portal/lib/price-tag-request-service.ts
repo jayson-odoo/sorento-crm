@@ -200,6 +200,23 @@ export interface PriceTagRequestLine {
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the template this line prints with, and its name. */
   tag_template_id?: string | null;
   tag_template_name?: string | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the variant members unticked for this tag. */
+  excluded_variant_ids?: string[];
+}
+
+/** PRICETAG-UPGRADE-VARIANTS: one member of a line product's variant tree (the chooser). */
+export interface VariantMemberOption {
+  product_id: string;
+  code: string;
+  name: string;
+  list_price: number | null;
+  is_discontinued: boolean;
+}
+
+/** `GET /lookups/variant-members/{product_id}`: the members and the product's own list price. */
+export interface VariantMembersLookup {
+  members: VariantMemberOption[];
+  own_list_price: number | null;
 }
 
 /** One template a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT). */
@@ -219,6 +236,9 @@ export interface ProductTagTemplateOption {
   default_selling?: boolean;
   /** What the template reads from a combo (from its published layers). */
   needs?: TemplateNeeds;
+  /** PRICETAG-UPGRADE-VARIANTS: the template has a layer on "All variants" (the line then offers
+   *  "Variants on this tag"). Absent on an older server = no. */
+  reads_variants?: boolean;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -234,6 +254,8 @@ export interface TagPreviewLineInput {
   tag_template_id: string | null;
   /** PRICETAG-LPSP: null = the request's mode. */
   price_type?: PriceMode | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the members unticked on the line. */
+  excluded_variant_ids?: string[];
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
@@ -429,6 +451,8 @@ export type PriceTagRequestLineInput = {
   tag_template_id?: string | null;
   /** PRICETAG-LPSP: this line's LP or SP; null/absent = the request's mode. */
   price_type?: PriceMode | null;
+  /** PRICETAG-UPGRADE-VARIANTS: the variant members unticked for this tag ([] = all ticked). */
+  excluded_variant_ids?: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -634,6 +658,13 @@ export function makePriceTagRequestService(
       `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}${query}`,
     );
     return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
+  }
+
+  /** PRICETAG-UPGRADE-VARIANTS: the line's "Variants on this tag" members. Called once per
+   *  product pick, like the combos lookup. */
+  async function lookupVariantMembers(productId: string): Promise<VariantMembersLookup> {
+    const res = await fetcher(`${LOOKUPS}/variant-members/${encodeURIComponent(productId)}`);
+    return unwrap<VariantMembersLookup>(res, 'Failed to load the variants of this product');
   }
 
   /** The live preview: the form's lines in progress, nothing saved. */
@@ -977,6 +1008,7 @@ export function makePriceTagRequestService(
     lookupTagItems,
     lookupProductCombos,
     lookupProductTagTemplates,
+    lookupVariantMembers,
     lookupTagPreview,
     lookupLinePricing,
     listRequests,
@@ -1009,6 +1041,7 @@ export const {
   lookupTagItems,
   lookupProductCombos,
   lookupProductTagTemplates,
+  lookupVariantMembers,
   lookupTagPreview,
   lookupLinePricing,
   listRequests,

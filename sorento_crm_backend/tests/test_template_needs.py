@@ -178,9 +178,11 @@ def test_a_grouped_part_ticked_upgrade_is_an_upgrade_not_an_option(db):
         parts=[{"product": one, "group": "Kitchen tap"}, {"product": two, "group": "Kitchen tap", "is_upgrade": True}],
     )
     db.refresh(combo)
+    # COMBO-SETTINGS-UX owner round 1 (10 Nov): the upgrade leaves "Kitchen tap" with one part, and a
+    # one-part group is a fixed part, not a choice.
     assert _mod().combo_shape(combo) == {
-        "fixed": 0,
-        "groups": [{"role": "Kitchen tap", "size": 1}],
+        "fixed": 1,
+        "groups": [],
         "upgrades": 1,
     }
 

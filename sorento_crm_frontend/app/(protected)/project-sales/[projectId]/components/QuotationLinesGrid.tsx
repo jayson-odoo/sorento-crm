@@ -8,10 +8,17 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
+import { Selection } from '@tiptap/pm/state';
+import { docPosAtTextOffset, textOffsetAtPoint } from './quotationDescriptionCaret';
+import { RichDescription } from '@/components/common/RichDescription';
+import { richOneLine, richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { toast } from '@/lib/toast';
 import { useDeferredDeleteSeconds } from '@/hooks/useDeferredDeleteSeconds';
 import { DEFAULT_DEFERRED_DELETE_SECONDS } from '@/services/deferredWindowService';
@@ -55,6 +62,7 @@ import type {
 import {
   addCol as addMatrixCol,
   addHeader as addMatrixHeader,
+  duplicateHeader as duplicateMatrixHeader,
   appendCopy as appendMatrixCopy,
   cellsUnder,
   hasColumns,
@@ -69,6 +77,7 @@ import {
   MATRIX_LABEL_FOOTER,
   MatrixAmountFooterLines,
   MatrixGridProvider,
+  ADD_FIRST_HEADER_COLUMN,
   buildMatrixColumns,
   type MatrixGridContextValue,
   type PendingRemoval,
@@ -90,8 +99,10 @@ import {
   emptyDraft,
   INLINE_CHECKED,
   isInlineChecked,
+  isSectionDraft,
   isUntouched,
   lineErrors,
+  sectionDraft,
   totalFromDrafts,
   trimAmount,
   type LineDraft,
@@ -111,10 +122,44 @@ interface GridRow {
   key: string;
   /** Position in the WHOLE scope, so a search hides rows without renumbering the rest. */
   index: number;
+  /**
+   * The item number: lines only, heading rows take none (PROPOSAL-FORM-COLLAPSE). Optional so a
+   * matrix cell's row (`MatrixGridRow`) still reads as a grid row.
+   */
+  number?: number | null;
   staged: StagedQuotationLine;
 }
 
 type MenuAction = 'below' | 'section' | 'remove';
+
+/** Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping. */
+function focusHeadingInput(key: string) {
+  document.querySelector<HTMLElement>(`[data-band-key="${key}"]`)?.focus();
+}
+
+/**
+ * Where focus goes as a grid menu closes: an action that puts the caret somewhere keeps it there,
+ * and the box it is for (a new heading, a renamed one, a duplicated header) takes it NOW, never
+ * earlier (INSERT-SECTION-FIX). While the menu plays its exit animation the pointer leaving the
+ * clicked item makes Radix focus the menu itself, which would take the caret back, and an empty
+ * heading that loses it goes.
+ */
+function settleMenuFocus(
+  event: Event,
+  keepFocus: React.RefObject<boolean>,
+  focusAfterClose: React.RefObject<(() => void) | null>,
+) {
+  if (keepFocus.current) event.preventDefault();
+  keepFocus.current = false;
+  const focus = focusAfterClose.current;
+  focusAfterClose.current = null;
+  focus?.();
+}
+
+/** Runs once the menu has closed: the new heading's box takes the caret. */
+function focusAddedHeading(key: string | null): (() => void) | null {
+  return key ? () => focusHeadingInput(key) : null;
+}
 
 /**
  * Everything a cell needs beyond its own row, handed down by context rather than closed over.
@@ -140,9 +185,12 @@ interface GridContextValue {
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
-  act: (key: string, action: MenuAction) => void;
-  bandOpen: Set<string>;
+  /** Returns the key of a heading the action added, for the menu to focus once it has closed. */
+  act: (key: string, action: MenuAction) => string | null;
+  /** Drops a heading row left without a name (blurred empty). */
   closeEmptyBand: (key: string) => void;
+  /** The name a heading row's box goes by: the line under it, else the end of the table. */
+  headingLabelOf: (row: GridRow) => string;
   openPreview: (kind: LineFileKind, shown: LineFileShown) => void;
   /** The row's name in every label (`describeLine`). */
   labelOf: (row: GridRow) => string;
@@ -192,7 +240,7 @@ export function describeLine(
   index: number,
   pickedCode?: string | null,
 ): string {
-  if (line) return line.product_code ?? line.description ?? `line ${index + 1}`;
+  if (line) return line.product_code ?? (richOneLine(line.description) || null) ?? `line ${index + 1}`;
   return pickedCode || `line ${index + 1}`;
 }
 
@@ -236,7 +284,7 @@ function ItemCell({ row }: CellContext<GridRow, unknown>) {
   const notes = grid.itemNotes(row.original);
   return (
     <span className="block text-sm font-medium tabular-nums">
-      {row.original.index + 1}
+      {row.original.number ?? ''}
       {notes.length > 0 && (
         <span
           role="img"
@@ -433,33 +481,159 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   );
 }
 
+/**
+ * What the shared editor hands back, as a description: an editor holding no text at all is an
+ * empty description, so the catalogue default applies on save, as it did for an emptied textarea.
+ */
+export function descriptionFromEditor(html: string): string {
+  return richPlainText(html).trim() === '' ? '' : html;
+}
+
+/**
+ * The line description (QUOTE-DESC-RICHTEXT): the styled text in the cell, the shared rich text
+ * editor (full toolbar, as the price tag description) in a popover anchored to it, since the
+ * toolbar does not fit the column. A plain description shows and prints exactly as typed.
+ *
+ * One step to type (owner hand test, 10 Nov): the click on the cell opens the editor with its caret
+ * at the character clicked; Tab into the cell, Enter or Space opens it with the caret at the end.
+ */
 function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const row = tableRow.original;
   const { staged } = row;
   const value = staged.draft.description ?? '';
+  const labelId = React.useId();
+  const [open, setOpen] = React.useState(false);
+  /** Where the caret goes when the editor arrives: a text offset, or null for the end. */
+  const caretAt = React.useRef<number | null>(null);
+  /** A pointer is pressing the cell: its click, not the focus it causes, opens the editor. */
+  const pressing = React.useRef(false);
+  /**
+   * Focus coming back to the cell as the editor closes must not open it again. Held until that
+   * focus arrives (the close animation hands it back late, crew re-pass on 6b7c3dac) or until the
+   * person moves on: a focus or a press anywhere else.
+   */
+  const justClosed = React.useRef(false);
+  const cellRef = React.useRef<HTMLDivElement | null>(null);
+  const releaseGuard = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => releaseGuard.current?.(), []);
+  /** The editor while it is open, so a second click on the cell moves its caret. */
+  const editorRef = React.useRef<Editor | null>(null);
+
+  // Stable, so the editor's ready effect runs once per mount rather than on every keystroke.
+  const placeCaret = React.useCallback((editor: Editor) => {
+    editorRef.current = editor;
+    const offset = caretAt.current;
+    const at =
+      offset === null
+        ? Selection.atEnd(editor.state.doc).from
+        : docPosAtTextOffset(editor.state.doc, offset);
+    editor.commands.focus(at);
+  }, []);
+  const openAt = (offset: number | null) => {
+    caretAt.current = offset;
+    if (open && editorRef.current) placeCaret(editorRef.current);
+    else setOpen(true);
+  };
+  const onOpenChange = (next: boolean) => {
+    if (next) return; // Opening is the click / focus / key handlers' job, with the caret placed.
+    releaseGuard.current?.();
+    justClosed.current = true;
+    const elsewhere = (event: Event) => {
+      if (cellRef.current && event.target instanceof Node && cellRef.current.contains(event.target)) {
+        return;
+      }
+      release();
+    };
+    const release = () => {
+      justClosed.current = false;
+      document.removeEventListener('focusin', elsewhere, true);
+      document.removeEventListener('pointerdown', elsewhere, true);
+      releaseGuard.current = null;
+    };
+    document.addEventListener('focusin', elsewhere, true);
+    document.addEventListener('pointerdown', elsewhere, true);
+    releaseGuard.current = release;
+    setOpen(false);
+    editorRef.current = null;
+    grid.markVisited(row.key);
+  };
 
   if (!grid.editing || staged.removed) {
-    return (
-      <p className="text-xs whitespace-pre-line break-words">{value || '-'}</p>
-    );
+    return <RichDescription value={value} className="text-xs" />;
   }
 
+  const label = grid.labelOf(row);
   return (
-    <div className="min-w-0">
-      <Textarea
-        variant="sm"
-        rows={1}
-        value={value}
-        aria-label={`Description on ${grid.labelOf(row)}`}
-        placeholder="Type what the customer reads"
-        className="field-sizing-content min-h-8 resize-none px-2 py-1.5"
-        onChange={(event) =>
-          grid.update(row.key, { description: event.target.value })
-        }
-        onBlur={() => grid.markVisited(row.key)}
-      />
-    </div>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        {/* A div, not a <button>: the styled text holds block elements, which a button may not. */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={`Description on ${label}`}
+          title="Edit description"
+          onPointerDown={() => {
+            pressing.current = true;
+          }}
+          ref={cellRef}
+          onFocus={() => {
+            if (justClosed.current) {
+              // The focus handed back by the close: used up, the next one opens again.
+              releaseGuard.current?.();
+              return;
+            }
+            if (pressing.current || open) return;
+            openAt(null);
+          }}
+          onBlur={() => {
+            pressing.current = false;
+          }}
+          onClick={(event) => {
+            // The popover's own toggle is not used: it would open with no caret.
+            event.preventDefault();
+            pressing.current = false;
+            openAt(textOffsetAtPoint(event.currentTarget, event.clientX, event.clientY));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              openAt(null);
+            }
+          }}
+          className="block min-h-8 w-full min-w-0 cursor-text rounded-md border border-input bg-background px-2 py-1.5 text-left hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {value.trim() ? (
+            <RichDescription value={value} className="text-xs" />
+          ) : (
+            <span className="text-xs text-muted-foreground">Type what the customer reads</span>
+          )}
+        </div>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent
+          align="start"
+          collisionPadding={8}
+          className="w-[min(28rem,calc(100vw-2rem))] p-2"
+          // The editor takes the focus itself, at the caret (placeCaret), not the first button.
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <span id={labelId} className="sr-only">
+            {`Description text on ${label}`}
+          </span>
+          <RichTextEditor
+            aria-labelledby={labelId}
+            value={toEditorHtml(value)}
+            onChange={(html) =>
+              grid.update(row.key, { description: descriptionFromEditor(html) })
+            }
+            onEditorReady={placeCaret}
+            placeholder="Type what the customer reads"
+            minHeight={96}
+          />
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 
@@ -704,6 +878,8 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const [open, setOpen] = React.useState(false);
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocus = React.useRef(false);
+  /** A heading the action added: it takes the caret once the menu has closed. */
+  const focusAfterClose = React.useRef<(() => void) | null>(null);
 
   if (!grid.editing) return null;
 
@@ -724,7 +900,7 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
 
   const run = (action: MenuAction) => {
     keepFocus.current = action === 'section' || action === 'below';
-    grid.act(row.key, action);
+    focusAfterClose.current = focusAddedHeading(grid.act(row.key, action));
   };
 
   return (
@@ -748,10 +924,7 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          onCloseAutoFocus={(event) => {
-            if (keepFocus.current) event.preventDefault();
-            keepFocus.current = false;
-          }}
+          onCloseAutoFocus={(event) => settleMenuFocus(event, keepFocus, focusAfterClose)}
         >
           <DropdownMenuItem onSelect={() => run('below')}>
             Insert a line below
@@ -825,15 +998,18 @@ function NotesButton({ row }: { row: GridRow }) {
   );
 }
 
-/** A section heading, drawn as a full-width row above the line that carries it (AC-QLG03). */
-function SectionBar({ row }: { row: GridRow }) {
+/**
+ * A section heading row (AC-QLG03; PROPOSAL-FORM-COLLAPSE, owner 10 Nov: "a heading shouldnt be
+ * tied to line"): one full-width bar of its own, with the line drag handle to move it up and down.
+ * Moving or removing a line never moves or drops it.
+ */
+function SectionRow({ row }: { row: GridRow }) {
   const grid = useGrid();
-  const { staged } = row;
-  const value = staged.draft.band_label ?? '';
-  if (!grid.editing || staged.removed) {
+  const value = row.staged.draft.band_label ?? '';
+  if (!grid.editing) {
     return (
       <span
-        className="block truncate text-sm font-semibold text-foreground uppercase"
+        className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
         title={value}
       >
         {value}
@@ -842,22 +1018,34 @@ function SectionBar({ row }: { row: GridRow }) {
   }
   return (
     // The whole bar answers a right-click (Rename, Remove section), not only its input.
-    <div data-section-key={row.key} className="w-full">
+    <div data-section-key={row.key} className="flex w-full items-center gap-1">
+      <DataGridTableDndRowHandle rowId={row.key} />
       <Input
         variant="sm"
         value={value}
         data-band-key={row.key}
-        aria-label={`Section heading on ${grid.labelOf(row)}`}
+        aria-label={`Section heading ${grid.headingLabelOf(row)}`}
         title={value}
         placeholder="e.g. BILL NO 3 PAGE 15/4, OPTIONAL ITEMS"
         maxLength={150}
         className="max-w-md font-semibold"
-        onChange={(event) =>
-          grid.update(row.key, { band_label: event.target.value })
-        }
+        onChange={(event) => grid.update(row.key, { band_label: event.target.value })}
         onBlur={() => grid.closeEmptyBand(row.key)}
       />
     </div>
+  );
+}
+
+/** A heading row as it floats while dragged: its label, full width, nothing to type into. */
+function SectionPreview({ row }: { row: GridRow }) {
+  const value = (row.staged.draft.band_label ?? '').trim();
+  return (
+    <span
+      className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
+      title={value}
+    >
+      {value || 'Section'}
+    </span>
   );
 }
 
@@ -883,6 +1071,26 @@ const FLUSH = 'px-0';
  * hidden. The handle and the row menu only exist while editing (column visibility), so the
  * column order a user saves holds in both views.
  */
+/** The hidden anchor the quantity block of a grid scope follows (see its column). */
+const QTY_BLOCK = 'qty_block';
+
+/**
+ * The reader's order without any column the DOCUMENT owns (ids `mx-*`: its header columns, their
+ * + buttons, Total qty). Those always follow the hidden anchor in definition order, so a saved
+ * order can never pin them and a header the document moves moves on screen too (review B1).
+ */
+function readerOrder(order: string[]): string[] {
+  return order.filter((id) => !id.startsWith('mx-'));
+}
+
+/** Every leaf column id, in definition order. */
+function leafIds(columns: ColumnDef<GridRow>[]): string[] {
+  return columns.flatMap((column) => {
+    const children = (column as { columns?: ColumnDef<GridRow>[] }).columns;
+    return children?.length ? leafIds(children) : [String(column.id)];
+  });
+}
+
 const COLUMNS: ColumnDef<GridRow>[] = [
   {
     id: 'drag_handle',
@@ -905,7 +1113,7 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     cell: ItemCell,
     size: 24,
     minSize: 24,
-    enableHiding: false,
+    enableHiding: true,
     meta: {
       headerTitle: '#',
       headerClassName: TIGHT,
@@ -1010,6 +1218,19 @@ const COLUMNS: ColumnDef<GridRow>[] = [
       cellClassName: `${NARROW} align-top`,
     },
   },
+  // Where a grid scope's quantity block sits (PROPOSAL-FORM-COLLAPSE, Q3): never drawn, but in
+  // the column order on every scope, so the reader's saved layout places the block the same way
+  // on each one. The block's own columns are data (per document) and follow it.
+  {
+    id: QTY_BLOCK,
+    header: () => null,
+    cell: () => null,
+    size: 0,
+    minSize: 0,
+    enableResizing: false,
+    enableHiding: false,
+    meta: { headerTitle: 'Quantities', draggable: false },
+  },
   {
     id: 'total',
     accessorFn: (row) => row.staged.draft.is_rate_only,
@@ -1042,6 +1263,18 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 ];
 
 /**
+ * A plain scope in an edit session: + Column header right after Total (RM), at the end of the
+ * header row where the owner pointed (PROPOSAL-FORM-COLLAPSE, 10 Nov), ahead of the row menu.
+ */
+function withFirstHeaderColumn(columns: ColumnDef<GridRow>[]): ColumnDef<GridRow>[] {
+  return columns.flatMap((column) =>
+    column.id === 'total'
+      ? [column, ADD_FIRST_HEADER_COLUMN as ColumnDef<GridRow>]
+      : [column],
+  );
+}
+
+/**
  * The columns for a scope WITH column headers (PS-QUOTE-MATRIX, mock v3 frame 1): every column
  * above stays where it is except Qty, whose place goes to the quantity columns after Rate; Total
  * becomes Amount, and the description column carries the two footer labels.
@@ -1054,7 +1287,7 @@ function matrixColumns(headers: MatrixHeader[], editable: boolean): ColumnDef<Gr
         return [];
       case 'description':
         return [{ ...column, footer: MATRIX_LABEL_FOOTER }];
-      case 'rate':
+      case QTY_BLOCK:
         return [column, ...quantity];
       case 'total':
         return [
@@ -1153,7 +1386,6 @@ export function QuotationLinesGrid({
   const headers = React.useMemo(() => optimistic ?? serverColumns ?? [], [optimistic, serverColumns]);
   const isMatrix = hasColumns(headers);
   const columnsEditable = editing && Boolean(matrix?.onChange);
-  const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
   const [preview, setPreview] = React.useState<{
     items: AttachmentPreviewItem[];
     index: number;
@@ -1273,40 +1505,54 @@ export function QuotationLinesGrid({
     };
   }, [instanceKey, isMatrix]);
 
-  const openBand = React.useCallback(
-    (key: string) => {
-      setBandOpen((previous) => new Set(previous).add(key));
-      // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
-      focusSoon(`[data-band-key="${key}"]`);
-    },
+  /** A heading row, new in this session, with nothing typed yet. */
+  const newHeading = React.useCallback((): StagedQuotationLine => {
+    nextNewId.current += 1;
+    return {
+      id: null,
+      key: `new:${instanceKey}:${nextNewId.current}`,
+      line: null,
+      draft: sectionDraft(),
+      removed: false,
+    };
+  }, [instanceKey]);
+
+  const focusHeading = React.useCallback(
+    (key: string) => focusSoon(`[data-band-key="${key}"]`),
     [focusSoon],
   );
 
-  const closeEmptyBand = React.useCallback((key: string) => {
-    const held = linesRef.current.find((line) => line.key === key);
-    if (held && (held.draft.band_label ?? '').trim() !== '') return;
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
-  }, []);
+  /** A heading row blurred with no name is not a heading: it goes, and no line moves. */
+  const closeEmptyBand = React.useCallback(
+    (key: string) => {
+      const held = linesRef.current.find((line) => line.key === key);
+      if (!held || !isSectionDraft(held.draft)) return;
+      if ((held.draft.band_label ?? '').trim() !== '') return;
+      commit(linesRef.current.filter((line) => line.key !== key));
+    },
+    [commit],
+  );
 
   const addLine = React.useCallback(
     (withSection: boolean) => {
       const added = newLine();
-      commit([...linesRef.current, added]);
-      if (withSection) openBand(added.key);
+      if (!withSection) {
+        commit([...linesRef.current, added]);
+        return;
+      }
+      // Add a section: a heading row of its own, then a line under it to start the section.
+      const heading = newHeading();
+      commit([...linesRef.current, heading, added]);
+      focusHeading(heading.key);
     },
-    [commit, newLine, openBand],
+    [commit, focusHeading, newHeading, newLine],
   );
 
   const act = React.useCallback(
-    (key: string, action: MenuAction) => {
+    (key: string, action: MenuAction): string | null => {
       const current = linesRef.current;
       const index = current.findIndex((line) => line.key === key);
-      if (index < 0) return;
+      if (index < 0) return null;
       switch (action) {
         case 'below': {
           const added = newLine();
@@ -1315,17 +1561,21 @@ export function QuotationLinesGrid({
             added,
             ...current.slice(index + 1),
           ]);
-          return;
+          return null;
         }
-        case 'section':
-          openBand(key);
-          return;
+        case 'section': {
+          // Insert a section above: a heading row of its own, before this line. Its box takes the
+          // caret from the menu, once that has closed (settleMenuFocus).
+          const heading = newHeading();
+          commit([...current.slice(0, index), heading, ...current.slice(index)]);
+          return heading.key;
+        }
         case 'remove':
           onToggleRemoved?.(key);
-          return;
+          return null;
       }
     },
-    [commit, newLine, onToggleRemoved, openBand],
+    [commit, newHeading, newLine, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -1341,10 +1591,14 @@ export function QuotationLinesGrid({
     [commit],
   );
 
-  const allRows = React.useMemo<GridRow[]>(
-    () => lines.map((staged, index) => ({ key: staged.key, index, staged })),
-    [lines],
-  );
+  const allRows = React.useMemo<GridRow[]>(() => {
+    let counted = 0;
+    return lines.map((staged, index) => {
+      const heading = isSectionDraft(staged.draft);
+      if (!heading) counted += 1;
+      return { key: staged.key, index, number: heading ? null : counted, staged };
+    });
+  }, [lines]);
   const visibleRows = React.useMemo(
     () =>
       rowFilter ? allRows.filter((row) => rowFilter(row.staged)) : allRows,
@@ -1422,13 +1676,21 @@ export function QuotationLinesGrid({
         : (row.staged.draft.product_id ?? '');
       return describeLine(
         row.staged.line,
-        row.index,
+        (row.number ?? row.index + 1) - 1,
         !row.staged.line && productId
           ? (productCodeOf(productId) ?? (row.staged.draft[PICKED_CODE_KEY] || null))
           : null,
       );
     },
     [productCodeOf],
+  );
+
+  const headingLabelOf = React.useCallback(
+    (row: GridRow) => {
+      const below = allRows.slice(row.index + 1).find((next) => !isSectionDraft(next.staged.draft));
+      return below ? `above ${labelOf(below)}` : 'at the end';
+    },
+    [allRows, labelOf],
   );
 
   /**
@@ -1474,8 +1736,8 @@ export function QuotationLinesGrid({
       selectProduct,
       toggleRemoved: (key) => onToggleRemoved?.(key),
       act,
-      bandOpen,
       closeEmptyBand,
+      headingLabelOf,
       openPreview,
       visited,
       markVisited,
@@ -1484,9 +1746,9 @@ export function QuotationLinesGrid({
     }),
     [
       act,
-      bandOpen,
       brandOptions,
       closeEmptyBand,
+      headingLabelOf,
       editing,
       fetchProducts,
       itemNotes,
@@ -1561,6 +1823,18 @@ export function QuotationLinesGrid({
         addMatrixHeader(headersRef.current, `Header ${headersRef.current.length + 1}`),
       ),
     [changeAndFocus],
+  );
+  /** Returns the copy's key; its menu hands the copy the caret once it has closed. */
+  const duplicateHeader = React.useCallback(
+    (headerKey: string): string | null => {
+      const header = headersRef.current.find((row) => row.key === headerKey);
+      if (!header) return null;
+      const before = usedKeys(headersRef.current);
+      const next = duplicateMatrixHeader(headersRef.current, headerKey, `${header.label} (copy)`);
+      change(next);
+      return Array.from(usedKeys(next)).find((key) => !before.has(key)) ?? null;
+    },
+    [change],
   );
   const startRemoval = React.useCallback((key: string) => {
     const all = headersRef.current.flatMap((header) => [
@@ -1680,7 +1954,7 @@ export function QuotationLinesGrid({
       summary(
         headers,
         lines
-          .filter((line) => !line.removed)
+          .filter((line) => !line.removed && !isSectionDraft(line.draft))
           .map((line) => ({
             qty_cells: draftCells(line.draft),
             unit_price: line.draft.unit_price,
@@ -1700,6 +1974,7 @@ export function QuotationLinesGrid({
       change,
       addCol,
       addHeader,
+      duplicateHeader,
       pending,
       startRemoval,
       undoRemoval: () => setPending(null),
@@ -1717,6 +1992,7 @@ export function QuotationLinesGrid({
       cellNotes,
       change,
       columnsEditable,
+      duplicateHeader,
       editing,
       focusKey,
       headers,
@@ -1730,8 +2006,20 @@ export function QuotationLinesGrid({
     ],
   );
 
+  /**
+   * The reader's column order, held here so it can be completed before TanStack reads it: a
+   * column the saved order has never seen (this document's quantity columns, a header just added)
+   * goes where it is defined, after its neighbour, not to the far right.
+   */
+  const [columnOrder, setColumnOrder] = React.useState<string[]>([]);
+
   const columns = React.useMemo(
-    () => (isMatrix ? matrixColumns(headers, columnsEditable) : COLUMNS),
+    () =>
+      isMatrix
+        ? matrixColumns(headers, columnsEditable)
+        : columnsEditable
+          ? withFirstHeaderColumn(COLUMNS)
+          : COLUMNS,
     [columnsEditable, headers, isMatrix],
   );
   const copySources = matrix?.copySources ?? [];
@@ -1748,9 +2036,17 @@ export function QuotationLinesGrid({
         ...columnVisibility,
         drag_handle: editing,
         row_actions: editing,
+        [QTY_BLOCK]: false,
       },
+      columnOrder: columnOrder.length
+        ? mergeColumnOrderWithLeafColumns(columnOrder, leafIds(columns))
+        : columnOrder,
     },
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnOrderChange: (updater) =>
+      setColumnOrder((previous) =>
+        readerOrder(typeof updater === 'function' ? updater(previous) : updater),
+      ),
     enableSorting: false,
     columnResizeMode: 'onChange',
   });
@@ -1760,7 +2056,7 @@ export function QuotationLinesGrid({
    * so one menu serves every row (owner hand test, points 2 and 3).
    */
   const [menuTarget, setMenuTarget] = React.useState<{
-    kind: 'line' | 'section';
+    kind: 'line' | 'section' | 'header';
     key: string;
   } | null>(null);
   /**
@@ -1768,6 +2064,11 @@ export function QuotationLinesGrid({
    * description, Qty): there the browser's own menu shows, for copy, paste and spelling.
    */
   const targetOf = (element: Element | null) => {
+    // A column header's whole box, its name included, answers with Duplicate (owner, 10 Nov:
+    // right-click rather than an icon). Every other editable control keeps the browser's menu.
+    const group = element?.closest<HTMLElement>('[data-matrix-header-key]');
+    if (group?.dataset.matrixHeaderKey && columnsEditable)
+      return { kind: 'header' as const, key: group.dataset.matrixHeaderKey };
     if (
       element?.closest(
         'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
@@ -1784,36 +2085,32 @@ export function QuotationLinesGrid({
   };
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocusAfterMenu = React.useRef(false);
+  /** Puts the caret where the chosen item asked, once the menu has closed. */
+  const focusAfterMenu = React.useRef<(() => void) | null>(null);
   const menuLine = menuTarget
     ? (lines.find((line) => line.key === menuTarget.key) ?? null)
     : null;
 
-  const renderSection = React.useCallback(
-    (row: GridRow) => {
-      const label = (row.staged.draft.band_label ?? '').trim();
-      return label || (editing && bandOpen.has(row.key)) ? (
-        <SectionBar row={row} />
-      ) : null;
-    },
-    [bandOpen, editing],
+  const renderHeadingRow = React.useCallback(
+    (row: GridRow, options?: { overlay?: boolean }) =>
+      !isSectionDraft(row.staged.draft) ? null : options?.overlay ? (
+        // The drag preview: the heading itself, static (owner hand test, 10 Nov 2026).
+        <SectionPreview row={row} />
+      ) : (
+        <SectionRow row={row} />
+      ),
+    [],
   );
 
   const galleryItems = preview?.items ?? [];
 
   const renameSection = (key: string) => {
     keepFocusAfterMenu.current = true;
-    window.setTimeout(() => {
-      document.querySelector<HTMLElement>(`[data-band-key="${key}"]`)?.focus();
-    }, 0);
+    focusAfterMenu.current = () => focusHeadingInput(key);
   };
   const removeSection = (key: string) => {
-    update(key, { band_label: '' });
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
+    // The heading row alone: no line moves (PROPOSAL-FORM-COLLAPSE).
+    commit(linesRef.current.filter((line) => line.key !== key));
   };
 
   return (
@@ -1827,13 +2124,14 @@ export function QuotationLinesGrid({
           // Rows render under the default layout while the saved one loads, rather than as
           // skeletons: an editor must never hide the lines somebody is about to type into.
           loadingMode="spinner"
-          // A grid scope's columns are DATA (its own headers), so nothing is saved for it: a stored
-          // order would be re-applied against whichever headers exist (see DataGrid's opt-out).
-          listingKey={isMatrix ? null : 'projects.projects.view::quotation-lines'}
+          // ONE per-user layout for edit and view, plain and grid scopes alike (PROPOSAL-FORM-
+          // COLLAPSE, Q3, owner 10 Nov 2026). A grid scope's own columns are data: they follow
+          // the hidden quantity-block anchor, and the merge above places any it has not seen.
+          listingKey="projects.projects.view::quotation-lines"
           tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
           tableClassNames={{ headerRow: 'text-xs' }}
           emptyMessage={lines.length === 0 ? emptyHint : filterEmptyHint}
-          renderGroupHeader={renderSection}
+          renderFullRow={renderHeadingRow}
           rowClassName={(row: GridRow) =>
             row.staged.removed
               ? 'text-muted-foreground line-through opacity-70'
@@ -1905,9 +2203,10 @@ export function QuotationLinesGrid({
                   <DataGridTableDndRows
                     handleDragEnd={handleRowDragEnd}
                     dataIds={visibleRows.map((row) => row.key)}
-                    // A grid scope's two header rows are its column headers, edited in place;
-                    // the product columns keep their order there rather than dragging.
-                    columnsDraggable={!isMatrix}
+                    // The fixed columns drag the DataGrid way on every scope (Q3); a grid
+                    // scope's own header columns do not (their order is the document's, moved
+                    // by their grips), so the block stays together.
+                    columnsDraggable
                   />
                 </DataGridScroller>
                 {editing && (
@@ -1932,33 +2231,28 @@ export function QuotationLinesGrid({
                       <Plus className="size-4" aria-hidden />
                       Add a section
                     </Button>
-                    {/* How a grid starts: the first column header (R11, R12). Once there is
-                        one, + Column header sits at the end of the header row instead. */}
-                    {columnsEditable && !isMatrix && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-primary hover:text-primary"
-                        disabled={Boolean(matrix?.saving)}
-                        onClick={addHeader}
-                      >
-                        <Plus className="size-4" aria-hidden />
-                        Column header
-                      </Button>
-                    )}
                   </div>
                 )}
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent
               className="w-52"
-              onCloseAutoFocus={(event) => {
-                if (keepFocusAfterMenu.current) event.preventDefault();
-                keepFocusAfterMenu.current = false;
-              }}
+              onCloseAutoFocus={(event) =>
+                settleMenuFocus(event, keepFocusAfterMenu, focusAfterMenu)
+              }
             >
-              {menuTarget?.kind === 'section' ? (
+              {menuTarget?.kind === 'header' ? (
+                <ContextMenuItem
+                  disabled={Boolean(matrix?.saving) || pending !== null}
+                  onSelect={() => {
+                    keepFocusAfterMenu.current = true;
+                    const copy = duplicateHeader(menuTarget.key);
+                    focusAfterMenu.current = copy ? () => setFocusKey(copy) : null;
+                  }}
+                >
+                  Duplicate
+                </ContextMenuItem>
+              ) : menuTarget?.kind === 'section' ? (
                 <>
                   <ContextMenuItem
                     onSelect={() => renameSection(menuTarget.key)}
@@ -1987,7 +2281,7 @@ export function QuotationLinesGrid({
                     disabled={Boolean(menuLine?.removed)}
                     onSelect={() => {
                       keepFocusAfterMenu.current = true;
-                      act(menuTarget.key, 'section');
+                      focusAfterMenu.current = focusAddedHeading(act(menuTarget.key, 'section'));
                     }}
                   >
                     Insert a section above

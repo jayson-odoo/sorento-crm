@@ -265,6 +265,17 @@ def sweep_chat_facts(
     return facts.sweep(db, since=since, until=until, rebuild=rebuild)
 
 
+def purge_panel_drafts(db: Any) -> int:
+    """Hard-delete AI panel files attached but never sent, past 24 hours (AGENT-PANEL-COMPOSER P1).
+    Returns the drafts removed.
+
+    A doorway for the scheduler tick, which may not import `app.services.chatbot`.
+    """
+    from app.services.chatbot.panel_files import purge_drafts
+
+    return purge_drafts(db)
+
+
 def label_chat_topics_job(limit: int | None = None) -> dict[str, Any]:
     """The nightly topic labeller as an RQ job on `analytics` (CA-2): label every ask with no
     topic or a stale taxonomy version. A doorway like the sweep above; the rules live in

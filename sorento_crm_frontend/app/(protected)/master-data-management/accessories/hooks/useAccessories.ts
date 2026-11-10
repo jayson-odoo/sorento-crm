@@ -2,11 +2,11 @@ import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { listAccessoryTemplates } from '@/app/(protected)/dealer-kit/services/accessoryTemplateService';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   addAccessoryPicture,
+  copyProductAccessories,
   createAccessory,
   deleteAccessoryImage,
   getAccessory,
@@ -18,11 +18,10 @@ import {
   updateAccessory,
   uploadAccessoryImage,
 } from '../services/accessoryService';
-import { entryRef, withBoxStyle } from '../types/accessory.types';
+import { entryRef } from '../types/accessory.types';
 import type {
   AccessoryColour,
   AccessoryEntry,
-  OwnerAccessories,
   AccessoryOwnerKind,
   AccessoryWrite,
 } from '../types/accessory.types';
@@ -134,18 +133,12 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
   const queryClient = useQueryClient();
   const key = ownerAccessoriesKey(kind, id);
   return useMutation({
-    mutationFn: ({ next, boxStyleId }: { next: AccessoryEntry[]; boxStyleId?: string | null }) =>
-      boxStyleId === undefined
-        ? replaceOwnerAccessories(kind, id, next.map(entryRef))
-        : replaceOwnerAccessories(kind, id, next.map(entryRef), boxStyleId),
-    onMutate: async ({ next, boxStyleId }) => {
+    mutationFn: ({ next }: { next: AccessoryEntry[] }) =>
+      replaceOwnerAccessories(kind, id, next.map(entryRef)),
+    onMutate: async ({ next }) => {
       await queryClient.cancelQueries({ queryKey: key });
-      const previous = queryClient.getQueryData<OwnerAccessories>(key);
-      // The list and the owner's box style travel in one answer, so one cache entry holds both.
-      queryClient.setQueryData<OwnerAccessories>(
-        key,
-        withBoxStyle(next, boxStyleId === undefined ? previous?.box_style_id : boxStyleId),
-      );
+      const previous = queryClient.getQueryData<AccessoryEntry[]>(key);
+      queryClient.setQueryData<AccessoryEntry[]>(key, next);
       return { previous };
     },
     onError: (error: Error, _vars, context) => {
@@ -157,26 +150,6 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
       queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
       queryClient.invalidateQueries({ queryKey: ['product-combos'] });
     },
-  });
-}
-
-/** Saved accessories templates as picker options, read now and narrowed by what was typed. */
-export async function fetchBoxStyleOptions(query: string) {
-  const needle = query.trim().toLowerCase();
-  // A picker that cannot load its choices offers none; it must not throw into the form.
-  const templates = await listAccessoryTemplates().catch(() => []);
-  return templates
-    .filter((template) => !needle || template.name.toLowerCase().includes(needle))
-    .map((template) => ({ value: template.id, label: template.name }));
-}
-
-/** Saved accessories templates as picker options. */
-export function useBoxStyleOptions(enabled: boolean) {
-  return useQuery({
-    queryKey: ['dealer-kit-accessory-templates', 'options'],
-    queryFn: async () =>
-      (await listAccessoryTemplates()).map((template) => ({ value: template.id, label: template.name })),
-    enabled,
   });
 }
 
@@ -222,4 +195,27 @@ export function useReplaceAccessoryColours() {
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save the colours'),
   });
+}
+
+/**
+ * ACC-COPY-TO-PRODUCTS: `preview` is the dry run behind the confirm step, `copy` the write.
+ * Every product's list is refetched after a copy, since any of them may have changed.
+ */
+export function useCopyProductAccessories(sourceId: string) {
+  const queryClient = useQueryClient();
+  const preview = useMutation({
+    mutationFn: (targetIds: string[]) => copyProductAccessories(sourceId, targetIds, true),
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const copy = useMutation({
+    mutationFn: (targetIds: string[]) => copyProductAccessories(sourceId, targetIds),
+    onSuccess: (summary) => {
+      queryClient.invalidateQueries({ queryKey: ['owner-accessories'] });
+      queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
+      const noun = summary.targets === 1 ? 'product' : 'products';
+      toast.success(`Accessories copied to ${summary.targets} ${noun}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  return { preview, copy };
 }

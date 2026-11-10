@@ -540,6 +540,15 @@ class ProductService:
             .where(ItemClass.id == Product.item_class_id)
             .correlate(Product)
             .scalar_subquery(),
+            # ACC-COPY-TO-PRODUCTS review: the grids offer these headers as sortable.
+            "category_name": select(ProductCategory.category_name)
+            .where(ProductCategory.id == Product.category_id)
+            .correlate(Product)
+            .scalar_subquery(),
+            "brand_name": select(Brand.brand_name)
+            .where(Brand.id == Product.brand_id)
+            .correlate(Product)
+            .scalar_subquery(),
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":

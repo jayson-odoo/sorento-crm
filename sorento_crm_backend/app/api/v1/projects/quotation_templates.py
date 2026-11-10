@@ -65,6 +65,21 @@ def list_merge_fields(
     return _envelope(templates.serialize_merge_fields())
 
 
+@router.get("/quotation-templates/payment-terms")
+def list_payment_terms(
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Payment Terms select (QUOTE-TERMS-SELECT): this company's active AutoCount terms.
+    Declared before ``/{template_id}`` so the literal segment is not read as an id."""
+    from app.services import quote_terms_service as quote_terms
+
+    try:
+        return _envelope(quote_terms.list_terms(db, company_id=acting_company_id(db)))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/quotation-templates/cover-default")
 def get_cover_default(
     _user: dict = Depends(require_permission(VIEW)),
@@ -72,6 +87,15 @@ def get_cover_default(
     """The default cover design (the #2088 cover), the one source the designer's Add form starts
     from. Declared before ``/{template_id}`` so the literal segment is not read as an id."""
     return cover.default_design()
+
+
+@router.get("/quotation-templates/cover-sources")
+def get_cover_sources(
+    _user: dict = Depends(require_permission(VIEW)),
+):
+    """The fields a cover row can print (QUOTE-COVER-FIELDS), served so the designer's Source
+    list and the renderer cannot drift. Declared before ``/{template_id}``."""
+    return _envelope(cover.serialize_sources())
 
 
 @router.post("/quotation-templates/cover-preview", response_model=QuotationCoverPreviewResponse)

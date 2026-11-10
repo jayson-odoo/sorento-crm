@@ -40,6 +40,7 @@ EXPECTED = {
     "crm_projects_list": "projects.projects.view",
     "crm_project_detail": "projects.projects.view",
     "crm_project_quotations_list": "projects.projects.view",
+    "crm_project_quotation_lines": "projects.projects.view",
     "crm_project_forecast": "projects.projects.view",
     "crm_order_analytics": "order_management.orders.view",
     "crm_find": "inventory.stock.view",

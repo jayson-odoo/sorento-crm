@@ -142,7 +142,7 @@ vi.mock('../hooks/useNewProductApplications', () => ({
 }));
 vi.mock('../services/newProductApplicationService', () => ({
   searchNewProductApplicationProducts: (q: string) => state.search(q),
-  downloadNewProductApplicationExcel: (...a: unknown[]) => state.download(...a),
+  exportNewProductApplicationXlsx: (...a: unknown[]) => state.download(...a),
   linkNewProductApplicationAttachment: (...a: unknown[]) => state.linkAtt(...a),
 }));
 
@@ -166,6 +166,39 @@ vi.mock('@/hooks/useDeferredRowAction', () => ({
     state.unlinkInputs.push(input);
     return { run: state.unlinkRun, targetId: null, isPending: false, countdown: null };
   },
+}));
+
+// NPA-FORM-SLA: the SI's handling lock and SLA tab, mocked so each test sets the lock state.
+const lock = vi.hoisted(() => ({
+  enabled: true,
+  input: null as null | Record<string, unknown>,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/useHandlingLock', () => ({
+  useHandlingLock: (input: Record<string, unknown>) => {
+    lock.input = input;
+    return {
+      state: lock.enabled ? 'not_escalated' : 'other_holds',
+      businessCtasEnabled: lock.enabled,
+      tracker: lock.enabled ? null : { handled_by_name: 'Purchasing Manager' },
+      banner: null,
+      claim: vi.fn(),
+      takeOver: vi.fn(),
+      release: vi.fn(),
+      refresh: vi.fn(),
+      isMutating: false,
+    };
+  },
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockBanner', () => ({
+  HandlingLockBanner: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/HandlingLockActions', () => ({
+  HandlingLockReleaseMenuItem: () => null,
+}));
+vi.mock('@/app/(protected)/sla-management/_shared/FormSLATrackingTab', () => ({
+  default: (p: { sourceEntityType: string; sourceEntityId: string }) => (
+    <div data-testid="sla-tab">{`${p.sourceEntityType}:${p.sourceEntityId}`}</div>
+  ),
 }));
 
 import NewProductApplicationDetail from './NewProductApplicationDetail';
@@ -229,9 +262,6 @@ function detail(over: Partial<Detail> = {}): Detail {
     customer_code: null,
     customer_name: 'EXAMPLE DEVELOPER SDN BHD',
     project_name: 'EXAMPLE RESIDENCE, TOWER B',
-    first_line: 'XY-1234-MB',
-    lines_total: 2,
-    lines_done: 0,
     opened_codes: [],
     needed_by: null,
     submitted_at: null,
@@ -335,7 +365,6 @@ describe('who sees which next action', () => {
     state.data = detail({
       status: 'approved',
       status_label: 'Approved',
-      lines_done: 1,
       lines: [
         line({
           opened_product_id: 'p-1',
@@ -455,10 +484,9 @@ describe('the table form', () => {
     }
     expect(screen.getByText('NPA-000001')).toBeInTheDocument();
     expect(screen.queryByText(/product \d+ of \d+/i)).toBeNull();
+    // Owner hand test 9 Nov: no product table under the header.
     for (const h of [/product code/i, /product type/i, /dimension/i, /qty/i, /cost \(myr\)/i])
-      expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(3);
+      expect(screen.queryByRole('columnheader', { name: h })).toBeNull();
   });
 });
 
@@ -515,12 +543,49 @@ describe('PURCHASING FEEDBACK (Edit purchasing response)', () => {
 });
 
 describe('Download Excel', () => {
-  it('is in the gear menu and calls the download service with the application id', async () => {
+  it('is in the gear menu and queues the workbook in My Downloads, the stock inquiry PDF\'s way', async () => {
+    const { toast } = await import('@/lib/toast');
+    state.download.mockResolvedValue({ id: 'd-1', kind: 'new_product_application_xlsx', status: 'pending' });
     state.data = approved();
     render(<Page />);
     fireEvent.click(screen.getByRole('button', { name: /download excel/i }));
     await waitFor(() => expect(state.download).toHaveBeenCalledTimes(1));
     expect(state.download.mock.calls[0][0]).toBe('a-1');
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('My Downloads')),
+    );
+  });
+});
+
+describe('owner hand test 9 Nov: no product rows, no repeated status', () => {
+  it('shows no product table and no "line done" count', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({
+      status: 'submitted',
+      status_label: 'Submitted',
+      submitted_at: '2026-11-08T01:00:00',
+    } as Partial<Detail>);
+    render(<Page />);
+    expect(screen.queryByText(/line done|lines done/)).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: /product type/i })).toBeNull();
+    expect(screen.queryByText('XY-1234-BG')).toBeNull();
+  });
+
+  it('shows no "No debtor code" chip next to the customer', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = detail({ customer_code: null, customer_name: '300-1001 - EXAMPLE DEPOT SDN BHD' });
+    render(<Page />);
+    expect(screen.getByText(/300-1001 - EXAMPLE DEPOT SDN BHD/)).toBeInTheDocument();
+    expect(screen.queryByText('No debtor code')).toBeNull();
+  });
+
+  it('shows no "Approved by" banner: the status pill and the SLA tab say it', () => {
+    state.perms = new Set(['procurement.new_product_applications.view']);
+    state.data = { ...approved(), decided_by_name: 'Example Manager', decided_at: '2026-11-09T01:00:00' };
+    render(<Page />);
+    expect(screen.queryByText(/Approved by Example Manager/)).toBeNull();
+    expect(screen.queryByText(/^Approved\.$/)).toBeNull();
+    expect(screen.getAllByText('Approved').length).toBeGreaterThan(0);
   });
 });
 
@@ -537,8 +602,6 @@ describe('read view shows plain values (S3)', () => {
     expect(screen.queryAllByRole('textbox')).toHaveLength(0);
     expect(screen.queryAllByRole('combobox')).toHaveLength(0);
     expect(screen.queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(screen.getAllByText('Example kitchen sink').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Carton').length).toBeGreaterThan(0);
     expect(screen.getByText('17/01/2028')).toBeInTheDocument();
     expect(screen.getByText('17/10/2026')).toBeInTheDocument();
     expect(screen.getAllByText('-').length).toBeGreaterThan(0);
@@ -691,10 +754,10 @@ describe('NEW PRODUCT CODE (header)', () => {
     state.perms = new Set([OPEN]);
   });
 
-  it('has no Opened as column and the table keeps its paper columns', () => {
+  it('has no product table at all (owner hand test 9 Nov)', () => {
     render(<Page />);
     expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-    expect(screen.getByRole('columnheader', { name: /cost \(myr\)/i })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /cost \(myr\)/i })).toBeNull();
   });
 
   it('keeps the suggestion out of the page; Use <code> in the dialog pre-selects Link and saves nothing', async () => {
@@ -801,71 +864,6 @@ describe('Stock inquiry tab', () => {
   });
 });
 
-describe('older applications worked row by row (NPA-FROM-SI v3)', () => {
-  const opened = () =>
-    approved({
-      lines_done: 2,
-      lines: [
-        line({
-          opened_product_id: 'p-9',
-          opened_product_code: 'XY-1234-MB-9',
-          opened_product_name: 'Example sink 9',
-          opened_product_active: true,
-        }),
-        line({
-          id: 'l-2',
-          line_no: 2,
-          proposed_code: 'XY-1234-BG',
-          closed_reason: 'Customer walked away',
-        }),
-        line({ id: 'l-3', line_no: 3, proposed_code: 'XY-1234-ZZ' }),
-      ],
-    });
-
-  it('shows the Opened as column with the opened code and the Rejected reason per row', () => {
-    state.data = opened();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
-    const rows = screen.getAllByTestId('npa-line');
-    expect(within(rows[0]).getByText(/XY-1234-MB-9/)).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Rejected: Customer walked away/)).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Rejected:/)).toBeNull();
-    expect(within(rows[2]).queryByText(/XY-1234-MB-9/)).toBeNull();
-  });
-
-  it('keeps Undo on a resolved row for open_code, and it undoes that row', () => {
-    state.data = opened();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    const rows = screen.getAllByTestId('npa-line');
-    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Undo' }));
-    expect(state.undoLine).toHaveBeenCalledWith({ id: 'a-1', lineId: 'l-1' });
-    expect(within(rows[2]).queryByRole('button', { name: 'Undo' })).toBeNull();
-  });
-
-  it('shows the column but no Undo to a viewer without open_code', () => {
-    state.data = opened();
-    state.perms = new Set();
-    render(<Page />);
-    expect(screen.getByRole('columnheader', { name: /opened as/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
-  });
-
-  it('shows no Opened as column when no line is resolved', () => {
-    state.data = approved();
-    state.perms = new Set([OPEN]);
-    render(<Page />);
-    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
-  });
-
-  it('has no Brand column', () => {
-    state.data = opened();
-    render(<Page />);
-    expect(screen.queryByRole('columnheader', { name: /brand/i })).toBeNull();
-  });
-});
-
 describe('Stock inquiry tab status is a Badge (NPA-FROM-SI)', () => {
   it('draws the inquiry status through the Badge component', () => {
     state.data = detail({
@@ -885,5 +883,74 @@ describe('Stock inquiry tab status is a Badge (NPA-FROM-SI)', () => {
     const badge = pill.closest('[data-slot="badge"]');
     expect(badge).not.toBeNull();
     expect(badge!.textContent).toContain('Responded');
+  });
+});
+
+
+describe('NPA-FORM-SLA: the SI\'s SLA tab and handling lock', () => {
+  beforeEach(() => {
+    lock.enabled = true;
+    lock.input = null;
+  });
+
+  it('offers SLA Tracking to a view-all holder and renders the SI tracker tab for this NPA', () => {
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'SLA Tracking' }));
+    expect(screen.getByTestId('sla-tab')).toHaveTextContent('new_product_application:a-1');
+    expect(lock.input).toMatchObject({ sourceEntityType: 'new_product_application', enabled: true });
+  });
+
+  it('hides SLA Tracking from an applicant without a view-all slug, and reads no tracker', () => {
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = detail();
+    render(<Page />);
+    expect(screen.queryByRole('tab', { name: 'SLA Tracking' })).not.toBeInTheDocument();
+    expect(lock.input).toMatchObject({ enabled: false, sourceEntityId: null });
+  });
+
+  it('disables Approve and Reject while another person holds the escalated stage', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    state.data = detail({ status: 'submitted', status_label: 'Submitted', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    const approve = screen.getByRole('button', { name: 'Approve' });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAttribute('title', 'Being handled by Purchasing Manager - take over to act');
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+  });
+
+  it('disables Edit purchasing response while the purchasing stage is held by someone else', () => {
+    lock.enabled = false;
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = detail({ status: 'approved', status_label: 'Approved', submitted_at: '2026-11-08T01:00:00' });
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeDisabled();
+  });
+});
+
+
+describe('Responded, like the stock inquiry (owner re-test 9 Nov ~12:35)', () => {
+  const responded = () =>
+    detail({ status: 'responded', status_label: 'Responded', submitted_at: '2026-11-08T01:00:00' });
+
+  it('shows the Responded pill and keeps purchasing on it: Edit purchasing response and Reject', () => {
+    state.perms = new Set(['procurement.new_product_applications.open_code']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getAllByText('Responded').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Edit purchasing response' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument();
+  });
+
+  it('is locked for the applicant, who can still Revise', () => {
+    state.userId = 'u-owner';
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    state.data = responded();
+    render(<Page />);
+    expect(screen.getByRole('button', { name: 'Revise' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
   });
 });

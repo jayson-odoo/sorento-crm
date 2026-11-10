@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { richOneLine, richPlainText } from '@/lib/dealer-kit/rich-text';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -47,7 +48,9 @@ import {
   completeSetText,
   draftCells,
   lineErrors,
+  isSectionDraft,
   serverToDraft,
+  splitCarriedHeadings,
   toBody,
   totalFromDrafts,
   type LineDraft,
@@ -70,7 +73,11 @@ export function unfinishedStagedLines(lines: StagedQuotationLine[]): number {
  */
 export function stagedLinesToBody(lines: StagedQuotationLine[]): QuotationLineBulkItem[] {
   return lines
-    .filter((line) => !line.removed)
+    // A heading row left without a name is not sent (the server would refuse it).
+    .filter(
+      (line) =>
+        !line.removed && !(isSectionDraft(line.draft) && !(line.draft.band_label ?? '').trim()),
+    )
     .map((line) =>
       line.id ? { id: line.id, ...toBody(line.draft, line.line) } : toBody(line.draft, line.line),
     );
@@ -400,7 +407,7 @@ export function QuotationVersionEditor({
             (storedSet ? stored?.product_code : null) ??
             (draft[PICKED_CODE_KEY] || 'Selected set'),
           description:
-            picked?.name ?? (storedSet ? (stored?.description ?? undefined) : undefined),
+            picked?.name ?? (storedSet ? richOneLine(stored?.description) || undefined : undefined),
         };
       }
       const productId = draft.product_id;
@@ -421,7 +428,7 @@ export function QuotationVersionEditor({
           (stored?.product_id === productId ? stored.product_code : null) ??
           (draft[PICKED_CODE_KEY] || 'Selected product'),
         description:
-          stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
+          stored?.product_id === productId ? richOneLine(stored.description) || undefined : undefined,
       };
     },
     [],
@@ -463,13 +470,17 @@ export function QuotationVersionEditor({
     if (!selected || lines.isLoading || lines.isFetching) return;
     seedScope(
       selected.id,
-      sortedLines.map((line) => ({
-        id: line.id,
-        key: line.id,
-        line,
-        draft: serverToDraft(line, withCells),
-        removed: false,
-      })),
+      // A heading still carried by a line is seeded as its own row (PROPOSAL-FORM-COLLAPSE), so
+      // the session's baseline is already split and an untouched scope stays clean.
+      splitCarriedHeadings(
+        sortedLines.map((line) => ({
+          id: line.id,
+          key: line.id,
+          line,
+          draft: serverToDraft(line, withCells),
+          removed: false,
+        })),
+      ),
     );
   }, [
     withCells,
@@ -493,13 +504,15 @@ export function QuotationVersionEditor({
     () =>
       gridEditing && staged
         ? staged
-        : sortedLines.map((line) => ({
-            id: line.id,
-            key: line.id,
-            line,
-            draft: serverToDraft(line, withCells),
-            removed: false,
-          })),
+        : splitCarriedHeadings(
+            sortedLines.map((line) => ({
+              id: line.id,
+              key: line.id,
+              line,
+              draft: serverToDraft(line, withCells),
+              removed: false,
+            })),
+          ),
     [gridEditing, sortedLines, staged, withCells],
   );
 
@@ -667,7 +680,7 @@ export function QuotationVersionEditor({
     return (line: StagedQuotationLine) =>
       [
         line.line?.product_code,
-        line.draft.description,
+        richPlainText(line.draft.description),
         line.draft.brand_snapshot,
         line.draft.band_label,
       ].some((value) => (value ?? '').toLowerCase().includes(needle));

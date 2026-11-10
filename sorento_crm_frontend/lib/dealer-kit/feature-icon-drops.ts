@@ -4,8 +4,8 @@
  * placed tag, each visible feature icons layer that prints for that data, its subject's specs,
  * then `featureIconsFor` + `featureIconFit`, the same two functions the renderers draw with.
  */
-import { featureIconFit, featureIconsFor, type FeatureIcon } from './feature-icons';
-import { layerShownFor, subjectSpecs } from './product-block';
+import { featureIconFit, type FeatureIcon } from './feature-icons';
+import { layerFeatureIcons, layerShownFor } from './product-block';
 import type { LineTagData, TagBindingData, TagSheetDoc } from './tag-template-types';
 
 /** One tag that loses icons: its label (`2a`, never an id) and how many. */
@@ -48,7 +48,7 @@ export function featureIconDrops(
         if (layer.props?.kind !== 'feature_icons' || layer.visible === false) continue;
         if (!layerShownFor(layer, binding)) continue;
         // Only icons that would draw: one with no signed URL is skipped by the renderers anyway.
-        const icons = featureIconsFor(subjectSpecs(binding, layer), featureIcons).filter(
+        const icons = layerFeatureIcons(binding, layer, featureIcons).filter(
           (icon) => assetUrls?.[icon.id],
         );
         dropped += featureIconFit(icons.length, layer.props, layer.width_mm).dropped;

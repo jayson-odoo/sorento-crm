@@ -51,6 +51,7 @@ import {
   ShoppingCart,
   SquareMousePointer,
   Star,
+  Store,
   TrendingUp,
   UserCheck,
   UserCircle,
@@ -110,6 +111,14 @@ const STAFF_SIDEBAR: MenuConfig = [
     icon: LayoutGrid,
     path: '/',
     permissionsAny: ['sla_management.conversation_sla_tracking.view', 'sla.kpi.view'],
+  },
+  {
+    // SORENTO-TOWN: admin-only (owner, 10 Nov 2026, TOWN-V2) through its own permission, granted to the
+    // admin and superadmin roles; amounts are still redacted server-side for anyone else granted it.
+    title: 'Town',
+    icon: Store,
+    path: '/town',
+    permission: 'dashboards.town.view',
   },
   {
     title: 'Ideas',
@@ -637,6 +646,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'Item Classes',
             path: '/master-data-management/item-classes',
             permission: 'master_data.item_classes.view',
+          },
+          {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
           },
           {
             title: 'Units of Measure',
@@ -1557,6 +1571,13 @@ export const MENU_SIDEBAR: MenuConfig = [
     permission: 'sales.customer_asks.view',
     audience: 'salesperson',
   },
+  {
+    title: 'Dealer access',
+    icon: UserCheck,
+    path: '/sales/dealer-access',
+    permission: 'user_management.contacts.edit_own',
+    audience: 'salesperson',
+  },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
   ...MY_REQUEST_ITEMS,
 ];
@@ -2068,6 +2089,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Item Classes',
       path: '/master-data-management/item-classes',
       permission: 'master_data.item_classes.view',
+    },
+    {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
     },
     {
       title: 'Units of Measure',

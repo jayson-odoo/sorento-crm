@@ -170,8 +170,13 @@ export async function getRollups(filters: ScmFilters): Promise<ScmRollups> {
 
 export async function getWarehouseHealth(
   filters: ScmFilters,
+  { activeOnly = false }: { activeOnly?: boolean } = {},
 ): Promise<{ data: WarehouseHealth[] }> {
-  const res = await apiFetch(`${BASE}/warehouses?${filterParams(filters).toString()}`);
+  const sp = filterParams(filters);
+  // SCM-INACTIVE-LOCATIONS: the reorder / low stock / daily job scope pickers ask for
+  // ACTIVE locations only, so an inactive one can never be ticked.
+  if (activeOnly) sp.set('active_only', 'true');
+  const res = await apiFetch(`${BASE}/warehouses?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load warehouse health'));
   return res.json();
 }

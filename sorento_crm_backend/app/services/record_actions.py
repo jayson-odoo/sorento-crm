@@ -295,6 +295,25 @@ register(
     )
 )
 
+
+def _delete_point_ratio(db: Session, payload: dict):
+    from app.services.sales import target_service
+
+    return target_service.delete_point_ratio(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="point_ratio.delete",
+        entity_types=("point_ratio",),
+        execute=_delete_point_ratio,
+        window=WINDOW_DESTRUCTIVE,
+        # Ratio writes are `.edit` (add and edit too): who can set a ratio can remove one.
+        permission="sales.targets.edit",
+        label="Delete point ratio",
+    )
+)
+
 register(
     FormAction(
         key="product.delete",
@@ -1530,6 +1549,37 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="user_management.contacts.edit",
         label="Unlink customer",
+    )
+)
+
+def _unlink_dealer_access(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
+    from app.services import dealer_access_screen
+
+    # Runs from whichever request commits the window: the requester is the actor, and the link must still be one of
+    # their own accounts' links (it fails, and stays, when it is not).
+    requester = str(payload.get("requested_by_id") or "")
+    if not requester:
+        raise ValueError("dealer_access_link.unlink has no requester")
+    # `real_user_id` is the admin while one views as the requester (stamped at park time, `_REAL_USER_ACTIONS`).
+    with actor_scope(
+        AuditActor(
+            actor_type="user", user_id=requester, real_user_id=str(payload.get("real_user_id") or requester)
+        ),
+        db=db,
+    ):
+        return dealer_access_screen.unlink(db, requester, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="dealer_access_link.unlink",
+        # Parked on the LINK row (`respond_contact_customers`), one of the requester's own accounts'.
+        entity_types=("dealer_access_link",),
+        execute=_unlink_dealer_access,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit_own",
+        label="Unlink dealer access",
     )
 )
 
@@ -2859,6 +2909,51 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.projects.delete",
         label="Delete quotation",
+    )
+)
+
+
+def assert_form_draft_discardable(db: Session, draft_id: str, user_id):
+    """QUOTE-AUTOSAVE Discard draft (card Q5): the draft exists and is the caller's to discard -
+    edit rights on its project, and for a new proposal's private draft, the caller's own. Run at
+    park time and again when the window lapses. 404 for a draft the caller cannot see. Returns it.
+    """
+    from app.models.projects import Project, QuotationDocumentDraft
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    row = db.query(QuotationDocumentDraft).filter(QuotationDocumentDraft.id == draft_id).first()
+    if row is None or (row.document_id is None and str(row.owner_user_id) != str(user_id)):
+        raise handle_not_found("Draft", draft_id)
+    project = db.query(Project).filter(Project.id == row.project_id).first()
+    if project is None:
+        raise handle_not_found("Draft", draft_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return row
+
+
+def _discard_form_draft(db: Session, payload: dict):
+    from app.services import quotation_form_draft_service as drafts
+
+    user_id = payload.get("requested_by_id")
+    row = assert_form_draft_discardable(db, _entity_id(payload), user_id)
+    # Only the tab holding the draft when the window lapses may discard it: a newer tab opened
+    # during the countdown keeps what it typed (owner Q4). A click without a token (an older
+    # client) is checked the same way and refused.
+    drafts.assert_holder(db, row, payload.get("token"), str(user_id))
+    return drafts.discard_draft(db, row)
+
+
+register(
+    FormAction(
+        key="quotation_form_draft.discard",
+        entity_types=("quotation_form_draft",),
+        execute=_discard_form_draft,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Discard draft",
     )
 )
 

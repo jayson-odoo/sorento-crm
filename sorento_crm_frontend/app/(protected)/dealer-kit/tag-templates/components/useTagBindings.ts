@@ -333,9 +333,9 @@ export function useKitLibrary(): KitLibrary {
     return map;
   }, [assets]);
 
-  // The rule only (id, name, spec_key, values); the URL went into `assetUrls` above.
+  // The rule only (id, name, spec_key, values, conditions); the URL went into `assetUrls` above.
   const featureIcons = useMemo<FeatureIcon[]>(
-    () => iconRows.map(({ id, name, spec_key, values }) => ({ id, name, spec_key, values })),
+    () => iconRows.map(({ id, name, spec_key, values, conditions }) => ({ id, name, spec_key, values, conditions })),
     [iconRows],
   );
 

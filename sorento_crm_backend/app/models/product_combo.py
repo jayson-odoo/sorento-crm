@@ -79,6 +79,10 @@ class ProductCombo(Base):
     # tag prints no price at all (never a sum of the parts).
     description = Column(Text, nullable=True)
     free_items = Column(Text, nullable=True)
+    # COMBO-SETTINGS-UX: the main (host) product's label on the tag, and the rich-text
+    # template repeated once per part to print "All parts as a list".
+    main_label = Column(String(100), nullable=True)
+    parts_line = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=True)
     sell_price = Column(Numeric(12, 2), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
@@ -138,6 +142,8 @@ class ProductComboPart(Base):
     sell_price = Column(Numeric(12, 2), nullable=True)
     topup_amount = Column(Numeric(12, 2), nullable=True)
     is_upgrade = Column(Boolean, nullable=False, server_default="false", default=False)
+    # COMBO-SETTINGS-UX: this part's label on the tag ("CABINET", "BASIN").
+    label = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

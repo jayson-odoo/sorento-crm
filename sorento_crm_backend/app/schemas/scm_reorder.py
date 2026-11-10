@@ -157,6 +157,9 @@ class ReorderRunStatusResponse(BaseModel):
     # for a Re-plan edit without a second endpoint. ---
     warehouse_codes: List[str] = []
     is_all_warehouses: bool = False
+    # SCM-INACTIVE-LOCATIONS: the subset of `warehouse_codes` deactivated since the run.
+    # A Re-plan prefill drops them (create_run refuses an inactive code) and says which.
+    inactive_warehouse_codes: List[str] = []
     # None = every product (the run stored no scope); a list, INCLUDING empty, is a real
     # narrowing - the same "None vs []" reading `_resolve_product_ids` already uses.
     product_codes: Optional[List[str]] = None

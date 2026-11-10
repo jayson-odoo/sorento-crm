@@ -53,7 +53,7 @@ class CustomerGroup(Base, CompanyScopedMixin):
 
     The chatbot used to join ledgers by the name rule (`ledger_family_key`), which merges
     different legal entities and cannot join one owner's two names. A group is the office's
-    own say-so; a ledger with no group is its own customer (CUSTOMER-GROUP-GATE, 3 Nov 2026).
+    own say-so; a ledger with no group still falls back to the name rule.
     """
 
     __tablename__ = "customer_groups"
@@ -188,6 +188,10 @@ class Customer(Base, CompanyScopedMixin):
     # upper and trimmed: the sales reports' debtor type axis (SALES-UNIFIED 2.3). Not the CRM's
     # own `debtor_type` above, which is a different, office-owned concept.
     autocount_debtor_type = Column(String(50), nullable=True)
+    # AutoCount `Debtor.DisplayTerm` as the customers push sends it (`payment_terms_code`,
+    # contract 2.14). A CODE, resolved against `payment_terms` when a new quotation for this
+    # customer takes its default (QUOTE-TERMS-SELECT Q3), so the two feeds need no order.
+    payment_terms_code = Column(String(100), nullable=True)
     # The group this ledger belongs to (see `CustomerGroup`). NULL = ungrouped.
     customer_group_id = Column(
         UUID(as_uuid=False),

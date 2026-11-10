@@ -175,7 +175,7 @@ const ActivityLogList = () => {
           skeleton: <Skeleton className="w-28 h-7" />,
         },
         enableSorting: true,
-        enableHiding: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'entityType',

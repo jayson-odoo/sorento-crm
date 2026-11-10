@@ -4,13 +4,17 @@
  * and a line saved without it read alike.
  */
 import { describe, expect, it } from 'vitest';
-import type { QuotationLine } from '../../_shared/types/project.types';
+import type { QuotationLine, StagedQuotationLine } from '../../_shared/types/project.types';
 import {
   completeSetText,
   emptyDraft,
+  isSectionDraft,
   lineErrors,
+  sectionDraft,
   serverToDraft,
+  splitCarriedHeadings,
   toBody,
+  totalFromDrafts,
 } from './quotationLineDraft';
 
 function line(overrides: Partial<QuotationLine> = {}): QuotationLine {
@@ -127,5 +131,78 @@ describe('lineErrors: every line names a catalogue product or set (QUOTE-NO-FREE
   it('shows the error again when the product of a described line is cleared', () => {
     const cleared = { ...emptyDraft(), product_id: '', description: 'Wall-hung basin' };
     expect(Object.values(lineErrors(cleared))).toEqual([MESSAGE]);
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): "a heading shouldnt be tied to line". A heading is its
+ * own row (`is_section`): its body is the heading alone, it needs no product, adds nothing, and a
+ * product line that still carries a heading from before is shown as a heading row above it.
+ */
+describe('heading rows', () => {
+  const heading = sectionDraft('BILL NO 3 PAGE 15/4');
+
+  it('is a heading draft, with nothing to fix and nothing to add up', () => {
+    expect(isSectionDraft(heading)).toBe(true);
+    expect(isSectionDraft(emptyDraft())).toBe(false);
+    expect(lineErrors(heading)).toEqual({});
+    const priced = { ...emptyDraft(), product_id: 'p1', quantity: '2', unit_price: '10.00' };
+    expect(totalFromDrafts([priced, heading])).toBe(totalFromDrafts([priced]));
+  });
+
+  it('sends the heading alone', () => {
+    expect(toBody(heading, null)).toEqual({ is_section: true, band_label: 'BILL NO 3 PAGE 15/4' });
+  });
+
+  it('reads a stored heading row back as a heading draft', () => {
+    const stored = {
+      id: 's1',
+      version_id: 'v1',
+      is_section: true,
+      band_label: 'OPTION',
+      quantity: '0.00',
+      unit_price: '0.00',
+      line_total: '0.00',
+    } as unknown as QuotationLine;
+    const draft = serverToDraft(stored);
+    expect(isSectionDraft(draft)).toBe(true);
+    expect(draft.band_label).toBe('OPTION');
+  });
+
+  it('splits a heading carried by a product line into a heading row above it', () => {
+    const carried: StagedQuotationLine = {
+      id: 'l1',
+      key: 'l1',
+      line: null,
+      draft: { ...emptyDraft(), product_id: 'p1', band_label: 'PAGE 1' },
+      removed: false,
+    };
+    const plain: StagedQuotationLine = {
+      id: 'l2',
+      key: 'l2',
+      line: null,
+      draft: { ...emptyDraft(), product_id: 'p2' },
+      removed: false,
+    };
+    const split = splitCarriedHeadings([carried, plain]);
+    expect(split.map((row) => row.key)).toEqual(['heading:l1', 'l1', 'l2']);
+    expect(split[0]).toMatchObject({ id: null, line: null, removed: false });
+    expect(isSectionDraft(split[0].draft)).toBe(true);
+    expect(split[0].draft.band_label).toBe('PAGE 1');
+    expect(split[1].draft.band_label).toBe('');
+    expect(split[2]).toBe(plain);
+    // A label repeated on the next line is the same section, as the PDF reads it: one heading.
+    const repeat: StagedQuotationLine = {
+      id: 'l3',
+      key: 'l3',
+      line: null,
+      draft: { ...emptyDraft(), product_id: 'p3', band_label: 'PAGE 1' },
+      removed: false,
+    };
+    const once = splitCarriedHeadings([carried, repeat]);
+    expect(once.map((row) => row.key)).toEqual(['heading:l1', 'l1', 'l3']);
+    expect(once[2].draft.band_label).toBe('');
+    // Idempotent: a set already split is returned as it is.
+    expect(splitCarriedHeadings(split).map((row) => row.key)).toEqual(['heading:l1', 'l1', 'l2']);
   });
 });

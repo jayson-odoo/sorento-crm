@@ -404,6 +404,9 @@ class PriceTagRequestService:
                     code="INVALID_PART",
                 )
 
+            excluded_variant_ids = PriceTagRequestService._clean_excluded_variants(
+                db, product_id, line_data.get("excluded_variant_ids"), idx
+            )
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
             # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
@@ -558,6 +561,7 @@ class PriceTagRequestService:
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
+                    excluded_variant_ids=excluded_variant_ids,
                     sort_order=idx if sort_order is None else sort_order,
                     promotion_id=promotion_id,
                     manual_sell_price=manual_sell_price,
@@ -591,6 +595,26 @@ class PriceTagRequestService:
                 company_id=request.company_id,
             )
             PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+
+    @staticmethod
+    def _clean_excluded_variants(db: Session, product_id, sent, idx: int) -> list[str]:
+        """PRICETAG-UPGRADE-VARIANTS S3: the line's unticked variant members, de-duplicated in the
+        order sent. Every id must be a member of the line product's variant tree (the product
+        itself is not one); anything else is a 422 ``NOT_A_VARIANT`` naming the line."""
+        from app.services.dealer_kit.variant_service import variant_members
+
+        wanted = list(dict.fromkeys(str(item) for item in sent or []))
+        if not wanted:
+            return []
+        members = {m["product_id"] for m in variant_members(db, product_id)}
+        if any(item not in members for item in wanted):
+            raise AppException(
+                status_code=422,
+                message="A variant on this line is not part of its product's family.",
+                detail=f"line:{idx}",
+                code="NOT_A_VARIANT",
+            )
+        return wanted
 
     @staticmethod
     def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:

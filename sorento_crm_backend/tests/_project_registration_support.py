@@ -48,6 +48,7 @@ def reject_url(project_id: str) -> str:
 # D3 / A5: the stored fields, exactly.
 FIELD_KEYS = {
     "title",
+    "name",  # PROJECT-NAME Q5 (b): the dealer portal form carries the short name too
     "distributor_name",
     "customer_id",
     "customer_name",

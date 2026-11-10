@@ -40,6 +40,9 @@ class LookupOption(Base):
     sort_order = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, default=True, nullable=False)
     description = Column(Text, nullable=True)
+    # PROJECT-PARTY-ROLES: "many parties allowed" for a role of the set `project_party_role`
+    # (several trading houses per project). Every other set leaves it false and never shows it.
+    allows_many = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 

@@ -14,8 +14,9 @@ Two cases:
 1. A webhook/live row and a NEWER console/test row both exist for one contact - the webhook
    row's envelope must still be the one borrowed, even though it is older.
 2. Only console/test rows exist for a contact (no real delivery on record) - `_borrow_envelope`
-   must raise `ConsoleContactUnknown`, the same as a contact with no rows at all, rather than
-   silently handing back a console turn's own envelope.
+   must never hand back a console turn's own envelope. CONSOLE-SYNTH-ENVELOPE (9 Nov 2026):
+   with no `respond_contacts` row either it raises `ConsoleContactUnknown`; with one it builds
+   a fresh synthetic base (`tests/chatbot/test_console_synthetic_envelope.py`).
 """
 from __future__ import annotations
 
@@ -101,7 +102,7 @@ class TestBorrowEnvelopeIgnoresConsoleAndTestTurns:
             f"one: {envelope['contact']['custom_fields']!r}"
         )
 
-    def test_only_console_or_test_rows_on_record_raises_contact_unknown(self, session_factory):
+    def test_only_console_rows_and_no_contact_row_raises_contact_unknown(self, session_factory):
         now = datetime.now(timezone.utc)
         _seed_turn(
             session_factory,

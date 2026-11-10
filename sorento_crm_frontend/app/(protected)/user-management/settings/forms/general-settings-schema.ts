@@ -35,6 +35,7 @@ export const GeneralSettingsSchema = z.object({
     .optional(),
   supportEmail: z.string().email('Must be a valid email'),
   supportPhone: z.string().nullable().optional(),
+  fax: z.string().nullable().optional(),
   language: z.string(),
   timezone: z.string(),
   currency: z.string(),

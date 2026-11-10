@@ -226,6 +226,8 @@ class _PlainText(HTMLParser):
         self.buf = ""
         self._lists: List[List] = []  # [kind, counter]
         self._dropping = 0
+        #: The marker just written for a list item, while no text has followed it yet.
+        self._marker = ""
 
     def _flush(self, *, always: bool = False) -> None:
         if always or self.buf:
@@ -251,8 +253,13 @@ class _PlainText(HTMLParser):
             current[1] += 1
             marker = "• " if current[0] == "ul" else f"{current[1]}. "
             self.buf = "  " * (len(self._lists) - 1) + marker
+            self._marker = self.buf
         elif tag in ("p", "h1", "h2", "h3", "blockquote"):
-            self._flush()
+            # The editor wraps each list item's text in a <p>: it continues the marker's line
+            # ("• bullet one"), it does not start a new one.
+            if not (self._marker and self.buf == self._marker):
+                self._flush()
+            self._marker = ""
 
     def handle_endtag(self, tag):
         if tag in _DROP_WITH_CONTENT:
@@ -299,3 +306,37 @@ def plain_text(value: Optional[str]) -> Optional[str]:
     parser.close()
     parser._flush()
     return "\n".join(parser.lines).strip("\n")
+
+
+#: Sanitised rich output carrying no styling at all: bare paragraphs, line breaks and text.
+_UNSTYLED_RE = re.compile(r"^(?:<p>|</p>|<br>|[^<])*$")
+
+
+def sanitise_description(value: Optional[str]) -> Optional[str]:
+    """The save rule for a quotation line description (QUOTE-DESC-RICHTEXT).
+
+    Rich input goes through the same allow-list as a price tag (`_rich_pass`). Unlike
+    `sanitise_tag_html`, plain text is kept exactly as typed (a bill of quantities says
+    "PIPE <DN50"), since every reader of a plain description escapes it. An edit that carries no
+    styling at all is stored back as plain lines, so typing in an old plain line does not turn
+    it into HTML.
+    """
+    if value is None:
+        return None
+    # Leading invisible characters (BOM, zero-width) are dropped, so the server and the browser
+    # (whose `\s` differs from Python's) always agree on whether a value is rich.
+    value = _CONTROLS.sub("", value).lstrip("\ufeff\u200b\u200c\u200d\u2060\x85")
+    if not value.strip():
+        return None
+    if not is_rich(value):
+        return value
+    clean = _rich_pass(value)
+    if clean is None:
+        return None
+    if _UNSTYLED_RE.match(clean):
+        text = plain_text(clean)
+        if text and text.strip() and not is_rich(text):
+            return text
+        if not text or not text.strip():
+            return None
+    return clean

@@ -22,6 +22,7 @@ import {
   getSalesTargets,
   patchSalesTarget,
   patchSalesTargetPeriod,
+  updatePointRatio,
 } from './salesTargetService';
 
 function ok(body: unknown) {
@@ -54,6 +55,16 @@ describe('salesTargetService', () => {
     await getSalesTargets({ all: true, on: '2026-10-15', subject: 'agent', salesTeamId: 'none' });
     expect(apiFetch).toHaveBeenLastCalledWith(
       '/api/v1/sales/targets?all=true&subject=agent&sales_team_id=none',
+    );
+  });
+
+  it('passes the abort signal so a superseded search is cancelled', async () => {
+    apiFetch.mockResolvedValue(ok({ on: '2026-10-15', rows: [], unassigned_amount: 0, no_team_count: 0 }));
+    const controller = new AbortController();
+    await getSalesTargets({ all: true, subject: 'dealer', query: 'deluxe' }, controller.signal);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      '/api/v1/sales/targets?all=true&subject=dealer&query=deluxe',
+      { signal: controller.signal },
     );
   });
 
@@ -170,5 +181,15 @@ describe('salesTargetService', () => {
       body: JSON.stringify({ ids: ['t1', 't2'] }),
     });
     expect(saveBlobAs).not.toHaveBeenCalled();
+  });
+
+  it('edits a point ratio with PATCH on its id (POINT-RATIO-EDIT)', async () => {
+    apiFetch.mockResolvedValue(ok({ id: 'r1' }));
+    await updatePointRatio('r1', { effective_from: '2026-02-01', rm_per_point: 1.25 });
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets/point-ratios/r1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ effective_from: '2026-02-01', rm_per_point: 1.25 }),
+    });
   });
 });

@@ -3370,12 +3370,7 @@ def stamp_customer_options(
     for option in options:
         option = dict(option)
         if not option.get("stamp"):
-            # A line with no row behind it (its identity is its code, not a uuid) is the contact's
-            # typed word: matched as search matches it (CUSTOMER-GROUP-GATE).
-            from app.services.chatbot.lanes.business.fetch import is_uuid as is_uuid_value
-
-            typed = not any(is_uuid_value(u) for u in (option.get("uuids") or [option.get("uuid")]) if u)
-            value = stamp(option.get("name") or option.get("label") or option.get("code"), bases_with_do, typed=typed)
+            value = stamp(option.get("name") or option.get("label") or option.get("code"), bases_with_do)
             if value:
                 option["stamp"] = value
         out.append(option)

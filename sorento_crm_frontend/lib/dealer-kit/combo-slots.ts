@@ -21,12 +21,23 @@ export interface ComboShape {
 
 type ShapePart = Pick<ComboPartOption, 'choice_group' | 'is_upgrade'>;
 
+/** The groups that ARE a choice: 2+ non-upgrade parts. A one-part group is a fixed part (the
+ *  backend's `template_needs.pick_one_groups`, COMBO-SETTINGS-UX owner round 1). */
+export function pickOneGroups(parts: ShapePart[]): Set<string> {
+  const sizes = new Map<string, number>();
+  for (const part of parts) {
+    if (!part.is_upgrade && part.choice_group) sizes.set(part.choice_group, (sizes.get(part.choice_group) ?? 0) + 1);
+  }
+  return new Set([...sizes].filter(([, size]) => size > 1).map(([role]) => role));
+}
+
 export function comboShape(parts: ShapePart[]): ComboShape {
   const shape: ComboShape = { fixed: 0, groups: [], upgrades: 0 };
+  const choices = pickOneGroups(parts);
   for (const part of parts) {
     if (part.is_upgrade) {
       shape.upgrades += 1;
-    } else if (part.choice_group) {
+    } else if (part.choice_group && choices.has(part.choice_group)) {
       const group = shape.groups.find((g) => g.role === part.choice_group);
       if (group) group.size += 1;
       else shape.groups.push({ role: part.choice_group, size: 1 });

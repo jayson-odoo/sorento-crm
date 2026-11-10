@@ -33,6 +33,7 @@ from app.models.product_combo import ProductCombo
 from app.models.resources import Attachment, AttachmentType
 from app.utils.tag_rich_text import sanitise_tag_html
 from app.services.error_handler import AppException, handle_not_found
+from app.services.image_thumbnailer import store_renditions, thumbnail_key_for
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -49,8 +50,20 @@ MAX_IMAGES = 12
 MAX_COLOURS = 12
 MAX_SPEC_CHARS = 4000
 MAX_REMARK_CHARS = 1000
+#: One list (product or combo) holds at most this many entries (the PUT body cap, schemas/accessory.py).
+MAX_LIST_ENTRIES = 100
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 STORAGE_PREFIX = "accessory_image"
+#: How long a list read waits for a picture's thumb to be made; one not ready by then shows the
+#: screen's placeholder and is there on the next read. Short, because a product page reads one list
+#: per combo and the request holds its connection meanwhile.
+THUMB_WAIT_SECONDS = 3.0
+
+
+def _delete_stored(provider: str, key: str) -> None:
+    """An original goes with its thumb (made at upload) and its medium (`delete_object_best_effort`)."""
+    delete_object_best_effort(provider, key)
+    delete_object_best_effort(provider, thumbnail_key_for(key))
 _IMAGE_MIME_BY_EXT = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 
 
@@ -237,7 +250,7 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
     price tag description unless the list row overrides it."""
     from app.services.dealer_kit.pricing import resolve_prices
     from app.services.dealer_kit.product_images import gallery_images
-    from app.services.dealer_kit.tag_data_service import staff_viewer
+    from app.services.dealer_kit.tag_data_service import spec_lines, staff_viewer
 
     viewer = viewer or staff_viewer()
     prices = resolve_prices(db, [product], viewer, None).get(product.id)
@@ -258,6 +271,11 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
         "colours": [],
         "code": product.product_code,
         "list_price": prices.list_price if prices else None,
+        # TAG-ACC-CARD-RESIZE Q4: what a card's `{{product.*}}` fields read for this item, as a
+        # normal text layer reads them for the tag's own product.
+        "sell_price": prices.offer_price if prices and prices.offer_price is not None else None,
+        "spec_lines": spec_lines(db, product),
+        "price_tag_description": product.price_tag_description,
     }
 
 
@@ -318,9 +336,16 @@ class AccessoryService:
 
     # ------------------------------------------------------------------ library
 
-    def serialize(self, accessory: Accessory, counts: Optional[Dict[str, tuple]] = None, link=None) -> Dict[str, Any]:
+    def serialize(
+        self,
+        accessory: Accessory,
+        counts: Optional[Dict[str, tuple]] = None,
+        link=None,
+        with_thumbs: bool = True,
+    ) -> Dict[str, Any]:
         """The library row as the master data screen reads it (its OWN text; a list row's overrides
-        ride in `entry`, never merged in)."""
+        ride in `entry`, never merged in). A batch caller passes `with_thumbs=False` and runs
+        `_with_thumbs` once over all its rows."""
         if counts is None:
             counts = self._counts([accessory.id])
         product_count, combo_count = counts.get(accessory.id, (0, 0))
@@ -334,7 +359,30 @@ class AccessoryService:
         }
         if link is not None:
             out["entry"] = self._entry_of(link)
-        return out
+        return self._with_thumbs([out])[0] if with_thumbs else out
+
+    def _with_thumbs(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Each picture of these rows gains `thumb_url`, its 320 px rendition, from ONE call to the
+        rendition service (IMAGE-UNIFY: a small picture on a screen is never the original). None
+        while it is not ready: the screen shows its placeholder and the next read has it."""
+        from app.services import image_thumbnailer
+
+        ids = [picture["attachment_id"] for row in rows for picture in row.get("images") or []]
+        # `image` too: a legacy accessory keeps its only picture there, outside `images`.
+        ids += [row["image"]["attachment_id"] for row in rows if row.get("image")]
+        thumbs = (
+            image_thumbnailer.rendition_urls(self.db, ids, "thumb", wait_seconds=THUMB_WAIT_SECONDS)
+            if ids
+            else {}
+        )
+        for row in rows:
+            row["images"] = [
+                {**picture, "thumb_url": thumbs.get(picture["attachment_id"])}
+                for picture in row.get("images") or []
+            ]
+            if row.get("image"):
+                row["image"] = {**row["image"], "thumb_url": thumbs.get(row["image"]["attachment_id"])}
+        return rows
 
     @staticmethod
     def _entry_of(link) -> Dict[str, Any]:
@@ -359,7 +407,7 @@ class AccessoryService:
         )
         counts = self._counts([row.id for row in rows])
         return {
-            "data": [self.serialize(row, counts) for row in rows],
+            "data": self._with_thumbs([self.serialize(row, counts, with_thumbs=False) for row in rows]),
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -420,7 +468,7 @@ class AccessoryService:
         self.db.commit()
         for sweep in sweeps:
             if sweep:
-                delete_object_best_effort(*sweep)
+                _delete_stored(*sweep)
 
     # ------------------------------------------------------------------ pictures
 
@@ -442,9 +490,10 @@ class AccessoryService:
         # survive into a key that `extract_key` later decodes); it is kept as the display name only.
         key = f"{STORAGE_PREFIX}/{attachment_id}.{ext}"
         provider = default_provider()
-        stored_key, _url = get_backend(provider).upload_file(
-            file_content=content, file_path=key, content_type=mime
-        )
+        backend = get_backend(provider)
+        stored_key, _url = backend.upload_file(file_content=content, file_path=key, content_type=mime)
+        # Thumb + medium now, as every other upload path does, so a list never waits to make them.
+        thumbnail = store_renditions(backend, provider, stored_key, content, mime)
         try:
             self.db.add(
                 Attachment(
@@ -454,6 +503,7 @@ class AccessoryService:
                     stored_filename=safe_name,
                     file_path=cdn_base_url(provider, stored_key),
                     file_size_bytes=len(content),
+                    thumbnail_path=thumbnail,
                     mime_type=mime,
                     file_hash=hashlib.sha256(content).hexdigest(),
                     entity_type="general",
@@ -465,7 +515,7 @@ class AccessoryService:
             )
             self.db.flush()
         except Exception:
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         return attachment_id, provider, stored_key
 
@@ -525,7 +575,7 @@ class AccessoryService:
             self.db.commit()
         except Exception:
             self.db.rollback()
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         return self._image_out(image)
 
@@ -571,7 +621,7 @@ class AccessoryService:
         sweep = self._drop_attachment(attachment_id)
         self.db.commit()
         if sweep:
-            delete_object_best_effort(*sweep)
+            _delete_stored(*sweep)
 
     def picture_in_scope(self, image_id: str) -> Optional[AccessoryImage]:
         """The picture when its accessory is visible to the caller's company scope, else None."""
@@ -633,10 +683,10 @@ class AccessoryService:
             self.db.commit()
         except Exception:
             self.db.rollback()
-            delete_object_best_effort(provider, stored_key)
+            _delete_stored(provider, stored_key)
             raise
         if sweep:
-            delete_object_best_effort(*sweep)
+            _delete_stored(*sweep)
 
         image = image_of(self.db, attachment_id)
         if image is None:
@@ -663,6 +713,8 @@ class AccessoryService:
         self, product_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
     ) -> List[Dict[str, Any]]:
         product = self._product_or_404(product_id)
+        # Same lock as `copy_product_list`, so a list save and a copy on one product take turns.
+        self.db.query(Product.id).filter(Product.id == product.id).with_for_update(key_share=True).first()
         style_id = self._resolve_box_style(box_style, product.company_id)
         resolved = self._resolve_items(items, product.company_id, refused={product.id: "A product cannot list itself"})
         self.db.query(ProductAccessory).filter(ProductAccessory.product_id == product_id).delete(
@@ -684,6 +736,96 @@ class AccessoryService:
         self.db.commit()
         return self.product_list(product_id)
 
+    def copy_product_list(
+        self, source_id: str, target_ids: List[str], *, dry_run: bool = False
+    ) -> Dict[str, int]:
+        """ACC-COPY-TO-PRODUCTS: add the source's entries each target is missing, at the end, in the
+        source's order, with the source row's overrides; the source's box style goes to targets that
+        have none. All or nothing: a target outside the source's company reads as missing (404), a
+        list that would pass `MAX_LIST_ENTRIES` refuses the call naming it."""
+        source = self._product_or_404(source_id)
+        links = _product_links(self.db, source.id)
+        if not links:
+            raise AppException(status_code=422, message="This product has no accessories to copy")
+
+        try:
+            normalised = [str(uuid.UUID(str(value))) for value in target_ids]
+        except ValueError:
+            raise AppException(status_code=422, message="Each target must be a product id")
+        wanted = list(dict.fromkeys(value for value in normalised if value != source.id))
+        query = self.db.query(Product).filter(Product.id.in_(wanted)).order_by(Product.id)
+        if not dry_run:
+            # A second copy or a list save (`set_product_list`) on the same product waits rather than
+            # racing into the unique constraint. NO KEY UPDATE, so the FK checks of the inserted rows
+            # (FOR KEY SHARE on target and item products) never deadlock against it.
+            query = query.with_for_update(of=Product, key_share=True)
+        rows = query.all() if wanted else []
+        targets = {row.id: row for row in rows}
+        for value in wanted:
+            row = targets.get(value)
+            if row is None or (source.company_id is not None and row.company_id != source.company_id):
+                raise handle_not_found("Product", value)
+
+        existing: Dict[str, List[ProductAccessory]] = {value: [] for value in wanted}
+        if wanted:
+            for row in self.db.query(ProductAccessory).filter(ProductAccessory.product_id.in_(wanted)).all():
+                existing[row.product_id].append(row)
+
+        summary = {
+            "targets": len(wanted),
+            "targets_with_a_list": 0,
+            "entries_added": 0,
+            "entries_already_there": 0,
+            "box_style_set": 0,
+        }
+        additions: List[ProductAccessory] = []
+        for value in wanted:
+            target = targets[value]
+            have = existing[value]
+            if have:
+                summary["targets_with_a_list"] += 1
+            keys = {(row.accessory_id, row.item_product_id) for row in have}
+            next_order = max((row.sort_order for row in have), default=-1) + 1
+            added = 0
+            for link in links:
+                if link.item_product_id == value:
+                    continue  # a product cannot list itself
+                if (link.accessory_id, link.item_product_id) in keys:
+                    summary["entries_already_there"] += 1
+                    continue
+                additions.append(
+                    ProductAccessory(
+                        product_id=value,
+                        accessory_id=link.accessory_id,
+                        item_product_id=link.item_product_id,
+                        sort_order=next_order + added,
+                        image_id=link.image_id,
+                        name_override=link.name_override,
+                        spec_override=link.spec_override,
+                        remark_override=link.remark_override,
+                    )
+                )
+                added += 1
+            if len(have) + added > MAX_LIST_ENTRIES:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        f"{target.product_code} would list {len(have) + added} accessories; "
+                        f"a list holds at most {MAX_LIST_ENTRIES}"
+                    ),
+                )
+            summary["entries_added"] += added
+            if source.accessory_box_preset_id and not target.accessory_box_preset_id:
+                summary["box_style_set"] += 1
+                if not dry_run:
+                    target.accessory_box_preset_id = source.accessory_box_preset_id
+
+        if dry_run:
+            return summary  # nothing was changed: the box style is set only when not dry_run
+        self.db.add_all(additions)
+        self.db.commit()
+        return summary
+
     def combo_list(self, combo_id: str) -> List[Dict[str, Any]]:
         self._combo_or_404(combo_id)
         return self.combo_list_rows(combo_id)
@@ -698,11 +840,10 @@ class AccessoryService:
         combo = self._combo_or_404(combo_id)
         style_id = self._resolve_box_style(box_style, self._product_or_404(combo.host_product_id).company_id)
         host = self._product_or_404(combo.host_product_id)
-        # One list of free products, never two: a product already IN the combo (a part) is not
-        # also its free item, and the host is the combo itself.
+        # The host is the combo itself, so it is never its own free item. A part may be
+        # (COMBO-FREE-PART, owner 9 Nov: the flyer lists the basin tap as a part AND prints it
+        # in the FREE box); it stays a part, and the combo's prices do not change.
         refused = {host.id: "The combo's own product cannot be its free item"}
-        for part in combo.parts or []:
-            refused.setdefault(part.part_product_id, "This product is already a part of this combo")
         resolved = self._resolve_items(items, host.company_id, refused=refused)
         self.db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo_id).delete(
             synchronize_session=False
@@ -778,8 +919,8 @@ class AccessoryService:
                         }
                     )
             elif link.accessory is not None:
-                out.append(self.serialize(link.accessory, counts, link))
-        return out
+                out.append(self.serialize(link.accessory, counts, link, with_thumbs=False))
+        return self._with_thumbs(out)
 
     def _resolve_items(
         self, items: List[Dict[str, Any]], company_id: Optional[str], *, refused: Dict[str, str]
