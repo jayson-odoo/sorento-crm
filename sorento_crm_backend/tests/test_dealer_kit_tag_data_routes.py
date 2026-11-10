@@ -353,6 +353,8 @@ def test_product_tag_data_keeps_every_field(api):
         "code",
         "name",
         "dimensions",
+        # COMBO-SETTINGS-UX: the same measurement as L780xW480xH400mm.
+        "dimensions_lwh",
         "spec_lines",
         "specs",
         "images",

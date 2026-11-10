@@ -52,11 +52,6 @@ export function copySummaryLines(summary: AccessoryCopySummary): string[] {
         ? `, ${plural(summary.entries_already_there, 'entry')} already there ${summary.entries_already_there === 1 ? 'is' : 'are'} left as ${summary.entries_already_there === 1 ? 'it is' : 'they are'}.`
         : '.'),
   );
-  if (summary.box_style_set > 0) {
-    lines.push(
-      `The box style is set on ${plural(summary.box_style_set, 'product')} that had none.`,
-    );
-  }
   return lines;
 }
 
