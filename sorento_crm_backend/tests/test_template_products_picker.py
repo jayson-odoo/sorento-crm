@@ -115,10 +115,15 @@ class TestAssignByIds:
 
     def test_more_than_500_ids_is_refused(self, env):
         db, c, _ = env
+        ref = _reference(db)
+        _product(db, ref)
         t = _template(db, "Pick")
         ids = [str(uuid.uuid4()) for _ in range(501)]
-        res = c.post(f"{DK}/tag-templates/{t}/assign", json={"product_ids": ids, "action": "add"})
+        # With a brand that matches, so only the id cap can refuse it.
+        res = c.post(f"{DK}/tag-templates/{t}/assign",
+                     json={"product_ids": ids, "brand_ids": [ref[1].id], "action": "add"})
         assert res.status_code == 422
+        assert _links(db, t) == set()
 
     def test_ids_narrow_a_filter_rather_than_widen_it(self, env):
         """AND across kinds, as the filter already is: ids plus a brand = those ids of that brand."""
@@ -131,6 +136,7 @@ class TestAssignByIds:
         db.add(other)
         db.flush()
         same_brand = _product(db, ref)
+        _product(db, ref)  # same brand, not picked
         other_brand = _product(db, ref, brand=other)
         t = _template(db, "Pick")
         res = c.post(f"{DK}/tag-templates/{t}/assign/preview",

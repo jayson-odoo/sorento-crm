@@ -129,21 +129,28 @@ describe('TemplateProductsDialog', () => {
   });
 
   it('Select all adds the matching products to the ticks instead of replacing them, Clear goes back', async () => {
-    // A page of two that does not hold seeded p1, so the page header tick shows the banner.
+    // A page of two that does not hold seeded p1/p2; the page header tick (p3, p4) shows the banner,
+    // and "Select all" brings p5 too.
+    const pageRows = [row('p3', 'SRTKS-8050-BK'), row('p4', 'SRTKS-6045-SS')];
     products.getProducts.mockImplementation(async (params: { pageSize: number }) =>
       params.pageSize > 100
-        ? { data: [row('p3', 'SRTKS-8050-BK'), row('p4', 'SRTKS-6045-SS')], pagination: { total: 2, page: 1, limit: 501 } }
-        : { data: [row('p3', 'SRTKS-8050-BK'), row('p4', 'SRTKS-6045-SS')], pagination: { total: 30, page: 1, limit: 25 } },
+        ? { data: [...pageRows, row('p5', 'SRTKS-9050-SS')], pagination: { total: 3, page: 1, limit: 501 } }
+        : { data: pageRows, pagination: { total: 30, page: 1, limit: 25 } },
     );
     mount();
     await box('SRTKS-8050-BK');
     await waitFor(() => expect(screen.getByText('2 use this template')).toBeTruthy());
     fireEvent.click(screen.getByRole('checkbox', { name: /select all/i }));
+    expect(screen.getByText('4 use this template after Save: 2 added, 0 removed')).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: /Select all 30 records/ }));
+    // Seeded p1 and p2 survive: Select all added, it did not replace.
+    await waitFor(() =>
+      expect(screen.getByText('5 use this template after Save: 3 added, 0 removed')).toBeTruthy(),
+    );
+    // Clear goes back to the ticks just before Select all, never to nothing.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
     await waitFor(() =>
       expect(screen.getByText('4 use this template after Save: 2 added, 0 removed')).toBeTruthy(),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
-    await waitFor(() => expect(screen.getByText('2 use this template')).toBeTruthy());
   });
 });
