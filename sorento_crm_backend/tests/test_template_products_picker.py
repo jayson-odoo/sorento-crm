@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from tests._pg_fixture import unique_code
 from tests.test_product_tag_templates import (  # noqa: F401  (env is a fixture)
     DK,
@@ -362,3 +364,86 @@ class TestJunkAndForeign:
         res = c.get("/api/v1/master-data/products/", params={"tag_template_id": theirs.id})
         assert res.status_code == 200, res.text
         assert res.json()["data"] == []
+
+
+# ---------------------------------------------------------------------------
+# Crew pass on c6e3e014 (AC-7): what the product card SHOWS as Default LP / SP never moves
+# ---------------------------------------------------------------------------
+
+
+def _typed(db, name: str, price_type):
+    """A published template with a price type (None fits LP and SP lines)."""
+    from app.models.dealer_kit import TagTemplate
+
+    tid = _template(db, name)
+    db.get(TagTemplate, tid).price_type = price_type
+    db.flush()
+    return tid
+
+
+def _card(c, product_id: str) -> dict[str, tuple[bool, bool]]:
+    """The product page card: template id -> (Default LP, Default SP), as the card shows it."""
+    res = c.get(f"{DK}/products/{product_id}/tag-templates")
+    assert res.status_code == 200, res.text
+    return {row["id"]: (row["default_list"], row["default_selling"]) for row in res.json()}
+
+
+class TestShownDefaultsNeverMove:
+    @pytest.mark.parametrize("new_type", ["selling", "list", None])
+    def test_an_implicit_default_survives_a_bulk_link(self, env, new_type):
+        """Crew repro: CB2151-DIY has DIY Tag (LP + SP) and Small Price Tag LP. The card shows
+        Default SP = DIY Tag (the only SP fit, never saved). Linking an SP template in bulk
+        emptied it."""
+        db, c, _ = env
+        ref = _reference(db)
+        p = _product(db, ref)
+        diy = _typed(db, "DIY", None)
+        small_lp = _typed(db, "SmallLP", "list")
+        _link(db, p, diy, small_lp)  # no saved flags at all
+        before = _card(c, p)
+        assert before == {diy: (False, True), small_lp: (False, False)}
+
+        new = _typed(db, "SmallSP", new_type)
+        res = c.post(f"{DK}/tag-templates/{new}/assign", json={"product_ids": [p], "action": "add"})
+        assert res.json() == {"changed": 1}
+        after = _card(c, p)
+        assert after[diy] == before[diy]
+        assert after[small_lp] == before[small_lp]
+        assert after[new] == (False, False)
+
+    def test_an_implicit_lp_default_survives_too(self, env):
+        db, c, _ = env
+        ref = _reference(db)
+        p = _product(db, ref)
+        lp = _typed(db, "LP", "list")
+        sp = _typed(db, "SP", "selling")
+        _link(db, p, lp, sp)
+        assert _card(c, p) == {lp: (True, False), sp: (False, True)}
+        new = _typed(db, "Both", None)
+        c.post(f"{DK}/tag-templates/{new}/assign", json={"product_ids": [p], "action": "add"})
+        assert _card(c, p) == {lp: (True, False), sp: (False, True), new: (False, False)}
+
+    def test_unlinking_the_default_clears_only_that_default(self, env):
+        """Matches the product page: the removed template's default goes; a lone remaining fit
+        for that type becomes the saved default; the other type is untouched."""
+        import app.services.record_actions  # noqa: F401
+        from app.models.base import set_company_scope
+        from app.models.dealer_kit import ProductTagTemplate
+        from app.services.form_action_registry import get_action
+
+        db, c, _ = env
+        ref = _reference(db)
+        p = _product(db, ref)
+        diy = _typed(db, "DIY", None)
+        small_lp = _typed(db, "SmallLP", "list")
+        db.add(ProductTagTemplate(product_id=p, template_id=diy, default_selling=True))
+        db.add(ProductTagTemplate(product_id=p, template_id=small_lp, default_list=True))
+        db.flush()
+        assert _card(c, p) == {diy: (False, True), small_lp: (True, False)}
+
+        set_company_scope(db, frozenset({SORENTO}))
+        get_action("tag_template.unassign_products").execute(
+            db, {"entity_id": diy, "product_ids": [p], "requested_by_id": MANAGER_ID}
+        )
+        assert _card(c, p) == {small_lp: (True, False)}
+        assert _flags(db, p) == {small_lp: (True, False)}

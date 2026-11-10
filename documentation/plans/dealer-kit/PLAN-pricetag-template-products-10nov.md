@@ -137,6 +137,15 @@ another template holding its default LP. Navigation by sidebar clicks from `/`.
 Screenshots kept (cap 2): `evidence-pricetag-template-products/1-save-countdown-1280.png`,
 `2-dialog-375.png`.
 
+## Crew pass on c6e3e014 (owner test copy, 11 Nov)
+
+Steps 1 to 7 and 9 to 14 PASS. One defect, AC-7: `bulk_assign` protected the default only for a product
+going from one link to two. A default the card shows can be implicit (`_defaults_for`: the only
+template that fits the type, never saved); adding a second fitting template emptied it (CB2151-DIY,
+Default SP = DIY Tag). Fix: `_freeze_shown_defaults` saves each product's shown Default LP / SP before a
+bulk add, so the card cannot change; red-first tests `TestShownDefaultsNeverMove` (3 of 5 red before the
+fix). Unlink already matched the product page and is now tested. Combos: not bulk-linked in this lane.
+
 ## Assistant coverage (DoD 6 to 8)
 
 6: `scripts/ci_ai_coverage.py` ok, no new paged list route (`/product-ids` is an unpaged seed for the

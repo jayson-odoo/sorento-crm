@@ -578,6 +578,50 @@ def _lone_link_is_default(db: Session, link_model, owner_attr: str, owner_ids) -
         db.flush()
 
 
+def _freeze_shown_defaults(db: Session, link_model, owner_attr: str, owner_ids) -> None:
+    """Save each owner's Default LP / SP exactly as the card shows it (`_defaults_for`), before
+    links are added in bulk (PRICETAG-TEMPLATE-PRODUCTS, crew pass on c6e3e014: AC-7).
+
+    A default the card shows can be implicit, "the only template that fits this type", with no
+    saved flag. Adding a second template that fits the type would silently empty it. Saving it
+    first means a bulk add can never change a default the product already shows. An owner with
+    no shown default for a type keeps none; archived links are not on the card and are skipped.
+    """
+    owner_col = getattr(link_model, owner_attr)
+    ids = [oid for oid in owner_ids if oid]
+    if not ids:
+        return
+    by_owner: dict[str, list] = {}
+    for link, template in (
+        db.query(link_model, TagTemplate)
+        .join(TagTemplate, TagTemplate.id == link_model.template_id)
+        .filter(owner_col.in_(ids), TagTemplate.archived_at.is_(None))
+        .all()
+    ):
+        by_owner.setdefault(str(getattr(link, owner_attr)), []).append((link, template))
+    wanted: list[tuple[object, str]] = []
+    for rows in by_owner.values():
+        shown = [(template, link.default_list, link.default_selling) for link, template in rows]
+        for kind, flag in (("list", "default_list"), ("selling", "default_selling")):
+            defaults = _defaults_for(shown, kind)
+            if len(defaults) != 1:
+                continue
+            target = next(iter(defaults))
+            for link, template in rows:
+                if getattr(link, flag) and template.id != target:
+                    # A stale flag (its template no longer fits): the card already ignores it.
+                    setattr(link, flag, False)
+                elif template.id == target and not getattr(link, flag):
+                    wanted.append((link, flag))
+    if not wanted:
+        return
+    # One default per type per owner (partial unique indexes): clear before setting.
+    db.flush()
+    for link, flag in wanted:
+        setattr(link, flag, True)
+    db.flush()
+
+
 def unlink_product_templates(db: Session, product_id: str, template_ids: list[str]) -> dict:
     """The product page's Remove, committed after its countdown (an unlink, so
     it parks: ``product.unlink_tag_templates``). Only links of a product in
@@ -755,11 +799,13 @@ def bulk_assign(
             .delete(synchronize_session=False)
         )
         db.flush()
+        # Same as the product page's unlink: the removed template's defaults go with it, and a
+        # product left with one template has it as its saved default for the types it fits.
         _lone_link_is_default(db, ProductTagTemplate, "product_id", list(linked))
         return {"changed": changed}
     missing = [pid for pid in product_ids if pid not in linked]
-    # A product going from one link to two keeps that one as its default.
-    _lone_link_is_default(db, ProductTagTemplate, "product_id", missing)
+    # A bulk add never changes a default the product already shows, saved or implicit.
+    _freeze_shown_defaults(db, ProductTagTemplate, "product_id", missing)
     db.add_all(
         ProductTagTemplate(product_id=pid, template_id=template.id, created_by=user_id)
         for pid in missing
