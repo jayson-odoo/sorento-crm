@@ -924,7 +924,20 @@ export function ProjectForm(props: ProjectFormProps) {
                   : undefined
               }
               picks={partyPicks}
-              onPicksChange={(role, next) => setPartyPicks((prev) => ({ ...prev, [role]: next }))}
+              onPicksChange={(role, next) => {
+                // A party that leaves the form drops its contact picks (rule 7) and, picked again,
+                // counts as a new pick: its single contact defaults again (owner re-test, 10 Nov).
+                const kept = new Set(next.map((o) => o.value));
+                for (const gone of (partyPicks[role] ?? []).filter((o) => !kept.has(o.value))) {
+                  initialPartyIds.current.delete(gone.value);
+                  setContactPicks((prev) => {
+                    const rest = { ...prev };
+                    delete rest[gone.value];
+                    return rest;
+                  });
+                }
+                setPartyPicks((prev) => ({ ...prev, [role]: next }));
+              }}
               contactPicks={contactPicks}
               onContactPicksChange={setContactPicks}
               fixedContacts={fixedContacts}

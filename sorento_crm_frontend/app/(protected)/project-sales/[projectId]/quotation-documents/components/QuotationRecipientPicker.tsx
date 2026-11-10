@@ -288,11 +288,19 @@ export function QuotationAttnChooser({
       email: value.recipient_email_snapshot,
     };
   }
-  // Owner hand test 10 Nov: "if only got 1 contact then should just default to it". Once per party.
+  // Owner hand test 10 Nov: "if only got 1 contact then should just default to it", on EVERY
+  // selection of a party (re-test: switching away and back must default again). Once per selection.
   const autoDone = React.useRef<string | null>(null);
+  const shownParty = React.useRef(partyId);
+  const [selected, setSelected] = React.useState(false);
+  if (shownParty.current !== partyId) {
+    shownParty.current = partyId;
+    autoDone.current = null;
+    if (!selected) setSelected(true);
+  }
   const only = (contacts.data ?? []).filter((c) => c.is_active !== false);
   const shouldAuto =
-    autoPick &&
+    (autoPick || selected) &&
     !locked &&
     Boolean(partyId) &&
     autoDone.current !== partyId &&

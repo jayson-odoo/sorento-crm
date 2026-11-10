@@ -485,6 +485,19 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
     expect(lastBody()!.contact_ids).toEqual(['k2']);
   });
 
+  it('clearing a party and picking it again re-applies its single contact (owner re-test 10 Nov)', async () => {
+    renderForm({ mode: 'create' });
+    await toDetails();
+    await pickParty('Architect', 'Arch', 'Archico');
+    await screen.findByRole('button', { name: '1 contact' });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear project-party-architect' }));
+    await pickParty('Architect', 'Arch', 'Archico');
+    await screen.findByRole('button', { name: '1 contact' });
+    register();
+    await waitFor(() => expect(lastBody()).toBeTruthy());
+    expect(lastBody()!.contact_ids).toEqual(['k1']);
+  });
+
   it('clearing the party drops its contact picks', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
@@ -510,6 +523,24 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
     await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
     const body = updateProject.mock.calls[0][1] as Record<string, unknown>;
     expect(body.contact_ids).toEqual(['k1']);
+  });
+
+  it('edit: a party already on the project, cleared and picked again, gets its single contact', async () => {
+    renderForm({
+      mode: 'edit',
+      project: project({
+        developer_party_id: null,
+        developer_name: null,
+        party_links: [{ role: 'architect', party_id: 'a1', name: 'Archico' }],
+      }),
+    });
+    await screen.findByRole('button', { name: 'Add contacts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear project-party-architect' }));
+    await pickParty('Architect', 'Arch', 'Archico');
+    await screen.findByRole('button', { name: '1 contact' });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    expect((updateProject.mock.calls[0][1] as Record<string, unknown>).contact_ids).toEqual(['k1']);
   });
 });
 

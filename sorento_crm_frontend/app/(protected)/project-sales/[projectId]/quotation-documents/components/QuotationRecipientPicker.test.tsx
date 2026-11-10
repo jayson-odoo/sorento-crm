@@ -314,6 +314,53 @@ describe('Attn from the contacts popup', () => {
     );
   });
 
+  it('switching to another party and back re-applies the single contact (owner re-test 10 Nov)', async () => {
+    listPartyContacts.mockImplementation(async (partyId: string) =>
+      partyId === 'p-a'
+        ? [{ id: 'ca', party_id: 'p-a', name: 'EN. AGROW', phone: '+60129876543', is_active: true }]
+        : [
+            { id: 'cb1', party_id: 'p-b', name: 'MS. B1', is_active: true },
+            { id: 'cb2', party_id: 'p-b', name: 'MS. B2', is_active: true },
+          ],
+    );
+    const onChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (value: object, autoPick = true) => (
+      <QueryClientProvider client={client}>
+        <QuotationAttnChooser value={value} partyName="X" locked={false} autoPick={autoPick} onChange={onChange} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view({ recipient_party_id: 'p-a' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    rerender(view({ recipient_party_id: 'p-b' }));
+    await screen.findByRole('button', { name: 'Choose contacts' });
+    rerender(view({ recipient_party_id: 'p-a' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ attn_contact_ids: ['ca'], attn_name: 'EN. AGROW', recipient_phone_snapshot: '012-987 6543' }),
+    );
+  });
+
+  it('on a saved proposal, picking a party (even the saved one back) applies its single contact', async () => {
+    listPartyContacts.mockImplementation(async (partyId: string) =>
+      partyId === 'p-a' ? [{ id: 'ca', party_id: 'p-a', name: 'EN. AGROW', is_active: true }] : [],
+    );
+    const onChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (value: object) => (
+      <QueryClientProvider client={client}>
+        <QuotationAttnChooser value={value} partyName="X" locked={false} onChange={onChange} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view({ recipient_party_id: 'p-a' }));
+    await screen.findByRole('button', { name: 'Choose contacts' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(view({ recipient_party_id: 'p-b' }));
+    rerender(view({ recipient_party_id: 'p-a' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ attn_contact_ids: ['ca'] })));
+  });
+
   it('no automatic Attn on a saved proposal whose party did not change', async () => {
     listPartyContacts.mockResolvedValue([
       { id: 'c1', party_id: 'p-pgb', name: 'MS. ANNE CONTOH', phone: null, is_active: true },
