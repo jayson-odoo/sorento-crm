@@ -1,6 +1,6 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Review passed (reviewer READY round 2, browser pass 6/6 at 1280 and 375); awaiting CI and owner hand test.
+Status: Owner round 1 fixed (10 Nov 18:2x); awaiting crew re-run and owner re-test.
 Track: LEAD, size M, one additive migration (`combo_0001_part_labels`), no auth/RBAC change.
 Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
 
@@ -185,3 +185,25 @@ tokens and one plain-text gap. No backend change is needed.
 - Seen, not this lane: on a fresh DB `alembic upgrade head` fails at `system_settings` (schema built by
   `create_all` + stamp); the Combos tab took two clicks right after load in the headless run (the tab
   strip is the existing URL-driven one).
+
+## Owner round 1 (10 Nov 18:2x) + crew browser pass D1-D4
+
+- A choice group with ONE part is a FIXED part everywhere (crew ruling, CARD-pricetag-combo-render-04nov.md:134):
+  `template_needs.pick_one_groups` decides it once and `combo_shape`, `_line_slots`, `_preview_slots`,
+  `_combo_object` and `pricing.combo_prices` all use it; FE mirror `combo-slots.ts pickOneGroups`.
+  On the Combos tab the lone part is listed with the fixed parts, has no "Sell price if picked", and
+  says 'Only part in "Test", so it prints as a fixed part.'; the preview sends it as a fixed part.
+- The group field reads "Choice group (only for pick-one parts)"; a part's own name is its Label.
+- The description always shows with this combo's real values: with no template, an unpublished one,
+  or a template with no field printing the description, the preview panel says which and shows "The
+  description prints as:" from `GET /dealer-kit/products/{host}/tag-data?combo_id=`. Insert field
+  previews against the same data once loaded.
+- D1: a discontinued product in the one picker carries the grey "Discontinued" hint, still pickable.
+- D2: typing "- " in the shared editor makes a bullet list (its standard shortcut, same in every rich
+  field); after the bullet fix every part keeps its bullet, so the hand-test Expected now says bullets.
+  A literal dash: type "-", then the space, then Ctrl+Z undoes the list.
+- D3: the default part line has no price tag description (code, label, dimensions). On real data a
+  combo host's price tag description often holds its old combo text, so the hand test uses Label,
+  not price tag description, for the main product; the field stays offered for parts that need it.
+- D4: `dimensions_lwh` reads the reviewed spec values first, else the product master columns (same
+  source as every tag's dimensions, `_measured_dimensions`): intended; the script says so.
