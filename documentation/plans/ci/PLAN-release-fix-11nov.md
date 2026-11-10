@@ -1,0 +1,30 @@
+# PLAN: release sweep red on main 6e6657e2 (RELEASE-FIX-11NOV, 11 Nov 2026)
+
+Status: in progress. Small fix track (tests only expected, no migration, no RBAC change).
+
+## Failing on origin/main 6e6657e261 (passing at prod e731f224)
+
+- tests/test_migration_354_projects_schema_move.py (3 tests): census of `projects`-schema tables
+  - test_the_mapping_covers_exactly_the_models_that_declare_the_projects_schema
+  - test_upgrade_moves_and_renames_when_the_tables_are_in_the_default_schema
+  - test_the_index_rename_map_is_the_one_the_models_derive
+- tests/test_migration_lec_0004_prompt_synonyms.py (3 tests): global `lookup_options` counts
+  - test_a_type_matched_by_name_and_existing_option_and_keyword_are_reused_case_aside
+  - test_a_label_with_no_attachment_type_is_skipped_and_no_type_is_created
+  - test_with_no_types_at_all_no_option_is_created
+
+## Approach
+
+Reproduce on a throwaway DB, name the merge that broke each, fix the test side if the merged app
+behaviour is right (code only if it is a real bug). No merged migration is changed.
+
+## Findings
+
+- 354: #2303 QUOTE-AUTOSAVE added `projects.quotation_document_drafts` and
+  `projects.quotation_document_snapshots` (migration `qas_0001_quote_form_drafts`, born straight into
+  `projects`). They are not in the test's `BORN_AFTER_THE_MOVE` set, so the census expects 354 to know
+  them. Fix: add both to the set (same shape as #2263).
+- lec_0004: #2300 PROJECT-PARTY-ROLES added an `after_create` listener in `tests/conftest.py` that seeds
+  the `project_party_role` lookup set and its 8 options into every `create_all` schema, the blank scratch
+  schema included. lec_0004 counted ALL `lookup_options` rows, so 0 became 8 and 1 became 9. The
+  migration and the seed are both right. Fix: count only the options of the `attachment_type_alias` set.
