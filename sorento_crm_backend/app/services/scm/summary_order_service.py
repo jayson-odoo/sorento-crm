@@ -897,25 +897,36 @@ def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
     low stock job, whose run is created from its own `warehouse_codes`).
 
     The run's own `warehouse_ids` (what the planner, or the daily job's config, selected),
-    kept to the ACTIVE SITE-POOL ones (`pool_predicate.active_site_pool_sql`) - the rule
-    the "BRW ..." columns already applied network-wide, so a project bin (BRW-BB) never
-    answers a BRW column even on a run that also planned it.
+    AS-IS when locations were TICKED (LOWSTOCK-PROJECT-BINS, owner ruling 10 Nov 2026): a
+    project bin ticked by name (BRW-IB, BRW-BB) counts like any other ticked location, and
+    nothing the run did not select counts.
+
+    A run with NOTHING ticked is stamped with every active warehouse
+    (`reorder_run_service._resolve_warehouse_ids`), project bins included, so its stored
+    scope cannot say which bins anybody chose. That run reads the active SITE POOL only
+    (`pool_predicate.active_site_pool_sql`), as before #2293 (crew decision 10 Nov 2026,
+    option (b)): project stock never leaks into an unticked report, and a daily job with
+    empty `warehouse_codes` reads as it always did. "Nothing ticked" is the same test the
+    plans list labels "All" with (`reorder_run_service.resolve_run_scope`'s
+    `is_all_warehouses`: the scope covers every active warehouse the run could see).
 
     None when the run stored no scope at all (NULL: `create_run` always stamps a list, so
     only a run older than scopes, or a hand-built one): each reader then keeps its own
-    pre-lane reading unchanged rather than this guessing a scope nobody chose. An empty
-    stored scope is `[]`, which matches nothing.
+    pre-lane network-wide site-pool reading rather than this guessing a scope nobody chose.
+    An empty stored scope is `[]`, which matches nothing.
 
     ORM, so the session's company filter scopes `Warehouse`.
     """
+    from app.services.scm.reorder_run_service import resolve_run_scope
+
     if run.warehouse_ids is None:
         return None
     wids = [str(w) for w in run.warehouse_ids]
     if not wids:
         return []
-    q = db.query(Warehouse.id).filter(
-        Warehouse.id.in_(wids), text(active_site_pool_sql("warehouses")),
-    )
+    q = db.query(Warehouse.id).filter(Warehouse.id.in_(wids))
+    if resolve_run_scope(db, wids, None, run.started_at)["is_all_warehouses"]:
+        q = q.filter(text(active_site_pool_sql("warehouses")))
     return sorted(str(wid) for (wid,) in q.all())
 
 
@@ -934,8 +945,10 @@ def _pool_on_hand_map(db: Session, product_ids: list[str],
     so it relies on the ORM's own `do_orm_execute` isolation filter, same as
     `site_pool_supply.open_spo_by_product` beside it.
 
-    `warehouse_ids` narrows it to a run's own `report_warehouse_ids`; None keeps the
-    network-wide site-pool reading (`stock_debt_service`).
+    `warehouse_ids` is a run's own `report_warehouse_ids`: those locations replace the
+    site-pool rule (a ticked project bin counts, LOWSTOCK-PROJECT-BINS); None keeps the
+    network-wide site-pool reading (`stock_debt_service`). `counts_as_available` applies
+    either way.
     """
     if not product_ids or (warehouse_ids is not None and not warehouse_ids):
         return {}
@@ -945,10 +958,11 @@ def _pool_on_hand_map(db: Session, product_ids: list[str],
         .filter(
             Stock.product_id.in_(product_ids),
             Warehouse.counts_as_available.is_(True),
-            text(active_site_pool_sql("warehouses")),
         )
     )
-    if warehouse_ids is not None:
+    if warehouse_ids is None:
+        query = query.filter(text(active_site_pool_sql("warehouses")))
+    else:
         query = query.filter(Stock.warehouse_id.in_([str(w) for w in warehouse_ids]))
     rows = query.group_by(Stock.product_id).all()
     return {str(pid): float(total or 0.0) for pid, total in rows}

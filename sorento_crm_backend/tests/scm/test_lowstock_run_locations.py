@@ -71,6 +71,10 @@ def _product(db, stem="SRTWT167-QT"):
 
 
 def _run(db, warehouse_ids):
+    """A run whose locations were TICKED. One more active location the run did not tick
+    exists beside them, as in any real estate: a scope covering every active warehouse is
+    a run with nothing ticked (`report_warehouse_ids`), which `_no_ticks_run` builds."""
+    _warehouse(db, "UNTICKED")
     run = ReorderRun(
         id=_u(), status="completed", buy_scope="warehouse",
         warehouse_ids=[str(w) for w in warehouse_ids] if warehouse_ids is not None else None,
@@ -168,15 +172,16 @@ def test_brw_report_last_in_is_the_brw_line_of_a_split_receipt(db):
     assert svc._last_in_text(report_row["last_receipt"]) == "KMTU9395907 - 121"
 
 
-def test_a_project_bin_never_answers_last_in_even_on_a_run_that_covers_it(db):
-    """The report's columns are BRW (site pool) columns: a run that also names the BRW-BB
-    project bin still reads Last in from BRW only, the same rule BRW incoming qty has."""
+def test_a_ticked_project_bin_sums_into_last_in(db):
+    """LOWSTOCK-PROJECT-BINS (owner ruling 10 Nov 2026): a run that ticks the BRW-BB project
+    bin too counts BRW-BB like any other selected location, so the split receipt reads
+    121 + 180 + 99 = 400."""
     brw, brw_bb, product, _spo_number = _srtwt167_qt(db)
     run = _run(db, [brw.id, brw_bb.id])
     _buy(db, run, product, brw)
 
     svc.write_rows(db, run.id)
-    assert float(_row(db, run, product).last_receipt_qty) == 121.0
+    assert float(_row(db, run, product).last_receipt_qty) == 400.0
 
 
 def test_no_receipt_in_the_runs_locations_leaves_last_in_blank(db):
@@ -335,6 +340,14 @@ def test_an_empty_stored_scope_reads_no_location_at_all(db):
     assert svc.report_warehouse_ids(db, _run(db, [brw.id])) == [brw.id]
 
 
+def test_the_shared_set_keeps_a_ticked_project_bin(db):
+    """The ONE location set is the run's selection as-is: a ticked project bin stays in it."""
+    brw = _warehouse(db, "BRW")
+    brw_ib = _warehouse(db, "BRW-IB", segment="project")
+    assert svc.report_warehouse_ids(db, _run(db, [brw.id, brw_ib.id])) == sorted(
+        [brw.id, brw_ib.id])
+
+
 def _one_receipt_in_two_locations(db, *, qty_a, qty_b):
     """One receipt (same SPO, container and delivery date) split across two site-pool
     locations, both lines created in the SAME instant, the way an import writes them."""
@@ -412,3 +425,165 @@ def test_two_different_receipts_on_one_date_pick_the_same_one_every_time(db):
     picks = {last_in_map(db, [product.id], [brw.id])[product.id]["container_number"]
              for _ in range(5)}
     assert picks == {"CONT-B"}
+
+
+# LOWSTOCK-PROJECT-BINS (owner ruling 10 Nov 2026, question (a) "yes"): a project bin the
+# planner ticks in Start Plan counts in every per-location column like any other ticked
+# location. Every location the run selected counts, and nothing outside them.
+
+
+def _srtwcx7405_pj(db):
+    """SRTWCX7405-RL-S-PJ shape: an older BRW receipt (11 + 31 on 29/05) and a NEWER BRW-IB
+    receipt (20 on 20/10, container YMMU6026231), plus stock, an open PO and an open SPO at
+    each of BRW and BRW-IB."""
+    brw = _warehouse(db, "BRW")
+    brw_ib = _warehouse(db, "BRW-IB", segment="project")
+    product = _product(db, "SRTWCX7405-RL-S-PJ")
+    spo_brw = _code("SPO-BRW", 50)
+    for qty in (11, 31):
+        _spo(db, product, brw, qty, spo_number=spo_brw, container="OOCU7774397",
+             expected=date(2026, 5, 29), received=qty,
+             created_at=datetime(2026, 5, 20, 9, 0, 0))
+    spo_ib = _code("SPO-IB", 50)
+    _spo(db, product, brw_ib, 20, spo_number=spo_ib, container="YMMU6026231",
+         expected=date(2026, 10, 20), created_at=datetime(2026, 10, 10, 9, 0, 0))
+    _stock(db, product, brw, 6)
+    _stock(db, product, brw_ib, 14)
+    po_brw = _po(db, product, brw, 100)
+    po_ib = _po(db, product, brw_ib, 40)
+    return brw, brw_ib, product, spo_brw, spo_ib, po_brw, po_ib
+
+
+def test_a_ticked_project_bins_newer_receipt_wins_last_in(db):
+    """BRW + BRW-IB run: BRW-IB's newer 20/10 line (YMMU6026231) is Last in."""
+    brw, brw_ib, product, _spo_brw, spo_ib, _po_brw, _po_ib = _srtwcx7405_pj(db)
+    run = _run(db, [brw.id, brw_ib.id])
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_ib
+    assert row.last_receipt_container_number == "YMMU6026231"
+    assert float(row.last_receipt_qty) == 20.0
+    assert row.last_receipt_date == date(2026, 10, 20)
+    report_row = svc.report(db, run_id=run.id)["rows"][0]
+    assert svc._last_in_text(report_row["last_receipt"]) == "YMMU6026231 - 20"
+
+
+def test_a_ticked_project_bin_counts_in_on_hand_po_and_incoming(db):
+    """BRW + BRW-IB run: BRW-IB's stock, open PO line and open SPO line all count."""
+    brw, brw_ib, product, _spo_brw, spo_ib, po_brw, po_ib = _srtwcx7405_pj(db)
+    run = _run(db, [brw.id, brw_ib.id])
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert float(row.pool_on_hand) == 20.0
+    assert float(row.po_open_qty) == 140.0
+    assert sorted(d["number"] for d in row.po_open_docs) == sorted(
+        [po_brw.po_number, po_ib.po_number])
+    assert float(row.incoming_spo_qty) == 20.0
+    assert [d["number"] for d in row.incoming_spo_docs] == [spo_ib]
+
+
+def test_a_brw_only_run_is_unchanged_by_a_project_bins_figures(db):
+    """The same data on a BRW-only run: BRW figures only, Last in is BRW's 11 + 31."""
+    brw, _brw_ib, product, spo_brw, _spo_ib, po_brw, _po_ib = _srtwcx7405_pj(db)
+    run = _run(db, [brw.id])
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_brw
+    assert float(row.last_receipt_qty) == 42.0
+    assert row.last_receipt_date == date(2026, 5, 29)
+    assert float(row.pool_on_hand) == 6.0
+    assert float(row.po_open_qty) == 100.0
+    assert [d["number"] for d in row.po_open_docs] == [po_brw.po_number]
+    assert float(row.incoming_spo_qty or 0) == 0.0
+
+
+def test_the_daily_jobs_run_never_reads_a_project_bin_outside_its_codes(db):
+    """The daily job's run (from its own `warehouse_codes`, no project bin among them) reads
+    exactly as before: the project bin's newer receipt, stock and supply never count."""
+    from app.services.scm import reorder_run_service
+
+    brw, _brw_ib, product, spo_brw, _spo_ib, po_brw, _po_ib = _srtwcx7405_pj(db)
+    created = reorder_run_service.create_run(db, [brw.warehouse_code], enqueue=False)
+    run = db.get(ReorderRun, created["run_id"])
+    assert run.warehouse_ids == [brw.id]
+    run.status = "completed"
+    run.decision_grain = "product"
+    run.front_planning_contract_version = 1
+    db.flush()
+    _buy(db, run, product, brw)
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_brw
+    assert float(row.pool_on_hand) == 6.0
+    assert float(row.po_open_qty) == 100.0
+    assert float(row.incoming_spo_qty or 0) == 0.0
+
+
+def test_network_wide_readers_still_exclude_project_bins(db):
+    """No run scope (None, e.g. `stock_debt_service`): the site-pool rule still applies."""
+    from app.services.scm.site_pool_supply import open_po_by_product, open_spo_by_product
+
+    _brw, _brw_ib, product, _spo_brw, _spo_ib, _po_brw, _po_ib = _srtwcx7405_pj(db)
+    assert svc._pool_on_hand_map(db, [product.id])[product.id] == 6.0
+    assert open_po_by_product(db, [product.id])[product.id]["qty"] == 100.0
+    assert open_spo_by_product(db, [product.id]).get(product.id, {"qty": 0.0})["qty"] == 0.0
+
+
+# Crew decision 10 Nov 2026 (option (b), owner may override): a run with NOTHING ticked
+# (stamped with every active warehouse, `reorder_run_service._resolve_warehouse_ids`) is
+# site pool only, as before; a project bin counts only when ticked by name.
+
+
+def _no_ticks_run(db):
+    from app.services.scm import reorder_run_service
+
+    created = reorder_run_service.create_run(db, None, enqueue=False)
+    run = db.get(ReorderRun, created["run_id"])
+    run.status = "completed"
+    run.decision_grain = "product"
+    run.front_planning_contract_version = 1
+    db.flush()
+    return run
+
+
+def test_a_run_with_nothing_ticked_excludes_project_bins(db):
+    """Nothing ticked: BRW-IB's newer receipt, stock and supply never count (BRW-BB too)."""
+    brw, brw_ib, product, spo_brw, _spo_ib, po_brw, _po_ib = _srtwcx7405_pj(db)
+    brw_bb = _warehouse(db, "BRW-BB", segment="project")
+    _stock(db, product, brw_bb, 500)
+    run = _no_ticks_run(db)
+    assert brw_ib.id in run.warehouse_ids and brw_bb.id in run.warehouse_ids
+    _buy(db, run, product, brw)
+
+    wids = svc.report_warehouse_ids(db, run)
+    assert brw.id in wids
+    assert brw_ib.id not in wids and brw_bb.id not in wids
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_brw
+    assert float(row.pool_on_hand) == 6.0
+    assert float(row.po_open_qty) == 100.0
+    assert [d["number"] for d in row.po_open_docs] == [po_brw.po_number]
+    assert float(row.incoming_spo_qty or 0) == 0.0
+
+
+def test_a_run_ticking_brw_ib_by_name_includes_it(db):
+    """The same data, BRW + BRW-IB ticked by name: BRW-IB counts in every column."""
+    brw, brw_ib, product, _spo_brw, spo_ib, _po_brw, _po_ib = _srtwcx7405_pj(db)
+    run = _run(db, [brw.id, brw_ib.id])
+    _buy(db, run, product, brw)
+
+    assert svc.report_warehouse_ids(db, run) == sorted([brw.id, brw_ib.id])
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+    assert row.last_receipt_spo_number == spo_ib
+    assert float(row.pool_on_hand) == 20.0
+    assert float(row.po_open_qty) == 140.0
+    assert float(row.incoming_spo_qty) == 20.0
