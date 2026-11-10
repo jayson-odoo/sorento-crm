@@ -178,18 +178,22 @@ def test_a_type_matched_by_name_and_existing_option_and_keyword_are_reused_case_
     db.flush()
     db.add(LookupOptionKeyword(option_id=opt.id, keyword="VIDEOS"))
     db.flush()
+    every_option = db.query(LookupOption).count()
     _call(db)
     assert db.query(LookupSet).filter_by(set_key=ALIAS_SET_KEY).count() == 1
     assert _alias_options(db).count() == 1
+    assert db.query(LookupOption).count() == every_option
     assert _keywords(db) == ["VIDEOS"]
 
 
 def test_a_label_with_no_attachment_type_is_skipped_and_no_type_is_created(db):
     _type(db, "photo", "Product Photos")
     before = db.query(AttachmentType).count()
+    every_option = db.query(LookupOption).count()
     _call(db)
     assert db.query(AttachmentType).count() == before
     assert _alias_options(db).count() == 1  # only photo's
+    assert db.query(LookupOption).count() == every_option + 1
 
 
 def test_a_skipped_file_type_label_is_logged_at_info_and_a_matched_one_is_not(db, caplog):
@@ -202,8 +206,10 @@ def test_a_skipped_file_type_label_is_logged_at_info_and_a_matched_one_is_not(db
 
 
 def test_with_no_types_at_all_no_option_is_created(db):
+    every_option = db.query(LookupOption).count()
     _call(db)
     assert _alias_options(db).count() == 0 and db.query(LookupOptionKeyword).count() == 0
+    assert db.query(LookupOption).count() == every_option
 
 
 def test_second_upgrade_adds_no_keywords_or_rows(db):
