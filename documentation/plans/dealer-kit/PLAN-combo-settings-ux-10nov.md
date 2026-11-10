@@ -1,6 +1,6 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Review (owner approved mock v2 + own Combos tab, 10 Nov ~16:40; reviewer round 1 fixed).
+Status: Review passed (reviewer READY round 2, browser pass 6/6 at 1280 and 375); awaiting CI and owner hand test.
 Track: LEAD, size M, one additive migration (`combo_0001_part_labels`), no auth/RBAC change.
 Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
 
@@ -174,3 +174,14 @@ tokens and one plain-text gap. No backend change is needed.
 - Not changed (nits): N1 brackets with markup inside, N2 editor `mergeFields` token protection,
   N3 `previewParts` mirrors `price-tag-draft-lines.ts` `partsFromCombo` (same output; kept local
   to avoid widening the lane).
+
+## Reviewer round 2 + browser pass (10 Nov)
+
+- Round 2: every brace is stripped from part values (`{}}{combo.parts}{{}` rebuilt a token after pair
+  removal) and the finished list is stripped of `{{combo.parts}}` / `{{combo.description}}`. READY.
+- Browser pass (`evidence/combo-settings-ux/README.md`): 6/6 PASS. Fixed from it: a part line written
+  as a bullet list kept no bullet on the first (main) part; a token alone in its paragraph now takes
+  the spliced block's own shape (`product-block.ts` `spliceRichTokens`).
+- Seen, not this lane: on a fresh DB `alembic upgrade head` fails at `system_settings` (schema built by
+  `create_all` + stamp); the Combos tab took two clicks right after load in the headless run (the tab
+  strip is the existing URL-driven one).

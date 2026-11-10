@@ -828,7 +828,10 @@ function spliceRichTokens(
       if (start > at) out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at, start), data, mode, layer));
       blocks.forEach((block, index) => {
         const runs = block.runs.map((own) => underTokenMarks(run, own));
-        if (index === 0) out[out.length - 1].runs.push(...runs);
+        // A token alone at the start of its paragraph takes the spliced block's own shape (a bullet,
+        // a heading), so a list's first item keeps its marker; text before it joins it as before.
+        if (index === 0 && out[out.length - 1].runs.length === 0) out[out.length - 1] = { ...block, runs };
+        else if (index === 0) out[out.length - 1].runs.push(...runs);
         else out.push({ ...block, runs });
       });
       at = start + match[0].length;

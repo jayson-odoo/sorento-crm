@@ -189,6 +189,23 @@ describe('{{combo.parts}}', () => {
     expect(blocks[1].runs.every((run) => run.bold)).toBe(true);
   });
 
+  it('a part line written as a bullet list keeps the bullet on every part, the main product too (browser pass)', () => {
+    const data = bathroom({
+      parts_line: '<ul><li><p>{{part.code}}</p></li></ul>',
+      description: '<p>Package</p><p>{{combo.parts}}</p>',
+    });
+    const layer = {
+      id: 'd', type: 'text', slot_binding: null, text_override: null,
+      props: { kind: 'text', text: '{{combo.description}}' },
+    } as unknown as TagLayer;
+    const blocks = layerRichBlocks(layer, data, 'print')!;
+    const listed = blocks.slice(1);
+    expect(listed.map((b) => b.runs.map((r) => r.text).join(''))).toEqual([
+      'SRTBF11829', 'SRTWB2380', 'SRTMCB8083-BL', 'SRTWT6203-GM', 'SRTW2600',
+    ]);
+    expect(listed.every((b) => !!b.marker)).toBe(true);
+  });
+
   it('offers the part fields the owner named, and a default line', () => {
     expect(PART_FIELDS.map((f) => f.path)).toEqual([
       'part.code',
