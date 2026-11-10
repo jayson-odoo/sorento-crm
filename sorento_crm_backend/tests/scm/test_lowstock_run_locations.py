@@ -627,3 +627,16 @@ def test_the_shared_set_drops_a_ticked_inactive_site_pool_location(db):
     _warehouse(db, "UNTICKED-2")
     db.flush()
     assert svc.report_warehouse_ids(db, _run(db, [brw.id, old.id])) == [brw.id]
+
+
+def test_a_ticked_inactive_location_does_not_make_a_ticked_bin_read_as_nothing_ticked(db):
+    """BRW + BRW-IB + an inactive OLD ticked, in an estate of 3 active warehouses: the
+    inactive id must not lift the count to "All" (`_covers_every_warehouse`), which would
+    read the run as nothing-ticked and drop the ticked BRW-IB (reviewer probe)."""
+    brw = _warehouse(db, "BRW")
+    brw_ib = _warehouse(db, "BRW-IB", segment="project")
+    old = _warehouse(db, "OLD")
+    old.is_active = False
+    db.flush()
+    run = _run(db, [brw.id, brw_ib.id, old.id])
+    assert svc.report_warehouse_ids(db, run) == sorted([brw.id, brw_ib.id])
