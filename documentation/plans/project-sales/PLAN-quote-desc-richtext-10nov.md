@@ -1,6 +1,6 @@
 # PLAN: QUOTE-DESC-RICHTEXT (rich text line description on proposals / quotations)
 
-Status: Build (red tests and implementation pushed on the card's recommendations; owner answers pending). Track:
+Status: Review (owner answered Q1-Q5 = recommendations, 10 Nov 15:10; tests green; reviewer running). Track:
 LEAD pattern, size M. No migration, no auth / RBAC change. PR #2304.
 
 Owner ruling, 10 Nov ~14:30 MYT: "the description should use rich text editor also to allow styling".

@@ -105,3 +105,8 @@ prints; the only loss is the link target, which a printed document cannot use an
 Q5. Spec sheet item description (made from the quotation lines). (a) Plain text, the product's spec-sheet layout
 stays as it is. (b) Styled like the quotation. Rec (a): the owner's ruling names the proposal / quotation; the spec
 sheet is a product document, and keeping it plain keeps this lane out of its renderer.
+
+## Owner answers (10 Nov ~15:10 MYT)
+
+Q1 (a) full toolbar. Q2 (a) same column, price tag format. Q3 (a) popover editor. Q4 (a) the PDF prints every allowed
+style. Q5 (a) spec sheet stays plain. All five match the recommendations; built as above.
