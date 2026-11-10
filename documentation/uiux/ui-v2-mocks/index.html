@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorento UI v2 mocks</title>
+<!--
+  UI-V2-PLAN lane, 10 Nov 2026. Static, self-contained, no app code.
+  Before = today's screen as the code draws it (cited file:line in each legend).
+  After  = the v2 proposal from documentation/uiux/UI-V2-PLAN.md.
+  Record values are shaped on dev data and test fixtures; every person and company name is masked.
+-->
+<style>
+/* ---------- mock-document chrome (not part of the proposal) ---------- */
+:root{
+  --doc-bg:#f4f4f5;--doc-fg:#18181b;--doc-muted:#71717a;--doc-line:#e4e4e7;--doc-card:#fff;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--doc-bg:#0c0c0e;--doc-fg:#f4f4f5;--doc-muted:#a1a1aa;--doc-line:#27272a;--doc-card:#151518}}
+:root[data-theme="dark"]{--doc-bg:#0c0c0e;--doc-fg:#f4f4f5;--doc-muted:#a1a1aa;--doc-line:#27272a;--doc-card:#151518}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--doc-bg);color:var(--doc-fg);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.doc-top{position:sticky;top:0;z-index:50;background:var(--doc-card);border-bottom:1px solid var(--doc-line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+.doc-top h1{font-size:15px;margin:0;font-weight:650;letter-spacing:-.01em}
+.doc-tabs,.seg{display:flex;flex-wrap:wrap;gap:4px}
+.doc-tabs button,.seg button{font:inherit;font-size:13px;border:1px solid var(--doc-line);background:transparent;color:var(--doc-fg);padding:5px 10px;border-radius:6px;cursor:pointer}
+.doc-tabs button[aria-pressed="true"],.seg button[aria-pressed="true"]{background:var(--doc-fg);color:var(--doc-card);border-color:var(--doc-fg)}
+.doc-spacer{flex:1}
+.doc-main{max-width:1360px;margin:0 auto;padding:20px 16px 80px}
+.screen{display:none}.screen.on{display:block}
+.screen > h2{font-size:20px;margin:0 0 4px;letter-spacing:-.015em}
+.screen > p.lede{margin:0 0 16px;color:var(--doc-muted);max-width:820px}
+.frame-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--doc-muted);margin:18px 0 6px}
+.frame{border:1px solid var(--doc-line);border-radius:10px;overflow:auto;background:#fff;box-shadow:0 1px 2px rgb(0 0 0/.04)}
+.frame > .app{min-width:1180px}
+.phones{display:flex;flex-wrap:wrap;gap:24px}
+.phone{width:375px;max-width:100%;border:1px solid var(--doc-line);border-radius:28px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgb(0 0 0/.06)}
+.phone .app{min-width:0;height:760px;overflow:hidden;display:flex;flex-direction:column}
+.legend{margin-top:14px;border:1px solid var(--doc-line);border-radius:10px;background:var(--doc-card);overflow:auto}
+.legend table{border-collapse:collapse;width:100%;font-size:13px;min-width:760px}
+.legend th,.legend td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--doc-line);vertical-align:top}
+.legend th{font-weight:600;color:var(--doc-muted);font-size:12px}
+.legend code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.tag.keep{background:#e4e4e7;color:#27272a}.tag.re{background:#dbeafe;color:#1e3a8a}.tag.new{background:#fde2d6;color:#7c2d12}.tag.del{background:#fee2e2;color:#7f1d1d}
+.notes{margin:10px 0 0;padding-left:18px;color:var(--doc-muted);max-width:980px}
+.notes li{margin:3px 0}
+.only-before,.only-after{display:none}
+body.v-before .only-before,body.v-after .only-after{display:block}
+body.v-both .only-before,body.v-both .only-after{display:block}
+
+/* component-map overlay */
+body.map .app.v2 [data-c]{outline:1px dashed #c2410c;outline-offset:-1px;position:relative}
+body.map .app.v2 [data-c]::before{content:attr(data-c);position:absolute;left:0;top:0;transform:translateY(-100%);z-index:40;font:600 10px/1.3 ui-monospace,Menlo,monospace;color:#fff;background:#c2410c;padding:1px 4px;border-radius:3px 3px 0 0;white-space:nowrap;pointer-events:none}
+
+/* ================= BEFORE: today's tokens (config.reui.css) ================= */
+.app.v1{--bg:#fff;--fg:#09090b;--muted:#71717a;--line:#efeff1;--input:#e4e4e7;--soft:#f4f4f5;--primary:#3b82f6;--primary-fg:#fff;
+  --warn-bg:#fef9c3;--warn-fg:#a16207;--info-bg:#ede9fe;--info-fg:#7c3aed;--ok-bg:#dcfce7;--ok-fg:#15803d;--sec-bg:#f4f4f5;--sec-fg:#3f3f46;
+  background:var(--bg);color:var(--fg);font-size:14px;display:grid;grid-template-columns:260px 1fr;min-height:640px}
+.v1 .side{border-right:1px solid var(--line);padding:14px 10px;background:#fff}
+.v1 .logo{display:flex;align-items:center;gap:8px;font-weight:700;padding:4px 8px 14px}
+.v1 .logo i{width:26px;height:26px;border-radius:50%;background:#F8285A;display:inline-block}
+.v1 .grp{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 8px 6px}
+.v1 .nav a{display:flex;gap:8px;align-items:center;padding:7px 10px;border-radius:6px;color:#3f3f46;text-decoration:none;font-size:13.5px}
+.v1 .nav a.on{background:#eff6ff;color:var(--primary);font-weight:600}
+.v1 .nav a .ic{width:16px;height:16px;border:1.5px solid currentColor;border-radius:4px;opacity:.6}
+.v1 .main{display:flex;flex-direction:column;min-width:0}
+.v1 .hdr{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 24px}
+.v1 .hdr .crumb{font-size:13px;color:var(--muted)}
+.v1 .hdr .s{margin-left:auto;display:flex;gap:10px;align-items:center}
+.v1 .round{width:34px;height:34px;border-radius:50%;border:1px solid var(--input);display:inline-block}
+.v1 .body{padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.v1 .ph{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.v1 .ph h1{font-size:20px;margin:0;font-weight:600}
+.v1 .ph .crumbs{width:100%;font-size:12.5px;color:var(--muted)}
+.v1 .btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font-size:13px;color:var(--fg);white-space:nowrap}
+.v1 .btn.p{background:var(--primary);border-color:var(--primary);color:#fff}
+.v1 .btn.sm{height:30px;padding:0 10px}
+.v1 .btn.ghost{border-color:transparent}
+.v1 .card{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 2px 6px rgb(0 0 0/.03)}
+.v1 .pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500}
+.v1 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.v1 .warn{background:var(--warn-bg);color:var(--warn-fg)}.v1 .info{background:var(--info-bg);color:var(--info-fg)}.v1 .ok{background:var(--ok-bg);color:var(--ok-fg)}.v1 .sec{background:var(--sec-bg);color:var(--sec-fg)}
+.v1 .custom-pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:6px;font-size:12px;font-weight:600;background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+.v1 table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13.5px}
+.v1 th{font-weight:500;color:var(--muted);text-align:left;font-size:13px;background:#fafafa;border-bottom:1px solid var(--line);padding:0 12px;height:40px}
+.v1 td{border-bottom:1px solid var(--line);padding:9px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.v1 td.num,.v1 th.num{text-align:right;font-variant-numeric:tabular-nums}
+.v1 .two{display:flex;flex-direction:column;gap:2px}
+.v1 .two small{font-size:12px;color:var(--muted)}
+.v1 .chips{display:flex;gap:6px;flex-wrap:wrap}
+.v1 .chip{height:26px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:6px;background:var(--soft);font-size:12.5px}
+.v1 .kpis{display:flex;gap:10px;flex-wrap:wrap}
+.v1 .kpi{border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px}
+.v1 .kpi b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+.v1 .kpi span{font-size:12px;color:var(--muted)}
+.v1 .tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);font-size:13.5px}
+.v1 .tabs span{padding:10px 0;color:var(--muted)}
+.v1 .tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:500}
+.v1 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.v1 .field label{font-size:13px;font-weight:500}
+.v1 .inp{height:36px;border:1px solid var(--input);border-radius:6px;padding:0 10px;display:flex;align-items:center;font-size:13.5px;color:var(--fg)}
+.v1 .hint{font-size:12px;color:var(--muted)}
+.v1 .pager{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);padding:10px 12px}
+.v1 .pg{display:flex;gap:4px}.v1 .pg span{min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px}
+.v1 .pg span.on{background:var(--soft);color:var(--fg);font-weight:600}
+.v1 .sheet{position:absolute;right:0;top:0;bottom:0;width:380px;background:#fff;border-left:1px solid var(--line);box-shadow:-8px 0 24px rgb(0 0 0/.08);padding:18px}
+
+/* ================= AFTER: v2 tokens (proposed, UI-V2-PLAN section 3) ================= */
+.app.v2{
+  --brand-500:#b44d2e;--brand-600:#9a3f24;--brand-50:#fbf1ed;--brand-100:#f6ddd3;
+  --bg:#ffffff;--surface:#ffffff;--canvas:#f7f7f8;--fg:#18181b;--fg-2:#3f3f46;--muted:#71717a;
+  --line:#ececee;--line-strong:#dcdce0;--input:#dcdce0;--hover:#f4f4f5;--sel:#fbf1ed;
+  --primary:var(--brand-500);--primary-hover:var(--brand-600);--primary-fg:#fff;--primary-soft:var(--brand-50);
+  --danger:#b42318;--focus:#b44d2e;
+  --ok-bg:#ecfdf3;--ok-fg:#067647;--warn-bg:#fffaeb;--warn-fg:#b54708;--info-bg:#eff4ff;--info-fg:#3538cd;--neu-bg:#f4f4f5;--neu-fg:#52525b;
+  --r-sm:6px;--r-md:8px;--r-lg:12px;
+  --row:36px;
+  background:var(--canvas);color:var(--fg);font-size:13px;line-height:1.45;display:grid;grid-template-columns:224px 1fr;min-height:640px;position:relative
+}
+.app.v2.dark{
+  --brand-500:#d9734f;--brand-600:#e58a68;--brand-50:#2a1a14;--brand-100:#3a2219;
+  --bg:#111113;--surface:#18181b;--canvas:#0d0d0f;--fg:#f4f4f5;--fg-2:#d4d4d8;--muted:#a1a1aa;
+  --line:#26262b;--line-strong:#34343a;--input:#3a3a41;--hover:#202024;--sel:#2a1a14;--primary-fg:#1a0d08;
+  --danger:#f97066;--ok-bg:#0b2a1c;--ok-fg:#47cd89;--warn-bg:#2d1f06;--warn-fg:#fdb022;--info-bg:#1a1f3d;--info-fg:#a4bcfd;--neu-bg:#26262b;--neu-fg:#d4d4d8
+}
+.v2 .side{background:var(--surface);border-right:1px solid var(--line);padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.v2 .logo{display:flex;align-items:center;gap:8px;font-weight:650;padding:6px 8px 12px;font-size:14px}
+.v2 .logo i{width:22px;height:22px;border-radius:6px;background:var(--primary);display:inline-block}
+.v2 .grp{font-size:11px;font-weight:600;color:var(--muted);margin:12px 8px 4px}
+.v2 .nav a{display:flex;gap:8px;align-items:center;height:30px;padding:0 8px;border-radius:var(--r-sm);color:var(--fg-2);text-decoration:none;font-size:13px}
+.v2 .nav a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.v2 .nav a .ic{width:15px;height:15px;border:1.5px solid currentColor;border-radius:4px;opacity:.55}
+.v2 .main{display:flex;flex-direction:column;min-width:0}
+.v2 .top{height:48px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 20px}
+.v2 .search{height:30px;border:1px solid var(--line-strong);border-radius:var(--r-sm);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--muted);width:340px;font-size:12.5px;background:var(--bg)}
+.v2 .kbd{margin-left:auto;font:11px ui-monospace,Menlo,monospace;border:1px solid var(--line-strong);border-radius:4px;padding:0 4px}
+.v2 .top .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.v2 .ibtn{width:30px;height:30px;border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:var(--fg-2);border:1px solid transparent}
+.v2 .ibtn.b{border-color:var(--line-strong);background:var(--bg)}
+.v2 .ibtn svg{width:16px;height:16px}
+.v2 .av{width:26px;height:26px;border-radius:50%;background:var(--neu-bg);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--neu-fg)}
+.v2 .co{height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border-radius:var(--r-sm);font-size:12.5px;color:var(--fg-2)}
+.v2 .body{padding:16px 20px 24px;display:flex;flex-direction:column;gap:12px}
+.v2 .crumbs{font-size:12px;color:var(--muted)}
+.v2 .ph{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.v2 .ph h1{font-size:20px;line-height:28px;margin:0;font-weight:650;letter-spacing:-.015em}
+.v2 .ph .acts{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.v2 .btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--r-sm);border:1px solid var(--line-strong);background:var(--bg);font-size:13px;font-weight:500;color:var(--fg);white-space:nowrap}
+.v2 .btn.p{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.v2 .btn.t{border-color:transparent;background:transparent;color:var(--fg-2)}
+.v2 .btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+.v2 .btn svg{width:15px;height:15px}
+.v2 .seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:var(--r-sm);overflow:hidden;gap:0}
+.v2 .seg span{height:30px;display:inline-flex;align-items:center;padding:0 10px;font-size:12.5px;color:var(--fg-2)}
+.v2 .seg span.on{background:var(--primary);color:var(--primary-fg)}
+.v2 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg)}
+.v2 .b{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:999px;font-size:11.5px;font-weight:550;white-space:nowrap}
+.v2 .b::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.v2 .b.warn{background:var(--warn-bg);color:var(--warn-fg)}.v2 .b.info{background:var(--info-bg);color:var(--info-fg)}.v2 .b.ok{background:var(--ok-bg);color:var(--ok-fg)}.v2 .b.neu{background:var(--neu-bg);color:var(--neu-fg)}
+.v2 .b.plain::before{display:none}
+.v2 .facets{display:flex;gap:6px;flex-wrap:wrap}
+.v2 .fc{height:28px;display:inline-flex;align-items:center;gap:8px;padding:0 10px;border-radius:999px;border:1px solid var(--line-strong);background:var(--surface);font-size:12.5px;color:var(--fg-2)}
+.v2 .fc b{font-variant-numeric:tabular-nums;color:var(--fg)}
+.v2 .fc.on{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
+.v2 .fc.on b{color:var(--primary)}
+.v2 .tb{display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.v2 .sbox{height:30px;width:260px;border:1px solid var(--line-strong);border-radius:var(--r-sm);display:flex;align-items:center;gap:6px;padding:0 9px;color:var(--muted);font-size:12.5px;background:var(--bg)}
+.v2 .fchip{height:28px;display:inline-flex;align-items:center;gap:5px;padding:0 9px;border-radius:var(--r-sm);border:1px dashed var(--line-strong);font-size:12.5px;color:var(--fg-2)}
+.v2 .fchip.set{border-style:solid;background:var(--primary-soft);border-color:transparent;color:var(--fg)}
+.v2 .fchip.set em{font-style:normal;color:var(--primary);font-weight:600}
+.v2 .tb .r{margin-left:auto;display:flex;gap:4px;align-items:center}
+.v2 .selbar{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--primary-soft);font-size:12.5px}
+.v2 .selbar a{color:var(--primary);font-weight:600;text-decoration:none}
+.v2 table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;font-size:13px}
+.v2 th{font-weight:550;color:var(--muted);text-align:left;font-size:12px;background:var(--surface);border-bottom:1px solid var(--line-strong);padding:0 10px;height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;top:0}
+.v2 th .so{opacity:.35;margin-left:3px;font-size:10px}
+.v2 th.sorted{color:var(--fg)}.v2 th.sorted .so{opacity:1;color:var(--primary)}
+.v2 td{border-bottom:1px solid var(--line);padding:0 10px;height:var(--row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface)}
+.v2 tr.sel td{background:var(--sel)}
+.v2 tr.hov td{background:var(--hover)}
+.v2 td.num,.v2 th.num{text-align:right;font-variant-numeric:tabular-nums}
+.v2 td.id{font-weight:550;font-variant-numeric:tabular-nums}
+.v2 td.mut{color:var(--muted)}
+.v2 .cb{width:14px;height:14px;border:1.5px solid var(--line-strong);border-radius:4px;display:inline-block;vertical-align:middle;background:var(--bg)}
+.v2 .cb.on{background:var(--primary);border-color:var(--primary);position:relative}
+.v2 .cb.on::after{content:"";position:absolute;left:3.5px;top:0.5px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.v2 .cb.mix{background:var(--primary);border-color:var(--primary);position:relative}
+.v2 .cb.mix::after{content:"";position:absolute;left:2px;right:2px;top:5px;height:2px;background:#fff}
+.v2 .pager{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--muted);padding:8px 10px}
+.v2 .pg{display:flex;gap:2px;align-items:center}.v2 .pg span{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);color:var(--fg-2)}
+.v2 .pg span.on{background:var(--primary-soft);color:var(--primary);font-weight:650}
+.v2 .menu{position:absolute;z-index:30;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-md);box-shadow:0 12px 32px rgb(0 0 0/.14),0 2px 6px rgb(0 0 0/.06);padding:4px;min-width:220px;font-size:13px}
+.v2 .menu div{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:5px;color:var(--fg)}
+.v2 .menu div.h{background:var(--hover)}
+.v2 .menu div small{margin-left:auto;color:var(--muted);font:11px ui-monospace,Menlo,monospace}
+.v2 .menu hr{border:0;border-top:1px solid var(--line);margin:4px 0}
+.v2 .menu div.d{color:var(--danger)}
+.v2 .rh{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.v2 .rh .id{display:flex;flex-direction:column;gap:2px;min-width:0}
+.v2 .rh h1{font-size:20px;line-height:28px;margin:0;font-weight:650;letter-spacing:-.015em;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.v2 .rh .sub{font-size:13px;color:var(--muted)}
+.v2 .rh .sub a{color:var(--primary);text-decoration:none;font-weight:550}
+.v2 .rh .acts{margin-left:auto;display:flex;gap:6px;align-items:center}
+.v2 .nav2{display:inline-flex;align-items:center;gap:2px;font-size:12.5px;color:var(--muted);margin-right:4px}
+.v2 .meta{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface)}
+.v2 .meta div{padding:8px 12px;border-right:1px solid var(--line);min-width:0}
+.v2 .meta div:last-child{border-right:0}
+.v2 .meta dt{font-size:11.5px;color:var(--muted);margin:0}
+.v2 .meta dd{margin:2px 0 0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v2 .tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);font-size:13px;overflow:auto}
+.v2 .tabs span{padding:8px 0;color:var(--muted);white-space:nowrap;display:inline-flex;gap:6px;align-items:center}
+.v2 .tabs span.on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--primary);font-weight:550}
+.v2 .tabs .n{font-size:11px;background:var(--neu-bg);color:var(--neu-fg);border-radius:999px;padding:0 6px}
+.v2 .fieldgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px;padding:14px 16px}
+.v2 .f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.v2 .f label{font-size:12px;font-weight:550;color:var(--fg-2)}
+.v2 .f .req{color:var(--danger)}
+.v2 .inp{height:32px;border:1px solid var(--input);border-radius:var(--r-sm);padding:0 10px;display:flex;align-items:center;gap:6px;font-size:13px;background:var(--bg);color:var(--fg);white-space:nowrap;overflow:hidden}
+.v2 .inp .caret{margin-left:auto;color:var(--muted)}
+.v2 .inp.ro{border-color:transparent;background:var(--canvas);color:var(--fg-2)}
+.v2 .sec-h{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);font-weight:600;font-size:13.5px}
+.v2 .sec-h small{font-weight:400;color:var(--muted);font-size:12.5px}
+.v2 .sec-h .r{margin-left:auto}
+.v2 .totals{display:grid;grid-template-columns:auto 140px;gap:4px 18px;justify-content:end;padding:10px 16px;font-size:13px;font-variant-numeric:tabular-nums}
+.v2 .totals span:nth-child(odd){color:var(--muted);text-align:right}
+.v2 .totals span:nth-child(even){text-align:right}
+.v2 .totals .g{font-weight:650;font-size:14.5px;color:var(--fg)!important}
+.v2 .why{font-size:11.5px;color:var(--muted);text-align:right;margin-top:3px}
+.v2 .thumb{width:26px;height:26px;border-radius:5px;background:linear-gradient(135deg,#e7e5e4,#d6d3d1);display:inline-block;vertical-align:middle}
+.v2 .secrow td{background:var(--canvas);font-weight:600;color:var(--fg-2);font-size:12.5px}
+.v2 .toast{position:absolute;right:20px;bottom:20px;z-index:35;background:var(--fg);color:var(--bg);border-radius:var(--r-md);padding:10px 12px;font-size:13px;display:flex;gap:14px;align-items:center;box-shadow:0 12px 28px rgb(0 0 0/.25)}
+.v2 .toast a{color:inherit;font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.v2 .setnav{display:flex;flex-direction:column;gap:1px;width:210px;flex:none}
+.v2 .setnav .g{font-size:11px;font-weight:600;color:var(--muted);margin:12px 8px 4px}
+.v2 .setnav .g:first-child{margin-top:0}
+.v2 .setnav a{height:30px;display:flex;align-items:center;padding:0 8px;border-radius:var(--r-sm);color:var(--fg-2);text-decoration:none;font-size:13px}
+.v2 .setnav a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.v2 .srow{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+.v2 .srow:last-child{border-bottom:0}
+.v2 .srow .l{font-size:13px;font-weight:550}
+.v2 .srow .d{font-size:12px;color:var(--muted)}
+.v2 .sw{width:32px;height:18px;border-radius:999px;background:var(--line-strong);position:relative;display:inline-block}
+.v2 .sw::after{content:"";position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;top:2px;left:2px;box-shadow:0 1px 2px rgb(0 0 0/.2)}
+.v2 .sw.on{background:var(--primary)}.v2 .sw.on::after{left:16px}
+.v2 .dirty{position:sticky;bottom:0;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--fg);color:var(--bg);border-radius:var(--r-md);font-size:13px;box-shadow:0 10px 24px rgb(0 0 0/.2)}
+.v2 .dirty .btn{border-color:transparent}
+.v2 .dirty .btn.t{color:var(--bg)}
+.v2 .changed{box-shadow:inset 3px 0 0 var(--primary)}
+
+/* phone */
+.phone .app{display:flex}
+.phone .v1 .hdr,.phone .v2 .top{flex:none}
+.pv1{--primary:#3b82f6;--line:#efeff1;--muted:#71717a;background:#fff;color:#09090b;font-size:14px}
+.pv1 .hdr{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 14px}
+.pv1 .hdr .bars{width:20px;height:14px;border-top:2px solid #3f3f46;border-bottom:2px solid #3f3f46;position:relative}
+.pv1 .hdr .bars::after{content:"";position:absolute;left:0;right:0;top:4px;border-top:2px solid #3f3f46}
+.pv1 .round{width:30px;height:30px;border-radius:50%;border:1px solid #e4e4e7;margin-left:6px}
+.pv1 .body{padding:14px;display:flex;flex-direction:column;gap:12px;overflow:hidden;flex:1}
+.pv1 h1{font-size:19px;margin:0;font-weight:600}
+.pv1 .btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:13px}
+.pv1 .btn.p{background:var(--primary);color:#fff;border-color:var(--primary)}
+.pv1 .kpi{border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-width:140px;flex:none}
+.pv1 .kpi b{display:block;font-size:17px}.pv1 .kpi span{font-size:12px;color:var(--muted)}
+.pv1 .scrollx{display:flex;gap:8px;overflow:hidden}
+.pv1 .inp{height:36px;border:1px solid #e4e4e7;border-radius:6px;padding:0 10px;display:flex;align-items:center;color:var(--muted);font-size:13.5px}
+.pv1 table{border-collapse:collapse;font-size:13.5px;table-layout:fixed;width:760px}
+.pv1 th{font-weight:500;color:var(--muted);text-align:left;font-size:13px;background:#fafafa;border-bottom:1px solid var(--line);padding:0 10px;height:38px}
+.pv1 td{border-bottom:1px solid var(--line);padding:9px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.pv1 .gridbox{border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:1;min-height:0}
+.pv1 .pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;background:#fef9c3;color:#a16207}
+.pv1 .pager{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--muted)}
+
+.pv2{background:var(--canvas);flex-direction:column}
+.pv2 .top{height:48px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--surface);border-bottom:1px solid var(--line)}
+.pv2 .top .t{font-weight:650;font-size:16px;letter-spacing:-.01em}
+.pv2 .top .r{margin-left:auto;display:flex;gap:2px}
+.pv2 .ibtn{width:40px;height:40px}
+.pv2 .tb2{display:flex;gap:6px;padding:8px 10px;background:var(--surface);border-bottom:1px solid var(--line);align-items:center}
+.pv2 .tb2 .sbox{flex:1;width:auto;height:36px}
+.pv2 .facets{padding:8px 10px;overflow:hidden;flex-wrap:nowrap;background:var(--surface);border-bottom:1px solid var(--line)}
+.pv2 .fc{height:30px;flex:none}
+.pv2 .gridwrap{flex:1;min-height:0;overflow:hidden;position:relative;background:var(--surface)}
+.pv2 table{width:640px}
+.pv2 td{height:44px}
+.pv2 th:first-child,.pv2 td:first-child{position:sticky;left:0;z-index:2;box-shadow:1px 0 0 var(--line-strong)}
+.pv2 .pager{background:var(--surface);border-top:1px solid var(--line);padding:6px 10px}
+.pv2 .sheetm{position:absolute;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-radius:16px 16px 0 0;box-shadow:0 -10px 30px rgb(0 0 0/.18);padding:8px 8px 16px}
+.pv2 .sheetm .grab{width:36px;height:4px;border-radius:2px;background:var(--line-strong);margin:2px auto 8px}
+.pv2 .sheetm .h{font-weight:650;padding:4px 10px 8px;font-size:14px}
+.pv2 .sheetm div.i{height:44px;display:flex;align-items:center;padding:0 12px;border-radius:8px;font-size:14px}
+.pv2 .scrim{position:absolute;inset:0;background:rgb(0 0 0/.35);z-index:25}
+@media (max-width:720px){.doc-top{position:static}}
+</style>
+</head>
+<body class="v-after">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.4 19.4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 14H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1.1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-cols" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5h18M6 12h12M10 19h4"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m5 12 5 5 9-10"/></symbol>
+</svg>
+
+<header class="doc-top">
+  <h1>Sorento UI v2 mocks</h1>
+  <nav class="doc-tabs" aria-label="Screens">
+    <button data-s="list" aria-pressed="true">1 Order inquiry list</button>
+    <button data-s="detail" aria-pressed="false">2 Order inquiry detail</button>
+    <button data-s="quote" aria-pressed="false">3 Quotation editor</button>
+    <button data-s="settings" aria-pressed="false">4 System settings</button>
+    <button data-s="phone" aria-pressed="false">5 Phone list</button>
+  </nav>
+  <span class="doc-spacer"></span>
+  <div class="seg" aria-label="Version">
+    <button data-v="before" aria-pressed="false">Before</button>
+    <button data-v="after" aria-pressed="true">After</button>
+    <button data-v="both" aria-pressed="false">Both</button>
+  </div>
+  <div class="seg">
+    <button id="mapBtn" aria-pressed="false">Component map</button>
+    <button id="darkBtn" aria-pressed="false">v2 dark</button>
+  </div>
+</header>
+
+<main class="doc-main">
+
+<!-- =============================== 1. OI LIST =============================== -->
+<section class="screen on" id="s-list">
+  <h2>1. Order inquiry list</h2>
+  <p class="lede">Route <code>/project-sales/order-inquiries</code>. Same columns, same data, same server-side paging. v2 changes the shell, puts every filter on one toolbar row as multi-select chips, makes every column sortable, keeps every row to one line, and adds the right-click row menu.</p>
+
+  <div class="only-before">
+  <div class="frame-label">Before (today)</div>
+  <div class="frame"><div class="app v1">
+    <aside class="side">
+      <div class="logo"><i></i>Sorento</div>
+      <div class="grp">Project sales</div>
+      <nav class="nav">
+        <a><span class="ic"></span>Projects</a><a><span class="ic"></span>Opportunities</a><a class="on"><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a>
+      </nav>
+      <div class="grp">SCM</div>
+      <nav class="nav"><a><span class="ic"></span>Sales orders</a><a><span class="ic"></span>Purchase orders</a><a><span class="ic"></span>SPO</a><a><span class="ic"></span>GRN</a></nav>
+      <div class="grp">Account</div>
+      <nav class="nav"><a><span class="ic"></span>Billing</a><a><span class="ic"></span>Invite a friend</a><a><span class="ic"></span>Privacy Settings</a></nav>
+    </aside>
+    <div class="main">
+      <div class="hdr"><span class="crumb">Project sales</span><span class="s"><span class="round"></span><span class="round"></span><span class="round"></span></span></div>
+      <div class="body">
+        <div class="ph"><div class="crumbs">Home / Project sales / Order inquiries</div><h1>Order inquiries</h1><span style="margin-left:auto;display:flex;gap:0"><span class="btn p sm" style="border-radius:6px 0 0 6px">List</span><span class="btn sm ghost" style="border:1px solid #e4e4e7;border-radius:0 6px 6px 0">Schedule</span></span></div>
+        <div class="kpis">
+          <div class="kpi"><b>120</b><span>Stock</span></div><div class="kpi"><b>84</b><span>Indent</span></div><div class="kpi"><b>108</b><span>Project</span></div><div class="kpi" style="border-color:#fcd34d"><b style="color:#b45309">17</b><span>To confirm</span></div>
+        </div>
+        <div class="card">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;padding:12px;border-bottom:1px solid #efeff1;align-items:center">
+            <span class="inp" style="width:280px;color:#a1a1aa">Search order inquiries...</span>
+            <span class="btn">Filters <span class="pill sec" style="height:18px">3</span></span>
+            <div class="chips"><span class="chip">Reserve: Needs reserve ✕</span><span class="chip">Agent: J***** ✕</span><span class="chip">Raised by: 2 selected ✕</span></div>
+            <span class="btn ghost" style="margin-left:auto">Clear filters</span><span class="btn">Columns</span>
+          </div>
+          <table>
+            <colgroup><col style="width:42px"><col style="width:185px"><col style="width:140px"><col style="width:120px"><col style="width:150px"><col style="width:80px"><col style="width:180px"><col style="width:160px"><col style="width:130px"><col style="width:120px"><col style="width:190px"><col style="width:130px"></colgroup>
+            <thead><tr><th>☐</th><th>Raised at ↓</th><th>OI no</th><th>S/O no</th><th>Raised by</th><th class="num">Qty</th><th>Customer</th><th>Project</th><th>Agent</th><th>SO date</th><th>Reserve</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>☐</td><td>10/11/2026, 9:42 am</td><td><b>OI-2611-0142</b></td><td>SO414285</td><td>E****</td><td class="num">48</td><td>R***** Kitchen Sdn Bhd</td><td>T*** Residences Blk B</td><td>J*****</td><td>09/11/2026</td><td><div class="two"><span class="pill sec">Parked request to reserve</span><small>parked by A*****</small></div></td><td><span class="pill warn">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>10/11/2026, 9:15 am</td><td><b>OI-2611-0141</b></td><td>SO414280</td><td>E****</td><td class="num">12</td><td>B****** Sdn Bhd (Project)</td><td>Menara S*** Fit-out</td><td>K*** L.</td><td>09/11/2026</td><td><span class="pill info">Needs reserve</span></td><td><span class="pill warn">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>09/11/2026, 5:58 pm</td><td><b>OI-2611-0139</b></td><td>SO413902</td><td>W** Y.</td><td class="num">6</td><td>M*** Debtor</td><td>-</td><td>J*****</td><td>08/11/2026</td><td><div class="two"><span class="pill warn">Parked reserve</span><small>parked by S****</small></div></td><td><span class="pill warn">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>09/11/2026, 4:20 pm</td><td><b>OI-2611-0137</b></td><td>SO413877</td><td>E****</td><td class="num">220</td><td>A*** Hartanah</td><td>Taman C**** Phase 3</td><td>K*** L.</td><td>07/11/2026</td><td><span class="pill ok">Reserved</span></td><td><span class="pill sec">Completed</span></td></tr>
+              <tr><td>☐</td><td>09/11/2026, 11:02 am</td><td><b>OI-2611-0133</b></td><td>SO413650</td><td>N*****</td><td class="num">32</td><td>T*** Residences Sdn Bhd</td><td>T*** Residences Blk A</td><td>J*****</td><td>06/11/2026</td><td><span class="pill info">Needs reserve</span></td><td><span class="pill warn">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>08/11/2026, 3:47 pm</td><td><b>OI-2611-0128</b></td><td>SO413301</td><td>W** Y.</td><td class="num">4</td><td>O****</td><td>-</td><td>A*****</td><td>05/11/2026</td><td><span class="pill ok">Reserved</span></td><td><span class="pill sec">Completed</span></td></tr>
+            </tbody>
+          </table>
+          <div class="pager"><span>Rows per page 25</span><span>1 - 25 of 312</span><span class="pg"><span>‹</span><span class="on">1</span><span>2</span><span>3</span><span>…</span><span>13</span><span>›</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <ul class="notes">
+    <li>Filters sit in a panel behind a "Filters" button; Reserve is a single-select there (<code>OrderInquiryHeadersList.tsx:665</code>), the other three are multi.</li>
+    <li>Reserve is the one column that is not sortable (<code>OrderInquiryHeadersList.tsx:491</code>) and the one cell that takes two lines (<code>:497-510</code>).</li>
+    <li>No row menu: secondary row actions need the record or the selection toolbar.</li>
+    <li>Metronic demo leftovers still in the menu config (Billing, Invite a friend, Privacy Settings; <code>config/menu.config.tsx:1739,2929,3286</code>).</li>
+  </ul>
+  </div>
+
+  <div class="only-after">
+  <div class="frame-label">After (v2)</div>
+  <div class="frame"><div class="app v2" data-v2>
+    <aside class="side" data-c="AppSidebar · app/components/layouts/demo1/components/sidebar.tsx (restyle)">
+      <div class="logo"><i></i>Sorento</div>
+      <div class="grp">Project sales</div>
+      <nav class="nav"><a><span class="ic"></span>Projects</a><a><span class="ic"></span>Opportunities</a><a class="on"><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a></nav>
+      <div class="grp">SCM</div>
+      <nav class="nav"><a><span class="ic"></span>Sales orders</a><a><span class="ic"></span>Purchase orders</a><a><span class="ic"></span>SPO</a><a><span class="ic"></span>GRN</a></nav>
+      <div class="grp">Inventory</div>
+      <nav class="nav"><a><span class="ic"></span>Stock</a><a><span class="ic"></span>Warehouses</a></nav>
+    </aside>
+    <div class="main">
+      <div class="top" data-c="AppTopbar · app/components/layouts/demo1/components/header.tsx (restyle)">
+        <span class="search" data-c="SearchDialog trigger · app/components/partials/dialogs/search/search-dialog.tsx"><svg><use href="#i-search"/></svg>Search records, people, products<span class="kbd">⌘K</span></span>
+        <span class="r"><span class="co">Sorento HQ ▾</span><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span>
+      </div>
+      <div class="body">
+        <div>
+          <div class="crumbs">Project sales</div>
+          <div class="ph" data-c="PageHeader · components/common/PageHeader.tsx">
+            <h1>Order inquiries</h1>
+            <span class="acts"><span class="seg" data-c="ViewToggle · NEW components/common/ViewToggle.tsx"><span class="on">List</span><span>Schedule</span></span></span>
+          </div>
+        </div>
+        <div class="facets" data-c="FacetChips · NEW components/common/FacetChips.tsx (replaces OrderInquiryStrip + SupplyKindCard)">
+          <span class="fc">Stock <b>120</b></span><span class="fc">Indent <b>84</b></span><span class="fc">Project <b>108</b></span><span class="fc on">To confirm <b>17</b></span>
+        </div>
+        <div class="card" style="overflow:visible;position:relative" data-c="DataGrid · components/ui/data-grid.tsx">
+          <div class="tb" data-c="DataGridListToolbar · components/ui/data-grid-list-toolbar.tsx (restyle)">
+            <span class="sbox" data-c="ListSearchInput · components/common/ListSearchInput.tsx"><svg width="14" height="14"><use href="#i-search"/></svg>Search OI no, S/O no, customer</span>
+            <span class="fchip set" data-c="FilterChip · NEW components/ui/data-grid-filter-chip.tsx (SearchableMultiSelect inside)">Reserve: <em>Needs reserve, Parked</em></span>
+            <span class="fchip set">Agent: <em>J*****</em></span>
+            <span class="fchip set">Raised by: <em>2</em></span>
+            <span class="fchip">+ Project</span>
+            <span class="fchip">+ Status</span>
+            <span class="btn t sm">Clear filters</span>
+            <span class="r"><span class="ibtn" title="Columns" data-c="ColumnsMenu · components/ui/data-grid-column-visibility.tsx"><svg><use href="#i-cols"/></svg></span></span>
+          </div>
+          <div class="selbar" data-c="Selection bar · data-grid-list-toolbar.tsx:39-40,220 + Select-all-N">
+            <span class="cb mix"></span><b>3 selected</b><span style="color:var(--muted)">·</span><a href="#">Select all 312</a>
+            <span style="margin-left:auto;display:flex;gap:6px"><span class="btn sm">Send to purchasing</span><span class="btn sm">Export Excel</span><span class="btn t sm">Clear</span></span>
+          </div>
+          <table data-c="DataGridTable · components/ui/data-grid-table.tsx (one line per row)">
+            <colgroup><col style="width:38px"><col style="width:150px"><col style="width:128px"><col style="width:104px"><col style="width:110px"><col style="width:64px"><col style="width:190px"><col style="width:170px"><col style="width:100px"><col style="width:98px"><col style="width:150px"><col style="width:112px"></colgroup>
+            <thead><tr><th><span class="cb mix"></span></th><th class="sorted">Raised at<span class="so">▼</span></th><th>OI no<span class="so">↕</span></th><th>S/O no<span class="so">↕</span></th><th>Raised by<span class="so">↕</span></th><th class="num">Qty<span class="so">↕</span></th><th>Customer<span class="so">↕</span></th><th>Project<span class="so">↕</span></th><th>Agent<span class="so">↕</span></th><th>SO date<span class="so">↕</span></th><th>Reserve<span class="so">↕</span></th><th>Status<span class="so">↕</span></th></tr></thead>
+            <tbody>
+              <tr class="sel"><td><span class="cb on"></span></td><td class="mut">10/11/2026, 9:42 am</td><td class="id">OI-2611-0142</td><td>SO414285</td><td>E****</td><td class="num">48</td><td>R***** Kitchen Sdn Bhd</td><td>T*** Residences Blk B</td><td>J*****</td><td>09/11/2026</td><td title="Parked by A*****"><span class="b neu">Parked request</span></td><td><span class="b warn">Outstanding</span></td></tr>
+              <tr class="sel"><td><span class="cb on"></span></td><td class="mut">10/11/2026, 9:15 am</td><td class="id">OI-2611-0141</td><td>SO414280</td><td>E****</td><td class="num">12</td><td>B****** Sdn Bhd (Project)</td><td>Menara S*** Fit-out</td><td>K*** L.</td><td>09/11/2026</td><td><span class="b info">Needs reserve</span></td><td><span class="b warn">Outstanding</span></td></tr>
+              <tr class="sel hov"><td><span class="cb on"></span></td><td class="mut">09/11/2026, 5:58 pm</td><td class="id">OI-2611-0139</td><td>SO413902</td><td>W** Y.</td><td class="num">6</td><td>M*** Debtor</td><td class="mut">-</td><td>J*****</td><td>08/11/2026</td><td title="Parked by S****"><span class="b warn">Parked reserve</span></td><td><span class="b warn">Outstanding</span></td></tr>
+              <tr><td><span class="cb"></span></td><td class="mut">09/11/2026, 4:20 pm</td><td class="id">OI-2611-0137</td><td>SO413877</td><td>E****</td><td class="num">220</td><td>A*** Hartanah</td><td>Taman C**** Phase 3</td><td>K*** L.</td><td>07/11/2026</td><td><span class="b ok">Reserved</span></td><td><span class="b neu">Completed</span></td></tr>
+              <tr><td><span class="cb"></span></td><td class="mut">09/11/2026, 11:02 am</td><td class="id">OI-2611-0133</td><td>SO413650</td><td>N*****</td><td class="num">32</td><td>T*** Residences Sdn Bhd</td><td>T*** Residences Blk A</td><td>J*****</td><td>06/11/2026</td><td><span class="b info">Needs reserve</span></td><td><span class="b warn">Outstanding</span></td></tr>
+              <tr><td><span class="cb"></span></td><td class="mut">08/11/2026, 3:47 pm</td><td class="id">OI-2611-0128</td><td>SO413301</td><td>W** Y.</td><td class="num">4</td><td>O****</td><td class="mut">-</td><td>A*****</td><td>05/11/2026</td><td><span class="b ok">Reserved</span></td><td><span class="b neu">Completed</span></td></tr>
+              <tr><td><span class="cb"></span></td><td class="mut">08/11/2026, 10:12 am</td><td class="id">OI-2611-0125</td><td>SO413122</td><td>E****</td><td class="num">18</td><td>S***** Sdn Bhd</td><td>S***** Velocity 2</td><td>K*** L.</td><td>05/11/2026</td><td><span class="b info">Needs reserve</span></td><td><span class="b warn">Outstanding</span></td></tr>
+            </tbody>
+          </table>
+          <div class="menu" style="left:560px;top:214px" data-c="DataGridRowMenu · NEW components/ui/data-grid-row-menu.tsx (items from useOrderInquiryActions, D15)">
+            <div class="h">Open<small>↵</small></div><div>Open in new tab<small>⌘↵</small></div><div>Copy OI no<small>⌘C</small></div><hr><div>Send 3 to purchasing</div><div>Request CS to reserve</div><div>Export Excel</div><hr><div>View splits</div>
+          </div>
+          <div class="pager" data-c="DataGridPagination · components/ui/data-grid-pagination.tsx">
+            <span>Rows 25 ▾</span><span class="pg"><span>1 - 25 of 312</span><span><svg width="14" height="14"><use href="#i-left"/></svg></span><span class="on">1</span><span>2</span><span>3</span><span>…</span><span>13</span><span><svg width="14" height="14"><use href="#i-right"/></svg></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  </div>
+
+  <div class="legend"><table>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Sidebar</td><td>Sidebar, SidebarMenu</td><td><span class="tag re">restyle</span></td><td><code>app/components/layouts/demo1/components/sidebar.tsx</code>, <code>sidebar-menu.tsx</code>, <code>config/menu.config.tsx</code></td><td>224 px, 30 px items, brand tint for active, Metronic demo entries removed</td></tr>
+      <tr><td>Topbar + search</td><td>Header, SearchDialog</td><td><span class="tag re">restyle</span></td><td><code>.../demo1/components/header.tsx</code>, <code>app/components/partials/dialogs/search/search-dialog.tsx</code></td><td>48 px bar; search field is the visible trigger for Cmd/Ctrl+K</td></tr>
+      <tr><td>Title + view switch</td><td>PageHeader + ViewToggle</td><td><span class="tag keep">keep</span> / <span class="tag new">new</span></td><td><code>components/common/PageHeader.tsx</code>; NEW <code>components/common/ViewToggle.tsx</code></td><td>The hand-built List | Schedule button pair (<code>OrderInquiriesClient.tsx:1515-1545</code>) becomes one shared toggle</td></tr>
+      <tr><td>Kind counts</td><td>FacetChips</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/FacetChips.tsx</code></td><td>Replaces <code>OrderInquiryStrip</code> + <code>SupplyKindCard</code> tiles; a count chip is a filter toggle, 28 px high instead of a 60 px tile</td></tr>
+      <tr><td>Search</td><td>ListSearchInput</td><td><span class="tag keep">keep</span></td><td><code>components/common/ListSearchInput.tsx</code></td><td>-</td></tr>
+      <tr><td>Filters</td><td>FilterChip (wraps SearchableMultiSelect)</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-filter-chip.tsx</code>; <code>components/common/SearchableMultiSelect.tsx</code></td><td>Every dropdown filter multi-select and on the toolbar row; the Filters panel goes away</td></tr>
+      <tr><td>Columns</td><td>Column visibility menu</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid-column-visibility.tsx</code></td><td>Icon button with styled tooltip</td></tr>
+      <tr><td>Selection bar + Select all N</td><td>DataGridListToolbar</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-list-toolbar.tsx</code>, <code>data-grid-range-select.ts</code></td><td>Shift/drag ranges already exist; "Select all 312" link added after a page is fully ticked</td></tr>
+      <tr><td>Rows</td><td>DataGridTable</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-table.tsx</code></td><td>36 px rows (Comfortable), one line always; Reserve keeps one badge, "parked by" goes to the cell title</td></tr>
+      <tr><td>Sort arrows</td><td>DataGridColumnHeader</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid-column-header.tsx</code></td><td>Every column sortable server-side; Reserve needs a backend sort key</td></tr>
+      <tr><td>Status / Reserve</td><td>Badge</td><td><span class="tag keep">keep</span></td><td><code>components/ui/badge.tsx</code>; <code>project-sales/_shared/lib/orderInquiryHeaderStatus.ts</code></td><td>v2 status tones</td></tr>
+      <tr><td>Row right-click menu</td><td>DataGridRowMenu</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-row-menu.tsx</code> on <code>components/ui/context-menu.tsx</code></td><td>Fed by the D15 <code>use&lt;Entity&gt;Actions</code> set; acts on the selection when the row is part of it</td></tr>
+      <tr><td>Dates</td><td>formatDate / formatDateTime</td><td><span class="tag new">new</span></td><td>NEW <code>lib/format/date.ts</code> (replaces six helpers in <code>lib/helpers.ts</code>)</td><td>dd/mm/yyyy, one formatter</td></tr>
+      <tr><td>Pager</td><td>DataGridPagination</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid-pagination.tsx</code></td><td>-</td></tr>
+    </tbody></table></div>
+</section>
+
+<!-- =============================== 2. OI DETAIL =============================== -->
+<section class="screen" id="s-detail">
+  <h2>2. Order inquiry detail</h2>
+  <p class="lede">Route <code>/project-sales/order-inquiries/[id]</code>. The OI header is already the model the owner wants every record to copy. v2 keeps its layout and fixes the two filled buttons, puts read-only metadata in one strip under the header, and keeps History as the last tab.</p>
+
+  <div class="only-before">
+  <div class="frame-label">Before (today)</div>
+  <div class="frame"><div class="app v1">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">Project sales</div><nav class="nav"><a><span class="ic"></span>Projects</a><a class="on"><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a></nav></aside>
+    <div class="main">
+      <div class="hdr"><span class="crumb">Project sales</span><span class="s"><span class="round"></span><span class="round"></span></span></div>
+      <div class="body">
+        <div class="card" style="padding:18px 20px">
+          <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+            <div><div style="display:flex;gap:8px;align-items:center"><span style="font-size:20px;font-weight:600">OI-2611-0142</span><span class="pill warn">Outstanding</span><span class="pill sec">Consignment</span></div>
+              <div class="hint" style="margin-top:4px;font-size:13px"><b style="color:#3b82f6">SO414285</b> · Raised by E**** on 10/11/2026, 9:42 am</div></div>
+            <div style="margin-left:auto;display:flex;gap:6px;align-items:center"><span class="hint">3 / 25</span><span class="btn sm">‹</span><span class="btn sm">›</span><span class="btn sm" title="Order inquiry options">⚙</span><span class="btn p">Confirm</span><span class="btn p">Reserve (2)</span></div>
+          </div>
+        </div>
+        <div class="tabs"><span class="on">Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span><span>History</span></div>
+        <div class="card">
+          <table>
+            <colgroup><col style="width:40px"><col style="width:52px"><col style="width:250px"><col style="width:80px"><col style="width:120px"><col style="width:150px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:140px"></colgroup>
+            <thead><tr><th>☐</th><th>No.</th><th>Product</th><th>Split</th><th>Delivery date</th><th>Supplier</th><th>PO</th><th>SPO</th><th>Location</th><th>State</th></tr></thead>
+            <tbody>
+              <tr><td>☑</td><td>1</td><td>SRT382-6 Ceramic Wash Basin 450mm</td><td>-</td><td>28/11/2026</td><td>FOSHAN WORKS</td><td>P2611-0031</td><td>SPO-2611-07</td><td>HQ</td><td><span class="pill info">Needs reserve</span></td></tr>
+              <tr><td>☑</td><td>2</td><td>SRTWC8613-RL Wall-hung WC</td><td>1 of 2</td><td>28/11/2026</td><td>DAFUYUAN</td><td>P2611-0031</td><td>-</td><td>HQ</td><td><span class="pill info">Needs reserve</span></td></tr>
+              <tr><td>☐</td><td>3</td><td>CB6633 Concealed cistern</td><td>-</td><td>05/12/2026</td><td>CHAOSHENG</td><td>-</td><td>-</td><td>-</td><td><span class="pill warn">To confirm</span></td></tr>
+              <tr><td>☐</td><td>4</td><td>SRT-WC-01 Close-coupled WC</td><td>-</td><td>05/12/2026</td><td>CHAOSHENG</td><td>-</td><td>-</td><td>-</td><td><span class="pill warn">To confirm</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <ul class="notes"><li>Two filled buttons at once, Confirm and Reserve (<code>OrderInquiryDetail.tsx:960-983</code>).</li><li>Gear and prev/next use a native <code>title</code> or nothing (<code>DetailActionsMenu.tsx:121-122</code>, <code>RecordNavigation.tsx:77,99</code>).</li><li>Customer, project and agent are only on the General tab.</li></ul>
+  </div>
+
+  <div class="only-after">
+  <div class="frame-label">After (v2)</div>
+  <div class="frame"><div class="app v2">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">Project sales</div><nav class="nav"><a><span class="ic"></span>Projects</a><a><span class="ic"></span>Opportunities</a><a class="on"><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a></nav></aside>
+    <div class="main">
+      <div class="top"><span class="search"><svg><use href="#i-search"/></svg>Search records, people, products<span class="kbd">⌘K</span></span><span class="r"><span class="co">Sorento HQ ▾</span><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+      <div class="body">
+        <div class="crumbs" data-c="Breadcrumb · PageHeader crumbs">Project sales / Order inquiries</div>
+        <div class="rh" data-c="RecordHeader · components/common/RecordHeaderCard.tsx (v2: flat, no card)">
+          <div class="id">
+            <h1>OI-2611-0142 <span class="b warn" data-c="Badge · components/ui/badge.tsx">Outstanding</span><span class="b neu plain">Consignment</span></h1>
+            <div class="sub"><a href="#">SO414285</a> · Raised by E**** on 10/11/2026, 9:42 am</div>
+          </div>
+          <div class="acts" data-c="DetailActions · components/common/DetailActions.tsx">
+            <span class="nav2" data-c="RecordNavigation · components/common/RecordNavigation.tsx">3 / 25<span class="ibtn" title="Previous order inquiry"><svg><use href="#i-left"/></svg></span><span class="ibtn" title="Next order inquiry"><svg><use href="#i-right"/></svg></span></span>
+            <span class="ibtn b" data-c="DetailActionsMenu · components/common/DetailActionsMenu.tsx" title="Order inquiry options"><svg><use href="#i-gear"/></svg></span>
+            <span class="btn p">Reserve 2 lines</span>
+          </div>
+        </div>
+        <dl class="meta" data-c="RecordMeta · NEW components/common/RecordMeta.tsx">
+          <div><dt>Customer</dt><dd>R***** Kitchen Sdn Bhd</dd></div>
+          <div><dt>Project</dt><dd>T*** Residences Blk B</dd></div>
+          <div><dt>Agent</dt><dd>J*****</dd></div>
+          <div><dt>SO date</dt><dd>09/11/2026</dd></div>
+          <div><dt>Qty</dt><dd>48</dd></div>
+          <div><dt>Reserve</dt><dd><span class="b info">Needs reserve</span></dd></div>
+        </dl>
+        <div class="tabs" data-c="Tabs line · components/ui/tabs.tsx">
+          <span class="on">Lines <span class="n">4</span></span><span>General</span><span>Related PO <span class="n">1</span></span><span>Related SPO <span class="n">1</span></span><span data-c="HistoryTab · NEW components/common/HistoryTab.tsx (wraps EventTimeline)">History</span>
+        </div>
+        <div class="card" style="overflow:hidden">
+          <div class="selbar"><span class="cb mix"></span><b>2 selected</b><span style="margin-left:auto;display:flex;gap:6px"><span class="btn sm">Reject</span><span class="btn t sm">Clear</span></span></div>
+          <table data-c="DataGrid · components/ui/data-grid.tsx">
+            <colgroup><col style="width:38px"><col style="width:48px"><col style="width:300px"><col style="width:80px"><col style="width:110px"><col style="width:150px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:140px"></colgroup>
+            <thead><tr><th><span class="cb mix"></span></th><th class="sorted">No.<span class="so">▲</span></th><th>Product<span class="so">↕</span></th><th>Split<span class="so">↕</span></th><th>Delivery date<span class="so">↕</span></th><th>Supplier<span class="so">↕</span></th><th>PO<span class="so">↕</span></th><th>SPO<span class="so">↕</span></th><th>Location<span class="so">↕</span></th><th>State<span class="so">↕</span></th></tr></thead>
+            <tbody>
+              <tr class="sel"><td><span class="cb on"></span></td><td>1</td><td><b>SRT382-6</b> Ceramic Wash Basin 450mm</td><td class="mut">-</td><td>28/11/2026</td><td>FOSHAN WORKS</td><td>P2611-0031</td><td>SPO-2611-07</td><td>HQ</td><td><span class="b info">Needs reserve</span></td></tr>
+              <tr class="sel"><td><span class="cb on"></span></td><td>2</td><td><b>SRTWC8613-RL</b> Wall-hung WC</td><td>1 of 2</td><td>28/11/2026</td><td>DAFUYUAN</td><td>P2611-0031</td><td class="mut">-</td><td>HQ</td><td><span class="b info">Needs reserve</span></td></tr>
+              <tr><td><span class="cb"></span></td><td>3</td><td><b>CB6633</b> Concealed cistern</td><td class="mut">-</td><td>05/12/2026</td><td>CHAOSHENG</td><td class="mut">-</td><td class="mut">-</td><td class="mut">-</td><td><span class="b warn">To confirm</span></td></tr>
+              <tr><td><span class="cb"></span></td><td>4</td><td><b>SRT-WC-01</b> Close-coupled WC</td><td class="mut">-</td><td>05/12/2026</td><td>CHAOSHENG</td><td class="mut">-</td><td class="mut">-</td><td class="mut">-</td><td><span class="b warn">To confirm</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="toast" data-c="toast · lib/toast.ts">Sent 2 lines to purchasing</div>
+  </div></div>
+  </div>
+
+  <div class="legend"><table>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Number + badges + subtitle</td><td>RecordHeader</td><td><span class="tag re">restyle</span></td><td><code>components/common/RecordHeaderCard.tsx</code></td><td>Drops the card frame; number and badge inline, ONE subtitle line, actions right. Every record header uses it</td></tr>
+      <tr><td>Prev / next</td><td>RecordNavigation</td><td><span class="tag re">restyle</span></td><td><code>components/common/RecordNavigation.tsx</code></td><td>Styled tooltip, "Previous order inquiry"</td></tr>
+      <tr><td>Gear</td><td>DetailActionsMenu</td><td><span class="tag re">restyle</span></td><td><code>components/common/DetailActionsMenu.tsx</code></td><td>Styled tooltip; Confirm moves here when Reserve is the state's next step</td></tr>
+      <tr><td>One primary</td><td>DetailActions</td><td><span class="tag re">rule</span></td><td><code>components/common/DetailActions.tsx</code></td><td>Takes ONE <code>primary</code> prop; a second filled button cannot be passed (type-level)</td></tr>
+      <tr><td>Metadata strip</td><td>RecordMeta</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/RecordMeta.tsx</code></td><td>Read-only key facts directly under the header (ADR rule), max 6, truncates with title</td></tr>
+      <tr><td>Tabs + counts</td><td>Tabs line</td><td><span class="tag keep">keep</span></td><td><code>components/ui/tabs.tsx</code></td><td>Count chip on tabs that hold lists</td></tr>
+      <tr><td>History tab</td><td>HistoryTab</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/HistoryTab.tsx</code> over <code>components/common/EventTimeline.tsx</code></td><td>The standard last tab on every record; replaces per-entity <code>OrderInquiryHistory.tsx</code>-style files and History sheets</td></tr>
+      <tr><td>Lines grid</td><td>DataGrid</td><td><span class="tag keep">keep</span></td><td><code>[id]/components/orderInquiryHeaderLinesColumns.tsx</code></td><td>Every column sortable; row right-click menu as on the list</td></tr>
+      <tr><td>Toast</td><td>toast</td><td><span class="tag keep">keep</span></td><td><code>lib/toast.ts</code></td><td>Says what happened, object and count</td></tr>
+    </tbody></table></div>
+</section>
+
+<!-- =============================== 3. QUOTATION EDITOR =============================== -->
+<section class="screen" id="s-quote">
+  <h2>3. Quotation editor</h2>
+  <p class="lede">Route <code>/project-sales/[projectId]/quotation-documents/[documentId]/edit</code>. Today the page draws two headers (PageHeader, then RecordHeaderCard), a hand-made status pill, and History in a side sheet. v2 has one record header, the Badge, History as a tab, and the reason a blocked Save is blocked.</p>
+
+  <div class="only-before">
+  <div class="frame-label">Before (today)</div>
+  <div class="frame"><div class="app v1" style="position:relative">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">Project sales</div><nav class="nav"><a class="on"><span class="ic"></span>Projects</a><a><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a></nav></aside>
+    <div class="main">
+      <div class="hdr"><span class="crumb">Project sales</span><span class="s"><span class="round"></span><span class="round"></span></span></div>
+      <div class="body">
+        <div class="ph"><div class="crumbs">Home / Projects / T*** Residences Blk B / Quotations / SRT/Q/2026/0141</div><h1>Edit quotation</h1>
+          <span style="margin-left:auto;display:flex;gap:8px;align-items:center"><span class="hint">Saved 2:14 pm</span><span class="btn sm" title="History">⟲</span><span class="btn">Discard draft</span><span class="btn p" style="opacity:.5">Save quotation</span></span></div>
+        <div class="card" style="padding:16px 20px"><div style="display:flex;gap:8px;align-items:center"><span style="font-size:18px;font-weight:600">SRT/Q/2026/0141</span><span class="custom-pill">Draft</span><span style="border:1px solid #e4e4e7;border-radius:6px;padding:0 7px;font-size:12px">v3</span></div><div class="hint" style="margin-top:4px">R***** Kitchen Sdn Bhd</div></div>
+        <div class="tabs"><span class="on">Header</span><span>Cover letter</span><span>Terms</span></div>
+        <div class="card"><div style="padding:12px 16px;font-weight:600;border-bottom:1px solid #efeff1">Header</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px;padding:16px">
+            <div class="field"><label>To</label><span class="inp">R***** Kitchen Sdn Bhd</span></div><div class="field"><label>Attn</label><span class="inp">Ms. L*** (Purchasing)</span></div>
+            <div class="field"><label>Date</label><span class="inp">10/11/2026</span></div><div class="field"><label>Validity</label><span class="inp">30 days</span></div>
+          </div></div>
+        <div class="card"><div style="padding:12px 16px;font-weight:600;border-bottom:1px solid #efeff1">Lines</div>
+          <table><colgroup><col style="width:40px"><col style="width:60px"><col style="width:140px"><col style="width:280px"><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:110px"><col style="width:120px"></colgroup>
+          <thead><tr><th>#</th><th>Photo</th><th>Product</th><th>Description</th><th>Brand</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+          <tbody><tr><td>1</td><td>▢</td><td>SRT382-6</td><td>Ceramic Wash Basin 450mm, white</td><td>SORENTO</td><td class="num">24</td><td>UNIT</td><td class="num">385.00</td><td class="num">9,240.00</td></tr>
+          <tr><td>2</td><td>▢</td><td>SRTWC8613-RL</td><td>Wall-hung WC with soft-close seat</td><td>SORENTO</td><td class="num">24</td><td>UNIT</td><td class="num">1,120.00</td><td class="num">26,880.00</td></tr></tbody></table></div>
+      </div>
+    </div>
+    <div class="sheet"><b>History</b><div class="hint" style="margin-top:8px">Side sheet (QuotationHistorySheet)</div></div>
+  </div></div>
+  <ul class="notes"><li>Two headers: <code>PageHeader</code> (<code>QuotationFormClient.tsx:895</code>) then <code>RecordHeaderCard</code> (<code>:999</code>).</li><li>Status drawn with <code>STATUS_PILL_BASE</code> (<code>lib/status-pill.ts:103</code>, 56 non-test files) instead of <code>Badge</code>.</li><li>Save disables with no reason (<code>QFC:948-962</code>); History opens a side sheet against the dialog-over-side-panel rule.</li></ul>
+  </div>
+
+  <div class="only-after">
+  <div class="frame-label">After (v2)</div>
+  <div class="frame"><div class="app v2">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">Project sales</div><nav class="nav"><a class="on"><span class="ic"></span>Projects</a><a><span class="ic"></span>Opportunities</a><a><span class="ic"></span>Order inquiries</a><a><span class="ic"></span>Quotations</a></nav></aside>
+    <div class="main">
+      <div class="top"><span class="search"><svg><use href="#i-search"/></svg>Search records, people, products<span class="kbd">⌘K</span></span><span class="r"><span class="co">Sorento HQ ▾</span><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+      <div class="body">
+        <div class="crumbs">Projects / T*** Residences Blk B / Quotations</div>
+        <div class="rh" data-c="RecordHeader · components/common/RecordHeaderCard.tsx (one header, PageHeader dropped)">
+          <div class="id"><h1>SRT/Q/2026/0141 <span class="b neu" data-c="Badge · replaces STATUS_PILL_BASE">Draft</span><span class="b neu plain">v3</span></h1>
+            <div class="sub">R***** Kitchen Sdn Bhd · Prepared by J*****</div></div>
+          <div class="acts">
+            <span style="font-size:12.5px;color:var(--muted);display:inline-flex;gap:5px;align-items:center" data-c="AutosaveIndicator · QuotationFormClient.tsx:828 (move to components/common)"><svg width="14" height="14" style="color:var(--ok-fg)"><use href="#i-check"/></svg>Saved 2:14 pm</span>
+            <span class="ibtn b" title="Quotation options" data-c="DetailActionsMenu (Discard draft, Download PDF)"><svg><use href="#i-gear"/></svg></span>
+            <span style="display:flex;flex-direction:column;align-items:flex-end" data-c="BlockedReason · NEW components/common/BlockedReason.tsx">
+              <span class="btn p" style="opacity:.55">Save quotation</span>
+              <span class="why">Line 3 needs a rate</span>
+            </span>
+          </div>
+        </div>
+        <div class="tabs" data-c="Tabs line"><span class="on">Header</span><span>Cover letter</span><span>Terms</span><span data-c="HistoryTab (replaces QuotationHistorySheet)">History</span></div>
+        <div class="card" data-c="FormSection · components/common/FormSection.tsx">
+          <div class="sec-h">Letterhead <small>R***** Kitchen Sdn Bhd · 10/11/2026 · RM 38,140.00</small><span class="r" style="color:var(--muted)">▴</span></div>
+          <div class="fieldgrid" data-c="Field · components/common/Field.tsx (same component as the portal form)">
+            <div class="f"><label>To <span class="req">*</span></label><span class="inp" data-c="SearchableSelect">R***** Kitchen Sdn Bhd<span class="caret">▾</span></span></div>
+            <div class="f"><label>Attn</label><span class="inp">Ms. L*** (Purchasing)<span class="caret">▾</span></span></div>
+            <div class="f"><label>Site address</label><span class="inp">Lot 12, Jalan T***, 47500 Subang Jaya</span></div>
+            <div class="f"><label>Date <span class="req">*</span></label><span class="inp" data-c="DatePicker · components/ui/date-picker.tsx">10/11/2026<span class="caret">▦</span></span></div>
+            <div class="f"><label>Validity</label><span class="inp">30 days</span></div>
+            <div class="f"><label>Prepared by</label><span class="inp ro">J*****</span></div>
+          </div>
+        </div>
+        <div class="card" style="overflow:visible;position:relative">
+          <div class="sec-h">Lines <small>3 lines · 1 section</small><span class="r"><span class="btn sm"><svg><use href="#i-plus"/></svg>Add line</span></span></div>
+          <table data-c="QuotationLinesGrid · project-sales/[projectId]/components/QuotationLinesGrid.tsx (DataGrid)">
+            <colgroup><col style="width:40px"><col style="width:50px"><col style="width:140px"><col style="width:300px"><col style="width:96px"><col style="width:70px"><col style="width:70px"><col style="width:110px"><col style="width:120px"></colgroup>
+            <thead><tr><th>#</th><th>Photo</th><th>Product</th><th>Description</th><th>Brand</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+            <tbody>
+              <tr class="secrow"><td colspan="9">Bathroom, Type A units</td></tr>
+              <tr><td>1</td><td><span class="thumb" data-c="AttachmentImage · components/common/AttachmentImage.tsx (one image pipeline)"></span></td><td class="id">SRT382-6</td><td>Ceramic Wash Basin 450mm, white</td><td>SORENTO</td><td class="num">24</td><td>UNIT</td><td class="num">385.00</td><td class="num">9,240.00</td></tr>
+              <tr><td>2</td><td><span class="thumb"></span></td><td class="id">SRTWC8613-RL</td><td>Wall-hung WC with soft-close seat</td><td>SORENTO</td><td class="num">24</td><td>UNIT</td><td class="num">1,120.00</td><td class="num">26,880.00</td></tr>
+              <tr class="hov"><td>3</td><td><span class="thumb"></span></td><td class="id">CB6633</td><td>Concealed cistern, dual flush</td><td>MOCHA</td><td class="num">24</td><td>UNIT</td><td class="num" style="box-shadow:inset 0 0 0 1px var(--danger);color:var(--danger)" title="Needs a rate">-</td><td class="num mut">-</td></tr>
+            </tbody>
+          </table>
+          <div class="menu" style="left:420px;top:150px" data-c="Line right-click menu · QuotationLinesGrid ContextMenu (exists; restyle)">
+            <div class="h">Insert line above</div><div>Insert section above</div><div>Duplicate line</div><hr><div>Move up</div><div>Move down</div><hr><div class="d">Remove line</div>
+          </div>
+          <div class="totals"><span>Subtotal</span><span>36,120.00</span><span>Discount</span><span>0.00</span><span class="g">Total (RM)</span><span class="g">36,120.00</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  </div>
+
+  <div class="legend"><table>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Header</td><td>RecordHeader</td><td><span class="tag re">restyle</span></td><td><code>components/common/RecordHeaderCard.tsx</code>; <code>QuotationFormClient.tsx:895-1000</code></td><td>One header instead of PageHeader + RecordHeaderCard</td></tr>
+      <tr><td>Status, version</td><td>Badge</td><td><span class="tag del">retire</span> STATUS_PILL_BASE</td><td><code>lib/status-pill.ts:103</code> (56 files) → <code>components/ui/badge.tsx</code></td><td>One status pill</td></tr>
+      <tr><td>Autosave state</td><td>AutosaveIndicator</td><td><span class="tag re">move</span></td><td><code>QuotationFormClient.tsx:828</code> → <code>components/common/AutosaveIndicator.tsx</code></td><td>Shared by every autosaving form</td></tr>
+      <tr><td>Blocked primary</td><td>BlockedReason</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/BlockedReason.tsx</code></td><td>Plain reason under a disabled primary (audit quick win 5), no pulse</td></tr>
+      <tr><td>Discard draft</td><td>DeferredActionButton in gear</td><td><span class="tag keep">keep</span></td><td><code>components/common/DeferredActionButton.tsx</code></td><td>Moves into the gear; the countdown still runs in the header</td></tr>
+      <tr><td>History</td><td>HistoryTab</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/HistoryTab.tsx</code>; retires <code>QuotationHistorySheet</code></td><td>Restore stays an action inside the tab</td></tr>
+      <tr><td>Fields</td><td>Field, FormSection, SearchableSelect, DatePicker</td><td><span class="tag keep">keep</span></td><td><code>components/common/Field.tsx</code>, <code>FormSection.tsx</code>, <code>SearchableSelect.tsx</code>, <code>components/ui/date-picker.tsx</code></td><td>32 px controls, labels above, 3 columns at 1280, 1 at 375</td></tr>
+      <tr><td>Lines grid</td><td>QuotationLinesGrid</td><td><span class="tag re">restyle</span></td><td><code>project-sales/[projectId]/components/QuotationLinesGrid.tsx</code></td><td>Inline error on the cell plus the header reason; right-click menu already exists</td></tr>
+      <tr><td>Photo</td><td>AttachmentImage</td><td><span class="tag keep">keep</span></td><td><code>components/common/AttachmentImage.tsx</code></td><td>The one image pipeline: thumb, lightbox preview, same URL rules</td></tr>
+    </tbody></table></div>
+</section>
+
+<!-- =============================== 4. SETTINGS =============================== -->
+<section class="screen" id="s-settings">
+  <h2>4. System settings</h2>
+  <p class="lede">Route <code>/user-management/settings</code>. Today: 14 tabs in one strip, and the General tab is one card titled "Social Settings" holding about 30 unrelated fields with one Save at the bottom. v2: a grouped settings nav on the left, titled sections of setting rows, and a save bar that appears only when something changed.</p>
+
+  <div class="only-before">
+  <div class="frame-label">Before (today)</div>
+  <div class="frame"><div class="app v1">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">User management</div><nav class="nav"><a><span class="ic"></span>Users</a><a><span class="ic"></span>Roles</a><a class="on"><span class="ic"></span>Settings</a></nav></aside>
+    <div class="main">
+      <div class="hdr"><span class="crumb">User management</span><span class="s"><span class="round"></span><span class="round"></span></span></div>
+      <div class="body">
+        <div class="ph"><h1>Settings</h1></div>
+        <div class="tabs" style="overflow:hidden;white-space:nowrap"><span class="on">General</span><span>Notifications</span><span>Complaints</span><span>Portal Revisions</span><span>Chatbot</span><span>Embeddings</span><span>Chatbot Media</span><span>Stock Visibility</span><span>Spec Visibility</span><span>Search ranking</span><span>System Health</span><span>SMTP</span><span>Social</span>…</div>
+        <div class="card"><div style="padding:14px 20px;font-weight:600;border-bottom:1px solid #efeff1">Social Settings</div>
+          <div style="padding:28px 20px;max-width:760px">
+            <div class="field"><label>Company Logo</label><span class="inp" style="height:64px;width:64px"></span></div>
+            <div class="field"><label>Shop Name</label><span class="inp">Sorento</span></div>
+            <div class="field"><label>Shop Status</label><span class="inp" style="background:#f4f4f5;border:0">● Active</span></div>
+            <div class="field"><label>Currency</label><span class="inp">MYR - Malaysian Ringgit</span></div>
+            <div class="field"><label>Delete countdown (seconds)</label><span class="inp">10</span></div>
+            <div class="field"><label>Default supplier (new products)</label><span class="inp">Automatic</span></div>
+            <div class="hint">… 20 more fields …</div>
+            <div style="margin-top:14px"><span class="btn p">Save Settings</span></div>
+          </div></div>
+      </div>
+    </div>
+  </div></div>
+  <ul class="notes"><li>Card title "Social Settings" over the General form (<code>user-management/settings/page.tsx:608</code>); Save at <code>:1466</code>.</li><li>14 tabs (<code>settings/layout.tsx:321-386</code>); at 375 px most are off-screen.</li><li>Title Case labels next to sentence-case ones on the same form.</li></ul>
+  </div>
+
+  <div class="only-after">
+  <div class="frame-label">After (v2)</div>
+  <div class="frame"><div class="app v2">
+    <aside class="side"><div class="logo"><i></i>Sorento</div><div class="grp">User management</div><nav class="nav"><a><span class="ic"></span>Users</a><a><span class="ic"></span>Roles</a><a class="on"><span class="ic"></span>Settings</a></nav></aside>
+    <div class="main">
+      <div class="top"><span class="search"><svg><use href="#i-search"/></svg>Search records, people, products<span class="kbd">⌘K</span></span><span class="r"><span class="co">Sorento HQ ▾</span><span class="ibtn"><svg><use href="#i-bell"/></svg></span><span class="av">JT</span></span></div>
+      <div class="body">
+        <div class="ph" data-c="PageHeader"><h1>Settings</h1></div>
+        <div style="display:flex;gap:20px;align-items:flex-start">
+          <nav class="setnav" data-c="SettingsNav · NEW components/common/SettingsNav.tsx (replaces the 14-tab strip)">
+            <div class="g">Company</div><a class="on">General</a><a>Regional</a><a>Sign-in page</a>
+            <div class="g">Operations</div><a>Countdowns and defaults</a><a>Stock visibility</a><a>Spec visibility</a><a>Complaints</a><a>Portal revisions</a>
+            <div class="g">Messaging</div><a>Notifications</a><a>SMTP</a><a>Social</a>
+            <div class="g">Chatbot and AI</div><a>Chatbot</a><a>Chatbot media</a><a>Embeddings</a><a>Search ranking</a>
+            <div class="g">System</div><a>Integrations</a><a>System health</a>
+          </nav>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;max-width:820px">
+            <div class="card" data-c="SettingsSection · NEW components/common/SettingsSection.tsx">
+              <div class="sec-h">Company</div>
+              <div class="srow" data-c="SettingsRow · NEW components/common/SettingsRow.tsx"><div><div class="l">Logo</div><div class="d">PNG or SVG, shown on documents and the portal</div></div><div style="display:flex;gap:8px;align-items:center"><span class="thumb" style="width:36px;height:36px" data-c="FileDropzone · components/common/FileDropzone.tsx"></span><span class="btn sm">Replace</span></div></div>
+              <div class="srow changed"><div><div class="l">Company name</div></div><span class="inp">Sorento Sdn Bhd</span></div>
+              <div class="srow"><div><div class="l">Shop open</div></div><div style="text-align:right"><span class="sw on" data-c="Switch · components/ui/switch.tsx"></span></div></div>
+              <div class="srow"><div><div class="l">Support email</div></div><span class="inp">support@••••••.com.my</span></div>
+              <div class="srow"><div><div class="l">Support phone</div></div><span class="inp">+60 3-•••• ••••</span></div>
+            </div>
+            <div class="card">
+              <div class="sec-h">Regional</div>
+              <div class="srow"><div><div class="l">Timezone</div></div><span class="inp">Asia/Kuala_Lumpur (GMT+8)<span class="caret">▾</span></span></div>
+              <div class="srow changed"><div><div class="l">Currency</div></div><span class="inp">MYR, Malaysian Ringgit<span class="caret">▾</span></span></div>
+              <div class="srow"><div><div class="l">Date format</div><div class="d">Fixed: dd/mm/yyyy</div></div><span class="inp ro">10/11/2026</span></div>
+            </div>
+            <div class="dirty" data-c="UnsavedChangesBar · NEW components/common/UnsavedChangesBar.tsx">2 unsaved changes<span style="margin-left:auto;display:flex;gap:6px"><span class="btn t sm">Discard</span><span class="btn p sm">Save changes</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  </div>
+
+  <div class="legend"><table>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Settings nav</td><td>SettingsNav</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/SettingsNav.tsx</code>; routes stay in <code>user-management/settings/layout.tsx:321-386</code></td><td>Grouped vertical nav at 1280; a list page at 375 (each item opens its page)</td></tr>
+      <tr><td>Sections</td><td>SettingsSection</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/SettingsSection.tsx</code></td><td>Titled card; General splits into Company, Regional, Countdowns and defaults</td></tr>
+      <tr><td>Setting rows</td><td>SettingsRow</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/SettingsRow.tsx</code></td><td>Label left, control right (300 px), stacks at 375; sentence case</td></tr>
+      <tr><td>Controls</td><td>Input, Switch, SearchableSelect, NumberInput</td><td><span class="tag keep">keep</span></td><td><code>components/ui/input.tsx</code>, <code>switch.tsx</code>, <code>number-input.tsx</code>, <code>components/common/SearchableSelect.tsx</code></td><td>Native currency select list becomes SearchableSelect</td></tr>
+      <tr><td>Logo</td><td>FileDropzone + AttachmentImage</td><td><span class="tag keep">keep</span></td><td><code>components/common/FileDropzone.tsx</code></td><td>One image pipeline</td></tr>
+      <tr><td>Save</td><td>UnsavedChangesBar</td><td><span class="tag new">new</span></td><td>NEW <code>components/common/UnsavedChangesBar.tsx</code></td><td>Sticky, only when dirty, counts the changes; changed rows get a brand edge. Replaces "Save Settings" at <code>page.tsx:1466</code></td></tr>
+    </tbody></table></div>
+</section>
+
+<!-- =============================== 5. PHONE LIST =============================== -->
+<section class="screen" id="s-phone">
+  <h2>5. Order inquiry list on a phone (375 px)</h2>
+  <p class="lede">Owner rule and audit Q2: one line per row and the grid scrolls sideways inside its box; no cards. v2 makes that comfortable: the first column stays pinned, rows are 44 px for touch, filters open in a bottom sheet, and a long press opens the same row menu as right-click.</p>
+  <div class="phones">
+    <div class="only-before" style="flex:none">
+      <div class="frame-label">Before (today)</div>
+      <div class="phone"><div class="app pv1">
+        <div class="hdr"><span class="bars"></span><b style="font-size:15px">Sorento</b><span style="margin-left:auto;display:flex"><span class="round"></span><span class="round"></span><span class="round"></span></span></div>
+        <div class="body">
+          <div style="font-size:12px;color:#71717a">Home / Project sales / Order inquiries</div>
+          <h1>Order inquiries</h1>
+          <div style="display:flex"><span class="btn p" style="border-radius:6px 0 0 6px">List</span><span class="btn" style="border-radius:0 6px 6px 0">Schedule</span></div>
+          <div class="scrollx"><div class="kpi"><b>120</b><span>Stock</span></div><div class="kpi"><b>84</b><span>Indent</span></div><div class="kpi"><b>108</b><span>Project</span></div></div>
+          <span class="inp">Search order inquiries...</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn">Filters 3</span><span class="btn">Clear filters</span><span class="btn">Columns</span></div>
+          <div class="gridbox"><table>
+            <colgroup><col style="width:36px"><col style="width:170px"><col style="width:130px"><col style="width:120px"><col style="width:150px"><col style="width:154px"></colgroup>
+            <thead><tr><th>☐</th><th>Raised at</th><th>OI no</th><th>S/O no</th><th>Raised by</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>☐</td><td>10/11/2026, 9:42 am</td><td><b>OI-2611-0142</b></td><td>SO414285</td><td>E****</td><td><span class="pill">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>10/11/2026, 9:15 am</td><td><b>OI-2611-0141</b></td><td>SO414280</td><td>E****</td><td><span class="pill">Outstanding</span></td></tr>
+              <tr><td>☐</td><td>09/11/2026, 5:58 pm</td><td><b>OI-2611-0139</b></td><td>SO413902</td><td>W** Y.</td><td><span class="pill">Outstanding</span></td></tr>
+            </tbody></table></div>
+          <div class="pager"><span>1 - 25 of 312</span><span>‹ 1 2 3 … ›</span></div>
+        </div>
+      </div></div>
+      <ul class="notes" style="max-width:375px"><li>Title, toggle, tiles, search and three toolbar buttons take about 60% of the screen before the first row.</li><li>The OI number scrolls away when the table scrolls sideways.</li></ul>
+    </div>
+
+    <div class="only-after" style="flex:none">
+      <div class="frame-label">After (v2), list</div>
+      <div class="phone"><div class="app v2 pv2">
+        <div class="top" data-c="AppTopbar (phone) · header.tsx + MobileNavDrawer (vaul, D13)"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span><span class="ibtn"><svg><use href="#i-bell"/></svg></span></span></div>
+        <div class="tb2" data-c="DataGridListToolbar (phone)"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" data-c="FilterSheet · NEW (vaul bottom sheet of FilterChips)" style="height:36px"><svg><use href="#i-filter"/></svg>3</span><span class="seg" data-c="ViewToggle (icon-only at 375)"><span class="on" style="height:34px">List</span><span style="height:34px">Sched.</span></span></div>
+        <div class="facets" data-c="FacetChips (scrolls sideways)"><span class="fc">Stock <b>120</b></span><span class="fc">Indent <b>84</b></span><span class="fc on">To confirm <b>17</b></span><span class="fc">Project <b>108</b></span></div>
+        <div class="gridwrap" data-c="DataGrid · pinned first column, 44 px rows on coarse pointer">
+          <table>
+            <colgroup><col style="width:128px"><col style="width:112px"><col style="width:100px"><col style="width:150px"><col style="width:150px"></colgroup>
+            <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th><th>Raised at<span class="so" style="opacity:1;color:var(--primary)">▼</span></th></tr></thead>
+            <tbody>
+              <tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen Sdn Bhd</td><td class="mut">10/11/2026, 9:42 am</td></tr>
+              <tr><td class="id">OI-2611-0141</td><td><span class="b warn">Outstanding</span></td><td>SO414280</td><td>B****** Sdn Bhd</td><td class="mut">10/11/2026, 9:15 am</td></tr>
+              <tr><td class="id">OI-2611-0139</td><td><span class="b warn">Outstanding</span></td><td>SO413902</td><td>M*** Debtor</td><td class="mut">09/11/2026, 5:58 pm</td></tr>
+              <tr><td class="id">OI-2611-0137</td><td><span class="b neu">Completed</span></td><td>SO413877</td><td>A*** Hartanah</td><td class="mut">09/11/2026, 4:20 pm</td></tr>
+              <tr><td class="id">OI-2611-0133</td><td><span class="b warn">Outstanding</span></td><td>SO413650</td><td>T*** Residences</td><td class="mut">09/11/2026, 11:02 am</td></tr>
+              <tr><td class="id">OI-2611-0128</td><td><span class="b neu">Completed</span></td><td>SO413301</td><td>O****</td><td class="mut">08/11/2026, 3:47 pm</td></tr>
+              <tr><td class="id">OI-2611-0125</td><td><span class="b warn">Outstanding</span></td><td>SO413122</td><td>S***** Sdn Bhd</td><td class="mut">08/11/2026, 10:12 am</td></tr>
+              <tr><td class="id">OI-2611-0121</td><td><span class="b warn">Outstanding</span></td><td>SO412977</td><td>R***** Kitchen Sdn Bhd</td><td class="mut">07/11/2026, 4:05 pm</td></tr>
+              <tr><td class="id">OI-2611-0118</td><td><span class="b neu">Completed</span></td><td>SO412804</td><td>K***** Interior</td><td class="mut">07/11/2026, 9:30 am</td></tr>
+            </tbody></table>
+        </div>
+        <div class="pager" data-c="DataGridPagination (compact)"><span>1 - 25 of 312</span><span class="pg"><span><svg width="14" height="14"><use href="#i-left"/></svg></span><span class="on">1</span><span><svg width="14" height="14"><use href="#i-right"/></svg></span></span></div>
+      </div></div>
+    </div>
+
+    <div class="only-after" style="flex:none">
+      <div class="frame-label">After (v2), long press on a row</div>
+      <div class="phone"><div class="app v2 pv2" style="position:relative">
+        <div class="top"><span class="ibtn"><svg><use href="#i-menu"/></svg></span><span class="t">Order inquiries</span><span class="r"><span class="ibtn"><svg><use href="#i-search"/></svg></span><span class="ibtn"><svg><use href="#i-bell"/></svg></span></span></div>
+        <div class="tb2"><span class="sbox"><svg width="14" height="14"><use href="#i-search"/></svg>Search</span><span class="btn" style="height:36px"><svg><use href="#i-filter"/></svg>3</span></div>
+        <div class="gridwrap"><table><colgroup><col style="width:128px"><col style="width:112px"><col style="width:100px"><col style="width:150px"></colgroup>
+          <thead><tr><th>OI no</th><th>Status</th><th>S/O no</th><th>Customer</th></tr></thead>
+          <tbody><tr><td class="id">OI-2611-0142</td><td><span class="b warn">Outstanding</span></td><td>SO414285</td><td>R***** Kitchen</td></tr>
+          <tr class="sel"><td class="id">OI-2611-0141</td><td><span class="b warn">Outstanding</span></td><td>SO414280</td><td>B****** Sdn Bhd</td></tr>
+          <tr><td class="id">OI-2611-0139</td><td><span class="b warn">Outstanding</span></td><td>SO413902</td><td>M*** Debtor</td></tr></tbody></table></div>
+        <div class="scrim"></div>
+        <div class="sheetm" data-c="DataGridRowMenu as vaul sheet on coarse pointer (D13)">
+          <div class="grab"></div><div class="h">OI-2611-0141</div>
+          <div class="i">Open</div><div class="i">Copy OI no</div><div class="i">Send to purchasing</div><div class="i">Request CS to reserve</div><div class="i">Select</div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="legend"><table>
+    <thead><tr><th>Element</th><th>Component</th><th>v2</th><th>Repo path</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td>Top bar</td><td>Header + mobile nav drawer</td><td><span class="tag re">restyle</span></td><td><code>.../demo1/components/header.tsx</code>, <code>components/ui/drawer.tsx</code> (vaul)</td><td>Page title moves into the 48 px bar; breadcrumb hidden at 375</td></tr>
+      <tr><td>Toolbar</td><td>DataGridListToolbar</td><td><span class="tag re">restyle</span></td><td><code>components/ui/data-grid-list-toolbar.tsx</code></td><td>One row: search, filter count, view toggle</td></tr>
+      <tr><td>Filters</td><td>FilterSheet</td><td><span class="tag new">new</span></td><td>NEW, the FilterChips in <code>components/ui/drawer.tsx</code></td><td>Same multi-select filters as desktop, in a bottom sheet</td></tr>
+      <tr><td>Pinned first column</td><td>DataGrid column pinning</td><td><span class="tag keep">keep</span></td><td><code>components/ui/data-grid.tsx</code> (pinning exists; "nothing pins automatically", DESIGN-LANGUAGE section 4)</td><td>v2 pins the identifier column of every list on coarse pointers by default</td></tr>
+      <tr><td>Row height</td><td>density token</td><td><span class="tag new">new</span></td><td><code>css/config.reui.css</code> <code>--row-h</code></td><td>36 px Comfortable on desktop, 44 px on coarse pointers</td></tr>
+      <tr><td>Long-press menu</td><td>DataGridRowMenu</td><td><span class="tag new">new</span></td><td>NEW <code>components/ui/data-grid-row-menu.tsx</code></td><td>Same items as right-click; a bottom sheet on touch. Long press after 500 ms, the same hold the range select already uses</td></tr>
+      <tr><td>Bottom bar</td><td>none</td><td><span class="tag keep">not added</span></td><td>-</td><td>See plan decision 3</td></tr>
+    </tbody></table></div>
+</section>
+
+</main>
+
+<script>
+(function(){
+  var b=document.body;
+  document.querySelectorAll('[data-s]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      document.querySelectorAll('[data-s]').forEach(function(x){x.setAttribute('aria-pressed',String(x===btn))});
+      document.querySelectorAll('.screen').forEach(function(s){s.classList.toggle('on',s.id==='s-'+btn.dataset.s)});
+      try{history.replaceState(null,'','#'+btn.dataset.s)}catch(e){}
+    });
+  });
+  document.querySelectorAll('[data-v]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      document.querySelectorAll('[data-v]').forEach(function(x){x.setAttribute('aria-pressed',String(x===btn))});
+      b.classList.remove('v-before','v-after','v-both');b.classList.add('v-'+btn.dataset.v);
+    });
+  });
+  var map=document.getElementById('mapBtn');
+  map.addEventListener('click',function(){var on=b.classList.toggle('map');map.setAttribute('aria-pressed',String(on))});
+  var dk=document.getElementById('darkBtn');
+  dk.addEventListener('click',function(){
+    var on=dk.getAttribute('aria-pressed')!=='true';dk.setAttribute('aria-pressed',String(on));
+    document.querySelectorAll('.app.v2').forEach(function(a){a.classList.toggle('dark',on)});
+  });
+  var h=(location.hash||'').slice(1);
+  if(h){var t=document.querySelector('[data-s="'+h+'"]');if(t)t.click();}
+})();
+</script>
+</body>
+</html>
