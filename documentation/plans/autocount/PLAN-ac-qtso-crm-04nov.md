@@ -264,9 +264,16 @@ extra guards; SS has no ROW_LAST_LINE).
   `...-update-delete-{dtlKey}`, when the feed offers `delete_line`; with it off the row waits as before. The last line too:
   an update with no sendable line still goes (create still needs one). The done note names the removed rows.
 - Remove line, sales order: an accepted amendment row CANCEL BALANCE down to 0 (the CRM's own cancelled line) is a removal when
-  `delete_line` is on; removals go before the PATCH (their bodies carry no stamp, so a retry replays them), key
-  `crm-amd-{id}-update-delete-{dtlKey}`. A CANCEL BALANCE to a non-zero qty still waits on the pending ruling. The change list
-  reads the feed only when such a row exists. ROW_NOT_FOUND on a removal counts as already removed.
+  `delete_line` is on, key `crm-amd-{id}-update-delete-{dtlKey}`. With removals the order is READ on every press (review B1/B2):
+  a row no longer in `Details` is not sent again (so a done removal is never replayed with its old stamp), and every press sends
+  the same bodies (docDate from the read), so a retry after a timeout never conflicts on its own key. Removals go before the
+  PATCH; ROW_HAS_TRANSFERS on one row lists it as waiting ("This line has already been delivered or copied ...") and the edits
+  still go (review S2); a refusal after a removal names what was removed (S1). A CANCEL BALANCE to a non-zero qty still waits
+  on the pending ruling. The change list reads the feed only when such a row exists AND the switch is on (S4).
+- The delete body carries no `expectedLastModified` (accepted: the document was read this press and a removed row is gone
+  whatever else changed). ROW_NOT_FOUND on a removal counts as already removed.
+- Owner check (review nit): with `delete_line` on, a revision that turns a line into a rate-only line (not sent, U16) removes
+  that line in AutoCount; the note lists it under both "skipped" and "Removed".
 - Cancel: unchanged route; the Cancel buttons already follow `cancel_doc`, so they light up from the feed. DOC_CANCELLED on a
   cancel records the cancel ("Already cancelled in AutoCount.").
 - Plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED, LINE_NOT_DELETED, ROW_HAS_TRANSFERS (naming the row on a

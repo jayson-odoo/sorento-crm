@@ -292,15 +292,45 @@ def _so_patch_done(fake_ss):
     fake_ss.answers[("PATCH", SO_DOC_PATH)] = (200, done_body(last_modified="2026-11-10T10:00:00"))
 
 
-def test_cancel_balance_to_zero_removes_the_line_when_delete_line_is_on(so_api, fake_ss):
-    client, db, world = so_api
+def _held_so(fake_ss, *, dtls=(DTL_1, DTL_3), last_modified="2026-11-10T08:00:00", doc_date="2026-10-01"):
+    """What AutoCount holds: read before any removal, so a removed row is never sent again."""
+    body = done_body(details=[{"DtlKey": d} for d in dtls], last_modified=last_modified)
+    body["document"]["DocDate"] = doc_date
+    fake_ss.answers[("GET", SO_DOC_PATH)] = (200, body)
+
+
+def _removal_world(db, world, rows=None):
     put_in_autocount(db, world)
     line3 = _third_line(db, world)
     amendment = add_amendment(
-        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
+        db, world, rows(line3) if rows else [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
     )
     db.commit()
+    return amendment
+
+
+def _replaying(first):
+    """SS's idempotency: same key + body replays the stored answer; a different body conflicts."""
+    store: dict = {}
+
+    def answer(request):
+        key = request.headers["Idempotency-Key"]
+        if key in store:
+            if store[key][0] != request.content:
+                return (409, refused_body("IDEMPOTENCY_CONFLICT", "same key, different body"))
+            return store[key][1]
+        out = first(request)
+        store[key] = (request.content, out)
+        return out
+
+    return answer
+
+
+def test_cancel_balance_to_zero_removes_the_line_when_delete_line_is_on(so_api, fake_ss):
+    client, db, world = so_api
+    amendment = _removal_world(db, world)
     fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
     fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _deleted(
         doc_no="SO412345", doc_key=DOC_KEY, last_modified="2026-11-10T09:59:00"
     )
@@ -310,8 +340,10 @@ def test_cancel_balance_to_zero_removes_the_line_when_delete_line_is_on(so_api, 
 
     assert body["outcome"] == "done", body
     assert body["waiting"] == []
+    assert "Removed:" in body["message"]
     [delete] = fake_ss.to("POST", _so_delete_path(DTL_3))
     assert delete.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-delete-{DTL_3}"
+    assert fake_ss.body(delete) == {"companyCode": "SRT", "docDate": "2026-10-01"}
     [patch] = fake_ss.to("PATCH", SO_DOC_PATH)
     assert [str(l["dtlKey"]) for l in fake_ss.body(patch)["lines"]] == [str(DTL_1)]
     assert fake_ss.body(patch)["expectedLastModified"] == "2026-11-10T09:59:00", (
@@ -321,18 +353,17 @@ def test_cancel_balance_to_zero_removes_the_line_when_delete_line_is_on(so_api, 
     assert amendment.autocount_edit_sent_at is not None
 
 
-def test_a_remove_only_amendment_sends_no_patch(so_api, fake_ss):
+def test_a_remove_only_amendment_sends_the_delete_and_no_patch(so_api, fake_ss):
     client, db, world = so_api
-    put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
-    db.commit()
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "0")])
     fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
     fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _deleted(doc_no="SO412345", doc_key=DOC_KEY)
 
     body = client.post(_so_url(amendment)).json()
 
     assert body["outcome"] == "done", body
+    assert len(fake_ss.to("POST", _so_delete_path(DTL_3))) == 1
     assert fake_ss.to("PATCH", SO_DOC_PATH) == []
     db.refresh(amendment)
     assert amendment.autocount_edit_sent_at is not None
@@ -342,33 +373,136 @@ def test_a_remove_only_amendment_sends_no_patch(so_api, fake_ss):
     assert [r for r in fake_ss.calls[calls:] if r.url.path != CAPS_PATH] == []
 
 
-def test_a_so_line_with_transfers_is_refused_in_plain_words_and_nothing_else_goes(so_api, fake_ss):
+def test_a_row_autocount_no_longer_holds_is_not_sent(so_api, fake_ss):
     client, db, world = so_api
-    put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(
-        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
-    )
-    db.commit()
+    amendment = _removal_world(db, world)
     fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss, dtls=(DTL_1,))
+    _so_patch_done(fake_ss)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "done", body
+    assert fake_ss.to("POST", _so_delete_path(DTL_3)) == []
+    assert len(fake_ss.to("PATCH", SO_DOC_PATH)) == 1
+
+
+def test_a_so_row_not_found_on_delete_counts_as_removed(so_api, fake_ss):
+    client, db, world = so_api
+    amendment = _removal_world(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = (409, refused_body("ROW_NOT_FOUND", "gone"))
+    _so_patch_done(fake_ss)
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "done", body
+    assert body["waiting"] == []
+    assert len(fake_ss.to("PATCH", SO_DOC_PATH)) == 1
+
+
+def test_a_so_line_with_transfers_waits_in_plain_words_and_the_edits_still_go(so_api, fake_ss):
+    client, db, world = so_api
+    amendment = _removal_world(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
     fake_ss.answers[("POST", _so_delete_path(DTL_3))] = (409, refused_body("ROW_HAS_TRANSFERS", "x"))
     _so_patch_done(fake_ss)
 
     body = client.post(_so_url(amendment)).json()
 
+    assert body["outcome"] == "done", body
+    [row] = body["waiting"]
+    assert row["verb"] == "CANCEL BALANCE" and TRANSFERRED_LINE in row["reason"]
+    assert len(fake_ss.to("PATCH", SO_DOC_PATH)) == 1
+
+
+def test_a_refused_patch_after_a_removal_says_what_was_removed(so_api, fake_ss):
+    client, db, world = so_api
+    amendment = _removal_world(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    _held_so(fake_ss)
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _deleted(doc_no="SO412345", doc_key=DOC_KEY)
+    fake_ss.answers[("PATCH", SO_DOC_PATH)] = (409, refused_body("QTY_BELOW_TRANSFERRED", "Qty below transferred"))
+
+    body = client.post(_so_url(amendment)).json()
+
     assert body["outcome"] == "refused"
-    assert TRANSFERRED_LINE in body["message"]
-    assert fake_ss.to("PATCH", SO_DOC_PATH) == []
+    assert body["message"].startswith("Removed: ")
+    assert "Nothing was changed" not in body["message"]
     db.refresh(amendment)
     assert amendment.autocount_edit_sent_at is None
 
 
+def test_a_stale_retry_after_a_done_removal_sends_autocounts_newer_stamp(so_api, fake_ss):
+    """Review B1: a done removal is never replayed, so its old stamp never comes back."""
+    client, db, world = so_api
+    amendment = _removal_world(db, world)
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+    reads = {"n": 0}
+
+    def held(_request):
+        reads["n"] += 1
+        dtls = (DTL_1, DTL_3) if reads["n"] == 1 else (DTL_1,)
+        body = done_body(details=[{"DtlKey": d} for d in dtls], last_modified="H-current")
+        return (200, body)
+
+    fake_ss.answers[("GET", SO_DOC_PATH)] = held
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _replaying(lambda r: (200, done_body(last_modified="R1")))
+    fake_ss.answers[("PATCH", SO_DOC_PATH)] = (409, refused_body("DOC_STALE", "stale"))
+
+    for _ in range(3):
+        client.post(_so_url(amendment))
+
+    assert len(fake_ss.to("POST", _so_delete_path(DTL_3))) == 1, "the removed row is not sent again"
+    stamps = [fake_ss.body(p)["expectedLastModified"] for p in fake_ss.to("PATCH", SO_DOC_PATH)]
+    assert stamps[-1] == "H-current", stamps
+
+
+def test_an_adopted_order_retry_never_conflicts_on_its_own_key(so_api, fake_ss):
+    """Review B2: every press sends the same bodies, so a retry after a timeout can succeed."""
+    import httpx
+
+    from tests.test_project_autocount_so_update import _adopt
+
+    client, db, world = so_api
+    _adopt(db, world)
+    line3 = _third_line(db, world)
+    amendment = add_amendment(
+        db, world, [order_row(world, world.line1, "120"), cancel_balance_row(world, line3, "0")]
+    )
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": "AED_SRT", "capabilities": caps_with(delete_line=(True, None))})
+    reads = {"n": 0}
+
+    def held(_request):
+        reads["n"] += 1
+        dtls = (DTL_1, DTL_3) if reads["n"] == 1 else (DTL_1,)
+        body = done_body(details=[{"DtlKey": d} for d in dtls], last_modified="E0")
+        body["document"]["DocDate"] = "2026-10-01"
+        return (200, body)
+
+    fake_ss.answers[("GET", SO_DOC_PATH)] = held
+    fake_ss.answers[("POST", _so_delete_path(DTL_3))] = _replaying(lambda r: (200, done_body(last_modified="R1")))
+
+    def down(_request):
+        raise httpx.ConnectError("down")
+
+    fake_ss.answers[("PATCH", SO_DOC_PATH)] = _replaying(down)
+    client.post(_so_url(amendment))
+    fake_ss.answers[("PATCH", SO_DOC_PATH)] = _replaying(lambda r: (200, done_body(last_modified="R2")))
+
+    body = client.post(_so_url(amendment)).json()
+
+    assert body["outcome"] == "done", body
+    first, second = fake_ss.to("PATCH", SO_DOC_PATH)
+    assert first.content == second.content
+
+
 def test_cancel_balance_to_a_non_zero_qty_still_waits_with_delete_line_on(so_api, fake_ss):
     client, db, world = so_api
-    put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "2")])
-    db.commit()
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "2")])
     fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
 
     body = client.post(_so_url(amendment)).json()
@@ -379,10 +513,7 @@ def test_cancel_balance_to_a_non_zero_qty_still_waits_with_delete_line_on(so_api
 
 def test_cancel_balance_to_zero_waits_with_the_feeds_reason_when_delete_line_is_off(so_api, fake_ss):
     client, db, world = so_api
-    put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
-    db.commit()
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "0")])
 
     body = client.post(_so_url(amendment)).json()
 
@@ -392,15 +523,28 @@ def test_cancel_balance_to_zero_waits_with_the_feeds_reason_when_delete_line_is_
 
 def test_the_change_list_marks_a_zero_cancel_balance_sendable_when_delete_line_is_on(so_api, fake_ss):
     client, db, world = so_api
-    put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(db, world, [cancel_balance_row(world, line3, "0")])
-    db.commit()
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "0")])
     fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
 
     rows = client.get(f"{BASE}/amendments/{amendment.id}/autocount-change-list").json()["rows"]
 
     assert [(r["verb"], r["autocount_sendable"]) for r in rows] == [("CANCEL BALANCE", True)]
+
+
+def test_the_change_list_never_calls_ss_with_the_switch_off(so_api, fake_ss):
+    """Review S4: a read page must not call SS, or call a row sendable, while writes are off."""
+    from tests._ac_write_support import set_switch
+
+    client, db, world = so_api
+    amendment = _removal_world(db, world, lambda line3: [cancel_balance_row(world, line3, "0")])
+    set_switch(db, False)
+    db.commit()
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, DELETE_ON)
+
+    rows = client.get(f"{BASE}/amendments/{amendment.id}/autocount-change-list").json()["rows"]
+
+    assert [(r["verb"], r["autocount_sendable"]) for r in rows] == [("CANCEL BALANCE", False)]
+    assert fake_ss.calls == []
 
 
 # =========================================================================== codes in plain words

@@ -43,6 +43,7 @@ from app.models.projects import (
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
 )
+from app.models.user import SystemSetting
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.autocount_idempotency import attempt_store, send_with_attempts
@@ -724,8 +725,10 @@ class ProjectAutocountWriteService:
         company = self._order_company_code(order)
         expected = order.autocount_last_modified
         doc_date = None
-        if not expected:
-            # Adopted order: nothing read back yet, so read the document before the PATCH.
+        if not expected or removals:
+            # Adopted order: nothing read back yet, so read the document before the PATCH. With
+            # removals the document is read on every press, so a row already removed (no longer in
+            # Details) is never sent again and every press sends the same bodies (review B1, B2).
             try:
                 held = self._gateway().read_document("sales-orders", doc_key, company)
             except FoundryxPullError as exc:
@@ -735,22 +738,35 @@ class ProjectAutocountWriteService:
                 )
                 failed["waiting"] = waiting
                 return failed
-            expected = (held.get("document") or held).get("LastModified")
-            doc_date = _iso_date((held.get("document") or held).get("DocDate"))
-        # Removals go first: their bodies carry no stamp, so a retry replays them as sent, and
-        # the edit after them carries the stamp the last removal answered.
+            held_doc = held.get("document") or held
+            expected = expected or held_doc.get("LastModified")
+            doc_date = _iso_date(held_doc.get("DocDate"))
+            if removals:
+                still = {str(d.get("DtlKey")) for d in (held_doc.get("Details") or [])}
+                removals = [(dtl, row) for dtl, row in removals if str(dtl) in still]
+        # Removals go first, then the edit carries the stamp the last removal answered.
         answer: Optional[Dict[str, Any]] = None
+        removed: List[str] = []
         for dtl, row in removals:
             gone = self._delete_line(
                 "sales-orders", doc_key, dtl, company, doc_date, f"crm-amd-{amendment.id}-update-delete"
             )
             if gone.get("errorCode") == "ROW_NOT_FOUND":
-                continue  # removed by an earlier press
+                continue  # removed meanwhile
+            if gone.get("errorCode") == "ROW_HAS_TRANSFERS":
+                # A definite refusal that changed nothing: this row waits, the edits still go.
+                waiting.append(self._waiting(row, f"This line {ROW_TRANSFERRED}, so it cannot be removed"))
+                continue
             if not self._is_done(gone):
-                refused = self._removal_refused(gone, row.get("product_code"), made=answer is not None)
+                refused = self._removal_refused(gone, row.get("product_code"), made=False)
+                if removed:
+                    refused["message"] = (
+                        f"Removed: {', '.join(removed)}. The other changes were not sent. {refused['message']}"
+                    )
                 refused["waiting"] = waiting
                 return refused
             answer = gone
+            removed.append(str(row.get("product_code") or dtl))
             expected = (gone.get("document") or {}).get("LastModified") or expected
             order.autocount_last_modified = expected
             self.db.flush()
@@ -771,6 +787,10 @@ class ProjectAutocountWriteService:
         answer = answer or {"outcome": "done"}
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
+            if removed:
+                refused["message"] = f"Removed: {', '.join(removed)}. " + refused["message"].replace(
+                    "Nothing was changed", "The quantity and date changes were not made"
+                )
             refused["waiting"] = waiting
             if self._is_stale(answer):
                 # B10: keep AutoCount's own stamp, so the next press (after a person checked
@@ -787,6 +807,8 @@ class ProjectAutocountWriteService:
         final = self._interpret(answer, verb="updated")
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
         final["message"] = f"{final['doc_no']} updated in AutoCount"
+        if removed:
+            final["message"] += f". Removed: {', '.join(removed)}."
         final["waiting"] = waiting
         if not order.autocount_doc_key:
             # An adopted order's first done update: keep its key and the book it came from.
@@ -813,8 +835,12 @@ class ProjectAutocountWriteService:
             return False
 
     def _so_caps_for_removal(self, order: ProjectSalesOrder, accepted: List[dict]):
-        """The sales order feed, read only when a row would remove a line."""
+        """The sales order feed, read only when a row would remove a line and the switch is on
+        (the change list must not call SS, or call it sendable, while writes are off)."""
         if not any(self._is_removal(r) for r in accepted):
+            return None
+        setting = self.db.query(SystemSetting).first()
+        if not getattr(setting, "project_autocount_write_enabled", False):
             return None
         return self.capabilities(order.company_id)["sales_orders"]
 
@@ -1222,8 +1248,6 @@ class ProjectAutocountWriteService:
                     continue
                 if not self._is_done(answer):
                     refused = self._removal_refused(answer, d.get("ItemCode"), made=True)
-                    if self._is_stale(answer) and last is None:
-                        self._keep_held_stamp(document, held_doc)
                     refused["waiting"] = waiting
                     return refused
                 removed.append(d)
@@ -1237,8 +1261,8 @@ class ProjectAutocountWriteService:
     def _delete_line(
         self, kind: str, doc_key: str, dtl_key: Any, company: str, doc_date: Optional[str], base_key: str
     ) -> Dict[str, Any]:
-        """SS v2 delete-line route. The body never carries a stamp, so a retry of the same row is
-        the same key and body and SS replays its stored answer instead of answering a conflict."""
+        """SS v2 delete-line route. The body carries no stamp (an accepted choice: the caller read
+        the document this press, and a removed row is gone whatever else changed)."""
         dtl = _safe_key(dtl_key)
         body: Dict[str, Any] = {"companyCode": company}
         if doc_date:
