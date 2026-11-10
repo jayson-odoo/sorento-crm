@@ -441,3 +441,32 @@ def test_the_migration_backfill_maps_only_an_exact_number_and_unit(api):
         ).first()
         sql = (row.n, row.u) if row.n is not None and 1 <= row.n <= 999 else None
         assert sql == qts.parse_validity(sample), sample
+
+
+def test_the_legacy_link_skips_a_quotation_that_is_with_a_manager_or_approved(api, monkeypatch):
+    """Security review 4: a sync never writes a locked quotation, not even the link. The
+    approval state is stubbed; the lock rule itself has its own suite."""
+    from app.models.projects import ProjectQuotationDocument
+    from app.services import project_quotation_approval_service as approvals
+
+    client, db, company_id, _user, project, _party = api
+    open_doc = _create_document(client, project.id, payment_terms="cash before delivery")
+    locked_doc = _create_document(client, project.id, payment_terms="CASH BEFORE DELIVERY")
+    term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+
+    monkeypatch.setattr(
+        approvals,
+        "current_key",
+        lambda _db, document: approvals.STATUS_APPROVED if str(document.id) == locked_doc["id"] else None,
+    )
+    qts.link_legacy_terms(db, company_id=company_id)
+
+    rows = {
+        str(row.id): row
+        for row in db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id.in_([open_doc["id"], locked_doc["id"]]))
+        .all()
+    }
+    assert str(rows[open_doc["id"]].payment_term_id) == str(term.id)
+    assert rows[locked_doc["id"]].payment_term_id is None

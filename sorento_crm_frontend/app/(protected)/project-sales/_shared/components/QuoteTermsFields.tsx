@@ -106,7 +106,9 @@ export function QuoteTermsFields({
     // An emptied number clears the validity, whatever the unit says.
     if (!nextValue) {
       if (nextUnit) setUnit('');
-      if (values.validity_value != null || values.validity) {
+      // Only a picked validity is cleared: a legacy text nobody picked over is not wiped by a
+      // digit typed and deleted again.
+      if (values.validity_value != null) {
         onChange({ validity_value: null, validity_unit: null, validity: null });
       }
       return;

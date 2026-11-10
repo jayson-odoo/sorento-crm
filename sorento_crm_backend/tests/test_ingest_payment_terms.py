@@ -178,3 +178,4 @@ def test_a_push_never_links_legacy_text_to_an_inactive_term(env):
     env.post(INGEST, [{"source_ref": _ref(), "code": code, "is_active": False}])
     env.db.refresh(template)
     assert template.payment_term_id is None
+

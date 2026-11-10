@@ -139,6 +139,14 @@ describe('QuoteTermsFields', () => {
     expect((screen.getByLabelText('Validity unit') as HTMLSelectElement).value).toBe('');
   });
 
+  it('typing and deleting a digit over a legacy validity keeps the legacy text', () => {
+    renderFields({ validity: '30 days from quotation date' });
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '' } });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByText('Current: 30 days from quotation date')).toBeTruthy();
+  });
+
   it('shows what prints when a synced link reads differently from the pick', () => {
     renderFields({ payment_term_id: 'pt-30', payment_terms: '30 days' });
     expect(screen.getByText('Current: 30 days')).toBeTruthy();
