@@ -28,7 +28,7 @@ from app.models.company import Company
 from app.models.finance import CREDIT_NOTE, BillingDocument
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseRequestHeader
+from app.models.procurement import InboundShipment, InboundShipmentLine, PurchaseRequestHeader, Supplier
 from app.models.product import Product
 from app.models.projects import ProjectQuotationDocument
 from app.models.scm import ReorderLevel
@@ -116,21 +116,37 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
     return figures, compare
 
 
+LORRY_CUSTOMERS = 6
+
+
 def _deliveries(db: Session, company_id: str, day: date) -> dict:
-    """Sales orders still owing goods that are due today or overdue (a count only)."""
+    """Sales orders still owing goods that are due today or overdue: the count, and the customers of
+    up to 6 of them, earliest due first (TOWN-V2 Q6: lorries drive to real customers). Customer ids
+    here are raw; `build_snapshot` keeps only those with a shop in the town."""
     due = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.requested_delivery_date)
+    owing = (
+        SalesOrder.company_id == company_id,
+        SalesOrderLine.line_status == "open",
+        SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
+        due <= day,
+    )
     count = db.execute(
         sa.select(sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)))
         .select_from(SalesOrderLine)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .where(
-            SalesOrder.company_id == company_id,
-            SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
-            due <= day,
-        )
+        .where(*owing)
     ).scalar_one()
-    return {"to_deliver": int(count)}
+    first_due = sa.func.min(due)
+    customers = db.execute(
+        sa.select(SalesOrder.customer_id)
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .where(*owing, SalesOrder.customer_id.is_not(None))
+        .group_by(SalesOrder.customer_id)
+        .order_by(first_due, SalesOrder.customer_id)
+        .limit(LORRY_CUSTOMERS)
+    ).scalars().all()
+    return {"to_deliver": int(count), "customers": [str(c) for c in customers]}
 
 
 def _dealer_rows(db: Session, company_id: str, since: date, until: date, *, today: Optional[date]) -> list:
@@ -302,6 +318,87 @@ def _approvals(db: Session, company_id: str) -> dict:
     return {"total": int(prs) + int(quotations), "purchase_requests": int(prs), "quotation_documents": int(quotations)}
 
 
+INCOMING_ROWS = 30
+
+
+def _incoming(db: Session, company_id: str, day: date) -> dict:
+    """Open shipments from overseas suppliers, in two plain states (owner, 10 Nov): INCOMING = the
+    effective ETA (`eta_delay_date`, else `estimated_arrival_date`) is today or later, or unknown;
+    LATE = it has passed. "Open" is the incoming-stock rule the assistant's shipment tool uses
+    (not draft, a line still incoming), imported, not re-derived. Exact counts, then up to 30
+    incoming rows (soonest first, no ETA last) and up to 30 late rows (most recently late first)."""
+    from app.services.incoming_stock_service import (
+        _not_draft_shipment_filter,
+        _remaining_expr,
+        _still_incoming_filter,
+    )
+
+    lines = (
+        sa.select(
+            InboundShipmentLine.shipment_id.label("sid"),
+            sa.func.count(sa.distinct(InboundShipmentLine.product_id)).label("products"),
+            sa.func.sum(_remaining_expr()).label("quantity"),
+        )
+        .where(_still_incoming_filter())
+        .group_by(InboundShipmentLine.shipment_id)
+        .subquery()
+    )
+    eta = sa.func.coalesce(InboundShipment.eta_delay_date, InboundShipment.estimated_arrival_date)
+    late = eta < day
+    base = (
+        sa.select(InboundShipment.id)
+        .join(lines, lines.c.sid == InboundShipment.id)
+        .where(InboundShipment.company_id == company_id, _not_draft_shipment_filter())
+    )
+    incoming_count, late_count, next_eta = db.execute(
+        sa.select(
+            sa.func.count().filter(sa.not_(late) | eta.is_(None)),
+            sa.func.count().filter(late),
+            sa.func.min(eta).filter(eta >= day),
+        )
+        .select_from(InboundShipment)
+        .where(InboundShipment.id.in_(base.scalar_subquery()))
+    ).one()
+
+    def rows(where, *order):
+        return db.execute(
+            sa.select(
+                InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
+                Supplier.supplier_name,
+                eta,
+                lines.c.products,
+                lines.c.quantity,
+            )
+            .join(lines, lines.c.sid == InboundShipment.id)
+            .join(Supplier, Supplier.id == InboundShipment.supplier_id, isouter=True)
+            .where(InboundShipment.company_id == company_id, _not_draft_shipment_filter(), where)
+            .order_by(*order, InboundShipment.shipment_number.asc())
+            .limit(INCOMING_ROWS)
+        ).all()
+
+    def row(r, is_late: bool) -> dict:
+        number, container, supplier, when, products, quantity = r
+        return {
+            "shipment_number": number,
+            "container": container,
+            "supplier": supplier,
+            "eta": when.isoformat() if when else None,
+            "products": int(products or 0),
+            "quantity": int(quantity or 0),
+            "late": is_late,
+        }
+
+    upcoming = rows(sa.not_(late) | eta.is_(None), eta.asc().nulls_last())
+    overdue = rows(late, eta.desc())
+    return {
+        "incoming": int(incoming_count),
+        "late": int(late_count),
+        "next_eta": next_eta.isoformat() if next_eta else None,
+        "shipments": [row(r, False) for r in upcoming] + [row(r, True) for r in overdue],
+    }
+
+
 def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) -> dict:
     """The FULL variant (schema 1) for one company and one MYT day."""
     now_myt = now.astimezone(MYT)
@@ -311,6 +408,11 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         )
     ).scalar_one()
     today, compare = _today_and_compare(db, company_id, day)
+    shops = _shops(db, company_id, day)
+    deliveries = _deliveries(db, company_id, day)
+    # Only customers the town already shows: a lorry heading anywhere else drives out of town (None).
+    shop_keys = {shop["key"] for shop in shops}
+    deliveries["customers"] = [key if key in shop_keys else None for key in deliveries["customers"]]
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -320,11 +422,12 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         "phase": "night" if now_myt.hour * 60 + now_myt.minute >= NIGHT_MINUTE else "day",
         "today": today,
         "compare": compare,
-        "shops": _shops(db, company_id, day),
+        "shops": shops,
         "warehouses": _warehouses(db, company_id),
         "reorder": _reorder(db, company_id),
         "approvals": _approvals(db, company_id),
-        "deliveries": _deliveries(db, company_id, day),
+        "deliveries": deliveries,
+        "incoming": _incoming(db, company_id, day),
     }
 
 
@@ -355,9 +458,20 @@ def day_events(db: Session, company_id: str, day: date, shop_keys: set) -> list:
 # ---------------------------------------------------------------------- redaction and wallboard
 
 def _opaque_keys(out: dict) -> None:
-    """Replace each shop's customer id with its position, so a viewer cannot correlate customers."""
+    """Replace each shop's customer id with its position, so a viewer cannot correlate customers.
+    The lorries' destinations (`deliveries.customers`) follow their shop to its new key."""
+    renamed = {}
     for index, shop in enumerate(out.get("shops", []), start=1):
-        shop["key"] = f"s{index}"
+        renamed[shop["key"]] = shop["key"] = f"s{index}"
+    deliveries = out.get("deliveries")
+    if deliveries and "customers" in deliveries:
+        deliveries["customers"] = [renamed.get(key) for key in deliveries["customers"]]
+
+
+def _drop_suppliers(out: dict) -> None:
+    """Supplier names follow dealer names: personal full view only (owner, 10 Nov)."""
+    for row in (out.get("incoming") or {}).get("shipments", []):
+        row.pop("supplier", None)
 
 
 def redact(snapshot: dict) -> dict:
@@ -376,6 +490,7 @@ def redact(snapshot: dict) -> dict:
         for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _drop_suppliers(out)
     return out
 
 
@@ -387,6 +502,7 @@ def strip_names(snapshot: dict) -> dict:
         for key in ("name", "code", "today_amount", "ninety_day_amount"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _drop_suppliers(out)
     return out
 
 

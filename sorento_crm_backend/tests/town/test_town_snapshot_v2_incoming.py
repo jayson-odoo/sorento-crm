@@ -114,7 +114,8 @@ def test_row_fields(db):
     p1, p2, p3 = (product(db, company_id=DEFAULT_COMPANY_ID) for _ in range(3))
     eta = TODAY + timedelta(days=6)
     number = _num("ROW")
-    # p1 appears on two incoming lines (distinct count), p2 once, p3 is fully received (ignored).
+    # p1 is on both still-incoming lines (counted once); p2 is over-received and p3 fully received, so
+    # neither is still incoming: one distinct product.
     _ship(db, number, eta=eta, supplier=sup, container="ZZTU1234567", products=[p1, p1, p2, p3],
           lines=((10, 4, "in_transit"), (5, 0, "in_transit"), (7, 20, "in_transit"), (9, 9, "in_transit")))
     late = _ship(db, _num("LATE"), eta=TODAY - timedelta(days=3), lines=((3, 0, "in_transit"),))
@@ -124,7 +125,7 @@ def test_row_fields(db):
     assert row["supplier"] == "ZZT Supplier Co"
     assert row["container"] == "ZZTU1234567"
     assert row["eta"] == eta.isoformat()
-    assert row["products"] == 2
+    assert row["products"] == 1
     assert row["quantity"] == 6 + 5  # (10-4) + 5; the over-received and the fully received lines add nothing
     assert row["late"] is False
     assert rows[late.shipment_number]["late"] is True

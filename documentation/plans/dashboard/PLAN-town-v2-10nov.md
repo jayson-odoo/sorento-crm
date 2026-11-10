@@ -1,7 +1,7 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Plan. Card questions all answered by the owner (10 Nov ~16:05); mock v5 (motion) + research note
-filed; build waits for the owner's sign-off on v5. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
+Status: Build (look-independent slices). All card questions answered (Q1-Q6, 10 Nov). The look and motion
+are reworked in the separate local lane TOWN-LOOK (v6); visuals wait for the owner's pick. Slice 1 done. Track: M (LEAD pattern), expected diff ~600-900 lines, no migration, no auth/RBAC change,
 no new ingest surface. UAC: `town-v2-acceptance-criteria.md`.
 
 ## Journey (owner, 10 Nov ~15:35 MYT, Dashboards > Town)
@@ -117,8 +117,9 @@ Answered 10 Nov ~16:00-16:05: Q1 dropped; Q2 two plain states (incoming / late);
 the personal view only; Q4 (b) a tap opens the lightbox, hover tooltips on desktop only; Q5 (a) "Open
 packing lists".
 
-Open with mock v5:
-6. **Where lorries drive.** The snapshot has only a count of due sales orders, not who they are for. (a)
+Answered 10 Nov ~16:10: Q6 (a).
+
+6. **Where lorries drive (answered: a).** The snapshot has only a count of due sales orders, not who they are for. (a)
    Add `deliveries.customers`: the keys of up to 6 shops with an order due today or overdue (one GROUP BY
    on the existing `_deliveries` query), so a lorry drives to a real customer; on the redacted or
    wallboard variant the keys stay opaque as they are today. (b) Lorries drive to lit shops (decoration,
@@ -148,7 +149,9 @@ Open with mock v5:
 ## Build slices (after sign-off)
 
 1. BE: `_incoming(db, company_id, day)` in `town/snapshot.py`, reusing the `incoming_stock_service`
-   filters; `redact`/`strip_names` drop `supplier`; (if Q6 = a) `deliveries.customers`. Tests first in
+   filters; `redact`/`strip_names` drop `supplier`; `deliveries.customers` (Q6 = a): up to 6 customers of
+   due orders, earliest due first, as their shop key or None when not in the town, remapped to the opaque
+   key on the redacted/wallboard variants. Tests first in
    `tests/town/test_town_snapshot_v2_incoming.py`.
 2. FE: `TownPanel` Sheet -> `TownLightbox` Dialog; cards + scene open it. Tests: role=dialog, Esc
    closes, no Sheet rendered.
