@@ -1,6 +1,6 @@
 # CARD: configurable project party roles + proposal "To" picker (lane PROJECT-PARTY-ROLES)
 
-Status: behaviour card v2 (owner addition 10 Nov ~13:40: contacts in the same step), waiting on the owner. No code yet.
+Status: behaviour card v3 (owner additions 10 Nov ~13:40 contacts in the same step, ~14:00 guided proposal TO), waiting on the owner. No code yet. Q1-Q6 unchanged from v1/v2.
 
 ## What is true today (origin/main a4af6565, read in this lane)
 
@@ -68,16 +68,20 @@ Status: behaviour card v2 (owner addition 10 Nov ~13:40: contacts in the same st
 - WhatsApp send's party pick + fill-a-missing-number (owner 2 Nov) uses the same project-parties list; I build
   the list endpoint once in PR 2 and the WhatsApp wiring stays its own lane unless you say otherwise.
 
-## Real examples (dev data, requested from crew, filled in when the rows come back)
+## Real examples (dev DB, 10 Nov; aggregates only, rows not committed)
 
-`crew-data-request:` SQL in `documentation/plans/project-sales/project-party-roles-dev-examples.sql`:
-1. PPF2611003: its developer, architect, main contractor and every `party_links` row (role, party), what the
-   Parties section would show after the move.
-2. Count of parties per `party_type`, active / inactive.
-3. Projects with an architect or main contractor column set (the backfill size), and any project where the
-   column party's `party_type` differs from the column's role (backfill must keep those, not drop them).
-4. Proposals per project with `recipient_party_id`, and how many differ from the project's developer today.
-5. Any `party_type` / `party_links.role` value outside the eight keys (would need seeding as an option).
+- Dev data is thin: `party_links` holds 1 row in the whole DB (PPF2611003, a trading house); 12 projects,
+  9 with a developer.
+- Parties by type: architect 1561, developer 211, main contractor 26, trading house 1, every one active. No
+  subcontractor, tender party, consultant or interior designer party exists yet.
+- Backfill size: 4 projects with an architect column, 5 with a main contractor column; 0 whose party type
+  differs from the column role. 0 type / role values outside the eight keys, so the seed covers all data.
+- Proposals: 12 proposals + 4 quotations; every one with a recipient is addressed to the developer (2
+  proposals have none). Nothing to migrate for PR 2.
+- Mock uses the owner's 10 Nov screenshot as the busy example (developer PARAGON VIEW SDN BHD, A. BAKHTIAR
+  ARCHITECT, AHMAD ZAKI RESOURCES BERHAD, SUBCONA, TRADING HOUSE A, TPA, CONSULTANTA, IDA) and PPF2611004
+  for the proposal (developer PARAGON VIEW SDN BHD; owner screenshot: name prefilled, address / phone / email
+  / attn empty).
 
 ## Edge cases
 
@@ -116,6 +120,37 @@ createOption -> `PartyContactDialog.tsx`, name the only required field) but sits
 Q6. On edit, un-picking a contact under a party. (a) removes that person's stakeholder row from the project
     (the contact stays on the party); (b) only adds, removal stays on the Stakeholders tab.
     **Recommend (a)**: the picker then shows the truth both ways; a picker that ignores un-picks reads as a bug.
+
+## Owner addition 2, 10 Nov ~14:00: guided proposal / quotation TO (PR 2)
+
+Owner: "we want to make the filling in very guided and smooth and flexible at the registration and quotation
+stage". This refines rule 8. Lane PROPOSAL-FORM-COLLAPSE owns the rest of the Header section; this lane
+touches only the TO block.
+
+15. **Choose the party, the header autoloads.** The TO block starts with a Party picker: the project's parties
+    first ("On this project", each with its role), then every other party of the company as you type.
+    Default on a new proposal is the developer, as today. Picking fills name, address, phone, email, Attn.
+16. **Not on the project yet: pick or create it here, backfilled.** A party from "Other parties" or one created
+    on the spot shows "Not on this project yet. Add as <role>": role defaults to the party's type, picked from
+    the active roles (a "one party" role already filled on the project is not offered). On Save the party is
+    linked to the project in that role and appears in its Parties section.
+17. **Attn = one or more contacts of that party.** Contacts already on the project first, then the party's
+    other contacts; not found: created on the spot (name only required). A contact picked here that is not a
+    project stakeholder yet is added as one; a new one is also added to the party. A missing number is filled
+    on the spot and saved to the contact.
+18. **Two or more Attn** print joined with " & " ("ATTN: MS. ANNE CHEW & MS IIYANA", real PGB GROUP sample),
+    stored in the existing `attn_name` text. Phone and email come from the first Attn, else the party's own.
+19. **Address** prefills per Q7.
+20. **Every field stays editable** after autoload; a typed value is never overwritten by a later re-pick
+    unless the user picks a different party (then the whole block reloads from the new party).
+21. Who may create a party or contact from the proposal: `projects.parties.edit`, same as registration;
+    without it the pickers only pick. Backfilling a party link needs edit rights on the project.
+
+Q7. Proposal address (owner: "the address we can get from project"). (a) the chosen party's address, falling
+    back to the project's site address when the party has none; (b) always the project's site address.
+    **Recommend (a)**: a letter's TO address is the addressee's own, the site already prints in the project
+    title, and the fallback still gives "from the project" when the party has no address on file. Mock 4b
+    shows both.
 
 ## Questions (at most 5, each with a recommendation)
 
