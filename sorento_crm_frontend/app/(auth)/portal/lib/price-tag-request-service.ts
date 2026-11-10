@@ -85,6 +85,7 @@
  * ===========================================================================
  */
 
+import { customersLabel, requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
@@ -755,14 +756,14 @@ export function makePriceTagRequestService(
         kind: 'price_tag_request' as const,
         // A draft may have no dealer yet, and a card with a blank first line reads
         // as a broken row rather than an unfinished one.
-        title: r.debtor_name || r.doc_number,
+        title: customersLabel(requestCustomers(r)) || r.doc_number,
         document_number: r.doc_number,
         reference: null,
         status: r.status,
         is_editable: isDraft,
         is_draft: isDraft,
         created_at: r.created_at,
-        customer_name: r.debtor_name,
+        customer_name: customersLabel(requestCustomers(r)),
         needed_by_date: r.needed_by_date,
         // AC-R7: the same revision fields the legacy kinds' own summaries carry
         // (D45's landing card reads these for the "Rev N" / "Revising" badges) -

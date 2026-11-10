@@ -26,6 +26,7 @@
  * designer, one click away through the same primary CTA.
  */
 
+import { requestCustomers } from '@/lib/dealer-kit/request-customers';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -951,13 +952,22 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             <CardContent className="px-4 py-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground block">Customer</span>
-                  {/* A portal draft may carry neither (D48a). */}
-                  <p className="font-medium">{request.debtor_name ?? '-'}</p>
-                  {request.debtor_code && (
-                    <p className="text-xs text-muted-foreground">
-                      {request.debtor_code}
-                    </p>
+                  <span className="text-muted-foreground block">
+                    {requestCustomers(request).length > 1 ? 'Customers' : 'Customer'}
+                  </span>
+                  {/* A portal draft may carry none (D48a); a request for several lists each
+                      (PRICETAG-REQUEST-LAYOUT), one line per customer. */}
+                  {requestCustomers(request).length === 0 ? (
+                    <p className="font-medium">-</p>
+                  ) : (
+                    requestCustomers(request).map((c) => (
+                      <p key={c.code || c.name} className="font-medium truncate" title={c.name}>
+                        {c.name}
+                        {c.code && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">{c.code}</span>
+                        )}
+                      </p>
+                    ))
                   )}
                 </div>
                 <div>

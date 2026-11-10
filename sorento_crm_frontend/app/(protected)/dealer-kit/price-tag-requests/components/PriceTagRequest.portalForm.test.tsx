@@ -69,6 +69,10 @@ vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => {
 });
 vi.mock('@/lib/save-blob', async (importOriginal) => ({ ...(await importOriginal<Record<string, unknown>>()), saveBlobAs: vi.fn() }));
 // A native select for the debtor picker (the portal's own suites do the same): `selectOption('Debtor', code)`.
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
