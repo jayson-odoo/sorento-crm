@@ -1,6 +1,6 @@
 # UI v2: the program
 
-Status: revision 2, proposed, awaiting owner review (lane UI-V2-PLAN, research and design only, no app code).
+Status: revision 2 (with discovery findings), proposed, awaiting owner review (lane UI-V2-PLAN, research and design only, no app code).
 
 | Rev | Date | Change |
 | --- | --- | --- |
@@ -198,7 +198,7 @@ produce an unreadable button. `css/design-tokens.test.ts` asserts every preset i
 | **Sorento Blue (default)** | hue of `#3b82f6` | Same hue as today; the filled button uses the AA step (`#2563eb`-equivalent, 5.2:1). Exact `#3b82f6` kept only if the owner rejects that (open question Q1) |
 | Sorento Red | `#b44d2e` | The dealer-kit brand swatch (`components/common/ColorPicker.tsx:30`) |
 | Teal | `#0f766e` | |
-| Graphite | `#3f3f46` | Monochrome; primary is near-black |
+| Graphite | `#3f3f46` | Monochrome; the generator picks the AA grey |
 | Indigo | `#4f46e5` | |
 | Custom | any hex, or picked | Generated and guarded as above |
 
@@ -324,6 +324,10 @@ four pass.
 | X-9 | Sentence case for labels, buttons, tabs, menu items; no UUIDs; no feature explanations |
 | X-10 | Visual baseline captured and approved (section 11.1) |
 | X-11 | Performance within budget (section 11.4) |
+| X-12 | Breadcrumb = the sidebar path (not rooted at "Dashboards"); its last crumb equals the page title; no "Back to ..." button beside it (discovery W3: 22 mismatches) |
+| X-13 | No native `type="date"` / `datetime-local` input (60 files today draw the browser's locale, discovery W9) |
+| X-14 | Empty state = heading + hint, no button, no feature explanation (discovery W4, W6) |
+| X-15 | Selected toggles and segments use the soft tint, never the primary fill, so the one filled control is the CTA (pending Q4) |
 
 ### 7.1 List (L)
 
@@ -386,7 +390,7 @@ four pass.
 
 | ID | Check |
 | --- | --- |
-| D-1 | Header: number and badge inline, one subtitle, actions right, no card frame |
+| D-1 | Header: number and badge inline, one subtitle, actions right, no card frame; the record's identity IS the page heading (no generic "Order Inquiry" / "Product" title above it, discovery W1-W2) |
 | D-2 | Exactly one filled primary = the step the state waits on; other steps in the gear; when the viewer cannot act, `WaitingOn` instead of a disabled button |
 | D-3 | Gear: secondary actions, separator, Delete (deferred countdown) last |
 | D-4 | Prev/next pager keeps the current tab (`hooks/useUrlTab.ts`) |
@@ -555,7 +559,7 @@ walkthrough on the crew test copy, the gates in section 11 green for everything 
 
 | Phase | Scope | Exit criteria | Effort |
 | --- | --- | --- | --- |
-| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar, phone bottom bar + nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 (allowlists that only shrink) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
+| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar, phone bottom bar + nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 and native date inputs (allowlists that only shrink). (j) Small-fix lane, can ship before v2: `handle_not_found` takes a human label instead of a model class name (`sorento_crm_backend/app/services/error_handler.py:36-42`, 17 call sites) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
 | **1 List archetype** | `GridToolbar`, `FilterChip`, `FacetChips`, `SelectionBar` + select-all-N (backend bulk-by-filter where missing), `RowMenu`, `PhoneCardList`, `StateView`; reference screen: OI list | L-1..L-9 and X-1..X-11 on the OI list in 4 variants; component suites green; owner sign-off on the reference | 10-14 |
 | **2 Detail archetype** | `RecordHeader`, `WaitingOn`, `RecordMeta`, `HistoryTab` (one backend shape), `ConfirmDialog`, status tone maps; reference screens: OI detail, quotation document view | D-1..D-9 on both references; History tab works for every entity that has audit rows | 10-14 |
 | **3 Form archetype** | `components/v2/forms` shared with the portal, `BlockedReason`, `AutosaveIndicator`, `DatePicker` everywhere, `FileDropzone` v2, image pipeline; reference screens: quotation editor, price tag request (portal + CRM) | F-1..F-7 on both; the portal renders the same component | 10-14 |
@@ -630,5 +634,15 @@ exit, then by the owner on the crew test copy. They are recorded as evidence run
 
 ## 13. Decisions for the owner
 
-These are filed in the crew report, each with a recommendation; see `UI-V2-DISCOVERY.md` section 7 for the full open
-list.
+Five decisions are filed in the crew report (see `UI-V2-DISCOVERY.md` section 7 for all seven open questions).
+Until answered, the plan assumes the recommendation:
+
+| # | Decision | Assumed |
+| --- | --- | --- |
+| Q1 | Default blue for filled buttons | The AA-safe step of today's hue |
+| Q2 | Retire right-side Sheets on desktop | Yes; dialogs and lightboxes on desktop, bottom sheets on the phone |
+| Q3 | Phone list cards | One generic card from each list's columns, tuned for journey lists |
+| Q4 | Selected toggles | Soft tint, not the primary fill |
+| Q5 | Page-view telemetry in phase 0 | Yes |
+| Q6 | Theme ownership | Company brand by an admin, light/dark per user |
+| Q7 | Rows per page | 25 everywhere, user can change |

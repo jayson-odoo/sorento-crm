@@ -1,6 +1,6 @@
 # UI v2: discovery
 
-Status: in progress (lane UI-V2-PLAN, research round asked for by the owner on 11 Nov 2026, about 00:10:
+Status: complete for review (lane UI-V2-PLAN, research round asked for by the owner on 11 Nov 2026, about 00:10:
 "just need more thinking, more exploring, more investigating before we make the coding"). Research and design
 only, no app code. Feeds the revision of `documentation/uiux/UI-V2-PLAN.md`.
 
@@ -17,53 +17,59 @@ only, no app code. Feeds the revision of `documentation/uiux/UI-V2-PLAN.md`.
 
 ## 0. Top 10 findings
 
-1. **The owner's grid rules are broken in bulk, not at the edges.**
-   - 521 columns in 152 files switch server sort off (`enableSorting: false`), against "every column sortable".
-   - 34 of the 144 list toolbars still offer a single-select filter (`SearchableSelect` next to `DataGridListToolbar`)
-     against "every dropdown filter multi-select".
-   - The rules exist only in plans and crew memory. `DESIGN-LANGUAGE.md` carries none of them, so no reviewer
-     can hold a PR to them (section 3.2).
-2. **"History as a standard tab" is true on 8 records out of about 63 detail pages.**
-   - 8 files have a `value="history"` tab, while `DetailActions` (the record header) is used by 63.
-   - Five records keep history in a sheet or drawer instead (`*History(Sheet|Drawer|Panel)`, 5 files).
-3. **Every journey that passes between roles breaks the one-primary rule exactly where the hand-off happens**
-   (section 4.10):
-   - OI detail shows Confirm and Reserve both filled (`project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx:963-984`).
-   - The quotation shows Reject and Approve side by side (`.../[documentId]/components/QuotationDocumentClient.tsx:595-611`).
-   - The reorder plan shows Save and Confirm (`scm/reorder/.../PlanLinesSection.tsx:237-258`).
-4. **The most important action is often buried in the gear menu.**
-   - On an OI, "Request CS to reserve" is one item in an 11-item gear (`OrderInquiryDetail.tsx:824-957`). Its
-     disabled reason is a hover tooltip, which a phone cannot show (`:892-902`).
-   - On a reorder plan, the PO worklist (the next step) sits in an Actions menu.
-5. **Records are too wide, and view and edit disagree.**
-   - A project has 10 tabs (`PS/[projectId]/components/ProjectDetailClient.tsx:102-113`).
-   - A product has 11 on view and a DIFFERENT 6 on edit (`master-data-management/products/[id]/components/ProductDetail.tsx:319-362`
-     vs `ProductForm.tsx:325-351`). That breaks the ADR's "view and edit are the same layout".
-   - A quotation document is spread over 8 sub-routes (`[documentId]/(view)/*`).
-6. **Every export is a two-step wait.** "Download PDF" queues an RQ job ("Prepared in My Downloads",
-   `quotation-documents/actions.tsx:168`), and the file is collected from a separate chip or drawer. The same holds
-   for OI Excel, stock debt Excel, tag sheets and the reorder report (section 4). Nothing downloads at the click.
-7. **Dialogs stack and patterns fork.**
-   - Stock debt opens a reserve or PO-link dialog ON TOP of the drill dialog (`PS/stock-debt/.../SnapshotDrillDialog.tsx:306-320`).
-   - The same decision has two different UIs: a popover vs the drill menu (`SnapshotDecisionPopover.tsx:101-190`).
-   - 96 files import `alert-dialog`, and 26 still use the retired `ConfirmDeleteDialog`.
-   - "Are you sure" appears in 29 files.
-8. **The owner's recurring complaint is complexity, not looks.** About 23 plan files record the owner calling
-   something "too complicated", "very bloated" or "too many information" (section 3.1). The fixes they asked for are
-   all subtraction: fewer fields, one line per row, a popup instead of a page, reuse the same component. v2 has to be
-   judged on that, not on new visual effects.
-9. **We cannot rank screens by use today.**
-   - The app records no page views, no clicks and no search queries, and has no frontend analytics.
-   - `api_call_log` excludes staff UI traffic by design (`sorento_crm_backend/app/middleware/api_call_log_middleware.py:30,55-62`).
-   - What exists measures writes (`audit_logs.source='ui'`), sessions (`user_sessions.user_agent`, giving phone share)
-     and tailored lists (`user_list_column_configs`) (section 3.3).
-   - The plan's earlier "top 10 lists by `api_call_logs`" was wrong and is withdrawn.
-10. **Two "owner rules" in the first plan were not the owner's words.**
-    - "No cards on the phone" (AUDIT Q2) was decided by crew with the owner informed after (commit `a0df2e6f`). The
-      owner's D4 answer ("follow the playbook") now overrides it.
-    - The owner uses "side panel" and "lightbox" interchangeably at least once: "i just need this as side panel (lightbox)"
-      (`documentation/plans/scm/PLAN-planning-why-12oct.md:76`). So R7 needs a precise reading before v2 retires every
-      Sheet (decision Q2 in section 7).
+1. **Every record looks different.** The walk found four record-header layouts:
+   - **OI:** a generic page title ("Order Inquiry") above a header card holding the number, badge and actions.
+   - **Product:** a generic title ("Product") above a large product name, with actions outside any card.
+   - **Project:** the number small above the name.
+   - **Quotation editor:** a `PageHeader` followed by a `RecordHeaderCard`.
+
+   Each also carries a "Back to ..." button next to a 4-5 level breadcrumb. The owner's rule ("header like OI") exists
+   only as one implementation out of four (`discovery-shots/oi-detail-1280.jpg`, `product-detail-1280.jpg`,
+   `project-detail-1280.jpg`).
+2. **The owner's grid rules are broken in bulk.**
+   - 521 columns in 152 files switch server sort off (`enableSorting: false`).
+   - 34 of the 144 list toolbars offer a single-select filter (the OI record's own "State" filter is one).
+   - The rules live only in plans and crew memory: `DESIGN-LANGUAGE.md` carries none of them (section 3.2).
+3. **dd/mm/yyyy is broken wherever a native date input is used.**
+   - 60 files use `<input type="date">`, which draws the date in the BROWSER's locale.
+   - On the walk, the quotation editor's Date field showed "11/10/2026" (month first) for 10 Nov
+     (`discovery-shots/quotation-new-1280.jpg`).
+   - Displayed dates are otherwise consistent: 68 walked pages show dd/mm/yyyy, and 2 admin pages show "d Mon yyyy".
+4. **More than one filled button on 37 of 250 walked pages; the same CTA twice on 17.**
+   - **Empty states:** they add a second copy of the CTA plus a feature explanation ("No bundles yet ... A bundle sells
+     several products together ...", `discovery-shots/bundles-empty-1280.jpg`). That breaks two written rules: one
+     CTA, and no explanations in the UI.
+   - **Selected toggles:** a selected segment uses the same primary fill as a button (the TOGGLE-SELECTED rule,
+     `DESIGN-LANGUAGE.md` section 4). So the OI list shows two filled blue controls ("Documents", "Outstanding") and
+     no CTA at all.
+5. **The hand-off between roles is where the screens fail** (section 4.10):
+   - two primaries on OI, quotation and reorder at exactly the hand-off point
+   - the next step hidden in an 11-item gear menu (`OrderInquiryDetail.tsx:824-957`)
+   - a disabled reason a phone cannot show (`:892-902`).
+6. **Records are wide and view/edit disagree.**
+   - Tabs: the project has 10, the product 11 on view against a different 6 on edit, and a quotation spans 8 sub-routes.
+   - System Settings puts 14 tabs on each of its 14 pages, and the General page is one card titled "Social Settings"
+     (`discovery-shots/settings-general-1280.jpg`).
+7. **History as a standard tab is true on 8 records out of about 63.** Five keep history in a sheet or drawer.
+8. **The phone spends half its screen before the first row.** At 375 px:
+   - **OI list:** the first data row starts at 458 px of an 812 px screen.
+   - **Products and customers:** 374 px.
+   - **OI record:** the first line row sits about 690 px down (`discovery-shots/oi-detail-375.jpg`).
+
+   On desktop (1280) the OI list starts at 318 px and shows 13 rows.
+9. **Plain words break at the edges.**
+   - `handle_not_found` puts the model class name into user messages ("LookupSet not found. Someone might have
+     deleted it already.", seen live on the project page). It does this for 17 call sites with CamelCase names such
+     as `TeamMember`, `RespondContact`, `LookupSet` (`sorento_crm_backend/app/services/error_handler.py:36-42`).
+   - Empty lists show "No data available" with a "1 - 0 of 0" pager on some screens and a proper "No X yet" on others.
+   - 130 of 240 page titles are Title Case and 46 are sentence case; form labels split 144 / 63.
+10. **We cannot rank screens by use, and two "owner rules" were not the owner's words.**
+    - **No usage data.** The app records no page views, clicks or searches, and `api_call_log` excludes staff UI
+      traffic by design (section 3.3).
+    - **"No cards on the phone"** (AUDIT Q2) was decided by crew (commit `a0df2e6f`), and the owner's D4 answer now
+      overrides it.
+    - **"Side panel" vs "lightbox":** the owner has used the two words interchangeably ("i just need this as side
+      panel (lightbox)", `documentation/plans/scm/PLAN-planning-why-12oct.md:76`).
 
 ## 1. Method
 
@@ -79,7 +85,59 @@ only, no app code. Feeds the revision of `documentation/uiux/UI-V2-PLAN.md`.
 
 ## 2. Screen walk
 
-(Filled in from the live walk; see section 2.4 for the measured shell and grid.)
+**How it was run.** 251 routes, every non-demo static route (240) plus 11 seeded records, at 1280 x 900 and
+375 x 812, light theme, signed in as an admin with every module enabled. Every page was measured in the browser:
+- title text, size and case
+- filled buttons in the primary colour
+- breadcrumb
+- tab count
+- grid header, first-row height and cell text size
+- date formats in the page text
+- page-level sideways scroll
+- console errors.
+
+**Evidence:**
+- **Measurements:** all 501 page measurements are in `documentation/uiux/discovery-walk.csv`.
+- **Screenshots:** 18 representative ones are in `documentation/uiux/discovery-shots/` (`<screen>-1280.jpg` / `<screen>-375.jpg`).
+- **Limits:**
+  - Data comes from the scratch seed only, so most lists show their empty state.
+  - The first row of an empty grid measures 69 px: the empty-state row, not a data row.
+  - The filled-button count also catches selected toggles and switches, so it is read together with the labels.
+
+### 2.0 What the walk measured
+
+| Measure | Result (desktop, 250 pages) |
+| --- | --- |
+| Page title size | 20 px on all 240 pages that have one; 9 pages have no `h1` (e.g. `/my-requests`, `/sla-management/kpi-dashboard`, `/system-management/mcp-tools`) |
+| Title case | Title Case 130, sentence case 46, single word 64 ("Root Causes", "Create Complaint" vs "Stock position", "Register a project") |
+| Breadcrumb | Always starts at "Dashboards"; depth 3 on 93 pages, 4 on 122, 5 on 13; the last crumb differs from the title on 22 pages ("Goods Receipt Notes" vs "GRN", "Products" vs "All Products", "Supply Chain" vs "Dashboard"); OI sits under "Procurement > Supply Chain" |
+| Filled primary-colour controls | 0 on 69 pages, 1 on 131, 2+ on 37 (of which the same CTA twice on 17: header + empty state) |
+| Grid | 152 pages: header 40 px on 146, cell text 14 px on all 152; data rows 44 px (OI list) |
+| Tabs | 14 tabs on all 14 System Settings pages; 11 product; 10 project; 8 SCM policies |
+| Dates in page text | dd/mm/yyyy on 68 pages; "d Mon yyyy" on 2 admin pages; native date inputs draw month-first in an en-US browser |
+| Phone sideways page scroll | 2 pages (`/procurement-management/grn/new`, `/system-management/activity`) |
+| Phone first row (375 x 812) | OI list 458 px, products / customers 374 px, complaints 334 px; OI record about 690 px |
+| Console errors | 404 on 16 pages, 403 on 6, 400 on 4, 500 on 3, 503 on 2 (empty-DB conditions included) |
+
+### 2.0.1 Inconsistencies seen on screen
+
+| # | What | Where (screenshot / code) |
+| --- | --- | --- |
+| W1 | Four record-header layouts (section 0, item 1) | `oi-detail`, `product-detail`, `project-detail`, `quotation-new`; `components/common/RecordHeaderCard.tsx`, `master-data-management/products/[id]/components/ProductDetail.tsx`, `PS/[projectId]/components/ProjectDetailClient.tsx`, `quotation-documents/components/QuotationFormClient.tsx:895,999` |
+| W2 | A generic page title ("Order Inquiry", "Product", "Project") above the record's own identity: two headings per record | same screenshots |
+| W3 | "Back to ..." button next to a 4-5 level breadcrumb: two ways back, both on screen | OI, product, project, brand create |
+| W4 | CTA placement varies: in the `PageHeader` (OI), inside the grid card's toolbar (complaints "Create", bundles "New bundle"), repeated in the empty state (bundles, flyers, tile designs, teams, opportunities) | `complaints-list-1280.jpg`, `bundles-empty-1280.jpg` |
+| W5 | Rows per page: 25 on OI, 50 on complaints | `oi-list-1280.jpg`, `complaints-list-1280.jpg` |
+| W6 | Empty grid: "No data available" + "1 - 0 of 0" vs "No bundles yet" + hint + button | `complaints-list`, `bundles-empty` |
+| W7 | Record "Quick Info" side card repeats the Overview tab and disagrees with it (category "Sanitaryware" vs the code "UIV2-SAN"); price as "MYR 1,120.00" where the rest of the app writes "RM" | `product-detail-1280.jpg` |
+| W8 | Create as a full page with a card that repeats the page title ("Create Brand" twice), help text under fields, and two different switch styles on one form | `brand-create-1280.jpg` |
+| W9 | Native date input renders "11/10/2026" for 10 Nov | `quotation-new-1280.jpg`; 60 files with `type="date"` |
+| W10 | Technical 404 text in a toast ("LookupSet not found ...") | `project-detail-1280.jpg`; `error_handler.py:36-42` |
+| W11 | Settings: 14 tabs, a "Social Settings" card holding General, explanatory field help ("Toggle the switch to enable or disable the store's active status.") | `settings-general-1280.jpg` |
+| W12 | Phone list toolbars collapse to unlabelled icon buttons (filter, columns, export, refresh) | `complaints-list-375.jpg` |
+| W13 | Phone record: breadcrumb wraps to two lines, then the back button, the header card, the tabs and a search box before the first line | `oi-detail-375.jpg` |
+| W14 | Floating elements at the bottom right: the AI assistant tab on every page, plus a second floating button on the project page | `project-detail-1280.jpg` |
+| W15 | IDs in a different font from the rest of the row (the OI number is monospace on the list and the record) | `oi-list-1280.jpg`, `oi-detail-1280.jpg` |
 
 ### 2.1 Pattern counts today (static)
 
@@ -412,13 +470,28 @@ See `UI-V2-PLAN.md` (revision 2) for the full program. In short:
    - **One export pattern** ("ready" toast with the file).
    - **Stacked-dialog ban.**
    - **The owner rules into `DESIGN-LANGUAGE.md`** with lint/inventory guards for sort-off and single-select filters.
+7. **New from the screen walk:**
+   - **One record header.** The record's own identity is the page heading: no generic "Order Inquiry" / "Product"
+     title above it, and no "Back to ..." button beside a breadcrumb (W1-W3).
+   - **Breadcrumb = sidebar path.** It no longer starts at "Dashboards" and its last crumb is the page title (22
+     mismatches today).
+   - **Empty states carry no button and no explanation.** The checker counts filled controls per page (W4, W6).
+   - **The native date input is banned.** A lint rule replaces it with `DatePicker` (60 files, W9).
+   - **`handle_not_found` takes a human label,** never a class name (W10). It is one backend line plus 17 call sites,
+     and can ship before v2 as a small-fix lane.
+   - **Selected toggles drop the primary fill** (Q4).
+   - **Sentence case everywhere** (130 Title Case titles, 144 Title Case labels), done screen by screen in the waves.
+   - **The phone record and list put data first:** the condensed top bar holds the identity, and filters and search
+     sit in one bar (W12, W13).
 
 ## 7. Open questions
 
-| # | Question | Why it matters |
-| --- | --- | --- |
-| Q1 | Default blue: keep `blue-500` exactly, or the nearest AA-safe step (`blue-600`, 5.2:1) for filled buttons? | `blue-500` with white text fails AA (3.7:1) |
-| Q2 | R7 "dialog / lightbox over side panels": does it retire every right-side Sheet, or only full-page side panels? | The owner once called a lightbox a "side panel (lightbox)" |
-| Q3 | Who picks the theme: the company (admin sets brand) with users picking only light/dark, or each user picks a preset too? | Decides storage and the settings screens |
-| Q4 | Phone list: playbook cards for every list on the phone, or cards only for the top journeys and the grid for the rest? | Effort scales with the number of lists (177) |
-| Q5 | May phase 0 add a minimal page-view record (route, user, viewport class, time to data)? | Without it the waves are ordered by guesswork |
+| # | Question | Why it matters | Recommendation |
+| --- | --- | --- | --- |
+| Q1 | Default blue: keep `blue-500` exactly for filled buttons, or the AA-safe step the generator picks (`#246bdd`, 5.0:1)? | `blue-500` with white text is 3.7:1, below AA for 14 px text | AA-safe step: same hue, readable |
+| Q2 | R7 "dialog / lightbox over side panels": retire every right-side Sheet on desktop (44 files), with bottom sheets only on the phone? | The owner once called a lightbox a "side panel (lightbox)" | Yes: dialogs and lightboxes on desktop, bottom sheets on the phone |
+| Q3 | Phone list cards: one generic card layout derived from each list's columns (ID + status, then the next two columns), for every list? | 177 lists; per-list design would be the largest single cost | Generic for all, hand-tuned for the journey lists |
+| Q4 | Selected toggles: keep the primary fill (TOGGLE-SELECTED rule) or use the soft tint with primary text? | The primary fill makes 2-3 filled controls per page and hides the one CTA (W4, 37 pages) | Soft tint |
+| Q5 | May phase 0 add a page-view record (route pattern, user, viewport class, time to first data; 90-day retention)? | Without it the waves are ordered by guesswork; it is also the performance gate | Yes |
+| Q6 | Theme ownership: company brand set by an admin plus each user's light/dark, or a per-user brand too? | Storage and settings screens | Company brand + user mode; no per-user brand until asked |
+| Q7 | Default rows per page: 25 (OI) or 50 (complaints)? | Today both exist | 25 everywhere, user can change, remembered per list |
