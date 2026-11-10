@@ -502,6 +502,16 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
             )
             out["validity_value"] = template.validity_value if template is not None else None
             out["validity_unit"] = template.validity_unit if template is not None else None
+    # Owner Q3 (QUOTE-TERMS-SELECT): the customer's AutoCount debtor terms, when they name a synced
+    # term, beat the template's payment term. Validity stays the template's.
+    term = quote_terms.customer_term(
+        db,
+        company_id=str(project.company_id),
+        customer_id=quote_terms.project_customer_id(db, project),
+    )
+    if term is not None:
+        out["payment_term_id"] = str(term.id)
+        out["payment_terms"] = quote_terms.term_label(term)
     return out
 
 

@@ -479,8 +479,8 @@ def _resolve_country_id(db: Session, value: str) -> Optional[str]:
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
-    # `credit_limit` / `payment_terms_days` / `payment_terms_code` are REMOVED
-    # (D15 end state, S4) - `customers` never had a matching column for any
+    # `credit_limit` / `payment_terms_days` are REMOVED (D15 end state, S4;
+    # `payment_terms_code` came back at contract 2.14 as Debtor.DisplayTerm, below) - `customers` never had a matching column for any
     # of the three, and an undeclared key is dropped (name logged, owner
     # decision 1 Oct 2026) before this builder runs, so none is ever written.
     columns: dict[str, Any] = {"customer_code": payload.code, "customer_name": payload.name}
@@ -494,6 +494,8 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
         "country",
         "is_active",
         "region",
+        # Contract 2.14 (QUOTE-TERMS-SELECT): AutoCount Debtor.DisplayTerm.
+        "payment_terms_code",
     )
     # D16 (S2): folded through the same rule the customer importer uses
     # (`customer_rules.fold_market_segment`) so the two can never map a

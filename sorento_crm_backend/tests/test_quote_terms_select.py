@@ -299,3 +299,73 @@ def test_the_cover_preview_prints_the_picked_values_before_save(api):
     rows = {row["key"]: row for row in response.json()["cover_rows"]}
     assert rows["payment_terms"]["text"] == "CASH BEFORE DELIVERY"
     assert rows["validity"]["text"] == "2 WEEKS"
+
+
+# ------------------------------------------------------------------------------ customer default
+# Owner Q3 (10 Nov 2026): a new quotation defaults to the customer's AutoCount debtor terms
+# (Debtor.DisplayTerm, `customers.payment_terms_code`) when they name a synced term; the terms
+# template's default otherwise.
+
+
+def _customer_on(db, project, company_id: str, terms_code):
+    import uuid
+
+    from app.models.order import Customer
+
+    customer = Customer(
+        company_id=company_id,
+        customer_code=f"ZQT{uuid.uuid4().hex[:8]}".upper(),
+        customer_name=f"{MARKER} customer",
+        payment_terms_code=terms_code,
+    )
+    db.add(customer)
+    db.flush()
+    from app.models.projects import ProjectSalesProfile
+
+    profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+    if profile is None:
+        profile = ProjectSalesProfile(project_id=project.id)
+        db.add(profile)
+    profile.customer_id = str(customer.id)
+    db.commit()
+    return customer
+
+
+def test_a_new_quotation_defaults_to_the_customers_debtor_terms(api):
+    client, db, company_id, _user, project, _party = api
+    template_term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    debtor_term = _term(db, company_id, "N30", "30 DAYS FROM INVOICE")
+    db.commit()
+    _terms_template(
+        client, payment_term_id=str(template_term.id), validity_value=2, validity_unit="week"
+    )
+    # Spelled the way AutoCount may send it: other case, stray spaces.
+    _customer_on(db, project, company_id, f"  {MARKER}-n30 ")
+
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] == str(debtor_term.id)
+    assert got["payment_terms"] == "30 DAYS FROM INVOICE"
+    # Validity is still the template's.
+    assert got["validity"] == "2 WEEKS" and got["validity_value"] == 2
+
+
+@pytest.mark.parametrize("terms_code", [None, "", "NO-SUCH-TERM"])
+def test_without_a_synced_debtor_term_the_template_default_stands(api, terms_code):
+    client, db, company_id, _user, project, _party = api
+    template_term = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    _terms_template(client, payment_term_id=str(template_term.id))
+    _customer_on(db, project, company_id, terms_code)
+
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] == str(template_term.id)
+    assert got["payment_terms"] == "CASH BEFORE DELIVERY"
+
+
+def test_an_inactive_debtor_term_does_not_become_the_default(api):
+    client, db, company_id, _user, project, _party = api
+    _term(db, company_id, "OLD", "RETIRED", is_active=False)
+    db.commit()
+    _customer_on(db, project, company_id, f"{MARKER}-OLD")
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] is None

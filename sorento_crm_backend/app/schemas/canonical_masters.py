@@ -188,6 +188,10 @@ class CanonicalCustomer(_Canonical):
     # agent as it was with warning `agent_unresolved`. A known one is set on the linked ledger
     # and every same-code ledger of the company.
     sales_agent_code: Optional[str] = Field(None, max_length=100)
+    # AutoCount `Debtor.DisplayTerm` (contract 2.14, QUOTE-TERMS-SELECT; back after D15 removed
+    # the old never-stored field of the same name). Absent = untouched, blank = cleared; stored
+    # as sent and matched to a `payment_terms` code when a new quotation takes its default.
+    payment_terms_code: Optional[str] = Field(None, max_length=50)
 
 
 class CanonicalSalesAgent(_Canonical):

@@ -14,6 +14,9 @@ NULL), `validity_value`, `validity_unit`. Their `payment_terms` / `validity` tex
 printed text, so nothing already stored or issued changes. Legacy validity text that is exactly a
 number and a unit ("30 days", "2 Weeks") backfills the pair; everything else stays text only.
 
+`customers.payment_terms_code` holds AutoCount `Debtor.DisplayTerm` from the customer feed (owner
+Q3): a new quotation for that customer defaults to the synced term of that code.
+
 Grants: every role holding `master_data.item_classes.<action>` gets
 `master_data.payment_terms.<action>` (the item_class_0001 shape: rows created when absent). Additive,
 every statement idempotent; downgrade drops the schema objects and leaves the grants.
@@ -100,10 +103,14 @@ def upgrade() -> None:
                 """
             ).bindparams(re=_VALIDITY_RE)
         )
+    # Owner Q3: AutoCount Debtor.DisplayTerm on the customer feed again (contract 2.14), the
+    # default payment term of a new quotation for that customer.
+    op.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS payment_terms_code VARCHAR(50)")
     apply_grants(op.get_bind())
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE customers DROP COLUMN IF EXISTS payment_terms_code")
     for table in _TABLES:
         op.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS validity_unit")
         op.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS validity_value")

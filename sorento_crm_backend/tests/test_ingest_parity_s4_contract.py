@@ -107,7 +107,8 @@ class TestAcP43ContractV21:
         body = env.client.get(CONTRACT_URL).json()
         fields_removed = body.get("fields_removed", {})
         expected = {
-            "customers": {"credit_limit", "payment_terms_days", "payment_terms_code"},
+            # payment_terms_code came back at v2.14 (QUOTE-TERMS-SELECT).
+            "customers": {"credit_limit", "payment_terms_days"},
             "suppliers": {"payment_terms_code"},
         }
         for entity, wanted in expected.items():

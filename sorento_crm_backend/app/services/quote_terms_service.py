@@ -74,6 +74,54 @@ def list_terms(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
     return sorted(out, key=lambda row: row["label"].lower())
 
 
+def project_customer_id(db: Session, project: Any) -> Optional[str]:
+    """The project's customer, by the rule the project list uses
+    (`project_service._effective_customer_id`): the one picked on the sales profile, else the
+    linked lead's buyer."""
+    from app.models.projects import ProjectLead, ProjectSalesProfile
+
+    picked = (
+        db.query(ProjectSalesProfile.customer_id)
+        .filter(ProjectSalesProfile.project_id == project.id)
+        .scalar()
+    )
+    if picked:
+        return str(picked)
+    if getattr(project, "lead_id", None):
+        lead_customer = (
+            db.query(ProjectLead.customer_id).filter(ProjectLead.id == project.lead_id).scalar()
+        )
+        return str(lead_customer) if lead_customer else None
+    return None
+
+
+def customer_term(db: Session, *, company_id: str, customer_id: Optional[str]) -> Optional[PaymentTerm]:
+    """The active term named by the customer's AutoCount debtor terms (`Debtor.DisplayTerm`),
+    matched by code ignoring case and spacing; None when the customer names none or none syncs.
+    Owner Q3 (10 Nov 2026): this beats the terms template's default on a new quotation."""
+    if not customer_id:
+        return None
+    from app.models.order import Customer
+
+    code = (
+        db.query(Customer.payment_terms_code)
+        .filter(Customer.id == str(customer_id), Customer.company_id == company_id)
+        .scalar()
+    )
+    if not (code or "").strip():
+        return None
+    wanted = _norm(code)
+    for term in (
+        db.query(PaymentTerm)
+        .filter(PaymentTerm.company_id == company_id, PaymentTerm.is_active.is_(True))
+        .order_by(PaymentTerm.created_at, PaymentTerm.id)
+        .all()
+    ):
+        if _norm(term.term_code) == wanted:
+            return term
+    return None
+
+
 def _unprocessable(message: str, code: str) -> AppException:
     return AppException(status_code=422, message=message, code=code)
 

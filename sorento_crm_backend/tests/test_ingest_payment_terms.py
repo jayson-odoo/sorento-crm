@@ -131,3 +131,35 @@ def test_a_dry_run_links_nothing(env):
     env.post(INGEST, [{"source_ref": _ref(), "code": code}], dry_run=True)
     env.db.refresh(template)
     assert template.payment_term_id is None
+
+
+# Owner Q3: the customer feed carries AutoCount Debtor.DisplayTerm again (contract 2.14).
+
+def _customer_terms(env, code: str):
+    return env.db.execute(
+        text("SELECT payment_terms_code FROM customers WHERE customer_code = :c AND company_id = :cid"),
+        {"c": code, "cid": env.company_a},
+    ).scalar()
+
+
+def test_the_customer_feed_stores_the_debtor_terms_code(env):
+    code = _code()
+    customers = "/api/v1/external/ingest/customers"
+    record = {"source_ref": _ref(), "code": code, "name": f"{MARKER} debtor", "payment_terms_code": "C.B.D."}
+    assert env.post(customers, [record]).status_code == 200
+    assert _customer_terms(env, code) == "C.B.D."
+
+    # Absent = untouched.
+    untouched = {k: v for k, v in record.items() if k != "payment_terms_code"}
+    assert env.post(customers, [untouched]).status_code == 200
+    assert _customer_terms(env, code) == "C.B.D."
+
+    # Blank = cleared (D14).
+    assert env.post(customers, [{**record, "payment_terms_code": ""}]).status_code == 200
+    assert _customer_terms(env, code) is None
+
+
+def test_contract_lists_the_customer_field_as_added_not_removed(env):
+    body = env.client.get(CONTRACT_URL).json()
+    assert "payment_terms_code" in body["fields_added"]["customers"]
+    assert "payment_terms_code" not in body["fields_removed"].get("customers", [])
