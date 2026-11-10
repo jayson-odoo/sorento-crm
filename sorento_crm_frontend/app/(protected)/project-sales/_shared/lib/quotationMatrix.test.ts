@@ -8,6 +8,7 @@ import {
   addHeader,
   appendCopy,
   cellsUnder,
+  duplicateHeader,
   hasPair,
   KEY_PATTERN,
   leafKeys,
@@ -283,5 +284,32 @@ describe('reshapeCells (R12)', () => {
 
   it('leaves a scope with no columns alone', () => {
     expect(reshapeCells(null, [], null, '7')).toEqual({ cells: null, quantity: '7' });
+  });
+});
+
+describe('duplicateHeader (PROPOSAL-FORM-COLLAPSE, owner 10 Nov)', () => {
+  const source: MatrixHeader[] = [
+    { key: 'a', label: 'Type A - 1 BH', cols: [{ key: 'a1', label: '1 BH' }, { key: 'a2', label: 'KITCH' }] },
+    { key: 'b', label: 'Type B', cols: [] },
+  ];
+
+  it('inserts a copy right after the group: same column names, fresh keys', () => {
+    const next = duplicateHeader(source, 'a', 'Type A - 1 BH (copy)');
+    expect(next.map((header) => header.label)).toEqual(['Type A - 1 BH', 'Type A - 1 BH (copy)', 'Type B']);
+    const copy = next[1];
+    expect(copy.cols.map((col) => col.label)).toEqual(['1 BH', 'KITCH']);
+    const old = new Set(['a', 'a1', 'a2', 'b']);
+    for (const key of [copy.key, ...copy.cols.map((col) => col.key)]) {
+      expect(old.has(key)).toBe(false);
+      expect(key).toMatch(KEY_PATTERN);
+    }
+    expect(new Set([copy.key, ...copy.cols.map((col) => col.key)]).size).toBe(3);
+    // The source is untouched.
+    expect(next[0]).toEqual(source[0]);
+  });
+
+  it('copies a header with no columns, and ignores an unknown key', () => {
+    expect(duplicateHeader(source, 'b', 'Type B (copy)')[2]).toMatchObject({ label: 'Type B (copy)', cols: [] });
+    expect(duplicateHeader(source, 'zz', 'x')).toBe(source);
   });
 });

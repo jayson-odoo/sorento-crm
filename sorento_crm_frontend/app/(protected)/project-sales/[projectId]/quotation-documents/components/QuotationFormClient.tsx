@@ -9,6 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
+import { FormSection } from '@/components/common/FormSection';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
@@ -41,7 +43,7 @@ import type {
   QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
-import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import { formatMyrExact, isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
@@ -115,7 +117,6 @@ const HEADER_FIELDS = [
   'recipient_phone_snapshot',
   'recipient_fax_snapshot',
   'recipient_email_snapshot',
-  'quotation_purpose',
   'payment_terms',
   'validity',
 ] as const;
@@ -314,7 +315,6 @@ export function QuotationFormClient({
         recipient_address_snapshot: '',
         recipient_phone_snapshot: project.data.customer_phone ?? '',
         recipient_email_snapshot: project.data.customer_email ?? '',
-        quotation_purpose: '',
         payment_terms: '',
         validity: '',
       });
@@ -401,6 +401,10 @@ export function QuotationFormClient({
     [savedScopes, stagedScopes],
   );
 
+  // Both sections open on arrival; folding is per visit, not remembered.
+  const [headerOpen, setHeaderOpen] = React.useState(true);
+  const [linesOpen, setLinesOpen] = React.useState(true);
+
   const liveTotal = React.useMemo(
     () => sumMoney((scopes ?? []).map(scopeTotal)),
     [scopeTotal, scopes],
@@ -430,7 +434,6 @@ export function QuotationFormClient({
       recipient_phone_snapshot: h.recipient_phone_snapshot ?? null,
       recipient_fax_snapshot: h.recipient_fax_snapshot ?? null,
       recipient_email_snapshot: h.recipient_email_snapshot ?? null,
-      quotation_purpose: h.quotation_purpose ?? null,
       payment_terms: h.payment_terms ?? null,
       validity: h.validity ?? null,
       terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,
@@ -673,48 +676,67 @@ export function QuotationFormClient({
           {/* Every panel stays mounted and is only hidden: the letter editors and the staged
               lines survive a tab switch, and Save can wait on them from any tab. */}
           <FormPanel open={tab === 'header'} label="Header">
-            <QuotationDocumentHeader
-              document={shownDocument}
-              liveGrandTotal={liveTotal}
-              details={details}
-              preparedBy={project.data?.owner_name ?? null}
-              onChange={(patch) => {
-                setDirty(true);
-                setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
-              }}
-              recipientPicker={
-                <QuotationRecipientPicker
-                  projectId={projectId}
-                  siteAddress={project.data?.address ?? null}
-                  value={header ?? {}}
-                  locked={recipientLocked}
-                  onChange={(patch) => {
-                    setDirty(true);
-                    setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
-                  }}
-                />
-              }
-              attnAction={
-                <QuotationAttnChooser
-                  value={header ?? {}}
-                  partyName={header?.recipient_name_snapshot ?? ''}
-                  locked={recipientLocked}
-                  // A party just picked (or a new proposal): its only contact becomes the Attn.
-                  autoPick={
-                    !isEdit ||
-                    (header?.recipient_party_id ?? null) !== (saved.data?.recipient_party_id ?? null)
-                  }
-                  onChange={(patch) => {
-                    setDirty(true);
-                    setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
-                  }}
-                />
-              }
-            />
+            {/* Header and Lines each fold (PROPOSAL-FORM-COLLAPSE, owner 10 Nov), open on
+                arrival; folded, they stay mounted so nothing typed is lost. The letterhead is
+                its own card, so the section drops its padding and that card's frame. */}
+            <FormSection
+              title="Header"
+              summary={headerSummary(shownDocument, liveTotal)}
+              open={headerOpen}
+              onOpenChange={setHeaderOpen}
+              keepMounted
+              bodyClassName="p-0 *:rounded-none *:border-0 *:shadow-none"
+            >
+              <QuotationDocumentHeader
+                document={shownDocument}
+                liveGrandTotal={liveTotal}
+                details={details}
+                preparedBy={project.data?.owner_name ?? null}
+                onChange={(patch) => {
+                  setDirty(true);
+                  setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                }}
+                recipientPicker={
+                  <QuotationRecipientPicker
+                    projectId={projectId}
+                    siteAddress={project.data?.address ?? null}
+                    value={header ?? {}}
+                    locked={recipientLocked}
+                    onChange={(patch) => {
+                      setDirty(true);
+                      setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                    }}
+                  />
+                }
+                attnAction={
+                  <QuotationAttnChooser
+                    value={header ?? {}}
+                    partyName={header?.recipient_name_snapshot ?? ''}
+                    locked={recipientLocked}
+                    // A party just picked (or a new proposal): its only contact becomes the Attn.
+                    autoPick={
+                      !isEdit ||
+                      (header?.recipient_party_id ?? null) !== (saved.data?.recipient_party_id ?? null)
+                    }
+                    onChange={(patch) => {
+                      setDirty(true);
+                      setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                    }}
+                  />
+                }
+              />
+            </FormSection>
 
             {/* The lines, under the letterhead on the same tab, as on the view page. */}
             {project.data && (
-              <div className="mt-5">
+              <FormSection
+                title="Lines"
+                summary={linesSummary((scopes ?? []).length, liveTotal)}
+                open={linesOpen}
+                onOpenChange={setLinesOpen}
+                keepMounted
+                className="mt-5"
+              >
               <FormLines
                 project={project.data}
                 scopes={scopes ?? []}
@@ -742,7 +764,7 @@ export function QuotationFormClient({
                   setActiveKey(null);
                 }}
               />
-              </div>
+              </FormSection>
             )}
 
             {/* The quotation page's own Add a scope dialog. It names the scope, which is staged
@@ -844,6 +866,23 @@ export function QuotationFormClient({
       )}
     </div>
   );
+}
+
+/** The folded Header's one line: To, Subject, Date, Total; blanks are left out. */
+function headerSummary(document: QuotationDocument, total: string | null): string {
+  return [
+    document.recipient_name_snapshot,
+    document.subject_title,
+    document.doc_date ? formatDateInMalaysia(document.doc_date) : null,
+    formatMyrExact(total),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The folded Lines' one line: how many scopes, and their total. */
+function linesSummary(count: number, total: string | null): string {
+  return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
 }
 
 /**

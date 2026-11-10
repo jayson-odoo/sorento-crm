@@ -872,6 +872,8 @@ export interface QuotationLine {
   complete_set?: string | null;
   /** Set on the line that OPENS a section, so a band cannot orphan itself (AC-C3). */
   band_label?: string | null;
+  /** A heading row: band_label only, no product or money (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
 
   is_non_standard: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
@@ -904,6 +906,8 @@ export interface QuotationLineBody {
   technical_spec?: string | null;
   complete_set?: string | null;
   band_label?: string | null;
+  /** A heading row: band_label only, no product or money (PROPOSAL-FORM-COLLAPSE). */
+  is_section?: boolean;
   is_rate_only?: boolean;
   /** Sent only on a version with columns; the server derives `quantity` from it. */
   qty_cells?: MatrixCells | null;
