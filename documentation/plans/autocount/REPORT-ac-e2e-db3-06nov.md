@@ -134,3 +134,24 @@ and a live ref can sit on an open and a cancelled line at once. Posted with fix 
 db3 documents written in phase 2: FXT-1111-PO-L (12294), FXT-1111-SO-L (12297), FXT-1111-SO-L2 (12300),
 FXT-HT-PO-A (12171) and FXT-HT-SO-A (12173) via `reseed.sh A`. Evidence (screens, JSON, call log, CRM selects):
 crew/state/files/AC-E2E-DB3/v2/ (private).
+
+### Phase 2b: rerun on the B12 fix (11 Nov 2026)
+
+Stack: #2223 head 3d5cbdb6 (contains main f6413b84, live on prod) + SS main 4193fdc4 (live). Fresh documents; every
+step from the Stock Debt UI, read back in AutoCount, and the CRM PO lines checked after each step.
+
+| ID | Operation | AutoCount | CRM PO lines | AutoCount after |
+| --- | --- | --- | --- | --- |
+| R1 | Whole-row link FXT-1111-PO-M row 12312 (3 @ HQ) -> FXT-1111-SO-M row 12315 | PASS | PASS (line eff6557f... kept, re-keyed to 12325) | 12325 3 @ HQ FromSO 12315; total 35.0 |
+| R1b | Whole row + relocate: row 12313 (4 @ HQ) -> SO-M row 12316 (BRW-AM) | PASS | PASS (line b7e3a5d8... kept, re-keyed to 12327) | 12327 4 @ BRW-AM FromSO 12316 |
+| R2 | Change link: 12325 -> FXT-1111-SO-M2 row 12318 | PASS | PASS (eff6557f... -> 12329, link `DB3:12317:12318`) | 12329 3 @ HQ FromSO 12318 |
+| R3 | Unlink 12327 | PASS | PARTIAL (B13: line re-keyed to 12330 and open, but `from_so_line_ref` still `DB3:12314:12316`) | 12330 4 @ BRW-AM FromSO 0; qty, price, date kept |
+| R4 | Split 3 of FXT-HT-PO-B row 12320 (10 @ HQ) -> FXT-HT-SO-B row 12322 | PASS | PASS (eede9267... kept, now 7; one new line for 12332) | 12320 7 @ HQ + 12332 3 @ HQ FromSO 12322; price 3.00, date 27/11; total 30.0 |
+
+After every step: exactly one CRM line per AutoCount row, all open, none "removed", source_refs unique and equal to
+AutoCount's DtlKeys; replaced rows keep their CRM line id. SO quantities unchanged. B12 is fixed. **B13** (posted on
+#2223): `stock_debt_po_link_service.py:496` clears the link only when `FromSODtlKey is None`, but AutoCount returns
+`0` for an unlinked PO row, so the CRM keeps the old `from_so_line_ref` after an unlink (the drill already shows the
+SO line uncovered). Documents: FXT-1111-PO-M 12311, FXT-1111-SO-M 12314, FXT-1111-SO-M2 12317, FXT-HT-PO-B 12319,
+FXT-HT-SO-B 12321. Evidence: crew/state/files/AC-E2E-DB3/v3/ (private). CI could not run (GitHub Actions billing
+block); this db3 run is the proof.
