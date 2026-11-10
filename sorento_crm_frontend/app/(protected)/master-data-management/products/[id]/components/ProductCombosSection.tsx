@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import { DEFAULT_PARTS_LINE, PART_FIELDS } from '@/lib/dealer-kit/combo-parts';
+import { pickOneGroups } from '@/lib/dealer-kit/combo-slots';
 import type { MergeFieldGroup } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData, TagPartData } from '@/lib/dealer-kit/tag-template-types';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
@@ -509,6 +510,8 @@ interface PartRowProps {
   groupOptions: SearchableSelectOption[];
   canEdit: boolean;
   isRemoving: boolean;
+  /** Its group is a real choice (2+ parts); a part alone in its group is a fixed part. */
+  isChoice: boolean;
   onChoiceGroup: (label: string | null) => void;
   onWrite: (write: ProductComboPartUpdate, revert?: () => void) => void;
   onRemove: () => void;
@@ -519,11 +522,14 @@ function PartRow({
   groupOptions,
   canEdit,
   isRemoving,
+  isChoice,
   onChoiceGroup,
   onWrite,
   onRemove,
 }: PartRowProps) {
-  const isOption = !!part.choice_group && !part.is_upgrade;
+  // A part alone in its group resolves on the spot: a fixed part, with no "if picked" price.
+  const isOption = !!part.choice_group && !part.is_upgrade && isChoice;
+  const alone = !!part.choice_group && !part.is_upgrade && !isChoice;
   return (
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
       <div className="min-w-0">
@@ -549,15 +555,21 @@ function PartRow({
             {part.label}
           </p>
         ) : null}
+        {alone ? (
+          <p className="text-xs text-muted-foreground">
+            Only part in &quot;{part.choice_group}&quot;, so it prints as a fixed part.
+          </p>
+        ) : null}
       </div>
       {canEdit ? (
         <SearchableSelect
           clearable
           truncateTriggerLabel
+          aria-label={`Choice group for ${part.code}`}
           value={part.choice_group ?? ''}
           onChange={(value) => onChoiceGroup(value || null)}
           options={groupOptions}
-          placeholder="Fixed part"
+          placeholder="Choice group (only for pick-one parts)"
           emptyMessage="No choice groups yet."
           // The vocabulary is whatever marketing already called a group on THIS
           // combo, plus whatever they type now - a basin group is a word off the
@@ -581,7 +593,9 @@ function PartRow({
           disabled={isRemoving}
         />
       ) : (
-        <p className="text-sm text-muted-foreground">{part.choice_group || 'Fixed part'}</p>
+        <p className="text-sm text-muted-foreground">
+          {part.choice_group && !alone ? part.choice_group : 'Fixed part'}
+        </p>
       )}
       {canEdit ? (
         <Button
@@ -843,10 +857,12 @@ function ComboBlock({
   // Upgrades are their own block after the groups, whatever group they were typed with.
   const upgradeParts = combo.parts.filter((part) => part.is_upgrade);
   const choiceParts = combo.parts.filter((part) => !part.is_upgrade);
-  const fixedParts = choiceParts.filter((part) => !part.choice_group);
+  // A group is a choice only with 2+ parts; a part alone in its group is listed with the fixed ones.
+  const choices = pickOneGroups(combo.parts);
+  const fixedParts = choiceParts.filter((part) => !part.choice_group || !choices.has(part.choice_group));
   const groups: { label: string; parts: ProductComboPartRow[] }[] = [];
   for (const part of choiceParts) {
-    if (!part.choice_group) continue;
+    if (!part.choice_group || !choices.has(part.choice_group)) continue;
     const existing = groups.find((group) => group.label === part.choice_group);
     if (existing) existing.parts.push(part);
     else groups.push({ label: part.choice_group, parts: [part] });
@@ -859,6 +875,7 @@ function ComboBlock({
       groupOptions={groupOptions}
       canEdit={canEdit}
       isRemoving={removingPartId === part.id}
+      isChoice={!!part.choice_group && choices.has(part.choice_group)}
       onChoiceGroup={(label) => onChoiceGroup(part, label)}
       onWrite={(write, revert) => onPartWrite(part, write, revert)}
       onRemove={() => onRemovePart(part)}

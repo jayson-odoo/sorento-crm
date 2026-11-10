@@ -207,14 +207,14 @@ describe('ComboTagPreview, preview with choices', () => {
     expect((screen.getByLabelText('Preview TAP') as HTMLSelectElement).value).toBe('');
   });
 
-  it('a one-option group is placed as its option, with no picker; a combo with nothing to pick shows none', async () => {
+  it('a one-option group is placed as a fixed part (owner round 1), with no picker; a combo with nothing to pick shows none', async () => {
     draw({
       ...SINK_COMBO,
       parts: [part('pt-a', 'p-a', 'BASIN-1', { choice_group: 'BASIN' }), part('pt-f', 'p-f', 'WASTE')],
     });
     await waitFor(() =>
       expect(lastParts()).toEqual([
-        { product_id: 'p-a', role: 'BASIN' },
+        { product_id: 'p-a', role: null },
         { product_id: 'p-f', role: null },
       ]),
     );

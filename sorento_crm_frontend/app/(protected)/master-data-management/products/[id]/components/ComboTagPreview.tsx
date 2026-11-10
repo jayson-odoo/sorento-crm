@@ -80,10 +80,12 @@ export function previewParts(
     if (seen.has(role)) continue;
     seen.add(role);
     const options = optionsOf(role);
-    const picked =
-      options.length === 1
-        ? options[0]
-        : options.find((id) => id === picks[role]);
+    // A one-part group is a fixed part (owner round 1), placed with no role.
+    if (options.length === 1) {
+      out.push({ product_id: options[0], role: null });
+      continue;
+    }
+    const picked = options.find((id) => id === picks[role]);
     out.push(
       picked ? { product_id: picked, role } : { role, candidates: options },
     );

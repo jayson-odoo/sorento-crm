@@ -79,12 +79,10 @@ describe('comboShape', () => {
       p('A2', 'Second'),
       p('U1', 'Second', { is_upgrade: true }),
     ];
+    // COMBO-SETTINGS-UX owner round 1: "First" has one part, so it is a fixed part, not a group.
     expect((await mod()).comboShape(parts)).toEqual({
-      fixed: 0,
-      groups: [
-        { role: 'Second', size: 2 },
-        { role: 'First', size: 1 },
-      ],
+      fixed: 1,
+      groups: [{ role: 'Second', size: 2 }],
       upgrades: 1,
     });
   });
@@ -210,9 +208,24 @@ describe('needsText', () => {
 describe('groupIndexOf', () => {
   it('is the 0-based group index, -1 for an unknown role', async () => {
     const m = await mod();
-    const shape = m.comboShape([p('A', 'Second'), p('B', 'First')]);
+    const shape = m.comboShape([p('A', 'Second'), p('B', 'First'), p('A2', 'Second'), p('B2', 'First')]);
     expect(m.groupIndexOf('Second', shape)).toBe(0);
     expect(m.groupIndexOf('First', shape)).toBe(1);
     expect(m.groupIndexOf('Upgrade', shape)).toBe(-1);
+  });
+});
+
+describe('comboShape, one-part groups (COMBO-SETTINGS-UX owner round 1)', () => {
+  it('counts a group with one part as a fixed part; a choice is 2+ parts', async () => {
+    expect(
+      (await mod()).comboShape([
+        { choice_group: null },
+        { choice_group: 'Test' },
+        { choice_group: 'TAP' },
+        { choice_group: 'TAP' },
+        { choice_group: 'Kitchen tap' },
+        { choice_group: 'Kitchen tap', is_upgrade: true },
+      ]),
+    ).toEqual({ fixed: 3, groups: [{ role: 'TAP', size: 2 }], upgrades: 1 });
   });
 });
