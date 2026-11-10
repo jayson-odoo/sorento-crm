@@ -1,6 +1,10 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import type { CoverDesign, CoverPageData } from '@/lib/quotation-cover';
+import type {
+  CoverDesign,
+  CoverPageData,
+  CoverSource,
+} from '@/lib/quotation-cover';
 
 /**
  * Cover letter and terms templates, matching `app/api/v1/projects/quotation_templates.py`
@@ -13,6 +17,7 @@ import type { CoverDesign, CoverPageData } from '@/lib/quotation-cover';
  *   POST /config/quotation-templates/{id}/deactivate   -> QuotationTemplate (cover_page only)
  *   GET  /config/quotation-templates/merge-fields      -> ListEnvelope<MergeField>
  *   GET  /config/quotation-templates/cover-default     -> CoverDesign (the default design)
+ *   GET  /config/quotation-templates/cover-sources     -> {data: CoverSource[]} (fields a row can print)
  *   POST /config/quotation-templates/cover-preview     -> CoverPageData (an unsaved design, stores nothing)
  *
  * kind `cover_page` is a cover page design: the intro is `body_html`, the rest is `design`.
@@ -56,7 +61,9 @@ export async function listQuotationTemplates(
 ): Promise<QuotationTemplate[]> {
   const response = await apiFetch(`${BASE}?kind=${kind}`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load the quotation templates'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the quotation templates'),
+    );
   const body: { data: QuotationTemplate[] } = await response.json();
   return body.data;
 }
@@ -70,7 +77,9 @@ export async function createQuotationTemplate(
     body: JSON.stringify({ ...body, kind }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to create the template'));
+    throw new Error(
+      await extractApiError(response, 'Failed to create the template'),
+    );
   return response.json();
 }
 
@@ -83,21 +92,29 @@ export async function updateQuotationTemplate(
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the template'));
+    throw new Error(
+      await extractApiError(response, 'Failed to save the template'),
+    );
   return response.json();
 }
 
-export async function activateQuotationTemplate(id: string): Promise<QuotationTemplate> {
+export async function activateQuotationTemplate(
+  id: string,
+): Promise<QuotationTemplate> {
   const response = await apiFetch(`${BASE}/${id}/activate`, { method: 'POST' });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to activate the template'));
+    throw new Error(
+      await extractApiError(response, 'Failed to activate the template'),
+    );
   return response.json();
 }
 
 export async function listMergeFields(): Promise<MergeField[]> {
   const response = await apiFetch(`${BASE}/merge-fields`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load the merge fields'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the merge fields'),
+    );
   const body: { data: MergeField[] } = await response.json();
   return body.data;
 }
@@ -111,20 +128,40 @@ export async function previewCoverDesign(body: {
     body: JSON.stringify(body),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to preview the cover page'));
+    throw new Error(
+      await extractApiError(response, 'Failed to preview the cover page'),
+    );
   return response.json();
 }
 
-export async function deactivateQuotationTemplate(id: string): Promise<QuotationTemplate> {
-  const response = await apiFetch(`${BASE}/${id}/deactivate`, { method: 'POST' });
+export async function deactivateQuotationTemplate(
+  id: string,
+): Promise<QuotationTemplate> {
+  const response = await apiFetch(`${BASE}/${id}/deactivate`, {
+    method: 'POST',
+  });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to deactivate the template'));
+    throw new Error(
+      await extractApiError(response, 'Failed to deactivate the template'),
+    );
   return response.json();
 }
 
 export async function getCoverDefaultDesign(): Promise<CoverDesign> {
   const response = await apiFetch(`${BASE}/cover-default`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load the default cover page'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the default cover page'),
+    );
   return response.json();
+}
+
+export async function listCoverSources(): Promise<CoverSource[]> {
+  const response = await apiFetch(`${BASE}/cover-sources`);
+  if (!response.ok)
+    throw new Error(
+      await extractApiError(response, 'Failed to load the cover page fields'),
+    );
+  const body: { data: CoverSource[] } = await response.json();
+  return body.data;
 }

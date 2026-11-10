@@ -616,11 +616,9 @@ def test_purchase_trend_with_warehouse_keeps_single_read(db):
 # S3 - AC-13: the sheet's frozen supply columns tally with the grid cells
 # =========================================================================== #
 
-def test_sheet_supply_columns_equal_the_grid_cells(scm_app):
-    """The sheet's own read (`summary_order_service`) is already site-pool-scoped
-    (S9/S14); the grid's read (`_planning_rows`) is not, yet. Today the two disagree -
-    this pins that they must not."""
-    _, db, _, _ = scm_app
+def _head_and_bin_supply(db) -> tuple[str, str, str, str]:
+    """(head_code, bin_code, pid, code): SPO 40 + PO 42 at the site-pool head, SPO 96 +
+    PO 400 at its own project bin."""
     _use_level_basis(db)
     head, head_code, bin_, bin_code = _pool(db)
     pid, code = _seed_product(db)
@@ -631,23 +629,47 @@ def test_sheet_supply_columns_equal_the_grid_cells(scm_app):
     _spo(db, pid, head, 40)
     _open_po(db, pid, bin_, 400)
     _open_po(db, pid, head, 42)
+    return head_code, bin_code, pid, code
 
-    run_id = _plan(db, [head_code, bin_code], code)
+
+def _grid_and_sheet(db, run_id: str, pid: str) -> tuple[float, float, float, float]:
+    """(grid SPO, grid PO, sheet incoming SPO, sheet open PO) for the run's one product."""
     row = _product_row(_recs(db, run_id, pid))
-    grid_spo = float(row["inputs"]["on_order"])
-    grid_po = float(row["inputs"]["po_ordered"])
-
     from app.services.scm import summary_order_service as sos
 
     assert sos.write_rows(db, run_id) == 1
     report_row = sos.report(db, run_id=run_id)["rows"][0]
+    return (float(row["inputs"]["on_order"]), float(row["inputs"]["po_ordered"]),
+            float(report_row["incoming_spo_qty"]), float(report_row["po_open_qty"]))
 
-    assert float(report_row["incoming_spo_qty"]) == grid_spo == 40.0, (
-        report_row["incoming_spo_qty"], grid_spo,
-    )
-    assert float(report_row["po_open_qty"]) == grid_po == 42.0, (
-        report_row["po_open_qty"], grid_po,
-    )
+
+def test_sheet_supply_columns_equal_the_grid_cells(scm_app):
+    """On a run that ticks only the site-pool head, the sheet's own read
+    (`summary_order_service`) and the grid's read (`_planning_rows`) tally."""
+    _, db, _, _ = scm_app
+    head_code, _bin_code, pid, code = _head_and_bin_supply(db)
+
+    run_id = _plan(db, [head_code], code)
+    grid_spo, grid_po, sheet_spo, sheet_po = _grid_and_sheet(db, run_id, pid)
+
+    assert sheet_spo == grid_spo == 40.0, (sheet_spo, grid_spo)
+    assert sheet_po == grid_po == 42.0, (sheet_po, grid_po)
+
+
+def test_a_ticked_project_bin_counts_on_the_sheet_but_not_in_the_grid(scm_app):
+    """Owner ruling 10 Nov 2026 (`PLAN-lowstock-project-bins-10nov.md:9-13`): a project bin
+    the planner ticks counts in the sheet's per-location columns like any other ticked
+    location. The grid's buy maths stays site pool only (crew answer 10 Nov, lane
+    LOWSTOCK-BINS-REGRESS option (a)), so a run ticking the head AND its bin differs by the
+    bin's own supply: sheet 40 + 96 and 42 + 400, grid 40 and 42."""
+    _, db, _, _ = scm_app
+    head_code, bin_code, pid, code = _head_and_bin_supply(db)
+
+    run_id = _plan(db, [head_code, bin_code], code)
+    grid_spo, grid_po, sheet_spo, sheet_po = _grid_and_sheet(db, run_id, pid)
+
+    assert (grid_spo, grid_po) == (40.0, 42.0)
+    assert (sheet_spo, sheet_po) == (136.0, 442.0)
 
 
 # =========================================================================== #
