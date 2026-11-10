@@ -234,14 +234,21 @@ export function useQuotationFormAutosave({
   // server). The live total is left out: opening a saved scope re-sums it, the same money written
   // differently, and that is not an edit. Comparing values also makes StrictMode's double effect
   // pass a no-op.
+  //
+  // Once something has been edited, every later change is an edit, one that takes the form back
+  // to its saved state included (isDirty is false again): skipping that would leave the draft
+  // holding the undone edit, and the form would reopen with it (INSERT-SECTION-FIX B1: an empty
+  // heading inserted, autosaved, then dropped on blur came back on the next open).
   const lastSeen = React.useRef<string | undefined>(undefined);
+  const editedRef = React.useRef(false);
   React.useEffect(() => {
+    if (isDirty) editedRef.current = true;
     if (!ready || state === null) return;
     const json = JSON.stringify({ ...state, total: undefined });
     if (json === lastSeen.current) return;
     const isInitial = lastSeen.current === undefined;
     lastSeen.current = json;
-    if (isInitial || !isDirty || viewOnlyRef.current || pausedRef.current) return;
+    if (isInitial || !editedRef.current || viewOnlyRef.current || pausedRef.current) return;
     writeMirror(mirrorKey(projectId, documentIdRef.current, tokenRef.current), {
       token: tokenRef.current,
       baseAt: serverAtRef.current,

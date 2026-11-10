@@ -769,6 +769,9 @@ export function QuotationFormClient({
         });
         id = created.id;
       }
+      // The server cleared the draft with this Save, and this tab still holds its claim: nothing
+      // after it (a refetch re-seeding the form while the page leaves) may write the draft back.
+      autosave.setPaused(true);
       autosave.forgetLocalCopy();
       router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
     } catch {
