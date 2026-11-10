@@ -20,6 +20,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.payment_term import PaymentTerm
 from app.models.inventory import Warehouse
 from app.models.procurement import Supplier
 from app.models.product import Brand, ItemClass, ItemType, Product, ProductCategory, UnitOfMeasure
@@ -39,6 +40,8 @@ _CODE_COLUMNS: dict[type, str] = {
     Brand: "brand_code",
     ItemType: "item_type_code",
     ItemClass: "item_class_code",
+    # QUOTE-TERMS-SELECT (contract 2.14).
+    PaymentTerm: "term_code",
 }
 
 #: The matching name column, for `ensure_reference`'s "code = name = raw

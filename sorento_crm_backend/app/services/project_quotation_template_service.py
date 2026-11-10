@@ -40,6 +40,7 @@ from app.models.projects import (
     QuotationTemplate,
 )
 from app.services.error_handler import AppException
+from app.services import quote_terms_service as quote_terms
 
 # ------------------------------------------------------------------ merge fields
 
@@ -440,6 +441,8 @@ def create_template(
         is_active=wants_active,
         created_by=actor_user_id,
     )
+    if template.kind == TEMPLATE_KIND_TERMS:
+        quote_terms.apply(db, company_id=company_id, target=template, payload=payload)
     db.add(template)
     db.flush()
     return template
@@ -482,6 +485,8 @@ def update_template(
     for field in ("payment_terms", "validity"):
         if field in payload:
             setattr(template, field, payload[field])
+    if template.kind == TEMPLATE_KIND_TERMS:
+        quote_terms.apply(db, company_id=template.company_id, target=template, payload=payload)
     db.flush()
     return template
 
@@ -557,6 +562,9 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "body_html": template.body_html,
         "payment_terms": template.payment_terms,
         "validity": template.validity,
+        "payment_term_id": str(template.payment_term_id) if template.payment_term_id else None,
+        "validity_value": template.validity_value,
+        "validity_unit": template.validity_unit,
         # A design saved before QUOTE-COVER-FIELDS reads in the sections shape.
         "design": _design_of(template),
         "is_active": bool(template.is_active),

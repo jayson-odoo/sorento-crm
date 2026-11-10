@@ -48,6 +48,7 @@ from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
 from app.services import quotation_view_service as _views
+from app.services import quote_terms_service as quote_terms
 from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
@@ -278,6 +279,7 @@ def create_document(
         created_by=actor_user_id,
         **_recipient_from_project(db, project),
     )
+    quote_terms.apply(db, company_id=project.company_id, target=document, payload=payload)
     db.add(document)
     db.flush()
     if render_templates:
@@ -502,6 +504,29 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
         if kind == templates.TEMPLATE_KIND_TERMS:
             out["payment_terms"] = template.payment_terms if template is not None else None
             out["validity"] = template.validity if template is not None else None
+            # QUOTE-TERMS-SELECT: the picks behind the two texts, copied onto the new quotation.
+            # Only a term still active: a deactivated one would refuse the create it seeds. Its
+            # text still prints and shows as the legacy "Current" value.
+            out["payment_term_id"] = (
+                quote_terms.active_term_id(
+                    db, company_id=str(project.company_id), term_id=template.payment_term_id
+                )
+                if template is not None
+                else None
+            )
+            out["validity_value"] = template.validity_value if template is not None else None
+            out["validity_unit"] = template.validity_unit if template is not None else None
+    # Owner Q3 (QUOTE-TERMS-SELECT): the customer's AutoCount debtor terms, when they name a synced
+    # term, beat the template's payment term. Validity stays the template's.
+    term = quote_terms.customer_term(
+        db,
+        company_id=str(project.company_id),
+        customer_id=quote_terms.project_customer_id(db, project),
+    )
+    if term is not None:
+        # A "*" term is never a new pick: it is handed on as text, printed and shown read-only.
+        out["payment_term_id"] = str(term.id) if quote_terms.is_offered(term) else None
+        out["payment_terms"] = quote_terms.term_label(term)
     return out
 
 
@@ -1234,6 +1259,9 @@ def serialize_document(
         "quotation_purpose": document.quotation_purpose,
         "payment_terms": document.payment_terms,
         "validity": document.validity,
+        "payment_term_id": str(document.payment_term_id) if document.payment_term_id else None,
+        "validity_value": document.validity_value,
+        "validity_unit": document.validity_unit,
         "prepared_by": _prepared_by(db, document),
         "attn_name": document.attn_name,
         "subject_title": document.subject_title,
@@ -1398,6 +1426,7 @@ def update_document(
     ):
         if field in payload:
             setattr(document, field, payload[field])
+    quote_terms.apply(db, company_id=document.company_id, target=document, payload=payload)
     db.flush()
     # ...and the known ones are filled in from this document, on every save.
     context = None
@@ -2340,6 +2369,8 @@ def preview_cover(
     for field in _PREVIEW_FIELDS:
         if field in payload:
             base[field] = payload[field]
+    # The picked term / validity print as a save would print them.
+    base.update(quote_terms.resolve(db, company_id=base["company_id"], payload=payload))
     document = SimpleNamespace(project_id=project.id, **base)
     context = templates.build_document_context(db, document=document, grand_total=total)
     for field in TOKEN_FIELDS:

@@ -6,6 +6,7 @@ from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, 
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductAlternative, ProductCategory, Brand, UnitOfMeasure
 from app.models.country import Country
+from app.models.payment_term import PaymentTerm
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.models.product_combo import ProductCombo, ProductComboPart
@@ -393,6 +394,7 @@ __all__ = [
     "EmailEventConfig",
     "ReorderPolicy",
     "ItemClassification",
+    "PaymentTerm",
     "AbcXyzPolicy",
     "SupplierScoringPolicy",
     "SupplierPerformance",
