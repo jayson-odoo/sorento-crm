@@ -15,6 +15,23 @@ from .test_project_quotation_document_routes import (  # noqa: F401  (api is a f
 from .test_quote_cover_design_templates import KEYS, LABELS, design
 
 MARKER = "zzt-qcpreview"
+#: QUOTE-COVER-FIELDS: the source a legacy row key prints (Quotation Purpose has none).
+SOURCE_OF = {
+    "reference": "document_no", "date": "date", "attn": "attn", "company": "to_name",
+    "contact": "to_tel", "address": "to_address", "email": "to_email", "terms": "terms",
+    "payment_terms": "payment_terms", "validity": "validity", "prepared_by": "salesperson_name",
+}
+DEFAULT_SOURCES = [
+    "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
+    "terms", "payment_terms", "validity", "salesperson_name",
+]
+
+
+def shown_sources(d):
+    """A legacy design's shown rows as sources, then the Project Title band every normalized
+    design ends with (QUOTE-COVER-FIELDS)."""
+    rows = [SOURCE_OF[r["key"]] for r in d["rows"] if r["shown"] and r["key"] in SOURCE_OF]
+    return rows + ["project_title"]
 TEMPLATES = f"{PS}/config/quotation-templates"
 
 
@@ -95,11 +112,12 @@ def test_project_preview_uses_the_active_design_and_the_unsaved_values(api):
     assert out["cover_title"] == d["title"]
     assert out["cover_show_letterhead"] is True
     rows = out["cover_rows"]
-    assert [r["key"] for r in rows] == [r["key"] for r in d["rows"] if r["shown"]]
-    assert "email" not in [r["key"] for r in rows]
+    assert [r["key"] for r in rows] == shown_sources(d)
+    assert "to_email" not in [r["key"] for r in rows]
     by = {r["key"]: r for r in rows}
-    assert by["reference"]["label"] == "Offer Number"
-    assert by["reference"]["text"].endswith(f"-R1 {project.title}")
+    assert by["document_no"]["label"] == "Offer Number"
+    assert by["document_no"]["text"] == f"{created['document_no']}-R1"
+    assert out["cover_sections"]
     assert by["attn"]["text"] == f"{MARKER} Kelly"
     assert by["payment_terms"]["text"] == f"{MARKER} 30 days net"
     assert f"{MARKER} clause" in by["terms"]["html"]
@@ -114,8 +132,8 @@ def test_project_preview_with_no_design_follows_the_default_design(api):
     out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert out["cover_title"] == "QUOTATION" and out["cover_show_letterhead"] is True
     keys = [r["key"] for r in out["cover_rows"]]
-    assert keys == [k for k in KEYS if k in keys]
-    assert {"reference", "attn", "payment_terms", "validity"} <= set(keys)
+    assert keys == [k for k in DEFAULT_SOURCES + ["project_title"] if k in keys]
+    assert {"document_no", "attn", "payment_terms", "validity"} <= set(keys)
     assert [r["label"] for r in out["cover_rows"]][0] == LABELS[0]
 
 
@@ -125,8 +143,8 @@ def test_project_preview_for_an_existing_document_names_its_number_and_next_revi
     before = counts(db)
     out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert counts(db) == before
-    ref = next(r for r in out["cover_rows"] if r["key"] == "reference")["text"]
-    assert ref == f"{created['document_no']}-R1 {project.title}"
+    ref = next(r for r in out["cover_rows"] if r["key"] == "document_no")["text"]
+    assert ref == f"{created['document_no']}-R1"
 
 
 def test_project_preview_after_a_send_names_r2_and_uses_the_typed_values(api):
@@ -145,7 +163,7 @@ def test_project_preview_after_a_send_names_r2_and_uses_the_typed_values(api):
     ).json()
     assert counts(db) == before
     by = {r["key"]: r for r in out["cover_rows"]}
-    assert by["reference"]["text"] == f"{created['document_no']}-R2 {project.title}"
+    assert by["document_no"]["text"] == f"{created['document_no']}-R2"
     assert by["attn"]["text"] == f"{MARKER} Typed Attn"
 
 
@@ -153,8 +171,8 @@ def test_new_document_preview_is_a_proposal_with_revision_a_and_a_sent_quotation
     client, db, _c, _u, project, _party = api
     out = client.post(project_url(project), json=body_for_project()).json()
     assert out["cover_title"] == "PROPOSAL"
-    ref = next(r for r in out["cover_rows"] if r["key"] == "reference")["text"]
-    assert ref.endswith(f"-A {project.title}"), ref
+    ref = next(r for r in out["cover_rows"] if r["key"] == "document_no")["text"]
+    assert ref.endswith("-A"), ref
 
     from .test_project_quotation_document_routes import _add_scope, _sign
 
@@ -165,8 +183,8 @@ def test_new_document_preview_is_a_proposal_with_revision_a_and_a_sent_quotation
     assert client.post(f"{root}/{created['id']}/issue").status_code == 201
     out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert out["cover_title"] == "QUOTATION"
-    ref = next(r for r in out["cover_rows"] if r["key"] == "reference")["text"]
-    assert ref.endswith(f"-R2 {project.title}"), ref
+    ref = next(r for r in out["cover_rows"] if r["key"] == "document_no")["text"]
+    assert ref.endswith("-R2"), ref
 
 
 def test_project_preview_without_permission_is_403_and_stores_nothing(api):
@@ -192,7 +210,8 @@ def test_design_preview_returns_the_cover_shape_with_sample_values_and_stores_no
     out = res.json()
     assert counts(db) == before
     assert out["cover_title"] == d["title"] and out["cover_show_letterhead"] is False
-    assert [r["key"] for r in out["cover_rows"]] == [r["key"] for r in d["rows"] if r["shown"]]
+    assert [r["key"] for r in out["cover_rows"]] == shown_sources(d)
+    assert out["cover_sections"]
     assert out["cover_rows"][0]["label"] == "Our Ref"
     for row in out["cover_rows"]:
         assert row.get("text") or row.get("html"), row["key"]
@@ -204,8 +223,19 @@ def test_design_preview_returns_the_cover_shape_with_sample_values_and_stores_no
 
 def test_design_preview_refuses_an_invalid_design_and_an_unknown_token(api):
     client, *_ = api
-    bad = design()
-    bad["rows"] = bad["rows"][:-1]
+    bad = {
+        "show_letterhead": True,
+        "title": "QUOTATION",
+        "closing_html": "",
+        "sections": [
+            {
+                "style": "fields", "label": "", "columns": 1,
+                "rows": [{"source": "nope", "label": "X", "shown": True, "column": 0}],
+            }
+        ],
+    }
+    assert client.post(f"{TEMPLATES}/cover-preview", json={"design": bad, "body_html": ""}).status_code == 422
+    bad["sections"][0]["rows"][0].update(source="date", column=1)
     assert client.post(f"{TEMPLATES}/cover-preview", json={"design": bad, "body_html": ""}).status_code == 422
     res = client.post(f"{TEMPLATES}/cover-preview", json={"design": design(), "body_html": "{{zz_unknown}}"})
     assert res.status_code == 422

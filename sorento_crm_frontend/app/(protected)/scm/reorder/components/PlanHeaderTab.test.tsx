@@ -78,7 +78,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 }));
 
 vi.mock('../../hooks/useScmOptions', () => ({
-  useWarehouseOptions: () => ({
+  useActiveWarehouseOptions: () => ({
     data: [
       { value: 'BRW', label: 'Butterworth' },
       { value: 'MWH', label: 'Main WH' },
@@ -293,5 +293,62 @@ describe('PlanHeaderTab - counts (review nit: no Disposition tile, S2 always zer
     expect(screen.getByText('Recommendations')).toBeInTheDocument();
     expect(screen.getByText('Cash impact')).toBeInTheDocument();
     expect(screen.queryByText('Disposition')).not.toBeInTheDocument();
+  });
+});
+
+describe('PlanHeaderTab - Re-plan drops inactive locations (SCM-INACTIVE-LOCATIONS)', () => {
+  async function replanWith(run: ReorderRun) {
+    renderTab(run);
+    fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Re-plan$/i }));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(dialogButton(/^Re-plan$/i));
+    await waitFor(() => expect(replanReorderRunMock).toHaveBeenCalledTimes(1));
+    return replanReorderRunMock.mock.calls[0][1] as { warehouse_codes: string[] };
+  }
+
+  it('drops the inactive code from the prefill and names it in one line', async () => {
+    const run = makeRun({
+      warehouse_codes: ['BRW', 'OLD'],
+      inactive_warehouse_codes: ['OLD'],
+      is_all_warehouses: false,
+    });
+    renderTab(run);
+    fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
+    expect(await screen.findByText('Skipped inactive location OLD')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Butterworth')).toBeChecked();
+  });
+
+  it('sends only the active codes', async () => {
+    const body = await replanWith(
+      makeRun({
+        warehouse_codes: ['BRW', 'OLD'],
+        inactive_warehouse_codes: ['OLD'],
+        is_all_warehouses: false,
+      }),
+    );
+    expect(body.warehouse_codes).toEqual(['BRW']);
+  });
+
+  it('every ticked code inactive falls back to the nothing-ticked rule and says so', async () => {
+    const run = makeRun({
+      warehouse_codes: ['OLD'],
+      inactive_warehouse_codes: ['OLD'],
+      is_all_warehouses: false,
+    });
+    renderTab(run);
+    fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
+    expect(
+      await screen.findByText(
+        'Skipped inactive location OLD, planning every active location instead',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no notice when nothing was dropped', async () => {
+    renderTab(makeRun({ warehouse_codes: ['BRW'], is_all_warehouses: false }));
+    fireEvent.click(screen.getByRole('button', { name: /Edit/i }));
+    await screen.findByLabelText('Butterworth');
+    expect(screen.queryByText(/Skipped inactive/)).not.toBeInTheDocument();
   });
 });
