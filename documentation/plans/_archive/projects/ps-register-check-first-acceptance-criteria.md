@@ -1,5 +1,8 @@
 # UAC: PS-REGISTER-CHECK-FIRST (30 Oct 2026, final)
 
+> Superseded in part (10 Nov 2026): AC-G2..G10, the document gate on Registered -> Spec In, were removed by
+> RFQ-GATE-REMOVE (`projects/PLAN-rfq-gate-remove-10nov.md`). The header follows the status graph.
+
 Source: card `CARD-ps-register-check-first-29oct.md` v1.4 (owner answers Q-A..Q-E all (a), then mock notes: Q-C became
 (b) "any document uploaded will do"), mock v4 `documentation/mockups/PS-REGISTER-CHECK-FIRST/index.html` approved
 30 Oct 10:27 with one change (Spec In hidden, not disabled, while a Registered project has no document); tab
