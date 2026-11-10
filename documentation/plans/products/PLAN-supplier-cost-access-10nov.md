@@ -1,6 +1,6 @@
 # PLAN: Supplier tab and cost data restricted to purchasing and management
 
-Status: Review (built; reviewer + security reviewer + cloud browser pass running). Track: full
+Status: Merge-ready pending owner hand test and three crew rulings (PR #2319). Track: full
 (RBAC change + data migration).
 
 Lane: SUPPLIER-COST-ACCESS. Source: owner + management meeting 9 Nov 2026, relayed 10 Nov.
