@@ -1,10 +1,11 @@
 # PLAN: one standard History view for every audited record (STANDARD-HISTORY)
 
-Status: Part B wave 1 in build on PR #2299 (track: full, an auth-adjacent read of audit data).
-Part A (an Unconfirm guard) was DROPPED by the owner on 10 Nov ~12:50 MYT ("just drop the
-unconfirm thingy, I didn't say I want this"); its code and tests are reverted and Unconfirm with
-nothing ticked keeps today's behaviour. Scout done, owner answered Q1 to Q4, mock v1 approved
-12:41 on condition that only existing components are used.
+Status: wave 1 (#2299) built and crew-passed, NOT accepted by the owner on hand test (10 Nov
+~15:10 MYT: "OI history why so complicated geh, our other audit trails or history page also so
+complicated? i want to reuse same component though"). Mock v2 (simple, one component =
+`AuditTrail`) filed as `crew-ask`: `mockups/standard-history-v2-10nov.html`, comparison
+screenshots in `evidence/standard-history-compare/`. #2299 is frozen until the owner approves v2.
+Part A (an Unconfirm guard) was dropped by the owner on 10 Nov ~12:50.
 
 ## Owner rulings (10 Nov 2026 ~12:40 MYT, via crew)
 
@@ -75,3 +76,14 @@ Q4 answered by crew: use the real item codes and times; person names stay masked
 - 10/11/2026 10:52 MYT: PO 202611-S0027 linked to SRTSP131, which went Done automatically.
 - Untouched by the Unconfirm: SRT320-CR (10), SRT5674-N, SRT5732, SRTWB246 (raised, request to
   reserve).
+
+## Owner hand test of wave 1, and v2 (10 Nov ~15:10)
+
+Verdict: too complicated; reuse the same component. Cause, from the comparison
+(`evidence/standard-history-compare/`): v1 copied the busiest history in the system (the
+planning-admin SO drawer: five filters, Clear, a badge per event, a grid per batch) instead of
+the simple one already on 8 detail pages (`components/audit/AuditTrail.tsx`: one entry per
+change, what / when / who, then indented change lines). v2 makes `AuditTrail` the one component:
+a plain two-line entry (one sentence; dd/mm/yyyy time and person), details only on "Show N
+lines", one search box shown only past 10 entries, no filters or badges. The backend endpoint
+and the OI root stamp stay as built.
