@@ -133,13 +133,15 @@ def test_the_older_tab_is_refused_and_its_typing_kept_as_history(api):
     newer = _open(client, project.id, document["id"])
 
     holder = client.get(
-        f"{_root(project.id)}/{document['id']}/form-draft/holder", params={"token": older["token"]}
+        f"{_root(project.id)}/{document['id']}/form-draft/holder",
+        headers={"X-Form-Draft-Token": older["token"]},
     ).json()
     assert holder["is_holder"] is False
     assert holder["holder_name"] == f"{MARKER} Baser"
     assert holder["holder_at"]
     assert client.get(
-        f"{_root(project.id)}/{document['id']}/form-draft/holder", params={"token": newer["token"]}
+        f"{_root(project.id)}/{document['id']}/form-draft/holder",
+        headers={"X-Form-Draft-Token": newer["token"]},
     ).json()["is_holder"] is True
 
     refused = _put(
@@ -322,7 +324,9 @@ def test_issue_and_request_approval_refuse_while_a_draft_is_unsaved(api):
     # Discard (the pending action's handler) lifts it: the issue goes through.
     from app.services.record_actions import _discard_form_draft
 
-    _discard_form_draft(db, {"entity_id": opened["draft_id"], "requested_by_id": user_id})
+    _discard_form_draft(
+        db, {"entity_id": opened["draft_id"], "requested_by_id": user_id, "token": opened["token"]}
+    )
     db.commit()
     assert client.post(f"{_root(project.id)}/{document['id']}/issue").status_code == 201
 
@@ -348,10 +352,31 @@ def test_discard_clears_the_draft_and_writes_no_history(api):
     document = _create_document(client, project.id)
     opened = _open(client, project.id, document["id"])
     _put(client, project.id, document["id"], _state("thrown"), opened["token"])
-    _discard_form_draft(db, {"entity_id": opened["draft_id"], "requested_by_id": user_id})
+    _discard_form_draft(
+        db, {"entity_id": opened["draft_id"], "requested_by_id": user_id, "token": opened["token"]}
+    )
     db.commit()
     assert _open(client, project.id, document["id"])["doc"] is None
     assert _history(client, project.id, document["id"]) == []
+
+
+def test_a_discard_from_a_tab_that_lost_the_draft_keeps_the_newer_tabs_work(api):
+    client, db, _company, user_id, project, _party = api
+    import pytest
+
+    from app.services.record_actions import _discard_form_draft
+
+    document = _create_document(client, project.id)
+    older = _open(client, project.id, document["id"])
+    newer = _open(client, project.id, document["id"])
+    _put(client, project.id, document["id"], _state(f"{MARKER} Newer tab"), newer["token"])
+    with pytest.raises(Exception) as refused:
+        _discard_form_draft(
+            db, {"entity_id": older["draft_id"], "requested_by_id": user_id, "token": older["token"]}
+        )
+    assert getattr(refused.value, "status_code", None) == 409
+    db.rollback()
+    assert _open(client, project.id, document["id"])["doc"]["header"]["subject_title"] == f"{MARKER} Newer tab"
 
 
 def test_someone_else_cannot_discard_my_private_new_draft(api):
@@ -494,18 +519,15 @@ def test_a_restored_entry_is_reconciled_against_the_record_as_it_is_now(api):
         },
         removedIds=[gone["id"]],
     )
-    client.patch(f"{_root(project.id)}/{document['id']}", json={"form_state": entry_state})
-    entry = _history(client, project.id, document["id"])[0]
     removed = client.patch(
         f"{_root(project.id)}/{document['id']}", json={"remove_scope_ids": [gone["id"]]}
     )
     assert removed.status_code == 200, removed.text
 
-    token = _open(client, project.id, document["id"])["token"]
-    doc = client.post(
-        f"{_root(project.id)}/{document['id']}/history/{entry['id']}/restore",
-        json={"token": token},
-    ).json()["doc"]
+    # A draft or a "Before restore" entry made before the removal, opened today.
+    from app.services import quotation_form_draft_service as drafts
+
+    doc = drafts.reconcile(db, _document_row(db, document["id"]), entry_state)
 
     by_label = {scope["scope_label"]: scope for scope in doc["scopes"]}
     assert by_label["Kept"]["id"] == kept["id"]
@@ -529,3 +551,115 @@ def test_draft_rows_cascade_with_their_document(api):
     db.expire_all()
     assert db.query(QuotationDocumentDraft).filter_by(document_id=document["id"]).count() == 0
     assert db.query(QuotationDocumentSnapshot).filter_by(document_id=document["id"]).count() == 0
+
+
+# ------------------------------------------------------------------ review fix round
+
+
+def test_a_lost_tab_keeps_one_history_entry_however_often_it_writes(api):
+    """Security review 1: a stale tab writing every second must not grow History without bound."""
+    client, _db, _company, _user_id, project, _party = api
+    document = _create_document(client, project.id)
+    older = _open(client, project.id, document["id"])
+    _open(client, project.id, document["id"])
+    for n in range(5):
+        _put(client, project.id, document["id"], _state(f"{MARKER} burst {n}"), older["token"])
+    entries = _history(client, project.id, document["id"])
+    assert [entry["kind"] for entry in entries] == ["conflict"]
+    detail = client.get(f"{_root(project.id)}/{document['id']}/history/{entries[0]['id']}").json()
+    assert detail["doc"]["header"]["subject_title"] == f"{MARKER} burst 4"
+
+
+def test_a_refused_save_from_a_lost_tab_is_kept_as_history(api):
+    """Review 8: a view-only tab that presses Save loses nothing either."""
+    client, _db, _company, _user_id, project, _party = api
+    document = _create_document(client, project.id)
+    older = _open(client, project.id, document["id"])
+    _open(client, project.id, document["id"])
+    refused = client.patch(
+        f"{_root(project.id)}/{document['id']}",
+        json={"form_state": _state(f"{MARKER} Pressed Save"), "form_token": older["token"]},
+    )
+    assert refused.status_code == 409
+    entries = _history(client, project.id, document["id"])
+    assert [entry["kind"] for entry in entries] == ["conflict"]
+
+
+def test_restoring_an_entry_whose_line_a_later_save_deleted_can_still_be_saved(api):
+    """Review B1: same version, line deleted by a later Save. Restore must not keep its stale id,
+    or every Save of the restored draft is a 404 and Issue stays blocked."""
+    client, db, _company, _user_id, project, _party = api
+    uom = _uom(db)
+    product = _product(db, _category(db, "Mixer").id, uom, FIXTURE_LIST_PRICE)
+    db.commit()
+    document = _create_document(client, project.id)
+    scope = _add_scope(client, project.id, document["id"], f"{MARKER} Townhouse")
+    version_id = _current_version_id(db, scope["id"])
+    keep = _add_priced_line(client, version_id, product, price="250.00", qty="4")
+    drop = _add_priced_line(client, version_id, product, price="300.00", qty="2")
+    token = _open(client, project.id, document["id"])["token"]
+
+    client.patch(f"{_root(project.id)}/{document['id']}", json={"form_state": _state("v1"), "form_token": token})
+    v1 = _history(client, project.id, document["id"])[0]
+    # Version 2 deletes `drop` on the SAME version (nothing issued).
+    line_body = {"product_id": product.id, "unit_price": "250.00", "quantity": "4"}
+    saved = client.patch(
+        f"{_root(project.id)}/{document['id']}",
+        json={
+            "scopes": [{"id": scope["id"], "lines": [{"id": keep["id"], **line_body}]}],
+            "form_state": _state("v2"),
+            "form_token": token,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert _current_version_id(db, scope["id"]) == version_id
+
+    doc = client.post(
+        f"{_root(project.id)}/{document['id']}/history/{v1['id']}/restore", json={"token": token}
+    ).json()["doc"]
+    restored = doc["record_lines"][scope["id"]]
+    assert [line["id"] for line in restored["lines"]] == [keep["id"], None]
+    assert restored["versionId"] == version_id
+
+
+def test_a_history_entry_holds_every_scope_so_restore_brings_back_untouched_lines(api):
+    """Review B2: a Save that changed only the Subject still records every scope's lines, so
+    restoring it later brings back THOSE lines, not today's."""
+    client, db, _company, _user_id, project, _party = api
+    uom = _uom(db)
+    product = _product(db, _category(db, "Shower").id, uom, FIXTURE_LIST_PRICE)
+    db.commit()
+    document = _create_document(client, project.id)
+    scope = _add_scope(client, project.id, document["id"], f"{MARKER} Guard House")
+    version_id = _current_version_id(db, scope["id"])
+    line = _add_priced_line(client, version_id, product, price="100.00", qty="1")
+    token = _open(client, project.id, document["id"])["token"]
+
+    # Version 1 touches only the Subject: the form sends no staged lines for the scope.
+    client.patch(
+        f"{_root(project.id)}/{document['id']}",
+        json={"subject_title": "Subject only", "form_state": _state("Subject only"), "form_token": token},
+    )
+    v1 = _history(client, project.id, document["id"])[0]
+    detail = client.get(f"{_root(project.id)}/{document['id']}/history/{v1['id']}").json()
+    stored = detail["doc"]["record_lines"][scope["id"]]
+    assert [l["unit_price"] for l in stored["lines"]] in (["100.00"], ["100.0"], ["100"])
+    assert detail["doc"]["scopes"] == [
+        {"key": scope["id"], "id": scope["id"], "scope_label": f"{MARKER} Guard House", "series_id": "", "notes": None}
+    ]
+
+    # Later the price becomes 200; restoring version 1 brings 100 back into the draft.
+    client.patch(
+        f"{_root(project.id)}/{document['id']}",
+        json={
+            "scopes": [{"id": scope["id"], "lines": [{"id": line["id"], "product_id": product.id, "unit_price": "200.00", "quantity": "1"}]}],
+            "form_state": _state("Price 200"),
+            "form_token": token,
+        },
+    )
+    doc = client.post(
+        f"{_root(project.id)}/{document['id']}/history/{v1['id']}/restore", json={"token": token}
+    ).json()["doc"]
+    back = doc["record_lines"][scope["id"]]["lines"]
+    assert back[0]["id"] == line["id"]
+    assert str(back[0]["unit_price"]).startswith("100")

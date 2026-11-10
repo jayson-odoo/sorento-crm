@@ -2937,7 +2937,12 @@ def assert_form_draft_discardable(db: Session, draft_id: str, user_id):
 def _discard_form_draft(db: Session, payload: dict):
     from app.services import quotation_form_draft_service as drafts
 
-    row = assert_form_draft_discardable(db, _entity_id(payload), payload.get("requested_by_id"))
+    user_id = payload.get("requested_by_id")
+    row = assert_form_draft_discardable(db, _entity_id(payload), user_id)
+    # Only the tab holding the draft when the window lapses may discard it: a newer tab opened
+    # during the countdown keeps what it typed (owner Q4). A click without a token (an older
+    # client) is checked the same way and refused.
+    drafts.assert_holder(db, row, payload.get("token"), str(user_id))
     return drafts.discard_draft(db, row)
 
 

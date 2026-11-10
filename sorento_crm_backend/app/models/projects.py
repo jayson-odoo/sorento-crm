@@ -1401,6 +1401,8 @@ class QuotationDocumentSnapshot(Base):
     )
     kind = Column(String(20), nullable=False)
     note = Column(Text, nullable=True)
+    # A ``conflict`` entry's lost claim, hashed: one entry per lost claim, updated in place.
+    source_key = Column(String(64), nullable=True)
     doc = Column(JSONB, nullable=False)
     grand_total = Column(Numeric(18, 2), nullable=True)
     created_by = Column(String(100), nullable=True)

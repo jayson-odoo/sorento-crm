@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -119,6 +119,17 @@ def _editable_project(db: Session, project_id: str, current_user: dict, *, write
     return project
 
 
+def _assert_holder_or_keep(db: Session, row, token, user_id: str, form_state) -> None:
+    """A Save from a tab that lost the draft (card Q4) is refused, but what it carried is kept as
+    History first and committed, so the refusal does not roll it away (review 8)."""
+    try:
+        drafts.assert_holder(db, row, token, user_id, form_state)
+    except AppException as exc:
+        if getattr(exc, "status_code", None) == 409:
+            db.commit()
+        raise
+
+
 # ------------------------------------------------------------------ documents
 
 
@@ -160,11 +171,12 @@ def create_quotation_document(
         body = payload.model_dump(exclude_unset=True)
         form_state = body.pop("form_state", None)
         form_token = body.pop("form_token", None)
-        # Card Q4: only the tab holding the new-proposal draft may save it.
+        # Card Q4: only the tab holding the new-proposal draft may save it; a refused Save's
+        # state is kept as that tab's History entry (committed before the refusal).
         if form_state is not None:
-            drafts.assert_holder(
+            _assert_holder_or_keep(
                 db, drafts.new_draft(db, project.id, current_user["id"]), form_token,
-                current_user["id"],
+                current_user["id"], form_state,
             )
         document, lines = svc.create_document_with_scopes(
             db,
@@ -226,7 +238,7 @@ def open_new_quotation_draft(
 )
 def get_new_quotation_draft_holder(
     project_id: str,
-    token: str = "",
+    token: str = Header(default="", alias="X-Form-Draft-Token"),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -349,8 +361,9 @@ def update_quotation_document(
         form_token = body.pop("form_token", None)
         # Card Q4: a view-only (older) tab cannot Save over the tab that holds the draft.
         if form_state is not None:
-            drafts.assert_holder(
-                db, drafts.document_draft(db, document), form_token, current_user["id"]
+            _assert_holder_or_keep(
+                db, drafts.document_draft(db, document), form_token, current_user["id"],
+                form_state,
             )
         # Normalised and de-duplicated before any write: a repeated id is one removal.
         removed = list(
@@ -453,7 +466,7 @@ def open_quotation_form_draft(
 def get_quotation_form_draft_holder(
     project_id: str,
     document_id: str,
-    token: str = "",
+    token: str = Header(default="", alias="X-Form-Draft-Token"),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):

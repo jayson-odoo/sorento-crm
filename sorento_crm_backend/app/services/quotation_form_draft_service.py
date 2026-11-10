@@ -27,13 +27,14 @@ it must reconcile against the record and stores everything else as given.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import secrets
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models.projects import (
     ProjectQuotation,
@@ -136,20 +137,53 @@ def _assert_writable(db: Session, row: QuotationDocumentDraft) -> None:
         approvals.assert_unlocked(db, document)
 
 
-def _not_holder(db: Session, row: QuotationDocumentDraft, doc: Any, user_id: str) -> AppException:
-    """Keep the refused tab's state as History, then refuse it (card Q4)."""
+def _token_key(token: Optional[str]) -> Optional[str]:
+    """Which lost claim a conflict entry belongs to: a hash, so no live token is ever stored."""
+    if not token:
+        return None
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+
+def _not_holder(
+    db: Session, row: QuotationDocumentDraft, doc: Any, user_id: str, token: Optional[str] = None
+) -> AppException:
+    """Keep the refused tab's state as History, then refuse it (card Q4).
+
+    ONE entry per lost claim (security review 1): a tab that keeps writing after losing the draft
+    updates its own entry rather than adding one per keystroke burst, so History cannot be grown
+    without bound and the entry always holds the latest of what that tab typed.
+    """
     if isinstance(doc, dict):
-        db.add(
-            QuotationDocumentSnapshot(
-                document_id=row.document_id,
-                draft_id=row.id,
-                kind=KIND_CONFLICT,
-                note="Not saved: opened in another tab",
-                doc=doc,
-                grand_total=draft_total(doc),
-                created_by=user_id,
+        doc = complete(db, _document_of(db, row), doc)
+        source = _token_key(token)
+        existing = (
+            db.query(QuotationDocumentSnapshot)
+            .filter(
+                QuotationDocumentSnapshot.draft_id == row.id,
+                QuotationDocumentSnapshot.kind == KIND_CONFLICT,
+                QuotationDocumentSnapshot.source_key == source,
             )
+            .first()
+            if source
+            else None
         )
+        if existing is not None:
+            existing.doc = doc
+            existing.grand_total = draft_total(doc)
+            existing.created_at = _now()
+        else:
+            db.add(
+                QuotationDocumentSnapshot(
+                    document_id=row.document_id,
+                    draft_id=row.id,
+                    kind=KIND_CONFLICT,
+                    note="Not saved: opened in another tab",
+                    source_key=source,
+                    doc=doc,
+                    grand_total=draft_total(doc),
+                    created_by=user_id,
+                )
+            )
         db.flush()
     return AppException(
         status_code=409,
@@ -174,7 +208,7 @@ def assert_holder(
     if row is None or not row.holder_token:
         return
     if not token or not secrets.compare_digest(str(token), str(row.holder_token)):
-        raise _not_holder(db, row, doc, user_id)
+        raise _not_holder(db, row, doc, user_id, token)
 
 
 # ------------------------------------------------------------------ reading
@@ -270,11 +304,12 @@ def record_save(
     """
     _check_size(form_state)
     row = document_draft(db, document, create=True)
+    db.flush()
     entry = QuotationDocumentSnapshot(
         document_id=document.id,
         draft_id=row.id,
         kind=KIND_SAVED,
-        doc=form_state,
+        doc=_as_saved(db, document, form_state),
         grand_total=grand_total if grand_total is not None else draft_total(form_state),
         created_by=str(user_id),
     )
@@ -311,9 +346,15 @@ def adopt_new_draft(
 # ------------------------------------------------------------------ history
 
 
-def _entries(db: Session, document: ProjectQuotationDocument) -> List[QuotationDocumentSnapshot]:
+def _entries(
+    db: Session, document: ProjectQuotationDocument, *, with_doc: bool = True
+) -> List[QuotationDocumentSnapshot]:
+    query = db.query(QuotationDocumentSnapshot)
+    if not with_doc:
+        # The list shows no document: up to 2 MB each is not read for it (security review 1).
+        query = query.options(defer(QuotationDocumentSnapshot.doc))
     return (
-        db.query(QuotationDocumentSnapshot)
+        query
         .filter(QuotationDocumentSnapshot.document_id == document.id)
         .order_by(QuotationDocumentSnapshot.created_at.asc(), QuotationDocumentSnapshot.id.asc())
         .all()
@@ -337,7 +378,7 @@ def _serialize_entry(db: Session, row, version: int, names: Dict[str, Optional[s
 def list_history(db: Session, document: ProjectQuotationDocument) -> List[Dict[str, Any]]:
     """Newest first, numbered oldest = 1, the tag designer's "Version N"."""
     names: Dict[str, Optional[str]] = {}
-    rows = _entries(db, document)
+    rows = _entries(db, document, with_doc=False)
     out = [_serialize_entry(db, row, index + 1, names) for index, row in enumerate(rows)]
     return list(reversed(out))
 
@@ -374,7 +415,7 @@ def restore_entry(
     row = document_draft(db, document, create=True, lock=True)
     _assert_writable(db, row)
     assert_holder(db, row, token, user_id)
-    leaving = row.doc
+    leaving = complete(db, document, row.doc) if row.doc is not None else None
     if leaving is None:
         saved = [r for r in rows if r.kind == KIND_SAVED]
         leaving = saved[-1].doc if saved else None
@@ -401,6 +442,88 @@ def restore_entry(
         "doc": restored,
         "updated_at": row.updated_at,
         "updated_by_name": user_name(db, user_id),
+    }
+
+
+# ------------------------------------------------------------------ complete entries
+
+
+def _scope_lines(db: Session, scope_id: str) -> Optional[Dict[str, Any]]:
+    """One scope's stored lines, as the lines route serves them, with its version and columns."""
+    from app.schemas.projects import ProjectQuotationLineResponse
+    from app.services import project_quotation_service as quotes
+
+    try:
+        version = quotes.current_version(db, scope_id)
+    except AppException:
+        return None
+    rows = quotes.serialize_lines(db, quotes.list_lines(db, version.id))
+    return {
+        "versionId": str(version.id),
+        "matrix_columns": version.matrix_columns or [],
+        "lines": [
+            ProjectQuotationLineResponse.model_validate(row).model_dump(mode="json") for row in rows
+        ],
+    }
+
+
+def complete(db: Session, document: Optional[ProjectQuotationDocument], doc: Any) -> Any:
+    """A History entry holds the WHOLE document, the tag designer's rule (review B2).
+
+    A draft carries only the scopes whose lines moved; the rest are whatever the record held at
+    that moment. Added here as ``record_lines`` (keyed by the form's scope key, in the lines
+    route's shape), so restoring the entry later brings back those lines too, not today's.
+    """
+    if document is None or not isinstance(doc, dict) or not isinstance(doc.get("scopes"), list):
+        return doc
+    doc = copy.deepcopy(doc)
+    staged = doc.get("staged") if isinstance(doc.get("staged"), dict) else {}
+    record_lines = dict(doc.get("record_lines") or {})
+    for scope in doc["scopes"]:
+        if not isinstance(scope, dict) or not scope.get("id"):
+            continue
+        key = scope.get("key")
+        if not key or key in staged or key in record_lines:
+            continue
+        stored = _scope_lines(db, str(scope["id"]))
+        if stored is not None:
+            record_lines[key] = stored
+    doc["record_lines"] = record_lines
+    return doc
+
+
+def _as_saved(db: Session, document: ProjectQuotationDocument, form_state: Dict[str, Any]) -> Dict[str, Any]:
+    """A Save's entry: the header and letter as the form sent them, and every scope as the record
+    holds it AFTER the Save (ids filled in, so restoring it never re-creates a scope that the Save
+    created)."""
+    scopes = (
+        db.query(ProjectQuotation)
+        .filter(ProjectQuotation.document_id == document.id)
+        .order_by(ProjectQuotation.sort_order.asc(), ProjectQuotation.created_at.asc())
+        .all()
+    )
+    record_lines: Dict[str, Any] = {}
+    out_scopes = []
+    for scope in scopes:
+        key = str(scope.id)
+        out_scopes.append(
+            {
+                "key": key,
+                "id": key,
+                "scope_label": scope.scope_label,
+                "series_id": str(scope.series_id) if scope.series_id else "",
+                "notes": scope.notes,
+            }
+        )
+        stored = _scope_lines(db, key)
+        if stored is not None:
+            record_lines[key] = stored
+    return {
+        **form_state,
+        "scopes": out_scopes,
+        "staged": {},
+        "removedIds": [],
+        "record_lines": record_lines,
     }
 
 
@@ -491,21 +614,37 @@ def reconcile(db: Session, document: ProjectQuotationDocument, doc: Any) -> Any:
         return {**held, "versionId": version_id or "", "seeded": [], "lines": lines}
 
     removed = set(str(x) for x in (doc.get("removedIds") or []))
+    record_lines = doc.get("record_lines") if isinstance(doc.get("record_lines"), dict) else {}
     for scope in scopes:
         if not isinstance(scope, dict):
             continue
         scope_id = str(scope["id"]) if scope.get("id") else None
         key = scope.get("key")
         held = staged.get(key) if isinstance(staged, dict) and key else None
+        stored = record_lines.get(key) if key else None
         if scope_id and scope_id not in live_scope_ids:
             scope["id"] = None
             if isinstance(held, dict):
                 staged[key] = as_new(held, set(), None)
+            if isinstance(stored, dict):
+                record_lines[key] = as_new(stored, set(), None)
             continue
-        if scope_id and isinstance(held, dict):
-            version_id = current_version.get(scope_id)
-            if held.get("versionId") != version_id:
-                staged[key] = as_new(held, line_ids(version_id), version_id)
+        if not scope_id:
+            continue
+        # The ids are checked even when the version did not move: a line deleted by a later
+        # Save on the same version is refused by `replace_lines` just the same (review B1).
+        version_id = current_version.get(scope_id)
+        keep = line_ids(version_id)
+        for collection in (staged, record_lines):
+            entry = collection.get(key) if isinstance(collection, dict) else None
+            if not isinstance(entry, dict):
+                continue
+            stale_ids = any(
+                isinstance(line, dict) and line.get("id") and str(line["id"]) not in keep
+                for line in entry.get("lines") or []
+            )
+            if entry.get("versionId") != version_id or stale_ids:
+                collection[key] = as_new(entry, keep, version_id)
     # A removal of a scope that is already gone is no removal.
     if removed:
         doc["removedIds"] = [x for x in doc.get("removedIds") or [] if str(x) in live_scope_ids]

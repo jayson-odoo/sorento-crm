@@ -60,6 +60,7 @@ def upgrade() -> None:
                 REFERENCES projects.quotation_document_drafts(id) ON DELETE CASCADE,
             kind VARCHAR(20) NOT NULL,
             note TEXT NULL,
+            source_key VARCHAR(64) NULL,
             doc JSONB NOT NULL,
             grand_total NUMERIC(18, 2) NULL,
             created_by VARCHAR(100) NULL,
