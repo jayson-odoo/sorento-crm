@@ -830,7 +830,7 @@ def price_changes(
             changes.append(
                 {
                     "product_code": line.product_code_snapshot,
-                    "description": line.description_snapshot,
+                    "description": scope_service.line_text(line),
                     "old_price": before[key],
                     "new_price": new_price,
                 }

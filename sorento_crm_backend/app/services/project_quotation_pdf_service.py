@@ -72,6 +72,7 @@ from app.services.quotation_cover_service import (
     layout_of,
 )
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
+from app.utils.tag_rich_text import is_rich, sanitise_tag_html
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,20 @@ def _multiline(value: Any) -> str:
     """Escaped text with its line breaks kept: a description is typed as several lines (the
     size on its own line, "c/w seat cover" on the next) and has to print that way."""
     return "<br/>".join(_cell(value).splitlines())
+
+
+def _description_html(value: Any) -> str:
+    """A line description as it prints (QUOTE-DESC-RICHTEXT).
+
+    Plain text prints exactly as before (`_multiline`). Styled text is the shared editor's HTML;
+    it was sanitised on save and is sanitised AGAIN here, so a value that reached the row any
+    other way can still place nothing but the allow-list (no attribute but colour / alignment
+    styles, so nothing can fetch or run) into the page WeasyPrint renders.
+    """
+    if not isinstance(value, str) or not is_rich(value):
+        return _multiline(value)
+    clean = sanitise_tag_html(value)
+    return f'<div class="rt">{clean}</div>' if clean else ""
 
 
 def _date(value: Any) -> str:
@@ -622,7 +637,7 @@ def _grid_scope_html(
                 + "</td>"
             ),
             "TECHNICAL SPEC": f'<td class="spec">{spec_cell}</td>',
-            "DESCRIPTION": f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>',
+            "DESCRIPTION": f'<td class="desc">{_description_html(line.description_snapshot)}{legacy}</td>',
             "BRAND": f"<td>{_cell(line.brand_snapshot)}</td>",
             "PRODUCT CODE": f"<td>{_cell(line.product_code_snapshot)}</td>",
             "UNIT RATE (RM)": f'<td class="num">{_line_money(line.unit_price)}</td>',
@@ -755,7 +770,7 @@ def _scope_html(
             quotation_columns.IMAGE: f'<td class="img">{picture}</td>',
             "spec": f'<td class="spec">{spec_cell}</td>',
             "description": (
-                f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>'
+                f'<td class="desc">{_description_html(line.description_snapshot)}{legacy}</td>'
             ),
             "brand": f"<td>{_cell(line.brand_snapshot)}</td>",
             "product_code": f"<td>{_cell(line.product_code_snapshot)}</td>",
@@ -1096,6 +1111,14 @@ _STYLE = """
   table.grid td.img img { width: 100%; }
   table.grid td.spec img { width: 100%; }
   .legacy-spec { margin-top: 3px; }
+  /* A styled description (QUOTE-DESC-RICHTEXT): paragraphs sit as line breaks do on a plain
+     one, headings stay close to the cell size, as in the grid's view. */
+  .rt p, .rt h1, .rt h2, .rt h3, .rt blockquote { margin: 0; }
+  .rt h1 { font-size: 1.4em; } .rt h2 { font-size: 1.2em; } .rt h3 { font-size: 1.1em; }
+  .rt ul, .rt ol { margin: 0; padding-left: 1.2em; }
+  .rt blockquote { padding-left: 4px; border-left: 2px solid #999; color: #555; }
+  .rt mark { background: transparent; color: inherit; }
+  .rt code { font-family: monospace; }
   tr.band td { background: #f4f4f4; font-weight: 700; }
   .rate-only { font-style: italic; }
   td.total-label { text-align: right; font-weight: 700; }

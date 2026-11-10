@@ -42,6 +42,7 @@ from app.models.projects import (
 from app.services import project_pricing_service as pricing
 from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
+from app.utils.tag_rich_text import plain_text, sanitise_description
 
 _CENTS = Decimal("0.01")
 
@@ -414,6 +415,12 @@ def revise(
     return nxt
 
 
+def line_text(line: Any) -> Optional[str]:
+    """A line's description with no markup, for every reader that cannot draw styled text
+    (Excel, notifications, SO / PO lines, labels). Plain text comes back exactly as stored."""
+    return plain_text(getattr(line, "description_snapshot", None))
+
+
 def copy_line(
     line: ProjectQuotationLine, *, version_id: str, company_id: Optional[str]
 ) -> ProjectQuotationLine:
@@ -538,8 +545,9 @@ def _snapshot_product(db: Session, line: ProjectQuotationLine, product: Product)
     sent, and a discontinued SKU must still print on last year's quotation.
     """
     line.product_code_snapshot = product.product_code
-    line.description_snapshot = (
-        line.description_snapshot or product.description or product.product_name
+    # The catalogue text is not edited through the line editor, so it passes the same save rule.
+    line.description_snapshot = line.description_snapshot or sanitise_description(
+        product.description or product.product_name
     )
     line.list_price_snapshot = product.list_price
     if line.uom is None:
@@ -569,7 +577,7 @@ def _snapshot_set(
     from app.services import product_set_service
 
     line.product_code_snapshot = product_set.set_code
-    line.description_snapshot = line.description_snapshot or product_set.name
+    line.description_snapshot = line.description_snapshot or sanitise_description(product_set.name)
     line.list_price_snapshot = product_set_service.resolve_set_price(product_set).resolved
     if line.uom is None:
         line.uom = "SET"
@@ -1023,6 +1031,14 @@ def _write_line(
     elif "qty_cells" in payload:
         payload = {**payload, "qty_cells": matrix.normalise_cells(columns, payload["qty_cells"])}
 
+    # The description is plain text or the shared editor's HTML (QUOTE-DESC-RICHTEXT); every
+    # write path lands here, so nothing but the allow-list is ever stored.
+    if "description_snapshot" in payload:
+        payload = {
+            **payload,
+            "description_snapshot": sanitise_description(payload["description_snapshot"]),
+        }
+
     for field in LINE_FIELDS:
         if field in payload:
             value = payload[field]
@@ -1433,7 +1449,7 @@ def recompute_version(
 
         # Named by what a person calls the line. No id reaches the reader.
         report["changed_lines"].append(
-            line.product_code_snapshot or line.description_snapshot or "Non-standard item"
+            line.product_code_snapshot or line_text(line) or "Non-standard item"
         )
 
     db.flush()

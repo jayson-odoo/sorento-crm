@@ -458,7 +458,14 @@ async function addScope(label: string) {
 /** Add a line on the open scope and wait for its cells. */
 async function addLine(card: HTMLElement, lineNo: number) {
   fireEvent.click(within(card).getByRole('button', { name: 'Add a line' }));
-  return within(card).findByRole('textbox', { name: `Description on line ${lineNo}` });
+  return within(card).findByRole('button', { name: `Description on line ${lineNo}` });
+}
+
+/** Opens a line's Description cell (a popover holding the shared editor, QUOTE-DESC-RICHTEXT)
+ * and hands back the editor's stand-in textarea. */
+async function openDescription(card: HTMLElement, label: string) {
+  fireEvent.click(within(card).getByRole('button', { name: `Description on ${label}` }));
+  return screen.findByRole('textbox', { name: `Description text on ${label}` });
 }
 
 /** Picks the catalogue product fixture on a line; the row's labels then name it by its code. */
@@ -599,8 +606,8 @@ describe('QuotationFormClient create', () => {
     renderForm();
     const card = await openLines();
 
-    const description = await addLine(card, 1);
-    fireEvent.change(description, { target: { value: 'Grab bar' } });
+    await addLine(card, 1);
+    fireEvent.change(await openDescription(card, 'line 1'), { target: { value: 'Grab bar' } });
     await waitFor(() =>
       expect(stageScopeSpy).toHaveBeenCalledWith(
         expect.stringMatching(/^new-scope:/),
@@ -724,7 +731,10 @@ describe('QuotationFormClient create', () => {
     const card = await openLines();
     await nameScope(card, 'Townhouse');
     const named = scopeCard('Townhouse');
-    fireEvent.change(await addLine(named, 1), { target: { value: 'Bespoke vanity top' } });
+    await addLine(named, 1);
+    fireEvent.change(await openDescription(named, 'line 1'), {
+      target: { value: 'Bespoke vanity top' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
@@ -798,7 +808,7 @@ describe('QuotationFormClient edit', () => {
     );
     expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
     const card = await openSavedLines();
-    expect(within(card).getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+    expect(within(card).getByRole('button', { name: 'Description on SRT-WC-01' }).textContent).toBe(
       'Wall-hung WC',
     );
     // The saved scope's own record reaches the editor, as on the quotation page.
@@ -1199,7 +1209,8 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
   it('still refuses a scope that has lines but no name, and opens Header (where the lines are) to show it', async () => {
     renderForm();
     const card = await openLines();
-    fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
+    await addLine(card, 1);
+    fireEvent.change(await openDescription(card, 'line 1'), { target: { value: 'Grab bar' } });
     await openTab('Terms');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
@@ -2024,19 +2035,25 @@ describe('QuotationFormClient: collapsible Header and Lines (PROPOSAL-FORM-COLLA
   it('a collapsed Lines section reads the scope count and total, and keeps staged lines', async () => {
     renderForm();
     const card = await openLines();
-    const description = await addLine(card, 1);
-    fireEvent.change(description, { target: { value: 'Kept while folded' } });
+    await addLine(card, 1);
+    // The description is typed in the cell's editor popover (QUOTE-DESC-RICHTEXT), then closed.
+    const editor = await openDescription(card, 'line 1');
+    fireEvent.change(editor, { target: { value: 'Kept while folded' } });
+    fireEvent.keyDown(editor, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Description text on line 1' })).toBeNull(),
+    );
 
     fireEvent.click(toggle(/^Lines/));
     const collapsed = toggle(/^Lines/);
     expect(collapsed).toHaveAttribute('aria-expanded', 'false');
     expect(collapsed).toHaveTextContent(/1 scope.*RM [\d,]+\.\d\d/);
-    expect(screen.getByDisplayValue('Kept while folded')).not.toBeVisible();
+    expect(screen.getByText('Kept while folded')).not.toBeVisible();
     // The Header stays open.
     expect(screen.getByRole('textbox', { name: 'Your Ref' })).toBeVisible();
 
     fireEvent.click(collapsed);
-    expect(screen.getByDisplayValue('Kept while folded')).toBeVisible();
+    expect(screen.getByText('Kept while folded')).toBeVisible();
   });
 
   it('leaves the Cover letter and Terms tabs without section toggles', async () => {
