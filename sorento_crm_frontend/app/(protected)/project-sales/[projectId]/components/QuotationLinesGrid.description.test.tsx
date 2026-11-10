@@ -125,7 +125,7 @@ describe('Description cell, editing', () => {
       expect(editable?.querySelector('strong')?.textContent).toBe('ZZT ONE PIECE WC');
     });
     // Full shared toolbar (card Q1): colour is there.
-    expect(screen.getByRole('button', { name: /selection colour/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^text colour$/i })).toBeInTheDocument();
   });
 
   it('a plain description opens as one paragraph per line', async () => {
