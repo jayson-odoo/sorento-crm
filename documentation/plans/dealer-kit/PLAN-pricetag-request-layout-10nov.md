@@ -1,6 +1,6 @@
 # PLAN: price tag request screen, customer first (multi), one price tag section, notes collapsible, preview before approve
 
-Status: Waiting on owner (mock v2 at `documentation/mockups/pricetag-request-layout/index.html`; v1 feedback applied, the 5 recommendations taken as answers). Track: full (a migration: a list of customers per request).
+Status: Waiting on owner (mock v3 at `documentation/mockups/pricetag-request-layout/index.html`; v1 + v2 feedback applied, the 5 recommendations taken as answers). Track: full (a migration: a list of customers per request).
 
 Lane: PRICETAG-REQUEST-LAYOUT. UAC: `pricetag-request-layout-acceptance-criteria.md` (written after the mock is approved).
 
@@ -49,6 +49,9 @@ Unchanged: salespeople cannot create templates; custom selling price for items w
 
 - 10 Nov, mock v1 feedback: Preview is the page's ONE call to action; it opens the preview popup,
   whose main button is Approve (with Back to edit). No Approve button on the page itself.
+- 10 Nov, mock v2 feedback: the Price tags section asks ONE choice first, "Upload a file" or "Type
+  the items"; only that path and its table show, with a small link to switch. AI extract stays
+  where it is (the dropzone tile's action), its wording simpler ("Read items").
 - Behaviour answers (recommendations, owner did not object): one request holds N customers; Qty is
   the total typed, not per customer; Preferred default stays List price / Selling price with the
   per-line flip; lists show the first customer "+N" and search matches any.
@@ -60,7 +63,16 @@ Unchanged: salespeople cannot create templates; custom selling price for items w
    every existing reader keep working unchanged. Submit requires at least one customer.
 2. Merge Price into "Price tags": toggle, dropzone and table in one section; Preview button moves to
    the action row as its primary button, and the page's Approve button goes.
+   The section opens on the choice (form-local `entryPath`: `null | 'upload' | 'manual'`, not
+   stored). Switching keeps lines already in. A saved draft reopens on Upload if it has an
+   attachment, else on Type the items once it has lines.
 3. Additional information starts folded.
 4. Preview runs the checks Approve runs today (`readyToFinish('approve')`), then opens the preview
    popup with Back to edit + Approve (primary); the popup's Approve runs the existing
    `handleFinish({kind:'approve'})`.
+
+## Folded in from UIUX-QUICK-WINS (so the two lanes do not both edit `PriceTagRequestForm.tsx`)
+
+5. "Need by" (`PriceTagRequestForm.tsx:2398-2409`, native `<Input type="date">`) uses the shared
+   `<DatePicker>` (dd/mm/yyyy), keeping its current minimum date.
+6. Any price tag status chip on this screen renders through the shared `<Badge status>`.

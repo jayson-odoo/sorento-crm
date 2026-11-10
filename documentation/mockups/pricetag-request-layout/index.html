@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Price tag request layout mock v2</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Price tag request layout mock v3</title>
 <style>
 :root{--fg:#18181b;--mut:#71717a;--line:#e4e4e7;--soft:#f4f4f5;--pri:#1b84ff;--new:#b45309;--newbg:#fffbeb;--err:#dc2626;--r:8px}
 *{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
@@ -31,11 +31,16 @@ td .in{font:inherit;border:1px solid var(--line);border-radius:5px;padding:3px 6
 .tg .im{flex:1;background:var(--soft);display:flex;align-items:center;justify-content:center;color:var(--mut)}.tg b{font-size:12px}.tg .lp{text-decoration:line-through;color:var(--mut)}.tg .sp{font-size:22px;font-weight:700;color:#8c7355}.tg .lponly{font-size:20px;font-weight:700}
 ul.map,ol.q{background:#fff;border:1px solid var(--line);border-radius:var(--r);margin:0;padding:10px 10px 10px 28px;font-size:12px}ul.map li,ol.q li{margin:4px 0}code{font:11px ui-monospace,Menlo,monospace;background:var(--soft);border-radius:3px;padding:0 3px;word-break:break-all}
 ol.q li b{display:block}
+.choice{display:grid;grid-template-columns:1fr 1fr;gap:12px}.opt{border:1px solid var(--line);border-radius:var(--r);padding:16px;background:#fff;text-align:left;font:inherit;cursor:pointer;display:flex;flex-direction:column;gap:4px}.opt:hover{border-color:var(--pri);background:#f5f9ff}.opt b{font-size:14px}.opt .ic{font-size:22px}
+.q{font-weight:600;font-size:13px}.sw{font-size:12px;color:var(--pri);background:none;border:0;padding:0;cursor:pointer;font:inherit;font-size:12px}
+.mock-state{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mut);margin-bottom:10px}
+@media(max-width:640px){.choice{grid-template-columns:1fr}}
 @media(max-width:640px){.wrap{padding:16px}.acts .btn{flex:1 1 100%}.acts .sp{display:none}.ph .btn{display:none}}
 </style></head><body><div class="wrap">
-<p class="note">Mock v2 for PRICETAG-REQUEST-LAYOUT (owner, 10 Nov: Preview is the page's one call to action; Approve lives only inside the preview). Made-up item codes, masked customer names, no photos (the cloud sandbox cannot reach the dev database; the rows follow the shape of a real request: one combo line on SP with a promotion, one plain item on LP, one item with a typed selling price). <span class="new">NEW</span> marks what this lane changes; everything else exists today. Click section headers to fold, then click Preview and approve from the popup.</p>
+<p class="note">Mock v3 for PRICETAG-REQUEST-LAYOUT. Owner, 10 Nov: Preview is the page's one call to action, Approve lives only inside the preview (v2); the Price tags section asks ONE choice, upload a file OR type the items, and shows only that path (v3). Made-up item codes, masked customer names, no photos (the cloud sandbox cannot reach the dev database; the rows follow the shape of a real request: one combo line on SP with a promotion, one plain item on LP, one item with a typed selling price). <span class="new">NEW</span> marks what this lane changes; everything else exists today. Click section headers to fold, then click Preview and approve from the popup.</p>
 
 <h2>1. Salesperson: New Price Tag Request</h2>
+<div class="mock-state">Mock only, jump to a state: <button class="btn sm" onclick="go(null)">1 Choose</button><button class="btn sm" onclick="go('upload')">2a Upload, file dropped</button><button class="btn sm" onclick="go('upload',true)">2b Upload, items read</button><button class="btn sm" onclick="go('manual')">3 Type the items</button></div>
 <div class="ph"><h1>New Price Tag Request</h1><button class="btn">Back to price tag requests</button></div>
 
 <div class="sec" id="s-cust"><div class="sh" onclick="fold('s-cust')"><span class="chev">&#9662;</span><b>Customers</b><span class="new">NEW multi</span><span class="sum" id="sum-cust"></span></div>
@@ -43,20 +48,10 @@ ol.q li b{display:block}
 <div class="ms" id="ms"></div>
 <div class="hint" style="margin-top:4px">One request; the same tags are for every customer picked.</div></div></div></div>
 
-<div class="sec" id="s-tags"><div class="sh" onclick="fold('s-tags')"><span class="chev">&#9662;</span><b>Price tags</b><span class="new">NEW merged</span><span class="sum">3 items, default SP</span></div>
+<div class="sec" id="s-tags"><div class="sh" onclick="fold('s-tags')"><span class="chev">&#9662;</span><b>Price tags</b><span class="new">NEW one step</span><span class="sum" id="sum-tags"></span></div>
 <div class="sb">
 <div><span class="lbl">Preferred default</span><div class="seg" id="seg"><button data-v="list">List price</button><button data-v="selling" class="on">Selling price</button></div></div>
-<div class="drop">Drop the sales order here, paste a screenshot, or <button class="btn sm">Browse</button>
-<span class="file">SO-ZZ-24117.pdf <a href="#" onclick="return false">Extract items</a></span></div>
-<div class="tw"><table>
-<colgroup><col style="width:28px"><col style="width:26%"><col style="width:70px"><col style="width:70px"><col style="width:12%"><col style="width:16%"><col style="width:12%"><col style="width:14%"><col style="width:40px"></colgroup>
-<thead><tr><th>#</th><th>Item</th><th>Qty (tags)</th><th>Price</th><th>List price</th><th>Promotion</th><th>Selling price</th><th>Template</th><th></th></tr></thead>
-<tbody>
-<tr><td>1</td><td title="ZZTKS900 + ZZTKT703 kitchen sink combo">ZZTKS900 + ZZTKT703 <small>combo</small></td><td><input class="in" value="2"></td><td><div class="seg c"><button>LP</button><button class="on">SP</button></div></td><td>RM 800</td><td title="Year end 2026">Year end 2026</td><td>RM 650</td><td title="KS_COMBO_SP">KS_COMBO_SP</td><td>&#128065;</td></tr>
-<tr><td>2</td><td title="ZZTWB501 basin, black">ZZTWB501 <small>basin, black</small></td><td><input class="in" value="1"></td><td><div class="seg c"><button class="on">LP</button><button>SP</button></div></td><td>RM 320</td><td><small>-</small></td><td><small>-</small></td><td title="WB_SMALL_LP">WB_SMALL_LP</td><td>&#128065;</td></tr>
-<tr><td>3</td><td title="ZZTMR200 mirror 800x600">ZZTMR200 <small>mirror 800x600</small></td><td><input class="in" value="3"></td><td><div class="seg c"><button>LP</button><button class="on">SP</button></div></td><td>RM 450</td><td><small>No promotion</small></td><td><input class="in" value="RM 399" title="Typed selling price"></td><td title="MR_A6_SP">MR_A6_SP</td><td>&#128065;</td></tr>
-</tbody></table></div>
-<div><button class="btn sm">+ Add item</button></div>
+<div id="path"></div>
 </div></div>
 
 <div class="sec closed" id="s-notes"><div class="sh" onclick="fold('s-notes')"><span class="chev">&#9662;</span><b>Additional information</b><span class="new">NEW folded</span><span class="sum">Optional notes for marketing</span></div>
@@ -76,7 +71,10 @@ ol.q li b{display:block}
 <li>Section cards with folded one-line summary: <code>components/common/FormSection.tsx</code> (already used for all four sections, <code>PriceTagRequestForm.tsx:2214</code>, <code>:2253</code>, <code>:2290</code>, <code>:2386</code>)</li>
 <li>Customers <span class="new">NEW</span>: <code>SearchableSelect</code> at <code>PriceTagRequestForm.tsx:2234</code> becomes <code>components/common/SearchableMultiSelect.tsx</code> over the same debtor options (<code>GET /portal/lookups/debtors</code>)</li>
 <li>Preferred default: <code>components/dealer-kit/PriceModeToggle.tsx</code>, moved from its own Price section (<code>:2253</code>) into Price tags</li>
-<li>Sales order upload + extract: <code>AttachmentDropzone</code> with per-file Extract into <code>AIExtractDialog</code> (<code>:2304</code>, <code>:2425</code>), unchanged, now in the same step as the table</li>
+<li>The choice <span class="new">NEW</span>: two option buttons (<code>components/ui/button</code>) inside the Price tags <code>FormSection</code>; a form-local <code>entryPath</code> state (<code>null | 'upload' | 'manual'</code>), not stored</li>
+<li>Upload path: <code>AttachmentDropzone</code> with its per-file action into <code>AIExtractDialog</code> (<code>:2304</code>, <code>:2425</code>), unchanged except the copy: placeholder "Drop the file here, paste a screenshot, or", tile action "Read items"; the table shows once the file's items are in</li>
+<li>Type path: <code>PriceTagLinesTable</code> + Add item (<code>:2338</code>, <code>:2355</code>), unchanged</li>
+<li>Switch link ("Type the items instead" / "Upload a file instead"): a link-style <code>Button</code>; lines already in stay</li>
 <li>Items table (per-line LP/SP, promotion, typed selling price, template, eye preview): <code>components/dealer-kit/PriceTagLinesTable.tsx</code>, unchanged</li>
 <li>Preview button <span class="new">NEW</span>: moves from above the table (<code>PriceTagRequestForm.tsx:2324</code>) to the action row and becomes its primary button; the page's own Approve button (<code>:2524</code>) is removed</li>
 <li>Preview popup:<code>components/dealer-kit/PriceTagLivePreview.tsx:242</code> (<code>popup</code> mode, <code>DesignLightbox</code>); <span class="new">NEW</span> footer with Back to edit + Approve (primary); the row eye icon keeps its plain one-tag lightbox</li>
@@ -92,6 +90,7 @@ ol.q li b{display:block}
 <li><b>Preferred default: LP / SP only, or a third "LP &amp; SP" choice?</b>(a) keep two (List price, Selling price); each line can still flip LP/SP, and LP &amp; SP stays a template type marketing sets. (b) add a third header choice. Answer (a): a mixed request already works line by line.</li>
 <li><b>Preview then approve (owner, mock v1 feedback).</b>One main button on the page, Preview. It opens the preview popup, whose main button is Approve, next to Back to edit. No Approve on the page itself.</li>
 <li><b>Requests list and marketing's detail page with N customers.</b>(a) list shows the first customer + "+2", search matches any of them; marketing's page lists all. (b) one row per customer. Answer (a): lists stay one line per row.</li>
+<li><b>Upload or type (owner, mock v2 feedback).</b>The section asks one choice first; only that path and its table show. Switching keeps the items already in. A saved draft reopens on Upload if it has a file, else on Type the items. Answer (a), no question for the owner unless they object.</li>
 </ol>
 </div>
 <script>
@@ -99,6 +98,27 @@ const $=i=>document.getElementById(i);
 let cust=['ZZ Kitchen Gallery Sdn Bhd (C-1***)','ZZ Home Centre Kepong (C-2***)','ZZ Bath Studio JB (C-3***)'];
 function drawMs(){$('ms').innerHTML=cust.map((c,i)=>`<span class="tagc" title="${c}"><span>${c}</span><button aria-label="Remove ${c}" onclick="cust.splice(${i},1);drawMs()">&times;</button></span>`).join('')+'<input placeholder="Search customers...">';$('sum-cust').textContent=cust.length?cust[0]+(cust.length>1?` +${cust.length-1}`:''):'None picked';}
 drawMs();
+
+const ROWS=`<div class="tw"><table>
+<colgroup><col style="width:28px"><col style="width:26%"><col style="width:70px"><col style="width:70px"><col style="width:12%"><col style="width:16%"><col style="width:12%"><col style="width:14%"><col style="width:40px"></colgroup>
+<thead><tr><th>#</th><th>Item</th><th>Qty (tags)</th><th>Price</th><th>List price</th><th>Promotion</th><th>Selling price</th><th>Template</th><th></th></tr></thead>
+<tbody>
+<tr><td>1</td><td title="ZZTKS900 + ZZTKT703 kitchen sink combo">ZZTKS900 + ZZTKT703 <small>combo</small></td><td><input class="in" value="2"></td><td><div class="seg c"><button>LP</button><button class="on">SP</button></div></td><td>RM 800</td><td title="Year end 2026">Year end 2026</td><td>RM 650</td><td title="KS_COMBO_SP">KS_COMBO_SP</td><td>&#128065;</td></tr>
+<tr><td>2</td><td title="ZZTWB501 basin, black">ZZTWB501 <small>basin, black</small></td><td><input class="in" value="1"></td><td><div class="seg c"><button class="on">LP</button><button>SP</button></div></td><td>RM 320</td><td><small>-</small></td><td><small>-</small></td><td title="WB_SMALL_LP">WB_SMALL_LP</td><td>&#128065;</td></tr>
+<tr><td>3</td><td title="ZZTMR200 mirror 800x600">ZZTMR200 <small>mirror 800x600</small></td><td><input class="in" value="3"></td><td><div class="seg c"><button>LP</button><button class="on">SP</button></div></td><td>RM 450</td><td><small>No promotion</small></td><td><input class="in" value="RM 399" title="Typed selling price"></td><td title="MR_A6_SP">MR_A6_SP</td><td>&#128065;</td></tr>
+</tbody></table></div>`;
+let path=null,read=false;
+function go(p,r){path=p;read=!!r;draw()}
+function draw(){const el=$('path');let h='';
+if(path===null){h=`<div class="q">How do you want to add the items?</div><div class="choice">
+<button class="opt" onclick="go('upload')"><span class="ic">&#128196;</span><b>Upload a file</b><span class="hint">Sales order, Excel or a photo. We read the items for you.</span></button>
+<button class="opt" onclick="go('manual')"><span class="ic">&#9998;</span><b>Type the items</b><span class="hint">Search and add each item yourself.</span></button></div>`;$('sum-tags').textContent='No items yet';}
+else if(path==='upload'){h=`<div class="row"><div class="q">Upload a file</div><button class="sw" onclick="go('manual')">Type the items instead</button></div>
+<div class="drop">Drop the file here, paste a screenshot, or <button class="btn sm">Browse</button>
+<span class="file">SO-ZZ-24117.pdf ${read?'<small style="color:#047857">3 items read</small>':'<a href="#" onclick="go(\'upload\',true);return false">Read items</a>'}</span></div>`+(read?ROWS:'');$('sum-tags').textContent=read?'3 items from SO-ZZ-24117.pdf, default SP':'File not read yet';}
+else{h=`<div class="row"><div class="q">Type the items</div><button class="sw" onclick="go('upload')">Upload a file instead</button></div>`+ROWS+`<div><button class="btn sm">+ Add item</button></div>`;$('sum-tags').textContent='3 items, default SP';}
+el.innerHTML=h}
+draw();
 function fold(id){$(id).classList.toggle('closed')}
 document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b))});
 const T=[['ZZTKS900 + ZZTKT703','RM 800','RM 650',2],['ZZTWB501',null,'RM 320',1],['ZZTMR200','RM 450','RM 399',3]];
