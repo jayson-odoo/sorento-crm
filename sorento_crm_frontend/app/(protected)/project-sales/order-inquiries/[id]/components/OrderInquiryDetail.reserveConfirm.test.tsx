@@ -194,11 +194,11 @@ describe('AC-SN-41 reserve confirmation', () => {
     expect(commitSpy).not.toHaveBeenCalled();
   });
 
-  it('Cancel commits nothing and keeps the staged chip', async () => {
+  it('Keep editing commits nothing and keeps the staged chip', async () => {
     renderDetail();
     await stageAndPressReserve();
     const dialog = await screen.findByRole('dialog', { name: /reserve 1 line/i });
-    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
 
     expect(commitSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /reserve 1 line/i })).not.toBeInTheDocument());

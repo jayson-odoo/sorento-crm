@@ -534,7 +534,7 @@ describe('AC-BR-25 / F8 the Reserve (N) confirmation across order inquiries', ()
     await screen.findByText('Reserve 88 @ BRW');
 
     fireEvent.click(reserveButton(3));
-    return screen.findByRole('dialog', { name: 'Reserve 3 lines on 2 order inquiries' });
+    return screen.findByRole('dialog', { name: 'Reserve 3 lines on 2 order inquiries?' });
   }
 
   const dialogRowOf = (dialog: HTMLElement, itemCode: string) =>
@@ -618,7 +618,7 @@ describe('AC-BR-26 / F9 confirming commits once per order inquiry', () => {
     fireEvent.click(within(rejectDialog).getByRole('button', { name: 'Save 1 line' }));
     await within(rowOf('SO-B1')).findByText('Reserve 0');
     fireEvent.click(reserveButton(4));
-    return screen.findByRole('dialog', { name: 'Reserve 4 lines on 3 order inquiries' });
+    return screen.findByRole('dialog', { name: 'Reserve 4 lines on 3 order inquiries?' });
   }
 
   it('sends one reserve-commit per OI with qty, warehouse (omitted when none), reason and park_notice false', async () => {
@@ -728,7 +728,7 @@ describe('AC-BR-26 / F9 confirming commits once per order inquiry', () => {
     await reserveAsRequested();
     await screen.findAllByText('Reserve 10 @ BRW');
     fireEvent.click(await screen.findByRole('button', { name: 'Reserve (4)' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Reserve 4 lines on 4 order inquiries' });
+    const dialog = await screen.findByRole('dialog', { name: 'Reserve 4 lines on 4 order inquiries?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reserve and send' }));
 
     await waitFor(() => expect(commitSpy).toHaveBeenCalledTimes(4), { timeout: 3000 });
@@ -815,7 +815,7 @@ describe('review round 1: the Reserve filter chip, count and labels, and the pen
     await reserveAsRequested();
     await screen.findByText('Reserve 88 @ BRW');
     fireEvent.click(reserveButton(1));
-    const dialog = await screen.findByRole('dialog', { name: 'Reserve 1 line on 1 order inquiry' });
+    const dialog = await screen.findByRole('dialog', { name: 'Reserve 1 line on 1 order inquiry?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reserve and send' }));
     await waitFor(() => expect(commitSpy).toHaveBeenCalledTimes(1));
 

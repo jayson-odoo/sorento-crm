@@ -26,14 +26,15 @@ export const ConfirmDismissDialog = ({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="md:max-w-[375px]">
         <AlertDialogHeader>
-          <AlertDialogTitle>Discard changes?</AlertDialogTitle>
+          {/* UIUX-QUICK-WINS item 6: the title asks about what happens, the line under it
+              says what happens, and the safe button is named for what it keeps. */}
+          <AlertDialogTitle>Discard your changes?</AlertDialogTitle>
           <AlertDialogDescription>
-            You have unsaved changes. Are you sure you want to close this
-            dialog?
+            What you typed here is not saved and is lost when this closes.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel onClick={onCancel}>Keep editing</AlertDialogCancel>
           <AlertDialogAction onClick={onConfirm}>
             Discard changes
           </AlertDialogAction>
