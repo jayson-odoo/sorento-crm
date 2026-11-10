@@ -237,6 +237,28 @@ def test_ac_lc_03_selected_supplier_no_longer_linked_is_named_and_not_replaced(c
     assert "selected_not_linked" in _codes(got)  # no silent switch to the primary (LC-05)
 
 
+def test_ac_lc_03_deleting_the_selected_supplier_succeeds_and_reads_not_linked(costing_env):
+    """The supplier FK is ON DELETE SET NULL and the DB allows `selected` with no supplier
+    (contract section 2), so removing a supplier a product override selects never fails; the
+    row then says so instead of silently switching method."""
+    from app.models.costing import CostingProductOverride
+
+    e = costing_env
+    w = e.workbook()
+    e.override(w.wb, cost_method="selected", cost_method_supplier_id=w.sup_b.id)
+    e.db.commit()
+    e.db.delete(w.link_b)
+    e.db.flush()
+    e.db.delete(w.sup_b)
+    e.db.commit()
+    e.db.expire_all()
+    ov = e.db.get(CostingProductOverride, w.wb.id)
+    assert ov.cost_method == "selected" and ov.cost_method_supplier_id is None
+    got = _basis(e, w.wb)
+    assert got["landing"] is None
+    assert "selected_not_linked" in _codes(got)
+
+
 # ------------------------------------------------------------------ AC-LC-03 average
 
 

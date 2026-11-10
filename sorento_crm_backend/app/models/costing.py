@@ -145,8 +145,10 @@ class CostingProductOverride(Base, CompanyScopedMixin):
             name="ck_costing_product_overrides_method",
         ),
         CheckConstraint(
-            "(cost_method = 'selected' AND cost_method_supplier_id IS NOT NULL) OR "
-            "(cost_method IS DISTINCT FROM 'selected' AND cost_method_supplier_id IS NULL)",
+            # A supplier only on `selected`. `selected` with NO supplier is allowed: deleting the
+            # supplier sets it null (ON DELETE SET NULL) and the row then reads
+            # "Selected supplier no longer linked" instead of blocking the delete.
+            "cost_method = 'selected' OR cost_method_supplier_id IS NULL",
             name="ck_costing_product_overrides_supplier",
         ),
     )

@@ -93,8 +93,7 @@ UPGRADE_SQL = (
             cost_method IS NULL OR cost_method IN ('primary', 'selected', 'average', 'last_po')
         ),
         CONSTRAINT ck_costing_product_overrides_supplier CHECK (
-            (cost_method = 'selected' AND cost_method_supplier_id IS NOT NULL)
-            OR (cost_method IS DISTINCT FROM 'selected' AND cost_method_supplier_id IS NULL)
+            cost_method = 'selected' OR cost_method_supplier_id IS NULL
         )
     )
     """,

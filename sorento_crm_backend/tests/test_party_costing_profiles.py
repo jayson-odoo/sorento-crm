@@ -258,11 +258,11 @@ def test_ac_pc_09_link_and_unlink_are_audited(costing_env):
     from app.models.costing import CustomerCostingProduct
 
     link = e.db.query(CustomerCostingProduct).filter_by(customer_id=c.id).one()
-    assert [a.action for a in e.audit_rows("customer_costing_products", link.id)] == ["INSERT"]
+    assert [a.action for a in e.audit_rows("customer_costing_products", link.id)] == ["CREATE"]
 
     get_action("costing_party_product.unlink").execute(e.db, {"entity_id": link.id})
     e.db.commit()
-    assert [a.action for a in e.audit_rows("customer_costing_products", link.id)] == ["INSERT", "DELETE"]
+    assert [a.action for a in e.audit_rows("customer_costing_products", link.id)] == ["CREATE", "DELETE"]
 
 
 # ------------------------------------------------------------------ AC-PC-09 profile audit and masking
@@ -274,7 +274,7 @@ def test_ac_pc_09_profile_create_and_edit_are_audited_old_to_new(costing_env):
     e.put(f"/parties/{c.id}", {"markup_pct": 8, "cost_method": None, "is_active": True})
     e.put(f"/parties/{c.id}", {"markup_pct": 9, "cost_method": "average", "is_active": True})
     audits = e.audit_rows("customer_costing_profiles", c.id)
-    assert [a.action for a in audits] == ["INSERT", "UPDATE"]
+    assert [a.action for a in audits] == ["CREATE", "UPDATE"]
     assert float(audits[-1].old_values["markup_pct"]) == 8.0
     assert float(audits[-1].new_values["markup_pct"]) == 9.0
     assert audits[-1].old_values["cost_method"] is None and audits[-1].new_values["cost_method"] == "average"

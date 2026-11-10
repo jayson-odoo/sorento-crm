@@ -221,8 +221,10 @@ def test_product_override_constraints():
         _refuses(db, "costing_product_overrides", **{**o, "transport_value": 8})
         _refuses(db, "costing_product_overrides", **{**o, "transport_mode": "add", "transport_value": 0})
         _refuses(db, "costing_product_overrides", **{**o, "transport_mode": "halve", "transport_value": 2})
-        # 'selected' needs a supplier; any other method must not carry one
-        _refuses(db, "costing_product_overrides", **{**o, "cost_method": "selected"})
+        # Only 'selected' may carry a supplier. 'selected' with a NULL supplier is allowed at the
+        # DB level on purpose (contract section 2): ON DELETE SET NULL on the supplier must not
+        # fail; the row then reads `selected_not_linked`. The API still refuses SETTING
+        # 'selected' without a supplier (test_costing_page_save).
         _refuses(db, "costing_product_overrides", **{**o, "cost_method": "average", "cost_method_supplier_id": sup.id})
         _refuses(db, "costing_product_overrides", **{**o, "cost_method": "bogus"})
         _insert(db, "costing_product_overrides",

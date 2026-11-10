@@ -10,7 +10,7 @@ ASSUMED SIGNATURES:
     Record action `exchange_rate.delete`: entity type "exchange_rate", destructive window,
         permission `scm.config.manage`; `execute(db, {"entity_id": id})` deletes the row.
     Audit rows: `entity_type == "exchange_rates"`, `entity_id == str(id)`, actions
-        INSERT / UPDATE / DELETE (the model carries `__audit_track__ = True`).
+        CREATE / UPDATE / DELETE (the model carries `__audit_track__ = True`).
 """
 from __future__ import annotations
 
@@ -217,11 +217,11 @@ def test_ac_er_06_add_and_edit_each_write_an_audit_row_with_old_and_new(costing_
     row = _ok(e.post("/exchange-rates", {"currency": "RMB", "effective_from": "2026-11-01",
                                          "rate_to_base": 0.625}))
     audits = e.audit_rows("exchange_rates", row["id"])
-    assert [a.action for a in audits] == ["INSERT"]
+    assert [a.action for a in audits] == ["CREATE"]
 
     assert e.put(f"/exchange-rates/{row['id']}", {"rate_to_base": 0.64}).status_code == 200
     audits = e.audit_rows("exchange_rates", row["id"])
-    assert [a.action for a in audits] == ["INSERT", "UPDATE"]
+    assert [a.action for a in audits] == ["CREATE", "UPDATE"]
     upd = audits[-1]
     assert float(upd.old_values["rate_to_base"]) == pytest.approx(0.625)
     assert float(upd.new_values["rate_to_base"]) == pytest.approx(0.64)
@@ -288,7 +288,8 @@ def test_ac_er_07_writing_needs_scm_config_manage_and_cost_view(costing_env):
     assert e.put(f"/exchange-rates/{row.id}", {"rate_to_base": 0.7}).status_code == 403
 
     e.as_user(e.user(RATE_WRITE, COST_VIEW))
-    assert e.post("/exchange-rates", body).status_code in (200, 201)
+    # Another date: the seeded 1 Nov row makes the same date a 409 (AC-ER-01).
+    assert e.post("/exchange-rates", {**body, "effective_from": "2026-11-15"}).status_code in (200, 201)
 
 
 def test_ac_ax_01_reading_rates_needs_cost_view(costing_env):

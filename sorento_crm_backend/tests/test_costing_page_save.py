@@ -61,7 +61,7 @@ def test_ac_cg_08_a_markup_cell_updates_the_party_row_and_is_audited_old_to_new(
     assert r.json() == {"updated": 1}
     assert float(_pp(e, w.pp_wb).markup_pct) == 12.0
 
-    audits = e.audit_rows("customer_costing_products", w.pp_wb.id)
+    audits = _changes(e, "customer_costing_products", w.pp_wb.id)
     assert [a.action for a in audits] == ["UPDATE"]
     assert audits[0].old_values["markup_pct"] is None
     assert float(audits[0].new_values["markup_pct"]) == 12.0
@@ -204,6 +204,11 @@ def test_ac_lc_06_leaving_selected_clears_the_supplier(costing_env):
 # ------------------------------------------------------------------ validation (422, nothing written)
 
 
+def _changes(e, entity_type, entity_id):
+    """Audit rows written after the fixture: its own CREATE rows are not a change."""
+    return [a for a in e.audit_rows(entity_type, entity_id) if a.action != "CREATE"]
+
+
 def _nothing_written(e, w):
     from app.models.costing import CostingProductOverride
 
@@ -211,9 +216,10 @@ def _nothing_written(e, w):
     assert e.db.query(CostingProductOverride).count() == 0
     assert float(_pp(e, w.pp_jac).markup_pct) == 10.0
     assert _pp(e, w.pp_wb).markup_pct is None
-    assert e.audit_rows("customer_costing_products", w.pp_wb.id) == []
-    assert e.audit_rows("customer_costing_products", w.pp_jac.id) == []
-    assert e.audit_rows("costing_product_overrides", w.wb.id) == []
+    # The fixture's own link rows carry their CREATE audit row; nothing after it.
+    assert _changes(e, "customer_costing_products", w.pp_wb.id) == []
+    assert _changes(e, "customer_costing_products", w.pp_jac.id) == []
+    assert _changes(e, "costing_product_overrides", w.wb.id) == []
 
 
 def test_ac_cg_08_markup_in_company_standard_is_422(costing_env):

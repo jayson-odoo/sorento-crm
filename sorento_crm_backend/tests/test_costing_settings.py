@@ -9,7 +9,7 @@ Routes (contract 4.6), all under /api/v1/master-data/costing:
                                         every category; mode/value null without a rule
     PUT  /category-rules/{category_id}  {mode, value}; both null clears (manage)
 Audit: `costing_settings` rows (entity_id = the row id) and `costing_category_rules`
-(entity_id = category_id), actions INSERT / UPDATE / DELETE with old_values / new_values.
+(entity_id = category_id), actions CREATE / UPDATE / DELETE with old_values / new_values.
 A write answers 200 with the new settings / the rule row (`{category_id, mode, value}`).
 """
 from __future__ import annotations
@@ -64,7 +64,7 @@ def test_ac_st_01_changes_are_audited_with_old_and_new(costing_env):
 
     row = e.db.query(CostingSettings).one()
     audits = e.audit_rows("costing_settings", row.id)
-    assert audits[0].action == "INSERT"
+    assert audits[0].action == "CREATE"
     assert audits[-1].action == "UPDATE"
     assert float(audits[-1].old_values["sst_factor"]) == pytest.approx(1.06)
     assert float(audits[-1].new_values["sst_factor"]) == pytest.approx(1.08)
@@ -198,7 +198,7 @@ def test_ac_st_02_rule_changes_are_audited(costing_env):
     e.put(f"/category-rules/{cat.id}", {"mode": "multiply", "value": 1.07})
     e.put(f"/category-rules/{cat.id}", {"mode": None, "value": None})
     actions = [a.action for a in e.audit_rows("costing_category_rules", cat.id)]
-    assert actions == ["INSERT", "UPDATE", "DELETE"]
+    assert actions == ["CREATE", "UPDATE", "DELETE"]
 
 
 def test_ac_st_02_rule_writes_need_manage_and_cost_view(costing_env):
