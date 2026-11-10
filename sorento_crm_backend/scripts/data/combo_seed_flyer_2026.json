@@ -5,7 +5,9 @@
   "page": 2,
   "host_code": "SRTBT1860-16",
   "combo_name": "SRTBT1860-16",
-  "aka": [],
+  "aka": [
+   "BATHTUB COMBO"
+  ],
   "combo_description": "<p><strong>Free Standing Bathtub</strong></p><p><strong>With Drainer &amp; Overflow</strong></p><p><strong>Material : Acrylic</strong></p><p><strong>L1600xW780xH800mm</strong></p>",
   "components": [],
   "choice_groups": [],
@@ -61,7 +63,9 @@
   "page": 2,
   "host_code": "SRTJC850",
   "combo_name": "SRTJC850",
-  "aka": [],
+  "aka": [
+   "BATHTUB COMBO"
+  ],
   "combo_description": "<p><strong>Free Standing Bathtub</strong></p><p><strong>With Drainer &amp; Overflow</strong></p><p><strong>Material : Acrylic</strong></p><p><strong>L1800xW890xH780mm</strong></p>",
   "components": [],
   "choice_groups": [],
@@ -173,7 +177,9 @@
   "page": 2,
   "host_code": "SRTBT1846",
   "combo_name": "SRTBT1846",
-  "aka": [],
+  "aka": [
+   "BATHTUB COMBO"
+  ],
   "combo_description": "<p><strong>Free Standing Bathtub</strong></p><p><strong>With Drainer &amp; Overflow</strong></p><p><strong>Material : Acrylic</strong></p><p><strong>L1700xW790xH740mm</strong></p>",
   "components": [],
   "choice_groups": [],
@@ -1685,7 +1691,9 @@
   "page": 4,
   "host_code": "SRTJC2025",
   "combo_name": "SRTJC2025",
-  "aka": [],
+  "aka": [
+   "BATHTUB COMBO"
+  ],
   "combo_description": "<p><strong>Bathtub with</strong></p><p><strong>Massage Jet</strong></p><p><strong>With Drainer &amp; Overflow</strong></p><p><strong>Material : Acrylic</strong></p><p><strong>L1800xW1300xH680mm</strong></p>",
   "components": [],
   "choice_groups": [],
@@ -1714,7 +1722,9 @@
   "page": 4,
   "host_code": "SRTJC8030",
   "combo_name": "SRTJC8030",
-  "aka": [],
+  "aka": [
+   "BATHTUB COMBO"
+  ],
   "combo_description": "<p><strong>Bathtub with</strong></p><p><strong>Massage Jet</strong></p><p><strong>With Drainer &amp; Overflow</strong></p><p><strong>Material : Acrylic</strong></p><p><strong>L1600xW750xH600mm</strong></p>",
   "components": [],
   "choice_groups": [],
@@ -1933,7 +1943,9 @@
   "page": 8,
   "host_code": "SRTWC6021-SH-UF",
   "combo_name": "SRTWC6021-SH-UF + SRTFP4001 + SRTFC2043",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO"
+  ],
   "combo_description": "<p><strong>Twister Flushing Technology</strong></p><p><strong>D : L490xW370xH355mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -1958,7 +1970,9 @@
   "page": 8,
   "host_code": "SRTWC6021-SH-UF",
   "combo_name": "SRTWC6021-SH-UF + SRTFV2011 + SRTFC2044",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO 2"
+  ],
   "combo_description": "<p><strong>Twister Flushing Technology</strong></p><p><strong>D : L490xW370xH355mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -1983,7 +1997,9 @@
   "page": 8,
   "host_code": "SRTWC6011-RL-BL",
   "combo_name": "SRTWC6011-RL-BL + SRTFP4001-BL + SRTFC2043",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung</strong></p><p><strong>Washdown Flushing Technology</strong></p><p><strong>D : L485xW365xH370mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2008,7 +2024,9 @@
   "page": 8,
   "host_code": "SRTWC6022-SH-UF",
   "combo_name": "SRTWC6022-SH-UF + SRTFP4002 + SRTFC2043",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO"
+  ],
   "combo_description": "<p><strong>Twister Flushing Technology</strong></p><p><strong>D : L510xW350xH350mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2033,7 +2051,9 @@
   "page": 8,
   "host_code": "SRTWC6022-SH-UF",
   "combo_name": "SRTWC6022-SH-UF + SRTFV2011 + SRTFC2044",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO 2"
+  ],
   "combo_description": "<p><strong>Wall Hung</strong></p><p><strong>Twister Flushing Technology</strong></p><p><strong>D : L510xW350xH350mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2058,7 +2078,9 @@
   "page": 8,
   "host_code": "SRTWC6011-RL-BL",
   "combo_name": "SRTWC6011-RL-BL + SRTFV2012-BL + SRTFC2044",
-  "aka": [],
+  "aka": [
+   "WALL HUNG WATER CLOSET COMBO 2"
+  ],
   "combo_description": "<p><strong>Wall Hung</strong></p><p><strong>Washdown Flushing Technology</strong></p><p><strong>D : L485xW365xH370mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2083,7 +2105,9 @@
   "page": 8,
   "host_code": "SRTWC6031-SH-UF",
   "combo_name": "SRTWC6031-SH-UF + SRTFP4001 + SRTFC2031",
-  "aka": [],
+  "aka": [
+   "FLOOR STANDING WATER CLOSET COMBO"
+  ],
   "combo_description": "<p><strong>Floor Standing</strong></p><p><strong>Twister Flushing Technology</strong></p><p><strong>D : L560xW360xH420mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2108,7 +2132,9 @@
   "page": 8,
   "host_code": "SRTWC6031-SH-UF",
   "combo_name": "SRTWC6031-SH-UF + SRTFV2011 + SRTFC2031",
-  "aka": [],
+  "aka": [
+   "FLOOR STANDING WATER CLOSET COMBO 2"
+  ],
   "combo_description": "<p><strong>Floor Standing</strong></p><p><strong>Twister Flushing Technology</strong></p><p><strong>D : L560xW360xH420mm</strong></p><p><strong>P-Trap : Horizontal Outlet 180mm</strong></p><p><strong>*UF Seat Cover</strong></p>",
   "components": [
    {
@@ -2133,7 +2159,9 @@
   "page": 9,
   "host_code": "SRTUB206",
   "combo_name": "SRTUB206 + SRTUFV101",
-  "aka": [],
+  "aka": [
+   "URINAL BOWL COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung Urinal Bowl</strong></p><p><strong>D : L300xW350xH680mm</strong></p><p><strong>Top Inlet</strong></p>",
   "components": [
    {
@@ -2182,7 +2210,9 @@
   "page": 9,
   "host_code": "SRTUB6503-NEW",
   "combo_name": "SRTUB6503-NEW + SRTUFV101",
-  "aka": [],
+  "aka": [
+   "URINAL BOWL COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung Urinal Bowl</strong></p><p><strong>D : L375xW320xH680mm</strong></p><p><strong>Top Inlet</strong></p>",
   "components": [
    {
@@ -2224,7 +2254,9 @@
   "page": 9,
   "host_code": "SRTUB6203",
   "combo_name": "SRTUB6203 + SRTUFV101",
-  "aka": [],
+  "aka": [
+   "URINAL BOWL COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung Urinal Bowl</strong></p><p><strong>D : L390xW350xH765mm</strong></p><p><strong>Top Inlet</strong></p>",
   "components": [
    {
@@ -2245,7 +2277,9 @@
   "page": 9,
   "host_code": "SRTUB6203-BI",
   "combo_name": "SRTUB6203-BI + SRTFV1001",
-  "aka": [],
+  "aka": [
+   "URINAL BOWL COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung Urinal Bowl</strong></p><p><strong>D : L390xW350xH765mm</strong></p><p><strong>Back Inlet</strong></p>",
   "components": [
    {
@@ -2266,7 +2300,9 @@
   "page": 9,
   "host_code": "SRTUB5202",
   "combo_name": "SRTUB5202 + SRTUFV101",
-  "aka": [],
+  "aka": [
+   "URINAL BOWL COMBO"
+  ],
   "combo_description": "<p><strong>Wall Hung Urinal Bowl</strong></p><p><strong>D : L350xW360xH580mm</strong></p><p><strong>Top Inlet</strong></p>",
   "components": [
    {
@@ -2373,7 +2409,9 @@
   "page": 13,
   "host_code": "SRTBF11412",
   "combo_name": "SRTBF11412",
-  "aka": [],
+  "aka": [
+   "BATHROOM FURNITURE COMBO"
+  ],
   "combo_description": "<p><strong>SRTBF11412</strong> (CABINET)</p><p>L370xW360xH400mm</p><p><strong>SRTWB248</strong> (BASIN)</p><p>L430xW360xH150mm</p><p><strong>MIRROR</strong></p><p>L400xH500mm</p><p><strong>SHELF</strong></p><p>L400xH120mm</p><p><strong>SRTWT7301-BL</strong></p><p>(BASIN COLD TAP)</p><p><strong>SRTW2600</strong></p><p>(POP UP WASTE)</p>",
   "components": [
    {
@@ -4009,7 +4047,7 @@
   "flyer": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
   "page": 20,
   "host_code": "SRTBF11834",
-  "combo_name": "SRTBF11834 + SRTMR502-BL",
+  "combo_name": "SRTBF11834 + SRTMR502-BL (p20)",
   "aka": [],
   "combo_description": "<p><strong>SRTBF11834</strong> (CABINET)</p><p>L800xW500xH300mm</p><p><strong>SRTTT834</strong> (TABLE TOP)</p><p>L800xW500xH60mm</p><p><strong>SRTWB1413-BL / SRTWB1409-BL</strong></p><p><strong>SRTWB1086-RG / SRTWB1096-RG</strong></p><p>(CERAMIC BASIN)</p><p><strong>SRTMR502-BL</strong> (MIRROR)</p><p>L800xH600mm</p><p><strong>SRTWT7203-BL</strong> (TAP)</p><p><strong>SRTW5102-BL</strong></p><p>(POP UP WASTE)</p>",
   "components": [
@@ -4290,7 +4328,8 @@
   "host_code": "SRTBF11834",
   "combo_name": "SRTBF11834 + SRTMR502-BL (p21)",
   "aka": [
-   "SRTBF11834 + SRTMR502-BL (p9)"
+   "SRTBF11834 + SRTMR502-BL (p9)",
+   "SRTBF11834 + SRTMR502-BL"
   ],
   "combo_description": "<p><strong>SRTBF11834</strong> (CABINET)</p><p>L800xW500xH300mm</p><p><strong>SRTWB1421-BL /</strong></p><p><strong>SRTWB1409-BL /</strong></p><p><strong>SRTWB1086-RG /</strong></p><p><strong>SRTWB1096-RG</strong></p><p>(BASIN)</p><p><strong>SRTMR502-BL</strong> (MIRROR)</p><p>L800xH600mm</p><p><strong>SRTWT8303-RG</strong></p><p>(BASIN COLD TAP)</p><p><strong>SRTW1200-BL</strong></p><p>(POP UP WASTE)</p>",
   "components": [
@@ -4544,7 +4583,9 @@
   "page": 24,
   "host_code": "SRTWB1419-GY",
   "combo_name": "SRTWB1419-GY + ADD ON",
-  "aka": [],
+  "aka": [
+   "CERAMIC BASIN COMBO"
+  ],
   "combo_description": "<p><strong>SRTWB1419-GY</strong></p><p><strong>D: L610xW340xH110mm</strong></p><p><strong>Golden Yellow</strong></p>",
   "components": [
    {
