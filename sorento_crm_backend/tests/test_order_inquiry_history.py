@@ -74,6 +74,14 @@ def _world(db, *, item_codes=("ZZT-SRTSP131", "ZZT-CKS1050", "ZZT-SRT320-CR")):
     }
 
 
+def _other_inquiry(db, world, item_code):
+    """A second OI (its own order: one OI per sales order) with one row."""
+    order = _adopted_order(db, world["company_id"], f"ZZTSO{_uid()[:8]}")
+    line = _line(db, world["company_id"], order, world["product"])
+    inquiry = _inquiry(db, world["company_id"], order, raised_by=world["cs"].id, raised_at=RAISED_AT)
+    return _row(db, world["company_id"], inquiry, line, item_code)
+
+
 def _get(db, user_id, inquiry_id, permissions=READ_ONLY):
     client, originals = _client(db, user_id, permissions)
     try:
@@ -144,23 +152,21 @@ def test_a_press_filed_under_another_ois_row_is_found_and_never_leaks_that_oi():
     own row in it."""
     with blank_session() as db:
         world = _world(db, item_codes=("ZZT-MINE",))
-        other = _inquiry(
-            db, world["company_id"], world["order"], raised_by=world["cs"].id,
-            raised_at=RAISED_AT,
-        )
-        foreign = _row(db, world["company_id"], other, world["line"], "ZZT-OTHER-OI")
+        foreign = _other_inquiry(db, world, "ZZT-OTHER-OI")
+        mine = world["rows"][0]
         db.flush()
-        ProjectOrderInquiryService(db).acknowledge_rows(
-            [foreign.id, world["rows"][0].id], actor_user_id=world["buyer"].id
+        # Exactly the row `acknowledge_rows` writes for a two-OI press
+        # (project_order_inquiry_service.py, the Confirm `log_audit`), filed under the
+        # OTHER OI's row - which row comes first is the query's order, so it is pinned here.
+        log_audit(
+            db, "project_order_inquiry_rows", foreign.id, "UPDATE",
+            old_values={"rows": [{"id": foreign.id, "ack_state": "awaiting"},
+                                 {"id": mine.id, "ack_state": "awaiting"}]},
+            new_values={"ack_state": "acknowledged", "row_ids": [foreign.id, mine.id]},
+            user_id=world["buyer"].id, company_id=world["company_id"],
+            description="Confirm: 2 row(s) marked Done by hand",
         )
         db.commit()
-        audit = (
-            db.query(AuditLog)
-            .filter(AuditLog.entity_type == "project_order_inquiry_rows")
-            .filter(AuditLog.entity_id == foreign.id)
-            .one()
-        )
-        assert audit.entity_id == foreign.id
 
         response = _get(db, world["buyer"].id, world["inquiry"].id)
         assert response.status_code == 200, response.text
@@ -190,22 +196,22 @@ def test_a_press_on_one_oi_stamps_that_oi_as_root_and_a_press_across_two_does_no
             assert audit.root_entity_type == "project_order_inquiries"
             assert audit.root_entity_id == world["inquiry"].id
 
-        other = _inquiry(
-            db, world["company_id"], world["order"], raised_by=world["cs"].id,
-            raised_at=RAISED_AT,
-        )
-        foreign = _row(db, world["company_id"], other, world["line"], "ZZT-C")
+        foreign = _other_inquiry(db, world, "ZZT-C")
         db.flush()
-        service.acknowledge_rows([foreign.id, world["rows"][0].id], actor_user_id=world["buyer"].id)
+        # rows[1] is still confirmed, so take a fresh pair: one row of each OI.
+        service.unacknowledge_rows([world["rows"][1].id], actor_user_id=world["buyer"].id)
+        db.flush()
+        service.acknowledge_rows([foreign.id, world["rows"][1].id], actor_user_id=world["buyer"].id)
         db.flush()
         across = (
             db.query(AuditLog)
             .filter(AuditLog.entity_type == "project_order_inquiry_rows")
-            .filter(AuditLog.entity_id == foreign.id)
+            .filter(AuditLog.new_values["row_ids"].has_key(foreign.id))
             .one()
         )
+        # The default root: the audit row's own entity (whichever row came first).
         assert across.root_entity_type == "project_order_inquiry_rows"
-        assert across.root_entity_id == foreign.id
+        assert across.root_entity_id == across.entity_id
 
 
 def test_raise_link_release_reject_cancel_and_reserve_are_events_too():
