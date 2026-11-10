@@ -1,7 +1,7 @@
 # PLAN: Supplier tab and cost data restricted to purchasing and management
 
-Status: Plan (behaviour card posted on PR #2319, building on the recommendations meanwhile).
-Track: full (RBAC change + data migration).
+Status: Review (built; reviewer + security reviewer + cloud browser pass running). Track: full
+(RBAC change + data migration).
 
 Lane: SUPPLIER-COST-ACCESS. Source: owner + management meeting 9 Nov 2026, relayed 10 Nov.
 
@@ -20,15 +20,22 @@ The tab is already gated (`ProductDetail.tsx:85`, `ProductForm.tsx:99`) on
 so every products viewer (sales, marketing) holds it. Admin/superadmin bypass every check
 (`user_service.py:1591`).
 
-## Roles (from migrations; the live role list could not be read from this sandbox)
+## Answers (crew + owner, 10 Nov 2026)
 
-| Role (name / slug) | Source | Gets `products.cost.view` |
-|---|---|---|
-| superadmin, admin | bypass (`user_service.py:1591`) + named grant | yes |
-| Purchasing, Purchasing Manager Role | named in `428_order_inquiry_ack_state.py:66` | yes (by name) |
-| any role holding `procurement.cost_price_changes.view` (the cpc1 purchasing sweep, `scm.proforma_invoice.upload` holders) | `cpc1_supplier_cost_lists.py:59-66` | yes (derived) |
-| director, management, manager (slugs) | the management set in `236_seed_sla_kpi_view_perm.py:24` | yes (by slug) |
-| salesperson, marketing, CS, dealer/portal_user, integration_% | | no |
+- Q1 (a): new `products.cost.view`, additive. Q3 (a): invoice price stays visible. Q4 (a): the
+  whole Purchase History tab is hidden without it. Q5 (a): Procurement > Product-Suppliers and the
+  supplier Costs tab also need it.
+- Q2, owner confirmed ("I am fine with the cost access rules"): grant by slug to admin, director,
+  purchasing_manager, purchasing, purchasing_executive (superadmin bypasses). Not granted:
+  salesperson, retail:salesperson, portal_user, customer_service, project.customer.service (holds
+  product_suppliers.view + cost_price_changes.view today and loses cost), project_sales_coordinator,
+  project_sales_manager, marketing_executive, marketing_manager, warehouse_manager,
+  warehouse_executive, technical executive, guest. No sweep from an existing slug for that reason.
+- Integrations: none granted. `integration_foundryx_esb` reads cost through its own raw master
+  read (`app/services/master_read_service.py:92`, `app/api/v1/external/ingest.py:92`), unchanged,
+  and is the system that writes cost. MCP and the chatbot never receive cost (MCP strips it;
+  the chatbot's PO last cost keeps its per-contact field reveal on the plain-key path).
+- Dealer portal: the 9 Nov decision replaces PQ1's "the portal sees cost".
 
 ## Surfaces (file:line, current gate -> new gate)
 
@@ -36,7 +43,7 @@ Backend (`sorento_crm_backend/`):
 
 | # | Surface | file:line | Today | After |
 |---|---|---|---|---|
-| B1 | Product list + detail (`cost_price`, also list-query column/filter/sort/export) | `app/api/v1/master_data/products.py:115,286`; `app/schemas/product.py`; `list_query_registry.py:118`; `product_service.py:525` | login | `cost_price` returned as null without the permission; filter/sort on it refused |
+| B1 | Product list + detail (`cost_price`, also list-query column/filter/sort/export) | `app/api/v1/master_data/products.py:115,286`; `app/schemas/product.py`; `list_query_registry.py:118`; `product_service.py:525` | login | `cost_price` returned as null without the permission; filter/sort/export on it refused; create/edit ignore a `cost_price` sent by a non-holder (the form would otherwise wipe it) |
 | B2 | Product purchase history (PO unit cost, supplier, last-cost summary) | `products.py:303`; `product_purchase_history_service.py:44,114` | login | 403 without the permission |
 | B3 | Product-supplier links + cost rows | `app/api/v1/procurement/product_suppliers.py:29,56,128,194-223` | `procurement.product_suppliers.*` | also requires the cost permission |
 | B4 | PO last-cost lookup, staff session | `app/api/v1/procurement/purchase_orders.py:37` | API-key reads only | staff session needs the cost permission; contacts keep field reveal |
