@@ -179,6 +179,8 @@ export type QuotationDocument = {
   /** On a proposal: the quotation made from one of its revisions, when there is one. */
   quotation_document_id?: string | null;
   recipient_party_type?: string | null;
+  /** The role the recipient plays on this project (PROJECT-PARTY-ROLES PR 2). */
+  recipient_role?: string | null;
   current_revision_label?: string | null;
   /** What the next Send prints: "C" on a proposal, "R2" on a quotation or a legacy proposal. */
   next_revision_label?: string | null;
@@ -268,6 +270,14 @@ export type QuotationDocumentBody = Partial<{
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
   recipient_email_snapshot: string | null;
+  /**
+   * PROJECT-PARTY-ROLES PR 2: the "To" chosen from the parties. A party not on the project yet is
+   * linked to it in `recipient_role`; `attn_contact_ids` join the project's stakeholders. Fixed
+   * once revision A is issued.
+   */
+  recipient_party_id: string | null;
+  recipient_role: string | null;
+  attn_contact_ids: string[];
   quotation_purpose: string | null;
   payment_terms: string | null;
   validity: string | null;

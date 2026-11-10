@@ -24,7 +24,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';

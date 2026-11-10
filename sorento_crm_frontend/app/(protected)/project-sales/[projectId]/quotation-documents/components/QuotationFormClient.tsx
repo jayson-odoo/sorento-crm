@@ -52,6 +52,7 @@ import {
   type QuotationScopeEditing,
 } from '../../components/QuotationVersionEditor';
 import { QuotationNameDialog } from '../[documentId]/components/QuotationNameDialog';
+import { QuotationAttnChooser, QuotationRecipientPicker } from './QuotationRecipientPicker';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
 import { useQuotationEditSession } from '../[documentId]/components/useQuotationEditSession';
 import {
@@ -304,6 +305,10 @@ export function QuotationFormClient({
         subject_title: project.data.title ?? '',
         recipient_name_snapshot:
           project.data.customer_name ?? project.data.developer_name ?? '',
+        // The "To" party (PROJECT-PARTY-ROLES PR 2): the developer by default, as before.
+        recipient_party_id: project.data.customer_name
+          ? null
+          : (project.data.developer_party_id ?? null),
         recipient_address_snapshot: '',
         recipient_phone_snapshot: project.data.customer_phone ?? '',
         recipient_email_snapshot: project.data.customer_email ?? '',
@@ -315,14 +320,16 @@ export function QuotationFormClient({
     }
     if (isEdit && saved.data && quotations.data) {
       const document = saved.data;
-      setHeader(
-        Object.fromEntries(
+      setHeader({
+        ...(Object.fromEntries(
           HEADER_FIELDS.map((field) => [
             field,
             (document[field] as string | null) ?? '',
           ]),
-        ) as QuotationDocumentBody,
-      );
+        ) as QuotationDocumentBody),
+        recipient_party_id: document.recipient_party_id ?? null,
+        recipient_role: document.recipient_role ?? null,
+      });
       setScopes(
         document.scopes.map((scope) => ({
           key: scope.id,
@@ -475,6 +482,27 @@ export function QuotationFormClient({
         ? value
         : null;
     });
+    // The "To" party (PROJECT-PARTY-ROLES PR 2): sent when picked or changed. A field the picked
+    // party could not fill here is left out, so the server fills it from the party (and the
+    // project's site address) rather than blanking it.
+    const partyId = header?.recipient_party_id ?? null;
+    const partyChanged = partyId !== (isEdit ? (saved.data?.recipient_party_id ?? null) : null);
+    if (partyId && partyChanged) {
+      body.recipient_party_id = partyId;
+      if (header?.recipient_role) body.recipient_role = header.recipient_role;
+      for (const field of [
+        'recipient_name_snapshot',
+        'recipient_address_snapshot',
+        'recipient_phone_snapshot',
+        'recipient_email_snapshot',
+      ] as const) {
+        if (body[field] === null) delete body[field];
+      }
+    }
+    if (partyId && (header?.attn_contact_ids ?? []).length > 0) {
+      body.recipient_party_id = partyId;
+      body.attn_contact_ids = header?.attn_contact_ids;
+    }
     return body;
   }
 
@@ -567,6 +595,9 @@ export function QuotationFormClient({
     (isEdit && (saved.isLoading || quotations.isLoading)) ||
     !header;
   const failed = isEdit && (saved.isError || (!saved.isLoading && !saved.data));
+
+  // The party is fixed once revision A is issued (owner Q5 a): a new party gets its own proposal.
+  const recipientLocked = isEdit && (saved.data?.issue_count ?? 0) > 0;
 
   const shownDocument: QuotationDocument = {
     ...(saved.data ?? placeholderDocument(projectId)),
@@ -667,6 +698,29 @@ export function QuotationFormClient({
                 setDirty(true);
                 setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
               }}
+              recipientPicker={
+                <QuotationRecipientPicker
+                  projectId={projectId}
+                  siteAddress={project.data?.address ?? null}
+                  value={header ?? {}}
+                  locked={recipientLocked}
+                  onChange={(patch) => {
+                    setDirty(true);
+                    setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                  }}
+                />
+              }
+              attnAction={
+                <QuotationAttnChooser
+                  value={header ?? {}}
+                  partyName={header?.recipient_name_snapshot ?? ''}
+                  locked={recipientLocked}
+                  onChange={(patch) => {
+                    setDirty(true);
+                    setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                  }}
+                />
+              }
             />
 
             {/* The lines, under the letterhead on the same tab, as on the view page. */}
