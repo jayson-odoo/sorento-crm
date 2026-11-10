@@ -76,9 +76,7 @@ import {
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
-  accessoryBoxStyleOf,
   boxColours,
-  effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardIconLayout,
@@ -1419,10 +1417,8 @@ function renderAccessoriesLayer(
   media: TagSheetMedia,
   binding: TagBindingData | null,
 ) {
-  const own = layer.props;
-  if (own.kind !== 'accessories') return null;
-  // The product / combo on this tag may name its own box style (S6): it replaces the design, not the place.
-  const props = effectiveBoxProps(own, accessoryBoxStyleOf(binding, layer));
+  const props = layer.props;
+  if (props.kind !== 'accessories') return null;
   const items = accessoriesOf(binding, layer);
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
   if (props.card) return renderDesignedAccessories({ ...layer, props }, media, items);

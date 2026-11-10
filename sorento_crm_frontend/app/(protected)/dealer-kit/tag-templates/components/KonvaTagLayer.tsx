@@ -21,7 +21,6 @@ import type {
   FeatureIconsLayerProps,
   LayerPadding,
   TagAccessory,
-  TagAccessoryBoxStyle,
   TagLayer,
   TagLayerProps,
   TextLayerProps,
@@ -69,7 +68,6 @@ import {
 import {
   accessoryDesignSamples,
   boxColours,
-  effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardElementsForDesign,
@@ -438,7 +436,6 @@ function LayerContent({
           props={props}
           accessories={display?.accessories}
           editing={display?.accessoryEditing}
-          boxStyle={display?.accessoryBoxStyle}
           cardIcons={display?.cardIcons}
           iconUrls={display?.iconUrls}
           headerHidden={display?.accessoryHeaderHidden}
@@ -1183,10 +1180,9 @@ function AccessoriesContent({
   widthMm,
   heightMm,
   scale,
-  props: ownProps,
+  props,
   accessories,
   editing,
-  boxStyle,
   cardIcons,
   iconUrls,
   headerHidden,
@@ -1200,14 +1196,11 @@ function AccessoriesContent({
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
-  boxStyle?: TagAccessoryBoxStyle | null;
   cardIcons?: FeatureIcon[];
   iconUrls?: Record<string, string>;
   headerHidden?: boolean;
   dropMarker?: boolean;
 }) {
-  // The previewed product / combo may name its own box style: it replaces the design, not the place.
-  const props = effectiveBoxProps(ownProps, boxStyle);
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
   if (props.card) {
     return (

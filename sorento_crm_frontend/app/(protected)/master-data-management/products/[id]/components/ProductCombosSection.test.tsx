@@ -263,12 +263,9 @@ describe('ProductCombosSection', () => {
     };
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
-    // The heading is the label alone. `getAllByText` because "Basin" is also an
-    // option inside every choice-group control on the combo.
-    const headings = screen
-      .getAllByText('Basin')
-      .filter((node) => node.tagName === 'P');
-    expect(headings).toHaveLength(1);
+    // COMBO-SETTINGS-UX owner round 1: a part alone in its group is a fixed part, said plainly,
+    // with no group box and no "pick one".
+    expect(screen.getByText('Only part in "Basin", so it prints as a fixed part.')).toBeInTheDocument();
     expect(screen.queryByText(/pick one/)).toBeNull();
   });
 
@@ -276,12 +273,12 @@ describe('ProductCombosSection', () => {
     combosQuery.value = { data: [COMBO_3_IN_1], isLoading: false, isError: false };
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
-    const controls = screen.getAllByLabelText('Fixed part');
+    const controls = screen.getAllByLabelText('Choice group (only for pick-one parts)');
     expect(controls).toHaveLength(3);
     // Every row offers the vocabulary the combo already uses, deduped - a basin
     // group is a word off the catalogue page, not a list the system can know.
     expect(within(controls[0]).getAllByRole('option').map((o) => o.textContent)).toEqual([
-      'Fixed part',
+      'Choice group (only for pick-one parts)',
       'Basin',
     ]);
 
@@ -293,7 +290,7 @@ describe('ProductCombosSection', () => {
 
     // Clearing it back to empty makes the part fixed again, sent as null rather
     // than as an empty string.
-    fireEvent.change(screen.getAllByLabelText('Fixed part')[1], { target: { value: '' } });
+    fireEvent.change(screen.getAllByLabelText('Choice group (only for pick-one parts)')[1], { target: { value: '' } });
     expect(updatePartMutate).toHaveBeenLastCalledWith({
       partId: BASIN_WHITE.id,
       write: { choice_group: null },

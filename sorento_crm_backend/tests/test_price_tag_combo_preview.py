@@ -227,7 +227,7 @@ def test_ac_5_3_a_combo_id_adds_the_same_combo_object_as_the_tag_data(api):
     assert response.status_code == 200, response.text
     combo = response.json()["combo"]
     assert combo is not None
-    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "accessory_box_style", "choices", "upgrades"}
+    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "accessory_box_style", "choices", "upgrades", "main_label", "parts_line", "part_labels"}
     assert combo["id"] == cb.id
     assert combo["name"] == "ZZT Preview pack"
     assert combo["description"] == "Preview text"

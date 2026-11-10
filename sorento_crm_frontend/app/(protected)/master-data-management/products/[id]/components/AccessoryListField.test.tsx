@@ -27,14 +27,17 @@ vi.mock('@dnd-kit/core', async (orig) => {
 });
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+type Opt = { value: string; label: string; group?: string };
+const pickerFetch = vi.hoisted(() => ({ current: null as null | ((q: string, p: number) => Promise<Opt[]>) }));
 // The real picker is a Radix popover; a native select stands in for the pick.
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     onChange: (v: string) => void;
-    fetchOptions: (q: string, p: number) => Promise<{ value: string; label: string }[]>;
+    fetchOptions: (q: string, p: number) => Promise<Opt[]>;
     'aria-label'?: string;
   }) => {
-    const [opts, setOpts] = React.useState<{ value: string; label: string }[]>([]);
+    const [opts, setOpts] = React.useState<Opt[]>([]);
+    pickerFetch.current = props.fetchOptions;
     React.useEffect(() => {
       void props.fetchOptions('', 0).then(setOpts);
     }, []);
@@ -46,7 +49,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       >
         <option value="" />
         {opts.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} data-group={o.group}>
             {o.label}
           </option>
         ))}
@@ -111,13 +114,68 @@ describe('AccessoryListField', () => {
     );
   });
 
+  it('has ONE add control and no Box style control (owner 10 Nov)', async () => {
+    renderField();
+    await screen.findByText('Tap');
+    expect(screen.getAllByLabelText(/^Add /)).toHaveLength(1);
+    expect(screen.getByLabelText('Add accessory or product to Accessories')).toBeInTheDocument();
+    expect(screen.queryByText('Box style')).toBeNull();
+    expect(screen.queryByLabelText('Box style')).toBeNull();
+  });
+
+  it('the one picker offers library accessories and catalogue products, grouped', async () => {
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [{ id: 'p7', product_code: 'SRT-TAP', product_name: 'Basin tap' }],
+    } as never);
+    renderField();
+    await screen.findByText('Tap');
+    const picker = screen.getByLabelText('Add accessory or product to Accessories');
+    await waitFor(() => expect(picker.querySelector('option[value="product:p7"]')).not.toBeNull());
+    expect(picker.querySelector('option[value="accessory:a3"]')?.getAttribute('data-group')).toBe('Accessories');
+    expect(picker.querySelector('option[value="product:p7"]')?.getAttribute('data-group')).toBe('Products');
+    // Already listed ones are not offered again (asked once the list has loaded, as an open picker does).
+    const values = (await pickerFetch.current!('', 0)).map((o) => o.value);
+    expect(values).toContain('accessory:a3');
+    expect(values).not.toContain('accessory:a1');
+  });
+
+  it('only the first page carries accessories; later pages are products only', async () => {
+    renderField();
+    await screen.findByText('Tap');
+    await waitFor(() => expect(service.searchAccessories).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(getProducts)).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0 }));
+    const fetchPage = pickerFetch.current!;
+    service.searchAccessories.mockClear();
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [{ id: 'p8', product_code: 'SRT-W', product_name: 'Waste' }],
+    } as never);
+    const page2 = await fetchPage('', 1);
+    expect(service.searchAccessories).not.toHaveBeenCalled();
+    expect(page2.map((o) => o.value)).toEqual(['product:p8']);
+  });
+
+  it('a discontinued product stays pickable with a grey "Discontinued" hint (owner 7 Nov)', async () => {
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [
+        { id: 'p7', product_code: 'SRT-TAP', product_name: 'Basin tap', is_discontinued: false },
+        { id: 'p8', product_code: 'AP8650B', product_name: 'Old basket', is_discontinued: true },
+      ],
+    } as never);
+    renderField();
+    await screen.findByText('Tap');
+    const options = await pickerFetch.current!('', 0);
+    const old = options.find((o) => o.value === 'product:p8') as { description?: string } | undefined;
+    expect(old?.description).toBe('Discontinued');
+    expect((options.find((o) => o.value === 'product:p7') as { description?: string }).description).toBeUndefined();
+  });
+
   it('add saves the list with the picked id appended', async () => {
     service.replaceOwnerAccessories.mockResolvedValue([TAP, WASTE, TRAP]);
     renderField();
     await screen.findByText('Tap');
-    const picker = screen.getByLabelText(/Add accessory/);
-    await waitFor(() => expect(picker.querySelector('option[value="a3"]')).not.toBeNull());
-    fireEvent.change(picker, { target: { value: 'a3' } });
+    const picker = screen.getByLabelText('Add accessory or product to Accessories');
+    await waitFor(() => expect(picker.querySelector('option[value="accessory:a3"]')).not.toBeNull());
+    fireEvent.change(picker, { target: { value: 'accessory:a3' } });
     await waitFor(() =>
       expect(service.replaceOwnerAccessories).toHaveBeenCalledWith('product', 'p1', [
         { accessory_id: 'a1' },
@@ -136,9 +194,9 @@ describe('AccessoryListField', () => {
     renderField();
     await screen.findByText('SRT-SK1');
     expect(screen.getByText(/LP: RM/)).toBeInTheDocument();
-    const picker = screen.getByLabelText(/Add product/);
-    await waitFor(() => expect(picker.querySelectorAll('option').length).toBe(2));
-    fireEvent.change(picker, { target: { value: 'p7' } });
+    const picker = screen.getByLabelText('Add accessory or product to Accessories');
+    await waitFor(() => expect(picker.querySelector('option[value="product:p7"]')).not.toBeNull());
+    fireEvent.change(picker, { target: { value: 'product:p7' } });
     await waitFor(() =>
       expect(service.replaceOwnerAccessories).toHaveBeenCalledWith('product', 'p1', [
         { product_id: 'p9' },
@@ -159,7 +217,8 @@ describe('AccessoryListField', () => {
     renderField(false);
     await screen.findByText('Tap');
     expect(screen.queryByLabelText('Remove Tap')).toBeNull();
-    expect(screen.queryByLabelText(/Add accessory/)).toBeNull();
+    expect(screen.queryByLabelText(/^Add /)).toBeNull();
+    expect(screen.queryByText('Box style')).toBeNull();
   });
 
   it('a drag reorder saves the new order', async () => {
@@ -175,7 +234,7 @@ describe('AccessoryListField', () => {
     );
   });
 
-  it('does not offer the host product in the Add product options', async () => {
+  it('does not offer the host product in the add options', async () => {
     service.listOwnerAccessories.mockResolvedValue([]);
     vi.mocked(getProducts).mockResolvedValue({
       data: [
@@ -184,8 +243,8 @@ describe('AccessoryListField', () => {
       ],
     } as never);
     renderField(true, 'p1');
-    const picker = await screen.findByLabelText(/Add product/);
-    await waitFor(() => expect(picker.querySelector('option[value="p7"]')).not.toBeNull());
-    expect(picker.querySelector('option[value="p1"]')).toBeNull();
+    const picker = await screen.findByLabelText('Add accessory or product to Accessories');
+    await waitFor(() => expect(picker.querySelector('option[value="product:p7"]')).not.toBeNull());
+    expect(picker.querySelector('option[value="product:p1"]')).toBeNull();
   });
 });
