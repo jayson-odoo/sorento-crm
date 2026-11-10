@@ -24,6 +24,7 @@
  */
 
 import { isRich, richPlainText } from './rich-text';
+import { comboPartField, comboPartsHtml } from './combo-parts';
 import { comboPositions } from './combo-slots';
 import { formatTagPrice } from './price-badge';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
@@ -51,6 +52,7 @@ export type MergeFieldGroup =
   | 'Line'
   | 'Combo'
   | 'Combo positions'
+  | 'Parts'
   | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
@@ -66,6 +68,8 @@ export interface MergeField {
   /** What a person calls the field. Never the raw path. */
   label: string;
   group: MergeFieldGroup;
+  /** The picker shows the label alone (a combo part's token carries an id nobody should read). */
+  hideToken?: boolean;
 }
 
 /** One key of the spec registry, as `GET /dealer-kit/spec-keys` answers it. */
@@ -201,6 +205,8 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
   { path: 'combo.free_items', label: 'Combo accessories included', group: 'Combo' },
+  // COMBO-SETTINGS-UX: every part, printed through the combo's own "Each part prints as" line.
+  { path: 'combo.parts', label: 'All parts as a list', group: 'Combo' },
   // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
   { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
   { path: 'line.area', label: 'Area', group: 'Spec sheet' },
@@ -298,6 +304,20 @@ function resolvePath(
     const key = path.slice('spec.'.length);
     const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
+  }
+
+  // COMBO-SETTINGS-UX: a per-part field of the combo description, tied to the part's product.
+  const partValue = comboPartField(data, path);
+  if (partValue !== null) return partValue;
+
+  if (path === 'combo.all_parts') {
+    // "All parts (one line each)" before it is inserted: the default line for every part.
+    return richPlainText(comboPartsHtml(data, true));
+  }
+
+  if (path === 'combo.parts') {
+    // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).
+    return richPlainText(comboPartsHtml(data));
   }
 
   if (path === 'combo.name' || path === 'combo.description' || path === 'combo.free_items') {

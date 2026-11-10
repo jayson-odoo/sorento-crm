@@ -492,11 +492,13 @@ describe('Combo merge tokens (AC-4.2)', () => {
       'combo.description',
       'combo.free_items',
       'combo.name',
+      'combo.parts',
     ]);
     expect(comboFields.map((field) => field.token).sort()).toEqual([
       '{{combo.description}}',
       '{{combo.free_items}}',
       '{{combo.name}}',
+      '{{combo.parts}}',
     ]);
     expect(comboFields.every((field) => field.label && !field.label.includes('combo.'))).toBe(true);
   });

@@ -15,7 +15,6 @@ import {
   accessoryCardInner,
   accessoryChrome,
   accessoryHeaderHeight,
-  partAtSlot,
   accessoryLineStyle,
   cardSize,
   type AccessoryBoxLayout,
@@ -34,9 +33,7 @@ import type {
   CardLayout,
   FooterLayout,
   TagAccessory,
-  TagAccessoryBoxStyle,
   TagBindingData,
-  TagLayerProps,
   TextLayerProps,
 } from './tag-template-types';
 import { defaultAccessoriesProps } from './tag-template-types';
@@ -1233,46 +1230,3 @@ export function accessoryDesignChanged(props: AccessoriesLayerProps, changes: Pa
   return designKey(accessoryDesign({ ...props, ...changes })) !== designKey(accessoryDesign(props));
 }
 
-/**
- * The box style the previewed owner names, branching exactly like `accessoriesOf`: a position picked
- * reads that part's; a request line's part (-1 = the main product's row) that part's; a request line its
- * own (already resolved); a product preview with a combo the combo's (never the product's), else the
- * product's. Null when there is none, on an older payload, or with no data.
- */
-export function accessoryBoxStyleOf(
-  data: TagBindingData | null | undefined,
-  layer: { props?: TagLayerProps } | undefined,
-): TagAccessoryBoxStyle | null {
-  if (!data) return null;
-  const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
-  // An owner's box style styles its free items; an Upgrades box keeps its own design.
-  if (props?.list === 'upgrades') return null;
-  const slot = props?.subjectSlot;
-  if (slot && (data.kind === 'line' || data.kind === 'product')) {
-    const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
-    return partAtSlot(slots, slot)?.accessory_box_style ?? null;
-  }
-  const part = props?.subjectPart;
-  if (part !== undefined && data.kind === 'line') {
-    if (part === -1) return data.line.slots?.main?.accessory_box_style ?? null;
-    return data.line.parts[part]?.accessory_box_style ?? null;
-  }
-  if (data.kind === 'line') return data.line.accessory_box_style ?? null;
-  if (data.kind === 'product') {
-    const combo = data.product.combo;
-    if (combo) return combo.accessory_box_style ?? null;
-    return data.product.accessory_box_style ?? null;
-  }
-  return null;
-}
-
-/** The props a box draws: its own, or with the previewed owner's box style applied (position, size,
- *  "Reads from" and its own `presetId` kept). */
-export function effectiveBoxProps(
-  props: AccessoriesLayerProps,
-  style: TagAccessoryBoxStyle | null | undefined,
-): AccessoriesLayerProps {
-  return style
-    ? applyAccessoryDesign(props, style.design as unknown as AccessoryDesign, props.presetId ?? null)
-    : props;
-}
