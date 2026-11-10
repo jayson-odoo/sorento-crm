@@ -83,12 +83,13 @@ const SELF_TOKEN = /\{\{\s*combo\.(?:parts|description)\s*\}\}/g;
 const EMPTY_BRACKETS = /(?:\s|&nbsp;)*\((?:\s|&nbsp;)*\)/g;
 
 /** The whole list as rich HTML, '' when the line has no combo or no parts. */
-export function comboPartsHtml(data: TagBindingData | null | undefined): string {
+/** `defaultLine`: the default part line whatever the combo stores ("All parts" before insert). */
+export function comboPartsHtml(data: TagBindingData | null | undefined, defaultLine = false): string {
   if (!data) return '';
   const combo = data.kind === 'line' ? data.line.combo : data.kind === 'product' ? data.product.combo : null;
   const listed = listedParts(data);
   if (!combo || listed.length === 0) return '';
-  const own = combo.parts_line?.trim() ? combo.parts_line : DEFAULT_PARTS_LINE;
+  const own = !defaultLine && combo.parts_line?.trim() ? combo.parts_line : DEFAULT_PARTS_LINE;
   const template = toEditorHtml(own).replace(SELF_TOKEN, '');
   // One chunk per paragraph, so a paragraph that only held an empty field can be dropped.
   const chunks = template.split(/(?<=<\/p>)/);

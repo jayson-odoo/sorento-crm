@@ -252,6 +252,9 @@ describe('description fields (owner ruling 20:1x: ONE description box)', () => {
     const label = editorProps.last?.mergeFieldLabel as (path: string) => string | null;
     expect(label('part.main.code')).toBe('CABINET - SRTBF11829: code');
     expect(label(`${partRef('p-basin')}.label`)).toBe('BASIN - SRTWB2380: label');
+    // crew F4: the old list and the other combo fields get readable chips too.
+    expect(label('combo.parts')).toBe('All parts (old list)');
+    expect(label('combo.name')).toBe('Combo name');
   });
 
   it("the picker's preview data falls back to this combo's parts by code (review S3)", () => {

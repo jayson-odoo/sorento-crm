@@ -5,7 +5,7 @@
  * still shows the description as it prints, from the combo's own tag data
  * (`GET /dealer-kit/products/{host}/tag-data?combo_id=`).
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -45,6 +45,25 @@ vi.mock('@/app/(protected)/dealer-kit/services/tagDataService', async (original)
   ...(await original<Record<string, unknown>>()),
   previewTags,
   getProductTagData,
+}));
+
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+    'aria-label'?: string;
+    placeholder?: string;
+  }) => (
+    <select aria-label={props['aria-label']} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+      <option value="">{props.placeholder}</option>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
 }));
 
 import { ComboTagPreview } from './ComboTagPreview';
@@ -205,5 +224,39 @@ describe('the description always shows with this combo\'s real values', () => {
     view.rerender(tree());
     expect(await screen.findByText('No price tag template linked')).toBeInTheDocument();
     expect(screen.queryByTestId('design-viewer')).toBeNull();
+  });
+
+  it('"The description prints as:" follows the TAP pick, like the drawn tag (crew F1)', async () => {
+    const T1 = 'aaaaaaaa-0000-0000-0000-000000000001';
+    const T2 = 'aaaaaaaa-0000-0000-0000-000000000002';
+    const tapCombo = {
+      ...combo,
+      parts: [
+        { id: 'x1', combo_id: 'combo-3', product_id: T1, code: 'SRTKT1633SS-BL', product_name: 'a', dimensions: null, choice_group: 'TAP', sort_order: 0 },
+        { id: 'x2', combo_id: 'combo-3', product_id: T2, code: 'SRTKT1634SS-BL', product_name: 'b', dimensions: null, choice_group: 'TAP', sort_order: 1 },
+      ],
+    };
+    getProductTagData.mockResolvedValue({
+      ...BF_DATA,
+      slots: {
+        ...BF_DATA.slots,
+        groups: [{ role: 'TAP', size: 2, picks: [
+          { product_id: T1, code: 'SRTKT1633SS-BL', name: 'a', dimensions: '' },
+          { product_id: T2, code: 'SRTKT1634SS-BL', name: 'b', dimensions: '' },
+        ] }],
+      },
+    });
+    state.links = [link({})];
+    answerWith([{ id: 'code', type: 'text', slot_binding: 'code', props: { kind: 'text', text: '' } }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ComboTagPreview combo={tapCombo as never} description="<p>Tap: [{{group.544150.code}}]</p>" />
+      </QueryClientProvider>,
+    );
+    // No pick: the TAP field prints nothing.
+    expect(await screen.findByText('Tap: []')).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText('Preview TAP'), { target: { value: T2 } });
+    expect(await screen.findByText('Tap: [SRTKT1634SS-BL]')).toBeInTheDocument();
   });
 });

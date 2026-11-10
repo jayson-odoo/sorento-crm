@@ -121,6 +121,7 @@ export function partFieldCatalog(parts: ComboPartLike[], main: MainPartLike): Me
     token: `{{${ALL_PARTS_PATH}}}`,
     label: 'All parts (one line each)',
     group: 'Parts',
+    hideToken: true,
   };
   return [
     all,
@@ -130,6 +131,7 @@ export function partFieldCatalog(parts: ComboPartLike[], main: MainPartLike): Me
         token: `{{${ref}.${field}}}`,
         label: `${name}: ${label}`,
         group: 'Parts' as const,
+        hideToken: true,
       })),
     ),
   ];

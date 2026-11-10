@@ -185,6 +185,26 @@ export function withDrafts(
   } as TagBindingData;
 }
 
+/** `binding` as a line with these picks prints: each group holds only its picked option (none
+ *  picked: empty), as the drawn tag places them (crew F1). The combo's own tag data lists every option. */
+export function withPicks(binding: TagBindingData | null, picks: Record<string, string>): TagBindingData | null {
+  if (!binding || binding.kind !== 'product' || !binding.product.slots) return binding;
+  const slots = binding.product.slots;
+  return {
+    ...binding,
+    product: {
+      ...binding.product,
+      slots: {
+        ...slots,
+        groups: slots.groups.map((group) => ({
+          ...group,
+          picks: group.picks.filter((pick) => !!picks[group.role] && pick.product_id === picks[group.role]),
+        })),
+      },
+    },
+  } as TagBindingData;
+}
+
 /** A layer stand-in, so a rich description splices `{{combo.parts}}` with its formatting. */
 const DESCRIPTION_LAYER = { props: { kind: 'text', text: '' } } as unknown as Pick<TagLayer, 'props'>;
 
@@ -263,7 +283,8 @@ export function ComboTagPreview({
   // The server draws the line (slots, parts, photos, prices) exactly as the request preview and
   // the PDF do; only a published default can be drawn.
   const preview = useTagPreview(line, !!link && link.published);
-  const real = useComboTagBinding(combo);
+  const loaded = useComboTagBinding(combo);
+  const real = useMemo(() => withPicks(loaded, picks), [loaded, picks]);
   useEffect(() => {
     onBinding?.(real);
   }, [real, onBinding]);

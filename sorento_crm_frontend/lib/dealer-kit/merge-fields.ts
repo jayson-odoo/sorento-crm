@@ -68,6 +68,8 @@ export interface MergeField {
   /** What a person calls the field. Never the raw path. */
   label: string;
   group: MergeFieldGroup;
+  /** The picker shows the label alone (a combo part's token carries an id nobody should read). */
+  hideToken?: boolean;
 }
 
 /** One key of the spec registry, as `GET /dealer-kit/spec-keys` answers it. */
@@ -307,6 +309,11 @@ function resolvePath(
   // COMBO-SETTINGS-UX: a per-part field of the combo description, tied to the part's product.
   const partValue = comboPartField(data, path);
   if (partValue !== null) return partValue;
+
+  if (path === 'combo.all_parts') {
+    // "All parts (one line each)" before it is inserted: the default line for every part.
+    return richPlainText(comboPartsHtml(data, true));
+  }
 
   if (path === 'combo.parts') {
     // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).

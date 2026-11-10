@@ -147,6 +147,13 @@ const DESCRIPTION_FIELD_GROUPS: MergeFieldGroup[] = ['Combo', 'Parts'];
 /** A description cannot hold itself; the old one-line list is superseded by "All parts" (it still
  *  prints wherever a description already uses it). */
 const DESCRIPTION_OMITS = ['combo.description', 'combo.parts'];
+/** Readable chips for the combo's own fields; the old one-line list keeps printing as it did. */
+const COMBO_CHIP_LABELS: Record<string, string> = {
+  'combo.parts': 'All parts (old list)',
+  'combo.name': 'Combo name',
+  'combo.free_items': 'Combo accessories included',
+  'combo.description': 'Combo description',
+};
 
 /**
  * The combo's positions as the Insert field picker names them ("Fixed 1 code: SRTWB2380"): the main
@@ -218,7 +225,7 @@ function DescriptionField({
     ...combo.parts.map((p) => `${p.product_id}:${p.label ?? ''}:${p.choice_group ?? ''}:${p.is_upgrade ? 1 : 0}`),
   ].join('|');
   const chipLabel = useCallback(
-    (path: string) => partChipLabel(path, combo.parts, main),
+    (path: string) => partChipLabel(path, combo.parts, main) ?? COMBO_CHIP_LABELS[path] ?? null,
     [combo.parts, main],
   );
   const commit = (event: React.FocusEvent<HTMLElement>) => {

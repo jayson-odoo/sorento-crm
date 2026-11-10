@@ -188,16 +188,18 @@ export function InsertFieldDialog({
                       type="button"
                       className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-left text-xs hover:bg-accent"
                       onClick={() => insert(field)}
-                      title={field.token}
+                      title={field.hideToken ? field.label : field.token}
                     >
                       <span className="w-full break-words">{field.label}</span>
                       {/* The FULL token on its own line, wrapping, never clipped. */}
-                      <span
-                        data-testid="merge-field-token"
-                        className="w-full break-all whitespace-normal font-mono text-2xs text-muted-foreground"
-                      >
-                        {field.token}
-                      </span>
+                      {field.hideToken ? null : (
+                        <span
+                          data-testid="merge-field-token"
+                          className="w-full break-all whitespace-normal font-mono text-2xs text-muted-foreground"
+                        >
+                          {field.token}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
