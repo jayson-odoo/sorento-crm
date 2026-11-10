@@ -229,3 +229,15 @@ edit page: the first tab locked ("Opened in another tab / by Ben Test at ..."), 
 the reverse direction kept the locked tab's text as History Version 2 ("Not saved: opened in
 another tab"). The read page showed "Unsaved draft, last edited ... by Aina Test." with Continue
 editing. The second user's edit page was opened by URL (a second tab of the same link).
+
+## Crew pass fixes (11 Nov)
+
+- Step 9 (proposal page kept its cached record after Back from Edit): leaving the form invalidates
+  the record once its leave flush has landed, and the record re-reads on window focus
+  (`refetchOnWindowFocus: 'always'`, `useQuotationDocument`).
+- Step 14 (page still said "Unsaved draft" after Discard): Discard's pending action invalidates the
+  record on commit.
+- The one-off "Continue editing opened the saved values": opening a draft could overtake the
+  leaving form's flush. `openQuotationFormDraft` now waits one task and then for every draft write
+  this browser still has on its way to the same draft (`quotationDocumentService.draftRace.test.ts`).
+  Browser: three Back + Continue editing rounds each reopened on the value just typed.

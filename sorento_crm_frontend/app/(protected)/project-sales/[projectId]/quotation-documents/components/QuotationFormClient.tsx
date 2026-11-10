@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { FileText, History, Mail, Plus, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +27,7 @@ import {
 } from '../../../_shared/hooks/useProjects';
 import { quotationStanding } from '../../../_shared/lib/quotationDecision';
 import {
+  quotationDocumentKey,
   useQuotationDocument,
   useQuotationCoverPreview,
   useQuotationDocumentMutations,
@@ -592,6 +594,8 @@ export function QuotationFormClient({
     subject: 'draft',
     surface: 'inline',
     successMessage: 'Draft discarded',
+    // The proposal page reads "Unsaved draft" off the record: re-read it (crew pass step 14).
+    invalidateKeys: routeDocumentId ? [quotationDocumentKey(projectId, routeDocumentId)] : [],
     onCommitted: () => {
       autosave.forgetLocalCopy();
       router.push(
@@ -601,6 +605,20 @@ export function QuotationFormClient({
       );
     },
   });
+
+  // Leaving the form (Back, the sidebar, a crumb) flushes the last edit into the draft; the
+  // proposal page then has to re-read the record to show "Unsaved draft" (crew pass step 9).
+  // After the flush, so the re-read sees it: `flush` resolves once the save has landed.
+  const queryClient = useQueryClient();
+  const flushRef = React.useRef(autosave.flush);
+  flushRef.current = autosave.flush;
+  React.useEffect(() => {
+    if (!routeDocumentId) return undefined;
+    const key = quotationDocumentKey(projectId, routeDocumentId);
+    return () => {
+      void flushRef.current().finally(() => queryClient.invalidateQueries({ queryKey: key }));
+    };
+  }, [projectId, routeDocumentId, queryClient]);
 
   // The state this page reopened on that the server never got: send it now the form is ready.
   React.useEffect(() => {

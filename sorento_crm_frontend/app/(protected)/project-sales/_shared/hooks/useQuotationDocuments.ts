@@ -75,6 +75,10 @@ export function useQuotationDocument(
     queryKey: quotationDocumentKey(projectId ?? '', documentId ?? ''),
     queryFn: () => getQuotationDocument(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+    // QUOTE-AUTOSAVE: the page's "Unsaved draft" line comes from the record, and the draft can be
+    // written from another tab or person; coming back to the page re-reads it, even inside the
+    // app-wide 30 s fresh window.
+    refetchOnWindowFocus: 'always',
   });
 }
 

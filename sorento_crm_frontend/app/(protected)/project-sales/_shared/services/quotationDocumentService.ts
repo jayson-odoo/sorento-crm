@@ -881,11 +881,39 @@ async function notHolderOr(response: Response, fallback: string): Promise<Error>
   return new DraftNotHolderError(error.message, details);
 }
 
+/**
+ * Draft writes this browser still has on their way, per draft URL (crew pass, 11 Nov). Leaving the
+ * form flushes its last edit; Continue editing a moment later opens the draft. Without this the
+ * open could overtake the flush: the form would open on the older draft, and the flush would then
+ * land under the claim the open had just replaced.
+ */
+const draftWritesInFlight = new Map<string, Set<Promise<unknown>>>();
+
+function trackDraftWrite<T>(url: string, write: Promise<T>): Promise<T> {
+  const writes = draftWritesInFlight.get(url) ?? new Set<Promise<unknown>>();
+  draftWritesInFlight.set(url, writes);
+  const settled = write.then(
+    () => undefined,
+    () => undefined,
+  );
+  writes.add(settled);
+  void settled.then(() => {
+    writes.delete(settled);
+    if (writes.size === 0) draftWritesInFlight.delete(url);
+  });
+  return write;
+}
+
 /** Open the form: claim the draft for this tab, and what to open on (`doc` null: the record). */
 export async function openQuotationFormDraft(
   projectId: string,
   documentId: string | null,
 ): Promise<QuotationFormDraftOpened> {
+  // One task first: on a route change the leaving form's flush reaches its PUT a microtask after
+  // the new page asks to open, in the same commit. Then every write to this draft already on its
+  // way lands first (answered or failed, either way).
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.all([...(draftWritesInFlight.get(draftUrl(projectId, documentId)) ?? [])]);
   const response = await apiFetch(`${draftUrl(projectId, documentId)}/open`, { method: 'POST' });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to open the draft'));
   return response.json();
@@ -912,13 +940,19 @@ export async function saveQuotationFormDraft(
   token: string,
   options: { keepalive?: boolean } = {},
 ): Promise<{ updated_at: string | null }> {
-  const response = await apiFetch(draftUrl(projectId, documentId), {
-    method: 'PUT',
-    body: JSON.stringify({ doc, token }),
-    keepalive: options.keepalive,
-  });
-  if (!response.ok) throw await notHolderOr(response, 'Failed to save the draft');
-  return response.json();
+  const url = draftUrl(projectId, documentId);
+  return trackDraftWrite(
+    url,
+    (async () => {
+      const response = await apiFetch(url, {
+        method: 'PUT',
+        body: JSON.stringify({ doc, token }),
+        keepalive: options.keepalive,
+      });
+      if (!response.ok) throw await notHolderOr(response, 'Failed to save the draft');
+      return response.json() as Promise<{ updated_at: string | null }>;
+    })(),
+  );
 }
 
 export async function listQuotationHistory(

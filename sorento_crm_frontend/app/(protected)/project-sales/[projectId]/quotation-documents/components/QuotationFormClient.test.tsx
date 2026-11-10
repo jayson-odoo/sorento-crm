@@ -906,8 +906,14 @@ describe('QuotationFormClient edit', () => {
     fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'left via Back' } });
     invalidate.mockClear();
     view.unmount();
-    expect(invalidate).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: quotationDocumentKey('p1', 'd1') }),
+    // After the leave flush has landed, so the re-read sees the draft.
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: quotationDocumentKey('p1', 'd1') }),
+      ),
+    );
+    expect(saveQuotationFormDraft.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      invalidate.mock.invocationCallOrder.at(-1)!,
     );
   });
 

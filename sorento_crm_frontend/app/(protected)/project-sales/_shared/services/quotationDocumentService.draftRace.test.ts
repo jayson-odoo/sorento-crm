@@ -54,6 +54,23 @@ describe('opening a draft waits for this browser\'s draft write on its way', () 
     expect((await open).doc?.header.your_ref).toBe('typed then left');
   });
 
+  it('a flush the leaving form starts a microtask AFTER the new page asks to open still goes first', async () => {
+    calls.length = 0;
+    pending.length = 0;
+    // Same commit: the new page's open fires, then the old page's flush reaches its PUT.
+    const open = openQuotationFormDraft('p1', 'd5');
+    const save = Promise.resolve().then(() =>
+      saveQuotationFormDraft('p1', 'd5', state, 'tok-old'),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toBe('PUT /api/v1/project-sales/projects/p1/quotation-documents/d5/form-draft');
+    pending[0](json({ updated_at: '2026-11-11T01:00:00' }));
+    await save;
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    pending[1](json({ draft_id: 'x', token: 't', doc: null, updated_at: null, updated_by_name: null }));
+    await open;
+  });
+
   it('a failed save does not hold the open back', async () => {
     calls.length = 0;
     pending.length = 0;
