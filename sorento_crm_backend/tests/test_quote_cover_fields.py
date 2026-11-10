@@ -628,3 +628,18 @@ def test_draft_preview_uses_the_typed_title_and_signatory_and_the_number_only_re
         assert cells["prepared_by_phone"] == "012-000 0001"  # saved, not typed
         assert cells["document_no"].startswith(document.document_no)
         assert env["project"].title not in cells["document_no"]
+
+
+def test_pdf_section_classes_never_reuse_the_page_title_class():
+    """Browser pass 10 Nov: a title-style section got class "cover-title" and printed its band at
+    the page title's 20px. Sections carry "cover-sec-<style>"."""
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        _activate(db, env, sheet_design())
+        document = _document(db, env)
+        record = _issue(db, document, env["owner"])
+        cover = qpdf.build_issue_html(db, record).split('<section class="cover', 1)[1]
+        assert 'class="cover-sec cover-sec-title"' in cover
+        assert cover.count('class="cover-title') == 1  # the page title only

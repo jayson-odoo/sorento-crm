@@ -892,7 +892,8 @@ def _cover_section_html(section: Dict[str, Any]) -> str:
         )
         start += len(cells)
     return (
-        f'<div class="cover-sec cover-{style}">{head}'
+        # "cover-sec-<style>", never "cover-<style>": .cover-title is the page title's rule.
+        f'<div class="cover-sec cover-sec-{style}">{head}'
         f'<table class="cover-cols"><tr>{"".join(columns)}</tr></table></div>'
     )
 
@@ -1152,9 +1153,9 @@ _SECTIONS_COVER_STYLE = """
   ol.cover-numbered p { margin: 0; }
   ol.cover-numbered ul { margin: 0; padding-left: 16px; list-style: disc; }
   ol.cover-numbered ol { margin: 0; padding-left: 16px; list-style: lower-alpha; }
-  .cover-signature { margin-top: 18px; width: 50%; }
+  .cover-sec-signature { margin-top: 18px; width: 50%; }
   .cover-sig-line { border-bottom: 1px solid #111; height: 36px; margin: 0 0 4px; }
-  .cover-footer { margin-top: 24px; border-top: 1px solid #999; padding-top: 6px;
+  .cover-sec-footer { margin-top: 24px; border-top: 1px solid #999; padding-top: 6px;
                   font-size: 9.5px; color: #333; }
 """
 
