@@ -710,6 +710,7 @@ def get_reorder_run(
         "started_at": _iso(row["started_at"]),
         "warehouse_codes": scope["warehouse_codes"],
         "is_all_warehouses": scope["is_all_warehouses"],
+        "inactive_warehouse_codes": scope["inactive_warehouse_codes"],
         "product_codes": scope["product_codes"],
         "supersedes_run_id": (str(row["supersedes_run_id"])
                               if row["supersedes_run_id"] else None),
