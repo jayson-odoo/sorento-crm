@@ -512,3 +512,15 @@ def test_a_star_debtor_default_prints_as_text_not_as_a_pick(api):
     created = _create_document(client, project.id, payment_terms=got["payment_terms"])
     assert created["payment_terms"] == "*Net 60 days"
     assert created["payment_term_id"] is None
+
+
+def test_payment_terms_company_id_is_not_null_in_the_model_as_in_its_migration():
+    # qts_0001_quote_terms_select creates `company_id UUID NOT NULL`; a create_all schema (CI, the
+    # blank test schema) must carry the same constraint, so the model overrides the mixin's nullable.
+    from pathlib import Path
+
+    from app.models.payment_term import PaymentTerm
+
+    migration = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "qts_0001_quote_terms_select.py"
+    assert "company_id UUID NOT NULL" in migration.read_text()
+    assert PaymentTerm.__table__.c.company_id.nullable is False

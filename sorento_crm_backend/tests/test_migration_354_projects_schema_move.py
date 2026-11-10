@@ -104,6 +104,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # QUOTE-CERT-TAB (#2245, migration qcert_0001_quote_certificates): the certificates a quote
     # document carries, born straight into `projects` beside `quotation_documents`.
     "quotation_document_certificates",
+    # QUOTE-AUTOSAVE (#2303, migration qas_0001_quote_form_drafts): the proposal/quotation form's
+    # autosaved state and its insert-only History, born straight into `projects`.
+    "quotation_document_drafts",
+    "quotation_document_snapshots",
 })
 
 MIGRATION = (
