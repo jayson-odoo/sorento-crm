@@ -8,13 +8,14 @@ import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useOptions } from '../hooks/useLookupSets';
 import OptionFormDialog from './OptionFormDialog';
-import type { LookupOption } from '../types/lookup.types';
+import { PARTY_ROLE_SET_KEY, type LookupOption } from '../types/lookup.types';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 export default function OptionsSection({ setId, setKey, aliasSet }: { setId: string; setKey?: string; aliasSet?: boolean }) {
   const { data: options, isLoading } = useOptions(setId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<LookupOption | null>(null);
+  const isPartyRoles = setKey === PARTY_ROLE_SET_KEY;
   // Delete asks nothing (D7): a toast counts down with Cancel.
   const deletion = useDeferredRowAction({
     actionKey: 'lookup_option.delete',
@@ -45,6 +46,7 @@ export default function OptionsSection({ setId, setKey, aliasSet }: { setId: str
                     <th className="px-3 py-2 w-48">Value</th>
                     <th className="px-3 py-2">Label</th>
                     <th className="px-3 py-2 w-20">Sort</th>
+                    {isPartyRoles && <th className="px-3 py-2 w-28">Many parties</th>}
                     <th className="px-3 py-2 w-20">Active</th>
                     <th className="px-3 py-2 w-24">Keywords</th>
                     <th className="px-3 py-2 w-28 text-right">Actions</th>
@@ -59,6 +61,7 @@ export default function OptionsSection({ setId, setKey, aliasSet }: { setId: str
                       </td>
                       <td className="px-3 py-2">{o.label}</td>
                       <td className="px-3 py-2">{o.sort_order}</td>
+                      {isPartyRoles && <td className="px-3 py-2">{o.allows_many ? 'Yes' : 'No'}</td>}
                       <td className="px-3 py-2">{o.is_active ? 'Yes' : 'No'}</td>
                       <td className="px-3 py-2">{o.keywords.length}</td>
                       <td className="px-3 py-2 text-right">

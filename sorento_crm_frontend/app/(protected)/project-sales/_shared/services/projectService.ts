@@ -6,6 +6,7 @@ import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
   PartyContact,
   PartyContactBody,
+  PartyRole,
   PartyOnProject,
   ClashPreview,
   MediaKind,
@@ -451,6 +452,24 @@ export async function decideTakeoverRequest(
 }
 
 // ------------------------------------------------------------------ parties
+
+/** The editable lookup set the party roles come from (PROJECT-PARTY-ROLES). */
+export const PARTY_ROLE_SET_KEY = 'project_party_role';
+
+/** Every party role, inactive ones included: a project still shows a role switched off since. */
+export async function listPartyRoles(): Promise<PartyRole[]> {
+  const response = await apiFetch(
+    `/api/v1/lookup/${PARTY_ROLE_SET_KEY}/options?include_inactive=true`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the party roles'));
+  const rows = (await response.json()) as Partial<PartyRole>[];
+  return rows.map((row) => ({
+    value: String(row.value ?? ''),
+    label: String(row.label ?? row.value ?? ''),
+    is_active: row.is_active !== false,
+    allows_many: Boolean(row.allows_many),
+  }));
+}
 
 export async function listParties(
   params: {

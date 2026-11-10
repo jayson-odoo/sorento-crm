@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePartyMutations } from '../../_shared/hooks/useProjects';
 import type { PartyType, ProjectParty } from '../../_shared/types/project.types';
-import { PARTY_TYPE_OPTIONS } from './partyTypes';
+import { usePartyTypeOptions } from './partyTypes';
 
 /**
  * Create and edit in one modal, per the CRUD standard.
@@ -44,7 +44,7 @@ export function PartyFormDialog({
 
   const isEdit = Boolean(party);
   const pending = create.isPending || update.isPending;
-  const selectedHint = PARTY_TYPE_OPTIONS.find((option) => option.value === partyType)?.hint;
+  const typeOptions = usePartyTypeOptions(party?.party_type);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -86,15 +86,9 @@ export function PartyFormDialog({
                 id="party-type"
                 value={partyType}
                 onChange={setPartyType}
-                options={PARTY_TYPE_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
+                options={typeOptions}
                 placeholder="Select a type"
               />
-              {selectedHint && (
-                <p className="text-xs text-muted-foreground">{selectedHint}</p>
-              )}
             </div>
 
             <div className="space-y-1.5">

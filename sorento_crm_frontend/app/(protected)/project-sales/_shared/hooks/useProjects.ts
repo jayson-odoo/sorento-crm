@@ -109,6 +109,7 @@ import {
   getProject,
   listCollaborators,
   listParties,
+  listPartyRoles,
   listProjectTemplates,
   getQuotationLineImages,
   listProjectTypes,
@@ -827,17 +828,50 @@ export function useLeads(params: LeadListParams) {
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
  * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
  */
-export function useFetchPartyOptions(partyType: PartyType) {
+/** The party roles (lookup set `project_party_role`), inactive ones included, in list order. */
+export function usePartyRoles() {
+  return useQuery({
+    queryKey: ['lookup-set-options', 'project_party_role', 'all'],
+    queryFn: listPartyRoles,
+    staleTime: 60_000,
+  });
+}
+
+/** `value -> label` for the party roles; an unknown key reads as itself, humanised. */
+export function usePartyRoleLabel() {
+  const roles = usePartyRoles();
+  return React.useCallback(
+    (value?: string | null) => {
+      if (!value) return '';
+      const row = (roles.data ?? []).find((role) => role.value === value);
+      return row?.label ?? value.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+    },
+    [roles.data],
+  );
+}
+
+/**
+ * Async options for a party picker. Any party can fill any role (PROJECT-PARTY-ROLES Q4 b), so the
+ * search covers every party; `preferredType` only orders the parties usually in that role first.
+ * The caption is the party's usual role.
+ */
+export function useFetchPartyOptions(preferredType?: PartyType) {
+  const roleLabel = usePartyRoleLabel();
   return React.useCallback(
     async (query: string) => {
-      const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
-      return result.data.map((party) => ({
+      const result = await listParties({ query: query || undefined, limit: 20 });
+      const rows = preferredType
+        ? [...result.data].sort(
+            (a, b) => Number(b.party_type === preferredType) - Number(a.party_type === preferredType),
+          )
+        : result.data;
+      return rows.map((party) => ({
         value: party.id,
         label: party.name,
-        description: party.registration_no ?? undefined,
+        description: roleLabel(party.party_type) || undefined,
       }));
     },
-    [partyType],
+    [preferredType, roleLabel],
   );
 }
 

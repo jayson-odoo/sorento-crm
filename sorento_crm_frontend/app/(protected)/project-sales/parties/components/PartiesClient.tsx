@@ -27,7 +27,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { usePartyMutations, useProjectParties } from '../../_shared/hooks/useProjects';
 import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
-import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
+import { usePartyRoleLabel, usePartyTypeOptions } from './partyTypes';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -89,6 +89,8 @@ export function PartiesClient() {
   const total = parties.data?.pagination?.total ?? rows.length;
   const filtered = Boolean(debounced || typeFilter);
 
+  const roleLabel = usePartyRoleLabel();
+  const typeOptions = usePartyTypeOptions();
   const columns = React.useMemo<ColumnDef<ProjectParty>[]>(
     () => [
       {
@@ -126,7 +128,7 @@ export function PartiesClient() {
         size: 160,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
-          const label = TYPE_LABEL[row.original.party_type] ?? row.original.party_type;
+          const label = roleLabel(row.original.party_type);
           return (
             <Badge variant="secondary" className="truncate" title={label}>
               {label}
@@ -257,7 +259,7 @@ export function PartiesClient() {
         ),
       },
     ],
-    [],
+    [roleLabel],
   );
 
   const table = useReactTable({
@@ -341,10 +343,7 @@ export function PartiesClient() {
                         value={splitMulti(typeFilter)}
                         onChange={(value) => setTypeFilter(joinMulti(value))}
                         clearable
-                        options={PARTY_TYPE_OPTIONS.map((option) => ({
-                          value: option.value,
-                          label: option.label,
-                        }))}
+                        options={typeOptions}
                         placeholder="All types"
                       />
                     </div>
