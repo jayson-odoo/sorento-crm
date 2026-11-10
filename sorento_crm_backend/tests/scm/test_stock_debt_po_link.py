@@ -101,6 +101,8 @@ def refusal_store(monkeypatch):
     store = MemoryStore()
     monkeypatch.setattr(idem, "_down_until", 0.0)
     monkeypatch.setattr(svc, "attempt_store", lambda: store)
+    # The B12 replace hints (`po_replace_hint`) go through `idem.attempt_store()`.
+    monkeypatch.setattr(idem, "_client", lambda: store)
     return store
 
 
@@ -1056,8 +1058,24 @@ def _assert_one_line_per_row(w, details, *, kept_id=None, kept_dtl=None):
 ORDERS = ["answer_first", "ingest_first"]
 
 
+def _spy_release(monkeypatch):
+    """PO line ids the ingest released as removed in AutoCount (their OI links given back)."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    released = []
+    real = ProjectOrderInquiryService.release_removed_lines
+
+    def spy(self, *, po_line_ids=(), spo_allocation_ids=()):
+        released.extend(str(i) for i in po_line_ids)
+        return real(self, po_line_ids=po_line_ids, spo_allocation_ids=spo_allocation_ids)
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "release_removed_lines", spy)
+    return released
+
+
 @pytest.mark.parametrize("order", ORDERS)
-def test_b12_whole_row_link_keeps_one_line(scm_app, fake_ss, order):
+def test_b12_whole_row_link_keeps_one_line(scm_app, fake_ss, order, monkeypatch):
+    released = _spy_release(monkeypatch)
     w = _world(scm_app, fake_ss)
     w["po_line"].qty_ordered = Decimal("120")  # whole row: link qty == row qty
     w["db"].flush()
@@ -1069,10 +1087,12 @@ def test_b12_whole_row_link_keeps_one_line(scm_app, fake_ss, order):
     if order == "answer_first":
         _push_po(w, details)
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12303)
+    assert w["po_line"].id not in released  # never shown as removed, OI links kept
 
 
 @pytest.mark.parametrize("order", ORDERS)
-def test_b12_unlink_keeps_one_line(scm_app, fake_ss, order):
+def test_b12_unlink_keeps_one_line(scm_app, fake_ss, order, monkeypatch):
+    released = _spy_release(monkeypatch)
     w = _world(scm_app, fake_ss)
     w["po_line"].from_so_line_ref = w["so_line"].source_ref
     w["db"].flush()
@@ -1084,10 +1104,12 @@ def test_b12_unlink_keeps_one_line(scm_app, fake_ss, order):
     if order == "answer_first":
         _push_po(w, details)
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12308)
+    assert w["po_line"].id not in released  # never shown as removed, OI links kept
 
 
 @pytest.mark.parametrize("order", ORDERS)
-def test_b12_change_link_keeps_one_line(scm_app, fake_ss, order):
+def test_b12_change_link_keeps_one_line(scm_app, fake_ss, order, monkeypatch):
+    released = _spy_release(monkeypatch)
     w = _world(scm_app, fake_ss)
     w["po_line"].from_so_line_ref = w["so_line"].source_ref
     _o, other = _demand(w["db"], w["product"], w["mwh"], qty=30, required_date=_months_ahead(1),
@@ -1108,10 +1130,12 @@ def test_b12_change_link_keeps_one_line(scm_app, fake_ss, order):
     if order == "answer_first":
         _push_po(w, details)
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12307)
+    assert w["po_line"].id not in released  # never shown as removed, OI links kept
 
 
 @pytest.mark.parametrize("order", ORDERS)
-def test_b12_split_keeps_one_line_per_row(scm_app, fake_ss, order):
+def test_b12_split_keeps_one_line_per_row(scm_app, fake_ss, order, monkeypatch):
+    released = _spy_release(monkeypatch)
     w = _world(scm_app, fake_ss)
     so_ref = w["so_line"].source_ref
     details = [(12009, 380, w["hq"], None, 16), (12080, 120, w["mwh"], so_ref, 32)]
@@ -1121,10 +1145,12 @@ def test_b12_split_keeps_one_line_per_row(scm_app, fake_ss, order):
     if order == "answer_first":
         _push_po(w, details)
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12009)
+    assert w["po_line"].id not in released  # never shown as removed, OI links kept
 
 
 @pytest.mark.parametrize("order", ORDERS)
-def test_b12_split_that_replaces_the_row_keeps_one_line_per_row(scm_app, fake_ss, order):
+def test_b12_split_that_replaces_the_row_keeps_one_line_per_row(scm_app, fake_ss, order, monkeypatch):
+    released = _spy_release(monkeypatch)
     w = _world(scm_app, fake_ss)
     so_ref = w["so_line"].source_ref
     details = [(12310, 380, w["hq"], None, 80), (12311, 120, w["mwh"], so_ref, 96)]
@@ -1134,6 +1160,7 @@ def test_b12_split_that_replaces_the_row_keeps_one_line_per_row(scm_app, fake_ss
     if order == "answer_first":
         _push_po(w, details)
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12310)
+    assert w["po_line"].id not in released  # never shown as removed, OI links kept
 
 
 def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss, monkeypatch):
@@ -1151,3 +1178,66 @@ def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss
     (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
     assert result["outcome"] == "done"
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12303)
+
+
+def test_b12_ingest_pairs_a_hinted_row_with_its_replacement(scm_app, fake_ss):
+    """Before `_apply` runs at all: the CRM line keeps its id, is never retired, links kept."""
+    from app.services.scm import po_replace_hint
+
+    w = _world(scm_app, fake_ss)
+    so_ref = w["so_line"].source_ref
+    po_replace_hint.remember(w["po_line"].source_ref, qty=500, from_so_ref=so_ref)
+    _push_po(w, [(12303, 500, w["mwh"], so_ref, 80)])
+    (line,) = _lines_of(w)
+    assert line.id == w["po_line"].id and line.source_ref == f"{DB}:12008:12303"
+    assert line.line_status == "open" and not line.removed_unreferenced
+
+
+def test_b12_ingest_does_not_pair_without_a_hint(scm_app, fake_ss):
+    """An AutoCount-side re-save nobody in the CRM asked for stays a removal plus a create."""
+    w = _world(scm_app, fake_ss)
+    _push_po(w, [(12303, 500, w["hq"], None, 80)])
+    lines = {l.source_ref: l for l in _lines_of(w)}
+    assert lines[w["po_line"].source_ref].line_status == "cancelled"
+    assert lines[f"{DB}:12008:12303"].id != w["po_line"].id
+
+
+def test_b12_ingest_does_not_guess_between_two_candidates(scm_app, fake_ss):
+    from app.services.scm import po_replace_hint
+
+    w = _world(scm_app, fake_ss)
+    po_replace_hint.remember(w["po_line"].source_ref, qty=500, from_so_ref=None)
+    _push_po(w, [(12303, 500, w["hq"], None, 80), (12304, 500, w["hq"], None, 96)])
+    lines = {l.source_ref: l for l in _lines_of(w)}
+    assert lines[w["po_line"].source_ref].line_status == "cancelled"
+    assert w["po_line"].id not in {lines[f"{DB}:12008:12303"].id, lines[f"{DB}:12008:12304"].id}
+
+
+def test_b12_ingest_does_not_pair_another_qty_or_link(scm_app, fake_ss):
+    from app.services.scm import po_replace_hint
+
+    w = _world(scm_app, fake_ss)
+    po_replace_hint.remember(w["po_line"].source_ref, qty=500, from_so_ref=w["so_line"].source_ref)
+    _push_po(w, [(12303, 499, w["mwh"], w["so_line"].source_ref, 80)])
+    lines = {l.source_ref: l for l in _lines_of(w)}
+    assert lines[w["po_line"].source_ref].line_status == "cancelled"
+
+
+def test_a_raising_second_send_keeps_the_stored_attempt(refusal_store):
+    """Reviewer round 2: the re-send may have reached AutoCount; nothing is recorded, so the
+    next press sends that same key again (SS replays it), never a third one."""
+    from app.services import autocount_idempotency as idem
+
+    sent = []
+
+    def send(key):
+        sent.append(key)
+        if len(sent) == 2:
+            raise RuntimeError("connection dropped")
+        return {"outcome": "refused", "errorCode": "VENDOR_UNSUPPORTED"}
+
+    with pytest.raises(RuntimeError):
+        idem.send_with_attempts(refusal_store, "base", send)
+    assert refusal_store.get(f"{idem._PREFIX}base") is None
+    idem.send_with_attempts(refusal_store, "base", lambda key: sent.append(key) or {"outcome": "done"})
+    assert sent == ["base", idem.attempt_key("base", 1), "base"]

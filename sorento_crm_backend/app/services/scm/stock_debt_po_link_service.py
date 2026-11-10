@@ -19,7 +19,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, defer
 
 from app.models.company import Company
@@ -31,6 +31,7 @@ from app.services.autocount_idempotency import attempt_store, send_with_attempts
 from app.services.error_handler import AppException, handle_not_found
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.project_supply_service import ProjectSupplyService
+from app.services.scm import po_replace_hint
 from app.services.scm.demand import demand_qty
 
 logger = logging.getLogger(__name__)
@@ -377,26 +378,78 @@ class StockDebtPoLinkService:
             self.db.rollback()
             return None
 
+    def _rekey(self, by_ref: Dict[str, List[PurchaseOrderLine]], old_ref: str, new_ref: str) -> None:
+        """B12: the CRM line of AutoCount row `old_ref` now carries `new_ref`, ONE line per row.
+
+        Ingest already paired them (`po_replace_hint`): nothing left to do. Ingest came first
+        without a hint: it retired the old line and created a duplicate for `new_ref`; the old
+        line (its id is what the CRM keys on) takes the duplicate's values and the duplicate
+        goes. A duplicate something already points at is kept, and the old line is left
+        retired under its old ref, so refs stay unique per PO."""
+        olds = by_ref.pop(old_ref, [])
+        if not olds:
+            return
+        old = olds[0]
+        news = [l for l in by_ref.get(new_ref, []) if l is not old]
+        if news and not self._merge_into(old, news[0]):
+            by_ref[old_ref] = olds
+            return
+        old.source_ref = new_ref
+        by_ref[new_ref] = [old]
+
+    def _merge_into(self, keep: PurchaseOrderLine, dup: PurchaseOrderLine) -> bool:
+        """`keep` takes `dup`'s values and whatever points at `dup` (the claim ingest raised
+        from its SO link), then `dup` goes. In a savepoint: on any clash nothing changes and
+        False is returned (both lines stay, `keep` under its old ref)."""
+        from app.services.dependent_probe import referrers_of
+
+        try:
+            with self.db.begin_nested():
+                for referrer, column in referrers_of(self.db, PurchaseOrderLine.__tablename__):
+                    self.db.execute(
+                        text(f'UPDATE {referrer} SET "{column}" = :keep WHERE "{column}" = :dup'),
+                        {"keep": str(keep.id), "dup": str(dup.id)},
+                    )
+                for column in PurchaseOrderLine.__table__.columns:
+                    if column.key in ("id", "purchase_order_id", "company_id", "created_at", "source_ref"):
+                        continue
+                    setattr(keep, column.key, getattr(dup, column.key))
+                self.db.delete(dup)
+                self.db.flush()
+        except Exception:  # noqa: BLE001
+            logger.warning("po link: could not merge the ingest duplicate %s into %s", dup.id, keep.id)
+            self.db.expire_all()
+            return False
+        return True
+
     def _apply(self, answer: Dict[str, Any], po_line: PurchaseOrderLine, so_ref: Optional[str]) -> None:
         """AutoCount's read-back onto the CRM's PO lines (only on `done` / `recovered`)."""
         if answer.get("outcome") not in ("done", "recovered"):
             return None
+        # B12: SS pushed the same read-back to the PO ingest DURING the call, in another
+        # transaction. Read the lines afresh, or a stale copy is renamed over what ingest wrote.
+        self.db.flush()
+        self.db.expire_all()
         base = _keys(po_line.source_ref)
         if base is None:
             return None
         db_name, doc_key, _dtl = base
         prefix = f"{db_name}:{doc_key}:"
-        siblings = {
-            (l.source_ref or "").strip(): l
-            for l in self.db.query(PurchaseOrderLine)
+        by_ref: Dict[str, List[PurchaseOrderLine]] = {}
+        for l in (
+            self.db.query(PurchaseOrderLine)
             .filter(PurchaseOrderLine.purchase_order_id == po_line.purchase_order_id)
+            .order_by(PurchaseOrderLine.created_at)
             .all()
-        }
+        ):
+            by_ref.setdefault((l.source_ref or "").strip(), []).append(l)
         for moved in answer.get("replacedLines") or []:
-            old = siblings.pop(f"{prefix}{moved.get('oldDtlKey')}", None)
-            if old is not None:
-                old.source_ref = f"{prefix}{moved.get('newDtlKey')}"
-                siblings[old.source_ref] = old
+            self._rekey(by_ref, f"{prefix}{moved.get('oldDtlKey')}", f"{prefix}{moved.get('newDtlKey')}")
+        # A retired copy never wins over a live line under the same ref.
+        siblings = {
+            ref: sorted(lines, key=lambda l: l.line_status == "cancelled")[0]
+            for ref, lines in by_ref.items() if lines
+        }
         so_keys = _keys(so_ref)
         doc = answer.get("document") or {}
         linked_line = None
@@ -503,6 +556,12 @@ class StockDebtPoLinkService:
                 body["soDocDate"] = so.order_date.isoformat()
             if po.issue_date:
                 body["docDate"] = po.issue_date.isoformat()
+            row_qty = Decimal(str(po_line.qty_ordered or 0))
+            if qty >= row_qty:  # whole row: the row itself moves onto the SO line
+                po_replace_hint.remember(po_line.source_ref, qty=row_qty, from_so_ref=so_line.source_ref)
+            else:  # split: the row keeps the rest and its own link
+                po_replace_hint.remember(po_line.source_ref, qty=row_qty - qty,
+                                         from_so_ref=po_line.from_so_line_ref)
             answer = self._send_intent("po-links", body, po_line)
             linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
@@ -533,6 +592,7 @@ class StockDebtPoLinkService:
             body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
             if po.issue_date:
                 body["docDate"] = po.issue_date.isoformat()
+            po_replace_hint.remember(po_line.source_ref, qty=po_line.qty_ordered, from_so_ref=None)
             answer = self._send_intent("po-links/unlink", body, po_line)
             self._apply_safely(answer, po_line, None)
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
@@ -561,6 +621,8 @@ class StockDebtPoLinkService:
                 body["docDate"] = po.issue_date.isoformat()
             if so.order_date:
                 body["soDocDate"] = so.order_date.isoformat()
+            po_replace_hint.remember(po_line.source_ref, qty=po_line.qty_ordered,
+                                     from_so_ref=so_line.source_ref)
             answer = self._send_intent("po-links/relink", body, po_line)
             linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,

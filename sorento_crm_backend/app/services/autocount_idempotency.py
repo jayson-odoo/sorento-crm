@@ -9,6 +9,11 @@ A definite refusal changed nothing in AutoCount, so the next press of that inten
 attempt. Anything else (a timeout, `pending_verification`, `needs_attention`, `vendor_error`, a
 key still in flight) keeps the key, so a retry replays and can never write twice.
 
+`VENDOR_UNSUPPORTED` is asked again ONCE in the same press, on the next attempt (round 2, SS #230
+turned link / unlink / relink on): a refusal SS stored before the attempt count existed would
+otherwise be replayed to the first press. If the count was lost (TTL, flush) after both attempts
+were refused, one press replays both and the next press heals; never a write twice.
+
 The attempt number per intent key lives in Redis (no schema), for as long as the Shared Service
 could still hold the refused answer. With Redis unreachable every press uses attempt 0, i.e. the
 plain intent key: the old behaviour, never a fresh key per press.
