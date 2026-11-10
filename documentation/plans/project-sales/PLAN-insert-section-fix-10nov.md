@@ -1,6 +1,6 @@
 # PLAN: Line menu "Insert a section above" is a no-op (fix for #2302)
 
-Status: in progress (SMALL FIX track: FE only, no migration, no auth/RBAC change)
+Status: built, in review (SMALL FIX track: FE only, no migration, no auth/RBAC change)
 
 ## Problem
 
@@ -25,7 +25,20 @@ The same holds for the bottom "Add a section" button and the right-click menu's 
 
 ## Diagnosis
 
-(filled in below once found)
+- `QuotationLinesGrid.tsx` `act('section')` committed the heading row, then focused its box with a
+  `setTimeout(0)`.
+- The menus stay mounted while they play their exit animation (`components/ui/dropdown-menu.tsx`,
+  `context-menu.tsx`: `forceMount` + motion `AnimatePresence`), so that timer fired inside the exit.
+- During the exit, the pointer leaving the clicked item makes Radix focus the menu content itself
+  (`@radix-ui/react-menu/dist/index.mjs` `onItemLeave`). The new, still empty heading blurred and
+  `SectionRow`'s `onBlur` ran `closeEmptyBand`, which dropped it. The menu then unmounted with its
+  close auto-focus prevented, so focus ended on `body` and Save had nothing to write.
+- jsdom tests passed: `vitest.setup.ts` skips every animation and `fireEvent.click` never moves the
+  pointer.
+- Same mechanism, no data lost: right-click Rename and header Duplicate lost the caret.
+
+Fix: focus moves in the menus' `onCloseAutoFocus` (`settleMenuFocus`), which Radix runs after the
+content has unmounted. Not affected: Add a section (a button), Insert a line below (focuses nothing).
 
 ## UAC
 
