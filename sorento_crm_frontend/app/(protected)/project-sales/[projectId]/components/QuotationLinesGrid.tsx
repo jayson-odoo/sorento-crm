@@ -12,6 +12,9 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { RichDescription } from '@/components/common/RichDescription';
+import { richOneLine, richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { toast } from '@/lib/toast';
 import { useDeferredDeleteSeconds } from '@/hooks/useDeferredDeleteSeconds';
 import { DEFAULT_DEFERRED_DELETE_SECONDS } from '@/services/deferredWindowService';
@@ -192,7 +195,7 @@ export function describeLine(
   index: number,
   pickedCode?: string | null,
 ): string {
-  if (line) return line.product_code ?? line.description ?? `line ${index + 1}`;
+  if (line) return line.product_code ?? (richOneLine(line.description) || null) ?? `line ${index + 1}`;
   return pickedCode || `line ${index + 1}`;
 }
 
@@ -433,33 +436,68 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   );
 }
 
+/**
+ * What the shared editor hands back, as a description: an editor holding no text at all is an
+ * empty description, so the catalogue default applies on save, as it did for an emptied textarea.
+ */
+export function descriptionFromEditor(html: string): string {
+  return richPlainText(html).trim() === '' ? '' : html;
+}
+
+/**
+ * The line description (QUOTE-DESC-RICHTEXT): the styled text in the cell, the shared rich text
+ * editor (full toolbar, as the price tag description) in a popover anchored to it, since the
+ * toolbar does not fit the column. A plain description shows and prints exactly as typed.
+ */
 function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const row = tableRow.original;
   const { staged } = row;
   const value = staged.draft.description ?? '';
+  const labelId = React.useId();
 
   if (!grid.editing || staged.removed) {
-    return (
-      <p className="text-xs whitespace-pre-line break-words">{value || '-'}</p>
-    );
+    return <RichDescription value={value} className="text-xs" />;
   }
 
+  const label = grid.labelOf(row);
   return (
-    <div className="min-w-0">
-      <Textarea
-        variant="sm"
-        rows={1}
-        value={value}
-        aria-label={`Description on ${grid.labelOf(row)}`}
-        placeholder="Type what the customer reads"
-        className="field-sizing-content min-h-8 resize-none px-2 py-1.5"
-        onChange={(event) =>
-          grid.update(row.key, { description: event.target.value })
-        }
-        onBlur={() => grid.markVisited(row.key)}
-      />
-    </div>
+    <Popover onOpenChange={(open) => (open ? undefined : grid.markVisited(row.key))}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Description on ${label}`}
+          title="Edit description"
+          className="block min-h-8 w-full min-w-0 cursor-text rounded-md border border-input bg-background px-2 py-1.5 text-left hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {value.trim() ? (
+            <RichDescription value={value} className="text-xs" />
+          ) : (
+            <span className="text-xs text-muted-foreground">Type what the customer reads</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent
+          align="start"
+          collisionPadding={8}
+          className="w-[min(28rem,calc(100vw-2rem))] p-2"
+        >
+          <span id={labelId} className="sr-only">
+            {`Description text on ${label}`}
+          </span>
+          <RichTextEditor
+            aria-labelledby={labelId}
+            value={toEditorHtml(value)}
+            onChange={(html) =>
+              grid.update(row.key, { description: descriptionFromEditor(html) })
+            }
+            placeholder="Type what the customer reads"
+            minHeight={96}
+          />
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 

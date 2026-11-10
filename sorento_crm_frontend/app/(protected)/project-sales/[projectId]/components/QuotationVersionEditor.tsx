@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { richOneLine, richPlainText } from '@/lib/dealer-kit/rich-text';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -400,7 +401,7 @@ export function QuotationVersionEditor({
             (storedSet ? stored?.product_code : null) ??
             (draft[PICKED_CODE_KEY] || 'Selected set'),
           description:
-            picked?.name ?? (storedSet ? (stored?.description ?? undefined) : undefined),
+            picked?.name ?? (storedSet ? richOneLine(stored?.description) || undefined : undefined),
         };
       }
       const productId = draft.product_id;
@@ -421,7 +422,7 @@ export function QuotationVersionEditor({
           (stored?.product_id === productId ? stored.product_code : null) ??
           (draft[PICKED_CODE_KEY] || 'Selected product'),
         description:
-          stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
+          stored?.product_id === productId ? richOneLine(stored.description) || undefined : undefined,
       };
     },
     [],
@@ -667,7 +668,7 @@ export function QuotationVersionEditor({
     return (line: StagedQuotationLine) =>
       [
         line.line?.product_code,
-        line.draft.description,
+        richPlainText(line.draft.description),
         line.draft.brand_snapshot,
         line.draft.band_label,
       ].some((value) => (value ?? '').toLowerCase().includes(needle));

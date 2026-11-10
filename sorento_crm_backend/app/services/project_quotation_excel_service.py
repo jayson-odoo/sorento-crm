@@ -69,6 +69,7 @@ from app.services import project_quotation_pdf_service as pdf
 from app.services import quotation_columns
 from app.services import quotation_matrix as matrix
 from app.services.project_quotation_document_service import document_noun, quotation_no
+from app.services.project_quotation_service import line_text
 
 _IMAGE_LABEL = dict(quotation_columns.COLUMNS)[quotation_columns.IMAGE]
 
@@ -594,7 +595,7 @@ def _write_scope(
         # Typed tech-spec text from before drawings printed is kept, under the description.
         description = "\n".join(
             part
-            for part in (_text(line.description_snapshot), _text(line.technical_spec))
+            for part in (_text(line_text(line)), _text(line.technical_spec))
             if part
         )
         _put(

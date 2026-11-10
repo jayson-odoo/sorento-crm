@@ -99,6 +99,7 @@ from app.services.scm.sales_agent_service import normalize_location_group
 from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -1126,7 +1127,7 @@ class ProjectSODraftService:
                 _Component(
                     product_id=line.product_id,
                     code=line.product_code_snapshot,
-                    description=line.description_snapshot,
+                    description=line_text(line),
                     uom=line.uom,
                     unit_price=_dec(line.unit_price),
                     numerator=_dec(line.quantity),
@@ -1321,7 +1322,7 @@ class ProjectSODraftService:
         return _Component(
             product_id=source.product_id,
             code=(quoted.product_code_snapshot if quoted else None) or source.code,
-            description=(quoted.description_snapshot if quoted else None) or source.description,
+            description=(line_text(quoted) if quoted else None) or source.description,
             uom=source.uom or (quoted.uom if quoted else None),
             unit_price=_dec(quoted.unit_price) if quoted else source.unit_price,
             numerator=Decimal("1"),

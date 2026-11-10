@@ -42,6 +42,7 @@ from app.models.projects import (
 from app.services import project_pricing_service as pricing
 from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
+from app.utils.tag_rich_text import plain_text, sanitise_description
 
 _CENTS = Decimal("0.01")
 
@@ -411,6 +412,12 @@ def revise(
         )
         db.flush()
     return nxt
+
+
+def line_text(line: Any) -> Optional[str]:
+    """A line's description with no markup, for every reader that cannot draw styled text
+    (Excel, notifications, SO / PO lines, labels). Plain text comes back exactly as stored."""
+    return plain_text(getattr(line, "description_snapshot", None))
 
 
 def copy_line(
@@ -1005,6 +1012,14 @@ def _write_line(
     elif "qty_cells" in payload:
         payload = {**payload, "qty_cells": matrix.normalise_cells(columns, payload["qty_cells"])}
 
+    # The description is plain text or the shared editor's HTML (QUOTE-DESC-RICHTEXT); every
+    # write path lands here, so nothing but the allow-list is ever stored.
+    if "description_snapshot" in payload:
+        payload = {
+            **payload,
+            "description_snapshot": sanitise_description(payload["description_snapshot"]),
+        }
+
     for field in LINE_FIELDS:
         if field in payload:
             value = payload[field]
@@ -1343,7 +1358,7 @@ def recompute_version(
 
         # Named by what a person calls the line. No id reaches the reader.
         report["changed_lines"].append(
-            line.product_code_snapshot or line.description_snapshot or "Non-standard item"
+            line.product_code_snapshot or line_text(line) or "Non-standard item"
         )
 
     db.flush()

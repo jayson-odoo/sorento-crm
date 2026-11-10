@@ -299,3 +299,35 @@ def plain_text(value: Optional[str]) -> Optional[str]:
     parser.close()
     parser._flush()
     return "\n".join(parser.lines).strip("\n")
+
+
+#: Sanitised rich output carrying no styling at all: bare paragraphs, line breaks and text.
+_UNSTYLED_RE = re.compile(r"^(?:<p>|</p>|<br>|[^<])*$")
+
+
+def sanitise_description(value: Optional[str]) -> Optional[str]:
+    """The save rule for a quotation line description (QUOTE-DESC-RICHTEXT).
+
+    Rich input goes through the same allow-list as a price tag (`_rich_pass`). Unlike
+    `sanitise_tag_html`, plain text is kept exactly as typed (a bill of quantities says
+    "PIPE <DN50"), since every reader of a plain description escapes it. An edit that carries no
+    styling at all is stored back as plain lines, so typing in an old plain line does not turn
+    it into HTML.
+    """
+    if value is None:
+        return None
+    value = _CONTROLS.sub("", value)
+    if not value.strip():
+        return None
+    if not is_rich(value):
+        return value
+    clean = _rich_pass(value)
+    if clean is None:
+        return None
+    if _UNSTYLED_RE.match(clean):
+        text = plain_text(clean)
+        if text and text.strip() and not is_rich(text):
+            return text
+        if not text or not text.strip():
+            return None
+    return clean
