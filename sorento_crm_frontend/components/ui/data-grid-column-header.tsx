@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { useDataGrid } from '@/components/ui/data-grid';
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -29,6 +28,7 @@ import {
   Settings2,
 } from 'lucide-react';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
+import { DataGridColumnVisibilityItems } from '@/components/ui/data-grid-column-visibility';
 
 interface DataGridColumnHeaderProps<TData, TValue> extends HTMLAttributes<HTMLDivElement> {
   column: Column<TData, TValue>;
@@ -285,22 +285,7 @@ function DataGridColumnHeader<TData, TValue>({
                 </DropdownMenuSubTrigger>
                 <DropdownMenuPortal>
                   <DropdownMenuSubContent>
-                    {table
-                      .getAllColumns()
-                      .filter((col) => typeof col.accessorFn !== 'undefined' && col.getCanHide())
-                      .map((col) => {
-                        return (
-                          <DropdownMenuCheckboxItem
-                            key={col.id}
-                            checked={col.getIsVisible()}
-                            onSelect={(event) => event.preventDefault()}
-                            onCheckedChange={(value) => col.toggleVisibility(!!value)}
-                            className="capitalize"
-                          >
-                            {col.columnDef.meta?.headerTitle || col.id}
-                          </DropdownMenuCheckboxItem>
-                        );
-                      })}
+                    <DataGridColumnVisibilityItems table={table} />
                     {columnPreferences?.resetToDefaults && <DropdownMenuSeparator />}
                     {columnPreferences?.resetToDefaults && (
                       <DropdownMenuItem
