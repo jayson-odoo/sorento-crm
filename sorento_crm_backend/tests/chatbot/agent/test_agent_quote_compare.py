@@ -841,3 +841,54 @@ def test_AC_E2_a_line_priced_above_list_has_no_discount_and_no_negative_value(db
     line = next(ln for ln in _doc(out, world.doc_b)["scopes"][0]["lines"] if ln["code"] == "ABOVE1")
     assert line["discount_pct"] is None, line
     assert not [k for k, v in line.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 0], line
+
+
+def _add_showroom_line(db, world, code, list_price, unit, qty="1", total=None):
+    from app.models.base import company_scope
+    from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
+
+    with company_scope(db, frozenset({world.company_id})):
+        showroom = db.query(ProjectQuotation).filter(
+            ProjectQuotation.project_id == world.project_id, ProjectQuotation.scope_label == "Showroom"
+        ).one()
+        version = db.query(ProjectQuotationVersion).filter(ProjectQuotationVersion.quotation_id == showroom.id).one()
+        db.add(ProjectQuotationLine(
+            company_id=world.company_id, version_id=version.id, product_code_snapshot=code,
+            description_snapshot=code, list_price_snapshot=Decimal(list_price), unit_price=Decimal(unit),
+            quantity=Decimal(qty), uom="pcs", line_total=Decimal(total or unit), sort_order=0,
+        ))
+        db.flush()
+
+
+def test_AC_E2_above_list_pct_is_positive_above_list_and_none_otherwise(db):
+    world = _seed_world(db)
+    _add_showroom_line(db, world, "ABOVE1", "600.00", "1200.00")
+    _add_showroom_line(db, world, "BELOW1", "600.00", "540.00")
+    _add_showroom_line(db, world, "EQUAL1", "600.00", "600.00")
+    out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
+    by_code = {ln["code"]: ln for ln in _doc(out, world.doc_b)["scopes"][0]["lines"]}
+    assert by_code["ABOVE1"].get("above_list_pct") == 100.0, by_code["ABOVE1"]
+    assert by_code["ABOVE1"]["discount_pct"] is None
+    assert "above_list_pct" in by_code["BELOW1"] and by_code["BELOW1"]["above_list_pct"] is None, by_code["BELOW1"]
+    assert "above_list_pct" in by_code["EQUAL1"] and by_code["EQUAL1"]["above_list_pct"] is None, by_code["EQUAL1"]
+
+
+def test_a_whole_turn_quoting_an_above_list_line_keeps_its_percent_verified(db):
+    from app.models.base import company_scope
+
+    world = _seed_world(db)
+    _add_showroom_line(db, world, "ABOVE1", "600.00", "1200.00", qty="5", total="6000.00")
+    user_id = _viewer(db)
+    text = "5 x RM 1,200 (100% above list, list RM 600.00) = RM 6,000.00"
+    figures = [
+        {"value": "5", "call_id": "c1"}, {"value": "1,200", "call_id": "c1"}, {"value": "100", "call_id": "c1"},
+        {"value": "600.00", "call_id": "c1"}, {"value": "6,000.00", "call_id": "c1"},
+    ]
+    final = _round(_tc("answer", {"text": text, "figures": figures, "not_found": [], "not_checked": []}, "ans"))
+    with company_scope(db, frozenset({world.company_id})):
+        result, _prov, _rec = _panel_run(
+            db, user_id, [_round(_tc(LINES, {"project_id": world.project_id, "refs": [world.doc_b]}, "c1")), final, final, final],
+            seed_ids=[world.project_id], company_id=world.company_id,
+        )
+    assert "100% above list" in result.reply_text, result.reply_text
+    assert "not verified" not in result.reply_text, result.reply_text
