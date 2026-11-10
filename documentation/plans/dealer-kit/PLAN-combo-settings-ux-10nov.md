@@ -1,6 +1,6 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Plan, mock v2 filed; Q1 and Q5 answered, Q2/Q3/Q4 open (no build yet). Track: LEAD, size M,
+Status: Build (owner approved mock v2 + own Combos tab, 10 Nov ~16:40). Track: LEAD, size M, migration (combo_0001).
 frontend only (no migration, no backend change, no auth/RBAC change; expected diff ~400 lines incl.
 tests).
 Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
@@ -137,3 +137,27 @@ tokens and one plain-text gap. No backend change is needed.
   joined onto one line. Dimensions print in the shared tag format `800 x 130 x 700 mm`
   (`tag_data_service.py:98` `format_dimensions_mm`), not the flyer's `L800xW130xH700mm`: one format
   for every tag, by that function's own rule.
+
+## Approved build (10 Nov ~16:25 to 16:40)
+
+- Box style: REMOVED (owner (a)). The control is gone, and the canvas, print page and drop counter
+  no longer apply it; every tag draws its template's own box. Dev had 2 products / 0 combos with a
+  value; they fall back. Columns `products.accessory_box_preset_id` / `product_combos.accessory_box_preset_id`
+  and the BE plumbing (`box_style_for`, payload `accessory_box_style`, copy-accessories box style) go
+  in a later cleanup lane.
+- Combos: its own product tab (`?tab=combos`, badge = combo count), not a card on Overview.
+- Q2 (owner): each part and the main product get a Label; `{{combo.parts}}` repeats the combo's own
+  "Each part prints as" line (rich, `{{part.code|label|name|price_tag_description|dimensions_lwh|dimensions}}`),
+  default `**{{part.code}} ({{part.label}})**` + `{{part.dimensions_lwh}}`. Label default: empty
+  (recommended (a); empty "( )" is dropped, a paragraph whose only field is empty is dropped).
+- Q4: position-based (a), crew decided.
+
+| Piece | Where |
+| --- | --- |
+| One add picker | `AccessoryListField.tsx` (`fetchOptions`, groups Accessories / Products) |
+| Box style removed | `accessory-card.ts`, `accessory-drops.ts`, `product-block.ts`, `KonvaTagLayer.tsx`, `TagCanvasEditor.tsx`, `InspectorPanel.tsx`, `TagSheetRenderer.tsx`, `useAccessories.ts`, `accessoryService.ts`, `CopyAccessoriesDialog.tsx` |
+| Combos tab | `ProductDetail.tsx` |
+| Preview picks | `ComboTagPreview.tsx` (`previewChoices`, `previewParts`), `useTagPreview.ts` (parts in the key) |
+| `{{combo.parts}}` | `lib/dealer-kit/combo-parts.ts`, `merge-fields.ts` (plain), `product-block.ts` (rich splice, also inside the description) |
+| Labels, Insert field, Each part prints as | `ProductCombosSection.tsx` (`LabelField`, `DescriptionField`, `PartsLineField`) |
+| BE | migration `combo_0001_part_labels`; `product_combo.py` model/schema/service; `tag_data_service.py` `_part_row.dimensions_lwh`, `_combo_object` labels + line; `schemas/price_tag.py` |
