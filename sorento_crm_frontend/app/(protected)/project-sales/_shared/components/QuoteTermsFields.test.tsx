@@ -120,15 +120,26 @@ describe('QuoteTermsFields', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('emptying both the number and the unit clears the validity', () => {
+  it('emptying the number clears the validity and its unit', () => {
     renderFields({ validity_value: 2, validity_unit: 'week', validity: '2 WEEKS' });
     fireEvent.change(screen.getByLabelText('Validity'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Validity unit'), { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith({
       validity_value: null,
       validity_unit: null,
       validity: null,
     });
+    expect((screen.getByLabelText('Validity unit') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('shows what prints when a synced link reads differently from the pick', () => {
+    renderFields({ payment_term_id: 'pt-30', payment_terms: '30 days' });
+    expect(screen.getByText('Current: 30 days')).toBeTruthy();
+  });
+
+  it('a retired pick with no text never shows an id', () => {
+    renderFields({ payment_term_id: 'pt-gone', payment_terms: null });
+    const select = screen.getByLabelText('Payment Terms') as HTMLSelectElement;
+    expect(select.options[select.selectedIndex].textContent).toBe('Retired term');
   });
 
   it('asks the project for its terms on the quotation form', () => {

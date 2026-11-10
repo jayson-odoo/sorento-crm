@@ -14,6 +14,7 @@ The printed text lives on the row itself, so issue freeze, cover, PDF and sign l
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func
@@ -137,6 +138,14 @@ def resolve(db: Session, *, company_id: str, payload: Dict[str, Any]) -> Dict[st
     if "payment_term_id" in payload:
         term_id = payload.get("payment_term_id")
         if term_id:
+            # A malformed id is the same refusal as an unknown one, never a 500 from Postgres.
+            try:
+                term_id = str(uuid.UUID(str(term_id)))
+            except ValueError:
+                raise _unprocessable(
+                    "That payment term is not one of this company's AutoCount terms. Pick one from the list.",
+                    "payment_term_unknown",
+                )
             term = (
                 db.query(PaymentTerm)
                 .filter(
@@ -188,20 +197,44 @@ def apply(db: Session, *, company_id: str, target: Any, payload: Dict[str, Any])
         setattr(target, field, value)
 
 
-def link_legacy_terms(db: Session, *, company_id: str) -> int:
-    """Link templates and quotations whose legacy text equals a term's code or description.
+def active_term_id(db: Session, *, company_id: str, term_id: Optional[str]) -> Optional[str]:
+    """``term_id`` when it is still an active term of this company, else None. A default handed
+    to a new quotation must be one ``resolve`` accepts, or the create is refused."""
+    if not term_id:
+        return None
+    found = (
+        db.query(PaymentTerm.id)
+        .filter(
+            PaymentTerm.id == str(term_id),
+            PaymentTerm.company_id == company_id,
+            PaymentTerm.is_active.is_(True),
+        )
+        .scalar()
+    )
+    return str(found) if found else None
 
-    Case and spacing ignored, this company only, never one already linked, and the printed text is
-    left as it is. Runs after a non-dry ``payment_terms`` push. Returns the rows linked.
+
+def link_legacy_terms(db: Session, *, company_id: str) -> int:
+    """Link templates and quotations whose legacy text equals an ACTIVE term's code or description.
+
+    Case and spacing ignored, this company only, never one already linked, never a quotation that
+    is with a manager or approved, and the printed text is left as it is. Runs after a non-dry
+    ``payment_terms`` push. Returns the rows linked.
     """
     from app.models.projects import ProjectQuotationDocument, QuotationTemplate
+    from app.services import project_quotation_approval_service as approvals
 
     by_text: Dict[str, str] = {}
-    terms = db.query(PaymentTerm).filter(PaymentTerm.company_id == company_id).all()
-    # Active first wins a clash; a code never loses to another term's description.
-    for term in sorted(terms, key=lambda t: (not t.is_active, t.term_code)):
+    terms = (
+        db.query(PaymentTerm)
+        .filter(PaymentTerm.company_id == company_id, PaymentTerm.is_active.is_(True))
+        .order_by(PaymentTerm.term_code)
+        .all()
+    )
+    # A code never loses to another term's description.
+    for term in terms:
         by_text.setdefault(_norm(term.term_code), str(term.id))
-    for term in sorted(terms, key=lambda t: (not t.is_active, t.term_code)):
+    for term in terms:
         if (term.description or "").strip():
             by_text.setdefault(_norm(term.description), str(term.id))
     if not by_text:
@@ -220,6 +253,10 @@ def link_legacy_terms(db: Session, *, company_id: str) -> int:
         )
         for row in rows:
             term_id = by_text.get(_norm(row.payment_terms))
+            if term_id and model is ProjectQuotationDocument and (
+                approvals.current_key(db, row) in approvals.LOCKED_KEYS
+            ):
+                continue
             if term_id:
                 row.payment_term_id = term_id
                 linked += 1

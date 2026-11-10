@@ -497,8 +497,14 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
             out["payment_terms"] = template.payment_terms if template is not None else None
             out["validity"] = template.validity if template is not None else None
             # QUOTE-TERMS-SELECT: the picks behind the two texts, copied onto the new quotation.
+            # Only a term still active: a deactivated one would refuse the create it seeds. Its
+            # text still prints and shows as the legacy "Current" value.
             out["payment_term_id"] = (
-                str(template.payment_term_id) if template is not None and template.payment_term_id else None
+                quote_terms.active_term_id(
+                    db, company_id=str(project.company_id), term_id=template.payment_term_id
+                )
+                if template is not None
+                else None
             )
             out["validity_value"] = template.validity_value if template is not None else None
             out["validity_unit"] = template.validity_unit if template is not None else None

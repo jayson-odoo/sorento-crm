@@ -57,7 +57,6 @@ export function QuoteTermsFields({
 }) {
   const terms = usePaymentTermOptions(projectId);
   const termId = values.payment_term_id ?? '';
-  const legacyTerms = !termId && (values.payment_terms ?? '').trim() ? values.payment_terms : null;
 
   const options = React.useMemo<SearchableSelectOption[]>(() => {
     const list: SearchableSelectOption[] = (terms.data ?? []).map((term) => ({
@@ -68,10 +67,16 @@ export function QuoteTermsFields({
     }));
     // A term picked before it was deactivated in AutoCount still shows as picked.
     if (termId && !list.some((option) => option.value === termId)) {
-      list.push({ value: termId, label: values.payment_terms || termId });
+      list.push({ value: termId, label: values.payment_terms || 'Retired term' });
     }
     return list;
   }, [terms.data, termId, values.payment_terms]);
+
+  // What prints, when it is not what the select shows: a legacy text nobody picked over, or one a
+  // sync linked to a term whose label reads differently.
+  const printedTerms = (values.payment_terms ?? '').trim();
+  const pickedLabel = options.find((option) => option.value === termId)?.label ?? '';
+  const legacyTerms = printedTerms && printedTerms !== pickedLabel.trim() ? printedTerms : null;
 
   // The number and the unit are sent as a pair, so a half-typed one stays here until it is whole.
   const [value, setValue] = React.useState<string>(
@@ -90,8 +95,12 @@ export function QuoteTermsFields({
 
   function emitValidity(nextValue: string, nextUnit: string) {
     const number = Number(nextValue);
-    if (!nextValue && !nextUnit) {
-      onChange({ validity_value: null, validity_unit: null, validity: null });
+    // An emptied number clears the validity, whatever the unit says.
+    if (!nextValue) {
+      if (nextUnit) setUnit('');
+      if (values.validity_value != null || values.validity) {
+        onChange({ validity_value: null, validity_unit: null, validity: null });
+      }
       return;
     }
     if (nextValue && Number.isInteger(number) && number >= 1 && number <= 999 && isUnit(nextUnit)) {

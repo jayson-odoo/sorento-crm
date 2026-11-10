@@ -369,3 +369,75 @@ def test_an_inactive_debtor_term_does_not_become_the_default(api):
     _customer_on(db, project, company_id, f"{MARKER}-OLD")
     got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
     assert got["payment_term_id"] is None
+
+
+# ------------------------------------------------------------------------------ review round 1
+
+
+def test_a_deactivated_template_term_does_not_block_new_quotations(api):
+    """Reviewer blocker: the template's term deactivated in AutoCount must not seed a create that
+    `resolve` then refuses. The text still prints and shows as the legacy value."""
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    _terms_template(client, payment_term_id=str(cbd.id))
+    cbd.is_active = False
+    db.commit()
+
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/letter-templates").json()
+    assert got["payment_term_id"] is None
+    assert got["payment_terms"] == "CASH BEFORE DELIVERY"
+
+    # As the form sends it: a null default id is not sent at all (QuotationFormClient).
+    created = _create_document(client, project.id, payment_terms=got["payment_terms"])
+    assert created["payment_terms"] == "CASH BEFORE DELIVERY"
+
+
+def test_a_quotation_on_a_term_later_deactivated_still_prints_and_saves(api):
+    """AC-B4: picked, then deactivated: still printed, and an unrelated save still works."""
+    client, db, company_id, _user, project, _party = api
+    cbd = _term(db, company_id, "CBD", "CASH BEFORE DELIVERY")
+    db.commit()
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+    created = _create_document(client, project.id, payment_term_id=str(cbd.id))
+    cbd.is_active = False
+    db.commit()
+
+    patched = client.patch(f"{root}/{created['id']}", json={"attn_name": "Mr Tan"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["payment_term_id"] == str(cbd.id)
+    assert patched.json()["payment_terms"] == "CASH BEFORE DELIVERY"
+
+
+@pytest.mark.parametrize("bad", ["not-a-uuid", "123"])
+def test_a_malformed_term_id_is_a_422_not_a_500(api, bad):
+    client, *_ = api
+    created = _terms_template(client)
+    response = client.put(f"{TEMPLATES}/{created['id']}", json={"payment_term_id": bad})
+    assert response.status_code == 422, response.text
+    assert response.json().get("code") == "payment_term_unknown"
+
+
+def test_the_migration_backfill_maps_only_an_exact_number_and_unit(api):
+    """AC-D3: the migration's own SQL rule, run against literals, agrees with parse_validity."""
+    import importlib.util
+    import pathlib
+
+    from sqlalchemy import text
+
+    _client, db, *_ = api
+    path = pathlib.Path(__file__).resolve().parents[1] / "alembic/versions/qts_0001_quote_terms_select.py"
+    spec = importlib.util.spec_from_file_location("qts_0001", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    samples = ["30 days", " 2 Weeks ", "1 month", "30 days from quotation date", "0 days", "two weeks"]
+    for sample in samples:
+        row = db.execute(
+            text(
+                "SELECT (regexp_match(:v, :re, 'i'))[1]::int AS n, "
+                "lower((regexp_match(:v, :re, 'i'))[2]) AS u"
+            ),
+            {"v": sample, "re": module._VALIDITY_RE},
+        ).first()
+        sql = (row.n, row.u) if row.n is not None and 1 <= row.n <= 999 else None
+        assert sql == qts.parse_validity(sample), sample

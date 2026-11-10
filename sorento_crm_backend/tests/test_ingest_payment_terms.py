@@ -163,3 +163,18 @@ def test_contract_lists_the_customer_field_as_added_not_removed(env):
     body = env.client.get(CONTRACT_URL).json()
     assert "payment_terms_code" in body["fields_added"]["customers"]
     assert "payment_terms_code" not in body["fields_removed"].get("customers", [])
+
+
+def test_a_push_never_links_legacy_text_to_an_inactive_term(env):
+    from app.models.projects import QuotationTemplate
+
+    code = _code()
+    template = QuotationTemplate(
+        company_id=env.company_a, kind="terms", name=f"{MARKER} f", body_html="<p>x</p>",
+        payment_terms=code,
+    )
+    env.db.add(template)
+    env.db.commit()
+    env.post(INGEST, [{"source_ref": _ref(), "code": code, "is_active": False}])
+    env.db.refresh(template)
+    assert template.payment_term_id is None
