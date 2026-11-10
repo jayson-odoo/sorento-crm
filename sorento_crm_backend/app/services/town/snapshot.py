@@ -479,7 +479,13 @@ def opaque_key(snapshot: dict, key: str) -> str:
     if _OPAQUE_RE.fullmatch(key):
         return key
     message = f"{snapshot.get('company_id')}:{snapshot.get('day')}:{key}".encode()
-    return "s" + hmac.new(settings.jwt_secret.encode(), message, hashlib.sha256).hexdigest()[:12]
+    return "s" + hmac.new(_opaque_secret(), message, hashlib.sha256).hexdigest()[:12]
+
+
+def _opaque_secret() -> bytes:
+    """A key of its own for `opaque_key`, derived from JWT_SECRET (domain separated, so it never doubles
+    as the link-token signing key)."""
+    return hmac.new(settings.jwt_secret.encode(), b"town-opaque-key", hashlib.sha256).digest()
 
 
 def _opaque_keys(out: dict) -> None:
