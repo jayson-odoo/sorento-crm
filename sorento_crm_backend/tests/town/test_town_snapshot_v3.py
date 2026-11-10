@@ -157,10 +157,10 @@ def test_endpoint_serves_the_v3_keys_per_variant():
         from tests.town.test_town_snapshot_endpoint import _user
 
         principal = _user(db, DEFAULT_COMPANY_ID)
-        with _client(db, principal, allow=("sales.reports.view",)) as client:
+        with _client(db, principal, allow=("dashboards.town.view", "sales.reports.view")) as client:
             holder = client.get(URL).json()
             holder_wb = client.get(URL, params={"mode": "wallboard"}).json()
-        with _client(db, principal, allow=()) as client:
+        with _client(db, principal, allow=("dashboards.town.view",)) as client:
             plain = client.get(URL).json()
             plain_wb = client.get(URL, params={"mode": "wallboard"}).json()
     assert holder["compare"]["last_week_amount"] == "123456.78"

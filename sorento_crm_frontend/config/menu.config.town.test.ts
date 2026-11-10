@@ -1,6 +1,7 @@
 /**
- * SORENTO-TOWN Phase 1: the Town entry (plan "Phase 1 screen": a menu entry for every signed-in
- * staff user, no permission, in the existing menu config).
+ * SORENTO-TOWN: the Town entry. Admin-only since TOWN-V2 (owner, 10 Nov 2026): gated on the dedicated
+ * `dashboards.town.view` permission (granted to admin and superadmin), so the sidebar hides it from
+ * everyone else; not a role-name check.
  */
 import { describe, expect, it } from 'vitest';
 import { MENU_SIDEBAR } from './menu.config';
@@ -23,12 +24,11 @@ describe('MENU_SIDEBAR - Town', () => {
     expect(found[0].heading).toBeUndefined();
   });
 
-  it('is open to every signed-in staff user: no permission, no module, no admin gate', () => {
+  it('is gated on dashboards.town.view only, not on a role name', () => {
     const [town] = entries(MENU_SIDEBAR, '/town');
     expect(town).toBeDefined();
-    expect(town.permission).toBeUndefined();
+    expect(town.permission).toBe('dashboards.town.view');
     expect(town.permissionsAny).toBeUndefined();
-    expect(town.moduleKey).toBeUndefined();
     expect(town.superadminOnly).toBeFalsy();
   });
 

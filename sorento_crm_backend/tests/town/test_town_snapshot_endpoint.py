@@ -28,6 +28,7 @@ from tests.town._town_seed import AMOUNT_KEYS, FAKE_RM_FIGURES, all_keys, fake_f
 
 URL = "/api/v1/town/snapshot"
 SLUG = "sales.reports.view"
+TOWN = "dashboards.town.view"  # TOWN-V2: the Town is admin-only (owner, 10 Nov ~16:55)
 BUSINESS_TABLES = (
     "billing_documents", "billing_document_lines", "customers", "stock", "warehouses", "reorder_level",
     "purchase_requests", "quotation_documents", "products",
@@ -115,7 +116,7 @@ def test_ac2_serving_the_snapshot_reads_no_business_table(db, stored):
         db.execute(text("select 1 from billing_documents limit 1"))
         assert any("billing_documents" in s for s in seen)
         seen.clear()
-        with _client(db, principal, allow=(SLUG,)) as client:
+        with _client(db, principal, allow=(TOWN, SLUG)) as client:
             ok = client.get(URL)
             wall = client.get(URL, params={"mode": "wallboard"})
         assert ok.status_code == 200 and wall.status_code == 200
@@ -132,7 +133,7 @@ def test_ac2_serving_the_snapshot_reads_no_business_table(db, stored):
 
 def test_ac3_user_without_sales_reports_view_gets_counts_and_no_amount_in_the_body(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         r = client.get(URL)
     assert r.status_code == 200
     body = r.json()
@@ -155,7 +156,7 @@ def test_a_redacted_shop_list_is_not_in_ranking_order(db):
     ]
     store(redis_conn, DEFAULT_COMPANY_ID, _today(), full)
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         first = [s["account_label"] for s in client.get(URL).json()["shops"]]
         again = [s["account_label"] for s in client.get(URL).json()["shops"]]
     assert first == again  # stable across refreshes
@@ -165,7 +166,7 @@ def test_a_redacted_shop_list_is_not_in_ranking_order(db):
 
 def test_ac3_redacted_body_has_no_dealer_identity_ranking_or_customer_id(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         r = client.get(URL)
     body = r.json()
     for shop in body["shops"]:
@@ -177,7 +178,7 @@ def test_ac3_redacted_body_has_no_dealer_identity_ranking_or_customer_id(db, sto
 
 def test_ac3_sales_reports_view_holder_gets_amounts(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL)
     assert r.status_code == 200
     body = r.json()
@@ -231,7 +232,7 @@ def test_a_salesperson_only_session_is_refused(db, stored):
 
 def test_ac4_wallboard_mode_has_no_name_or_code(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL, params={"mode": "wallboard"})
         personal = client.get(URL)
     assert r.status_code == 200
@@ -247,7 +248,7 @@ def test_ac4_wallboard_mode_has_no_name_or_code(db, stored):
 
 def test_ac4_wallboard_for_a_non_holder_has_neither_names_nor_amounts(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         r = client.get(URL, params={"mode": "wallboard"})
     body = r.json()
     assert not (all_keys(body) & (AMOUNT_KEYS | {"name", "code"}))
@@ -258,7 +259,7 @@ def test_ac4_wallboard_for_a_non_holder_has_neither_names_nor_amounts(db, stored
 
 def test_response_is_the_stored_gzip_with_contract_headers_and_an_etag(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL)
     assert r.status_code == 200
     assert r.headers["content-encoding"] == "gzip"
@@ -269,10 +270,10 @@ def test_response_is_the_stored_gzip_with_contract_headers_and_an_etag(db, store
 
 def test_etag_differs_by_variant_and_wallboard(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         full = client.get(URL).headers["etag"]
         full_wb = client.get(URL, params={"mode": "wallboard"}).headers["etag"]
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         red = client.get(URL).headers["etag"]
         red_wb = client.get(URL, params={"mode": "wallboard"}).headers["etag"]
     assert full == f'"{stored}-full"'
@@ -284,7 +285,7 @@ def test_etag_differs_by_variant_and_wallboard(db, stored):
 
 def test_same_if_none_match_answers_304_with_an_empty_body(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         etag = client.get(URL).headers["etag"]
         again = client.get(URL, headers={"If-None-Match": etag})
         other_variant = client.get(URL, params={"mode": "wallboard"}, headers={"If-None-Match": etag})
@@ -295,9 +296,9 @@ def test_same_if_none_match_answers_304_with_an_empty_body(db, stored):
 
 def test_a_redacted_users_etag_does_not_validate_a_full_body(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=()) as client:
+    with _client(db, principal, allow=(TOWN,)) as client:
         red_etag = client.get(URL).headers["etag"]
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL, headers={"If-None-Match": red_etag})
     assert r.status_code == 200
     assert r.json()["today"]["amount"] == "512345.60"
@@ -308,7 +309,7 @@ def test_a_new_snapshot_version_is_a_new_etag_not_a_304(db, stored):
     from app.services.town.snapshot import store
 
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         old = client.get(URL).headers["etag"]
         changed = fake_full(_today(), DEFAULT_COMPANY_ID)
         changed["today"]["invoice_count"] = 238
@@ -320,7 +321,7 @@ def test_a_new_snapshot_version_is_a_new_etag_not_a_304(db, stored):
 
 def test_no_snapshot_stored_yet_answers_200_pending(db):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL)
     assert r.status_code == 200
     assert r.json() == {"pending": True}
@@ -340,7 +341,7 @@ def test_ac10_the_31st_request_within_a_minute_is_429(db):
 
     principal = _user(db, DEFAULT_COMPANY_ID)
     _wait_for_a_fresh_minute()
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         codes = [client.get(URL).status_code for _ in range(31)]
     assert codes[:30] == [200] * 30
     assert codes[30] == 429
@@ -353,9 +354,9 @@ def test_ac10_the_limit_is_per_user(db):
     first = _user(db, DEFAULT_COMPANY_ID)
     second = _user(db, DEFAULT_COMPANY_ID)
     _wait_for_a_fresh_minute()
-    with _client(db, first, allow=(SLUG,)) as client:
+    with _client(db, first, allow=(TOWN, SLUG)) as client:
         assert [client.get(URL).status_code for _ in range(31)][-1] == 429
-    with _client(db, second, allow=(SLUG,)) as client:
+    with _client(db, second, allow=(TOWN, SLUG)) as client:
         assert client.get(URL).status_code == 200
 
 
@@ -378,7 +379,7 @@ def _bearer(user_id):
 
 
 @contextmanager
-def _resolver_client(db, principal, allow=(SLUG,)):
+def _resolver_client(db, principal, allow=(TOWN, SLUG)):
     """The real `apply_company_scope` (not overridden): the scope comes from the bearer's user grants."""
     from app.services.user_service import UserPermissionService
 
@@ -442,6 +443,6 @@ def test_a_portal_token_is_401(db, stored):
 
 def test_a_staff_session_with_the_shared_key_header_is_refused(db, stored):
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=(SLUG,)) as client:
+    with _client(db, principal, allow=(TOWN, SLUG)) as client:
         r = client.get(URL, headers={"X-API-Key": "ZZT-anything"})
     assert r.status_code == 400
