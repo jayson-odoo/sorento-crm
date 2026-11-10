@@ -275,20 +275,12 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [selectedLines],
   );
-  // W (coordinator's ruling): nothing ticked means every confirmed line of the WHOLE
-  // OI, the same ticked/whole-OI symmetry Confirm and Auto link already have - not just
-  // "nothing to unconfirm". `activeLines` already holds every non-cancelled line of this
-  // header (`useOrderInquiryHeaderLines` reads every page of the worklist's own
-  // `inquiry_id` filter), so no extra fetch is needed for the "all" scope.
-  const allUnconfirmable = useMemo(
-    () =>
-      activeLines.filter((l) => {
-        const state = ackStateOf(l);
-        return state === 'acknowledged' || state === 'changed';
-      }),
-    [activeLines],
-  );
-  const unconfirmScope = anyTicked ? selectedUnconfirmable : allUnconfirmable;
+  // STANDARD-HISTORY A (owner ruling 10 Nov 2026, supersedes the coordinator's W ruling):
+  // Unconfirm reads the TICKED lines only, like the worklist's own Unconfirm (N) and this
+  // page's Link / Unlink / Reject selected. Nothing ticked used to mean every confirmed
+  // line of the whole OI, and one stray press on OI-2611-0019 sent all 9 rows back to
+  // "To order". To unconfirm everything, tick the header checkbox first.
+  const unconfirmScope = selectedUnconfirmable;
   const selectedRejectable = useMemo(
     () =>
       selectedLines.filter(
