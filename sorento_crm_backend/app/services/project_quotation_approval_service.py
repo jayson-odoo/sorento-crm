@@ -136,6 +136,7 @@ def below_floor_line_count(db: Session, document: ProjectQuotationDocument) -> i
         .filter(
             ProjectQuotationLine.version_id.in_(version_ids),
             ProjectQuotationLine.is_below_floor.is_(True),
+            ProjectQuotationLine.is_section.is_(False),
         )
         .scalar()
         or 0
@@ -187,7 +188,12 @@ def _flagged_line_count(db: Session, document: ProjectQuotationDocument, flag) -
         return 0
     return int(
         db.query(func.count(ProjectQuotationLine.id))
-        .filter(ProjectQuotationLine.version_id.in_(version_ids), flag.is_(True))
+        .filter(
+            ProjectQuotationLine.version_id.in_(version_ids),
+            flag.is_(True),
+            # Heading rows are never flagged; filtered all the same (PROPOSAL-FORM-COLLAPSE).
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .scalar()
         or 0
     )
@@ -217,7 +223,10 @@ def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_below_floor, Integer)), 0),
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_non_standard, Integer)), 0),
         )
-        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .filter(
+            ProjectQuotationLine.version_id.in_(version_ids),
+            ProjectQuotationLine.is_section.is_(False),
+        )
         .one()
     )
     return {

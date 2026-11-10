@@ -125,6 +125,7 @@ class ProjectParty(Base, CompanyScopedMixin):
     registration_no = Column(String(100), nullable=True)
     address = Column(Text, nullable=True)
     phone = Column(String(50), nullable=True)
+    fax = Column(String(50), nullable=True)
     email = Column(String(150), nullable=True)
     notes = Column(Text, nullable=True)
     customer_id = Column(
@@ -1204,6 +1205,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_fax_snapshot = Column(String(200), nullable=True)
     recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
     # Cover page (QUOTE-COVER-PAGE): free text, per quotation.
@@ -2073,6 +2075,11 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     # ("BILL NO 3 PAGE 15/4", "OPTION"). Carried by the line that OPENS the band rather than in a
     # table of its own, so a band cannot orphan itself from the lines under it.
     band_label = Column(String(150), nullable=True)
+    # The row IS a section heading (PROPOSAL-FORM-COLLAPSE, owner 10 Nov 2026: "a heading
+    # shouldnt be tied to line"): it carries `band_label` only (no product, set, quantity or
+    # price) and its own `sort_order`, so moving or deleting a line never moves or drops it.
+    # Every reader of quotation lines skips it or draws it as the band row.
+    is_section = Column(Boolean, nullable=False, server_default="false", default=False)
 
     unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
     quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)

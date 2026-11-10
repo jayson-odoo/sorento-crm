@@ -559,7 +559,7 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Date')).toHaveValue(today);
     // The subject arrives as the project's title, the same default the server would use.
     await waitFor(() =>
-      expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'),
+      expect(screen.getByLabelText('Project title')).toHaveValue('Menara Test'),
     );
     const card = await openLines();
     expect(screen.getByRole('button', { name: 'Scope actions on Scope 1' })).toBeInTheDocument();
@@ -609,14 +609,18 @@ describe('QuotationFormClient create', () => {
     );
 
     fireEvent.click(within(card).getByRole('button', { name: 'Add a section' }));
-    const heading = await within(card).findByRole('textbox', { name: 'Section heading on line 2' });
+    // A heading row of its own, then a line under it (PROPOSAL-FORM-COLLAPSE).
+    const heading = await within(card).findByRole('textbox', { name: 'Section heading above line 2' });
     fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS' } });
     await waitFor(() =>
       expect(stageScopeSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/^new-scope:/),
         [
           expect.anything(),
-          expect.objectContaining({ draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }) }),
+          expect.objectContaining({
+            draft: expect.objectContaining({ is_section: expect.any(String), band_label: 'OPTIONAL ITEMS' }),
+          }),
+          expect.objectContaining({ id: null }),
         ],
       ),
     );
@@ -1124,7 +1128,7 @@ describe('QuotationFormClient tabs (AC-QF055)', () => {
   it('holds recipient, attention, your ref, date, subject and address in the Header tab', async () => {
     renderForm();
 
-    for (const label of ['Name', 'Address', 'Attn', 'Your Ref', 'Date', 'Subject']) {
+    for (const label of ['Name', 'Address', 'Attn', 'Your Ref', 'Date', 'Project title']) {
       expect(await screen.findByLabelText(label)).toBeInTheDocument();
     }
   });
@@ -1493,7 +1497,8 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
     );
-    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('');
+    // Quotation Purpose is gone from the form (owner, 10 Nov 2026).
+    expect(screen.queryByLabelText('Quotation Purpose')).toBeNull();
   });
 
   it('create prefills Payment Terms and Validity from the letter templates', async () => {
@@ -1516,7 +1521,7 @@ describe('QuotationFormClient cover page fields', () => {
     expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
   });
 
-  it('Save sends recipient_email_snapshot, quotation_purpose, payment_terms and validity', async () => {
+  it('Save sends recipient_email_snapshot, payment_terms and validity, and no quotation_purpose', async () => {
     getProject.mockResolvedValue(withEmail());
     getQuotationLetterTemplates.mockResolvedValue(templates);
     renderForm();
@@ -1524,9 +1529,6 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
     );
-    fireEvent.change(screen.getByLabelText('Quotation Purpose'), {
-      target: { value: 'Supply of sanitary ware' },
-    });
     await openTab('Terms');
     fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
 
@@ -1534,10 +1536,10 @@ describe('QuotationFormClient cover page fields', () => {
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       recipient_email_snapshot: 'lim.weiming@example.test',
-      quotation_purpose: 'Supply of sanitary ware',
       payment_terms: '30 days net',
       validity: '90 days',
     });
+    expect(createQuotationDocument.mock.calls[0][1]).not.toHaveProperty('quotation_purpose');
   });
 
   it('with no active template Payment Terms and Validity start empty and Save still works', async () => {
@@ -1566,7 +1568,9 @@ describe('QuotationFormClient cover page fields', () => {
     renderForm('d1');
 
     await waitFor(() => expect(screen.getByLabelText('Email')).toHaveValue('saved@example.test'));
-    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('Saved purpose');
+    // A stored purpose stays in the column but is no longer shown or sent.
+    expect(screen.queryByLabelText('Quotation Purpose')).toBeNull();
+    expect(screen.queryByText('Saved purpose')).toBeNull();
     await openTab('Terms');
     const pay = await screen.findByLabelText('Payment Terms');
     expect(pay).toHaveValue('Saved payment');
@@ -1969,5 +1973,98 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     renderForm();
     await screen.findByRole('textbox', { name: 'Your Ref' });
     expect(screen.queryByTestId('record-header-card')).toBeNull();
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): "I want to make the header and lines section to be
+ * collapsible". Both open by default; a collapsed one shows a one-line summary and keeps its
+ * fields mounted (hidden), so nothing typed is lost; Cover letter and Terms are untouched.
+ */
+describe('QuotationFormClient: collapsible Header and Lines (PROPOSAL-FORM-COLLAPSE)', () => {
+  function toggle(name: RegExp) {
+    return screen.getByRole('button', { name });
+  }
+
+  it('opens both sections by default, on New and on Edit', async () => {
+    renderForm();
+    await openLines();
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle(/^Lines/)).toHaveAttribute('aria-expanded', 'true');
+    cleanup();
+
+    renderForm('d1');
+    await openLines('Townhouse');
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle(/^Lines/)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('a collapsed Header hides its fields and reads To, Subject, Date and Total on one line', async () => {
+    renderForm('d1');
+    await openLines('Townhouse');
+    const name = screen.getByRole('textbox', { name: 'Name' });
+    expect(name).toBeVisible();
+
+    fireEvent.click(toggle(/^Header/));
+    const collapsed = toggle(/^Header/);
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false');
+    expect(collapsed).toHaveTextContent(
+      /Nadi Cergas Sdn Bhd.*Menara Test.*28\/09\/2026.*RM [\d,]+\.\d\d/,
+    );
+    // Hidden, not unmounted: the typed value survives a collapse.
+    expect(screen.getByDisplayValue('Nadi Cergas Sdn Bhd')).not.toBeVisible();
+    // The lines stay open.
+    expect(within(scopeCard('Townhouse')).getByRole('button', { name: 'Add a line' })).toBeVisible();
+
+    fireEvent.click(collapsed);
+    expect(toggle(/^Header/)).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeVisible();
+  });
+
+  it('a collapsed Lines section reads the scope count and total, and keeps staged lines', async () => {
+    renderForm();
+    const card = await openLines();
+    const description = await addLine(card, 1);
+    fireEvent.change(description, { target: { value: 'Kept while folded' } });
+
+    fireEvent.click(toggle(/^Lines/));
+    const collapsed = toggle(/^Lines/);
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false');
+    expect(collapsed).toHaveTextContent(/1 scope.*RM [\d,]+\.\d\d/);
+    expect(screen.getByDisplayValue('Kept while folded')).not.toBeVisible();
+    // The Header stays open.
+    expect(screen.getByRole('textbox', { name: 'Your Ref' })).toBeVisible();
+
+    fireEvent.click(collapsed);
+    expect(screen.getByDisplayValue('Kept while folded')).toBeVisible();
+  });
+
+  it('leaves the Cover letter and Terms tabs without section toggles', async () => {
+    renderForm();
+    await openLines();
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
+    await openTab('Terms');
+    const terms = screen.getByRole('tabpanel', { name: 'Terms' });
+    expect(within(terms).queryByRole('button', { name: /^(Header|Lines)/ })).toBeNull();
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (review should-fix 4): a saved line that still carries a heading from
+ * before heading rows is shown with that heading as its own row, but merely OPENING the scope is
+ * not an edit: Save sends no lines for it, so nothing is rewritten until somebody changes it.
+ */
+describe('QuotationFormClient: a carried heading leaves an untouched scope clean', () => {
+  it('opens the scope, shows the heading row, and saves without its lines', async () => {
+    listQuotationLines.mockResolvedValue([{ ...LINE, band_label: 'BILL NO 1' }]);
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    expect(
+      await within(card).findByRole('textbox', { name: 'Section heading above SRT-WC-01' }),
+    ).toHaveValue('BILL NO 1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2].scopes[0]).not.toHaveProperty('lines');
   });
 });

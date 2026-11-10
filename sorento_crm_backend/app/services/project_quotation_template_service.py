@@ -83,7 +83,9 @@ MERGE_FIELDS: tuple[Dict[str, str], ...] = (
     },
     {
         "token": "subject_title",
-        "label": "Subject line",
+        # The form calls it Project title (owner, 10 Nov 2026); "on this quotation" keeps it
+        # apart from {{project_title}}, the project record's own title.
+        "label": "Project title on this quotation",
         "example": "CADANGAN MEMBINA PANGSAPURI RUMAH IDAMAN",
     },
     {
@@ -539,6 +541,14 @@ def delete_template(db: Session, *, template: QuotationTemplate) -> None:
 # -------------------------------------------------------------------- serialize
 
 
+def _design_of(template: QuotationTemplate) -> Optional[Dict[str, Any]]:
+    if not template.design:
+        return template.design
+    from app.services.quotation_cover_service import normalize_design
+
+    return normalize_design(template.design)
+
+
 def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
     return {
         "id": str(template.id),
@@ -547,7 +557,8 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "body_html": template.body_html,
         "payment_terms": template.payment_terms,
         "validity": template.validity,
-        "design": template.design,
+        # A design saved before QUOTE-COVER-FIELDS reads in the sections shape.
+        "design": _design_of(template),
         "is_active": bool(template.is_active),
         "created_at": template.created_at,
         "updated_at": template.updated_at,

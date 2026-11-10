@@ -519,7 +519,19 @@ describe('QuotationDocumentClient header dedupe', () => {
     expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
 
     rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
-    expect(screen.getByLabelText('Subject')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+    expect(screen.getByLabelText('Project title')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+  });
+
+  // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): a long Malay title overflowed the one-line input, so
+  // the field is a wrapping textarea named for what it holds.
+  it('edits the project title in a wrapping textarea, labelled Project title', () => {
+    const onChange = vi.fn();
+    render(<QuotationDocumentHeader document={quotationDocument()} onChange={onChange} />);
+    const field = screen.getByLabelText('Project title');
+    expect(field.tagName).toBe('TEXTAREA');
+    expect(screen.queryByLabelText('Subject')).toBeNull();
+    fireEvent.change(field, { target: { value: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' } });
+    expect(onChange).toHaveBeenCalledWith({ subject_title: 'CADANGAN PEMBANGUNAN BERSTRATA 2 BLOK' });
   });
 });
 
@@ -2003,7 +2015,7 @@ describe('QuotationDocumentClient cover page fields', () => {
       } as unknown as Partial<QuotationDocument>),
     });
 
-  it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
+  it('the Header tab shows Email and Prepared By, and no Quotation Purpose', async () => {
     getQuotationDocument.mockResolvedValue(coverDocument());
     getProject.mockResolvedValue(project({ owner_name: 'Wrong Project Owner' }));
     renderScreen(<QuotationHeaderTab />);
@@ -2011,8 +2023,9 @@ describe('QuotationDocumentClient cover page fields', () => {
     const card = await screen.findByTestId('quotation-header-card');
     await waitFor(() => expect(card).toHaveTextContent('kelly@example.test'));
     expect(card).toHaveTextContent('Email');
-    expect(card).toHaveTextContent('Quotation Purpose');
-    expect(card).toHaveTextContent('Supply of sanitary ware');
+    // Removed (owner, 10 Nov 2026): a stored value no longer shows.
+    expect(card).not.toHaveTextContent('Quotation Purpose');
+    expect(card).not.toHaveTextContent('Supply of sanitary ware');
     expect(card).toHaveTextContent('Prepared By');
     expect(card).toHaveTextContent('Ahmad Faizal');
     expect(card).not.toHaveTextContent('Wrong Project Owner');

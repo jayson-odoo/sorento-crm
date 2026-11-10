@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
@@ -55,6 +56,7 @@ import type {
 import {
   addCol as addMatrixCol,
   addHeader as addMatrixHeader,
+  duplicateHeader as duplicateMatrixHeader,
   appendCopy as appendMatrixCopy,
   cellsUnder,
   hasColumns,
@@ -69,6 +71,7 @@ import {
   MATRIX_LABEL_FOOTER,
   MatrixAmountFooterLines,
   MatrixGridProvider,
+  ADD_FIRST_HEADER_COLUMN,
   buildMatrixColumns,
   type MatrixGridContextValue,
   type PendingRemoval,
@@ -90,8 +93,10 @@ import {
   emptyDraft,
   INLINE_CHECKED,
   isInlineChecked,
+  isSectionDraft,
   isUntouched,
   lineErrors,
+  sectionDraft,
   totalFromDrafts,
   trimAmount,
   type LineDraft,
@@ -111,6 +116,11 @@ interface GridRow {
   key: string;
   /** Position in the WHOLE scope, so a search hides rows without renumbering the rest. */
   index: number;
+  /**
+   * The item number: lines only, heading rows take none (PROPOSAL-FORM-COLLAPSE). Optional so a
+   * matrix cell's row (`MatrixGridRow`) still reads as a grid row.
+   */
+  number?: number | null;
   staged: StagedQuotationLine;
 }
 
@@ -141,8 +151,10 @@ interface GridContextValue {
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
   act: (key: string, action: MenuAction) => void;
-  bandOpen: Set<string>;
+  /** Drops a heading row left without a name (blurred empty). */
   closeEmptyBand: (key: string) => void;
+  /** The name a heading row's box goes by: the line under it, else the end of the table. */
+  headingLabelOf: (row: GridRow) => string;
   openPreview: (kind: LineFileKind, shown: LineFileShown) => void;
   /** The row's name in every label (`describeLine`). */
   labelOf: (row: GridRow) => string;
@@ -236,7 +248,7 @@ function ItemCell({ row }: CellContext<GridRow, unknown>) {
   const notes = grid.itemNotes(row.original);
   return (
     <span className="block text-sm font-medium tabular-nums">
-      {row.original.index + 1}
+      {row.original.number ?? ''}
       {notes.length > 0 && (
         <span
           role="img"
@@ -825,15 +837,18 @@ function NotesButton({ row }: { row: GridRow }) {
   );
 }
 
-/** A section heading, drawn as a full-width row above the line that carries it (AC-QLG03). */
-function SectionBar({ row }: { row: GridRow }) {
+/**
+ * A section heading row (AC-QLG03; PROPOSAL-FORM-COLLAPSE, owner 10 Nov: "a heading shouldnt be
+ * tied to line"): one full-width bar of its own, with the line drag handle to move it up and down.
+ * Moving or removing a line never moves or drops it.
+ */
+function SectionRow({ row }: { row: GridRow }) {
   const grid = useGrid();
-  const { staged } = row;
-  const value = staged.draft.band_label ?? '';
-  if (!grid.editing || staged.removed) {
+  const value = row.staged.draft.band_label ?? '';
+  if (!grid.editing) {
     return (
       <span
-        className="block truncate text-sm font-semibold text-foreground uppercase"
+        className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
         title={value}
       >
         {value}
@@ -842,22 +857,34 @@ function SectionBar({ row }: { row: GridRow }) {
   }
   return (
     // The whole bar answers a right-click (Rename, Remove section), not only its input.
-    <div data-section-key={row.key} className="w-full">
+    <div data-section-key={row.key} className="flex w-full items-center gap-1">
+      <DataGridTableDndRowHandle rowId={row.key} />
       <Input
         variant="sm"
         value={value}
         data-band-key={row.key}
-        aria-label={`Section heading on ${grid.labelOf(row)}`}
+        aria-label={`Section heading ${grid.headingLabelOf(row)}`}
         title={value}
         placeholder="e.g. BILL NO 3 PAGE 15/4, OPTIONAL ITEMS"
         maxLength={150}
         className="max-w-md font-semibold"
-        onChange={(event) =>
-          grid.update(row.key, { band_label: event.target.value })
-        }
+        onChange={(event) => grid.update(row.key, { band_label: event.target.value })}
         onBlur={() => grid.closeEmptyBand(row.key)}
       />
     </div>
+  );
+}
+
+/** A heading row as it floats while dragged: its label, full width, nothing to type into. */
+function SectionPreview({ row }: { row: GridRow }) {
+  const value = (row.staged.draft.band_label ?? '').trim();
+  return (
+    <span
+      className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
+      title={value}
+    >
+      {value || 'Section'}
+    </span>
   );
 }
 
@@ -883,6 +910,26 @@ const FLUSH = 'px-0';
  * hidden. The handle and the row menu only exist while editing (column visibility), so the
  * column order a user saves holds in both views.
  */
+/** The hidden anchor the quantity block of a grid scope follows (see its column). */
+const QTY_BLOCK = 'qty_block';
+
+/**
+ * The reader's order without any column the DOCUMENT owns (ids `mx-*`: its header columns, their
+ * + buttons, Total qty). Those always follow the hidden anchor in definition order, so a saved
+ * order can never pin them and a header the document moves moves on screen too (review B1).
+ */
+function readerOrder(order: string[]): string[] {
+  return order.filter((id) => !id.startsWith('mx-'));
+}
+
+/** Every leaf column id, in definition order. */
+function leafIds(columns: ColumnDef<GridRow>[]): string[] {
+  return columns.flatMap((column) => {
+    const children = (column as { columns?: ColumnDef<GridRow>[] }).columns;
+    return children?.length ? leafIds(children) : [String(column.id)];
+  });
+}
+
 const COLUMNS: ColumnDef<GridRow>[] = [
   {
     id: 'drag_handle',
@@ -905,7 +952,7 @@ const COLUMNS: ColumnDef<GridRow>[] = [
     cell: ItemCell,
     size: 24,
     minSize: 24,
-    enableHiding: false,
+    enableHiding: true,
     meta: {
       headerTitle: '#',
       headerClassName: TIGHT,
@@ -1010,6 +1057,19 @@ const COLUMNS: ColumnDef<GridRow>[] = [
       cellClassName: `${NARROW} align-top`,
     },
   },
+  // Where a grid scope's quantity block sits (PROPOSAL-FORM-COLLAPSE, Q3): never drawn, but in
+  // the column order on every scope, so the reader's saved layout places the block the same way
+  // on each one. The block's own columns are data (per document) and follow it.
+  {
+    id: QTY_BLOCK,
+    header: () => null,
+    cell: () => null,
+    size: 0,
+    minSize: 0,
+    enableResizing: false,
+    enableHiding: false,
+    meta: { headerTitle: 'Quantities', draggable: false },
+  },
   {
     id: 'total',
     accessorFn: (row) => row.staged.draft.is_rate_only,
@@ -1042,6 +1102,18 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 ];
 
 /**
+ * A plain scope in an edit session: + Column header right after Total (RM), at the end of the
+ * header row where the owner pointed (PROPOSAL-FORM-COLLAPSE, 10 Nov), ahead of the row menu.
+ */
+function withFirstHeaderColumn(columns: ColumnDef<GridRow>[]): ColumnDef<GridRow>[] {
+  return columns.flatMap((column) =>
+    column.id === 'total'
+      ? [column, ADD_FIRST_HEADER_COLUMN as ColumnDef<GridRow>]
+      : [column],
+  );
+}
+
+/**
  * The columns for a scope WITH column headers (PS-QUOTE-MATRIX, mock v3 frame 1): every column
  * above stays where it is except Qty, whose place goes to the quantity columns after Rate; Total
  * becomes Amount, and the description column carries the two footer labels.
@@ -1054,7 +1126,7 @@ function matrixColumns(headers: MatrixHeader[], editable: boolean): ColumnDef<Gr
         return [];
       case 'description':
         return [{ ...column, footer: MATRIX_LABEL_FOOTER }];
-      case 'rate':
+      case QTY_BLOCK:
         return [column, ...quantity];
       case 'total':
         return [
@@ -1153,7 +1225,6 @@ export function QuotationLinesGrid({
   const headers = React.useMemo(() => optimistic ?? serverColumns ?? [], [optimistic, serverColumns]);
   const isMatrix = hasColumns(headers);
   const columnsEditable = editing && Boolean(matrix?.onChange);
-  const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
   const [preview, setPreview] = React.useState<{
     items: AttachmentPreviewItem[];
     index: number;
@@ -1273,33 +1344,48 @@ export function QuotationLinesGrid({
     };
   }, [instanceKey, isMatrix]);
 
-  const openBand = React.useCallback(
-    (key: string) => {
-      setBandOpen((previous) => new Set(previous).add(key));
-      // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
-      focusSoon(`[data-band-key="${key}"]`);
-    },
+  /** A heading row, new in this session, with nothing typed yet. */
+  const newHeading = React.useCallback((): StagedQuotationLine => {
+    nextNewId.current += 1;
+    return {
+      id: null,
+      key: `new:${instanceKey}:${nextNewId.current}`,
+      line: null,
+      draft: sectionDraft(),
+      removed: false,
+    };
+  }, [instanceKey]);
+
+  const focusHeading = React.useCallback(
+    // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
+    (key: string) => focusSoon(`[data-band-key="${key}"]`),
     [focusSoon],
   );
 
-  const closeEmptyBand = React.useCallback((key: string) => {
-    const held = linesRef.current.find((line) => line.key === key);
-    if (held && (held.draft.band_label ?? '').trim() !== '') return;
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
-  }, []);
+  /** A heading row blurred with no name is not a heading: it goes, and no line moves. */
+  const closeEmptyBand = React.useCallback(
+    (key: string) => {
+      const held = linesRef.current.find((line) => line.key === key);
+      if (!held || !isSectionDraft(held.draft)) return;
+      if ((held.draft.band_label ?? '').trim() !== '') return;
+      commit(linesRef.current.filter((line) => line.key !== key));
+    },
+    [commit],
+  );
 
   const addLine = React.useCallback(
     (withSection: boolean) => {
       const added = newLine();
-      commit([...linesRef.current, added]);
-      if (withSection) openBand(added.key);
+      if (!withSection) {
+        commit([...linesRef.current, added]);
+        return;
+      }
+      // Add a section: a heading row of its own, then a line under it to start the section.
+      const heading = newHeading();
+      commit([...linesRef.current, heading, added]);
+      focusHeading(heading.key);
     },
-    [commit, newLine, openBand],
+    [commit, focusHeading, newHeading, newLine],
   );
 
   const act = React.useCallback(
@@ -1317,15 +1403,19 @@ export function QuotationLinesGrid({
           ]);
           return;
         }
-        case 'section':
-          openBand(key);
+        case 'section': {
+          // Insert a section above: a heading row of its own, before this line.
+          const heading = newHeading();
+          commit([...current.slice(0, index), heading, ...current.slice(index)]);
+          focusHeading(heading.key);
           return;
+        }
         case 'remove':
           onToggleRemoved?.(key);
           return;
       }
     },
-    [commit, newLine, onToggleRemoved, openBand],
+    [commit, focusHeading, newHeading, newLine, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -1341,10 +1431,14 @@ export function QuotationLinesGrid({
     [commit],
   );
 
-  const allRows = React.useMemo<GridRow[]>(
-    () => lines.map((staged, index) => ({ key: staged.key, index, staged })),
-    [lines],
-  );
+  const allRows = React.useMemo<GridRow[]>(() => {
+    let counted = 0;
+    return lines.map((staged, index) => {
+      const heading = isSectionDraft(staged.draft);
+      if (!heading) counted += 1;
+      return { key: staged.key, index, number: heading ? null : counted, staged };
+    });
+  }, [lines]);
   const visibleRows = React.useMemo(
     () =>
       rowFilter ? allRows.filter((row) => rowFilter(row.staged)) : allRows,
@@ -1422,13 +1516,21 @@ export function QuotationLinesGrid({
         : (row.staged.draft.product_id ?? '');
       return describeLine(
         row.staged.line,
-        row.index,
+        (row.number ?? row.index + 1) - 1,
         !row.staged.line && productId
           ? (productCodeOf(productId) ?? (row.staged.draft[PICKED_CODE_KEY] || null))
           : null,
       );
     },
     [productCodeOf],
+  );
+
+  const headingLabelOf = React.useCallback(
+    (row: GridRow) => {
+      const below = allRows.slice(row.index + 1).find((next) => !isSectionDraft(next.staged.draft));
+      return below ? `above ${labelOf(below)}` : 'at the end';
+    },
+    [allRows, labelOf],
   );
 
   /**
@@ -1474,8 +1576,8 @@ export function QuotationLinesGrid({
       selectProduct,
       toggleRemoved: (key) => onToggleRemoved?.(key),
       act,
-      bandOpen,
       closeEmptyBand,
+      headingLabelOf,
       openPreview,
       visited,
       markVisited,
@@ -1484,9 +1586,9 @@ export function QuotationLinesGrid({
     }),
     [
       act,
-      bandOpen,
       brandOptions,
       closeEmptyBand,
+      headingLabelOf,
       editing,
       fetchProducts,
       itemNotes,
@@ -1560,6 +1662,16 @@ export function QuotationLinesGrid({
       changeAndFocus(
         addMatrixHeader(headersRef.current, `Header ${headersRef.current.length + 1}`),
       ),
+    [changeAndFocus],
+  );
+  const duplicateHeader = React.useCallback(
+    (headerKey: string) => {
+      const header = headersRef.current.find((row) => row.key === headerKey);
+      if (!header) return;
+      changeAndFocus(
+        duplicateMatrixHeader(headersRef.current, headerKey, `${header.label} (copy)`),
+      );
+    },
     [changeAndFocus],
   );
   const startRemoval = React.useCallback((key: string) => {
@@ -1680,7 +1792,7 @@ export function QuotationLinesGrid({
       summary(
         headers,
         lines
-          .filter((line) => !line.removed)
+          .filter((line) => !line.removed && !isSectionDraft(line.draft))
           .map((line) => ({
             qty_cells: draftCells(line.draft),
             unit_price: line.draft.unit_price,
@@ -1700,6 +1812,7 @@ export function QuotationLinesGrid({
       change,
       addCol,
       addHeader,
+      duplicateHeader,
       pending,
       startRemoval,
       undoRemoval: () => setPending(null),
@@ -1717,6 +1830,7 @@ export function QuotationLinesGrid({
       cellNotes,
       change,
       columnsEditable,
+      duplicateHeader,
       editing,
       focusKey,
       headers,
@@ -1730,8 +1844,20 @@ export function QuotationLinesGrid({
     ],
   );
 
+  /**
+   * The reader's column order, held here so it can be completed before TanStack reads it: a
+   * column the saved order has never seen (this document's quantity columns, a header just added)
+   * goes where it is defined, after its neighbour, not to the far right.
+   */
+  const [columnOrder, setColumnOrder] = React.useState<string[]>([]);
+
   const columns = React.useMemo(
-    () => (isMatrix ? matrixColumns(headers, columnsEditable) : COLUMNS),
+    () =>
+      isMatrix
+        ? matrixColumns(headers, columnsEditable)
+        : columnsEditable
+          ? withFirstHeaderColumn(COLUMNS)
+          : COLUMNS,
     [columnsEditable, headers, isMatrix],
   );
   const copySources = matrix?.copySources ?? [];
@@ -1748,9 +1874,17 @@ export function QuotationLinesGrid({
         ...columnVisibility,
         drag_handle: editing,
         row_actions: editing,
+        [QTY_BLOCK]: false,
       },
+      columnOrder: columnOrder.length
+        ? mergeColumnOrderWithLeafColumns(columnOrder, leafIds(columns))
+        : columnOrder,
     },
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnOrderChange: (updater) =>
+      setColumnOrder((previous) =>
+        readerOrder(typeof updater === 'function' ? updater(previous) : updater),
+      ),
     enableSorting: false,
     columnResizeMode: 'onChange',
   });
@@ -1760,7 +1894,7 @@ export function QuotationLinesGrid({
    * so one menu serves every row (owner hand test, points 2 and 3).
    */
   const [menuTarget, setMenuTarget] = React.useState<{
-    kind: 'line' | 'section';
+    kind: 'line' | 'section' | 'header';
     key: string;
   } | null>(null);
   /**
@@ -1768,6 +1902,11 @@ export function QuotationLinesGrid({
    * description, Qty): there the browser's own menu shows, for copy, paste and spelling.
    */
   const targetOf = (element: Element | null) => {
+    // A column header's whole box, its name included, answers with Duplicate (owner, 10 Nov:
+    // right-click rather than an icon). Every other editable control keeps the browser's menu.
+    const group = element?.closest<HTMLElement>('[data-matrix-header-key]');
+    if (group?.dataset.matrixHeaderKey && columnsEditable)
+      return { kind: 'header' as const, key: group.dataset.matrixHeaderKey };
     if (
       element?.closest(
         'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
@@ -1788,14 +1927,15 @@ export function QuotationLinesGrid({
     ? (lines.find((line) => line.key === menuTarget.key) ?? null)
     : null;
 
-  const renderSection = React.useCallback(
-    (row: GridRow) => {
-      const label = (row.staged.draft.band_label ?? '').trim();
-      return label || (editing && bandOpen.has(row.key)) ? (
-        <SectionBar row={row} />
-      ) : null;
-    },
-    [bandOpen, editing],
+  const renderHeadingRow = React.useCallback(
+    (row: GridRow, options?: { overlay?: boolean }) =>
+      !isSectionDraft(row.staged.draft) ? null : options?.overlay ? (
+        // The drag preview: the heading itself, static (owner hand test, 10 Nov 2026).
+        <SectionPreview row={row} />
+      ) : (
+        <SectionRow row={row} />
+      ),
+    [],
   );
 
   const galleryItems = preview?.items ?? [];
@@ -1807,13 +1947,8 @@ export function QuotationLinesGrid({
     }, 0);
   };
   const removeSection = (key: string) => {
-    update(key, { band_label: '' });
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
+    // The heading row alone: no line moves (PROPOSAL-FORM-COLLAPSE).
+    commit(linesRef.current.filter((line) => line.key !== key));
   };
 
   return (
@@ -1827,13 +1962,14 @@ export function QuotationLinesGrid({
           // Rows render under the default layout while the saved one loads, rather than as
           // skeletons: an editor must never hide the lines somebody is about to type into.
           loadingMode="spinner"
-          // A grid scope's columns are DATA (its own headers), so nothing is saved for it: a stored
-          // order would be re-applied against whichever headers exist (see DataGrid's opt-out).
-          listingKey={isMatrix ? null : 'projects.projects.view::quotation-lines'}
+          // ONE per-user layout for edit and view, plain and grid scopes alike (PROPOSAL-FORM-
+          // COLLAPSE, Q3, owner 10 Nov 2026). A grid scope's own columns are data: they follow
+          // the hidden quantity-block anchor, and the merge above places any it has not seen.
+          listingKey="projects.projects.view::quotation-lines"
           tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
           tableClassNames={{ headerRow: 'text-xs' }}
           emptyMessage={lines.length === 0 ? emptyHint : filterEmptyHint}
-          renderGroupHeader={renderSection}
+          renderFullRow={renderHeadingRow}
           rowClassName={(row: GridRow) =>
             row.staged.removed
               ? 'text-muted-foreground line-through opacity-70'
@@ -1905,9 +2041,10 @@ export function QuotationLinesGrid({
                   <DataGridTableDndRows
                     handleDragEnd={handleRowDragEnd}
                     dataIds={visibleRows.map((row) => row.key)}
-                    // A grid scope's two header rows are its column headers, edited in place;
-                    // the product columns keep their order there rather than dragging.
-                    columnsDraggable={!isMatrix}
+                    // The fixed columns drag the DataGrid way on every scope (Q3); a grid
+                    // scope's own header columns do not (their order is the document's, moved
+                    // by their grips), so the block stays together.
+                    columnsDraggable
                   />
                 </DataGridScroller>
                 {editing && (
@@ -1932,21 +2069,6 @@ export function QuotationLinesGrid({
                       <Plus className="size-4" aria-hidden />
                       Add a section
                     </Button>
-                    {/* How a grid starts: the first column header (R11, R12). Once there is
-                        one, + Column header sits at the end of the header row instead. */}
-                    {columnsEditable && !isMatrix && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-primary hover:text-primary"
-                        disabled={Boolean(matrix?.saving)}
-                        onClick={addHeader}
-                      >
-                        <Plus className="size-4" aria-hidden />
-                        Column header
-                      </Button>
-                    )}
                   </div>
                 )}
               </div>
@@ -1958,7 +2080,17 @@ export function QuotationLinesGrid({
                 keepFocusAfterMenu.current = false;
               }}
             >
-              {menuTarget?.kind === 'section' ? (
+              {menuTarget?.kind === 'header' ? (
+                <ContextMenuItem
+                  disabled={Boolean(matrix?.saving) || pending !== null}
+                  onSelect={() => {
+                    keepFocusAfterMenu.current = true;
+                    duplicateHeader(menuTarget.key);
+                  }}
+                >
+                  Duplicate
+                </ContextMenuItem>
+              ) : menuTarget?.kind === 'section' ? (
                 <>
                   <ContextMenuItem
                     onSelect={() => renameSection(menuTarget.key)}

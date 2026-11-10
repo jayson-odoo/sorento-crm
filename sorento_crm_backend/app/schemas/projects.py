@@ -32,6 +32,7 @@ class ProjectPartyBase(BaseModel):
     registration_no: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = None
     phone: Optional[str] = Field(None, max_length=50)
+    fax: Optional[str] = Field(None, max_length=50)
     email: Optional[str] = Field(None, max_length=150)
     notes: Optional[str] = None
     customer_id: Optional[str] = Field(
@@ -54,6 +55,7 @@ class ProjectPartyUpdate(BaseModel):
     registration_no: Optional[str] = Field(None, max_length=100)
     address: Optional[str] = None
     phone: Optional[str] = Field(None, max_length=50)
+    fax: Optional[str] = Field(None, max_length=50)
     email: Optional[str] = Field(None, max_length=150)
     notes: Optional[str] = None
     customer_id: Optional[str] = None
@@ -1358,6 +1360,13 @@ class ProjectQuotationLineBase(BaseModel):
         False,
         description="Quoted at a rate and printed, contributing nothing to any total.",
     )
+    is_section: bool = Field(
+        False,
+        description=(
+            "The row is a section heading: band_label only, no product, set, quantity or "
+            "price, and nothing added to any total."
+        ),
+    )
     image_attachment_id: Optional[str] = Field(
         None,
         description=(
@@ -1397,6 +1406,7 @@ class ProjectQuotationLineUpdate(BaseModel):
     complete_set: Optional[str] = Field(None, max_length=100)
     band_label: Optional[str] = Field(None, max_length=150)
     is_rate_only: Optional[bool] = None
+    is_section: Optional[bool] = None
 
     @field_validator("quantity")
     @classmethod
@@ -1561,6 +1571,8 @@ class ProjectQuotationLineResponse(BaseModel):
     technical_spec: Optional[str] = None
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
+    # A section heading row (band_label only), never a priced line (PROPOSAL-FORM-COLLAPSE).
+    is_section: bool = False
 
     is_non_standard: bool = False
     # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.
@@ -2033,6 +2045,7 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
+    recipient_fax_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
     # QUOTE-AUTOSAVE (card Q2): a new proposal's first Save. The form's state becomes its first
     # History entry and its private draft becomes the document's; `form_token` is the tab's claim
@@ -2067,6 +2080,7 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
     terms_html: Optional[str] = Field(default=None, max_length=50000)
     recipient_phone_snapshot: Optional[str] = None
+    recipient_fax_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeUpdate]] = Field(
         default=None,
         description="The quotation form's scopes (#1341). Absent leaves every scope as it is.",
@@ -2157,6 +2171,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
+    recipient_fax_snapshot: Optional[str] = None
 
     scopes: List[ProjectQuotationScopeSummary] = Field(default_factory=list)
     grand_total: Decimal = Decimal("0.00")
@@ -2545,6 +2560,8 @@ class QuotationSignScopeLine(BaseModel):
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
+    # A heading row: draw band_label as the band, nothing else (PROPOSAL-FORM-COLLAPSE).
+    is_section: bool = False
     is_rate_only: bool = False
     amount: Optional[Decimal] = None
     qty_cells: Dict[str, Any] = Field(default_factory=dict)
@@ -2581,6 +2598,7 @@ class QuotationCoverPreviewRequest(BaseModel):
     recipient_name_snapshot: Optional[str] = Field(default=None, max_length=2000)
     recipient_address_snapshot: Optional[str] = Field(default=None, max_length=2000)
     recipient_phone_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_fax_snapshot: Optional[str] = Field(default=None, max_length=200)
     recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
@@ -2588,6 +2606,9 @@ class QuotationCoverPreviewRequest(BaseModel):
     terms_html: Optional[str] = Field(default=None, max_length=50000)
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    subject_title: Optional[str] = Field(default=None, max_length=2000)
+    signatory_name: Optional[str] = Field(default=None, max_length=120)
+    signatory_phone: Optional[str] = Field(default=None, max_length=60)
 
 
 class QuotationDesignPreviewRequest(BaseModel):
@@ -2597,7 +2618,24 @@ class QuotationDesignPreviewRequest(BaseModel):
     body_html: str = Field(default="", max_length=50000)
 
 
+class QuotationCoverCell(BaseModel):
+    source: str
+    label: str = ""
+    text: Optional[str] = None
+    html: Optional[str] = None
+
+
+class QuotationCoverSection(BaseModel):
+    """One section of a layout 4 cover (QUOTE-COVER-FIELDS): ``cells`` holds one list per column."""
+
+    style: str
+    label: str = ""
+    columns: int = 1
+    cells: List[List[QuotationCoverCell]] = Field(default_factory=list)
+
+
 class QuotationCoverPreviewResponse(BaseModel):
+    cover_sections: Optional[List[QuotationCoverSection]] = None
     cover_rows: List[QuotationCoverRow] = Field(default_factory=list)
     cover_title: str = ""
     cover_show_letterhead: bool = True
@@ -2619,6 +2657,8 @@ class QuotationSignPageResponse(BaseModel):
     document_kind: str = "proposal"
     # The cover page rows (layout 2); null for an issue from before the cover page.
     cover_rows: Optional[List[QuotationCoverRow]] = None
+    # Layout 4 (QUOTE-COVER-FIELDS): the sections; null for layouts 1 to 3.
+    cover_sections: Optional[List[QuotationCoverSection]] = None
     # Layout 3 (QUOTE-COVER-DESIGN): the design copied at send; null for layouts 1 and 2.
     cover_title: Optional[str] = None
     cover_show_letterhead: Optional[bool] = None

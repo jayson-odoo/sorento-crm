@@ -61,9 +61,12 @@ from app.services.project_quotation_document_service import document_noun, quota
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
     COVER_LAYOUT_DESIGNED,
+    COVER_LAYOUT_SECTIONS,
     clean_terms_html,
     cover_reference,
     cover_rows,
+    cover_sections,
+    flat_rows,
     cover_title,
     design_of,
     layout_of,
@@ -572,8 +575,16 @@ def _grid_scope_html(
 
     body: List[str] = []
     current_band: Optional[str] = None
-    for position, (line, row) in enumerate(zip(lines, summary["rows"]), start=1):
+    position = 0
+    for line, row in zip(lines, summary["rows"]):
         band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
+            continue
+        position += 1
         if band and band != current_band:
             current_band = band
             body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
@@ -627,7 +638,8 @@ def _grid_scope_html(
             + "".join(plain[c] for c in after)
             + "</tr>"
         )
-    if not body:
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
         body.append(
             f'<tr><td class="empty" colspan="{span}">No items priced in this scope.</td></tr>'
         )
@@ -697,8 +709,18 @@ def _scope_html(
 
     body: List[str] = []
     current_band: Optional[str] = None
-    for position, line in enumerate(lines, start=1):
+    position = 0
+    for line in lines:
         band = (line.band_label or "").strip()
+        if line.is_section:
+            # A heading row is the band and nothing else, and takes no item number
+            # (PROPOSAL-FORM-COLLAPSE).
+            current_band = band
+            body.append(
+                f'<tr class="band"><td colspan="{len(columns)}">{_cell(band)}</td></tr>'
+            )
+            continue
+        position += 1
         # Printed once, above the line that opens the band. Repeating the same label on the next
         # line is a data quirk rather than a new section, and printing it twice would leave a QS
         # unable to tell where the section starts.
@@ -744,7 +766,8 @@ def _scope_html(
         }
         body.append("<tr>" + "".join(cells[key] for key, _label in columns) + "</tr>")
 
-    if not body:
+    if not position:
+        # Only headings (or nothing) in the scope: still says so (PROPOSAL-FORM-COLLAPSE).
         body.append(
             f'<tr><td class="empty" colspan="{len(columns)}">No items priced in this '
             "scope.</td></tr>"
@@ -814,6 +837,111 @@ def _designed_cover_html(
     {title_html}
     {intro_html}
     <table class="cover-rows">{"".join(body)}</table>
+    {closing_html}
+  </section>
+"""
+
+
+def _cover_value(cell: Dict[str, Any]) -> str:
+    if "html" in cell:
+        return cell["html"]
+    return "<br/>".join(_cell(cell["text"]).splitlines())
+
+
+def _numbered_label(cell: Dict[str, Any]) -> str:
+    """The bold label of a numbered item. Block html (the terms) starts on its own line under
+    the label, so the colon stays with the label rather than alone above the text."""
+    label = escape(cell["label"].upper())
+    return f"<strong>{label}:</strong>" if "html" in cell else f"<strong>{label}</strong>: "
+
+
+def _cover_column_html(style: str, cells: List[Dict[str, Any]], start: int) -> str:
+    """One column of one section, in the section's style. ``start`` numbers a numbered section
+    on from the previous column."""
+    if style == "title":
+        return "".join(f'<div class="cover-ptitle">{_cover_value(c)}</div>' for c in cells)
+    if style == "numbered":
+        items = "".join(
+            "<li>"
+            + (_numbered_label(c) if c["label"] else "")
+            + f"{_cover_value(c)}</li>"
+            for c in cells
+        )
+        return f'<ol class="cover-numbered" start="{start}">{items}</ol>' if items else ""
+    if style == "footer":
+        return "".join(
+            '<div class="cover-foot-line">'
+            + (f"{escape(c['label'])}: " if c["label"] else "")
+            + f"{_cover_value(c)}</div>"
+            for c in cells
+        )
+    rows = "".join(
+        (
+            (
+                f"<tr><th>{escape(c['label'])}:</th><td>{_cover_value(c)}</td></tr>"
+                if "html" in c
+                else f"<tr><th>{escape(c['label'])}</th><td>: {_cover_value(c)}</td></tr>"
+            )
+            if c["label"]
+            else f'<tr><td colspan="2">{_cover_value(c)}</td></tr>'
+        )
+        for c in cells
+    )
+    line = '<div class="cover-sig-line"></div>' if style == "signature" else ""
+    return f'{line}<table class="cover-fields">{rows}</table>' if rows else line
+
+
+def _cover_section_html(section: Dict[str, Any]) -> str:
+    style = section["style"]
+    label = escape(section["label"]) if section["label"] else ""
+    head = ""
+    if label:
+        head = (
+            f'<div class="cover-sig-label">{label}</div>'
+            if style == "signature"
+            else f'<div class="cover-band">{label}</div>'
+        )
+    # Short percentages ("50", "33.3"): a bare "0.00" anywhere reads as a printed zero price.
+    width = round(100 / max(section["columns"], 1), 1)
+    columns: List[str] = []
+    start = 1
+    for cells in section["cells"]:
+        columns.append(
+            f'<td class="cover-col" style="width:{width:g}%">'
+            f"{_cover_column_html(style, cells, start)}</td>"
+        )
+        start += len(cells)
+    return (
+        # "cover-sec-<style>", never "cover-<style>": .cover-title is the page title's rule.
+        f'<div class="cover-sec cover-sec-{style}">{head}'
+        f'<table class="cover-cols"><tr>{"".join(columns)}</tr></table></div>'
+    )
+
+
+def _sections_cover_html(
+    sections: List[Dict[str, Any]],
+    design: Dict[str, Any],
+    letterhead: str,
+    issue: ProjectQuotationIssue,
+    noun: str = "Quotation",
+) -> str:
+    """Page 1 (layout 4, QUOTE-COVER-FIELDS): letterhead, title, intro, then each section as a
+    band heading over its columns (fields, a centred title, numbered terms, a signature block or
+    the footer), then the closing."""
+    top = f'<div class="cover-top">{letterhead}</div>' if design.get("show_letterhead", True) else ""
+    title = cover_title(design, noun)
+    title_html = f'<div class="cover-title cover-title-centre">{escape(title)}</div>' if title else ""
+    intro = clean_terms_html(issue.cover_letter_rendered)
+    closing = clean_terms_html(issue.cover_closing_rendered)
+    intro_html = f'<div class="cover-text cover-intro">{intro}</div>' if intro else ""
+    closing_html = f'<div class="cover-text cover-closing">{closing}</div>' if closing else ""
+    body = "".join(_cover_section_html(section) for section in sections)
+    return f"""
+  <section class="cover cover-sheet">
+    {top}
+    {title_html}
+    {intro_html}
+    {body}
     {closing_html}
   </section>
 """
@@ -1025,11 +1153,41 @@ _DESIGNED_COVER_STYLE = """
 """
 
 
-def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
+# Added only for layout 4 (sections), so layouts 2 and 3 render from their own stylesheets.
+_SECTIONS_COVER_STYLE = """
+  .cover-title-centre { text-align: center; }
+  .cover-sec { margin: 0 0 10px; }
+  .cover-band { background: #1f2937; color: #fff; font-weight: 700; padding: 3px 8px;
+                margin: 0 0 6px; }
+  table.cover-cols { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  td.cover-col { vertical-align: top; padding: 0 10px 0 0; }
+  table.cover-fields { width: 100%; border-collapse: collapse; }
+  table.cover-fields th { width: 34%; text-align: left; vertical-align: top; font-weight: 700;
+                          padding: 2px 6px 2px 0; }
+  table.cover-fields td { vertical-align: top; padding: 2px 0; line-height: 1.4; }
+  table.cover-fields td p { margin: 0; }
+  .cover-ptitle { text-align: center; font-weight: 700; font-size: 14px; line-height: 1.35;
+                  padding: 6px 16px; }
+  ol.cover-numbered { margin: 0; padding-left: 18px; list-style: decimal; }
+  ol.cover-numbered li { margin: 0 0 4px; line-height: 1.4; }
+  ol.cover-numbered p { margin: 0; }
+  ol.cover-numbered ul { margin: 0; padding-left: 16px; list-style: disc; }
+  ol.cover-numbered ol { margin: 0; padding-left: 16px; list-style: lower-alpha; }
+  .cover-sec-signature { margin-top: 18px; width: 50%; }
+  .cover-sig-line { border-bottom: 1px solid #111; height: 36px; margin: 0 0 4px; }
+  .cover-sec-footer { margin-top: 24px; border-top: 1px solid #999; padding-top: 6px;
+                  font-size: 9.5px; color: #333; }
+"""
+
+
+def build_issue_html(
+    db: Session, issue: ProjectQuotationIssue, total_pages: Optional[str] = None
+) -> str:
     """The whole document as HTML, straight off the issue snapshot.
 
     Exposed separately from ``render_issue_pdf`` so the layout can be asserted as a readable
     string, and so a host without WeasyPrint's native libraries can still be tested.
+    ``total_pages`` fills a layout 4 Total Pages row ("1+N"); ``render_issue_pdf`` counts it.
     """
     document = _document_of(db, issue)
     sender = _sender(db, document)
@@ -1058,7 +1216,13 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        if designed:
+        if layout_of(issue) >= COVER_LAYOUT_SECTIONS:
+            design = design_of(issue)
+            sections = cover_sections(db, document, issue, project, design, total_pages)
+            cover = _sections_cover_html(sections, design, letterhead, issue, document_noun(document))
+            shown = any(r["key"] == "terms" for r in flat_rows(sections))
+            terms = "" if shown else _plain_terms_html(issue)
+        elif designed:
             design = design_of(issue)
             rows = cover_rows(db, document, issue, project, design)
             cover = _designed_cover_html(rows, design, letterhead, issue, document_noun(document))
@@ -1071,6 +1235,8 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             )
             terms = ""
         style = _STYLE + _COVER_STYLE + (_DESIGNED_COVER_STYLE if designed else "")
+        if layout_of(issue) >= COVER_LAYOUT_SECTIONS:
+            style += _SECTIONS_COVER_STYLE
     else:
         terms = _terms_html(issue)
 
@@ -1102,13 +1268,36 @@ def build_filename(issue: ProjectQuotationIssue) -> str:
     return f"{stem}-{safe}.pdf"
 
 
+#: Stands in for the Total Pages value while the pages are counted. Digits only, so escaping
+#: leaves it as is, and no real value prints it.
+TOTAL_PAGES_MARK = "1+0000"
+
+
+def _fill_total_pages(html: str, pages: int) -> str:
+    return html.replace(TOTAL_PAGES_MARK, f"1+{max(pages - 1, 0)}")
+
+
+def _prints_total_pages(issue: ProjectQuotationIssue) -> bool:
+    """A layout 4 design with a shown Total Pages row."""
+    if layout_of(issue) < COVER_LAYOUT_SECTIONS:
+        return False
+    return any(
+        row.get("source") == "total_pages" and row.get("shown", True)
+        for section in (design_of(issue).get("sections") or [])
+        for row in section.get("rows") or []
+    )
+
+
 def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, str]:
     """Return ``(pdf_bytes, filename)`` for one issue.
 
     Raises ``PDFRenderingUnavailable`` when WeasyPrint cannot render, so a host without
     cairo/pango returns a clear message instead of a 500 nobody can diagnose.
     """
-    html = build_issue_html(db, issue)
+    # A Total Pages row is built with a placeholder the width of a real count, so the counting
+    # pass below lays the row out exactly as the printed one.
+    counted = _prints_total_pages(issue)
+    html = build_issue_html(db, issue, total_pages=TOTAL_PAGES_MARK if counted else None)
     try:
         from weasyprint import HTML  # noqa: WPS433 (guarded optional dep)
         from weasyprint.urls import URLFetcher  # noqa: WPS433
@@ -1120,9 +1309,14 @@ def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, 
         # Every picture is inlined as a data: URI before it gets here, so the renderer has no
         # reason to fetch anything else, and must not: a file:// or an internal http:// address
         # reached from a customer document would read the server's own disk or network.
-        pdf_bytes = HTML(
-            string=html, url_fetcher=URLFetcher(allowed_protocols=("data",))
-        ).write_pdf()
+        def _html(source: str) -> Any:
+            return HTML(string=source, url_fetcher=URLFetcher(allowed_protocols=("data",)))
+
+        if counted:
+            # One build, two renders: count the pages, then print "1+N" (the cover and the rest).
+            pages = len(_html(html).render().pages)
+            html = _fill_total_pages(html, pages)
+        pdf_bytes = _html(html).write_pdf()
     except Exception as e:
         raise PDFRenderingUnavailable(
             f"PDF rendering failed (WeasyPrint native libraries missing or broken: {e})."

@@ -198,6 +198,27 @@ describe('reorderRunService - getReorderRun', () => {
     expect(run.buy_scope).toBe('warehouse');
     expect(run.summary?.recommendation_count).toBe(8);
   });
+
+  it('carries inactive_warehouse_codes through for the Re-plan prefill (SCM-INACTIVE-LOCATIONS)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        run_id: 'run-9',
+        status: 'completed',
+        buy_scope: 'warehouse',
+        warehouse_codes: ['BRW', 'OLD'],
+        inactive_warehouse_codes: ['OLD'],
+        is_all_warehouses: false,
+      }),
+    );
+    const run = await getReorderRun('run-9');
+    expect(run.inactive_warehouse_codes).toEqual(['OLD']);
+  });
+
+  it('defaults inactive_warehouse_codes to an empty list when the payload omits it', async () => {
+    apiFetch.mockResolvedValue(ok({ run_id: 'run-9', status: 'completed', buy_scope: 'warehouse' }));
+    const run = await getReorderRun('run-9');
+    expect(run.inactive_warehouse_codes).toEqual([]);
+  });
 });
 
 describe('reorderRunService - getTodayRun (AC-F01 / AC-F10, Stage 2 grain pass-through)', () => {

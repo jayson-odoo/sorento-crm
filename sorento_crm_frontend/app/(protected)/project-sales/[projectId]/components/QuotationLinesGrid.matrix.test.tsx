@@ -47,6 +47,22 @@ const settings = { deleteSeconds: 10 };
 vi.mock('@/hooks/useDeferredDeleteSeconds', () => ({
   useDeferredDeleteSeconds: () => settings.deleteSeconds,
 }));
+// The row drag's start, captured, and its floating preview drawn inline (owner hand test,
+// 10 Nov 2026: a heading's preview showed an empty line). Pass-through otherwise.
+const rowDnd: { start: ((event: unknown) => void) | null } = { start: null };
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>();
+  return {
+    ...actual,
+    DndContext: (props: React.ComponentProps<typeof actual.DndContext>) => {
+      if (props.onDragStart) rowDnd.start = props.onDragStart as (event: unknown) => void;
+      return <actual.DndContext {...props} />;
+    },
+    DragOverlay: ({ children }: { children?: React.ReactNode }) => (
+      <div data-testid="drag-overlay">{children}</div>
+    ),
+  };
+});
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -542,9 +558,13 @@ describe('readable column labels in edit mode (browser pass finding)', () => {
     expect(EDIT_LABEL_CHAR_PX).toBeGreaterThanOrEqual(8);
   });
 
-  it('leaves the read widths as they were', () => {
-    expect(leafColumnWidth('Balcony', false)).toBe(72);
-    expect(leafColumnWidth('Break tank', false, true)).toBe(96);
+  it('reads a short label at the old widths, a long one wide enough never to overlap', () => {
+    expect(leafColumnWidth('BH', false)).toBe(72);
+    expect(leafColumnWidth('Tank', false, true)).toBe(96);
+    // PROPOSAL-FORM-COLLAPSE (owner, 10 Nov view page): BALCONY ran into the next column.
+    for (const label of ['BALCONY', 'KITCHEN', 'Break tank']) {
+      expect(leafColumnWidth(label, false)).toBeGreaterThanOrEqual(label.length * EDIT_LABEL_CHAR_PX + 16);
+    }
     expect(leafColumnWidth('BA', true)).toBe(EDIT_LEAF_MIN_WIDTH);
     expect(leafColumnWidth('x'.repeat(60), true)).toBe(220);
   });
@@ -662,5 +682,165 @@ describe('fix round 3: a new name is there to type into at once (M2a)', () => {
       fail(false);
     });
     expect(screen.queryByRole('textbox', { name: 'Column Column 3' })).toBeNull();
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov: "the column header supposed to be here", arrow at the
+ * end of the header row): on a scope with no column headers, + Column header sits in the
+ * column-header row right after Total (RM), not in the bar under the table.
+ */
+describe('+ Column header in the header row on a scope with no columns', () => {
+  function headerCells(): HTMLElement[] {
+    return screen.getAllByRole('columnheader');
+  }
+
+  it('sits in the column-header cell right after Total (RM), and nowhere else', () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [], onChange } });
+    const button = screen.getByRole('button', { name: 'Column header' });
+    const cells = headerCells();
+    const owner = cells.findIndex((cell) => cell.contains(button));
+    expect(owner).toBeGreaterThan(-1);
+    expect((cells[owner - 1].textContent ?? '').trim()).toBe('Total (RM)');
+    // Only one: the bar under the table keeps Add a line and Add a section alone.
+    expect(screen.getAllByRole('button', { name: 'Column header' })).toHaveLength(1);
+    const bar = screen.getByRole('button', { name: 'Add a line' }).parentElement as HTMLElement;
+    expect(within(bar).queryByRole('button', { name: 'Column header' })).toBeNull();
+  });
+
+  it('still starts the grid from there', () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [], onChange } });
+    fireEvent.click(screen.getByRole('button', { name: 'Column header' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual([
+      { key: expect.any(String), label: 'Header 1', cols: [] },
+    ]);
+  });
+
+  it('is not offered on a read, or where the columns cannot be edited', () => {
+    const { unmount } = renderGrid({ lines: [staged(TRAP, false)], matrix: { columns: [], onChange: vi.fn() } });
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
+    unmount();
+    renderGrid({ lines: [staged(TRAP, false)], editing: true, matrix: { columns: [] } });
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): duplicate a column-header group with its columns so
+ * the column names are not retyped, from a RIGHT-CLICK on the group header (owner Q2 b: "want to
+ * keep the UI minimum", no icon). Quantities stay blank (fresh keys).
+ */
+describe('duplicating a column header', () => {
+  async function rightClickHeader(label: string) {
+    const name = screen.getByRole('textbox', { name: `Column header ${label}` });
+    expect(fireEvent.contextMenu(name)).toBe(false);
+    return screen.findByRole('menuitem', { name: 'Duplicate' });
+  }
+
+  it('right-click Duplicate copies the group and its column names right after it, named "(copy)"', async () => {
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+    fireEvent.click(await rightClickHeader('Type A - 1 BH'));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as MatrixHeader[];
+    expect(next.map((header) => header.label)).toEqual([
+      'Type A - 1 BH',
+      'Type A - 1 BH (copy)',
+      'Type B - 2 BH',
+      'Type C - 3 BH',
+    ]);
+    expect(next[1].cols.map((item) => item.label)).toEqual(['1 BH', 'Balcony']);
+    expect(next[1].key).not.toBe('a');
+  });
+
+  it('adds no icon to the header, and a sub-column right-click offers no Duplicate', async () => {
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
+    expect(screen.queryByRole('button', { name: /^Duplicate / })).toBeNull();
+    fireEvent.contextMenu(screen.getAllByRole('textbox', { name: 'Column 1 BH' })[0]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(screen.queryByRole('menuitem', { name: 'Duplicate' })).toBeNull();
+  });
+});
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): "a heading shouldnt be tied to line", and it drags up
+ * and down like a line. A heading is its own row: one full-width bar with the line's drag handle,
+ * never numbered; removing it touches no line, and adding one adds a row of its own.
+ */
+describe('section heading rows', () => {
+  function heading(key: string, label: string): StagedQuotationLine {
+    const line = {
+      id: key,
+      version_id: 'v1',
+      is_section: true,
+      band_label: label,
+      quantity: '0.00',
+      unit_price: '0.00',
+      line_total: '0.00',
+    } as unknown as QuotationLine;
+    return { id: key, key, line, draft: serverToDraft(line), removed: false };
+  }
+  const rowOf = (key: string) =>
+    document.querySelector<HTMLTableRowElement>(`tr[data-line-key="${key}"]`) as HTMLTableRowElement;
+  const lines = () => [staged(TRAP, false), heading('h1', 'PAGE 1'), staged(WC, false)];
+
+  it('reads a heading as one full-width row and numbers only the lines', () => {
+    renderGrid({ lines: lines() });
+    const bar = rowOf('h1');
+    expect(bar.querySelectorAll('td')).toHaveLength(1);
+    expect(bar).toHaveTextContent('PAGE 1');
+    expect(rowOf('l1').querySelector('td')?.textContent?.trim()).toBe('1');
+    expect(rowOf('l2').querySelector('td')?.textContent?.trim()).toBe('2');
+  });
+
+  it('gives a heading the line drag handle and its own name box while editing', () => {
+    renderGrid({ lines: lines(), editing: true });
+    const bar = rowOf('h1');
+    expect(within(bar).getByRole('button', { name: 'Drag to reorder' })).toBeInTheDocument();
+    expect(within(bar).getByRole('textbox', { name: 'Section heading above WC8518-SH' })).toHaveValue('PAGE 1');
+    expect(within(bar).queryByRole('button', { name: /Row actions/ })).toBeNull();
+  });
+
+  it('floats a dragged heading as its own label, not as an empty line', () => {
+    renderGrid({ lines: lines(), editing: true });
+    act(() => rowDnd.start?.({ active: { id: 'h1' } }));
+    const overlay = screen.getByTestId('drag-overlay');
+    expect(overlay).toHaveTextContent('PAGE 1');
+    expect(overlay.querySelectorAll('td')).toHaveLength(1);
+    expect(within(overlay).queryByRole('textbox')).toBeNull();
+    expect(within(overlay).queryByRole('combobox')).toBeNull();
+  });
+
+  it('Remove section drops the heading row only', async () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.contextMenu(rowOf('h1').querySelector('[data-section-key]') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove section' }));
+    expect(lastStaged(onStage).map((line) => line.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('Add a section adds a heading row of its own, then a line under it', () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
+    const next = lastStaged(onStage);
+    expect(next).toHaveLength(5);
+    expect(next[3].draft.is_section).toBeTruthy();
+    expect(next[3].draft.band_label ?? '').toBe('');
+    expect(next[4].draft.is_section ?? '').toBe('');
+  });
+
+  it('Insert a section above puts a heading row before that line and moves no line', async () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.contextMenu(rowOf('l2').querySelector('td') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Insert a section above' }));
+    const next = lastStaged(onStage);
+    expect(next.map((line) => line.key).filter((key) => !key.startsWith('new:'))).toEqual(['l1', 'h1', 'l2']);
+    expect(next[2].draft.is_section).toBeTruthy();
+    expect(next[3].key).toBe('l2');
   });
 });
