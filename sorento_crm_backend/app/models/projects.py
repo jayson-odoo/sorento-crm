@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import uuid
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -1293,37 +1295,69 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     )
 
 
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
 class QuotationDocumentDraft(Base):
-    """A proposal / quotation form's work in progress (QUOTE-AUTOSAVE), one row per document.
+    """A proposal / quotation form's work in progress (QUOTE-AUTOSAVE).
 
     The tag designer's ``page.draft_doc`` split (``models/dealer_kit.py:132``): the form autosaves
-    its whole state into ``doc`` about once a second, overwritten in place and never history.
-    Save applies it through the ordinary PATCH, so the floor-breach alert and audit fire once per
+    its whole state into ``doc`` about once a second, overwritten in place and never history. Save
+    applies it through the ordinary POST / PATCH, so the floor-breach alert and audit fire once per
     Save rather than once per keystroke burst, writes a ``QuotationDocumentSnapshot`` and sets
     ``doc`` back to NULL.
 
-    Its own table rather than columns on the document for two reasons. The document is audited,
-    and a column there would write an audit row carrying the whole form every second. And an
-    autosave must not move the document's ``updated_at``, which reads as "the record changed".
+    Two kinds of row (owner, 10 Nov, card Q2):
 
-    ``rev`` is bumped by every write, discard, restore and Save, and the row is kept (``doc``
-    NULL) rather than deleted, so the counter never goes backwards: a tab writes only over the
-    revision it last read, and a second tab or a second person is stopped instead of silently
-    overwriting the first.
+    - ``document_id`` set: the draft of an existing document, one per document, shared by everyone
+      who can edit it;
+    - ``document_id`` NULL: a NEW proposal, private to ``owner_user_id`` and numbered only on its
+      first Save, so an abandoned one uses up no number. One per person per project.
+
+    ``holder_token`` (card Q4): every open of the form claims the draft with a fresh token, and only
+    the holder may write. The tab opened earlier is told it no longer holds the draft and goes
+    view-only; what it had not sent is kept as a ``conflict`` History entry.
+
+    Its own table rather than columns on the document: the document is audited, and a column there
+    would write an audit row carrying the whole form every second; and an autosave must not move
+    the document's ``updated_at``, which reads as "the record changed".
     """
 
     __tablename__ = "quotation_document_drafts"
     __audit_skip__ = "autosave work in progress, overwritten about once a second"
-    __table_args__ = ({"schema": "projects"},)
+    __table_args__ = (
+        Index(
+            "uq_quotation_document_drafts_document",
+            "document_id",
+            unique=True,
+            postgresql_where=text("document_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_quotation_document_drafts_new",
+            "project_id",
+            "owner_user_id",
+            unique=True,
+            postgresql_where=text("document_id IS NULL"),
+        ),
+        {"schema": "projects"},
+    )
 
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
+    )
     document_id = Column(
         UUID(as_uuid=False),
         ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=True,
     )
+    owner_user_id = Column(String(100), nullable=True)
     # `none_as_null` so "no draft" is one SQL NULL, never the JSON value null (dealer_kit.py:127).
     doc = Column(JSONB(none_as_null=True), nullable=True)
-    rev = Column(Integer, nullable=False, server_default="0", default=0)
+    holder_token = Column(String(64), nullable=True)
+    holder_by = Column(String(100), nullable=True)
+    holder_at = Column(DateTime(timezone=False), nullable=True)
     updated_by = Column(String(100), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 
@@ -1331,14 +1365,16 @@ class QuotationDocumentDraft(Base):
 class QuotationDocumentSnapshot(Base):
     """One entry in a proposal / quotation's History (QUOTE-AUTOSAVE).
 
-    The form's whole state at a deliberate moment, in the shape the form holds it, so Restore can
-    load it straight back into the draft. Immutable once written, the tag designer's
-    ``PageVersion`` rule. ``kind``: ``saved`` (every Save), ``before_restore`` (the draft a
-    Restore replaced), ``conflict`` (a stale tab's refused autosave) and ``discarded`` (a draft
-    Discard draft set aside), so nothing typed is ever lost.
+    The tag designer's rule (owner, card Q3): an entry per Save, and Restore first keeps the state
+    being left as "Before restore", then puts the entry into the draft. Plus ``conflict`` (card Q4):
+    what a tab that lost the draft had not sent yet, so a second tab never loses typing.
 
-    Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only through its document, which carries the partition,
-    and every read goes through the document lookup first.
+    The form's whole state, in the shape the form holds it, so Restore can load it straight back.
+    Immutable once written (``PageVersion``'s rule). ``draft_id`` carries an entry made before its
+    proposal had a number; the first Save moves it onto the new document.
+
+    Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only
+    through its document (or its owner's private draft), and every read goes through that first.
     """
 
     __tablename__ = "quotation_document_snapshots"
@@ -1346,7 +1382,7 @@ class QuotationDocumentSnapshot(Base):
     __table_args__ = (
         Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
         CheckConstraint(
-            "kind IN ('saved', 'before_restore', 'conflict', 'discarded')",
+            "kind IN ('saved', 'before_restore', 'conflict')",
             name="ck_quotation_document_snapshots_kind",
         ),
         {"schema": "projects"},
@@ -1356,13 +1392,23 @@ class QuotationDocumentSnapshot(Base):
     document_id = Column(
         UUID(as_uuid=False),
         ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    draft_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_document_drafts.id", ondelete="CASCADE"),
+        nullable=True,
     )
     kind = Column(String(20), nullable=False)
+    note = Column(Text, nullable=True)
     doc = Column(JSONB, nullable=False)
     grand_total = Column(Numeric(18, 2), nullable=True)
     created_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # Python's clock, not the transaction's: History is ordered by this, and `now()` is the same
+    # for every row one transaction writes (a Restore writes two).
+    created_at = Column(
+        DateTime(timezone=False), default=_utcnow, server_default=func.now(), nullable=False
+    )
 
 
 class QuotationTemplate(Base, CompanyScopedMixin):

@@ -2,13 +2,14 @@
 
 Plan: documentation/plans/project-sales/PLAN-quote-autosave-10nov.md.
 
-- ``projects.quotation_document_drafts``: one row per document, the form's autosaved state
-  (``doc``, NULL when nothing is in progress) and a ``rev`` counter every write bumps.
+- ``projects.quotation_document_drafts``: the form's autosaved state (``doc``, NULL when nothing is
+  in progress). One row per document (shared), or, with ``document_id`` NULL, one private row per
+  person per project for a NEW proposal that has no number yet. ``holder_token`` is the tab that
+  may write (the older tab goes view-only).
 - ``projects.quotation_document_snapshots``: insert-only History (``saved`` on every Save,
-  ``before_restore``, ``conflict`` and ``discarded`` so a Restore, a stale tab or Discard draft
-  never loses typing).
+  ``before_restore`` on a Restore, ``conflict`` for a tab that lost the draft).
 
-Both cascade with their document. Additive only; downgrade drops the two tables.
+Both cascade with their document / project. Additive only; downgrade drops the two tables.
 
 Revision ID: qas_0001_quote_form_drafts
 Revises: ptag_0021_icon_conditions
@@ -26,28 +27,45 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS projects.quotation_document_drafts (
-            document_id UUID PRIMARY KEY
+            id UUID PRIMARY KEY,
+            project_id UUID NOT NULL REFERENCES projects.projects(id) ON DELETE CASCADE,
+            document_id UUID NULL
                 REFERENCES projects.quotation_documents(id) ON DELETE CASCADE,
+            owner_user_id VARCHAR(100) NULL,
             doc JSONB NULL,
-            rev INTEGER NOT NULL DEFAULT 0,
+            holder_token VARCHAR(64) NULL,
+            holder_by VARCHAR(100) NULL,
+            holder_at TIMESTAMP WITHOUT TIME ZONE NULL,
             updated_by VARCHAR(100) NULL,
             updated_at TIMESTAMP WITHOUT TIME ZONE NULL
         )
         """
     )
     op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_document_drafts_document "
+        "ON projects.quotation_document_drafts (document_id) WHERE document_id IS NOT NULL"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_document_drafts_new "
+        "ON projects.quotation_document_drafts (project_id, owner_user_id) "
+        "WHERE document_id IS NULL"
+    )
+    op.execute(
         """
         CREATE TABLE IF NOT EXISTS projects.quotation_document_snapshots (
             id UUID PRIMARY KEY,
-            document_id UUID NOT NULL
+            document_id UUID NULL
                 REFERENCES projects.quotation_documents(id) ON DELETE CASCADE,
+            draft_id UUID NULL
+                REFERENCES projects.quotation_document_drafts(id) ON DELETE CASCADE,
             kind VARCHAR(20) NOT NULL,
+            note TEXT NULL,
             doc JSONB NOT NULL,
             grand_total NUMERIC(18, 2) NULL,
             created_by VARCHAR(100) NULL,
             created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
             CONSTRAINT ck_quotation_document_snapshots_kind
-                CHECK (kind IN ('saved', 'before_restore', 'conflict', 'discarded'))
+                CHECK (kind IN ('saved', 'before_restore', 'conflict'))
         )
         """
     )

@@ -2913,6 +2913,46 @@ register(
 )
 
 
+def assert_form_draft_discardable(db: Session, draft_id: str, user_id):
+    """QUOTE-AUTOSAVE Discard draft (card Q5): the draft exists and is the caller's to discard -
+    edit rights on its project, and for a new proposal's private draft, the caller's own. Run at
+    park time and again when the window lapses. 404 for a draft the caller cannot see. Returns it.
+    """
+    from app.models.projects import Project, QuotationDocumentDraft
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    row = db.query(QuotationDocumentDraft).filter(QuotationDocumentDraft.id == draft_id).first()
+    if row is None or (row.document_id is None and str(row.owner_user_id) != str(user_id)):
+        raise handle_not_found("Draft", draft_id)
+    project = db.query(Project).filter(Project.id == row.project_id).first()
+    if project is None:
+        raise handle_not_found("Draft", draft_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return row
+
+
+def _discard_form_draft(db: Session, payload: dict):
+    from app.services import quotation_form_draft_service as drafts
+
+    row = assert_form_draft_discardable(db, _entity_id(payload), payload.get("requested_by_id"))
+    return drafts.discard_draft(db, row)
+
+
+register(
+    FormAction(
+        key="quotation_form_draft.discard",
+        entity_types=("quotation_form_draft",),
+        execute=_discard_form_draft,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Discard draft",
+    )
+)
+
+
 def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
     """The spec sheet routes' write checks (edit right + write access to the project), run at park
     time and again when the window lapses. 404 when the sheet is gone or not in the caller's

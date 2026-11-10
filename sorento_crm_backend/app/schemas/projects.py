@@ -2034,11 +2034,13 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
-    # QUOTE-AUTOSAVE: a new proposal's first real edit creates the record AND writes its draft in
-    # one commit (card Q2), so the number and the typing land together.
-    form_draft: Optional[Dict[str, Any]] = Field(
-        default=None, description="The form's whole state, stored as the new document's draft."
+    # QUOTE-AUTOSAVE (card Q2): a new proposal's first Save. The form's state becomes its first
+    # History entry and its private draft becomes the document's; `form_token` is the tab's claim
+    # on that draft (card Q4).
+    form_state: Optional[Dict[str, Any]] = Field(
+        default=None, description="The form's whole state at Save, kept as a History entry."
     )
+    form_token: Optional[str] = Field(default=None, max_length=64)
     # Capped on what comes in (not on the response, which echoes whatever is stored).
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
@@ -2079,6 +2081,7 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
     form_state: Optional[Dict[str, Any]] = Field(
         default=None, description="The form's whole state at Save, kept as a History entry."
     )
+    form_token: Optional[str] = Field(default=None, max_length=64)
 
 
 class ProjectQuotationScopeCreate(BaseModel):
@@ -2223,29 +2226,38 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
 
 
 class QuotationFormDraftWrite(BaseModel):
-    """An autosave: the form's whole state and the draft revision it was built on."""
+    """An autosave: the form's whole state and this tab's claim on the draft (card Q4)."""
 
     doc: Dict[str, Any]
-    base_rev: int = Field(ge=0)
+    token: str = Field(default="", max_length=64)
 
 
 class QuotationFormDraftWriteResponse(BaseModel):
-    rev: int
     updated_at: Optional[datetime] = None
 
 
-class QuotationFormDraftResponse(BaseModel):
-    """The draft the form opens on. ``doc`` null means none: open on the record."""
+class QuotationFormDraftOpenResponse(BaseModel):
+    """What the form opens on (``doc`` null: the record) and this tab's claim on the draft."""
 
+    draft_id: str
+    token: Optional[str] = None
     doc: Optional[Dict[str, Any]] = None
-    rev: int = 0
     updated_at: Optional[datetime] = None
     updated_by_name: Optional[str] = None
 
 
+class QuotationFormDraftHolderResponse(BaseModel):
+    is_holder: bool
+    holder_name: Optional[str] = None
+    holder_at: Optional[datetime] = None
+
+
 class QuotationHistoryEntryResponse(BaseModel):
     id: str
+    #: Oldest = 1, the tag designer's "Version N".
+    version: int
     kind: str
+    note: Optional[str] = None
     grand_total: Optional[Decimal] = None
     created_at: Optional[datetime] = None
     created_by_name: Optional[str] = None
@@ -2256,7 +2268,7 @@ class QuotationHistoryEntryDetailResponse(QuotationHistoryEntryResponse):
 
 
 class QuotationHistoryRestoreRequest(BaseModel):
-    base_rev: int = Field(ge=0)
+    token: str = Field(default="", max_length=64)
 
 
 class MakeQuotationRequest(BaseModel):

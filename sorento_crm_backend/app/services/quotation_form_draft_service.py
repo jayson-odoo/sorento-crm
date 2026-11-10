@@ -1,28 +1,34 @@
 """QUOTE-AUTOSAVE: a proposal / quotation form's draft and its History.
 
 The tag designer's split (``api/v1/dealer_kit/price_tag_requests.py:1359`` / ``:1395``), applied to
-the quotation form:
+the quotation form, with the owner's answers of 10 Nov 2026 (plan
+``documentation/plans/project-sales/PLAN-quote-autosave-10nov.md``):
 
-- **Autosave** overwrites the document's draft in place (``save_draft``). It never touches the
-  record, so nothing a Save fires (the floor-breach alert to management, guardrails, audit of every
-  rewritten line) runs per keystroke burst.
-- **Save** is today's POST / PATCH. When it carries the form's state, ``record_save`` writes a
-  ``saved`` History entry from it and clears the draft, in the same commit.
-- **History** is insert-only (``QuotationDocumentSnapshot``). Restore loads an entry into the
-  draft and keeps the draft it replaced as a ``before_restore`` entry, so it never destroys work.
+- **Autosave** overwrites the draft in place (``save_draft``). It never touches the record, so
+  nothing a Save fires (the floor-breach alert to management, guardrails, audit of every rewritten
+  line) runs per keystroke burst.
+- **A new proposal** (card Q2) has a PRIVATE draft, one per person per project, and no number: the
+  record is created by its first Save, which adopts the draft (``adopt_new_draft``).
+- **Save** is today's POST / PATCH. With the form's state it writes a ``saved`` History entry and
+  clears the draft in the record's own commit (``record_save``).
+- **History** follows the tag designer exactly (card Q3): an entry per Save; Restore first keeps
+  the state being left as "Before restore to version N" (the draft, else the latest Save), then
+  puts the entry into the draft (``restore_entry``, cf. ``price_tag_requests.py:941-997``).
+- **One writer** (card Q4): every open of the form claims the draft with a fresh token
+  (``open_draft``). Only the holder may write; a write from the tab opened earlier is refused with
+  409 ``quotation_draft_not_holder``, and what it carried is kept as a ``conflict`` entry first,
+  so the older tab's typing is never lost while it goes view-only.
+- **Discard draft** (card Q5) is a 5 s server-deferred record action (``record_actions``), which
+  clears the draft; nothing reaches History.
 
-The draft's shape is the form's own (``QuotationFormClient.tsx``); this module reads only the few
-keys it must reconcile against the record (``scopes[].id``, ``staged[key].versionId`` and the
-staged lines' ``id`` / ``line``) and stores everything else as given.
-
-Concurrency: every write names the draft revision it was built on (``base_rev``). A stale one is
-refused with 409 ``quotation_draft_stale``, and its document is kept as a ``conflict`` History
-entry first, so the refused tab's typing survives (owner card Q4).
+The draft's shape is the form's own (``QuotationFormClient.tsx``); this module reads only the keys
+it must reconcile against the record and stores everything else as given.
 """
 from __future__ import annotations
 
 import copy
 import json
+import secrets
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
@@ -38,21 +44,19 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 
-#: A draft is the form's state as JSON. The biggest real proposal measured is far under this; the
-#: cap only stops a runaway client filling a row (and every History entry copied from it).
+#: The cap only stops a runaway client filling a row (and every History entry copied from it).
 MAX_DRAFT_BYTES = 2_000_000
 
 KIND_SAVED = "saved"
 KIND_BEFORE_RESTORE = "before_restore"
 KIND_CONFLICT = "conflict"
-KIND_DISCARDED = "discarded"
 
 
 def _now() -> datetime:
     return datetime.utcnow()
 
 
-def _check_size(doc: Dict[str, Any]) -> None:
+def _check_size(doc: Any) -> None:
     if not isinstance(doc, dict):
         raise AppException(
             status_code=422, message="The draft must be an object.", code="quotation_draft_invalid"
@@ -65,24 +69,6 @@ def _check_size(doc: Dict[str, Any]) -> None:
         )
 
 
-def _row(db: Session, document: ProjectQuotationDocument, *, lock: bool = False):
-    query = db.query(QuotationDocumentDraft).filter(
-        QuotationDocumentDraft.document_id == document.id
-    )
-    if lock:
-        query = query.with_for_update()
-    return query.first()
-
-
-def _row_or_new(db: Session, document: ProjectQuotationDocument) -> QuotationDocumentDraft:
-    row = _row(db, document, lock=True)
-    if row is None:
-        row = QuotationDocumentDraft(document_id=document.id, rev=0, doc=None)
-        db.add(row)
-        db.flush()
-    return row
-
-
 def user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     if not user_id:
         return None
@@ -92,24 +78,73 @@ def user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return user.name if user else None
 
 
-def _assert_writable(db: Session, document: ProjectQuotationDocument) -> None:
-    """A document an approval holds refuses its draft too (card rule 6).
-
-    The same 422 the record's own edits answer (``assert_unlocked``), so a stale tab on a locked
-    document cannot keep a draft growing behind the lock.
-    """
-    from app.services import project_quotation_approval_service as approvals
-
-    approvals.assert_unlocked(db, document)
+# ------------------------------------------------------------------ rows
 
 
-def _stale(db: Session, document, row, doc, user_id) -> AppException:
+def document_draft(
+    db: Session, document: ProjectQuotationDocument, *, create: bool = False, lock: bool = False
+) -> Optional[QuotationDocumentDraft]:
+    query = db.query(QuotationDocumentDraft).filter(
+        QuotationDocumentDraft.document_id == document.id
+    )
+    if lock:
+        query = query.with_for_update()
+    row = query.first()
+    if row is None and create:
+        row = QuotationDocumentDraft(project_id=document.project_id, document_id=document.id)
+        db.add(row)
+        db.flush()
+    return row
+
+
+def new_draft(
+    db: Session, project_id: str, user_id: str, *, create: bool = False, lock: bool = False
+) -> Optional[QuotationDocumentDraft]:
+    """The caller's OWN new-proposal draft on this project (card Q2). Never anyone else's."""
+    query = db.query(QuotationDocumentDraft).filter(
+        QuotationDocumentDraft.project_id == project_id,
+        QuotationDocumentDraft.document_id.is_(None),
+        QuotationDocumentDraft.owner_user_id == str(user_id),
+    )
+    if lock:
+        query = query.with_for_update()
+    row = query.first()
+    if row is None and create:
+        row = QuotationDocumentDraft(project_id=project_id, owner_user_id=str(user_id))
+        db.add(row)
+        db.flush()
+    return row
+
+
+def _document_of(db: Session, row: QuotationDocumentDraft) -> Optional[ProjectQuotationDocument]:
+    if not row.document_id:
+        return None
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == row.document_id)
+        .first()
+    )
+
+
+def _assert_writable(db: Session, row: QuotationDocumentDraft) -> None:
+    """A document an approval holds refuses its draft too (card rule 6): the same 422 its own edits
+    answer, so a stale tab cannot keep a draft growing behind the lock."""
+    document = _document_of(db, row)
+    if document is not None:
+        from app.services import project_quotation_approval_service as approvals
+
+        approvals.assert_unlocked(db, document)
+
+
+def _not_holder(db: Session, row: QuotationDocumentDraft, doc: Any, user_id: str) -> AppException:
     """Keep the refused tab's state as History, then refuse it (card Q4)."""
     if isinstance(doc, dict):
         db.add(
             QuotationDocumentSnapshot(
-                document_id=document.id,
+                document_id=row.document_id,
+                draft_id=row.id,
                 kind=KIND_CONFLICT,
+                note="Not saved: opened in another tab",
                 doc=doc,
                 grand_total=draft_total(doc),
                 created_by=user_id,
@@ -118,36 +153,63 @@ def _stale(db: Session, document, row, doc, user_id) -> AppException:
         db.flush()
     return AppException(
         status_code=409,
-        message="This draft was changed in another tab or by someone else. Reload to continue.",
-        code="quotation_draft_stale",
-        details={
-            "rev": row.rev if row is not None else 0,
-            "updated_at": row.updated_at.isoformat() if row is not None and row.updated_at else None,
-            "updated_by_name": user_name(db, row.updated_by) if row is not None else None,
-        },
+        message="This draft was opened in another tab. This one is view only now; reload to edit.",
+        code="quotation_draft_not_holder",
+        details=_holder(db, row),
     )
+
+
+def _holder(db: Session, row: QuotationDocumentDraft) -> Dict[str, Any]:
+    return {
+        "holder_name": user_name(db, row.holder_by),
+        "holder_at": row.holder_at.isoformat() if row.holder_at else None,
+    }
+
+
+def assert_holder(
+    db: Session, row: Optional[QuotationDocumentDraft], token: Optional[str], user_id: str,
+    doc: Any = None,
+) -> None:
+    """Only the tab holding the draft writes. A row nobody has claimed yet accepts any writer."""
+    if row is None or not row.holder_token:
+        return
+    if not token or not secrets.compare_digest(str(token), str(row.holder_token)):
+        raise _not_holder(db, row, doc, user_id)
 
 
 # ------------------------------------------------------------------ reading
 
 
-def draft_state(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
-    """The draft as the form opens it: reconciled against the record, plus who and when."""
-    row = _row(db, document)
-    doc = row.doc if row is not None else None
+def open_draft(db: Session, row: QuotationDocumentDraft, user_id: str) -> Dict[str, Any]:
+    """Open the form: claim the draft for this tab (card Q4) and hand back what to open on."""
+    row.holder_token = secrets.token_urlsafe(24)
+    row.holder_by = str(user_id)
+    row.holder_at = _now()
+    db.flush()
+    document = _document_of(db, row)
+    doc = row.doc
+    if doc is not None and document is not None:
+        doc = reconcile(db, document, copy.deepcopy(doc))
     return {
-        "doc": reconcile(db, document, doc) if doc is not None else None,
-        "rev": row.rev if row is not None else 0,
-        "updated_at": row.updated_at if row is not None and doc is not None else None,
-        "updated_by_name": (
-            user_name(db, row.updated_by) if row is not None and doc is not None else None
-        ),
+        "draft_id": str(row.id),
+        "token": row.holder_token,
+        "doc": doc,
+        "updated_at": row.updated_at if row.doc is not None else None,
+        "updated_by_name": user_name(db, row.updated_by) if row.doc is not None else None,
     }
+
+
+def holder_state(db: Session, row: Optional[QuotationDocumentDraft], token: str) -> Dict[str, Any]:
+    """Whether this tab still holds the draft, and if not, who took it and when."""
+    is_holder = row is None or not row.holder_token or (
+        bool(token) and secrets.compare_digest(str(token), str(row.holder_token))
+    )
+    return {"is_holder": is_holder, **(_holder(db, row) if row is not None else {})}
 
 
 def draft_summary(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
     """The three fields the document response carries for the read page's draft strip."""
-    row = _row(db, document)
+    row = document_draft(db, document)
     has = row is not None and row.doc is not None
     return {
         "has_form_draft": has,
@@ -156,18 +218,11 @@ def draft_summary(db: Session, document: ProjectQuotationDocument) -> Dict[str, 
     }
 
 
-def has_pending_draft(db: Session, document: ProjectQuotationDocument) -> bool:
-    row = _row(db, document)
-    return row is not None and row.doc is not None
-
-
 def assert_no_pending_draft(db: Session, document: ProjectQuotationDocument) -> None:
-    """Issue and Request approval refuse while a draft is unsaved (card rule 7).
-
-    Otherwise the customer, or the approver, would get a revision missing edits that are sitting
-    in the draft.
-    """
-    if has_pending_draft(db, document):
+    """Issue and Request approval refuse while a draft is unsaved (card rule 7): otherwise the
+    customer, or the approver, gets a revision missing edits that are sitting in the draft."""
+    row = document_draft(db, document)
+    if row is not None and row.doc is not None:
         raise AppException(
             status_code=409,
             message="Save or discard the draft first.",
@@ -179,55 +234,25 @@ def assert_no_pending_draft(db: Session, document: ProjectQuotationDocument) -> 
 
 
 def save_draft(
-    db: Session,
-    *,
-    document: ProjectQuotationDocument,
-    doc: Dict[str, Any],
-    base_rev: int,
-    user_id: str,
+    db: Session, *, row: QuotationDocumentDraft, doc: Dict[str, Any], token: str, user_id: str
 ) -> Dict[str, Any]:
-    """Autosave: overwrite the draft in place. Never writes History, never touches the record."""
+    """Autosave: overwrite the draft in place. Never History, never the record."""
     _check_size(doc)
-    _assert_writable(db, document)
-    row = _row_or_new(db, document)
-    if int(base_rev) != int(row.rev or 0):
-        raise _stale(db, document, row, doc, user_id)
+    _assert_writable(db, row)
+    assert_holder(db, row, token, user_id, doc)
     row.doc = doc
-    row.rev = int(row.rev or 0) + 1
-    row.updated_by = user_id
+    row.updated_by = str(user_id)
     row.updated_at = _now()
     db.flush()
-    return {"rev": row.rev, "updated_at": row.updated_at}
+    return {"updated_at": row.updated_at}
 
 
-def discard_draft(
-    db: Session, *, document: ProjectQuotationDocument, base_rev: Optional[int], user_id: str
-) -> Dict[str, Any]:
-    """Discard draft (card Q5): the form goes back to the last Save.
-
-    The discarded draft is kept as a ``discarded`` History entry, so Discard destroys nothing and
-    Restore is the way back. That is why it needs no countdown and no confirm: the
-    ``RequestVersionsSheet`` rule for Restore (an act that ADDS an entry is not destructive).
-    """
-    row = _row_or_new(db, document)
-    if base_rev is not None and int(base_rev) != int(row.rev or 0):
-        raise _stale(db, document, row, None, user_id)
-    if row.doc is not None:
-        db.add(
-            QuotationDocumentSnapshot(
-                document_id=document.id,
-                kind=KIND_DISCARDED,
-                doc=row.doc,
-                grand_total=draft_total(row.doc),
-                created_by=user_id,
-            )
-        )
+def discard_draft(db: Session, row: QuotationDocumentDraft) -> None:
+    """Discard draft (card Q5), committed by the 5 s pending action: the form goes back to the
+    last Save. The countdown is the way back, as for every reversible record action."""
     row.doc = None
-    row.rev = int(row.rev or 0) + 1
-    row.updated_by = user_id
     row.updated_at = _now()
     db.flush()
-    return {"rev": row.rev}
 
 
 def record_save(
@@ -241,97 +266,96 @@ def record_save(
     """Save: a ``saved`` History entry from the form's state, and the draft cleared.
 
     Called by the POST / PATCH routes inside their own transaction, after the record write, so a
-    Save the server refuses (an issued line, a locked document) writes no History and keeps the
-    draft.
+    Save the server refuses writes no History and keeps the draft.
     """
     _check_size(form_state)
+    row = document_draft(db, document, create=True)
     entry = QuotationDocumentSnapshot(
         document_id=document.id,
+        draft_id=row.id,
         kind=KIND_SAVED,
         doc=form_state,
         grand_total=grand_total if grand_total is not None else draft_total(form_state),
-        created_by=user_id,
+        created_by=str(user_id),
     )
     db.add(entry)
-    row = _row_or_new(db, document)
     row.doc = None
-    row.rev = int(row.rev or 0) + 1
-    row.updated_by = user_id
+    row.updated_by = str(user_id)
     row.updated_at = _now()
     db.flush()
     return entry
 
 
-def seed_draft(
-    db: Session, *, document: ProjectQuotationDocument, doc: Dict[str, Any], user_id: str
-) -> Dict[str, Any]:
-    """A new proposal's first real edit (card Q2): the record is created and its draft written in
-    the same commit, so the number and the typing land together."""
-    _check_size(doc)
-    row = _row_or_new(db, document)
-    row.doc = doc
-    row.rev = int(row.rev or 0) + 1
-    row.updated_by = user_id
-    row.updated_at = _now()
+def adopt_new_draft(
+    db: Session,
+    *,
+    document: ProjectQuotationDocument,
+    user_id: str,
+    token: Optional[str],
+) -> None:
+    """A new proposal's first Save (card Q2): its private draft becomes the new document's draft,
+    and any History made while it had no number moves onto the document."""
+    row = new_draft(db, document.project_id, user_id, lock=True)
+    if row is None:
+        return
+    assert_holder(db, row, token, user_id)
+    db.query(QuotationDocumentSnapshot).filter(
+        QuotationDocumentSnapshot.draft_id == row.id,
+        QuotationDocumentSnapshot.document_id.is_(None),
+    ).update({QuotationDocumentSnapshot.document_id: document.id}, synchronize_session=False)
+    row.document_id = document.id
+    row.owner_user_id = None
     db.flush()
-    return {"rev": row.rev, "updated_at": row.updated_at}
 
 
 # ------------------------------------------------------------------ history
 
 
-def list_history(db: Session, document: ProjectQuotationDocument) -> List[Dict[str, Any]]:
-    rows = (
+def _entries(db: Session, document: ProjectQuotationDocument) -> List[QuotationDocumentSnapshot]:
+    return (
         db.query(QuotationDocumentSnapshot)
         .filter(QuotationDocumentSnapshot.document_id == document.id)
-        .order_by(QuotationDocumentSnapshot.created_at.desc(), QuotationDocumentSnapshot.id.desc())
+        .order_by(QuotationDocumentSnapshot.created_at.asc(), QuotationDocumentSnapshot.id.asc())
         .all()
     )
+
+
+def _serialize_entry(db: Session, row, version: int, names: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    if row.created_by and row.created_by not in names:
+        names[row.created_by] = user_name(db, row.created_by)
+    return {
+        "id": str(row.id),
+        "version": version,
+        "kind": row.kind,
+        "note": row.note,
+        "grand_total": row.grand_total,
+        "created_at": row.created_at,
+        "created_by_name": names.get(row.created_by) if row.created_by else None,
+    }
+
+
+def list_history(db: Session, document: ProjectQuotationDocument) -> List[Dict[str, Any]]:
+    """Newest first, numbered oldest = 1, the tag designer's "Version N"."""
     names: Dict[str, Optional[str]] = {}
-    out = []
-    for row in rows:
-        if row.created_by and row.created_by not in names:
-            names[row.created_by] = user_name(db, row.created_by)
-        out.append(
-            {
-                "id": str(row.id),
-                "kind": row.kind,
-                "grand_total": row.grand_total,
-                "created_at": row.created_at,
-                "created_by_name": names.get(row.created_by) if row.created_by else None,
-            }
-        )
-    return out
+    rows = _entries(db, document)
+    out = [_serialize_entry(db, row, index + 1, names) for index, row in enumerate(rows)]
+    return list(reversed(out))
 
 
-def _entry_or_404(db: Session, document, entry_id: str) -> QuotationDocumentSnapshot:
-    row = (
-        db.query(QuotationDocumentSnapshot)
-        .filter(
-            QuotationDocumentSnapshot.id == entry_id,
-            # Checked against THIS document, so a known entry id cannot be read through any
-            # other document the caller can open.
-            QuotationDocumentSnapshot.document_id == document.id,
-        )
-        .first()
+def _entry_or_404(db: Session, document, entry_id: str):
+    rows = _entries(db, document)
+    for index, row in enumerate(rows):
+        # Checked against THIS document, so a known entry id cannot be read through another one.
+        if str(row.id) == str(entry_id):
+            return row, index + 1, rows
+    raise AppException(
+        status_code=404, message="History entry not found.", code="quotation_history_not_found"
     )
-    if row is None:
-        raise AppException(
-            status_code=404, message="History entry not found.", code="quotation_history_not_found"
-        )
-    return row
 
 
 def get_history_entry(db: Session, document, entry_id: str) -> Dict[str, Any]:
-    row = _entry_or_404(db, document, entry_id)
-    return {
-        "id": str(row.id),
-        "kind": row.kind,
-        "grand_total": row.grand_total,
-        "created_at": row.created_at,
-        "created_by_name": user_name(db, row.created_by),
-        "doc": row.doc,
-    }
+    row, version, _ = _entry_or_404(db, document, entry_id)
+    return {**_serialize_entry(db, row, version, {}), "doc": row.doc}
 
 
 def restore_entry(
@@ -339,36 +363,45 @@ def restore_entry(
     *,
     document: ProjectQuotationDocument,
     entry_id: str,
-    base_rev: int,
+    token: str,
     user_id: str,
 ) -> Dict[str, Any]:
-    """Restore: the entry becomes the draft; the draft it replaces becomes ``before_restore``.
-
-    No confirm (the History sheet's rule): nothing is destroyed. The record changes only on the
-    next Save, which fires everything a Save fires.
+    """Restore, the tag designer's way (``price_tag_requests.py:941-997``): the state being LEFT is
+    kept first ("Before restore to version N": the draft, else the latest Save), then the entry
+    becomes the draft. No confirm: nothing is destroyed. The record changes only on the next Save.
     """
-    entry = _entry_or_404(db, document, entry_id)
-    _assert_writable(db, document)
-    row = _row_or_new(db, document)
-    if int(base_rev) != int(row.rev or 0):
-        raise _stale(db, document, row, None, user_id)
-    if row.doc is not None:
+    entry, version, rows = _entry_or_404(db, document, entry_id)
+    row = document_draft(db, document, create=True, lock=True)
+    _assert_writable(db, row)
+    assert_holder(db, row, token, user_id)
+    leaving = row.doc
+    if leaving is None:
+        saved = [r for r in rows if r.kind == KIND_SAVED]
+        leaving = saved[-1].doc if saved else None
+    if leaving is not None:
         db.add(
             QuotationDocumentSnapshot(
                 document_id=document.id,
+                draft_id=row.id,
                 kind=KIND_BEFORE_RESTORE,
-                doc=row.doc,
-                grand_total=draft_total(row.doc),
-                created_by=user_id,
+                note=f"Before restore to version {version}",
+                doc=leaving,
+                grand_total=draft_total(leaving),
+                created_by=str(user_id),
             )
         )
     restored = reconcile(db, document, copy.deepcopy(entry.doc))
     row.doc = restored
-    row.rev = int(row.rev or 0) + 1
-    row.updated_by = user_id
+    row.updated_by = str(user_id)
     row.updated_at = _now()
     db.flush()
-    return {"doc": restored, "rev": row.rev, "updated_at": row.updated_at}
+    return {
+        "draft_id": str(row.id),
+        "token": row.holder_token,
+        "doc": restored,
+        "updated_at": row.updated_at,
+        "updated_by_name": user_name(db, user_id),
+    }
 
 
 # ------------------------------------------------------------------ the draft's figures
