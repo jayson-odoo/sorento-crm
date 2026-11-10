@@ -179,7 +179,15 @@ export function useQuotationFormAutosave({
             { keepalive: teardownRef.current },
           );
           serverAtRef.current = saved?.updated_at ?? serverAtRef.current;
-          clearMirror(key);
+          // The copy may already hold a NEWER edit typed while this one was on its way: keep that
+          // and move its base to the version just written, or a reopen would read it as stale
+          // (review 5/7a). Only the copy of exactly what landed is dropped.
+          const copy = readMirror(key);
+          if (copy && JSON.stringify(copy.doc) !== JSON.stringify(value)) {
+            writeMirror(key, { ...copy, baseAt: serverAtRef.current });
+          } else {
+            clearMirror(key);
+          }
         } catch (error) {
           if (error instanceof DraftNotHolderError) {
             // The server kept this tab's state as History; the local copy is not needed.

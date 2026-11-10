@@ -251,6 +251,28 @@ describe('useQuotationFormAutosave (QUOTE-AUTOSAVE)', () => {
     expect(readMirror(mirrorKey(PROJECT, DOC, TOKEN))?.baseAt).toBe('2026-11-10T06:20:00');
   });
 
+  it('an edit typed while a save is on its way keeps its local copy, re-based on the new version', async () => {
+    let land: (value: { updated_at: string }) => void = () => undefined;
+    saveDraft.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        land = resolve;
+      }),
+    );
+    saveDraft.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { rerender } = setup({ state: state('Opened'), isDirty: false });
+    rerender({ state: state('A'), isDirty: true });
+    await tick(); // A is on its way
+    rerender({ state: state('B, typed meanwhile'), isDirty: true });
+    await act(async () => {
+      land({ updated_at: '2026-11-10T06:30:00' });
+    });
+    const copy = readMirror(mirrorKey(PROJECT, DOC, TOKEN));
+    expect(copy?.doc.header.subject_title).toBe('B, typed meanwhile');
+    expect(copy?.baseAt).toBe('2026-11-10T06:30:00');
+    await tick(); // B fails offline: still there, on the right base, for the next open
+    expect(readMirror(mirrorKey(PROJECT, DOC, TOKEN))?.baseAt).toBe('2026-11-10T06:30:00');
+  });
+
   it('Discard draft pauses saving: nothing typed during the countdown revives the draft', async () => {
     const { rerender, result, unmount } = setup({ state: state('Opened'), isDirty: false });
     act(() => {

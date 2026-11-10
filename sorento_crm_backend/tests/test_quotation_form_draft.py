@@ -663,3 +663,40 @@ def test_a_history_entry_holds_every_scope_so_restore_brings_back_untouched_line
     back = doc["record_lines"][scope["id"]]["lines"]
     assert back[0]["id"] == line["id"]
     assert str(back[0]["unit_price"]).startswith("100")
+
+
+def test_restore_never_stages_a_scope_the_customer_now_holds(api):
+    """Review N1: an entry from before an issue would otherwise re-send the issued version's lines,
+    and Save would be refused with 422 for the whole document every time."""
+    client, db, _company, _user_id, project, _party = api
+    uom = _uom(db)
+    product = _product(db, _category(db, "Bidet").id, uom, FIXTURE_LIST_PRICE)
+    db.commit()
+    document = _create_document(client, project.id)
+    scope = _add_scope(client, project.id, document["id"], f"{MARKER} Townhouse")
+    _add_priced_line(client, _current_version_id(db, scope["id"]), product, price="250.00", qty="4")
+    token = _open(client, project.id, document["id"])["token"]
+    client.patch(f"{_root(project.id)}/{document['id']}", json={"form_state": _state("v1"), "form_token": token})
+    v1 = _history(client, project.id, document["id"])[0]
+    detail = client.get(f"{_root(project.id)}/{document['id']}/history/{v1['id']}").json()
+    assert scope["id"] in detail["doc"]["record_lines"]
+
+    _sign(client, _root(project.id), document["id"])
+    assert client.post(f"{_root(project.id)}/{document['id']}/issue").status_code == 201
+
+    doc = client.post(
+        f"{_root(project.id)}/{document['id']}/history/{v1['id']}/restore", json={"token": token}
+    ).json()["doc"]
+    assert scope["id"] not in doc["record_lines"]
+    assert scope["id"] not in doc["staged"]
+    # A Save of the restored draft goes through: nothing of the issued version is sent.
+    saved = client.patch(
+        f"{_root(project.id)}/{document['id']}",
+        json={"subject_title": "after restore", "scopes": [{"id": scope["id"], "scope_label": f"{MARKER} Townhouse"}], "form_state": doc, "form_token": token},
+    )
+    assert saved.status_code == 200, saved.text
+    # And a Save after the issue records no lines for the version the customer holds.
+    latest = client.get(
+        f"{_root(project.id)}/{document['id']}/history/{_history(client, project.id, document['id'])[0]['id']}"
+    ).json()
+    assert scope["id"] not in latest["doc"]["record_lines"]

@@ -376,16 +376,29 @@ export function QuotationFormClient({
     docId: string | null,
     claim: QuotationFormDraftOpened | undefined,
   ): QuotationFormState | null {
+    const copies = readMirrors(mirrorPrefix(projectId, docId));
+    // The newest copy made on the version the server still has is reopened (oldest first, so the
+    // last match wins). Every other copy, a second tab's included, is sent under its own lapsed
+    // claim so the server keeps it as History (review 6), and is dropped only once the server
+    // has answered for it: a failed send (offline, a locked document) keeps it for next time.
+    let resumeKey: string | null = null;
+    copies.forEach(({ key, value }) => {
+      if ((value.baseAt ?? null) === (claim?.updated_at ?? null)) resumeKey = key;
+    });
     let resume: QuotationFormState | null = null;
-    for (const { key, value } of readMirrors(mirrorPrefix(projectId, docId))) {
-      if ((value.baseAt ?? null) === (claim?.updated_at ?? null)) {
-        resume = value.doc; // oldest first, so the newest current copy wins
+    for (const { key, value } of copies) {
+      if (key === resumeKey) {
+        resume = value.doc;
+        clearMirror(key);
       } else if (value.token && value.token !== claim?.token) {
-        void saveQuotationFormDraft(projectId, docId, value.doc, value.token).catch(
-          () => undefined,
-        );
+        saveQuotationFormDraft(projectId, docId, value.doc, value.token)
+          .then(() => clearMirror(key))
+          .catch((error) => {
+            if (error instanceof DraftNotHolderError) clearMirror(key);
+          });
+      } else {
+        clearMirror(key);
       }
-      clearMirror(key);
     }
     if (resume) {
       resumeRef.current = resume;

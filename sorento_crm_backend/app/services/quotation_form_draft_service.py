@@ -168,9 +168,9 @@ def _not_holder(
             else None
         )
         if existing is not None:
+            # `created_at` is kept: History is ordered (and numbered) by it.
             existing.doc = doc
             existing.grand_total = draft_total(doc)
-            existing.created_at = _now()
         else:
             db.add(
                 QuotationDocumentSnapshot(
@@ -457,6 +457,9 @@ def _scope_lines(db: Session, scope_id: str) -> Optional[Dict[str, Any]]:
 
     try:
         version = quotes.current_version(db, scope_id)
+        # A version the customer holds is never staged or sent (review N1): Save would be refused
+        # with 422 for the whole document. Its lines are the record's and stay as they are.
+        quotes.assert_editable(db, version)
     except AppException:
         return None
     rows = quotes.serialize_lines(db, quotes.list_lines(db, version.id))
@@ -587,11 +590,19 @@ def reconcile(db: Session, document: ProjectQuotationDocument, doc: Any) -> Any:
     from app.services import project_quotation_service as quotes
 
     current_version: Dict[str, Optional[str]] = {}
+    editable_versions: set = set()
     for scope_id in live_scope_ids:
         try:
-            current_version[scope_id] = str(quotes.current_version(db, scope_id).id)
+            version = quotes.current_version(db, scope_id)
         except AppException:
             current_version[scope_id] = None
+            continue
+        current_version[scope_id] = str(version.id)
+        try:
+            quotes.assert_editable(db, version)
+            editable_versions.add(str(version.id))
+        except AppException:
+            pass
 
     def line_ids(version_id: Optional[str]) -> set:
         if not version_id:
@@ -636,6 +647,12 @@ def reconcile(db: Session, document: ProjectQuotationDocument, doc: Any) -> Any:
         # The ids are checked even when the version did not move: a line deleted by a later
         # Save on the same version is refused by `replace_lines` just the same (review B1).
         version_id = current_version.get(scope_id)
+        if version_id not in editable_versions:
+            # Issued since: the customer holds it, so nothing of it is staged (review N1).
+            for collection in (staged, record_lines):
+                if isinstance(collection, dict):
+                    collection.pop(key, None)
+            continue
         keep = line_ids(version_id)
         for collection in (staged, record_lines):
             entry = collection.get(key) if isinstance(collection, dict) else None
