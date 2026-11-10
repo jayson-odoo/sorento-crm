@@ -632,3 +632,29 @@ def test_AC_E1_a_view_own_only_user_reads_the_lines_on_a_panel_turn(db):
     user_id = seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW_OWN,))
     out = _lines(db, world, {"project_id": world.project_id}, user_id=user_id)
     assert out.status == "ok", (out.status, out.message)
+
+
+def test_AC_E6_a_scope_too_big_for_the_result_cap_is_capped_and_counts_the_rest(db):
+    from app.models.base import company_scope
+    from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
+
+    world = _seed_world(db)
+    with company_scope(db, frozenset({world.company_id})):
+        showroom = db.query(ProjectQuotation).filter(
+            ProjectQuotation.project_id == world.project_id, ProjectQuotation.scope_label == "Showroom"
+        ).one()
+        version = db.query(ProjectQuotationVersion).filter(ProjectQuotationVersion.quotation_id == showroom.id).one()
+        for i in range(250):
+            db.add(ProjectQuotationLine(
+                company_id=world.company_id, version_id=version.id, product_code_snapshot=f"BIG{i:04d}",
+                description_snapshot="long description " * 12, list_price_snapshot=Decimal("10.00"),
+                unit_price=Decimal("9.00"), quantity=Decimal("1"), uom="pcs", line_total=Decimal("9.00"),
+                sort_order=i,
+            ))
+        db.flush()
+    out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
+    assert out.status == "ok", (out.status, out.message)
+    assert len(json.dumps(out.data, default=str)) <= agent_tools.RESULT_CHAR_CAP
+    scope = _doc(out, world.doc_b)["scopes"][0]
+    assert scope.get("lines_not_shown", 0) > 0, {k: v for k, v in scope.items() if k != "lines"}
+    assert len(scope["lines"]) + scope["lines_not_shown"] == 250

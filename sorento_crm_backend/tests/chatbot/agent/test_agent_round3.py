@@ -168,7 +168,9 @@ def test_registry_carries_the_contact_grants():
 
     # AGENTIC-UNIFY PR 4: the ported reads carry no contact grant, but the order analytics asks the sales reveal
     # (a staff member's is their own `sales.reports.view`, so a user without it is not offered the totals).
-    ported = {n: None for n in AC1_NAMES}
+    from tests.chatbot.agent._ported_reads_support import LOCAL_PORTED
+
+    ported = {n: None for n in [*AC1_NAMES, *LOCAL_PORTED]}
     ported["crm_order_analytics"] = "sales_orders.sales_report"
     assert {n: d.contact_grant for n, d in REGISTRY.items()} == {**EXPECTED_GRANTS, **ported}
 
