@@ -1,9 +1,9 @@
 # PLAN: Town v2 (hover names, lightbox popups, tilt camera, incoming shipments port)
 
-Status: Build. Track L (since 10 Nov ~16:55: a permission migration + an RBAC gate; security reviewer
-joins Phase 3). All card questions answered (Q1-Q6). Look and motion: the owner approved TOWN-LOOK v6
-(#2316, `documentation/mockups/TOWN-LOOK/`), being ported into `TownScene.tsx`. Done: snapshot `incoming`
-+ `deliveries.customers`, lightbox, hover/tilt/zoom/reset, plain port + sixth card, admin-only access.
+Status: Review (fix round 1). Track L (a permission migration + an RBAC gate). All card questions
+answered (Q1-Q6). Built: snapshot `incoming` + `deliveries.customers`, lightbox, hover/tilt/zoom/reset,
+the port + sixth card, the TOWN-LOOK v6 scene and motion (`town/components/townWorld.ts`), admin-only
+access. Security reviewer READY; reviewer round 1 fixes in progress.
 
 ## Journey (owner, 10 Nov ~15:35 MYT, Dashboards > Town)
 
@@ -83,8 +83,15 @@ shipments also ... how about purchased from overseas?"
     - Trees sway, two flags wave, the water moves (faceted low-poly).
     - The town assembles on load: buildings rise in a short stagger, then labels fade in.
     - Time of day: light and sky follow the snapshot's `as_of` hour (warm near 18:00, blue after 20:00).
-    - Guard rails: 30 fps cap, the clock stops while the tab is hidden, `prefers-reduced-motion` = the
-      static town (as today), and a Pause/Play button (WCAG 2.2.2), remembered per viewer in localStorage.
+    - Guard rails (as shipped from v6): render on demand with a 60 fps cap (pixel ratio steps down below
+      50 fps), the clock stops while the tab is hidden, `prefers-reduced-motion` = the still v6 town (no
+      fly-in, nothing drives), and a Pause/Play button (WCAG 2.2.2), remembered per viewer in localStorage.
+    - The sale beat diffs shop keys between two polls. That needed one backend change: the redacted and
+      wallboard variants' opaque keys were list positions (`s1..sN`) and moved when the redacted list
+      re-sorted, so they are now `opaque_key()` = "s" + 12 hex of an HMAC (own key derived from
+      JWT_SECRET) over company, day and customer id. Trade-off, accepted: a viewer without
+      `sales.reports.view` can follow one unnamed dealer's invoice count through the day (never across
+      days, never its name or id); the Town is admin-only, so that viewer is a granted non-admin.
 
 11. **Admin-only (owner, 10 Nov ~16:55).** Only admins see the Town, through the app's permission system:
     `dashboards.town.view` (`app/rbac/permission_registry.py`), granted to `admin` and `superadmin` by
@@ -95,6 +102,13 @@ shipments also ... how about purchased from overseas?"
     browser (`TownPage.tsx:35-47` -> `useTownSnapshot({mode:'wallboard'})` -> `townService.ts:10-12`
     `apiFetch` with the user's bearer session -> `town.py` `get_current_user`). The Mac mini keeps working
     while that browser is signed in as an admin (30-day sliding session).
+
+## Exemption recorded
+
+The port lightbox lists shipments in a plain read-only table, not a DataGrid: at most 30 rows per section
+inside a popup, no paging, sorting, filtering, column preferences or row links (the "Open packing lists"
+button is the way to the real list). DESIGN-LANGUAGE's DataGrid rule is for listing screens; a DataGrid
+inside a lightbox would add toolbar and chrome the owner's minimal-UI rule argues against.
 
 ## Real examples (dev data)
 
@@ -130,7 +144,10 @@ packing lists".
 
 Answered 10 Nov ~16:10: Q6 (a).
 
-6. **Where lorries drive (answered: a).** The snapshot has only a count of due sales orders, not who they are for. (a)
+6. **Where lorries drive (answered: a).** Shipped as `deliveries.customers` = up to 6 `{key, name,
+   orders}`, earliest due first: `key` = the customer's shop in the town, else null with the customer's
+   `name` (personal full view only; dropped on the redacted and wallboard variants). The question was:
+   the snapshot has only a count of due sales orders, not who they are for. (a)
    Add `deliveries.customers`: the keys of up to 6 shops with an order due today or overdue (one GROUP BY
    on the existing `_deliveries` query), so a lorry drives to a real customer; on the redacted or
    wallboard variant the keys stay opaque as they are today. (b) Lorries drive to lit shops (decoration,

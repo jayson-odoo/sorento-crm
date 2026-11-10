@@ -345,7 +345,7 @@ def _incoming(db: Session, company_id: str, day: date) -> dict:
             sa.func.count(sa.distinct(InboundShipmentLine.product_id)).label("products"),
             sa.func.sum(_remaining_expr()).label("quantity"),
         )
-        .where(_still_incoming_filter())
+        .where(InboundShipmentLine.company_id == company_id, _still_incoming_filter())
         .group_by(InboundShipmentLine.shipment_id)
         .subquery()
     )
