@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
@@ -21,8 +23,8 @@ export type { RecordHistoryEvent, RecordHistoryLine };
  * components that we had in the system, don't invent new things" - so this is the SO History
  * drawer's own body (`PlanningHistorySheet.tsx`) lifted out of its Sheet: the same filters
  * (SearchableSelect / SearchableMultiSelect / DateRangePicker / Clear), the same
- * `EventTimeline`, the same light `Badge`, and the same expand-to-lines table. Nothing here
- * is a new visual.
+ * `EventTimeline`, the same light `Badge`, and the same expand-to-lines read. The lines are
+ * the standard `DataGrid` (M5-06 forbids a new raw table). Nothing here is a new visual.
  *
  * A batch press (one Unconfirm that moved 9 lines) is ONE event whose `lines` name every
  * row; a Product or Line filter narrows the lines shown and keeps the event whole.
@@ -49,31 +51,77 @@ function isoDay(at: string | null): string | null {
   return y && m && d ? `${y}-${m}-${d}` : null;
 }
 
+function Truncated({ text }: { text: string }) {
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}
+
+/** One row per line, in the standard DataGrid (M5-06: no raw tables), the OI line History
+ * dialog's own fixed, resizable read-only grid (`OrderInquiryLineHistoryDialog.tsx`). */
+const LINE_COLUMNS: ColumnDef<RecordHistoryLine>[] = [
+  {
+    id: 'line',
+    header: 'Line',
+    size: 64,
+    enableSorting: false,
+    meta: { headerTitle: 'Line' },
+    cell: ({ row }) => <span className="tabular-nums">{row.original.so_line_no ?? ''}</span>,
+  },
+  {
+    id: 'product',
+    header: 'Product',
+    size: 170,
+    enableSorting: false,
+    meta: { headerTitle: 'Product' },
+    cell: ({ row }) => <Truncated text={row.original.item_code ?? ''} />,
+  },
+  {
+    id: 'qty',
+    header: 'Qty',
+    size: 72,
+    enableSorting: false,
+    meta: { headerTitle: 'Qty' },
+    cell: ({ row }) => <span className="tabular-nums">{row.original.qty ?? ''}</span>,
+  },
+  {
+    id: 'change',
+    header: 'Change',
+    size: 260,
+    enableSorting: false,
+    meta: { headerTitle: 'Change' },
+    cell: ({ row }) => <Truncated text={row.original.change} />,
+  },
+];
+
 function LinesTable({ lines }: { lines: RecordHistoryLine[] }) {
+  const table = useReactTable({
+    columns: LINE_COLUMNS,
+    data: lines,
+    getRowId: (line) => line.row_id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
   if (lines.length === 0) return null;
   return (
-    <div className="mt-2 overflow-x-auto">
-      <Table className="text-xs">
-        <TableHeader>
-          <TableRow>
-            {['Line', 'Product', 'Qty', 'Change'].map((name) => (
-              <TableHead key={name} className="h-8 px-2">
-                {name}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {lines.map((line) => (
-            <TableRow key={line.row_id}>
-              <TableCell className="px-2 py-1.5 break-words">{line.so_line_no ?? ''}</TableCell>
-              <TableCell className="px-2 py-1.5 break-words">{line.item_code ?? ''}</TableCell>
-              <TableCell className="px-2 py-1.5 break-words">{line.qty ?? ''}</TableCell>
-              <TableCell className="px-2 py-1.5 break-words">{line.change}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="mt-2">
+      <DataGrid
+        table={table}
+        recordCount={lines.length}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          // A fixed read of one event's lines: no saved column preference to drag into.
+          columnsDraggable: false,
+          // The page (or the dialog body) owns the vertical scroll.
+          scrollerMaxHeight: false,
+        }}
+      >
+        <DataGridTable />
+      </DataGrid>
     </div>
   );
 }
