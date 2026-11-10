@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -163,6 +164,17 @@ def run_panel_turn(
     return _rendered(result, route="chat", decision=decision)
 
 
+_UUID_IN_TEXT = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def _page_ids(page_snapshot: Any) -> list[str]:
+    """The lower-case UUIDs in the open page's path (`/project-sales/<uuid>`); a dict, a payload or None."""
+    if page_snapshot is None:
+        return []
+    path = page_snapshot.get("path") if isinstance(page_snapshot, dict) else getattr(page_snapshot, "path", None)
+    return [m.lower() for m in _UUID_IN_TEXT.findall(path or "")]
+
+
 def _page_context(db: Session, user_id: str, snapshot: Any) -> tuple[dict[str, Any] | None, str]:
     """`(summary, agent note)` for the page the user has open; `(None, "")` for a blank snapshot.
     The summary (`title`, `path` and, only when the record may be read, `record_kind` and `record_ref`)
@@ -233,7 +245,8 @@ def _run_agent_side(
             if files.images:
                 extra["images"] = files.images
         result = agent_loop.run_agent_turn(
-            db, contact_respond_id=principal.key, text=text, context_before=before, context_after=after, **extra
+            db, contact_respond_id=principal.key, text=text, context_before=before, context_after=after,
+            seed_ids=_page_ids(principal.page), **extra,
         )
     except AppException as exc:  # the rate limit: one plain line, not an error page (AC-24)
         return PanelTurnResult(reply_text=exc.detail["message"], route="agent", status="refused", route_decision=shown)
