@@ -1,6 +1,6 @@
 # PLAN: RFQ-GATE-REMOVE - drop the hard-coded Upload Requirement gate
 
-Status: in progress (small fix track: under 300 lines, no migration, no auth/RBAC change)
+Status: PR #2308 open, review READY, awaiting owner hand test (small fix track: under 300 lines, no migration, no auth/RBAC change)
 
 ## Why
 
