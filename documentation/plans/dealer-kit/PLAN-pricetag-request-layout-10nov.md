@@ -1,8 +1,8 @@
 # PLAN: price tag request screen, customer first (multi), one price tag section, notes collapsible, preview before approve
 
-Status: Waiting on owner (mock v3 at `documentation/mockups/pricetag-request-layout/index.html`; v1 + v2 feedback applied, the 5 recommendations taken as answers). Track: full (a migration: a list of customers per request).
+Status: in review, PR #2318 (full track: one migration, ptag_0022_request_customers). Mock v3 approved 10 Nov with the condition that the AI extract is reused unchanged.
 
-Lane: PRICETAG-REQUEST-LAYOUT. UAC: `pricetag-request-layout-acceptance-criteria.md` (written after the mock is approved).
+Lane: PRICETAG-REQUEST-LAYOUT. UAC: `pricetag-request-layout-acceptance-criteria.md`.
 
 ## Journey
 
