@@ -817,3 +817,27 @@ def test_a_contact_turn_that_read_data_then_lost_the_model_stays_failed_with_no_
     )
     assert result.status == "failed", (result.status, result.reply_text)
     assert "What I read" not in result.reply_text
+
+
+def test_AC_E2_a_line_priced_above_list_has_no_discount_and_no_negative_value(db):
+    from app.models.base import company_scope
+    from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
+
+    world = _seed_world(db)
+    with company_scope(db, frozenset({world.company_id})):
+        showroom = db.query(ProjectQuotation).filter(
+            ProjectQuotation.project_id == world.project_id, ProjectQuotation.scope_label == "Showroom"
+        ).one()
+        version = db.query(ProjectQuotationVersion).filter(ProjectQuotationVersion.quotation_id == showroom.id).one()
+        db.add(ProjectQuotationLine(
+            company_id=world.company_id, version_id=version.id, product_code_snapshot="ABOVE1",
+            description_snapshot="Priced above list", list_price_snapshot=Decimal("600.00"),
+            unit_price=Decimal("1200.00"), quantity=Decimal("1"), uom="pcs", line_total=Decimal("1200.00"),
+            sort_order=0,
+        ))
+        db.flush()
+    out = _lines(db, world, {"project_id": world.project_id, "refs": [world.doc_b]})
+    assert out.status == "ok", (out.status, out.message)
+    line = next(ln for ln in _doc(out, world.doc_b)["scopes"][0]["lines"] if ln["code"] == "ABOVE1")
+    assert line["discount_pct"] is None, line
+    assert not [k for k, v in line.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 0], line
