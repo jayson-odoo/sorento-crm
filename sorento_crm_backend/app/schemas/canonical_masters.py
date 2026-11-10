@@ -92,6 +92,17 @@ class CanonicalBrand(_Canonical):
     is_active: Optional[bool] = None
 
 
+class CanonicalPaymentTerm(_Canonical):
+    """AutoCount `Terms` (QUOTE-TERMS-SELECT, contract 2.14). The row has two fields only:
+    `code` is `DisplayTerm` (what prints, matched exactly), `rule` is `Terms` (the calculation
+    rule, e.g. "Net 0th Next 1 Month"). Caps are the `payment_terms` column widths."""
+
+    code: str = Field(..., min_length=1, max_length=100)
+    rule: Optional[str] = Field(None, max_length=200)
+    # Absent vs null (D14): omitted leaves the stored value (true on create).
+    is_active: Optional[bool] = None
+
+
 class CanonicalItemClass(_Canonical):
     """AutoCount ItemClass (ITEM-CLASS-MASTER, contract 2.11), the brands master exactly.
     Syncs BEFORE brands and products, so a product's `item_class_code` links a real master row
@@ -176,6 +187,10 @@ class CanonicalCustomer(_Canonical):
     # agent as it was with warning `agent_unresolved`. A known one is set on the linked ledger
     # and every same-code ledger of the company.
     sales_agent_code: Optional[str] = Field(None, max_length=100)
+    # AutoCount `Debtor.DisplayTerm` (contract 2.14, QUOTE-TERMS-SELECT; back after D15 removed
+    # the old never-stored field of the same name). Absent = untouched, blank = cleared; stored
+    # as sent and matched to a `payment_terms` code when a new quotation takes its default.
+    payment_terms_code: Optional[str] = Field(None, max_length=100)
 
 
 class CanonicalSalesAgent(_Canonical):

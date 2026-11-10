@@ -222,6 +222,9 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 # ITEM-CLASS: AutoCount Item Class reference data (migration item_class_0001 grants each slug
 # to every role holding the matching brands slug).
 PERMISSION_REGISTRY.extend(_crud("master_data", "item_classes", "Item Classes"))
+# QUOTE-TERMS-SELECT: AutoCount Terms, ingest-only reference data (migration
+# qts_0001_quote_terms_select grants each slug to every role holding the item classes one).
+PERMISSION_REGISTRY.extend(_crud("master_data", "payment_terms", "Payment Terms"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "countries", "Countries"))

@@ -356,6 +356,33 @@ def _seed_packing_list_numbering_after_create(target, connection, **kw):  # noqa
     )
 
 
+# Same gap again for the project party roles (PROJECT-PARTY-ROLES): the list is rows of the lookup
+# set `project_party_role`, seeded by migration ppr_0001 from the one SEED_ROLES definition. Without
+# it every party create and every party link is refused as an unknown role.
+from app.models.lookup import LookupOption as _LookupOption  # noqa: E402
+from app.services import project_party_roles as _party_roles  # noqa: E402
+
+
+@_sa_scope_event.listens_for(_LookupOption.__table__, "after_create")
+def _seed_party_roles_after_create(target, connection, **kw):  # noqa: ANN001
+    from app.models.lookup import LookupSet as _LookupSet
+
+    # Through the Table objects, so a scratch schema's translate map applies to both inserts.
+    set_id = str(_uuid_for_seed.uuid4())
+    connection.execute(
+        _LookupSet.__table__.insert().values(
+            id=set_id, tenant_id=None, set_key=_party_roles.SET_KEY, name=_party_roles.SET_NAME, is_active=True
+        )
+    )
+    for order, (value, label, many) in enumerate(_party_roles.SEED_ROLES, start=1):
+        connection.execute(
+            target.insert().values(
+                id=str(_uuid_for_seed.uuid4()), set_id=set_id, value=value, label=label,
+                sort_order=order * 10, is_active=True, allows_many=many,
+            )
+        )
+
+
 @_sa_scope_event.listens_for(_SAScopeSession, "after_begin")
 def _default_company_scope_for_tests(session, transaction, connection):  # noqa: ANN001
     if getattr(_company_scope, "_ENFORCE", True):

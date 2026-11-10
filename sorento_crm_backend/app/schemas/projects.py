@@ -14,6 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from app.services.uuid_path_param import UUID_PATTERN
 
+from typing import Annotated as _Annotated
+
+#: A UUID-shaped id in a list body: a malformed one is a 422, never a database error.
+UUID4Str = _Annotated[str, Field(pattern=UUID_PATTERN)]
+
 # A pure, dependency-free lookup table (no DB, no network), so a schema importing it introduces
 # no cycle. It lives in services because the PDF renderer needs the same answer.
 from app.services import geo_places
@@ -24,9 +29,7 @@ from app.services import geo_places
 class ProjectPartyBase(BaseModel):
     party_type: str = Field(
         ...,
-        description=(
-            "developer | architect | main_contractor | trading_house | consultant"
-        ),
+        description="A key of the lookup set project_party_role: the role the party usually plays.",
     )
     name: str = Field(..., min_length=1, max_length=255)
     registration_no: Optional[str] = Field(None, max_length=100)
@@ -167,6 +170,7 @@ class ClashCandidateResponse(BaseModel):
     project_id: str
     project_code: Optional[str] = None
     title: str
+    name: Optional[str] = None
     outcome: Optional[str] = None
     status_label: Optional[str] = None
     owner_user_id: Optional[str] = None
@@ -213,6 +217,8 @@ class ProjectRegisterRequest(BaseModel):
     """
 
     title: str = Field(..., min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -238,8 +244,6 @@ class ProjectRegisterRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -248,6 +252,8 @@ class ProjectRegisterRequest(BaseModel):
 
 class ProjectUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -260,14 +266,16 @@ class ProjectUpdateRequest(BaseModel):
     lead_source: Optional[str] = Field(None, max_length=32)
     # Present = replace every link; absent = keep them.
     party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked on edit (PROJECT-PARTY-ROLES rule 13): ADDED as stakeholders, never
+    # removed here (owner Q6 b: removal stays on the Stakeholders tab). UUIDs, so a malformed id
+    # is a 422 rather than a database error.
+    contact_ids: Optional[List[UUID4Str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -290,6 +298,8 @@ class ProjectApproveRequest(BaseModel):
     and a field sent here wins over what the project already carries."""
 
     title: Optional[str] = Field(None, min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -301,8 +311,6 @@ class ProjectApproveRequest(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -352,6 +360,8 @@ class ProjectResponse(BaseModel):
     id: str
     project_code: Optional[str] = None
     title: str
+    # Short name for headers and pickers; null shows the title (PROJECT-NAME).
+    name: Optional[str] = None
     outcome: str
     loss_reason: Optional[str] = None
     admin_ref: Optional[str] = None
@@ -400,10 +410,6 @@ class ProjectResponse(BaseModel):
     address: Optional[str] = None
     state: Optional[str] = None
     mukim: Optional[str] = None
-    architect_party_id: Optional[str] = None
-    architect_name: Optional[str] = None
-    main_contractor_party_id: Optional[str] = None
-    main_contractor_name: Optional[str] = None
     party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None
@@ -648,6 +654,7 @@ class ProjectTaskResponse(ProjectTaskBase):
     project_id: str
     project_code: Optional[str] = None
     project_title: Optional[str] = None
+    project_name: Optional[str] = None
 
     status_id: Optional[str] = None
     status_key: Optional[str] = None
@@ -718,6 +725,7 @@ class ProjectLeadInformant(BaseModel):
 
 class ProjectLeadBase(ProjectLeadInformant):
     title: str = Field(min_length=1)
+    name: Optional[str] = Field(None, max_length=80)
     customer_id: Optional[str] = Field(
         None,
         description=(
@@ -764,6 +772,7 @@ class ProjectLeadCreate(ProjectLeadBase):
 
 class ProjectLeadUpdate(ProjectLeadInformant):
     title: Optional[str] = Field(None, min_length=1)
+    name: Optional[str] = Field(None, max_length=80)
     customer_id: Optional[str] = None
     developer_party_id: Optional[str] = None
     source: Optional[str] = None
@@ -788,6 +797,7 @@ class ProjectLeadResponse(BaseModel):
     id: str
     lead_code: str
     title: str
+    name: Optional[str] = None
 
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
@@ -884,6 +894,9 @@ class ProjectLeadQualifyRequest(BaseModel):
 
     title: Optional[str] = Field(
         None, description="Defaults to the lead's title. Split a masterplan here."
+    )
+    name: Optional[str] = Field(
+        None, max_length=80, description="Defaults to the lead's name (PROJECT-NAME)."
     )
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
@@ -1983,6 +1996,11 @@ class ProjectQuotationDocumentBase(BaseModel):
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class ProjectQuotationFormScopeCreate(BaseModel):
@@ -2029,7 +2047,21 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 
-class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
+class ProjectQuotationRecipientPick(BaseModel):
+    """PROJECT-PARTY-ROLES PR 2: the "To" chosen from the parties (owner addition 2, 10 Nov).
+
+    ``recipient_party_id`` picks the party (any of the company's; the project's own come first in
+    the picker) and the header autoloads from it; a party not on the project yet is linked to it in
+    ``recipient_role``. ``attn_contact_ids`` are that party's people the letter is for: their names
+    fill Attn and they join the project's stakeholders. Every typed field wins over the autoload.
+    The party is fixed once revision A is issued (owner Q5 a)."""
+
+    recipient_party_id: Optional[str] = Field(default=None, max_length=64)
+    recipient_role: Optional[str] = Field(default=None, max_length=32)
+    attn_contact_ids: Optional[List[UUID4Str]] = Field(default=None, max_length=20)
+
+
+class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
     The document arrives already filled in: the reference from the numbering rule, the recipient
@@ -2047,13 +2079,20 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_phone_snapshot: Optional[str] = None
     recipient_fax_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
+    # QUOTE-AUTOSAVE (card Q2): a new proposal's first Save. The form's state becomes its first
+    # History entry and its private draft becomes the document's; `form_token` is the tab's claim
+    # on that draft (card Q4).
+    form_state: Optional[Dict[str, Any]] = Field(
+        default=None, description="The form's whole state at Save, kept as a History entry."
+    )
+    form_token: Optional[str] = Field(default=None, max_length=64)
     # Capped on what comes in (not on the response, which echoes whatever is stored).
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
     terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
-class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
+class ProjectQuotationDocumentUpdate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """The letterhead, correctable in the edit view.
 
     The recipient block is here and NOT on the base, so it can be corrected but never supplied at
@@ -2083,6 +2122,12 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
         description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
         "quotation_scope_issued for a scope any version of which has been issued.",
     )
+    # QUOTE-AUTOSAVE: the form's whole state at Save. Present, the same commit writes a `saved`
+    # History entry from it and clears the draft; a Save the server refuses writes neither.
+    form_state: Optional[Dict[str, Any]] = Field(
+        default=None, description="The form's whole state at Save, kept as a History entry."
+    )
+    form_token: Optional[str] = Field(default=None, max_length=64)
 
 
 class ProjectQuotationScopeCreate(BaseModel):
@@ -2215,11 +2260,64 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     source_label: Optional[str] = None
     quotation_document_id: Optional[str] = None
     recipient_party_type: Optional[str] = None
+    # The role the recipient plays on THIS project (developer, or its party link), for the caption.
+    recipient_role: Optional[str] = None
     current_revision_label: Optional[str] = None
     next_revision_label: Optional[str] = None
 
+    # QUOTE-AUTOSAVE: the read page's "Unsaved draft, last edited 2:14 PM by Aina" strip.
+    has_form_draft: bool = False
+    form_draft_at: Optional[datetime] = None
+    form_draft_by_name: Optional[str] = None
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class QuotationFormDraftWrite(BaseModel):
+    """An autosave: the form's whole state and this tab's claim on the draft (card Q4)."""
+
+    doc: Dict[str, Any]
+    token: str = Field(default="", max_length=64)
+
+
+class QuotationFormDraftWriteResponse(BaseModel):
+    updated_at: Optional[datetime] = None
+
+
+class QuotationFormDraftOpenResponse(BaseModel):
+    """What the form opens on (``doc`` null: the record) and this tab's claim on the draft."""
+
+    draft_id: str
+    token: Optional[str] = None
+    doc: Optional[Dict[str, Any]] = None
+    updated_at: Optional[datetime] = None
+    updated_by_name: Optional[str] = None
+
+
+class QuotationFormDraftHolderResponse(BaseModel):
+    is_holder: bool
+    holder_name: Optional[str] = None
+    holder_at: Optional[datetime] = None
+
+
+class QuotationHistoryEntryResponse(BaseModel):
+    id: str
+    #: Oldest = 1, the tag designer's "Version N".
+    version: int
+    kind: str
+    note: Optional[str] = None
+    grand_total: Optional[Decimal] = None
+    created_at: Optional[datetime] = None
+    created_by_name: Optional[str] = None
+
+
+class QuotationHistoryEntryDetailResponse(QuotationHistoryEntryResponse):
+    doc: Dict[str, Any]
+
+
+class QuotationHistoryRestoreRequest(BaseModel):
+    token: str = Field(default="", max_length=64)
 
 
 class MakeQuotationRequest(BaseModel):
@@ -2267,6 +2365,11 @@ class QuotationTemplateBase(BaseModel):
     body_html: str = ""
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
@@ -2292,6 +2395,11 @@ class QuotationTemplateUpdate(BaseModel):
     design: Optional[Dict[str, Any]] = None
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class QuotationTemplateResponse(QuotationTemplateBase):
@@ -2539,6 +2647,11 @@ class QuotationCoverPreviewRequest(BaseModel):
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
     terms_html: Optional[str] = Field(default=None, max_length=50000)
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
@@ -2678,6 +2791,10 @@ class ProjectPartyOnProject(BaseModel):
     role: str
     name: str
     phone: Optional[str] = None
+    # The proposal "To" autoloads from these (PROJECT-PARTY-ROLES PR 2).
+    address: Optional[str] = None
+    email: Optional[str] = None
+    fax: Optional[str] = None
     contacts: List[ProjectPartyPerson] = Field(default_factory=list)
 
 

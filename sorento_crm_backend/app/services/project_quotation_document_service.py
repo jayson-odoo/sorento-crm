@@ -43,10 +43,12 @@ from app.models.projects import (
     ProjectQuotationVersion,
     QuotationSignature,
 )
+from app.services import quotation_form_draft_service as _form_drafts
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
 from app.services import quotation_view_service as _views
+from app.services import quote_terms_service as quote_terms
 from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
@@ -215,8 +217,17 @@ def _next_document_no(
     return f"{prefix}-{date.today().year}-{highest + 1:04d}"
 
 
+def _site_address(db: Session, project: Project) -> Optional[str]:
+    """The project's own site address, the fallback for a recipient party with none (owner Q7 a,
+    PROJECT-PARTY-ROLES: "the address we can get from project")."""
+    from app.models.projects import ProjectSalesProfile
+
+    profile = db.get(ProjectSalesProfile, project.id)
+    return (getattr(profile, "address", None) or "").strip() or None
+
+
 def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
-    """Everything knowable about who this goes to, taken once and kept.
+    """Everything knowable about who this goes to, taken once and kept: the developer by default.
 
     The journey's rule: a field derivable from something we already hold is derived, never asked.
     """
@@ -231,15 +242,122 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
             "recipient_name_snapshot": None,
             "recipient_address_snapshot": None,
             "recipient_phone_snapshot": None,
+            "recipient_email_snapshot": None,
             "recipient_fax_snapshot": None,
         }
     return {
         "recipient_party_id": party.id,
         "recipient_name_snapshot": party.name,
-        "recipient_address_snapshot": party.address,
-        "recipient_phone_snapshot": party.phone,
+        "recipient_address_snapshot": party.address or _site_address(db, project),
+        "recipient_phone_snapshot": _display_phone(party.phone),
+        "recipient_email_snapshot": party.email,
         "recipient_fax_snapshot": party.fax,
     }
+
+
+def _display_phone(value: Any) -> Optional[str]:
+    from app.services.project_party_contact_service import display_phone
+
+    return display_phone(value)
+
+
+def apply_recipient_pick(
+    db: Session, *, document: ProjectQuotationDocument, project: Project, payload: Dict[str, Any]
+) -> None:
+    """The "To" chosen from the parties (PROJECT-PARTY-ROLES PR 2, owner addition 2, 10 Nov).
+
+    Keyed on presence like every header save. A new ``recipient_party_id`` reloads the whole block
+    from that party (name, its address or the project's site address, phone, email); a party not
+    on the project yet is linked in ``recipient_role`` first. ``attn_contact_ids`` fill Attn
+    ("A & B"), phone and email from the first of them, and join the project's stakeholders. A key
+    present in ``payload`` is a typed value and is never overwritten here. The party is fixed once
+    revision A is issued (owner Q5 a): a different party gets its own proposal.
+    """
+    from app.services import project_party_contact_service as party_contacts
+
+    attn_ids = list(dict.fromkeys(str(c) for c in (payload.get("attn_contact_ids") or []) if c))
+    if "recipient_party_id" not in payload and not attn_ids:
+        return
+    party_id = payload.get("recipient_party_id") if "recipient_party_id" in payload else document.recipient_party_id
+    changing = "recipient_party_id" in payload and str(party_id or "") != str(document.recipient_party_id or "")
+    if changing and document.id and list_issues(db, document):
+        raise AppException(
+            status_code=422,
+            message="This proposal has been issued, so who it is addressed to is fixed. Make a new proposal for another party.",
+            code="quotation_recipient_locked",
+        )
+    if not party_id:
+        if changing:
+            document.recipient_party_id = None
+        return
+    party = party_contacts._company_party(db, str(project.company_id), party_id)
+    if party is None:
+        raise AppException(
+            status_code=422,
+            message="Pick the parties, type and template from this company.",
+            code="project_ref_invalid",
+        )
+    if party.id not in party_contacts._party_ids_on(db, project):
+        role = payload.get("recipient_role")
+        if not role:
+            raise AppException(
+                status_code=422,
+                message=f"{party.name} is not on this project yet. Pick the role it plays.",
+                code="quotation_recipient_role_required",
+            )
+        party_contacts.add_party_link(db, project, role, party.id)
+
+    contacts: List[Any] = []
+    if attn_ids:
+        from app.models.projects import ProjectPartyContact
+        from app.services.uuid_path_param import UUID_PATTERN
+
+        if any(not re.fullmatch(UUID_PATTERN, c) for c in attn_ids):
+            raise AppException(
+                status_code=422,
+                message=f"Pick Attn from the people at {party.name}.",
+                code="quotation_attn_not_of_party",
+            )
+
+        rows = {
+            row.id: row
+            for row in db.query(ProjectPartyContact).filter(
+                ProjectPartyContact.id.in_(attn_ids),
+                ProjectPartyContact.company_id == project.company_id,
+                ProjectPartyContact.party_id == party.id,
+                ProjectPartyContact.is_active.is_(True),
+            )
+        }
+        if len(rows) != len(attn_ids):
+            raise AppException(
+                status_code=422,
+                message=f"Pick Attn from the people at {party.name}.",
+                code="quotation_attn_not_of_party",
+            )
+        contacts = [rows[c] for c in attn_ids]
+        party_contacts.add_registered_contacts(db, project, attn_ids)
+
+    first = contacts[0] if contacts else None
+    loaded: Dict[str, Any] = {}
+    if changing:
+        loaded.update(
+            recipient_party_id=party.id,
+            recipient_name_snapshot=party.name,
+            recipient_address_snapshot=party.address or _site_address(db, project),
+            recipient_phone_snapshot=_display_phone(party.phone),
+            recipient_email_snapshot=party.email,
+            recipient_fax_snapshot=party.fax,
+        )
+    if contacts:
+        loaded.update(
+            attn_name=" & ".join(c.name for c in contacts),
+            recipient_phone_snapshot=_display_phone(first.phone or party.phone),
+            recipient_email_snapshot=(first.email or party.email),
+        )
+    for field, value in loaded.items():
+        if field == "recipient_party_id" or field not in payload:
+            setattr(document, field, value)
+    db.flush()
 
 
 #: The text fields whose {{merge fields}} are filled on every save.
@@ -264,7 +382,6 @@ def create_document(
         your_ref=payload.get("your_ref"),
         doc_date=payload.get("doc_date") or date.today(),
         attn_name=payload.get("attn_name"),
-        recipient_email_snapshot=payload.get("recipient_email_snapshot"),
         quotation_purpose=payload.get("quotation_purpose"),
         payment_terms=payload.get("payment_terms"),
         validity=payload.get("validity"),
@@ -275,8 +392,17 @@ def create_document(
         signatory_name=payload.get("signatory_name"),
         signatory_phone=payload.get("signatory_phone"),
         created_by=actor_user_id,
-        **_recipient_from_project(db, project),
+        **{
+            **_recipient_from_project(db, project),
+            # A typed email wins over the developer's own (PROJECT-PARTY-ROLES AC-12).
+            **(
+                {"recipient_email_snapshot": payload["recipient_email_snapshot"]}
+                if payload.get("recipient_email_snapshot")
+                else {}
+            ),
+        },
     )
+    quote_terms.apply(db, company_id=project.company_id, target=document, payload=payload)
     db.add(document)
     db.flush()
     if render_templates:
@@ -449,6 +575,13 @@ def create_document_with_scopes(
     document = create_document(
         db, project=project, actor_user_id=actor_user_id, payload=body, render_templates=False
     )
+    # The "To" picked from the parties, before the typed corrections below (PROJECT-PARTY-ROLES).
+    apply_recipient_pick(
+        db,
+        document=document,
+        project=project,
+        payload={**body, **{f: v for f, v in corrections.items() if v is not None and str(v).strip()}},
+    )
     # A typed recipient CORRECTS the party snapshot (the result create-then-edit gave before); a
     # blank one keeps what the developer party says rather than blanking the letterhead.
     for field, value in corrections.items():
@@ -501,6 +634,29 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
         if kind == templates.TEMPLATE_KIND_TERMS:
             out["payment_terms"] = template.payment_terms if template is not None else None
             out["validity"] = template.validity if template is not None else None
+            # QUOTE-TERMS-SELECT: the picks behind the two texts, copied onto the new quotation.
+            # Only a term still active: a deactivated one would refuse the create it seeds. Its
+            # text still prints and shows as the legacy "Current" value.
+            out["payment_term_id"] = (
+                quote_terms.active_term_id(
+                    db, company_id=str(project.company_id), term_id=template.payment_term_id
+                )
+                if template is not None
+                else None
+            )
+            out["validity_value"] = template.validity_value if template is not None else None
+            out["validity_unit"] = template.validity_unit if template is not None else None
+    # Owner Q3 (QUOTE-TERMS-SELECT): the customer's AutoCount debtor terms, when they name a synced
+    # term, beat the template's payment term. Validity stays the template's.
+    term = quote_terms.customer_term(
+        db,
+        company_id=str(project.company_id),
+        customer_id=quote_terms.project_customer_id(db, project),
+    )
+    if term is not None:
+        # A "*" term is never a new pick: it is handed on as text, printed and shown read-only.
+        out["payment_term_id"] = str(term.id) if quote_terms.is_offered(term) else None
+        out["payment_terms"] = quote_terms.term_label(term)
     return out
 
 
@@ -829,7 +985,7 @@ def price_changes(
             changes.append(
                 {
                     "product_code": line.product_code_snapshot,
-                    "description": line.description_snapshot,
+                    "description": scope_service.line_text(line),
                     "old_price": before[key],
                     "new_price": new_price,
                 }
@@ -1175,7 +1331,23 @@ def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, A
         ),
         "quotation_document_id": str(made) if made else None,
         "recipient_party_type": party_type,
+        "recipient_role": _recipient_role(db, document),
     }
+
+
+def _recipient_role(db: Session, document: ProjectQuotationDocument) -> Optional[str]:
+    """The role the recipient plays on this project (caption of the TO block)."""
+    if not document.recipient_party_id:
+        return None
+    from app.services import project_party_contact_service as party_contacts
+
+    project = db.query(Project).filter(Project.id == document.project_id).first()
+    if project is None:
+        return None
+    for role, party_id in party_contacts.project_party_roles(db, project):
+        if str(party_id) == str(document.recipient_party_id):
+            return role
+    return None
 
 
 def serialize_document(
@@ -1233,6 +1405,9 @@ def serialize_document(
         "quotation_purpose": document.quotation_purpose,
         "payment_terms": document.payment_terms,
         "validity": document.validity,
+        "payment_term_id": str(document.payment_term_id) if document.payment_term_id else None,
+        "validity_value": document.validity_value,
+        "validity_unit": document.validity_unit,
         "prepared_by": _prepared_by(db, document),
         "attn_name": document.attn_name,
         "subject_title": document.subject_title,
@@ -1280,6 +1455,8 @@ def serialize_document(
         # approval service cannot drift - this repo has been bitten by a manual builder silently
         # dropping a new column more than once (`get_user`, `system_settings`).
         **approvals.serialize_approval(db, document, viewer_id=viewer_id),
+        # QUOTE-AUTOSAVE: whether a form draft is waiting, for the read page's strip.
+        **_form_drafts.draft_summary(db, document),
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
@@ -1374,6 +1551,10 @@ def update_document(
     # One rule for every save: an unknown merge field is refused before anything is written.
     for field in TOKEN_FIELDS:
         templates.assert_tokens_known(payload.get(field))
+    # The "To" picked from the parties autoloads first; the typed fields below then win.
+    project = db.query(Project).filter(Project.id == document.project_id).first()
+    if project is not None:
+        apply_recipient_pick(db, document=document, project=project, payload=payload)
     for field in (
         "your_ref",
         "doc_date",
@@ -1395,6 +1576,7 @@ def update_document(
     ):
         if field in payload:
             setattr(document, field, payload[field])
+    quote_terms.apply(db, company_id=document.company_id, target=document, payload=payload)
     db.flush()
     # ...and the known ones are filled in from this document, on every save.
     context = None
@@ -2337,6 +2519,8 @@ def preview_cover(
     for field in _PREVIEW_FIELDS:
         if field in payload:
             base[field] = payload[field]
+    # The picked term / validity print as a save would print them.
+    base.update(quote_terms.resolve(db, company_id=base["company_id"], payload=payload))
     document = SimpleNamespace(project_id=project.id, **base)
     context = templates.build_document_context(db, document=document, grand_total=total)
     for field in TOKEN_FIELDS:

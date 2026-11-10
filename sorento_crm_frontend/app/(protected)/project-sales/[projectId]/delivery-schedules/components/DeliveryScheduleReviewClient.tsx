@@ -23,6 +23,7 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../../_shared/hooks/useProjects';
+import { projectDisplayName } from '../../../_shared/lib/projectName';
 import {
   useDeliverySchedulePriorVersion,
   useDeliveryScheduleVersion,
@@ -403,7 +404,7 @@ export function DeliveryScheduleReviewClient({
   const crumbs = [
     { title: 'Project Sales' },
     { title: 'Projects', path: '/project-sales/pipeline' },
-    { title: project.data?.title ?? 'Project', path: `/project-sales/${projectId}` },
+    { title: (project.data && projectDisplayName(project.data)) || 'Project', path: `/project-sales/${projectId}` },
   ];
 
   if (view.isLoading) {
@@ -742,13 +743,13 @@ function MetaLine({
   poHref,
 }: {
   version: DeliveryScheduleVersion;
-  project: { title: string; project_code?: string | null } | undefined;
+  project: { title: string; name?: string | null; project_code?: string | null } | undefined;
   poHref: string | null;
 }) {
   const projectLabel = project
     ? project.project_code
-      ? `${project.title} (${project.project_code})`
-      : project.title
+      ? `${projectDisplayName(project)} (${project.project_code})`
+      : projectDisplayName(project)
     : '-';
   const checkedAgainst =
     version.po_version_no !== null && version.po_version_no !== undefined

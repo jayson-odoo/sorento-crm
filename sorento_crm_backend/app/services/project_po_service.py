@@ -37,6 +37,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.services.error_handler import AppException
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ def qty_over_quotation(db: Session, project_id: str) -> List[Dict[str, Any]]:
             quoted[key] = quoted.get(key, Decimal("0")) + Decimal(line.quantity or 0)
             names.setdefault(
                 key,
-                {"product_code": line.product_code_snapshot, "description": line.description_snapshot},
+                {"product_code": line.product_code_snapshot, "description": line_text(line)},
             )
             # A product line is also findable by the code the PO printed.
             code = (line.product_code_snapshot or "").strip().upper()

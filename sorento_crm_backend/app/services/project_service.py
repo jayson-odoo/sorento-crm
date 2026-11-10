@@ -55,6 +55,36 @@ REJECTED_LABEL = "Rejected"
 RESUBMITTED_LABEL = APPEALED_LABEL
 
 
+#: PROJECT-NAME: the short name's cap, the same as the column.
+PROJECT_NAME_MAX_LEN = 80
+
+
+def clean_project_name(value: Any) -> Optional[str]:
+    """A typed or extracted name as stored: whitespace collapsed, blank as null."""
+    # NUL is refused by Postgres (a 500), and split() keeps it.
+    text = " ".join(str(value or "").replace("\x00", "").split())
+    return text or None
+
+
+def checked_project_name(value: Any) -> Optional[str]:
+    """`clean_project_name`, refusing a name longer than the column with a 422 rather than
+    letting the database answer a 500 (a free-form `details` dict reaches here unvalidated)."""
+    name = clean_project_name(value)
+    if name and len(name) > PROJECT_NAME_MAX_LEN:
+        raise AppException(
+            status_code=422,
+            message=f"Project name is too long (at most {PROJECT_NAME_MAX_LEN} characters).",
+            code="project_name_too_long",
+        )
+    return name
+
+
+def project_display_name(project) -> str:
+    """What a person recognises the project by: its short name, else its title (PROJECT-NAME
+    rule 7). Notifications and labels use this; documents keep the full title."""
+    return clean_project_name(getattr(project, "name", None)) or (getattr(project, "title", None) or "")
+
+
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
     "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
@@ -121,7 +151,7 @@ def check_company_refs(
         message="Pick the parties, type and template from this company.",
         code=code,
     )
-    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+    for key in ("developer_party_id",):
         value = payload.get(key)
         if value and not (
             is_uuid(value)
@@ -179,8 +209,6 @@ def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dic
     }
     profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
     stored["customer_id"] = getattr(profile, "customer_id", None)
-    stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
-    stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
     out: Dict[str, Any] = {
         key: payload[key]
         for key in stored
@@ -725,11 +753,6 @@ def serialize_projects(
         .filter(ProjectSalesProfile.project_id.in_([p.id for p in projects]))
         .all()
     }
-    profile_party_names = _party_name_map(
-        db,
-        [pr.architect_party_id for pr in profiles.values()]
-        + [pr.main_contractor_party_id for pr in profiles.values()],
-    )
     from app.services.project_party_contact_service import party_links_for
 
     party_links = party_links_for(db, [p.id for p in projects])
@@ -836,6 +859,7 @@ def serialize_projects(
                 "id": project.id,
                 "project_code": project.project_code,
                 "title": project.title,
+                "name": project.name,
                 "outcome": project.outcome,
                 "loss_reason": project.loss_reason,
                 "admin_ref": project.admin_ref,
@@ -890,21 +914,7 @@ def serialize_projects(
                 "address": profile.address if profile else None,
                 "state": profile.state if profile else None,
                 "mukim": profile.mukim if profile else None,
-                "architect_party_id": profile.architect_party_id if profile else None,
-                "architect_name": (
-                    profile_party_names.get(profile.architect_party_id)
-                    if profile
-                    else None
-                ),
                 "party_links": party_links.get(project.id, []),
-                "main_contractor_party_id": (
-                    profile.main_contractor_party_id if profile else None
-                ),
-                "main_contractor_name": (
-                    profile_party_names.get(profile.main_contractor_party_id)
-                    if profile
-                    else None
-                ),
                 "estimated_sales_value": (
                     profile.estimated_sales_value if profile else None
                 ),
@@ -1141,6 +1151,7 @@ def list_projects(
         query = query.filter(
             or_(
                 func.lower(Project.title).like(needle),
+                func.lower(Project.name).like(needle),
                 func.lower(Project.project_code).like(needle),
             )
         )
@@ -1303,8 +1314,6 @@ _PROFILE_FIELDS = (
     "address",
     "state",
     "mukim",
-    "architect_party_id",
-    "main_contractor_party_id",
     "lead_source",
     "estimated_sales_value",
     "launch_date",
@@ -1313,6 +1322,7 @@ _PROFILE_FIELDS = (
 )
 
 _PROJECT_FIELDS = (
+    "name",
     "type_id",
     "template_id",
     "loss_reason",
@@ -1342,7 +1352,8 @@ def apply_sales_details(
 
     for key in _PROJECT_FIELDS:
         if key in payload:
-            setattr(project, key, payload[key])
+            value = checked_project_name(payload[key]) if key == "name" else payload[key]
+            setattr(project, key, value)
 
     db.flush()
 
@@ -1454,6 +1465,8 @@ def update_project(
         party_contacts.assert_lead_source(db, payload["lead_source"], required=False)
     if "party_links" in payload and payload["party_links"] is not None:
         party_contacts.set_party_links(db, project, payload["party_links"])
+    # After the links: a contact of a party linked in this same save is accepted (rule 13).
+    party_contacts.add_registered_contacts(db, project, payload.get("contact_ids") or [])
 
     apply_sales_details(db, project, payload)
     return project
@@ -1846,6 +1859,7 @@ def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
                 "project_id": candidate.project_id,
                 "project_code": candidate.project_code,
                 "title": candidate.title,
+                "name": row.get("name"),
                 "outcome": candidate.outcome,
                 "status_label": row.get("status_label"),
                 "owner_user_id": candidate.owner_user_id,

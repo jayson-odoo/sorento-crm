@@ -33,6 +33,18 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warni
 const useProjectParties = vi.hoisted(() => vi.fn());
 vi.mock('../../_shared/hooks/useProjects', () => ({
   useProjectParties: (...args: unknown[]) => useProjectParties(...args),
+  // PROJECT-PARTY-ROLES: the types are the editable role list.
+  usePartyRoles: () => ({ data: [
+      { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+      { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+      { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+      { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+      { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+      { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+      { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+      { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+    ] }),
+  usePartyRoleLabel: () => (value?: string | null) => (value ?? '').replace(/_/g, ' '),
   usePartyMutations: () => ({ remove: { mutate: vi.fn(), isPending: false }, create: { mutate: vi.fn() }, update: { mutate: vi.fn() } }),
 }));
 vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {

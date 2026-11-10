@@ -298,7 +298,10 @@ function ColorPopoverButton({
   const Icon = kind === 'color' ? Baseline : Highlighter;
 
   function apply(hex: string) {
-    const chain = editor.chain().focus();
+    // No `.focus()`: the map and hue slider apply on every release, and pulling the focus into
+    // the editor counts as focus outside this popover and the picker's own, closing both mid-pick
+    // (owner hand test, QUOTE-DESC-RICHTEXT round 1). The command acts on the kept selection.
+    const chain = editor.chain();
     if (kind === 'color') chain.setColor(hex).run();
     else chain.setBackgroundColor(hex).run();
   }

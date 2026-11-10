@@ -110,6 +110,16 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
+  // PROJECT-PARTY-ROLES: the Parties section reads the editable role list.
+  usePartyRoles: () => ({
+    data: [
+      { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+      { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+      { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+      { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+      { value: 'interior_designer', label: 'Interior designer', is_active: false, allows_many: false },
+    ],
+  }),
   useChangeProjectStatus: () => ({ mutate: changeStatus, isPending: false }),
   useSetProjectOutcome: () => ({ mutate: vi.fn(), isPending: false }),
   useQuotationLossReasons: () => ({ data: [{ value: 'price', label: 'Price' }] }),
@@ -450,7 +460,7 @@ describe('the overview, read as sections', () => {
     expect(screen.getByText('123 Jalan Setia')).toBeInTheDocument();
   });
 
-  it('PS-REGISTRATION-V3 shows the linked parties by role, a role with none as a dash', () => {
+  it('shows the linked parties by role from the role list, a role with none as a dash', () => {
     projectFixture = project({
       party_links: [
         { role: 'subcontractor', party_id: 's1', name: 'Sub One' },
@@ -461,10 +471,13 @@ describe('the overview, read as sections', () => {
 
     renderDetail();
 
-    expect(screen.getByText('Subcontractors')).toBeInTheDocument();
+    expect(screen.getByText('Subcontractor')).toBeInTheDocument();
     expect(screen.getByText('Sub One, Sub Two')).toBeInTheDocument();
+    // An inactive role still on the project is shown and marked.
+    expect(screen.getByText('Interior designer (inactive)')).toBeInTheDocument();
     expect(screen.getByText('ID Studio')).toBeInTheDocument();
-    expect(screen.getByText('Trading houses')).toBeInTheDocument();
+    expect(screen.getByText('Trading house')).toBeInTheDocument();
+    expect(screen.getByText('Architect')).toBeInTheDocument();
   });
 
   it('PS-REGISTRATION-V3 shows the project\'s own lead source when it has no lead', () => {
@@ -869,5 +882,36 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
       expect.anything(),
     );
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe('PROJECT-NAME header and The development (owner 10 Nov)', () => {
+  const LONG =
+    'CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, MUKIM KUALA KUANTAN';
+
+  it('the header shows the short name, not the title', () => {
+    projectFixture = project({ name: '54 Teres 2 Tingkat, Permatang Badak Perdana', title: LONG });
+    const { container } = renderDetail();
+    const header = container.querySelector('header')!;
+    expect(within(header).getByRole('heading', { level: 2 })).toHaveTextContent(
+      '54 Teres 2 Tingkat, Permatang Badak Perdana',
+    );
+    expect(within(header).queryByText(LONG)).toBeNull();
+  });
+
+  it('with no name the header falls back to the title', () => {
+    projectFixture = project({ name: null, title: LONG });
+    const { container } = renderDetail();
+    const header = container.querySelector('header')!;
+    expect(within(header).getByRole('heading', { level: 2 })).toHaveTextContent(LONG);
+  });
+
+  it('The development opens with the full Project title, before Developer', () => {
+    projectFixture = project({ name: 'Short', title: LONG, developer_name: 'Contoh Land' });
+    renderDetail();
+    const label = screen.getByText('Project title');
+    expect(label.closest('div')).toHaveTextContent(LONG);
+    const developer = screen.getByText('Developer');
+    expect(label.compareDocumentPosition(developer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

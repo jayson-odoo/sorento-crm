@@ -292,7 +292,7 @@ describe('LeadsClient', () => {
   it('lays search, filters and export out on the grid toolbar, in one row', async () => {
     renderClient();
 
-    const toolbar = (await screen.findByPlaceholderText(/Search title or lead code/i))
+    const toolbar = (await screen.findByPlaceholderText(/Search name, title or lead code/i))
       .closest('[data-slot="card-header"]');
     expect(toolbar).not.toBeNull();
     // Filters and Export sit beside the search box rather than in a strip of their own.

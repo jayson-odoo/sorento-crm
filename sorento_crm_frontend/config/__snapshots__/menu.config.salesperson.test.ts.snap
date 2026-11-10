@@ -413,6 +413,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Item Classes",
           },
           {
+            "path": "/master-data-management/payment-terms",
+            "title": "Payment Terms",
+          },
+          {
             "path": "/master-data-management/units-of-measure",
             "title": "Units of Measure",
           },

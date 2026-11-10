@@ -54,10 +54,13 @@ import {
   useChangeProjectStatus,
   useSetProjectOutcome,
   useDeleteProject,
+  usePartyRoles,
   useProject,
   useRejectProject,
 } from '../../_shared/hooks/useProjects';
+import { PARTY_ROLE_DEVELOPER } from '../../_shared/lib/partyRoles';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
   ApprovalStatePill,
@@ -137,6 +140,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const activeTab = resolveProjectTab(searchParams.get('tab'));
 
   const { data: project, isLoading, isError, error } = useProject(projectId);
+  const partyRoles = usePartyRoles();
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
   const setOutcome = useSetProjectOutcome();
@@ -314,8 +318,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
+          {/* The short name (PROJECT-NAME); the full title sits in "The development". With no
+              name yet the title stands in, clamped as before. */}
           <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            {project.name?.trim() ? (
+              <span className="break-words">{project.name}</span>
+            ) : (
+              <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+            )}
           </h2>
         </div>
 
@@ -498,6 +508,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               it carries its own actions and notes and reads badly squeezed into a column. */}
           <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
             <Section title="The development">
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="text-xs text-muted-foreground">Project title</dt>
+                <dd className="text-sm">
+                  <TruncatedTextCell text={project.title} lines={3} dialogTitle="Project title" />
+                </dd>
+              </div>
               <Fact label="Developer" value={project.developer_name} />
               <Fact label="Registered company / SPV" value={project.registered_company_name} />
               <Fact label="Location" value={project.location} />
@@ -541,21 +557,27 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             </Section>
 
             <Section title="Parties">
-              <Fact label="Architect" value={project.architect_name} />
-              <Fact label="Main contractor" value={project.main_contractor_name} />
-              {LINKED_ROLES.map(([role, label]) => (
-                <Fact
-                  key={role}
-                  label={label}
-                  value={
-                    (project.party_links ?? [])
-                      .filter((link) => link.role === role)
-                      .map((link) => link.name)
-                      .filter(Boolean)
-                      .join(', ') || null
-                  }
-                />
-              ))}
+              {/* Same roles, order and labels as the form: the editable role list. */}
+              {(partyRoles.data ?? [])
+                .filter(
+                  (role) =>
+                    role.value !== PARTY_ROLE_DEVELOPER &&
+                    (role.is_active ||
+                      (project.party_links ?? []).some((link) => link.role === role.value)),
+                )
+                .map((role) => (
+                  <Fact
+                    key={role.value}
+                    label={role.is_active ? role.label : `${role.label} (inactive)`}
+                    value={
+                      (project.party_links ?? [])
+                        .filter((link) => link.role === role.value)
+                        .map((link) => link.name)
+                        .filter(Boolean)
+                        .join(', ') || null
+                    }
+                  />
+                ))}
             </Section>
 
             <SourceCard project={project} />
@@ -621,7 +643,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Confirm delete"
-        description={`Delete ${projectCodeLabel(project)} "${project.title}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
+        description={`Delete ${projectCodeLabel(project)} "${projectDisplayName(project)}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
@@ -851,15 +873,6 @@ function formatMyr(value: string): string {
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
 }
-
-/** The roles a project links beyond architect and main contractor, in display order. */
-const LINKED_ROLES: [string, string][] = [
-  ['subcontractor', 'Subcontractors'],
-  ['trading_house', 'Trading houses'],
-  ['tender_party', 'Tender parties'],
-  ['consultant', 'Consultant'],
-  ['interior_designer', 'Interior designer'],
-];
 
 /** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 function labelise(value?: string | null): string | null {
