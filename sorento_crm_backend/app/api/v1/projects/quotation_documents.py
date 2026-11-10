@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,13 @@ from app.schemas.projects import (
     ProjectQuotationScopeCreate,
     ProjectQuotationScopeSummary,
     ProjectQuotationScopeUpdate,
+    QuotationFormDraftHolderResponse,
+    QuotationFormDraftOpenResponse,
+    QuotationFormDraftWrite,
+    QuotationFormDraftWriteResponse,
+    QuotationHistoryEntryDetailResponse,
+    QuotationHistoryEntryResponse,
+    QuotationHistoryRestoreRequest,
 )
 from app.schemas.status import StatusGraphResponse
 from app.services import after_response
@@ -55,6 +62,7 @@ from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
 from app.services import quotation_amendment_service as amendments
+from app.services import quotation_form_draft_service as drafts
 from app.services.client_ip import client_ip
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
@@ -111,6 +119,17 @@ def _editable_project(db: Session, project_id: str, current_user: dict, *, write
     return project
 
 
+def _assert_holder_or_keep(db: Session, row, token, user_id: str, form_state) -> None:
+    """A Save from a tab that lost the draft (card Q4) is refused, but what it carried is kept as
+    History first and committed, so the refusal does not roll it away (review 8)."""
+    try:
+        drafts.assert_holder(db, row, token, user_id, form_state)
+    except AppException as exc:
+        if getattr(exc, "status_code", None) == 409:
+            db.commit()
+        raise
+
+
 # ------------------------------------------------------------------ documents
 
 
@@ -149,17 +168,113 @@ def create_quotation_document(
         project = _editable_project(db, project_id, current_user)
         # The quotation form page (#1341) sends the scopes and their lines with the letterhead;
         # all of it lands in this one commit, or none of it does.
+        body = payload.model_dump(exclude_unset=True)
+        form_state = body.pop("form_state", None)
+        form_token = body.pop("form_token", None)
+        # Card Q4: only the tab holding the new-proposal draft may save it; a refused Save's
+        # state is kept as that tab's History entry (committed before the refusal).
+        if form_state is not None:
+            _assert_holder_or_keep(
+                db, drafts.new_draft(db, project.id, current_user["id"]), form_token,
+                current_user["id"], form_state,
+            )
         document, lines = svc.create_document_with_scopes(
             db,
             project=project,
             actor_user_id=current_user["id"],
-            payload=payload.model_dump(exclude_unset=True),
+            payload=body,
         )
         for line in lines:
             _notify_breaches(db, line, current_user["id"])
+        # QUOTE-AUTOSAVE (card Q2): the first Save numbers a new proposal. Its private draft
+        # becomes the document's, and this Save is its first History entry, in this one commit.
+        if form_state is not None:
+            db.flush()
+            drafts.adopt_new_draft(
+                db, document=document, user_id=current_user["id"], token=form_token
+            )
+            drafts.record_save(
+                db,
+                document=document,
+                form_state=form_state,
+                user_id=current_user["id"],
+                grand_total=svc.document_total(db, document),
+            )
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document, viewer_id=current_user["id"])
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# A NEW proposal's private draft (QUOTE-AUTOSAVE, card Q2): one per person per project, no number
+# until its first Save. Literal segment, so declared before `/{document_id}`.
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/new-draft/open",
+    response_model=QuotationFormDraftOpenResponse,
+)
+def open_new_quotation_draft(
+    project_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        project = _editable_project(db, project_id, current_user)
+        row = drafts.new_draft(db, project.id, current_user["id"], create=True, lock=True)
+        result = drafts.open_draft(db, row, current_user["id"])
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/new-draft/holder",
+    response_model=QuotationFormDraftHolderResponse,
+)
+def get_new_quotation_draft_holder(
+    project_id: str,
+    token: str = Header(default="", alias="X-Form-Draft-Token"),
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        project = _editable_project(db, project_id, current_user, write=False)
+        return drafts.holder_state(
+            db, drafts.new_draft(db, project.id, current_user["id"]), token
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/projects/{project_id}/quotation-documents/new-draft",
+    response_model=QuotationFormDraftWriteResponse,
+)
+def save_new_quotation_draft(
+    project_id: str,
+    payload: QuotationFormDraftWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Autosave of a new proposal: the caller's own draft, never anyone else's."""
+    try:
+        project = _editable_project(db, project_id, current_user)
+        row = drafts.new_draft(db, project.id, current_user["id"], create=True, lock=True)
+        try:
+            result = drafts.save_draft(
+                db, row=row, doc=payload.doc, token=payload.token, user_id=current_user["id"]
+            )
+        except AppException as exc:
+            if getattr(exc, "status_code", None) == 409:
+                db.commit()
+            raise
+        db.commit()
+        return result
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -259,6 +374,14 @@ def update_quotation_document(
         document = svc.get_document_or_404(db, project_id, document_id)
         body = payload.model_dump(exclude_unset=True)
         scopes = body.pop("scopes", None)
+        form_state = body.pop("form_state", None)
+        form_token = body.pop("form_token", None)
+        # Card Q4: a view-only (older) tab cannot Save over the tab that holds the draft.
+        if form_state is not None:
+            _assert_holder_or_keep(
+                db, drafts.document_draft(db, document), form_token, current_user["id"],
+                form_state,
+            )
         # Normalised and de-duplicated before any write: a repeated id is one removal.
         removed = list(
             dict.fromkeys(
@@ -297,9 +420,187 @@ def update_quotation_document(
             )
             for line in lines:
                 _notify_breaches(db, line, current_user["id"])
+        # QUOTE-AUTOSAVE: the Save's History entry, and the draft cleared, in the SAME commit as
+        # the record write, so a refused Save (above) keeps the draft and writes no entry.
+        if form_state is not None:
+            db.flush()
+            drafts.record_save(
+                db,
+                document=document,
+                form_state=form_state,
+                user_id=current_user["id"],
+                grand_total=svc.document_total(db, document),
+            )
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document, viewer_id=current_user["id"])
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------- form draft (QUOTE-AUTOSAVE)
+#
+# Plan: documentation/plans/project-sales/PLAN-quote-autosave-10nov.md. Every route here is behind
+# EDIT on a project the caller may edit: a draft is somebody's unsaved work, not part of the record a
+# reader may see. The new-proposal routes (`/new-draft`) are declared above `/{document_id}` so the
+# literal segment is not read as a document id.
+
+
+def _document_draft_or_create(db: Session, project_id: str, document_id: str, current_user: dict):
+    validate_uuid_path(document_id, resource="Quotation")
+    _editable_project(db, project_id, current_user, write=False)
+    document = svc.get_document_or_404(db, project_id, document_id)
+    return document, drafts.document_draft(db, document, create=True, lock=True)
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/form-draft/open",
+    response_model=QuotationFormDraftOpenResponse,
+)
+def open_quotation_form_draft(
+    project_id: str,
+    document_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The form opens: claim the draft for this tab and return what to open on (doc null: the
+    record). The tab that held it before goes view-only on its next write or check (card Q4)."""
+    try:
+        _document, row = _document_draft_or_create(db, project_id, document_id, current_user)
+        result = drafts.open_draft(db, row, current_user["id"])
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/form-draft/holder",
+    response_model=QuotationFormDraftHolderResponse,
+)
+def get_quotation_form_draft_holder(
+    project_id: str,
+    document_id: str,
+    token: str = Header(default="", alias="X-Form-Draft-Token"),
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Whether this tab still holds the draft (polled, so an idle older tab locks too)."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user, write=False)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return drafts.holder_state(db, drafts.document_draft(db, document), token)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/projects/{project_id}/quotation-documents/{document_id}/form-draft",
+    response_model=QuotationFormDraftWriteResponse,
+)
+def save_quotation_form_draft(
+    project_id: str,
+    document_id: str,
+    payload: QuotationFormDraftWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Autosave: overwrite the draft in place. Never touches the record, never writes History,
+    never alerts anyone (the tag designer's ``PUT .../design/draft``). 409
+    ``quotation_draft_not_holder`` from a tab another open took the draft from; what it carried is
+    kept as a ``conflict`` History entry first, and committed even though the write is refused."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        row = drafts.document_draft(db, document, create=True, lock=True)
+        try:
+            result = drafts.save_draft(
+                db, row=row, doc=payload.doc, token=payload.token, user_id=current_user["id"]
+            )
+        except AppException as exc:
+            if getattr(exc, "status_code", None) == 409:
+                db.commit()
+            raise
+        db.commit()
+        return result
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/history",
+    response_model=ListResponse[QuotationHistoryEntryResponse],
+)
+def list_quotation_history(
+    project_id: str,
+    document_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The form's History, newest first (card Q3: the tag designer's rule)."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        _editable_project(db, project_id, current_user, write=False)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return _envelope(drafts.list_history(db, document))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/history/{entry_id}",
+    response_model=QuotationHistoryEntryDetailResponse,
+)
+def get_quotation_history_entry(
+    project_id: str,
+    document_id: str,
+    entry_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(entry_id, resource="History entry")
+        _editable_project(db, project_id, current_user, write=False)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return drafts.get_history_entry(db, document, entry_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/history/{entry_id}/restore",
+    response_model=QuotationFormDraftOpenResponse,
+)
+def restore_quotation_history_entry(
+    project_id: str,
+    document_id: str,
+    entry_id: str,
+    payload: QuotationHistoryRestoreRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Restore: the state being left is kept as "Before restore to version N", then the entry
+    becomes the draft. The record changes only on the next Save."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(entry_id, resource="History entry")
+        _editable_project(db, project_id, current_user)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        result = drafts.restore_entry(
+            db,
+            document=document,
+            entry_id=entry_id,
+            token=payload.token,
+            user_id=current_user["id"],
+        )
+        db.commit()
+        return result
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -463,6 +764,8 @@ def issue_quotation_document(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
+        # QUOTE-AUTOSAVE (card rule 7): never send a revision missing edits sitting in a draft.
+        drafts.assert_no_pending_draft(db, document)
         record = svc.issue(db, document=document, actor_user_id=current_user["id"])
         changes = list(getattr(record, "price_changes", None) or [])
         db.commit()
@@ -582,6 +885,8 @@ def move_quotation_approval(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
+        # QUOTE-AUTOSAVE (card rule 7): the approver judges the record, so it must hold the edits.
+        drafts.assert_no_pending_draft(db, document)
         approvals.move(
             db,
             document=document,

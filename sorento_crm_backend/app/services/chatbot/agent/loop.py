@@ -1010,7 +1010,12 @@ class _AgentUnavailable(Exception):
 
 
 class _ProviderFailed(Exception):
-    """A model call failed. The detail is logged, never shown."""
+    """A model call failed. The detail is logged, never shown; `error_class` is the original exception's class name."""
+
+    def __init__(self, error_class: str = "", timed_out: bool = False) -> None:
+        super().__init__(error_class)
+        self.error_class = error_class
+        self.timed_out = timed_out
 
 
 #: The reply of a turn that ended with nothing to say (a customer never gets it: the inbox swaps it).
@@ -1323,8 +1328,10 @@ def run_agent_turn(
     images: list | None = None,
     files: list[dict] | None = None,
     file_text: str = "",
+    seed_ids: list[str] | None = None,
 ) -> AgentTurnResult:
-    """`file_text` is the text read from the user's attached files: quoted data in a message of its own
+    """`seed_ids` are ids the user's open page already shows (a panel turn): they count as seen for the id guard.
+    `file_text` is the text read from the user's attached files: quoted data in a message of its own
     before the user's, never part of `text`. `images` ride every model call of the turn but the history summary (the panel's pictures and
     PDFs); `files` is what the turn read, recorded on its envelope. `is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
     operator behind it, its rate limit keys on the contact.
@@ -1341,6 +1348,7 @@ def run_agent_turn(
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
             context_after=context_after, images=images, files=files, file_text=file_text,
+            seed_ids=seed_ids,
         )
 
 
@@ -1563,7 +1571,7 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    is_test=True, context_before="", context_after="", images=None, files=None, file_text="",
+    is_test=True, context_before="", context_after="", images=None, files=None, file_text="", seed_ids=None,
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -1655,7 +1663,11 @@ def _run(
             )
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason
             logger.warning("agent: model call failed (%s)", kind, exc_info=True)
-            raise _ProviderFailed() from exc
+            from app.services.chatbot.llm_call import TimedOut
+            from app.services.llm_provider import is_timeout
+
+            trace.add("agent_provider_failed", {"error_class": type(exc).__name__})
+            raise _ProviderFailed(type(exc).__name__, is_timeout(exc) or isinstance(exc, TimedOut)) from exc
         ms = int((clock() - started) * 1000)
         run.calls += 1
         run.prompt_tokens += int(result.prompt_tokens or 0)
@@ -1798,7 +1810,7 @@ def _run(
                 return {**args, "text": redact_ids(args["text"], own_ids)}
             return args
         ledger: dict[str, dict] = {}
-        seen_ids: set[str] = set()
+        seen_ids: set[str] = {str(i).lower() for i in seed_ids or []}
         denied_domains: set[str] = set()
         used_call_ids: set[str] = set()
         repaired = False
@@ -1825,7 +1837,21 @@ def _run(
                     ),
                 }
             )
-            res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
+            try:
+                res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
+            except (_ProviderFailed, TimeoutError) as exc:
+                # Reads only: a confirmed change or the hand-off is not something the reply can say it "read".
+                # Staff panel turns only: a dealer's reply is never a list of what was read.
+                read = [
+                    e["name"] for e in ledger.values()
+                    if e.get("status") == "ok" and (e["name"] in REGISTRY or e["name"] in writes.USER_READS)
+                ] if staff_principal.current() is not None else []
+                if not read:
+                    raise
+                timed_out = isinstance(exc, TimeoutError) or getattr(exc, "timed_out", False)
+                reason = "the model did not respond in time" if timed_out else "the model provider returned an error"
+                labels = ", ".join(dict.fromkeys(TOOL_LABELS.get(n, "another lookup") for n in read))
+                return f"I could not finish the answer because {reason}. What I read: {labels}.", True
             nonlocal forced_args
             args = forced_args = answer_of(res)
             bad_numbers, bad_nf = ([], []) if batch_shown() else verify_answer(args, ledger, text)

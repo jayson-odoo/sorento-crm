@@ -2,7 +2,7 @@
 on the terms template and the quotation, and the `master_data.payment_terms.*` slugs.
 
 Revision ID: qts_0001_quote_terms_select
-Revises: pfc_0001_line_is_section
+Revises: qas_0001_quote_form_drafts
 Create Date: 2026-11-10
 
 `payment_terms` is AutoCount `Terms` (DisplayTerm = term_code, Terms = term_rule), company-scoped, unique on
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "qts_0001_quote_terms_select"
-down_revision = "pfc_0001_line_is_section"
+down_revision = "qas_0001_quote_form_drafts"
 branch_labels = None
 depends_on = None
 

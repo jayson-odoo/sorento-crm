@@ -35,6 +35,7 @@ from app.models.projects import (
 from app.services import project_quotation_document_service as documents
 from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +476,7 @@ def feedback_for_document(
                     "line_id": str(row.line_id),
                     "scope_id": str(scope.id) if scope else None,
                     "scope_label": scope.scope_label if scope else None,
-                    "line_description": line.description_snapshot if line else None,
+                    "line_description": line_text(line) if line else None,
                     "cell_key": row.cell_key,
                     "cell_label": (
                         matrix.cell_label(version.matrix_columns, row.cell_key)

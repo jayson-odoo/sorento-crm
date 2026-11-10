@@ -198,6 +198,7 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_form_draft.discard",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
@@ -266,6 +267,10 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key == "quotation_form_draft.discard":
+        from app.services.record_actions import assert_form_draft_discardable
+
+        assert_form_draft_discardable(db, entity_id, actor_id)
     elif action_key in ("tag_template.delete", "tag_template.bulk_delete"):
         # Refused now, not ten seconds later: a template a spec sheet draws from stays.
         from app.services.dealer_kit import tag_template_service
@@ -440,6 +445,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_compatibility.unlink",
     "quotation_certificate.remove",
     "quotation_document.delete",
+    "quotation_form_draft.discard",
     "quotation_spec_sheet.delete",
     "quotation_spec_sheet.reset_page",
     "sample_request.delete",
