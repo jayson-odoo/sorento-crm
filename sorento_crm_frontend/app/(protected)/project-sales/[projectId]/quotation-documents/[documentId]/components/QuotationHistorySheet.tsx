@@ -5,8 +5,9 @@
  *
  * Lifted from the tag designer's `components/dealer-kit/RequestVersionsSheet.tsx`: newest first,
  * who and when, View draws the entry read-only, Restore loads it back. Restore runs at once with
- * no confirmation: it puts the entry into the DRAFT and the server keeps the draft it replaced as
- * its own "Before restore" entry, so nothing is destroyed and the record changes only on Save.
+ * no confirmation, the tag designer's rule: the server first keeps the state being left as
+ * "Before restore to version N", then puts the entry into the DRAFT, so nothing is destroyed and
+ * the record changes only on Save.
  */
 
 import * as React from 'react';
@@ -43,9 +44,13 @@ import {
 export const HISTORY_KIND_LABEL: Record<QuotationHistoryKind, string> = {
   saved: 'Saved',
   before_restore: 'Before restore',
-  conflict: 'Not saved, edited elsewhere',
-  discarded: 'Discarded draft',
+  conflict: 'Not saved: opened in another tab',
 };
+
+/** "Version 3", and its note on the line under it, the tag designer's own History row. */
+function entryNote(entry: QuotationHistoryEntry): string {
+  return entry.note || HISTORY_KIND_LABEL[entry.kind];
+}
 
 export function QuotationHistorySheet({
   open,
@@ -54,6 +59,7 @@ export function QuotationHistorySheet({
   documentId,
   documentNo,
   onRestore,
+  readOnly = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,6 +67,8 @@ export function QuotationHistorySheet({
   documentId: string;
   documentNo: string;
   onRestore: (entryId: string) => Promise<void>;
+  /** A view-only tab (Q4) can look, not restore. */
+  readOnly?: boolean;
 }) {
   const [entries, setEntries] = React.useState<QuotationHistoryEntry[] | null>(null);
   const [restoring, setRestoring] = React.useState<string | null>(null);
@@ -110,7 +118,8 @@ export function QuotationHistorySheet({
                 data-testid={`quotation-history-${entry.id}`}
               >
                 <div className="min-w-0">
-                  <span className="text-sm font-medium">{HISTORY_KIND_LABEL[entry.kind]}</span>
+                  <span className="text-sm font-medium">Version {entry.version}</span>
+                  <p className="text-sm text-muted-foreground">{entryNote(entry)}</p>
                   {entry.grand_total !== null && (
                     <p className="text-sm text-muted-foreground">
                       {formatMyrExact(entry.grand_total)}
@@ -137,7 +146,7 @@ export function QuotationHistorySheet({
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={restoring === entry.id}
+                    disabled={readOnly || restoring === entry.id}
                     onClick={async () => {
                       setRestoring(entry.id);
                       try {
@@ -175,9 +184,9 @@ function HistoryEntryView({ entry }: { entry: QuotationHistoryEntryDetail }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{HISTORY_KIND_LABEL[entry.kind]}</DialogTitle>
+        <DialogTitle>Version {entry.version}</DialogTitle>
         <DialogDescription>
-          {entry.created_by_name || 'Unknown'}
+          {entryNote(entry)} / {entry.created_by_name || 'Unknown'}
           {entry.created_at ? ` / ${formatDateTimeInMalaysia(entry.created_at)}` : ''}
           {entry.grand_total !== null ? ` / ${formatMyrExact(entry.grand_total)}` : ''}
         </DialogDescription>

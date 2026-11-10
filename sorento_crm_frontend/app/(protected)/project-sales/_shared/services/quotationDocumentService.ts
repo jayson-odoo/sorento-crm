@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { codedError, extractApiError } from '@/lib/api-client';
 import type { CoverPageData } from '@/lib/quotation-cover';
 import type {
   QuotationFeedback,
@@ -291,13 +291,10 @@ export type QuotationDocumentBody = Partial<{
    * customer, and nothing in that save lands.
    */
   remove_scope_ids: string[];
-  /**
-   * QUOTE-AUTOSAVE, POST only: a new proposal's first real edit creates the record and stores
-   * this as its draft in the same commit (the number and the typing land together).
-   */
-  form_draft: QuotationFormState;
-  /** QUOTE-AUTOSAVE, PATCH only: the form's state at Save, kept as a History entry. */
+  /** QUOTE-AUTOSAVE: the form's state at Save, kept as a History entry (POST and PATCH). */
   form_state: QuotationFormState;
+  /** QUOTE-AUTOSAVE: this tab's claim on the draft; a view-only tab's Save is refused (409). */
+  form_token: string;
 }>;
 
 /** The company's letter and terms as written, for the create form's own tabs (#1341). */
@@ -771,12 +768,19 @@ export type QuotationCoverPreviewBody = Partial<{
 
 // ------------------------------------------------------------------ QUOTE-AUTOSAVE
 //
-//   GET    /projects/{projectId}/quotation-documents/{id}/form-draft                -> QuotationFormDraft
-//   PUT    /projects/{projectId}/quotation-documents/{id}/form-draft                -> { rev, updated_at }, 409 quotation_draft_stale
-//   DELETE /projects/{projectId}/quotation-documents/{id}/form-draft?base_rev=N     -> { rev }
-//   GET    /projects/{projectId}/quotation-documents/{id}/history                   -> ListEnvelope<QuotationHistoryEntry>
-//   GET    /projects/{projectId}/quotation-documents/{id}/history/{entryId}         -> QuotationHistoryEntryDetail
-//   POST   /projects/{projectId}/quotation-documents/{id}/history/{entryId}/restore -> QuotationFormDraft
+// An existing document's draft (shared), and a NEW proposal's private draft (per person, no number
+// until the first Save). Every open claims the draft for the tab; only the holder writes.
+//
+//   POST /projects/{projectId}/quotation-documents/{id}/form-draft/open            -> QuotationFormDraftOpened
+//   GET  /projects/{projectId}/quotation-documents/{id}/form-draft/holder?token=    -> QuotationDraftHolder
+//   PUT  /projects/{projectId}/quotation-documents/{id}/form-draft                  -> { updated_at }, 409 quotation_draft_not_holder
+//   POST /projects/{projectId}/quotation-documents/new-draft/open                   -> QuotationFormDraftOpened
+//   GET  /projects/{projectId}/quotation-documents/new-draft/holder?token=          -> QuotationDraftHolder
+//   PUT  /projects/{projectId}/quotation-documents/new-draft                        -> { updated_at }, 409
+//   GET  /projects/{projectId}/quotation-documents/{id}/history                     -> ListEnvelope<QuotationHistoryEntry>
+//   GET  /projects/{projectId}/quotation-documents/{id}/history/{entryId}           -> QuotationHistoryEntryDetail
+//   POST /projects/{projectId}/quotation-documents/{id}/history/{entryId}/restore   -> QuotationFormDraftOpened
+//   Discard draft: the pending action `quotation_form_draft.discard` on the draft's id (5 s).
 
 /**
  * The quotation form's whole state, as the form holds it (`QuotationFormClient`). The server stores
@@ -804,18 +808,29 @@ export type QuotationFormState = {
 
 type StagedLine = StagedQuotationLine;
 
-export type QuotationFormDraft = {
+export type QuotationFormDraftOpened = {
+  draft_id: string;
+  /** This tab's claim on the draft. Every write carries it. */
+  token: string | null;
   doc: QuotationFormState | null;
-  rev: number;
   updated_at: string | null;
   updated_by_name: string | null;
 };
 
-export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict' | 'discarded';
+export type QuotationDraftHolder = {
+  is_holder: boolean;
+  holder_name?: string | null;
+  holder_at?: string | null;
+};
+
+export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict';
 
 export type QuotationHistoryEntry = {
   id: string;
+  /** Oldest = 1, the tag designer's "Version N". */
+  version: number;
   kind: QuotationHistoryKind;
+  note: string | null;
   grand_total: string | null;
   created_at: string | null;
   created_by_name: string | null;
@@ -823,71 +838,76 @@ export type QuotationHistoryEntry = {
 
 export type QuotationHistoryEntryDetail = QuotationHistoryEntry & { doc: QuotationFormState };
 
-/** A tab or a person wrote the draft since this tab last read it (card Q4). */
-export class StaleDraftError extends Error {
-  readonly rev: number;
-  readonly updatedAt: string | null;
-  readonly updatedByName: string | null;
-  constructor(message: string, details: { rev?: number; updated_at?: string | null; updated_by_name?: string | null }) {
+/** Another tab (or person) opened this draft after this tab did: this tab is view-only now. */
+export class DraftNotHolderError extends Error {
+  readonly holderName: string | null;
+  readonly holderAt: string | null;
+  constructor(message: string, details: { holder_name?: string | null; holder_at?: string | null }) {
     super(message);
-    this.name = 'StaleDraftError';
-    this.rev = details.rev ?? 0;
-    this.updatedAt = details.updated_at ?? null;
-    this.updatedByName = details.updated_by_name ?? null;
+    this.name = 'DraftNotHolderError';
+    this.holderName = details.holder_name ?? null;
+    this.holderAt = details.holder_at ?? null;
   }
 }
 
-const formDraftUrl = (projectId: string, documentId: string) =>
-  `${BASE}/projects/${projectId}/quotation-documents/${documentId}/form-draft`;
-
-async function staleOr(response: Response, fallback: string): Promise<Error> {
-  if (response.status === 409) {
-    const body = await response
-      .clone()
-      .json()
-      .catch(() => null);
-    if (body?.code === 'quotation_draft_stale') {
-      return new StaleDraftError(body.message ?? fallback, body.details ?? {});
-    }
-  }
-  return new Error(await extractApiError(response, fallback));
+/** The draft's base URL: a document's, or the caller's own new-proposal draft. */
+function draftUrl(projectId: string, documentId: string | null): string {
+  return documentId
+    ? `${BASE}/projects/${projectId}/quotation-documents/${documentId}/form-draft`
+    : `${BASE}/projects/${projectId}/quotation-documents/new-draft`;
 }
 
-export async function getQuotationFormDraft(
+async function notHolderOr(response: Response, fallback: string): Promise<Error> {
+  if (response.status !== 409) return new Error(await extractApiError(response, fallback));
+  // The message and code through the shared reader; `details` (who opened it, when) off a clone.
+  const detailsClone = response.clone();
+  const error = await codedError(response, fallback);
+  if (error.code !== 'quotation_draft_not_holder') return error;
+  let details: { holder_name?: string | null; holder_at?: string | null } = {};
+  try {
+    details = ((await detailsClone.json()) as { details?: typeof details }).details ?? {};
+  } catch {
+    // No details: the banner still says the draft was opened elsewhere.
+  }
+  return new DraftNotHolderError(error.message, details);
+}
+
+/** Open the form: claim the draft for this tab, and what to open on (`doc` null: the record). */
+export async function openQuotationFormDraft(
   projectId: string,
-  documentId: string,
-): Promise<QuotationFormDraft> {
-  const response = await apiFetch(formDraftUrl(projectId, documentId));
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the draft'));
+  documentId: string | null,
+): Promise<QuotationFormDraftOpened> {
+  const response = await apiFetch(`${draftUrl(projectId, documentId)}/open`, { method: 'POST' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to open the draft'));
+  return response.json();
+}
+
+export async function getQuotationDraftHolder(
+  projectId: string,
+  documentId: string | null,
+  token: string,
+): Promise<QuotationDraftHolder> {
+  const response = await apiFetch(
+    `${draftUrl(projectId, documentId)}/holder?token=${encodeURIComponent(token)}`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to check the draft'));
   return response.json();
 }
 
 /** The autosave. `keepalive` only on the page-teardown flush (a keepalive body is capped at 64KB). */
 export async function saveQuotationFormDraft(
   projectId: string,
-  documentId: string,
+  documentId: string | null,
   doc: QuotationFormState,
-  baseRev: number,
+  token: string,
   options: { keepalive?: boolean } = {},
-): Promise<{ rev: number; updated_at: string | null }> {
-  const response = await apiFetch(formDraftUrl(projectId, documentId), {
+): Promise<{ updated_at: string | null }> {
+  const response = await apiFetch(draftUrl(projectId, documentId), {
     method: 'PUT',
-    body: JSON.stringify({ doc, base_rev: baseRev }),
+    body: JSON.stringify({ doc, token }),
     keepalive: options.keepalive,
   });
-  if (!response.ok) throw await staleOr(response, 'Failed to save the draft');
-  return response.json();
-}
-
-export async function discardQuotationFormDraft(
-  projectId: string,
-  documentId: string,
-  baseRev: number,
-): Promise<{ rev: number }> {
-  const response = await apiFetch(`${formDraftUrl(projectId, documentId)}?base_rev=${baseRev}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) throw await staleOr(response, 'Failed to discard the draft');
+  if (!response.ok) throw await notHolderOr(response, 'Failed to save the draft');
   return response.json();
 }
 
@@ -918,12 +938,12 @@ export async function restoreQuotationHistoryEntry(
   projectId: string,
   documentId: string,
   entryId: string,
-  baseRev: number,
-): Promise<QuotationFormDraft> {
+  token: string,
+): Promise<QuotationFormDraftOpened> {
   const response = await apiFetch(
     `${BASE}/projects/${projectId}/quotation-documents/${documentId}/history/${entryId}/restore`,
-    { method: 'POST', body: JSON.stringify({ base_rev: baseRev }) },
+    { method: 'POST', body: JSON.stringify({ token }) },
   );
-  if (!response.ok) throw await staleOr(response, 'Could not restore that entry');
+  if (!response.ok) throw await notHolderOr(response, 'Could not restore that entry');
   return response.json();
 }

@@ -12,7 +12,7 @@ import {
   addQuotationScope,
   approveQuotationDocument,
   createQuotationDocument,
-  getQuotationFormDraft,
+  openQuotationFormDraft,
   createQuotationSignLink,
   deleteQuotationDocument,
   getQuotationFeedback,
@@ -79,18 +79,22 @@ export function useQuotationDocument(
 }
 
 /**
- * QUOTE-AUTOSAVE: the draft the form opens on. Read ONCE per visit (no refetch on focus or mount):
- * the form seeds from it a single time, and a refetch landing mid-edit must not look like news.
+ * QUOTE-AUTOSAVE: open the form's draft, which claims it for this tab (owner, Q4): an existing
+ * document's (`documentId`), or the person's own new-proposal draft (null). Run ONCE per visit (no
+ * refetch on focus, mount or reconnect): a second open from the same tab would take the claim away
+ * from itself, and the form seeds from the answer a single time.
  */
-export function useQuotationFormDraft(projectId: string | undefined, documentId: string | undefined) {
+export function useQuotationFormDraftOpen(projectId: string | undefined, documentId: string | null) {
   return useQuery({
-    queryKey: ['project-quotation-form-draft', projectId ?? '', documentId ?? ''],
-    queryFn: () => getQuotationFormDraft(projectId as string, documentId as string),
-    enabled: Boolean(projectId && documentId),
+    queryKey: ['project-quotation-form-draft-open', projectId ?? '', documentId ?? 'new'],
+    queryFn: () => openQuotationFormDraft(projectId as string, documentId),
+    enabled: Boolean(projectId),
     staleTime: Infinity,
     gcTime: 0,
+    retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchOnMount: false,
   });
 }
 
@@ -382,8 +386,6 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   return {
     create,
     update,
-    /** QUOTE-AUTOSAVE: refresh the lists after the form created a record on its own. */
-    invalidateAll: invalidate,
     remove,
     addScope,
     renameScope,

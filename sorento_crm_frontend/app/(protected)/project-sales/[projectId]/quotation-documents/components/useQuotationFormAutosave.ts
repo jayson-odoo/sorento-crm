@@ -3,34 +3,38 @@
 import * as React from 'react';
 import { useAutosave, type AutosaveStatus } from '@/hooks/useAutosave';
 import {
+  DraftNotHolderError,
+  getQuotationDraftHolder,
   saveQuotationFormDraft,
-  StaleDraftError,
-  type QuotationDocument,
   type QuotationFormState,
 } from '../../../_shared/services/quotationDocumentService';
 
 /**
  * QUOTE-AUTOSAVE: the proposal / quotation form's autosave (plan
- * `documentation/plans/project-sales/PLAN-quote-autosave-10nov.md`, card rules 1-2).
+ * `documentation/plans/project-sales/PLAN-quote-autosave-10nov.md`; owner's answers of 10 Nov).
  *
- * The tag designer's own debounce (`hooks/useAutosave`, 1 s after the last change, saves
- * serialised, `flush`, `retry`) writing the document's DRAFT, never the record:
+ * The tag designer's own debounce (`hooks/useAutosave`: 1 s after the last change, saves
+ * serialised, `flush`, `retry`) writing the DRAFT, never the record:
  *
- * - **First real edit of a new proposal** creates it (`create`), with the draft in the same
- *   request, so the number and the typing land together. Every later save is `PUT .../form-draft`.
+ * - **A new proposal** (Q2) writes the person's own private draft; nothing is numbered until Save.
  * - **Every edit** is mirrored to this browser's local storage until the server has it, so a tab
  *   closed while offline still comes back on the next open (`readMirror`).
- * - **Leaving** flushes: an in-app route change unmounts the form (cleanup below), a refresh or a
- *   closed tab fires `pagehide` (sent `keepalive`, so it outlives the page). The same two exits
- *   the request designer covers (`RequestTagDesigner.tsx:1110-1136`).
+ * - **Leaving** flushes: an in-app route change unmounts the form, a refresh or a closed tab fires
+ *   `pagehide` (sent `keepalive`, so it outlives the page): the request designer's two exits
+ *   (`RequestTagDesigner.tsx:1110-1136`).
  * - **Back online** retries the failed save on its own.
- * - **Two tabs** (card Q4): each save names the draft revision it was built on; a stale one comes
- *   back 409, the server keeps its state as a History entry, and this hook stops saving and
- *   reports `conflict` until the page is reloaded.
+ * - **Two tabs** (Q4): the form claims the draft when it opens (`token`). A tab another open took
+ *   the draft from is refused (409), and finds out within `HOLDER_POLL_MS` even when idle; it then
+ *   goes view-only (`viewOnly`), and what it had not sent is kept by the server as History.
+ * - **Discard draft** pauses saving while its 5 s countdown runs, so nothing written during the
+ *   countdown, or by the unmount that follows it, brings the discarded draft back.
  */
 
+/** How often an idle tab asks whether it still holds the draft. */
+export const HOLDER_POLL_MS = 15_000;
+
 export type MirroredDraft = {
-  baseRev: number;
+  token: string | null;
   doc: QuotationFormState;
   at: string;
 };
@@ -69,132 +73,108 @@ export function clearMirror(key: string): void {
   }
 }
 
-export type DraftConflict = { updatedByName: string | null; updatedAt: string | null };
+export type DraftViewOnly = { holderName: string | null; holderAt: string | null };
 
 export type UseQuotationFormAutosave = {
   status: AutosaveStatus;
   savedAt: Date | null;
   retry: () => void;
   flush: () => Promise<void>;
-  /** The document's id: the route's, or the one the first edit created. */
-  documentId: string | null;
-  /** The draft revision this tab last wrote or read. */
-  rev: React.MutableRefObject<number>;
-  conflict: DraftConflict | null;
-  /** A draft exists on the server for this document (Discard draft, the read page strip). */
-  hasDraft: boolean;
-  setHasDraft: (value: boolean) => void;
+  /** Another tab or person opened the draft after this tab: fields lock, Save is off. */
+  viewOnly: DraftViewOnly | null;
   /** Save `state` as soon as the debounce allows: an unsent local copy the form reopened on. */
   resume: (state: QuotationFormState) => void;
+  /** Stop (true) or restart (false) saving: the Discard draft countdown. */
+  setPaused: (paused: boolean) => void;
 };
 
 export function useQuotationFormAutosave({
   projectId,
-  initialDocumentId,
-  initialRev,
-  initialHasDraft,
+  documentId,
+  token,
   state,
   isDirty,
   ready,
-  create,
-  onCreated,
 }: {
   projectId: string;
-  initialDocumentId: string | null;
-  /** The draft revision the form opened on; null until it is known. */
-  initialRev: number | null;
-  initialHasDraft: boolean;
+  /** The document, or null for a new proposal's private draft. */
+  documentId: string | null;
+  /** This tab's claim on the draft, from opening it; null until it has opened. */
+  token: string | null;
   /** The form's state, or null until the form has its starting point. */
   state: QuotationFormState | null;
   /** Something has been typed: before that, a changing state is the form loading, not an edit. */
   isDirty: boolean;
-  /** The form has loaded and may save (false while locked or still loading). */
+  /** The form has opened its draft and may save (false while loading or locked). */
   ready: boolean;
-  /** A new proposal's first save: create the record with this state as its draft. */
-  create: (state: QuotationFormState) => Promise<QuotationDocument>;
-  onCreated: (document: QuotationDocument) => void;
 }): UseQuotationFormAutosave {
-  const [documentId, setDocumentId] = React.useState<string | null>(initialDocumentId);
-  const documentIdRef = React.useRef<string | null>(initialDocumentId);
-  const rev = React.useRef<number>(initialRev ?? 0);
-  const [conflict, setConflict] = React.useState<DraftConflict | null>(null);
-  const conflictRef = React.useRef(false);
-  const [hasDraft, setHasDraft] = React.useState(initialHasDraft);
+  const [viewOnly, setViewOnly] = React.useState<DraftViewOnly | null>(null);
+  const viewOnlyRef = React.useRef(false);
+  const pausedRef = React.useRef(false);
   const teardownRef = React.useRef(false);
+  const tokenRef = React.useRef(token);
+  const documentIdRef = React.useRef(documentId);
+  React.useEffect(() => {
+    tokenRef.current = token;
+    documentIdRef.current = documentId;
+  }, [token, documentId]);
 
-  React.useEffect(() => {
-    if (initialRev !== null) rev.current = initialRev;
-  }, [initialRev]);
-  React.useEffect(() => {
-    setHasDraft(initialHasDraft);
-  }, [initialHasDraft]);
-
-  const createRef = React.useRef(create);
-  const onCreatedRef = React.useRef(onCreated);
-  React.useEffect(() => {
-    createRef.current = create;
-    onCreatedRef.current = onCreated;
-  }, [create, onCreated]);
+  const lockOut = React.useCallback((holderName: string | null, holderAt: string | null) => {
+    viewOnlyRef.current = true;
+    setViewOnly({ holderName, holderAt });
+  }, []);
 
   const { status, savedAt, schedule, flush, retry } = useAutosave<QuotationFormState>(
     React.useCallback(
       async (value: QuotationFormState) => {
-        if (conflictRef.current) return;
-        const currentId = documentIdRef.current;
-        const key = mirrorKey(projectId, currentId);
+        if (pausedRef.current) return;
+        const key = mirrorKey(projectId, documentIdRef.current);
         try {
-          if (!currentId) {
-            const created = await createRef.current(value);
-            documentIdRef.current = created.id;
-            rev.current = 1;
-            setDocumentId(created.id);
-            clearMirror(key);
-            onCreatedRef.current(created);
-          } else {
-            const result = await saveQuotationFormDraft(projectId, currentId, value, rev.current, {
-              keepalive: teardownRef.current,
-            });
-            rev.current = result.rev;
-            clearMirror(key);
-          }
-          setHasDraft(true);
+          await saveQuotationFormDraft(
+            projectId,
+            documentIdRef.current,
+            value,
+            tokenRef.current ?? '',
+            { keepalive: teardownRef.current },
+          );
+          clearMirror(key);
         } catch (error) {
-          if (error instanceof StaleDraftError) {
-            // The server kept this tab's state as a History entry; the local copy is not needed.
-            conflictRef.current = true;
+          if (error instanceof DraftNotHolderError) {
+            // The server kept this tab's state as History; the local copy is not needed.
             clearMirror(key);
-            setConflict({ updatedByName: error.updatedByName, updatedAt: error.updatedAt });
+            lockOut(error.holderName, error.holderAt);
+            return;
           }
           throw error;
         }
       },
-      [projectId],
+      [projectId, lockOut],
     ),
   );
 
-  // Every REAL edit schedules a save (card rule 1). Guarded on the serialised VALUE, not a "have I
-  // run" flag: the first value is the form's starting point and only moves the baseline, and so
-  // does any change made before anything was typed (a template default, a scope opened and seeded
-  // from the server). Comparing values also makes StrictMode's double effect pass a no-op.
+  // Every REAL edit schedules a save. Guarded on the serialised VALUE, not a "have I run" flag: the
+  // first value is the form's starting point and only moves the baseline, and so does any change
+  // made before anything was typed (a template default, a scope opened and seeded from the
+  // server). The live total is left out: opening a saved scope re-sums it, the same money written
+  // differently, and that is not an edit. Comparing values also makes StrictMode's double effect
+  // pass a no-op.
   const lastSeen = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     if (!ready || state === null) return;
-    // The live total is left out of the comparison: opening a saved scope swaps the server's figure
-    // for the staged lines' own sum, the same money written differently, and that is not an edit.
     const json = JSON.stringify({ ...state, total: undefined });
     if (json === lastSeen.current) return;
     const isInitial = lastSeen.current === undefined;
     lastSeen.current = json;
-    if (isInitial || !isDirty || conflictRef.current) return;
+    if (isInitial || !isDirty || viewOnlyRef.current || pausedRef.current) return;
     writeMirror(mirrorKey(projectId, documentIdRef.current), {
-      baseRev: rev.current,
+      token: tokenRef.current,
       doc: state,
       at: new Date().toISOString(),
     });
     schedule(state);
   }, [state, isDirty, ready, schedule, projectId]);
 
-  // Leaving the page, both ways it can happen (card rule 2).
+  // Leaving the page, both ways it can happen.
   React.useEffect(() => {
     teardownRef.current = false;
     const handler = () => {
@@ -217,10 +197,41 @@ export function useQuotationFormAutosave({
     return () => window.removeEventListener('online', onOnline);
   }, [retry]);
 
+  // Q4: an idle older tab must find out too, not only on its next keystroke. Checked on a timer
+  // and whenever the tab comes back into view. Losing the draft first flushes what is pending, so
+  // the server keeps it as History, then locks the form.
+  React.useEffect(() => {
+    if (!ready || !token) return;
+    let stopped = false;
+    const check = async () => {
+      if (stopped || viewOnlyRef.current || document.visibilityState === 'hidden') return;
+      try {
+        const holder = await getQuotationDraftHolder(projectId, documentIdRef.current, token);
+        if (stopped || holder.is_holder) return;
+        await flush();
+        lockOut(holder.holder_name ?? null, holder.holder_at ?? null);
+      } catch {
+        // A failed check proves nothing; the next write or check will tell.
+      }
+    };
+    const timer = window.setInterval(() => void check(), HOLDER_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [ready, token, projectId, flush, lockOut]);
+
   const resume = React.useCallback(
     (value: QuotationFormState) => {
       writeMirror(mirrorKey(projectId, documentIdRef.current), {
-        baseRev: rev.current,
+        token: tokenRef.current,
         doc: value,
         at: new Date().toISOString(),
       });
@@ -229,16 +240,9 @@ export function useQuotationFormAutosave({
     [projectId, schedule],
   );
 
-  return {
-    status,
-    savedAt,
-    retry,
-    flush,
-    documentId,
-    rev,
-    conflict,
-    hasDraft,
-    setHasDraft,
-    resume,
-  };
+  const setPaused = React.useCallback((paused: boolean) => {
+    pausedRef.current = paused;
+  }, []);
+
+  return { status, savedAt, retry, flush, viewOnly, resume, setPaused };
 }

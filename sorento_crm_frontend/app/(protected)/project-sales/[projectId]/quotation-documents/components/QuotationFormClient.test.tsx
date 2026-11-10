@@ -68,6 +68,12 @@ const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
 const getQuotationLetterTemplates = vi.fn();
 const getQuotationFeedback = vi.fn();
+// QUOTE-AUTOSAVE: the form's draft and History calls.
+const getQuotationFormDraft = vi.fn();
+const saveQuotationFormDraft = vi.fn();
+const discardQuotationFormDraft = vi.fn();
+const restoreQuotationHistoryEntry = vi.fn();
+const listQuotationHistory = vi.fn();
 vi.mock(
   '../../../_shared/services/quotationDocumentService',
   async (importOriginal) => {
@@ -86,6 +92,11 @@ vi.mock(
       getQuotationLetterTemplates: (...args: unknown[]) =>
         getQuotationLetterTemplates(...args),
       getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
+      getQuotationFormDraft: (...args: unknown[]) => getQuotationFormDraft(...args),
+      saveQuotationFormDraft: (...args: unknown[]) => saveQuotationFormDraft(...args),
+      discardQuotationFormDraft: (...args: unknown[]) => discardQuotationFormDraft(...args),
+      restoreQuotationHistoryEntry: (...args: unknown[]) => restoreQuotationHistoryEntry(...args),
+      listQuotationHistory: (...args: unknown[]) => listQuotationHistory(...args),
     };
   },
 );
@@ -459,6 +470,14 @@ beforeEach(() => {
   getQuotationDocument.mockResolvedValue(document());
   createQuotationDocument.mockResolvedValue(document({ id: 'd-new' }));
   updateQuotationDocument.mockResolvedValue(document());
+  getQuotationFormDraft.mockResolvedValue({ doc: null, rev: 0, updated_at: null, updated_by_name: null });
+  saveQuotationFormDraft.mockImplementation(async (_p: string, _d: string, _doc: unknown, rev: number) => ({
+    rev: rev + 1,
+    updated_at: '2026-11-10T06:14:00',
+  }));
+  discardQuotationFormDraft.mockResolvedValue({ rev: 1 });
+  listQuotationHistory.mockResolvedValue([]);
+  window.localStorage.clear();
   getQuotationLetterTemplates.mockResolvedValue({
     cover_letter_html: '<p>Dear {{attn_name}}</p>',
     terms_html: '<p>Valid 30 days</p>',
