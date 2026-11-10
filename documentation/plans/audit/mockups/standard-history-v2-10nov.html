@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple History v2</title>
+<!-- STANDARD-HISTORY Lavish mock v2. Annotated mockup, not shipped code.
+     Owner, 10 Nov ~15:10 MYT, on the v1 build (#2299): "OI history why so complicated geh, our other
+     audit trails or history page also so complicated? i want to reuse same component though".
+     Plan: documentation/plans/audit/PLAN-standard-history-10nov.md. Person names masked. -->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--primary:#1b84ff;--primary-soft:#e9f3ff;
+--green:#15803d;--red:#dc2626;--callout:#e11d74;--radius:8px;
+--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0b0f17;--card:#111827;--fg:#e5e7eb;--muted:#9ca3af;--line:#1f2937;--primary-soft:#0c2a4d}}
+:root[data-theme="dark"]{--bg:#0b0f17;--card:#111827;--fg:#e5e7eb;--muted:#9ca3af;--line:#1f2937;--primary-soft:#0c2a4d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1400px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 20px;max-width:980px}
+h2.ft{font-size:15px;margin:36px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.notes{flex:1 1 320px;min-width:260px;max-width:520px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;vertical-align:middle}
+/* The existing Audit Trail card (components/audit/AuditTrail.tsx): Card, title, one entry per change. */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;width:720px;max-width:100%}
+.card.narrow{width:375px}
+.card h3{margin:0;padding:16px 20px;font-size:16px;border-bottom:1px solid var(--line)}
+.card .body{padding:14px 20px}
+.search{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;height:34px;padding:0 10px;color:var(--muted);margin-bottom:10px;background:var(--card)}
+.search.set{color:var(--fg);border-color:var(--primary)}
+.entry{padding:10px 0;border-bottom:1px solid var(--line)}
+.entry:last-child{border-bottom:0}
+.what{font-weight:500}
+.meta{color:var(--muted);font-size:13px;margin-top:2px}
+.more{color:var(--primary);font-size:13px;cursor:default}
+.lines{list-style:none;margin:6px 0 0;padding:0;font-size:13px;color:var(--muted)}
+.lines li{border-left:2px solid var(--line);padding-left:8px;margin-top:3px;word-break:break-word}
+.lines li .now{color:var(--fg)}
+.empty{padding:22px 0;text-align:center}.empty b{display:block}.empty span{color:var(--muted);font-size:13px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.shot{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.shot img{width:100%;display:block;border-bottom:1px solid var(--line)}
+.shot p{margin:0;padding:10px 12px;font-size:13px}.shot p b{display:block}
+.verdict{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600;margin-left:4px}
+.v-simple{background:#f0fdf4;color:var(--green)}.v-busy{background:#fef2f2;color:var(--red)}
+.qa{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-width:1100px}
+.qa p{margin:0 0 10px}.qa ul{margin:0 0 10px;padding-left:20px}
+.qa table{border-collapse:collapse;width:100%;font-size:13px}.qa td,.qa th{border-top:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.qa th{color:var(--muted)}
+.scroll{overflow-x:auto}
+code{word-break:break-word}
+.tabs{display:flex;gap:16px;border-bottom:1px solid var(--line);padding:0 20px;font-size:13px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:10px 0;color:var(--muted)}.tabs .on{color:var(--fg);font-weight:600;border-bottom:2px solid var(--primary)}
+</style>
+</head>
+<body><div class="doc">
+<h1>History, simple: one component for every record (v2)</h1>
+<p class="sub">Owner, 10 Nov ~15:10 on the v1 build: "OI history why so complicated geh, our other audit trails or history page also so complicated? i want to reuse same component though". v2 answers both: the system already has a simple history (the Audit Trail tab on 8 detail pages), v1 copied the busiest one instead, and v2 makes that simple one the only one. Real OI-2611-0019 story, names masked. Pink numbers map to the notes.</p>
+
+<!-- =============================================================== 0 -->
+<h2 class="ft">0. The answer: what we have today, side by side (screenshots from the sandbox, seeded data)</h2>
+<div class="gallery">
+  <div class="shot"><img src="../evidence/standard-history-compare/2-product-audit-trail.png" alt="Product Audit Trail tab"><p><b>Product / PO / complaint / PR / stock inquiry / sample request / NPA / spec registry: Audit Trail tab <span class="verdict v-simple">simple</span></b>One line per change: what, when, by whom, then "List price: 120.50 → 135". No filters, no badges, no tables. <code>components/audit/AuditTrail.tsx</code></p></div>
+  <div class="shot"><img src="../evidence/standard-history-compare/4-new-oi-history-tab-v1.png" alt="v1 OI History tab"><p><b>v1 OI History tab (#2299, what you tested) <span class="verdict v-busy">busy</span></b>Copied the SO History drawer: 5 filters + Clear, a coloured badge per event, a grid per batch. <code>components/history/RecordHistory.tsx</code></p></div>
+  <div class="shot"><img src="../evidence/standard-history-compare/1-system-audit-logs.png" alt="System Audit Logs"><p><b>System &gt; Audit Logs <span class="verdict v-busy">admin tool</span></b>A superadmin grid across every record: search, Filters, Columns, Export, entity type and action pills. Right for admins hunting across the system; wrong inside one record.</p></div>
+  <div class="shot"><img src="../evidence/standard-history-compare/3-oi-line-history-rows.png" alt="OI line History dialog Rows"><p><b>OI line History dialog (Rows / Decisions / Reserve) <span class="verdict v-busy">three views</span></b>A grid of row versions (When, Qty, Delivery, What, Document, Why) plus two more tabs; presses never appear. <code>OrderInquiryLineHistoryDialog.tsx</code></p></div>
+  <div class="shot"><p><b>SO History drawer (Fulfilment Planning) <span class="verdict v-busy">busiest</span></b>Not captured: the sandbox board has no orders. From the code: a side drawer with SO, Product, Line, Event, User and date filters plus Clear, count chips per event, an "Open email" dialog and a table per event; planning admins only. <code>PlanningHistorySheet.tsx:504-551</code>. v1 was built from this one.</p></div>
+  <div class="shot"><p><b>Contacts, customers, price tags, users <span class="verdict v-busy">none</span></b>No history on the record at all; only System &gt; Audit Logs (superadmin) shows their changes.</p></div>
+</div>
+<div class="qa" style="margin-top:14px">
+<p><b>Why v1 felt complicated (each item is what v2 removes):</b></p>
+<ul>
+<li><b>Five filters and a Clear button</b> above a list that usually holds 5 to 20 entries.</li>
+<li><b>A coloured badge on every entry</b> repeating the title ("Unconfirmed 9 lines" + "Unconfirmed").</li>
+<li><b>A grid per batch</b> (Line / Product / Qty / Change, with a sideways swipe on a phone) where a short list reads faster.</li>
+<li><b>Time on the right, person on a second line</b>: the eye zigzags; the Audit Trail reads left to right in one line.</li>
+<li><b>Two components for one job</b>: Audit Trail on 8 pages, RecordHistory on the OI. You asked for one.</li>
+</ul>
+</div>
+
+<!-- =============================================================== 1 -->
+<h2 class="ft">1. v2 on the OI detail page: the History tab (OI-2611-0019)</h2>
+<div class="layout">
+<div class="card">
+  <div class="tabs"><span>Lines</span><span>General</span><span>Related PO</span><span>Related SPO</span><span class="on">History</span></div>
+  <h3>History <span class="co">1</span></h3>
+  <div class="body">
+    <div class="search">⌕ Search history <span class="co">2</span></div>
+    <div class="entry"><div class="what">PO 202611-S0027 linked to SRTSP131, now Done</div><div class="meta">10/11/2026, 10:52 am · Automatic <span class="co">3</span></div></div>
+    <div class="entry"><div class="what">Unconfirmed 9 lines, back to To confirm</div><div class="meta">09/11/2026, 5:15:53 pm · by J*** (Purchasing) · <span class="more">Show 9 lines ▸</span> <span class="co">4</span></div></div>
+    <div class="entry"><div class="what">Confirmed SRTSP131 (marked Done by hand)</div><div class="meta">09/11/2026, 5:15:45 pm · by J*** (Purchasing)</div></div>
+    <div class="entry"><div class="what">Raised from SO428916, 13 lines</div><div class="meta">02/11/2026, 5:31 pm · by A*** (CS) · <span class="more">Show 13 lines ▸</span></div></div>
+  </div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>The Audit Trail card, as on Product and PO</b>The same Card, title and entry rhythm as the existing Audit Trail tab (section 0, first screenshot). One component, <code>AuditTrail</code>, for every record; the v1 RecordHistory goes away.<span class="ref">components/audit/AuditTrail.tsx · PurchaseOrderDetail.tsx:1415 · ProductDetail.tsx:669</span></div></li>
+  <li><span class="co">2</span><div><b>At most one control: a search box</b>Typing narrows the list to entries whose sentence, person or lines contain the text (an item code, a name, a PO number). Shown only when the record has more than 10 entries; a short history has no control at all. No Event / User / Product / Line / date filters, no Clear.</div></li>
+  <li><span class="co">3</span><div><b>One sentence, then when and who</b>Line 1 is what happened, in plain words. Line 2 is the date and time (dd/mm/yyyy; seconds only when two entries share a minute, as here) and the person, or "Automatic". No badges, no colours.</div></li>
+  <li><span class="co">4</span><div><b>Details only on click</b>A press that moved several lines says how many and offers "Show 9 lines". Nothing is expanded until asked (section 2).</div></li>
+</ol></div>
+</div>
+
+<!-- =============================================================== 2 -->
+<h2 class="ft">2. Clicking "Show 9 lines", and searching "SRTSP131"</h2>
+<div class="layout">
+<div class="card">
+  <h3>History</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Unconfirmed 9 lines, back to To confirm</div><div class="meta">09/11/2026, 5:15:53 pm · by J*** (Purchasing) · <span class="more">Hide ▾</span></div>
+      <ul class="lines"><span class="co" style="float:right">5</span>
+        <li>CKS1050: Confirmed → <span class="now">To confirm</span></li>
+        <li>CKSW015: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRT61-CR: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTHD122: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTSH22512-N: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTWC286-SH-NEW: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTWT167: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTWT2219: Confirmed → <span class="now">To confirm</span></li>
+        <li>SRTSP131: Done by hand → <span class="now">To confirm</span></li>
+      </ul></div>
+  </div>
+</div>
+<div class="card">
+  <h3>History</h3>
+  <div class="body">
+    <div class="search set">⌕ SRTSP131 <span class="co">6</span></div>
+    <div class="entry"><div class="what">PO 202611-S0027 linked to SRTSP131, now Done</div><div class="meta">10/11/2026, 10:52 am · Automatic</div></div>
+    <div class="entry"><div class="what">Unconfirmed 9 lines, back to To confirm</div><div class="meta">09/11/2026, 5:15:53 pm · by J*** (Purchasing) · <span class="more">Show 9 lines ▸</span></div>
+      <ul class="lines"><li>SRTSP131: Done by hand → <span class="now">To confirm</span></li></ul></div>
+    <div class="entry"><div class="what">Confirmed SRTSP131 (marked Done by hand)</div><div class="meta">09/11/2026, 5:15:45 pm · by J*** (Purchasing)</div></div>
+    <div class="entry"><div class="what">Raised from SO428916, 13 lines</div><div class="meta">02/11/2026, 5:31 pm · by A*** (CS)</div></div>
+  </div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">5</span><div><b>The lines are the Audit Trail's own change lines</b>One short line per row, "item: before → after", the same indented style the Audit Trail uses for "List price: 120.50 → 135". No grid, no columns, nothing to swipe on a phone.</div></li>
+  <li><span class="co">6</span><div><b>Search keeps a press whole</b>The 9-line Unconfirm stays one entry; its matching line shows under it, so it never reads as a 1-line press.</div></li>
+</ol></div>
+</div>
+
+<!-- =============================================================== 3 -->
+<h2 class="ft">3. The SAME component on every record</h2>
+<div class="layout">
+<div class="card">
+  <h3>History · Product SRTSP131</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Changed list price from 120.50 to 135</div><div class="meta">10/11/2026, 2:02 pm · by Never Stuck Admin</div></div>
+    <div class="entry"><div class="what">Changed description to "Wall mounted, matt black"</div><div class="meta">10/11/2026, 2:02 pm · by Never Stuck Admin</div></div>
+    <div class="entry"><div class="what">Created the product</div><div class="meta">10/11/2026, 2:02 pm · by Never Stuck Admin</div></div>
+  </div>
+</div>
+<div class="card">
+  <h3>History · Contact (dealer)</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Gave dealer access to 2 brands</div><div class="meta">05/11/2026, 11:20 am · by S*** (Admin) on behalf of A*** (CS) · <span class="more">Show 2 ▸</span> <span class="co">7</span></div></div>
+    <div class="entry"><div class="what">Changed phone</div><div class="meta">03/11/2026, 9:04 am · by A*** (CS)</div></div>
+  </div>
+</div>
+<div class="card">
+  <h3>History · Price tag request</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Approved the request</div><div class="meta">06/11/2026, 4:40 pm · by M*** (Marketing)</div></div>
+    <div class="entry"><div class="what">Changed 3 lines</div><div class="meta">06/11/2026, 4:12 pm · by K*** (Sales) · <span class="more">Show 3 lines ▸</span></div></div>
+  </div>
+</div>
+<div class="card">
+  <h3>History · Sales order SO428916</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Confirmed plan revision 3</div><div class="meta">08/11/2026, 3:30 pm · by L*** (Planning) · <span class="more">Show 5 lines ▸</span></div></div>
+    <div class="entry"><div class="what">Emailed purchasing: 2 lines to order</div><div class="meta">08/11/2026, 3:31 pm · Automatic · <span class="more">Open email</span></div></div>
+  </div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">7</span><div><b>Illustrative entries (not from a real record)</b>Product entries are real sandbox edits; contact, price tag and SO entries show the wording each would get. "On behalf of" appears in the same meta line when an admin acted as someone else. Every record gets the same card, the same two-line entry, the same "Show N" and the same search box.</div></li>
+</ol></div>
+</div>
+
+<!-- =============================================================== 4 -->
+<h2 class="ft">4. The OI line History dialog, and a phone (375px)</h2>
+<div class="layout">
+<div class="card" style="width:560px">
+  <div class="tabs"><span class="on">History</span><span>Rows</span><span>Decisions</span></div>
+  <div class="body">
+    <div class="entry"><div class="what">PO 202611-S0027 linked, now Done</div><div class="meta">10/11/2026, 10:52 am · Automatic</div></div>
+    <div class="entry"><div class="what">Unconfirmed (with 8 other lines), back to To confirm</div><div class="meta">09/11/2026, 5:15:53 pm · by J*** (Purchasing)</div></div>
+    <div class="entry"><div class="what">Confirmed, marked Done by hand</div><div class="meta">09/11/2026, 5:15:45 pm · by J*** (Purchasing)</div></div>
+    <div class="entry"><div class="what">Raised</div><div class="meta">02/11/2026, 5:31 pm · by A*** (CS)</div></div>
+  </div>
+</div>
+<div class="card narrow">
+  <h3>History</h3>
+  <div class="body">
+    <div class="entry"><div class="what">Unconfirmed 9 lines, back to To confirm</div><div class="meta">09/11/2026, 5:15:53 pm · by J*** (Purchasing) · <span class="more">Show 9 lines ▸</span></div></div>
+    <div class="entry"><div class="what">Confirmed SRTSP131 (marked Done by hand)</div><div class="meta">09/11/2026, 5:15:45 pm · by J*** (Purchasing)</div></div>
+  </div>
+</div>
+<div class="card narrow">
+  <h3>History</h3>
+  <div class="body"><div class="empty"><b>No history yet</b><span>Changes to this record appear here.</span></div></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">8</span><div><b>The line dialog's first tab is the same list, for one line</b>Named "History" (not "All events"). Rows and Decisions stay until you say retire them. On a phone the entries simply wrap; nothing scrolls sideways. Empty: a heading and a hint, no button.</div></li>
+</ol></div>
+</div>
+
+<!-- =============================================================== 5 -->
+<h2 class="ft">5. What changes in #2299 if you approve v2</h2>
+<div class="qa"><div class="scroll">
+<table>
+<thead><tr><th>Part</th><th>v1 (#2299 today)</th><th>v2</th></tr></thead>
+<tbody>
+<tr><td>Component</td><td>New <code>RecordHistory</code> (filters, badges, DataGrid per event)</td><td><b>Deleted.</b> <code>AuditTrail</code> is the one component; it learns to take a list of plain entries (sentence, when, who, optional lines) besides its own audit read, and gets the "Show N lines" toggle and the one search box.</td></tr>
+<tr><td>OI History tab</td><td>RecordHistory</td><td><code>AuditTrail</code> fed by the same OI history endpoint (unchanged backend: it already writes the plain sentences and the lines)</td></tr>
+<tr><td>Line dialog</td><td>"All events" tab with filters</td><td>"History" tab, the same <code>AuditTrail</code> list narrowed to the line</td></tr>
+<tr><td>The 8 Audit Trail pages</td><td>unchanged</td><td>Same component; their entries read as sentences ("Changed list price from 120.50 to 135" instead of "Update" + "List price: 120.50 → 135"), only where that wave is built</td></tr>
+<tr><td>Backend</td><td>History endpoint + OI root stamp</td><td>Unchanged; the response drops nothing</td></tr>
+</tbody></table>
+</div>
+<p style="margin-top:10px">Rollout after OI stays as approved: SO / Fulfilment Planning (the SO drawer keeps its admin filters for planners, its record tab uses this list), contacts and dealer access, products and spec registry, price tags, then the rest. Each wave its own PR.</p>
+</div>
+</div></body>
+</html>

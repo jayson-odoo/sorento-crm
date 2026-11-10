@@ -77,8 +77,8 @@ function renderDialog(current: TemplateDefault | null) {
 describe('SetDefaultTemplateDialog - dynamic URL button', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (listApprovedTemplates as any).mockResolvedValue([BUTTON_TEMPLATE, PLAIN_TEMPLATE]);
-    (setTemplateDefault as any).mockResolvedValue({});
+    vi.mocked(listApprovedTemplates).mockResolvedValue([BUTTON_TEMPLATE, PLAIN_TEMPLATE]);
+    vi.mocked(setTemplateDefault).mockResolvedValue({});
   });
 
   it('renders the Button link row for a template with a dynamic URL button', async () => {
@@ -100,7 +100,7 @@ describe('SetDefaultTemplateDialog - dynamic URL button', () => {
     await screen.findByText('Button link');
     fireEvent.click(screen.getByRole('button', { name: /save default/i }));
     await waitFor(() => expect(setTemplateDefault).toHaveBeenCalled());
-    const [, body] = (setTemplateDefault as any).mock.calls[0];
+    const [, body] = vi.mocked(setTemplateDefault).mock.calls[0];
     expect(body.param_mapping.button_url).toBe('portal_url');
     expect(body.param_mapping['1']).toBe('contact_name');
   });
@@ -151,13 +151,13 @@ function renderChatDialog(current: TemplateDefault | null) {
 describe('SetDefaultTemplateDialog - chat message enforcement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (listApprovedTemplates as any).mockResolvedValue([CHAT_TEMPLATE]);
-    (setTemplateDefault as any).mockResolvedValue({});
+    vi.mocked(listApprovedTemplates).mockResolvedValue([CHAT_TEMPLATE]);
+    vi.mocked(setTemplateDefault).mockResolvedValue({});
     // Radix Select calls these on open; jsdom does not implement them.
     Element.prototype.scrollIntoView = vi.fn();
-    (Element.prototype as any).hasPointerCapture = vi.fn();
-    (Element.prototype as any).setPointerCapture = vi.fn();
-    (Element.prototype as any).releasePointerCapture = vi.fn();
+    (Element.prototype as unknown as Record<string, unknown>).hasPointerCapture = vi.fn();
+    (Element.prototype as unknown as Record<string, unknown>).setPointerCapture = vi.fn();
+    (Element.prototype as unknown as Record<string, unknown>).releasePointerCapture = vi.fn();
   });
 
   it('disables Save + shows chat-message-required when no slot maps to message', async () => {
@@ -189,5 +189,48 @@ describe('SetDefaultTemplateDialog - chat message enforcement', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /save default/i })).toBeEnabled(),
     );
+  });
+});
+
+// --- List price change link (LIST-PRICE-LINK, owner 10 Nov) ------------------
+
+describe('SetDefaultTemplateDialog - list price change link', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listApprovedTemplates).mockResolvedValue([BUTTON_TEMPLATE]);
+    vi.mocked(setTemplateDefault).mockResolvedValue({});
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('offers "List price change link" in the Button link picker and saves it', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <SetDefaultTemplateDialog
+          useCase="product_list_price_changed"
+          current={{
+            ...makeCurrent(BUTTON_TEMPLATE, {
+              '1': 'list_price_count',
+              '2': 'today_date',
+              button_url: 'portal_url',
+            }),
+            use_case: 'product_list_price_changed',
+          }}
+          open
+          onOpenChange={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Button link');
+    const buttonPicker = screen
+      .getAllByRole('combobox')
+      .find((el) => el.textContent?.includes('Portal URL'))!;
+    fireEvent.click(buttonPicker);
+    fireEvent.click(await screen.findByRole('option', { name: 'List price change link' }));
+    fireEvent.click(screen.getByRole('button', { name: /save default/i }));
+    await waitFor(() => expect(setTemplateDefault).toHaveBeenCalled());
+    const [useCase, body] = vi.mocked(setTemplateDefault).mock.calls[0];
+    expect(useCase).toBe('product_list_price_changed');
+    expect(body.param_mapping.button_url).toBe('list_price_link');
   });
 });
