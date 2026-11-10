@@ -1169,7 +1169,7 @@ def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
     return ToolResult("ok", data={"armed": False, "say": knowledge_service.KNOWLEDGE_MISS_LINE, "refer": True})
 
 
-def _quotation_lines(db: Any, args: dict, seen: set[str]) -> ToolResult:
+def _quotation_lines(db: Any, ctx: Any, args: dict, seen: set[str]) -> ToolResult:
     """`crm_project_quotation_lines`: the project route's own read, in process as the user."""
     from app.services.chatbot.agent.quotation_lines import project_quotation_lines
     from app.services.error_handler import AppException
@@ -1191,15 +1191,40 @@ def _quotation_lines(db: Any, args: dict, seen: set[str]) -> ToolResult:
     bad_id = _check_ids({"project_id": args["project_id"]}, seen)
     if bad_id is not None:
         return bad_id
+    from fastapi import HTTPException
+
+    from app.api.v1.projects._own_scope import PREFIX, check
+    from app.dependencies import _load_user_dict_from_db
+    from app.services.chatbot.agent.writes import _module_open
+
+    project_id = args["project_id"].lower()
     try:
-        data, more = project_quotation_lines(db, args["project_id"].lower(), refs or [], RESULT_CHAR_CAP)
+        user = _load_user_dict_from_db(db, str(ctx.user_id))
+        if user is None:
+            return ToolResult("denied", message=f"{QUOTATION_LINES} is outside this user's access.")
+        try:
+            _module_open(user, db, "projects")
+        except HTTPException:
+            return ToolResult("denied", message=f"{QUOTATION_LINES} is outside this user's access.")
+        try:  # the project router's "only theirs" guard, which a direct call skips
+            check(db, str(user["id"]), "GET", PREFIX + "/projects/{project_id}/quotations", {"project_id": project_id})
+        except HTTPException:
+            return ToolResult("invalid", message="Project not found.")
+        data, more = project_quotation_lines(db, project_id, refs or [], RESULT_CHAR_CAP)
     except AppException as exc:  # the route's own refusal (404 for another company's project)
         message = exc.detail.get("message") if isinstance(exc.detail, dict) else None
         return ToolResult("invalid", message=str(message or "Project not found."))
     except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
         logger.warning("agent: %s failed", QUOTATION_LINES, exc_info=True)
+        try:
+            db.rollback()  # a failed statement leaves the transaction unusable
+        except Exception:  # noqa: BLE001
+            pass
         return ToolResult("error", message=FIXED_ERROR)
-    message = f"{more} lines did not fit and are left out (lines_not_shown per scope); ask for one document with refs." if more else ""
+    message = (
+        f"{more} lines or documents did not fit and are left out (lines_not_shown per scope, documents_not_shown); "
+        "ask for one document with refs." if more else ""
+    )
     return ToolResult("ok", data=data, more=more, message=message)
 
 
@@ -1354,7 +1379,7 @@ def _dispatch_inner(
     if tool.name == KNOWLEDGE:
         return _knowledge_search(db, ctx, args)
     if tool.name == QUOTATION_LINES:
-        return _quotation_lines(db, args, seen)
+        return _quotation_lines(db, ctx, args, seen)
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")

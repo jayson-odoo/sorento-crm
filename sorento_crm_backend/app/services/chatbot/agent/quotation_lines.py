@@ -34,21 +34,35 @@ def _line(row: Any) -> dict[str, Any]:
         "unit_price": _num(unit),
         "discount_pct": discount,
         "line_total": _num(row.line_total),
+        "rate_only": bool(row.is_rate_only),
     }
 
 
-def _scope(db: Session, label: str | None, version_no: int | None, version_id: str | None, total: Any) -> dict:
-    lines = [_line(r) for r in svc.list_lines(db, version_id)] if version_id else []
-    return {
-        "scope": label,
-        "version": version_no,
-        "total": _num(total) or 0.0,
-        "lines": lines,
-    }
+def _scope(label: str | None, version_no: int | None, version_id: str | None, total: Any) -> dict:
+    """A scope with its version id kept aside (`_vid`) until `_fill` reads every version's lines in one query."""
+    return {"scope": label, "version": version_no, "total": _num(total) or 0.0, "lines": [], "_vid": version_id}
+
+
+def _fill(db: Session, scopes: list[dict]) -> None:
+    from app.models.projects import ProjectQuotationLine as Line
+
+    ids = {s["_vid"] for s in scopes if s["_vid"]}
+    by_version: dict[str, list[dict]] = {}
+    if ids:
+        rows = (
+            db.query(Line)
+            .filter(Line.version_id.in_(ids))
+            .order_by(Line.sort_order.asc(), Line.created_at.asc(), Line.id.asc())  # the order `list_lines` gives
+            .all()
+        )
+        for row in rows:
+            by_version.setdefault(row.version_id, []).append(_line(row))
+    for scope in scopes:
+        scope["lines"] = by_version.get(scope.pop("_vid"), [])
 
 
 def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: int) -> tuple[dict, int]:
-    """`(data, lines_not_shown)`. Raises the project route's 404 for an unknown project."""
+    """`(data, items_not_shown)`. Raises the project route's 404 for an unknown project."""
     from app.models.projects import (
         ProjectQuotation,
         ProjectQuotationDocument,
@@ -71,21 +85,21 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         .all()
     )
     current = {row["id"]: row for row in svc.serialize_quotations(db, scopes)}
+    wanted = [r.strip() for r in refs if isinstance(r, str) and r.strip()]
     issues = (
         db.query(ProjectQuotationIssue)
         .filter(ProjectQuotationIssue.document_id.in_([d.id for d in documents]))
         .order_by(ProjectQuotationIssue.issue_no.asc())
         .all()
-        if documents
+        if documents and wanted
         else []
     )
-    wanted = [r.strip() for r in refs if isinstance(r, str) and r.strip()]
     out: list[dict] = []
     matched: set[str] = set()
 
     def current_doc(doc: Any) -> dict:
         rows = [current[s.id] for s in scopes if s.document_id == doc.id]
-        built = [_scope(db, r["scope_label"], r["current_version_no"], r["current_version_id"], r["current_total"]) for r in rows]
+        built = [_scope(r["scope_label"], r["current_version_no"], r["current_version_id"], r["current_total"]) for r in rows]
         return {
             "ref": doc.document_no, "document_no": doc.document_no, "revision": None,
             "total": round(sum(s["total"] for s in built), 2), "scopes": built,
@@ -100,7 +114,7 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
             .order_by(ProjectQuotationIssueScope.sort_order.asc())
             .all()
         )
-        built = [_scope(db, q.scope_label, v.version_no, v.id, p.scope_total) for p, q, v in pinned]
+        built = [_scope(q.scope_label, v.version_no, v.id, p.scope_total) for p, q, v in pinned]
         ref = quotation_no(doc.document_no, issue.issue_no, issue.revision_label)
         return {
             "ref": ref, "document_no": doc.document_no, "revision": issue.revision_label or f"R{issue.issue_no}",
@@ -120,6 +134,7 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
                 if ref.lower() in lowered:
                     matched.add(ref.lower())
                     out.append(issued_doc(doc, issue))
+    _fill(db, [sc for d in out for sc in d["scopes"]])
     not_found = [r for r in wanted if r.lower() not in matched]
     data: dict[str, Any] = {"documents": out, "not_found": not_found}
     return data, _fit(data, cap)
@@ -127,13 +142,21 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
 
 def _fit(data: dict, cap: int) -> int:
     """Cut lines, from the scope with most, until the JSON is under `cap` characters; each cut scope says how many
-    it left out. Returns the count cut."""
+    it left out. With no lines left, whole documents go (`documents_not_shown`). Returns the count cut. What is
+    left (an empty `documents` and at most ten `not_found` refs) is far under any cap."""
     cut = 0
     scope_rows = [s for d in data["documents"] for s in d["scopes"]]
     while len(json.dumps(data, default=str)) > cap:
         biggest = max(scope_rows, key=lambda s: len(s["lines"]), default=None)
         if biggest is None or not biggest["lines"]:
-            break
+            # No lines left to cut: whole documents go, last first, and are counted.
+            if not data["documents"]:
+                break
+            data["documents"].pop()
+            data["documents_not_shown"] = data.get("documents_not_shown", 0) + 1
+            cut += 1
+            scope_rows = [s for d in data["documents"] for s in d["scopes"]]
+            continue
         drop = max(1, len(biggest["lines"]) // 4)
         del biggest["lines"][-drop:]
         biggest["lines_not_shown"] = biggest.get("lines_not_shown", 0) + drop

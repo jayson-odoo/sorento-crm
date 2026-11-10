@@ -1012,9 +1012,10 @@ class _AgentUnavailable(Exception):
 class _ProviderFailed(Exception):
     """A model call failed. The detail is logged, never shown; `error_class` is the original exception's class name."""
 
-    def __init__(self, error_class: str = "") -> None:
+    def __init__(self, error_class: str = "", timed_out: bool = False) -> None:
         super().__init__(error_class)
         self.error_class = error_class
+        self.timed_out = timed_out
 
 
 #: The reply of a turn that ended with nothing to say (a customer never gets it: the inbox swaps it).
@@ -1662,7 +1663,11 @@ def _run(
             )
         except Exception as exc:  # noqa: BLE001 - detail is logged, the user sees a fixed reason
             logger.warning("agent: model call failed (%s)", kind, exc_info=True)
-            raise _ProviderFailed(type(exc).__name__) from exc
+            from app.services.chatbot.llm_call import TimedOut
+            from app.services.llm_provider import is_timeout
+
+            trace.add("agent_provider_failed", {"error_class": type(exc).__name__})
+            raise _ProviderFailed(type(exc).__name__, is_timeout(exc) or isinstance(exc, TimedOut)) from exc
         ms = int((clock() - started) * 1000)
         run.calls += 1
         run.prompt_tokens += int(result.prompt_tokens or 0)
@@ -1836,15 +1841,14 @@ def _run(
                 res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             except (_ProviderFailed, TimeoutError) as exc:
                 # Reads only: a confirmed change or the hand-off is not something the reply can say it "read".
+                # Staff panel turns only: a dealer's reply is never a list of what was read.
                 read = [
                     e["name"] for e in ledger.values()
                     if e.get("status") == "ok" and (e["name"] in REGISTRY or e["name"] in writes.USER_READS)
-                ]
+                ] if staff_principal.current() is not None else []
                 if not read:
                     raise
-                error_class = getattr(exc, "error_class", "") or type(exc).__name__
-                trace.add("agent_provider_failed", {"error_class": error_class})
-                timed_out = isinstance(exc, TimeoutError) or error_class in ("TimedOut", "TimeoutError")
+                timed_out = isinstance(exc, TimeoutError) or getattr(exc, "timed_out", False)
                 reason = "the model did not respond in time" if timed_out else "the model provider returned an error"
                 labels = ", ".join(dict.fromkeys(TOOL_LABELS.get(n, "another lookup") for n in read))
                 return f"I could not finish the answer because {reason}. What I read: {labels}.", True
