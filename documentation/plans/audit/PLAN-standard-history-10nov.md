@@ -1,8 +1,19 @@
 # PLAN: one standard History view for every audited record (STANDARD-HISTORY)
 
-Status: Part A built on PR #2298 (small fix track: FE only, no migration, no RBAC change). Part B
-scout is filed as a `crew-ask` card on PR #2298; Part B is not built until the owner approves the
-proposal and the mock.
+Status: Part A built on PR #2298 (small fix track: FE only, no migration, no RBAC change), ON HOLD
+by the owner (10 Nov ~12:40: deciding whether to keep the Unconfirm guard and whether Confirm gets
+the same guard). Part B: scout done, owner answered Q1 to Q4, mock v1 committed
+(`mockups/standard-history-oi-10nov.html`) and filed as `crew-ask`; wave 1 not started until the
+owner approves the mock.
+
+## Owner rulings (10 Nov 2026 ~12:40 MYT, via crew)
+
+- Q1: History is a TAB on each record's detail page, "1 tab just like SO or PO", the same
+  component as the PO detail History tab. Not a gear drawer. Where a record has no tabs, the mock
+  says so and proposes the smallest fit.
+- Q2: anyone who can open the record sees its history; IP and raw data stay admin-only.
+- Q3: yes, the OI Confirm / Unconfirm audit writes also stamp the OI as root.
+- Q4: the real OI-2611-0019 story, person names masked.
 
 Plan created: 2026-11-10. Domain: audit. UAC: `standard-history-10nov-acceptance-criteria.md`.
 
