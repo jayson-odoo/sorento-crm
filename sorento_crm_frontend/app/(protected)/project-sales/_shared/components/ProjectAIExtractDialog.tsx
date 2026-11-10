@@ -15,6 +15,8 @@ import type { PartyType } from '../types/project.types';
 /** What the form fills in once the review is confirmed (new parties already created). */
 export type ProjectExtractFill = {
   title?: string;
+  /** The short project name (PROJECT-NAME); lands in the page 2 field. */
+  name?: string;
   developer?: { id: string; name: string };
   architect?: { id: string; name: string };
   main_contractor?: { id: string; name: string };
@@ -30,6 +32,7 @@ const FIELD_DEFS: { name: ProjectExtractFieldKey; label: string }[] = [
   { name: 'project_type', label: 'Project type' },
   { name: 'state', label: 'State' },
   { name: 'mukim', label: 'Area' },
+  { name: 'name', label: 'Project name' },
   { name: 'title', label: 'Project title' },
 ];
 
@@ -117,6 +120,7 @@ export function ProjectAIExtractDialog({
     }
     if (listed('state')) fill.state = proposalText(proposals.state);
     if (listed('mukim')) fill.mukim = proposalText(proposals.mukim);
+    if (listed('name')) fill.name = proposalText(proposals.name);
     if (listed('title')) fill.title = proposalText(proposals.title);
     onFill(fill);
   }

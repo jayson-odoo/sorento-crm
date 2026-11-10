@@ -818,6 +818,8 @@ def serialize_tasks(
                 "project_id": task.project_id,
                 "project_code": getattr(project, "project_code", None),
                 "project_title": getattr(project, "title", None),
+                # The short name the task row shows; null shows the title (PROJECT-NAME).
+                "project_name": getattr(project, "name", None),
                 "name": task.name,
                 "description": task.description,
                 "task_phase": task.task_phase,

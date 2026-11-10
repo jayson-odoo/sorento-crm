@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project name mock</title>
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;gap:4px;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0}
+.crumb{font-size:12px;color:var(--muted)}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ta{min-height:56px;align-items:flex-start}
+.req{color:var(--destructive)}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}
+.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+
+/* the paper form: a bordered 2-column label:value sheet */
+.paper{max-width:860px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:#fff;padding:22px 26px 26px}
+.paper .ttl{text-align:center;font-size:20px;font-weight:700;text-decoration:underline;text-underline-offset:4px;letter-spacing:.02em;margin:4px 0 18px}
+.paper .sec{text-align:center;font-size:16px;font-weight:700;letter-spacing:.02em;margin:22px 0 10px}
+table.sheet{border-collapse:collapse;width:100%;table-layout:fixed}
+table.sheet th{width:200px;text-align:right;font-weight:700;font-size:13px;letter-spacing:.02em;padding:8px 12px;border:1px solid #d4d4d8;background:#fafafa;vertical-align:top}
+table.sheet td{padding:6px 10px;border:1px solid #d4d4d8;vertical-align:top;font-size:14px}
+table.sheet td .inp{border-color:transparent;padding:4px 2px;min-height:28px}
+table.sheet td.edit .inp{border-color:var(--border);padding:5px 8px}
+table.sheet tr.app th{color:var(--muted);font-weight:600}
+.prodhdr{display:flex;justify-content:space-between;align-items:center;background:var(--muted-bg);border:1px solid #d4d4d8;border-bottom:none;padding:6px 10px;font-weight:600;font-size:13px;margin-top:14px}
+.img{display:flex;gap:10px;flex-wrap:wrap}
+.ph-img{width:150px;height:110px;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 8px,#f4f4f5 8px,#f4f4f5 16px)}
+.ph-add{width:150px;height:110px;border:1px dashed var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;text-align:center}
+.ro{color:var(--muted)}
+.opened{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px;font-size:13px}
+.audit{max-width:860px;margin:16px auto 0;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 18px}
+
+/* phone */
+.w375 .content{padding:14px 12px}
+.w375 .paper{padding:14px 10px;border-radius:10px}
+.w375 table.sheet th,.w375 table.sheet td{display:block;width:auto;border:none;text-align:left;padding:2px 2px}
+.w375 table.sheet tr{display:block;border-bottom:1px solid #e4e4e7;padding:6px 0}
+.w375 table.sheet th{background:none;font-size:11px;color:var(--muted)}
+.w375 .ph-img,.w375 .ph-add{width:100px;height:80px}
+
+/* excel preview */
+.xl{background:#fff;border:1px solid #c7c7c7;width:640px;font:12px Calibri,Arial,sans-serif;margin:0 auto}
+.xl .bar{background:#217346;color:#fff;padding:6px 10px;font:12px var(--font)}
+.xl table{border-collapse:collapse;width:100%}
+.xl td{border:1px solid #9ca3af;padding:5px 8px;vertical-align:top}
+.xl td.l{width:150px;text-align:right;font-weight:700}
+.xl td.h{text-align:center;font-weight:700;font-size:16px}
+.dec{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0}
+.dec table{border-collapse:collapse;width:100%;font-size:13px}
+.dec th,.dec td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.dec th{color:var(--muted);font-weight:500}
+.warn{border:1px solid #fde68a;background:#fffbeb;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin:6px 0}
+.pill.red{background:#fee2e2;color:#991b1b}.pill.amber{background:#fef3c7;color:#92400e}
+table.grid{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+table.grid th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);padding:8px}
+table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.portalbar{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;font-weight:700}
+.fld{margin-bottom:12px}.fld label{display:block;font-size:13px;font-weight:500;margin-bottom:4px}
+.form1{max-width:720px}
+.sect{border:1px solid var(--border);border-radius:10px;margin-bottom:12px}
+.sect .sh{padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px;display:flex;justify-content:space-between}
+.sect .sb{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sect .sb .full{grid-column:1/3}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:-6px 0 12px}
+.meta b{color:var(--fg);font-weight:500}
+.dup{font-size:13px;margin-bottom:12px}
+</style>
+<style>
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+.hdr h2{font-size:20px;font-weight:600;margin:4px 0 0}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.clamp3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:14px;font-size:13px}
+.tabs span{padding:8px 0}.tabs .on{border-bottom:2px solid var(--primary);color:var(--primary);font-weight:600}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{border:1px solid var(--border);border-radius:10px;background:#fff}
+.card .ch{padding:12px 16px 4px;font-weight:600;font-size:13px}
+.card dl{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;padding:8px 16px 16px;margin:0}
+.card dt{font-size:12px;color:var(--muted)}.card dd{margin:0;font-size:14px;word-break:break-word}
+.card .wide{grid-column:1/3}
+.more{color:var(--primary);font-size:12px}
+.steps{display:flex;gap:10px;border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:13px}
+.steps .s{display:flex;align-items:center;gap:6px}.steps .n{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);font-size:12px}
+.steps .s.on .n{background:var(--primary);color:#fff;border-color:var(--primary)}.steps .s.on{font-weight:600}
+.box{border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;background:#fff}
+.fs{border:1px solid var(--border);border-radius:10px;margin-bottom:12px;background:#fff}
+.fs .fh{display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px}
+.fs .fh .sm{font-weight:400;color:var(--muted);font-size:13px;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fs .fb{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}.fs .fb .full{grid-column:1/3}
+.lbl{font-size:13px;font-weight:500;margin-bottom:4px;display:block}
+.cnt{float:right;color:var(--muted);font-size:12px;font-weight:400}
+.dlg{width:560px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 10px 30px rgba(0,0,0,.12);margin:0 auto}
+.dlg .dh{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:600}
+.dlg table{width:100%;border-collapse:collapse;font-size:13px}
+.dlg td,.dlg th{padding:8px 18px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.dlg th{color:var(--muted);font-weight:500}
+.dlg .df{padding:12px 18px;display:flex;justify-content:flex-end;gap:8px}
+.new{background:#fef9c3;border-radius:4px}
+.w375 .cards{grid-template-columns:1fr}.w375 .card dl{grid-template-columns:1fr}.w375 .card .wide{grid-column:auto}
+.w375 .hdr{flex-direction:column;align-items:flex-start}
+</style>
+</head>
+<body><div class="doc"><h1>Project name (PROJECT-NAME mock v1, 10 Nov)</h1>
+<p class="sub">Static. Existing components only; each callout names the component and repo path (FE = sorento_crm_frontend/). Yellow = what this lane changes. PPF2611003's title is from the owner's screenshot; developer, customer and people are invented. Card: documentation/plans/projects/CARD-project-name-10nov.md (Q1-Q5 drawn with the recommended answers).</p>
+<h2 class="ft">A. Project PPF2611003, Overview (1280)</h2><div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Leads</div><div class="it">Parties</div><div class="it">Sample requests</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects / PPF2611003</div><div class="hdr"><div style="min-width:0"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="muted xs">PPF2611003</span><span class="pill blue">Registered</span></div>
+<h2 class="rel" style="padding-right:18px"><span class="co pin" style="right:0">1</span><span class="new">54 Teres 2 Tingkat, Permatang Badak Perdana</span></h2></div>
+<div style="display:flex;gap:6px"><span class="btn out sm">&lsaquo;</span><span class="btn out sm">&rsaquo;</span><span class="btn out sm">&#9881;</span><span class="btn sm">Move to Spec In</span></div></div>
+<div class="tabs"><span class="on">Overview</span><span>Tasks</span><span>Quotations</span><span>Documents</span><span>History</span></div>
+<div class="cards"><div class="card rel"><span class="co pin">2</span><div class="ch">The development</div><dl>
+<div class="wide"><dt>Project title</dt><dd><span class="new clamp3">CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT</span><span class="more">Show all</span></dd></div>
+<div><dt>Developer</dt><dd>Pembangunan Contoh Sdn Bhd</dd></div><div><dt>Registered company / SPV</dt><dd class="muted">-</dd></div>
+<div><dt>Location</dt><dd>Permatang Badak, Kuantan</dd></div><div><dt>Address</dt><dd class="muted">-</dd></div>
+<div><dt>State</dt><dd>Pahang</dd></div><div><dt>Area</dt><dd>Kuala Kuantan</dd></div>
+<div><dt>Project type</dt><dd>Landed residential</dd></div><div><dt>To-do list template</dt><dd>Landed standard</dd></div>
+<div><dt>Reference</dt><dd>PS26-0412</dd></div></dl></div>
+<div class="card"><div class="ch">Customer</div><dl><div><dt>Name</dt><dd>Contoh Trading Sdn Bhd</dd></div><div><dt>Phone</dt><dd>012-000 0000</dd></div><div><dt>Attn</dt><dd class="muted">-</dd></div></dl></div>
+</div></div></div></div></div></div><div class="notes"><ol><li><span class="co">1</span><div><b>Header shows the name</b>The h2 that held the 2-line clamped title now shows the project name; with no name it falls back to the title, clamped as today.<span class="ref">FE/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:334 (TruncatedTextCell, components/common/TruncatedTextCell.tsx); pills: ProjectStatusPill; actions: components/common/DetailActions.tsx</span></div></li><li><span class="co">2</span><div><b>Full title in "The development"</b>First fact, spans both columns, clamped to 3 lines with "Show all" (the existing full-on-demand dialog).<span class="ref">ProjectDetailClient.tsx:534 Section + Fact (:859, :874); TruncatedTextCell lines=3 dialogTitle="Project title"</span></div></li></ol></div></div><h2 class="ft">B. Same at 375</h2><div class="layout"><div class="scroll"><div class="frame w375"><div class="shell"><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects / PPF2611003</div><div class="hdr"><div style="min-width:0"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="muted xs">PPF2611003</span><span class="pill blue">Registered</span></div>
+<h2 class="rel" style="padding-right:18px"><span class="co pin" style="right:0">1</span><span class="new">54 Teres 2 Tingkat, Permatang Badak Perdana</span></h2></div>
+<div style="display:flex;gap:6px"><span class="btn out sm">&lsaquo;</span><span class="btn out sm">&rsaquo;</span><span class="btn out sm">&#9881;</span><span class="btn sm">Move to Spec In</span></div></div>
+<div class="tabs"><span class="on">Overview</span><span>Tasks</span><span>Quotations</span><span>Documents</span><span>History</span></div>
+<div class="cards"><div class="card rel"><span class="co pin">2</span><div class="ch">The development</div><dl>
+<div class="wide"><dt>Project title</dt><dd><span class="new clamp3">CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT</span><span class="more">Show all</span></dd></div>
+<div><dt>Developer</dt><dd>Pembangunan Contoh Sdn Bhd</dd></div><div><dt>Registered company / SPV</dt><dd class="muted">-</dd></div>
+<div><dt>Location</dt><dd>Permatang Badak, Kuantan</dd></div><div><dt>Address</dt><dd class="muted">-</dd></div>
+<div><dt>State</dt><dd>Pahang</dd></div><div><dt>Area</dt><dd>Kuala Kuantan</dd></div>
+<div><dt>Project type</dt><dd>Landed residential</dd></div><div><dt>To-do list template</dt><dd>Landed standard</dd></div>
+<div><dt>Reference</dt><dd>PS26-0412</dd></div></dl></div>
+<div class="card"><div class="ch">Customer</div><dl><div><dt>Name</dt><dd>Contoh Trading Sdn Bhd</dd></div><div><dt>Phone</dt><dd>012-000 0000</dd></div><div><dt>Attn</dt><dd class="muted">-</dd></div></dl></div>
+</div></div></div></div></div></div><div class="notes"><ol><li><span class="co">1</span><div><b>Phone</b>Header stacks (flex-col until sm, as today); the 80-char cap means the name wraps to at most 2 lines; the title clamps to 3 inside the card.<span class="ref">ProjectDetailClient.tsx:295</span></div></li></ol></div></div><h2 class="ft">C. Register, page 1 Check (1280): unchanged</h2><div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Leads</div><div class="it">Parties</div><div class="it">Sample requests</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects / Register a project</div><div class="phdr"><h1>Register a project</h1></div><div class="steps"><span class="s on"><span class="n">1</span>Check</span><span class="muted">&rsaquo;</span><span class="s "><span class="n">2</span>Details</span></div><div class="box rel"><span class="co pin">3</span>
+<label class="lbl">Project title <span class="req">*</span></label><div class="inp ta" style="min-height:80px">CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT</div>
+<div style="margin:8px 0 14px"><span class="btn out sm rel"><span class="co pin">4</span>&#10022; AI extract</span></div>
+<label class="lbl">Developer</label><div class="inp">Pembangunan Contoh Sdn Bhd <span class="muted">&#10005; &#9662;</span></div>
+<div class="banner ok" style="margin-top:12px">No clash: no project with this title for this developer.</div></div>
+<div style="display:flex;justify-content:space-between"><span class="btn out">Cancel</span><span><span class="btn out">Back</span> <span class="btn">Next</span></span></div></div></div></div></div></div><div class="notes"><ol><li><span class="co">3</span><div><b>Page 1 stays lean</b>Project title (textarea, first field) + Developer + Check result. Nothing added by this lane: it is already this shape on main.<span class="ref">FE/app/(protected)/project-sales/_shared/components/ProjectForm.tsx:640-689; components/common/WizardSteps.tsx; components/ui/textarea; components/common/SearchableSelect</span></div></li><li><span class="co">4</span><div><b>AI extract, same button</b>Takes the title text and photos. Now also proposes the project name (see F).<span class="ref">ProjectForm.tsx:648-655 -> _shared/components/ProjectAIExtractDialog.tsx</span></div></li></ol></div></div><h2 class="ft">D. Register, page 2 Details (1280)</h2><div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Leads</div><div class="it">Parties</div><div class="it">Sample requests</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects / Register a project</div><div class="phdr"><h1>Register a project</h1></div><div class="steps"><span class="s "><span class="n">1</span>Check</span><span class="muted">&rsaquo;</span><span class="s on"><span class="n">2</span>Details</span></div>
+<div class="fs rel"><span class="co pin">5</span><div class="fh">Who and what <span class="sm">54 Teres 2 Tingkat, Permatang Badak Perdana</span></div><div class="fb">
+<div class="full"><label class="lbl">Project name <span class="cnt">43 / 80</span></label><div class="inp new">54 Teres 2 Tingkat, Permatang Badak Perdana</div><div class="xs muted" style="margin-top:4px">Optional</div></div>
+<div><label class="lbl">Project type</label><div class="inp">Landed residential <span class="muted">&#10005; &#9662;</span></div></div>
+<div><label class="lbl">To-do list template</label><div class="inp">Landed standard <span class="muted">&#10005; &#9662;</span></div></div></div></div>
+<div class="fs"><div class="fh">Details <span class="sm">unchanged</span></div></div>
+<div class="fs"><div class="fh">Parties and contacts <span class="sm">unchanged (lane PROJECT-PARTY-ROLES)</span></div></div>
+<div class="fs"><div class="fh">Lead source, customer and salesperson <span class="sm">unchanged</span></div></div>
+<div style="display:flex;justify-content:space-between"><span class="btn out">Cancel</span><span><span class="btn out">Back</span> <span class="btn">Register</span></span></div></div></div></div></div></div><div class="notes"><ol><li><span class="co">5</span><div><b>Project name, first field of "Who and what"</b>Plain input, optional, max 80 with a counter; prefilled by the AI extract, editable by hand. Section summary shows the name. Other sections untouched (Parties belongs to lane PROJECT-PARTY-ROLES).<span class="ref">ProjectForm.tsx:693-774 FormSection (components/common/FormSection.tsx); components/ui/input</span></div></li></ol></div></div><h2 class="ft">E. AI extract review</h2><div class="layout"><div class="dlg rel"><span class="co pin">6</span><div class="dh">AI extract</div><table><tr><th>Field</th><th>Proposed</th><th></th></tr>
+<tr><td>Developer</td><td>Pembangunan Contoh Sdn Bhd</td><td><span class="pill ok">Match</span></td></tr>
+<tr><td>Project type</td><td>Landed residential</td><td><span class="pill ok">Match</span></td></tr>
+<tr><td>State</td><td>Pahang</td><td></td></tr><tr><td>Area</td><td>Kuala Kuantan</td><td></td></tr>
+<tr class="new"><td><b>Project name</b></td><td>54 Teres 2 Tingkat, Permatang Badak Perdana</td><td></td></tr>
+<tr><td>Project title</td><td><span class="clamp2">CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT</span></td><td></td></tr></table>
+<div class="df"><span class="btn out">Cancel</span><span class="btn">Apply</span></div></div><div class="notes"><ol><li><span class="co">6</span><div><b>One new row: Project name</b>Same review table and Apply as today. Apply fills the page 2 field unless a name was already typed (same rule as the title). No new extractor: one field added to the existing schema with an instruction (card, Examples).<span class="ref">components/common/ai-extract/AIExtractDialog.tsx; ProjectAIExtractDialog.tsx:26-34 FIELD_DEFS; BE/app/services/ai_extract/form_schema_registry.py:403; BE/app/services/project_ai_extract_service.py:124</span></div></li></ol></div></div><h2 class="ft">F. Edit project (1280)</h2><div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Leads</div><div class="it">Parties</div><div class="it">Sample requests</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects / PPF2611003 / Edit</div><div class="phdr"><h1>Edit project</h1></div><div class="fs rel"><span class="co pin">7</span><div class="fh">Who and what <span class="sm">54 Teres 2 Tingkat, Permatang Badak Perdana</span></div><div class="fb">
+<div class="full"><label class="lbl">Project title <span class="req">*</span></label><div class="inp ta" style="min-height:80px">CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT</div>
+<div style="margin-top:8px"><span class="btn out sm">Check</span> <span class="btn out sm">&#10022; AI extract</span></div></div>
+<div class="full"><label class="lbl">Project name <span class="cnt">43 / 80</span></label><div class="inp new">54 Teres 2 Tingkat, Permatang Badak Perdana</div></div>
+<div><label class="lbl">Developer</label><div class="inp">Pembangunan Contoh Sdn Bhd <span class="muted">&#10005; &#9662;</span></div></div>
+<div><label class="lbl">Project type</label><div class="inp">Landed residential <span class="muted">&#10005; &#9662;</span></div></div></div></div></div></div></div></div></div><div class="notes"><ol><li><span class="co">7</span><div><b>Edit = one page</b>Project title stays the first field (28 Oct); Project name directly under it; developer and type as today.<span class="ref">ProjectForm.tsx:700-766</span></div></li></ol></div></div><h2 class="ft">G. Projects list (1280)</h2><div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Leads</div><div class="it">Parties</div><div class="it">Sample requests</div></div><div class="main"><div class="topbar"></div><div class="content"><div class="crumb">Projects</div><div class="phdr"><h1>Projects</h1><span class="btn">Register a project</span></div>
+<div class="inp ph rel" style="max-width:360px;margin-bottom:10px"><span class="co pin">8</span>Search name, title or code</div>
+<table class="grid"><colgroup><col style="width:120px"><col style="width:300px"><col style="width:200px"><col style="width:120px"><col style="width:140px"></colgroup>
+<tr><th>Code</th><th>Project</th><th>Developer</th><th>Stage</th><th>Salesperson</th></tr>
+<tr><td>PPF2611003</td><td class="new" title="CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, 161269 &amp; 161270, JALAN PERMATANG BADAK PERDANA, MUKIM KUALA KUANTAN, DAERAH KUANTAN, PAHANG DARUL MAKMUR. - PLOT 1: 18 UNIT RUMAH TERES DUA TINGKAT, PLOT 2: 36 UNIT RUMAH TERES DUA TINGKAT">54 Teres 2 Tingkat, Permatang Badak Perdana</td><td>Pembangunan Contoh Sdn Bhd</td><td><span class="pill blue">Registered</span></td><td>Sales A</td></tr>
+<tr><td>PPF2611002</td><td title="CADANGAN PEMBANGUNAN ... (no name yet)">CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI 22 TINGKAT DI ATAS LOT ...</td><td>Contoh Holdings Bhd</td><td><span class="pill">Identified</span></td><td>Sales B</td></tr>
+<tr><td>PPF2610017</td><td>Residensi Contoh Phase 2</td><td>Contoh Land Sdn Bhd</td><td><span class="pill ok">PO received</span></td><td>Sales A</td></tr></table>
+<p class="xs muted">Row 2 has no name yet: the title stands in, one line, full text on hover (rule 7).</p></div></div></div></div></div><div class="notes"><ol><li><span class="co">8</span><div><b>Project column = name, search covers name too</b>Column shows the name (title as tooltip); search matches name, title and code. Same label in the pickers ("code - name").<span class="ref">FE/app/(protected)/project-sales/_shared/components/ProjectsGrid.tsx:115-125, :234; BE/app/services/project_service.py:1139-1145; _shared/services/projectService.ts:165; complaint-management/complaints/services/complaintService.ts:506</span></div></li></ol></div></div></div></body></html>

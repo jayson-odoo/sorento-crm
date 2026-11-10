@@ -476,11 +476,14 @@ class AIExtractService:
         *,
         user_id: str | None = None,
         portal_contact_id: str | None = None,
+        field_subset: list[str] | None = None,
     ) -> ExtractResult:
+        """``field_subset`` narrows the schema so the model answers only those fields (the
+        project-name backfill asks for ``["name"]`` alone)."""
         return self._run_extract(
             form_key,
             files,
-            field_subset=None,
+            field_subset=field_subset,
             user_id=user_id,
             portal_contact_id=portal_contact_id,
         )

@@ -182,7 +182,8 @@ describe('J3 an owner\'s draft page', () => {
     renderDetail();
     expect(within(header()).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Submit for approval' })).toBeInTheDocument();
-    expect(screen.getByText('Draf Menara CONTOH')).toBeInTheDocument();
+    // PROJECT-NAME: no name yet, so the title heads the page and also opens The development.
+    expect(screen.getAllByText('Draf Menara CONTOH').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('SP Setia CONTOH')).toBeInTheDocument();
   });
 

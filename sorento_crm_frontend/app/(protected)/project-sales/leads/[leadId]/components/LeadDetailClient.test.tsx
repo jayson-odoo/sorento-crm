@@ -857,3 +857,19 @@ describe('LeadDetailClient header actions', () => {
     expect(screen.queryByRole('button', { name: /Reassign/ })).not.toBeInTheDocument();
   });
 });
+
+describe('PROJECT-NAME the lead header (Q5 b)', () => {
+  it('shows the lead name, with the full title kept as a Title fact', async () => {
+    getLead.mockResolvedValue(lead({ name: 'Taman Contoh Lead' }));
+    renderDetail();
+    expect(await screen.findByRole('heading', { name: 'Taman Contoh Lead' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Tower behind the showroom' })).toBeNull();
+    expect(screen.getAllByText('Tower behind the showroom').length).toBeGreaterThan(0);
+  });
+
+  it('falls back to the title when the lead has no name', async () => {
+    getLead.mockResolvedValue(lead({ name: null }));
+    renderDetail();
+    expect(await screen.findByRole('heading', { name: 'Tower behind the showroom' })).toBeInTheDocument();
+  });
+});

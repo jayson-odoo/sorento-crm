@@ -11,6 +11,7 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import { projectDisplayName } from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 
 export type ComplaintsListParams = DataGridApiFetchParams & {
@@ -499,11 +500,12 @@ export async function searchProjectsForLink(
       id: string;
       project_code: string | null;
       title: string;
+      name?: string | null;
       developer_name?: string | null;
       status_label?: string | null;
     }) => ({
       value: row.id,
-      label: `${projectCodeLabel(row)} - ${row.title}`,
+      label: `${projectCodeLabel(row)} - ${projectDisplayName(row)}`,
       description: [row.developer_name, row.status_label].filter(Boolean).join(' - ') || undefined,
     }),
   );
