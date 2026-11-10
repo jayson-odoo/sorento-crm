@@ -1,6 +1,19 @@
-# CARD: PROJECT-NAME v1 (10 Nov 2026)
+# CARD: PROJECT-NAME v1.1 (10 Nov 2026)
 
-Status: waiting on the owner (5 questions below, each with a recommendation). Track: normal (additive migration).
+**v1.1: owner answers 10 Nov ~15:10 MYT: Q1 (a), Q2 (a), Q3 (a), Q4 (a), Q5 (b): leads and the dealer
+portal registration form get the short name too (the portal extract keeps the value). Mock v1 approved
+("ok", Lavish).** What changed from v1 while building:
+
+- Leads: `projects.leads.name` (VARCHAR 80, optional), on the lead form under the title, searched, shown in the
+  lead header; Qualify carries it onto the project unless the confirm step sends one.
+- Portal: the registration form has a "Project name" field after the title; the portal save stores it on the
+  project row (like the title), max 80 (422 "Project name is too long"); the approver may set it on Approve.
+- The duplicate / already-registered / possible-duplicate links on the project page keep code + TITLE: they are
+  the evidence of a title clash (Q4), so they show what was compared.
+- Backfill: `sorento_crm_backend/scripts/backfill_project_names.py` (coded projects only; drafts and waiting
+  registrations are named by their approver).
+
+Status: building (answers in, mock approved). Track: normal (additive migration).
 Plan: `PLAN-project-name-10nov.md`. Mock: `mockups/project-name-10nov.html` (v1).
 
 Owner ruling 10 Nov ~13:30 MYT: "we need like a project name field so it doesn't bloat the title ... the header put a

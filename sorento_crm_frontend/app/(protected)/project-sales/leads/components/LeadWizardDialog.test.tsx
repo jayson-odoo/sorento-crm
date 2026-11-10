@@ -279,6 +279,34 @@ describe('LeadWizardDialog', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
+  it('sends the optional short project name, or null when left blank (PROJECT-NAME)', async () => {
+    renderWizard();
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
+      target: { value: 'Cadangan Pembangunan Menara Setia' },
+    });
+    const name = screen.getByLabelText('Project name') as HTMLInputElement;
+    expect(name.maxLength).toBe(80);
+    fireEvent.change(name, { target: { value: '  Setia Tower  ' } });
+    next();
+    await screen.findByLabelText('Their reference');
+    next();
+    fireEvent.click(await screen.findByRole('button', { name: 'Create lead' }));
+
+    await waitFor(() => expect(createLead).toHaveBeenCalledTimes(1));
+    expect(createLead).toHaveBeenCalledWith(expect.objectContaining({ name: 'Setia Tower' }));
+  });
+
+  it('sends a null name when the field is blank (PROJECT-NAME)', async () => {
+    renderWizard();
+    await walkToConfirm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Create lead' }));
+
+    await waitFor(() => expect(createLead).toHaveBeenCalledTimes(1));
+    expect(createLead).toHaveBeenCalledWith(expect.objectContaining({ name: null }));
+  });
+
   it('assigns after creating when a salesperson is picked', async () => {
     renderWizard();
 

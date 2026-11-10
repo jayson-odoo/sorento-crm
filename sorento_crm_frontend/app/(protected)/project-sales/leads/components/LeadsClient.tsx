@@ -134,7 +134,7 @@ export function LeadsClient() {
       value={search}
       onChange={setSearch}
       isSettling={isSearchInFlight(debouncedSettling, leads.isFetching, debounced)}
-      placeholder="Search title or lead code…"
+      placeholder="Search name, title or lead code…"
       aria-label="Search leads"
       className="w-full max-w-xs"
     />

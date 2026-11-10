@@ -490,8 +490,12 @@ describe('PROJECT-NAME edit mode', () => {
     expect(name.compareDocumentPosition(developer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('the section summary shows the name, not the title', () => {
+  it('the folded section summary shows the name, not the title', () => {
     renderForm({ mode: 'edit', project: editProject({ name: 'Menara Ringkas' }) });
-    expect(screen.getByRole('button', { name: /^Who and what/ })).toHaveTextContent('Menara Ringkas');
+    const header = screen.getByRole('button', { name: /^Who and what/ });
+    if (header.getAttribute('aria-expanded') === 'true') fireEvent.click(header);
+    const folded = screen.getByRole('button', { name: /^Who and what/ });
+    expect(folded).toHaveTextContent('Menara Ringkas');
+    expect(folded).not.toHaveTextContent('Menara Lama CONTOH');
   });
 });
