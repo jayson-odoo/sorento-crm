@@ -105,7 +105,9 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # customer). The FIRST is mirrored into ``debtor_code`` / ``debtor_name`` by
     # ``_mirror_first_customer`` so list, sort, search, SLA and revision labels keep reading the
     # old pair. NULL on a request saved before this column: readers fall back to the pair.
-    customers = Column(JSONB, nullable=True)
+    # none_as_null: a None is SQL NULL, never a JSON null that the customer search's
+    # jsonb_array_elements would refuse (review, re-check round).
+    customers = Column(JSONB(none_as_null=True), nullable=True)
     notes = Column(Text, nullable=True)
     # Header-level price mode (D5, r7): 'list' | 'selling'. Replaces the old
     # per-line `show_promo_price` switch as the thing the salesperson picks;

@@ -201,3 +201,16 @@ def test_revision_history_names_the_customers_once(db):
     ]
     shown = {f["field"]: f["display"] for f in service._snapshot_fields(adapter, current)}
     assert shown["customers"] == f"{_B['name']}, {_A['name']}"
+
+
+def test_an_explicit_null_customers_keeps_list_search_working(client):
+    """Re-review: `customers: null` must be stored as SQL NULL, not a JSON null that
+    `jsonb_array_elements` refuses, or every search on the list 500s."""
+    c, db, _ = client
+    created = _create_draft(c, _seed_product(db), customers=[_A])
+
+    res = c.put(f"{_BASE}/{created['id']}", json={"customers": None})
+    assert res.status_code == 200, res.text
+
+    listed = c.get(_BASE, params={"q": "ZZT"})
+    assert listed.status_code == 200, listed.text
