@@ -409,8 +409,9 @@ export function QuotationDocumentHeader({
             </EditField>
           </div>
         ) : null}
-        {/* No Quotation Purpose: removed from the form and from every printout (owner, 10 Nov
-            2026). The column stays, so a stored value is kept but no longer shown or sent. */}
+        {/* No Quotation Purpose: removed from the form and from every new revision (owner, 10 Nov
+            2026). The column stays, so a stored value is kept but no longer shown or sent; a
+            revision that already went out still reprints it as sent. */}
         {document.prepared_by ?? preparedBy ? (
           <div className="min-w-0 md:col-span-2">
             <Field label="Prepared By" wide value={document.prepared_by ?? preparedBy} />

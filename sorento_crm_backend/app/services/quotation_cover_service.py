@@ -430,7 +430,7 @@ def cover_rows(
     project: Optional[Project] = None,
     design: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """The rows of one issue (or of a draft shaped like one) under ``design``."""
+    """The rows of one layout 2 / 3 issue under ``design`` (layout 4 and drafts use sections)."""
     from app.services.project_quotation_document_service import document_noun
 
     return rows_for_design(
