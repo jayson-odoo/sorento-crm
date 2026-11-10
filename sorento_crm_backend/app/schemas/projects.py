@@ -2008,7 +2008,21 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 
-class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
+class ProjectQuotationRecipientPick(BaseModel):
+    """PROJECT-PARTY-ROLES PR 2: the "To" chosen from the parties (owner addition 2, 10 Nov).
+
+    ``recipient_party_id`` picks the party (any of the company's; the project's own come first in
+    the picker) and the header autoloads from it; a party not on the project yet is linked to it in
+    ``recipient_role``. ``attn_contact_ids`` are that party's people the letter is for: their names
+    fill Attn and they join the project's stakeholders. Every typed field wins over the autoload.
+    The party is fixed once revision A is issued (owner Q5 a)."""
+
+    recipient_party_id: Optional[str] = Field(default=None, max_length=64)
+    recipient_role: Optional[str] = Field(default=None, max_length=32)
+    attn_contact_ids: Optional[List[str]] = Field(default=None, max_length=20)
+
+
+class ProjectQuotationDocumentCreate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
     The document arrives already filled in: the reference from the numbering rule, the recipient
@@ -2031,7 +2045,7 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
-class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
+class ProjectQuotationDocumentUpdate(ProjectQuotationRecipientPick, ProjectQuotationDocumentBase):
     """The letterhead, correctable in the edit view.
 
     The recipient block is here and NOT on the base, so it can be corrected but never supplied at
@@ -2191,6 +2205,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     source_label: Optional[str] = None
     quotation_document_id: Optional[str] = None
     recipient_party_type: Optional[str] = None
+    # The role the recipient plays on THIS project (developer, or its party link), for the caption.
+    recipient_role: Optional[str] = None
     current_revision_label: Optional[str] = None
     next_revision_label: Optional[str] = None
 

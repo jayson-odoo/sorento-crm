@@ -57,6 +57,8 @@ vi.mock('../services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    listPartyRoles: async () => ROLES,
+    getPartiesOnProject: async () => [],
     listProjectTypes: (...args: unknown[]) => listProjectTypes(...args),
     listProjectTemplates: (...args: unknown[]) => listProjectTemplates(...args),
     previewClashes: (...args: unknown[]) => previewClashes(...args),
@@ -70,6 +72,18 @@ vi.mock('../services/projectService', async (importOriginal) => {
 });
 
 const listPartyContacts = vi.fn();
+
+// PROJECT-PARTY-ROLES: the party roles are a lookup list (seed order).
+const ROLES = [
+  { value: 'developer', label: 'Developer', is_active: true, allows_many: false },
+  { value: 'architect', label: 'Architect', is_active: true, allows_many: false },
+  { value: 'main_contractor', label: 'Main contractor', is_active: true, allows_many: false },
+  { value: 'trading_house', label: 'Trading house', is_active: true, allows_many: true },
+  { value: 'subcontractor', label: 'Subcontractor', is_active: true, allows_many: true },
+  { value: 'tender_party', label: 'Tender party', is_active: true, allows_many: true },
+  { value: 'consultant', label: 'Consultant', is_active: true, allows_many: false },
+  { value: 'interior_designer', label: 'Interior designer', is_active: true, allows_many: false },
+];
 const lookupKeys: string[] = [];
 
 type Option = { value: string; label: string };
@@ -291,19 +305,18 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
 
 import { ProjectForm } from './ProjectForm';
 
-const PARTIES: Record<string, { id: string; name: string }[]> = {
-  developer: [{ id: 'd1', name: 'SP Setia' }],
-  architect: [{ id: 'a1', name: 'Archico' }],
-  main_contractor: [{ id: 'c1', name: 'BuildIt' }],
-  subcontractor: [
-    { id: 's1', name: 'Sub One' },
-    { id: 's2', name: 'Sub Two' },
-  ],
-  trading_house: [{ id: 't1', name: 'Trade House' }],
-  tender_party: [{ id: 'tp1', name: 'Tender Co' }],
-  consultant: [{ id: 'q1', name: 'QS Firm' }],
-  interior_designer: [{ id: 'i1', name: 'ID Studio' }],
-};
+// Any party can fill any role, so the search sees every party (filtered by the query only).
+const PARTIES: { id: string; name: string; party_type: string }[] = [
+  { id: 'd1', name: 'SP Setia', party_type: 'developer' },
+  { id: 'a1', name: 'Archico', party_type: 'architect' },
+  { id: 'c1', name: 'BuildIt', party_type: 'main_contractor' },
+  { id: 's1', name: 'Sub One', party_type: 'subcontractor' },
+  { id: 's2', name: 'Sub Two', party_type: 'subcontractor' },
+  { id: 't1', name: 'Trade House', party_type: 'trading_house' },
+  { id: 'tp1', name: 'Tender Co', party_type: 'tender_party' },
+  { id: 'q1', name: 'QS Firm', party_type: 'consultant' },
+  { id: 'i1', name: 'ID Studio', party_type: 'interior_designer' },
+];
 
 function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project }) {
   const client = new QueryClient({
@@ -322,8 +335,16 @@ async function pickParty(label: string | RegExp, text: string, optionName: strin
 }
 
 async function pickMany(label: string | RegExp, optionName: string) {
-  fireEvent.change(screen.getByLabelText(label), { target: { value: 'x' } });
+  fireEvent.change(screen.getByLabelText(label), { target: { value: optionName } });
   fireEvent.click(await screen.findByRole('button', { name: `pick ${optionName}` }));
+}
+
+/** Opens the contacts popup of the only picked party, ticks one contact and presses Done. */
+async function tickContact(name: string) {
+  fireEvent.click(await screen.findByRole('button', { name: 'Add contacts' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.click(await within(dialog).findByLabelText(name));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
 }
 
 async function toDetails() {
@@ -377,12 +398,10 @@ beforeEach(() => {
   lookupKeys.length = 0;
   sessionUser = { id: 'u-me', name: 'Me' };
   hasManagePermission.mockReturnValue(true);
-  listParties.mockImplementation(async (params: { party_type?: string }) => ({
-    data: (PARTIES[params.party_type ?? ''] ?? []).map((p) => ({
-      ...p,
-      party_type: params.party_type,
-      is_active: true,
-    })),
+  listParties.mockImplementation(async (params: { query?: string }) => ({
+    data: PARTIES.filter((p) => p.name.toLowerCase().includes((params.query ?? '').toLowerCase())).map(
+      (p) => ({ ...p, is_active: true }),
+    ),
     pagination: { total: 1, page: 1, limit: 20 },
   }));
   listProjectTypes.mockResolvedValue([]);
@@ -405,8 +424,8 @@ describe('PS-REGISTRATION-V3 party links (Q5 b)', () => {
   it('sends several subcontractors and one consultant as party_links', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    await pickMany('Subcontractors', 'Sub One');
-    await pickMany('Subcontractors', 'Sub Two');
+    await pickMany('Subcontractor', 'Sub One');
+    await pickMany('Subcontractor', 'Sub Two');
     await pickParty('Consultant', 'QS', 'QS Firm');
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
@@ -421,9 +440,9 @@ describe('PS-REGISTRATION-V3 party links (Q5 b)', () => {
     renderForm({ mode: 'create' });
     await toDetails();
     for (const label of [
-      'Subcontractors',
-      'Trading houses',
-      'Tender parties',
+      'Subcontractor',
+      'Trading house',
+      'Tender party',
       'Consultant',
       'Interior designer',
     ]) {
@@ -449,7 +468,7 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
     renderForm({ mode: 'create' });
     await toDetails();
     await pickParty('Architect', 'Arch', 'Archico');
-    fireEvent.click(await screen.findByRole('button', { name: 'pick Ar. Example One' }));
+    await tickContact('Ar. Example One');
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
     expect(lastBody()!.contact_ids).toEqual(['k1']);
@@ -458,8 +477,8 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
   it('a party picked through a link gets its own contacts picker', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    await pickMany('Subcontractors', 'Sub One');
-    fireEvent.click(await screen.findByRole('button', { name: 'pick Site Example' }));
+    await pickMany('Subcontractor', 'Sub One');
+    await tickContact('Site Example');
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
     expect(lastBody()!.contact_ids).toEqual(['k2']);
@@ -469,16 +488,27 @@ describe('PS-REGISTRATION-V3 contacts picked per party (rules 5-7)', () => {
     renderForm({ mode: 'create' });
     await toDetails();
     await pickParty('Architect', 'Arch', 'Archico');
-    fireEvent.click(await screen.findByRole('button', { name: 'pick Ar. Example One' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Clear project-architect' }));
+    await tickContact('Ar. Example One');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear project-party-architect' }));
     register();
     await waitFor(() => expect(lastBody()).toBeTruthy());
     expect(lastBody()).not.toHaveProperty('contact_ids');
   });
 
-  it('edit has no contacts pickers (the Stakeholders panel owns them after registration)', () => {
-    renderForm({ mode: 'edit', project: project({ architect_party_id: 'a1', architect_name: 'Archico' }) });
-    expect(screen.queryByLabelText(/^Contacts at/)).toBeNull();
+  it('edit offers the contacts link and sends picked contact_ids', async () => {
+    renderForm({
+      mode: 'edit',
+      project: project({
+        developer_party_id: null,
+        developer_name: null,
+        party_links: [{ role: 'architect', party_id: 'a1', name: 'Archico' }],
+      }),
+    });
+    await tickContact('Ar. Example One');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+    const body = updateProject.mock.calls[0][1] as Record<string, unknown>;
+    expect(body.contact_ids).toEqual(['k1']);
   });
 });
 

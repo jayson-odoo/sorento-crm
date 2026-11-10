@@ -197,6 +197,21 @@ def set_party_links(db: Session, project: Project, links: Iterable[Dict[str, Any
     db.flush()
 
 
+def add_party_link(db: Session, project: Project, role: Optional[str], party_id: str) -> None:
+    """Link one more party in ``role``, keeping every link already there (PROJECT-PARTY-ROLES PR 2:
+    a proposal addressed to a party not on the project yet backfills it). Same role rules as the
+    registration form: an active role of the list, a one-party role not already filled."""
+    existing = [
+        (row.role, row.party_id)
+        for row in db.query(ProjectPartyLink).filter(ProjectPartyLink.project_id == project.id).all()
+    ]
+    if (role, party_id) in existing:
+        return
+    party_roles.check_links(db, existing + [(role, party_id)], existing)
+    db.add(ProjectPartyLink(project_id=project.id, role=role, party_id=party_id))
+    db.flush()
+
+
 def party_links_for(db: Session, project_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     """``{project_id: [{role, party_id, name}]}`` for a page of projects, one query."""
     out: Dict[str, List[Dict[str, Any]]] = {pid: [] for pid in project_ids}
