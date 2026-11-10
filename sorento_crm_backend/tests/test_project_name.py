@@ -296,3 +296,52 @@ def test_the_portal_refuses_a_name_over_80(world):
     body = fields(world.debtor_a.id, name="N" * 81)
     res = as_contact(world, world.a).post(SUB, json={"fields": body})
     assert res.status_code == 422, res.text
+
+
+# ------------------------------------------------------------------ backfill (Q2 a)
+
+
+def _backfill():
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "backfill_project_names.py"
+    spec = importlib.util.spec_from_file_location("backfill_project_names", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_backfill_dry_run_proposes_and_writes_nothing(v2, monkeypatch):
+    backfill = _backfill()
+    created = _register(v2).json()
+    named = _register(v2, name="Already named").json()
+    monkeypatch.setattr(v2.db, "commit", lambda: None)  # the fixture's session must survive
+    monkeypatch.setattr(v2.db, "rollback", lambda: None)
+
+    rows = backfill.dry_run(v2.db, lambda title: "  Proposed   Name ")
+
+    by_code = {code: name for code, _title, name in rows}
+    # The proposer already cleans; the dry run lists what it answered.
+    assert by_code[created["project_code"]] == "  Proposed   Name "
+    assert named["project_code"] not in by_code
+    assert _stored(v2, created["id"]).name is None
+
+
+def test_the_backfill_apply_writes_only_reviewed_unnamed_rows(v2, monkeypatch):
+    backfill = _backfill()
+    unnamed = _register(v2).json()
+    refused = _register(v2).json()
+    named = _register(v2, name="Keep me").json()
+    monkeypatch.setattr(v2.db, "commit", v2.db.flush)
+
+    result = backfill.apply(v2.db, [
+        {"project_code": unnamed["project_code"], "proposed_name": " Taman  Contoh "},
+        {"project_code": refused["project_code"], "proposed_name": ""},
+        {"project_code": named["project_code"], "proposed_name": "Overwrite"},
+    ])
+
+    assert result == {"written": 1, "skipped": 2}
+    assert _stored(v2, unnamed["id"]).name == "Taman Contoh"
+    assert _stored(v2, refused["id"]).name is None
+    assert _stored(v2, named["id"]).name == "Keep me"

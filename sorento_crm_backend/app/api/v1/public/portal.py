@@ -451,6 +451,8 @@ class ProjectLookupItem(BaseModel):
     id: str
     project_code: Optional[str] = None
     title: str
+    # The short name (PROJECT-NAME); null shows the title.
+    name: Optional[str] = None
     company_name: Optional[str] = None
 
 
@@ -614,7 +616,7 @@ def register_profile_routes(router: APIRouter, token_dependency: Callable[..., A
 
     @router.get("/lookups/projects", response_model=list[ProjectLookupItem])
     def lookup_projects(
-        q: str = Query("", description="Substring match on the code or the title"),
+        q: str = Query("", description="Substring match on the code, the name or the title"),
         limit: int = Query(20, ge=1, le=50),
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),

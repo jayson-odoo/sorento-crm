@@ -654,6 +654,7 @@ class ProjectTaskResponse(ProjectTaskBase):
     project_id: str
     project_code: Optional[str] = None
     project_title: Optional[str] = None
+    project_name: Optional[str] = None
 
     status_id: Optional[str] = None
     status_key: Optional[str] = None
