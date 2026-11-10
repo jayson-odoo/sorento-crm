@@ -1,6 +1,6 @@
 # PLAN: reorder / low stock scope uses active locations only
 
-Status: in progress (small fix track: under ~300 lines, no migration, no auth/RBAC change)
+Status: in review, PR #2312, reviewer READY (small fix track: under ~300 lines, no migration, no auth/RBAC change)
 
 Lane: SCM-INACTIVE-LOCATIONS. Follow-up of #2309 (LOWSTOCK-BINS-REGRESS, evidence comment
 https://github.com/jayson-odoo/sorento-crm/pull/2309#issuecomment-6761732471).
