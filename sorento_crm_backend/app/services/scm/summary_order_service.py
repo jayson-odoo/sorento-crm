@@ -926,9 +926,18 @@ def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
     wids = [str(w) for w in run.warehouse_ids]
     if not wids:
         return []
-    q = db.query(Warehouse.id).filter(Warehouse.id.in_(wids), Warehouse.is_active.is_(True))
-    if resolve_run_scope(db, wids, None, run.started_at)["is_all_warehouses"]:
-        q = q.filter(text(active_site_pool_sql("warehouses")))
+    # Active ids first, and only those feed the "nothing ticked" count: a ticked inactive id
+    # would otherwise lift the count to "All" and drop a project bin ticked beside it.
+    active = [str(wid) for (wid,) in db.query(Warehouse.id).filter(
+        Warehouse.id.in_(wids), Warehouse.is_active.is_(True),
+    ).all()]
+    if not active:
+        return []
+    if not resolve_run_scope(db, active, None, run.started_at)["is_all_warehouses"]:
+        return sorted(active)
+    q = db.query(Warehouse.id).filter(
+        Warehouse.id.in_(active), text(active_site_pool_sql("warehouses")),
+    )
     return sorted(str(wid) for (wid,) in q.all())
 
 
