@@ -204,7 +204,54 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
   CTA, in its `PageHeader` actions, and no subtitle or description line under a page or dialog
   title. An empty state is heading and hint text only, never a button or link, and the typecheck
   enforces both: `PageHeader` has no `children` slot and `DataGrid` / `PanelDataGrid` have no
-  `emptyAction`.
+  `emptyAction`. One carve-out: a confirm dialog (below) carries the line that says what
+  happens.
+
+### Owner UI rules (owner + management, 9 Nov 2026; UIUX-QUICK-WINS)
+
+Binding for every new or changed screen. Where the Foundryx UI/UX playbook differs, these win
+(`documentation/uiux/playbook-uiux-audit.md` section 6).
+
+- **Dates read dd/mm/yyyy, through one shared formatter.** Display via `formatDateInMalaysia` /
+  `formatDateTimeInMalaysia` (`lib/helpers.ts`); never a bare `format(` or `toLocaleDateString`
+  in a component. Date fields are the shared `DatePicker` (`components/ui/date-picker.tsx`),
+  typed or picked as DD/MM/YYYY, never a native `<input type="date">` (the browser draws it in
+  its own locale). Calendar days travel as `YYYY-MM-DD` (`ADR-PRODUCT-STANDARDS.md`).
+- **Lists are the standard DataGrid, one line per row.** No second info line under a cell, no
+  stacked badge + caption; long text truncates with `title`. No card layout on phones: the
+  grid scrolls inside its box.
+- **Every column sorts server-side.** `enableSorting: false` needs a reason at the call site;
+  the backend list takes a sort key for every column it returns.
+- **Every dropdown filter is multi-select** (`SearchableMultiSelect`), OR-ed server-side,
+  comma-joined (ids, codes) or repeated (free text) in the URL.
+- **Row actions live in a right-click row menu, never row icon buttons.** Row click opens the
+  record; the row's actions are the same `recordActions` set as the record's gear (D15). Until
+  the shared right-click menu lands in `components/ui/data-grid*`, the existing "..." row menu
+  stands in.
+- **A dialog or lightbox over a side panel.** New surfaces open as `Dialog`; a `Sheet` needs a
+  reason (the mobile nav drawer and bottom sheets, D13, are the standing exceptions).
+- **One image pipeline.** Uploads go through a shared dropzone, never a hand-rolled
+  `<input type="file">`: `AttachmentDropzone` (`app/(auth)/portal/components/AttachmentDropzone.tsx`)
+  for record attachments (drop, paste, preview, and a failed file stays as its own row with why
+  and **Try again**), `FileDropzone` (section 4) for a single file a form reads. No third
+  uploader; folding the two into one is the next step, not a licence for a new one.
+- **Minimal UI, Sorento brand.** Sorento blue `--primary`, no hover lift or pop, no floating
+  widgets beyond the AI bubble. From the playbook only the styled tooltip is adopted: an icon
+  button's label is the shared `Tooltip` (`components/ui/tooltip.tsx`), never a native `title`
+  (the header gear and prev/next carry it, `components/common/DetailActionsMenu.tsx`,
+  `components/common/RecordNavigation.tsx`).
+- **One filled button at a time.** When a header offers two actions, only the one the record's
+  state is waiting for is filled; the other is outline or in the gear.
+- **A blocked main action says why**, in plain words, under the button (and as its
+  `aria-describedby`); no pulse, no tooltip-only reason.
+- **Confirm dialogs (non-destructive sends; destructive ones are deferred actions, D7):** the
+  title is a question about what happens ("Reserve 3 lines on OI-2611-0004?"), the line under it
+  says what happens in plain words, never "Are you sure...", the safe button is named for what
+  it keeps ("Keep editing", "Keep supplier"), the action is verb + object ("Reserve and send to
+  Mei"). No press-and-hold.
+- **No access is one shared state:** `AccessDenied` (`app/components/common/AccessDenied.tsx`)
+  names who can open the area and offers the way back; never hand-rolled "Forbidden - ..." text
+  (a guard test, `app/components/common/AccessDenied.test.tsx`, enforces it).
 
 ## 7. Responsive
 
