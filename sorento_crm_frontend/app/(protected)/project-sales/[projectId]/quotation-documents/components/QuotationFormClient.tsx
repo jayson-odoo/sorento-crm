@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { FileText, Mail, Plus, ScrollText } from 'lucide-react';
+import { FileText, History, Mail, Plus, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,6 +11,9 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { toast } from '@/lib/toast';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { AutosaveIndicator } from '@/app/(protected)/dealer-kit/components/AutosaveIndicator';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
@@ -25,10 +28,17 @@ import {
   useQuotationCoverPreview,
   useQuotationDocumentMutations,
   useQuotationFeedback,
+  useQuotationFormDraft,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
 import {
+  createQuotationDocument,
+  discardQuotationFormDraft,
   documentNoun,
+  restoreQuotationHistoryEntry,
+  saveQuotationFormDraft,
+  StaleDraftError,
+  type QuotationFormState,
   type QuotationCoverPreviewBody,
   type QuotationDocument,
   type QuotationDocumentBody,
@@ -53,7 +63,17 @@ import {
 } from '../../components/QuotationVersionEditor';
 import { QuotationNameDialog } from '../[documentId]/components/QuotationNameDialog';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
-import { useQuotationEditSession } from '../[documentId]/components/useQuotationEditSession';
+import {
+  useQuotationEditSession,
+  type StagedScope,
+} from '../[documentId]/components/useQuotationEditSession';
+import { QuotationHistorySheet } from '../[documentId]/components/QuotationHistorySheet';
+import {
+  clearMirror,
+  mirrorKey,
+  readMirror,
+  useQuotationFormAutosave,
+} from './useQuotationFormAutosave';
 import {
   QuotationDocumentHeader,
   useQuotationHeaderDetails,
@@ -183,6 +203,31 @@ function todayIso(): string {
  * read-only, and a scope any version of which was sent cannot be removed.
  */
 
+/** The header fields as the API takes them: blank is null. */
+function headerBodyOf(header: QuotationDocumentBody | null): QuotationDocumentBody {
+  const body: QuotationDocumentBody = {};
+  HEADER_FIELDS.forEach((field) => {
+    const value = ((header ?? {})[field] as string | null | undefined) ?? '';
+    (body as Record<string, string | null>)[field] = value.trim() ? value : null;
+  });
+  return body;
+}
+
+/** Create: the letter tabs' text, when there is any. Empty lets the server render the template. */
+function createLetterBodyOf(letter: QuotationDocumentBody): QuotationDocumentBody {
+  const body: QuotationDocumentBody = {};
+  if ((letter.cover_letter_html ?? '').trim()) body.cover_letter_html = letter.cover_letter_html;
+  if ((letter.cover_closing_html ?? '').trim()) body.cover_closing_html = letter.cover_closing_html;
+  if ((letter.terms_html ?? '').trim()) body.terms_html = letter.terms_html;
+  return body;
+}
+
+/** "Edited in another tab or by Ben at 10/11/2026 2:30 PM." (card Q4). */
+export function conflictMessage(by: string | null, at: string | null): string {
+  const who = by ? `in another tab or by ${by}` : 'in another tab or by someone else';
+  return `This draft was edited ${who}${at ? ` at ${formatDateTimeInMalaysia(at)}` : ''}. Reload to continue; what you typed here is kept in History.`;
+}
+
 /** The page title: "New proposal", or the document's number (PS-PROPOSAL-QUOTATION). */
 export function formTitle({
   isEdit,
@@ -204,13 +249,19 @@ export function saveLabel(kind?: string | null): string {
 
 export function QuotationFormClient({
   projectId,
-  documentId,
+  documentId: routeDocumentId,
 }: {
   projectId: string;
   documentId?: string;
 }) {
   const router = useRouter();
+  // QUOTE-AUTOSAVE (card Q2): a new proposal becomes a record on its first real edit, and the
+  // page carries on as that record's edit form without remounting (nothing typed is dropped).
+  const [createdId, setCreatedId] = React.useState<string | null>(null);
+  const documentId = routeDocumentId ?? createdId ?? undefined;
   const isEdit = Boolean(documentId);
+  // Only the route's document has a draft to open on; one created here starts from this form.
+  const draftQuery = useQuotationFormDraft(projectId, routeDocumentId);
   const project = useProject(projectId);
   const saved = useQuotationDocument(projectId, documentId);
   const quotations = useQuotations(isEdit ? projectId : undefined);
@@ -277,18 +328,29 @@ export function QuotationFormClient({
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
 
-  // Everything on this page lives only in the browser until Save, so a refresh or a closed tab
-  // would lose it silently. Warn while there is something to lose.
+  // QUOTE-AUTOSAVE replaces the old "you have unsaved changes" warning: every edit is saved to
+  // the draft as it is made, so leaving loses nothing and there is nothing to warn about.
   const isDirty = dirty || edit.changedScopes.length > 0;
-  React.useEffect(() => {
-    if (!isDirty || isSaving) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [isDirty, isSaving]);
+  /** Bumped when a draft or a History entry replaces the staged lines: remounts the editor. */
+  const [generation, setGeneration] = React.useState(0);
+  /** A state the form reopened on that the server never received: saved once the form is ready. */
+  const resumeRef = React.useRef<QuotationFormState | null>(null);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+
+  /** Put a draft or a History entry on screen: header, letter, scopes and every staged line. */
+  function applyState(state: QuotationFormState) {
+    setHeader({ ...(state.header ?? {}) });
+    setLetter({ ...(state.letter ?? {}) });
+    setScopes((state.scopes ?? []).map((scope) => ({ ...scope })));
+    setRemovedIds([...(state.removedIds ?? [])]);
+    edit.hydrate((state.staged ?? {}) as Record<string, StagedScope>);
+    // The create form's one-off defaults must not overwrite what the state already holds.
+    setLetterSeeded(true);
+    setTermsDefaulted(true);
+    (state.scopes ?? []).forEach((scope) => seriesDefaulted.current.add(scope.key));
+    setActiveKey(null);
+    setGeneration((n) => n + 1);
+  }
 
   // The starting point, taken ONCE: a refetch landing mid-edit must not overwrite what somebody
   // is typing.
@@ -312,9 +374,36 @@ export function QuotationFormClient({
         validity: '',
       });
       setScopes([newScope()]);
+      // A new proposal typed while offline and never created: pick it back up.
+      const mirror = readMirror(mirrorKey(projectId, null));
+      if (mirror) {
+        applyState(mirror.doc);
+        resumeRef.current = mirror.doc;
+      }
+      return;
     }
-    if (isEdit && saved.data && quotations.data) {
+    if (isEdit && routeDocumentId && saved.data && quotations.data && draftQuery.isFetched) {
       const document = saved.data;
+      // QUOTE-AUTOSAVE (card rule 3): open on the draft when there is one, and on this browser's
+      // unsent copy of it when the last save never reached the server (offline, a closed tab).
+      const key = mirrorKey(projectId, routeDocumentId);
+      const mirror = readMirror(key);
+      const serverRev = draftQuery.data?.rev ?? 0;
+      if (mirror && mirror.baseRev !== serverRev) {
+        // Written over by another tab or person since: sent as it stands, so the server keeps it
+        // as a "Not saved, edited elsewhere" History entry rather than it being dropped.
+        void saveQuotationFormDraft(projectId, routeDocumentId, mirror.doc, mirror.baseRev).catch(
+          () => undefined,
+        );
+        clearMirror(key);
+      }
+      const start =
+        mirror && mirror.baseRev === serverRev ? mirror.doc : (draftQuery.data?.doc ?? null);
+      if (start) {
+        applyState(start);
+        if (start === mirror?.doc) resumeRef.current = start;
+        return;
+      }
       setHeader(
         Object.fromEntries(
           HEADER_FIELDS.map((field) => [
@@ -334,7 +423,9 @@ export function QuotationFormClient({
         })),
       );
     }
-  }, [header, isEdit, project.data, quotations.data, saved.data]);
+    // `applyState` is stable in what it does (setters only); left out so the seed runs once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [header, isEdit, project.data, quotations.data, saved.data, draftQuery.isFetched]);
 
   // Create: the letter and terms tabs start from the company templates, taken once so a late
   // refetch cannot overwrite what was typed. No template leaves the tab empty and editable.
@@ -397,9 +488,84 @@ export function QuotationFormClient({
     [scopeTotal, scopes],
   );
 
-  const backPath = isEdit
-    ? `/project-sales/${projectId}/quotation-documents/${documentId}`
-    : `/project-sales/${projectId}?tab=quotations`;
+  /**
+   * QUOTE-AUTOSAVE: everything the form holds, as the draft stores it. Only the scopes whose lines
+   * moved (and new ones) carry their staged lines: a scope merely opened is what the server
+   * already has, and copying it would make opening a tab look like an edit.
+   */
+  const changedKeys = React.useMemo(
+    () => new Set(edit.changedScopes.map((scope) => scope.scopeId)),
+    [edit.changedScopes],
+  );
+  const formState = React.useMemo<QuotationFormState | null>(() => {
+    if (header === null || scopes === null) return null;
+    const newKeys = new Set(scopes.filter((scope) => !scope.id).map((scope) => scope.key));
+    return {
+      v: 1,
+      header,
+      letter,
+      scopes,
+      staged: Object.fromEntries(
+        Object.entries(stagedScopes).filter(([key]) => changedKeys.has(key) || newKeys.has(key)),
+      ),
+      removedIds,
+      total: liveTotal ?? '0',
+    };
+  }, [header, letter, scopes, stagedScopes, changedKeys, removedIds, liveTotal]);
+
+  // An approval holds the document: the server refuses its draft too (card rule 6).
+  const lockedForApproval = ['pending_approval', 'resubmitted', 'approved'].includes(
+    saved.data?.approval_status_key ?? '',
+  );
+  const formReady =
+    header !== null &&
+    scopes !== null &&
+    !project.isLoading &&
+    (!isEdit || Boolean(saved.data)) &&
+    (isEdit || letterSeeded) &&
+    !lockedForApproval;
+
+  const autosave = useQuotationFormAutosave({
+    projectId,
+    initialDocumentId: routeDocumentId ?? null,
+    initialRev: routeDocumentId ? (draftQuery.data?.rev ?? null) : 0,
+    initialHasDraft: Boolean(draftQuery.data?.doc),
+    state: formState,
+    isDirty,
+    ready: formReady,
+    create: React.useCallback(
+      (state: QuotationFormState) =>
+        createQuotationDocument(projectId, {
+          ...headerBodyOf(state.header),
+          ...createLetterBodyOf(state.letter),
+          form_draft: state,
+        }),
+      [projectId],
+    ),
+    onCreated: React.useCallback(
+      (created: QuotationDocument) => {
+        setCreatedId(created.id);
+        // The address bar follows, so a refresh reopens this record's form, not a blank one.
+        window.history.replaceState(
+          null,
+          '',
+          `/project-sales/${projectId}/quotation-documents/${created.id}/edit`,
+        );
+        mutations.invalidateAll();
+      },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [projectId],
+    ),
+  });
+
+  // The state this page reopened on that the server never got: send it now the form is ready.
+  React.useEffect(() => {
+    if (!formReady || !resumeRef.current) return;
+    const state = resumeRef.current;
+    resumeRef.current = null;
+    autosave.resume(state);
+  }, [formReady, autosave]);
+
   const title = formTitle({
     isEdit,
     documentNo: saved.data?.document_no,
@@ -468,14 +634,7 @@ export function QuotationFormClient({
   }
 
   function headerBody(): QuotationDocumentBody {
-    const body: QuotationDocumentBody = {};
-    HEADER_FIELDS.forEach((field) => {
-      const value = ((header ?? {})[field] as string | null | undefined) ?? '';
-      (body as Record<string, string | null>)[field] = value.trim()
-        ? value
-        : null;
-    });
-    return body;
+    return headerBodyOf(header);
   }
 
   function scopesBody(): QuotationFormScopeBody[] {
@@ -498,15 +657,13 @@ export function QuotationFormClient({
     });
   }
 
-  /** Create: the letter tabs' text, when there is any. Empty lets the server render the template. */
-  function createLetterBody(): QuotationDocumentBody {
-    const body: QuotationDocumentBody = {};
-    if ((letter.cover_letter_html ?? '').trim()) body.cover_letter_html = letter.cover_letter_html;
-    if ((letter.cover_closing_html ?? '').trim()) body.cover_closing_html = letter.cover_closing_html;
-    if ((letter.terms_html ?? '').trim()) body.terms_html = letter.terms_html;
-    return body;
-  }
 
+  /**
+   * Save (card rule 4): today's PATCH, unchanged in what it fires, now built from the same state
+   * the autosave keeps. The autosave is flushed first so the two cannot land out of order, the
+   * form's state rides along as the History entry, and the server clears the draft in the same
+   * commit. A new proposal nothing was typed into yet is created first, then saved.
+   */
   async function save() {
     const problem = validate();
     setError(problem);
@@ -515,35 +672,83 @@ export function QuotationFormClient({
       setTab('header');
       return;
     }
+    if (!formState || autosave.conflict) return;
     setIsSaving(true);
     try {
-      if (isEdit && documentId) {
-        await mutations.update.mutateAsync({
-          id: documentId,
-          body: {
-            ...headerBody(),
-            ...letter,
-            scopes: scopesBody(),
-            ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
-          },
-        });
-        router.push(
-          `/project-sales/${projectId}/quotation-documents/${documentId}`,
-        );
-      } else {
-        const created = await mutations.create.mutateAsync({
+      await autosave.flush();
+      let id = autosave.documentId;
+      if (!id) {
+        const created = await createQuotationDocument(projectId, {
           ...headerBody(),
-          ...createLetterBody(),
-          scopes: scopesBody(),
+          ...createLetterBodyOf(letter),
+          form_draft: formState,
         });
-        router.push(
-          `/project-sales/${projectId}/quotation-documents/${created.id}`,
-        );
+        id = created.id;
+        setCreatedId(created.id);
       }
+      await mutations.update.mutateAsync({
+        id,
+        body: {
+          ...headerBody(),
+          ...letter,
+          scopes: scopesBody(),
+          ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
+          form_state: formState,
+        },
+      });
+      // The server moved the draft's revision on when it cleared it.
+      autosave.rev.current += 1;
+      autosave.setHasDraft(false);
+      clearMirror(mirrorKey(projectId, id));
+      clearMirror(mirrorKey(projectId, null));
+      router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
     } catch {
-      // The mutation toasted the server's reason; the form keeps everything that was typed.
+      // The mutation toasted the server's reason; the draft keeps everything that was typed.
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  /** Discard draft (card Q5): back to the last Save; the server keeps the draft in History. */
+  async function discardDraft() {
+    const id = autosave.documentId;
+    if (!id) return;
+    try {
+      await autosave.flush();
+      await discardQuotationFormDraft(projectId, id, autosave.rev.current);
+      autosave.setHasDraft(false);
+      clearMirror(mirrorKey(projectId, id));
+      toast.success('Draft discarded. It is kept in History.');
+      router.push(`/project-sales/${projectId}/quotation-documents/${id}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not discard the draft');
+    }
+  }
+
+  /** Restore (card rule 5): the entry becomes the draft; the draft it replaced stays in History. */
+  async function restoreEntry(entryId: string) {
+    const id = autosave.documentId;
+    if (!id) return;
+    try {
+      await autosave.flush();
+      const restored = await restoreQuotationHistoryEntry(
+        projectId,
+        id,
+        entryId,
+        autosave.rev.current,
+      );
+      autosave.rev.current = restored.rev;
+      autosave.setHasDraft(true);
+      if (restored.doc) applyState(restored.doc);
+      setDirty(true);
+      setHistoryOpen(false);
+      toast.success('Restored. Save to apply it to the record.');
+    } catch (error) {
+      if (!(error instanceof StaleDraftError)) {
+        toast.error(error instanceof Error ? error.message : 'Could not restore that entry');
+      } else {
+        toast.error(error.message);
+      }
     }
   }
 
@@ -580,16 +785,40 @@ export function QuotationFormClient({
         crumbs={projectCrumbs(projectId, { tab: 'quotations' }, { title })}
         actions={
           <>
+            {/* The tag designer's own indicator (card rule 1): "Saving...", "Saved 2:14 PM", or
+                "Save failed" with Retry. No Cancel: leaving keeps the draft (card Q5). */}
+            <AutosaveIndicator
+              status={autosave.status}
+              savedAt={autosave.savedAt}
+              onRetry={autosave.retry}
+            />
+            {autosave.documentId && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="History"
+                title="History"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <History className="size-4" aria-hidden />
+              </Button>
+            )}
+            {autosave.documentId && autosave.hasDraft && !autosave.conflict && (
+              <Button type="button" variant="outline" onClick={() => void discardDraft()}>
+                Discard draft
+              </Button>
+            )}
             <Button
               type="button"
-              variant="outline"
-              onClick={() => router.push(backPath)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={isSaving || columnsBusy || loading || failed || !letterReady}
+              disabled={
+                isSaving ||
+                columnsBusy ||
+                loading ||
+                failed ||
+                !letterReady ||
+                Boolean(autosave.conflict)
+              }
               onClick={() => void save()}
             >
               {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
@@ -597,6 +826,33 @@ export function QuotationFormClient({
           </>
         }
       />
+
+      {/* Card Q4: another tab or person wrote this draft since this tab read it. This tab stops
+          saving; what it held is already in History, so Reload loses nothing. */}
+      {autosave.conflict && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+        >
+          <span>
+            {conflictMessage(autosave.conflict.updatedByName, autosave.conflict.updatedAt)}
+          </span>
+          <Button type="button" size="sm" variant="outline" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        </div>
+      )}
+
+      {autosave.documentId && (
+        <QuotationHistorySheet
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          projectId={projectId}
+          documentId={autosave.documentId}
+          documentNo={saved.data?.document_no ?? ''}
+          onRestore={restoreEntry}
+        />
+      )}
 
       {error && (
         <p
@@ -678,6 +934,7 @@ export function QuotationFormClient({
                 savedScopes={savedScopes ?? []}
                 quotations={quotations.data ?? []}
                 activeKey={activeKey}
+                generation={generation}
                 onSelect={setActiveKey}
                 scopeTotal={scopeTotal}
                 edit={edit}
@@ -867,6 +1124,7 @@ function FormLines({
   savedScopes,
   quotations,
   activeKey,
+  generation,
   onSelect,
   scopeTotal,
   edit,
@@ -883,6 +1141,8 @@ function FormLines({
   savedScopes: QuotationScope[];
   quotations: ProjectQuotation[];
   activeKey: string | null;
+  /** Remounts the open editor when a draft or a History entry replaced the staged lines. */
+  generation: number;
   onSelect: (key: string) => void;
   scopeTotal: (scope: FormScope) => string;
   edit: ReturnType<typeof useQuotationEditSession>;
@@ -995,7 +1255,7 @@ function FormLines({
           <Skeleton className="h-64 w-full" />
         ) : (
           <QuotationVersionEditor
-            key={active.key}
+            key={`${active.key}:${generation}`}
             project={project}
             quotation={savedRow}
             seriesId={active.series_id || null}

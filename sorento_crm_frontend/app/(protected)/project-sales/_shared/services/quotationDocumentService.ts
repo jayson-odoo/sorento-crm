@@ -1,7 +1,11 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { CoverPageData } from '@/lib/quotation-cover';
-import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
+import type {
+  QuotationFeedback,
+  QuotationLineBulkItem,
+  StagedQuotationLine,
+} from '../types/project.types';
 import type { MatrixHeader } from '../lib/quotationMatrix';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
@@ -91,6 +95,10 @@ export type QuotationSignatureRecord = {
 };
 
 export type QuotationDocument = {
+  /** QUOTE-AUTOSAVE: a form draft is waiting, and who left it when (the read page's strip). */
+  has_form_draft?: boolean;
+  form_draft_at?: string | null;
+  form_draft_by_name?: string | null;
   id: string;
   project_id: string;
   document_no: string;
@@ -283,6 +291,13 @@ export type QuotationDocumentBody = Partial<{
    * customer, and nothing in that save lands.
    */
   remove_scope_ids: string[];
+  /**
+   * QUOTE-AUTOSAVE, POST only: a new proposal's first real edit creates the record and stores
+   * this as its draft in the same commit (the number and the typing land together).
+   */
+  form_draft: QuotationFormState;
+  /** QUOTE-AUTOSAVE, PATCH only: the form's state at Save, kept as a History entry. */
+  form_state: QuotationFormState;
 }>;
 
 /** The company's letter and terms as written, for the create form's own tabs (#1341). */
@@ -752,3 +767,163 @@ export type QuotationCoverPreviewBody = Partial<{
   cover_letter_html: string | null;
   cover_closing_html: string | null;
 }>;
+
+
+// ------------------------------------------------------------------ QUOTE-AUTOSAVE
+//
+//   GET    /projects/{projectId}/quotation-documents/{id}/form-draft                -> QuotationFormDraft
+//   PUT    /projects/{projectId}/quotation-documents/{id}/form-draft                -> { rev, updated_at }, 409 quotation_draft_stale
+//   DELETE /projects/{projectId}/quotation-documents/{id}/form-draft?base_rev=N     -> { rev }
+//   GET    /projects/{projectId}/quotation-documents/{id}/history                   -> ListEnvelope<QuotationHistoryEntry>
+//   GET    /projects/{projectId}/quotation-documents/{id}/history/{entryId}         -> QuotationHistoryEntryDetail
+//   POST   /projects/{projectId}/quotation-documents/{id}/history/{entryId}/restore -> QuotationFormDraft
+
+/**
+ * The quotation form's whole state, as the form holds it (`QuotationFormClient`). The server stores
+ * it as given; it reads only `total` and reconciles `scopes[].id`, `staged[key].versionId` and the
+ * staged lines' `id` / `line` against the record (`quotation_form_draft_service.reconcile`).
+ */
+export type QuotationFormState = {
+  v: 1;
+  header: QuotationDocumentBody;
+  letter: QuotationDocumentBody;
+  scopes: {
+    key: string;
+    id: string | null;
+    scope_label: string;
+    series_id: string;
+    notes?: string | null;
+    matrix_columns?: MatrixHeader[];
+  }[];
+  /** Only the scopes whose lines moved (and new scopes): what the server already has is not copied. */
+  staged: Record<string, { versionId: string; seeded: StagedLine[]; lines: StagedLine[] }>;
+  removedIds: string[];
+  /** The form's live grand total, for the History list. */
+  total: string;
+};
+
+type StagedLine = StagedQuotationLine;
+
+export type QuotationFormDraft = {
+  doc: QuotationFormState | null;
+  rev: number;
+  updated_at: string | null;
+  updated_by_name: string | null;
+};
+
+export type QuotationHistoryKind = 'saved' | 'before_restore' | 'conflict' | 'discarded';
+
+export type QuotationHistoryEntry = {
+  id: string;
+  kind: QuotationHistoryKind;
+  grand_total: string | null;
+  created_at: string | null;
+  created_by_name: string | null;
+};
+
+export type QuotationHistoryEntryDetail = QuotationHistoryEntry & { doc: QuotationFormState };
+
+/** A tab or a person wrote the draft since this tab last read it (card Q4). */
+export class StaleDraftError extends Error {
+  readonly rev: number;
+  readonly updatedAt: string | null;
+  readonly updatedByName: string | null;
+  constructor(message: string, details: { rev?: number; updated_at?: string | null; updated_by_name?: string | null }) {
+    super(message);
+    this.name = 'StaleDraftError';
+    this.rev = details.rev ?? 0;
+    this.updatedAt = details.updated_at ?? null;
+    this.updatedByName = details.updated_by_name ?? null;
+  }
+}
+
+const formDraftUrl = (projectId: string, documentId: string) =>
+  `${BASE}/projects/${projectId}/quotation-documents/${documentId}/form-draft`;
+
+async function staleOr(response: Response, fallback: string): Promise<Error> {
+  if (response.status === 409) {
+    const body = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (body?.code === 'quotation_draft_stale') {
+      return new StaleDraftError(body.message ?? fallback, body.details ?? {});
+    }
+  }
+  return new Error(await extractApiError(response, fallback));
+}
+
+export async function getQuotationFormDraft(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationFormDraft> {
+  const response = await apiFetch(formDraftUrl(projectId, documentId));
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the draft'));
+  return response.json();
+}
+
+/** The autosave. `keepalive` only on the page-teardown flush (a keepalive body is capped at 64KB). */
+export async function saveQuotationFormDraft(
+  projectId: string,
+  documentId: string,
+  doc: QuotationFormState,
+  baseRev: number,
+  options: { keepalive?: boolean } = {},
+): Promise<{ rev: number; updated_at: string | null }> {
+  const response = await apiFetch(formDraftUrl(projectId, documentId), {
+    method: 'PUT',
+    body: JSON.stringify({ doc, base_rev: baseRev }),
+    keepalive: options.keepalive,
+  });
+  if (!response.ok) throw await staleOr(response, 'Failed to save the draft');
+  return response.json();
+}
+
+export async function discardQuotationFormDraft(
+  projectId: string,
+  documentId: string,
+  baseRev: number,
+): Promise<{ rev: number }> {
+  const response = await apiFetch(`${formDraftUrl(projectId, documentId)}?base_rev=${baseRev}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw await staleOr(response, 'Failed to discard the draft');
+  return response.json();
+}
+
+export async function listQuotationHistory(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationHistoryEntry[]> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/history`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the history'));
+  return (await response.json()).data;
+}
+
+export async function getQuotationHistoryEntry(
+  projectId: string,
+  documentId: string,
+  entryId: string,
+): Promise<QuotationHistoryEntryDetail> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/history/${entryId}`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Could not open that entry'));
+  return response.json();
+}
+
+export async function restoreQuotationHistoryEntry(
+  projectId: string,
+  documentId: string,
+  entryId: string,
+  baseRev: number,
+): Promise<QuotationFormDraft> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/history/${entryId}/restore`,
+    { method: 'POST', body: JSON.stringify({ base_rev: baseRev }) },
+  );
+  if (!response.ok) throw await staleOr(response, 'Could not restore that entry');
+  return response.json();
+}

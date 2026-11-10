@@ -148,11 +148,12 @@ actions only. Collapsible sections (PROPOSAL-FORM-COLLAPSE #2302) and the "To" p
 4. **Two tabs / two users on one draft.** (a) the stale writer is stopped with Reload and its
    unsent state goes to History; (b) last write wins (the designer today). **Recommend (a)**:
    (b) silently loses one person's typing, which is the bug this lane exists to fix.
-5. **What Cancel becomes.** (a) Cancel goes; the page header gets "Discard draft" (a 5 s
-   reversible countdown, the pending-action standard) shown only while a draft exists, which
-   puts the form back to the last Save, and leaving by any route keeps the draft; (b) Cancel stays
-   and discards. **Recommend (a)**: a Cancel that throws work away is the click-outside loss the
-   owner is reporting, under a friendlier name.
+5. **What Cancel becomes.** (a) Cancel goes; the page header gets "Discard draft", shown only
+   while a draft exists, which puts the form back to the last Save and keeps the discarded draft
+   as a History entry (so it destroys nothing and needs no countdown, the History sheet's own rule
+   for Restore); leaving by any route keeps the draft; (b) Cancel stays and discards. **Recommend
+   (a)**: a Cancel that throws work away is the click-outside loss the owner is reporting, under a
+   friendlier name.
 
 ### Mock
 

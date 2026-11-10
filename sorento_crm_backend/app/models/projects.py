@@ -1334,8 +1334,8 @@ class QuotationDocumentSnapshot(Base):
     The form's whole state at a deliberate moment, in the shape the form holds it, so Restore can
     load it straight back into the draft. Immutable once written, the tag designer's
     ``PageVersion`` rule. ``kind``: ``saved`` (every Save), ``before_restore`` (the draft a
-    Restore replaced) and ``conflict`` (a stale tab's refused autosave, kept so nothing typed is
-    lost).
+    Restore replaced), ``conflict`` (a stale tab's refused autosave) and ``discarded`` (a draft
+    Discard draft set aside), so nothing typed is ever lost.
 
     Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only through its document, which carries the partition,
     and every read goes through the document lookup first.
@@ -1346,7 +1346,7 @@ class QuotationDocumentSnapshot(Base):
     __table_args__ = (
         Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
         CheckConstraint(
-            "kind IN ('saved', 'before_restore', 'conflict')",
+            "kind IN ('saved', 'before_restore', 'conflict', 'discarded')",
             name="ck_quotation_document_snapshots_kind",
         ),
         {"schema": "projects"},

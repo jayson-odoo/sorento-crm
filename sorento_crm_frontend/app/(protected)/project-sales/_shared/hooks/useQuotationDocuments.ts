@@ -12,6 +12,7 @@ import {
   addQuotationScope,
   approveQuotationDocument,
   createQuotationDocument,
+  getQuotationFormDraft,
   createQuotationSignLink,
   deleteQuotationDocument,
   getQuotationFeedback,
@@ -74,6 +75,22 @@ export function useQuotationDocument(
     queryKey: quotationDocumentKey(projectId ?? '', documentId ?? ''),
     queryFn: () => getQuotationDocument(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+  });
+}
+
+/**
+ * QUOTE-AUTOSAVE: the draft the form opens on. Read ONCE per visit (no refetch on focus or mount):
+ * the form seeds from it a single time, and a refetch landing mid-edit must not look like news.
+ */
+export function useQuotationFormDraft(projectId: string | undefined, documentId: string | undefined) {
+  return useQuery({
+    queryKey: ['project-quotation-form-draft', projectId ?? '', documentId ?? ''],
+    queryFn: () => getQuotationFormDraft(projectId as string, documentId as string),
+    enabled: Boolean(projectId && documentId),
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 }
 
@@ -365,6 +382,8 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   return {
     create,
     update,
+    /** QUOTE-AUTOSAVE: refresh the lists after the form created a record on its own. */
+    invalidateAll: invalidate,
     remove,
     addScope,
     renameScope,

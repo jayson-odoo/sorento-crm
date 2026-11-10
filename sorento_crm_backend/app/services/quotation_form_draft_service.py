@@ -45,6 +45,7 @@ MAX_DRAFT_BYTES = 2_000_000
 KIND_SAVED = "saved"
 KIND_BEFORE_RESTORE = "before_restore"
 KIND_CONFLICT = "conflict"
+KIND_DISCARDED = "discarded"
 
 
 def _now() -> datetime:
@@ -202,11 +203,25 @@ def save_draft(
 def discard_draft(
     db: Session, *, document: ProjectQuotationDocument, base_rev: Optional[int], user_id: str
 ) -> Dict[str, Any]:
-    """Discard draft (card Q5): the form goes back to the last Save. Nothing is written to History
-    because nothing is lost that was ever Saved; the countdown on the button is the way back."""
+    """Discard draft (card Q5): the form goes back to the last Save.
+
+    The discarded draft is kept as a ``discarded`` History entry, so Discard destroys nothing and
+    Restore is the way back. That is why it needs no countdown and no confirm: the
+    ``RequestVersionsSheet`` rule for Restore (an act that ADDS an entry is not destructive).
+    """
     row = _row_or_new(db, document)
     if base_rev is not None and int(base_rev) != int(row.rev or 0):
         raise _stale(db, document, row, None, user_id)
+    if row.doc is not None:
+        db.add(
+            QuotationDocumentSnapshot(
+                document_id=document.id,
+                kind=KIND_DISCARDED,
+                doc=row.doc,
+                grand_total=draft_total(row.doc),
+                created_by=user_id,
+            )
+        )
     row.doc = None
     row.rev = int(row.rev or 0) + 1
     row.updated_by = user_id

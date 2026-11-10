@@ -5,7 +5,8 @@ Plan: documentation/plans/project-sales/PLAN-quote-autosave-10nov.md.
 - ``projects.quotation_document_drafts``: one row per document, the form's autosaved state
   (``doc``, NULL when nothing is in progress) and a ``rev`` counter every write bumps.
 - ``projects.quotation_document_snapshots``: insert-only History (``saved`` on every Save,
-  ``before_restore`` and ``conflict`` so a Restore or a stale tab never loses typing).
+  ``before_restore``, ``conflict`` and ``discarded`` so a Restore, a stale tab or Discard draft
+  never loses typing).
 
 Both cascade with their document. Additive only; downgrade drops the two tables.
 
@@ -46,7 +47,7 @@ def upgrade() -> None:
             created_by VARCHAR(100) NULL,
             created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT now(),
             CONSTRAINT ck_quotation_document_snapshots_kind
-                CHECK (kind IN ('saved', 'before_restore', 'conflict'))
+                CHECK (kind IN ('saved', 'before_restore', 'conflict', 'discarded'))
         )
         """
     )

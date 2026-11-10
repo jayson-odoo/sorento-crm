@@ -273,6 +273,19 @@ def test_discard_with_a_stale_rev_is_refused(api):
     assert draft["doc"]["header"]["subject_title"] == "b"
 
 
+def test_discard_keeps_the_discarded_draft_as_history(api):
+    client, _db, _company, _user, project, _party = api
+    document = _create_document(client, project.id)
+    _put_draft(client, project.id, document["id"], _state(f"{MARKER} Thrown", total="12.00"), 0)
+    assert client.delete(f"{_root(project.id)}/{document['id']}/form-draft?base_rev=1").status_code == 200
+    draft = client.get(f"{_root(project.id)}/{document['id']}/form-draft").json()
+    assert draft["doc"] is None and draft["rev"] == 2
+    entries = _history(client, project.id, document["id"])
+    assert [entry["kind"] for entry in entries] == ["discarded"]
+    detail = client.get(f"{_root(project.id)}/{document['id']}/history/{entries[0]['id']}").json()
+    assert detail["doc"]["header"]["subject_title"] == f"{MARKER} Thrown"
+
+
 # ------------------------------------------------------------------ rule 6: locked
 
 
