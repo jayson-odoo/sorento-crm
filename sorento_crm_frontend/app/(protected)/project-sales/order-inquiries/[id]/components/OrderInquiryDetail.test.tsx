@@ -485,56 +485,86 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
 });
 
 /**
- * Review S3 (PR #1266 at a98e01cf): since S2 the Lines fetch carries cancelled rows
- * (`include_history`), so the whole-OI Unconfirm must still read the LIVE rows only.
+ * STANDARD-HISTORY part A (owner ruling 10 Nov 2026, OI-2611-0019): Unconfirm with
+ * nothing ticked used to send EVERY confirmed line of the OI back to "To order" in one
+ * press (9 rows, 8 s after a 1-row Confirm). It now matches the worklist's own
+ * Unconfirm (N) and the page's other "... selected" actions: disabled until a line is
+ * ticked, and it sends the ticked lines' LIVE confirmed rows only (Review S3 still holds:
+ * cancelled and used rows never ride along).
  */
-describe('Review S3: whole-OI Unconfirm sends only live acknowledged rows', () => {
-  it('with nothing ticked, Unconfirm skips the cancelled and the used acknowledged rows', async () => {
-    const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
-      ({
-        ...LINKED_LINE,
-        verb: 'ORDER',
-        links: [],
-        ...over,
-      }) as OrderInquiryWorklistRow;
-    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
-      lineRow({
-        id: 'row-live',
-        item_code: 'ZZT-A',
-        core_line_id: 'cl-a',
-        line_no: 1,
-        ack_state: 'acknowledged',
-      }),
-      lineRow({
-        id: 'row-old',
-        item_code: 'ZZT-A',
-        core_line_id: 'cl-a',
-        line_no: 1,
-        state: 'cancelled',
-        ack_state: 'acknowledged',
-      }),
-      lineRow({
-        id: 'row-used',
-        item_code: 'ZZT-B',
-        core_line_id: 'cl-b',
-        line_no: 2,
-        redirected_to_pool: true,
-        ack_state: 'acknowledged',
-      }),
-    ]);
+describe('STANDARD-HISTORY A: Unconfirm never widens to the whole OI', () => {
+  const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+    ({
+      ...LINKED_LINE,
+      verb: 'ORDER',
+      links: [],
+      ...over,
+    }) as OrderInquiryWorklistRow;
+  const confirmedLines = () => [
+    lineRow({
+      id: 'row-live',
+      item_code: 'ZZT-A',
+      core_line_id: 'cl-a',
+      line_no: 1,
+      ack_state: 'acknowledged',
+    }),
+    lineRow({
+      id: 'row-old',
+      item_code: 'ZZT-A',
+      core_line_id: 'cl-a',
+      line_no: 1,
+      state: 'cancelled',
+      ack_state: 'acknowledged',
+    }),
+    lineRow({
+      id: 'row-b',
+      item_code: 'ZZT-B',
+      core_line_id: 'cl-b',
+      line_no: 2,
+      ack_state: 'acknowledged',
+    }),
+    lineRow({
+      id: 'row-used',
+      item_code: 'ZZT-C',
+      core_line_id: 'cl-c',
+      line_no: 3,
+      redirected_to_pool: true,
+      ack_state: 'acknowledged',
+    }),
+  ];
+
+  async function openGear() {
+    fireEvent.pointerDown(
+      screen.getByRole('button', { name: 'Order inquiry options' }),
+      { button: 0 },
+    );
+    return screen.findByRole('menuitem', { name: /unconfirm/i });
+  }
+
+  it('with nothing ticked, Unconfirm is disabled and sends nothing', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce(confirmedLines());
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
     await screen.findByLabelText('Select ZZT-A');
 
-    fireEvent.pointerDown(
-      screen.getByRole('button', { name: 'Order inquiry options' }),
-      {
-        button: 0,
-      },
-    );
-    fireEvent.click(
-      await screen.findByRole('menuitem', { name: /unconfirm/i }),
-    );
+    const item = await openGear();
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+
+    // Give any stray mutate a chance to land before asserting it never did.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unacknowledgeSpy).not.toHaveBeenCalled();
+  });
+
+  it('with one line ticked, Unconfirm sends only that line\'s live confirmed row', async () => {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce(confirmedLines());
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-A'));
+
+    const item = await openGear();
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
 
     await waitFor(() => expect(unacknowledgeSpy).toHaveBeenCalledTimes(1));
     expect((unacknowledgeSpy.mock.calls[0] as unknown[])[0]).toEqual([
