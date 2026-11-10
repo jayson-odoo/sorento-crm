@@ -875,6 +875,19 @@ function SectionRow({ row }: { row: GridRow }) {
   );
 }
 
+/** A heading row as it floats while dragged: its label, full width, nothing to type into. */
+function SectionPreview({ row }: { row: GridRow }) {
+  const value = (row.staged.draft.band_label ?? '').trim();
+  return (
+    <span
+      className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
+      title={value}
+    >
+      {value || 'Section'}
+    </span>
+  );
+}
+
 function ReorderHeader() {
   return <span className="sr-only">Reorder</span>;
 }
@@ -1915,7 +1928,13 @@ export function QuotationLinesGrid({
     : null;
 
   const renderHeadingRow = React.useCallback(
-    (row: GridRow) => (isSectionDraft(row.staged.draft) ? <SectionRow row={row} /> : null),
+    (row: GridRow, options?: { overlay?: boolean }) =>
+      !isSectionDraft(row.staged.draft) ? null : options?.overlay ? (
+        // The drag preview: the heading itself, static (owner hand test, 10 Nov 2026).
+        <SectionPreview row={row} />
+      ) : (
+        <SectionRow row={row} />
+      ),
     [],
   );
 

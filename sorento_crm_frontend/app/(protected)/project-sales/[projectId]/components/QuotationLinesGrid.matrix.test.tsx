@@ -47,6 +47,22 @@ const settings = { deleteSeconds: 10 };
 vi.mock('@/hooks/useDeferredDeleteSeconds', () => ({
   useDeferredDeleteSeconds: () => settings.deleteSeconds,
 }));
+// The row drag's start, captured, and its floating preview drawn inline (owner hand test,
+// 10 Nov 2026: a heading's preview showed an empty line). Pass-through otherwise.
+const rowDnd: { start: ((event: unknown) => void) | null } = { start: null };
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>();
+  return {
+    ...actual,
+    DndContext: (props: React.ComponentProps<typeof actual.DndContext>) => {
+      if (props.onDragStart) rowDnd.start = props.onDragStart as (event: unknown) => void;
+      return <actual.DndContext {...props} />;
+    },
+    DragOverlay: ({ children }: { children?: React.ReactNode }) => (
+      <div data-testid="drag-overlay">{children}</div>
+    ),
+  };
+});
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -786,6 +802,16 @@ describe('section heading rows', () => {
     expect(within(bar).getByRole('button', { name: 'Drag to reorder' })).toBeInTheDocument();
     expect(within(bar).getByRole('textbox', { name: 'Section heading above WC8518-SH' })).toHaveValue('PAGE 1');
     expect(within(bar).queryByRole('button', { name: /Row actions/ })).toBeNull();
+  });
+
+  it('floats a dragged heading as its own label, not as an empty line', () => {
+    renderGrid({ lines: lines(), editing: true });
+    act(() => rowDnd.start?.({ active: { id: 'h1' } }));
+    const overlay = screen.getByTestId('drag-overlay');
+    expect(overlay).toHaveTextContent('PAGE 1');
+    expect(overlay.querySelectorAll('td')).toHaveLength(1);
+    expect(within(overlay).queryByRole('textbox')).toBeNull();
+    expect(within(overlay).queryByRole('combobox')).toBeNull();
   });
 
   it('Remove section drops the heading row only', async () => {

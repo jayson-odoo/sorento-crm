@@ -7,7 +7,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Table } from '@tanstack/react-table';
 import type {
   QuotationFeedbackRow,
@@ -66,61 +66,6 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
-
-function col(key: string, label: string) {
-  return { key, label };
-}
-
-const UNIT: MatrixHeader[] = [
-  { key: 'a', label: 'Type A - 1 BH', cols: [col('a-bh', '1 BH'), col('a-bal', 'Balcony')] },
-  { key: 'b', label: 'Type B - 2 BH', cols: [col('b-bh', '2 BH'), col('b-bal', 'Balcony')] },
-  { key: 'c', label: 'Type C - 3 BH', cols: [col('c-bh', '3 BH'), col('c-bal', 'Balcony')] },
-];
-
-const TRAP: QuotationLine = {
-  id: 'l1',
-  version_id: 'v1',
-  product_id: 'p1',
-  product_code: 'FT100-SS',
-  description: 'Floor trap 100mm',
-  unit_price: '45.00',
-  quantity: '1522.00',
-  uom: 'PCS',
-  line_total: '68490.00',
-  is_non_standard: false,
-  is_below_floor: false,
-  sort_order: 0,
-  qty_cells: {
-    'a-bh': '120.00',
-    'a-bal': '120.00',
-    'b-bh': '500.00',
-    'b-bal': '250.00',
-    'c-bh': '399.00',
-    'c-bal': '133.00',
-  },
-};
-
-const WC: QuotationLine = {
-  ...TRAP,
-  id: 'l2',
-  product_code: 'WC8518-SH',
-  description: 'One-piece WC',
-  unit_price: '520.00',
-  quantity: '120.00',
-  line_total: '62400.00',
-  sort_order: 1,
-  qty_cells: { 'a-bh': '120.00' },
-};
-
-function staged(source: QuotationLine, withCells: boolean): StagedQuotationLine {
-  return {
-    id: source.id,
-    key: source.id,
-    line: source,
-    draft: serverToDraft(source, withCells),
-    removed: false,
-  };
-}
 
 function renderGrid({
   lines,

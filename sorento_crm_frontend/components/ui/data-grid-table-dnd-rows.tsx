@@ -324,6 +324,10 @@ function DataGridTableDndRows<TData>({
     );
   });
 
+  const overlayFullRow = activeRow
+    ? props.renderFullRow?.(activeRow.original as TData, { overlay: true })
+    : null;
+
   return (
     <DndContext
       id={useId()}
@@ -427,11 +431,19 @@ function DataGridTableDndRows<TData>({
                 {/* No `returnedFromId`: this floating clone follows the pointer, it is
                     never the settled row the reader returned to. */}
                 <DataGridTableBodyRow row={activeRow}>
-                  {activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
-                    <DataGridTableBodyRowCell cell={cell} key={colIndex}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </DataGridTableBodyRowCell>
-                  ))}
+                  {overlayFullRow != null ? (
+                    // A row drawn whole floats as itself (owner hand test, 10 Nov 2026: the
+                    // section heading's preview showed an empty line's cells).
+                    <td colSpan={activeRow.getVisibleCells().length} className="bg-muted/60 px-1 py-1">
+                      {overlayFullRow}
+                    </td>
+                  ) : (
+                    activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
+                      <DataGridTableBodyRowCell cell={cell} key={colIndex}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </DataGridTableBodyRowCell>
+                    ))
+                  )}
                 </DataGridTableBodyRow>
               </tbody>
             </table>
