@@ -69,6 +69,7 @@ _APPROVAL_FILTERS = ("pending", "resubmitted", "rejected", "approved", "draft")
 _MACHINE_AUTH_METHODS = frozenset({"api_key", "integration_api_key", "connector"})
 
 _PROFILE_KEYS = (
+    "name",
     "registered_company_name",
     "location",
     "address",
@@ -138,6 +139,7 @@ def preview_clashes(
         if VIEW not in permission_slugs(db, _user["id"]):
             # A salesperson with the submit grant only learns that a project exists (D8).
             rows = [
+                # Exactly D8's four keys: the short name is not added for this view.
                 {k: row.get(k) for k in ("project_id", "project_code", "title", "blocks")}
                 for row in rows
             ]

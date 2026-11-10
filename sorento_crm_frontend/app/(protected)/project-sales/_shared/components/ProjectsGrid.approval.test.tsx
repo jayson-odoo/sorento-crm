@@ -217,3 +217,16 @@ describe('ProjectsGrid: the typed developer of a registration (review round 3)',
     expect(screen.getByText('SP Setia')).toBeInTheDocument();
   });
 });
+
+describe('ProjectsGrid: PROJECT-NAME (owner 10 Nov)', () => {
+  it('the Project column shows the short name, with the full title on hover', async () => {
+    renderGrid([project({ name: 'Residensi Contoh Phase 2', title: 'CADANGAN MEMBINA BLOK A' })]);
+    const link = await screen.findByRole('link', { name: 'Residensi Contoh Phase 2' });
+    expect(link).toHaveAttribute('title', 'CADANGAN MEMBINA BLOK A');
+  });
+
+  it('a project with no name shows its title', async () => {
+    renderGrid([project({ name: null })]);
+    expect(await screen.findByRole('link', { name: 'Staff Registered Tower' })).toBeInTheDocument();
+  });
+});

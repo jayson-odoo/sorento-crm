@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { RichDescription } from '@/components/common/RichDescription';
+import { isRich, richOneLine } from '@/lib/dealer-kit/rich-text';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
@@ -76,7 +78,12 @@ function withUom(line: QuotationSignLine): string {
 function Description({ line }: { line: QuotationSignLine }) {
   return (
     <>
-      {cell(line.description)}
+      {/* Styled text as the PDF prints it; plain text exactly as this page always showed it. */}
+      {isRich(line.description) ? (
+        <RichDescription value={line.description} empty="" />
+      ) : (
+        cell(line.description)
+      )}
       {line.technical_spec?.trim() ? (
         <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
           {line.technical_spec}
@@ -184,7 +191,7 @@ function LineAmount({ line }: { line: QuotationSignLine }) {
 function itemName(line: QuotationSignLine, position: number): string {
   // Not `item_label`: since #2106 that is the printed item NUMBER ("1"), which the ITEM column
   // shows, and "Feedback on 1" names nothing a customer would recognise (fix round 2, B2).
-  return line.description?.trim() || line.product_code?.trim() || `Item ${position + 1}`;
+  return richOneLine(line.description).trim() || line.product_code?.trim() || `Item ${position + 1}`;
 }
 
 /** Brand and code under the item's name in the grid, muted (mock v3 frame 4). */
