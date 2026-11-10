@@ -64,8 +64,10 @@ def test_a_push_creates_then_updates_one_row_per_company(env):
 
 def test_the_read_door_returns_the_stored_fields(env):
     ref, code = _ref(), _code()
-    env.post(INGEST, [{"source_ref": ref, "code": code, "description": "NET 30", "term_days": 30}])
-    response = env.read([ref])
+    pushed = env.post(INGEST, [{"source_ref": ref, "code": code, "description": "NET 30", "term_days": 30}])
+    assert pushed.json()["records"][0]["outcome"] == "created", pushed.text
+    # Not env.read(): that helper is bound to the item classes door.
+    response = env.client.post(READ, json={"companyCode": env.company_a_code, "source_refs": [ref]})
     assert response.status_code == 200, response.text
     assert ref in response.text and "NET 30" in response.text
 
