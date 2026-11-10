@@ -570,14 +570,18 @@ describe('QuotationFormClient create', () => {
     );
 
     fireEvent.click(within(card).getByRole('button', { name: 'Add a section' }));
-    const heading = await within(card).findByRole('textbox', { name: 'Section heading on line 2' });
+    // A heading row of its own, then a line under it (PROPOSAL-FORM-COLLAPSE).
+    const heading = await within(card).findByRole('textbox', { name: 'Section heading above line 2' });
     fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS' } });
     await waitFor(() =>
       expect(stageScopeSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/^new-scope:/),
         [
           expect.anything(),
-          expect.objectContaining({ draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }) }),
+          expect.objectContaining({
+            draft: expect.objectContaining({ is_section: expect.any(String), band_label: 'OPTIONAL ITEMS' }),
+          }),
+          expect.objectContaining({ id: null }),
         ],
       ),
     );
