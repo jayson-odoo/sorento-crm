@@ -899,7 +899,9 @@ def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
     The run's own `warehouse_ids` (what the planner, or the daily job's config, selected),
     AS-IS when locations were TICKED (LOWSTOCK-PROJECT-BINS, owner ruling 10 Nov 2026): a
     project bin ticked by name (BRW-IB, BRW-BB) counts like any other ticked location, and
-    nothing the run did not select counts.
+    nothing the run did not select counts. Ticking replaces only the project-bin half of
+    the site-pool rule: an INACTIVE warehouse counts nowhere, ticked or not
+    (LOWSTOCK-BINS-REGRESS, the `is_active` leg of `pool_predicate.active_site_pool_sql`).
 
     A run with NOTHING ticked is stamped with every active warehouse
     (`reorder_run_service._resolve_warehouse_ids`), project bins included, so its stored
@@ -924,7 +926,7 @@ def report_warehouse_ids(db: Session, run: ReorderRun) -> Optional[list[str]]:
     wids = [str(w) for w in run.warehouse_ids]
     if not wids:
         return []
-    q = db.query(Warehouse.id).filter(Warehouse.id.in_(wids))
+    q = db.query(Warehouse.id).filter(Warehouse.id.in_(wids), Warehouse.is_active.is_(True))
     if resolve_run_scope(db, wids, None, run.started_at)["is_all_warehouses"]:
         q = q.filter(text(active_site_pool_sql("warehouses")))
     return sorted(str(wid) for (wid,) in q.all())
