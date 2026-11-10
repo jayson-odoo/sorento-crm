@@ -6,6 +6,11 @@ service also reports the currencies the purchase-order book actually PRICES in t
 rate on file. The screen can then say "you have no rate for CNY" rather than leaving the
 buyer to reverse-engineer it from a plan.
 
+Rates live in the dated `exchange_rates` table (PRODUCT-COSTING, contract 4.8). The SCM screen
+keeps its one-row-per-currency shape: it lists and edits the row in force TODAY, and saving
+writes the row dated `as_of` (today when none is given), updating it when that date already has
+one.
+
 Saving follows the reconciliation rule the rest of this module uses: same then skip, diff
 then update, new then create. Skipping matters here because an unchanged row that gets
 rewritten anyway moves `updated_at`, and "updated today" would then be a claim that somebody
@@ -19,19 +24,36 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models.scm import CurrencyRate
+from app.models.costing import ExchangeRate
 from app.services.error_handler import AppException
 from app.services.scm.money import BASE_CURRENCY, normalize_currency
 
-# Read and write through the MODEL, never `text("... scm.currency_rate ...")`. A schema-
-# qualified name bypasses search_path, so raw SQL here would reach past a test's scratch
-# schema and touch the real table - the same silent live-data write the blank-schema
+# Read and write through the MODEL, never `text("... exchange_rates ...")` for the rates. A
+# schema-qualified name bypasses search_path, so raw SQL here would reach past a test's
+# scratch schema and touch the real table - the same silent live-data write the blank-schema
 # fixture exists to prevent.
 
 
+def _today() -> date:
+    from app.services.reports.registry import today_malaysia
+
+    return today_malaysia()
+
+
+def _in_force_rows(db: Session, currency: Optional[str] = None) -> list[ExchangeRate]:
+    """The row in force today for each currency (or for one)."""
+    query = db.query(ExchangeRate).filter(ExchangeRate.effective_from <= _today())
+    if currency is not None:
+        query = query.filter(ExchangeRate.currency == currency)
+    latest: dict[str, ExchangeRate] = {}
+    for r in query.order_by(ExchangeRate.currency, ExchangeRate.effective_from):
+        latest[r.currency] = r
+    return [latest[c] for c in sorted(latest)]
+
+
 def list_rates(db: Session) -> dict:
-    """Every rate on file, plus the currencies the book uses that have none."""
-    rows = db.query(CurrencyRate).order_by(CurrencyRate.currency).all()
+    """Every rate in force today, plus the currencies the book uses that have none."""
+    rows = _in_force_rows(db)
     held = {r.currency for r in rows}
 
     # What the purchase-order book actually prices in. The line's own currency wins over
@@ -77,46 +99,52 @@ def upsert_rate(db: Session, currency: str, rate_to_base: float, *,
                     "item in that currency at nothing.",
         )
 
-    existing = db.get(CurrencyRate, code)
+    effective_from = as_of or _today()
+    existing = (
+        db.query(ExchangeRate)
+        .filter(ExchangeRate.currency == code, ExchangeRate.effective_from == effective_from)
+        .first()
+    )
 
     if existing is not None:
-        same = (float(existing.rate_to_base) == value
-                and existing.as_of == as_of
+        same = (round(float(existing.rate_to_base), 6) == round(value, 6)
                 and (existing.note or None) == (note or None))
         if same:
             return {"action": "unchanged", "rate": _serialize(existing)}
         existing.rate_to_base = value
-        existing.as_of = as_of
         existing.note = note
-        existing.updated_by = actor
         db.commit()
         db.refresh(existing)
         return {"action": "updated", "rate": _serialize(existing)}
 
-    row = CurrencyRate(currency=code, rate_to_base=value, as_of=as_of, note=note,
-                       updated_by=actor)
+    # The screen's words stay per currency: a currency with a rate already is being UPDATED to
+    # a new one (a new dated row), and only its first row is a creation.
+    had_rate = db.query(ExchangeRate).filter(ExchangeRate.currency == code).first() is not None
+    row = ExchangeRate(currency=code, rate_to_base=value, effective_from=effective_from,
+                       note=note, created_by=actor)
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"action": "created", "rate": _serialize(row)}
+    return {"action": "updated" if had_rate else "created", "rate": _serialize(row)}
 
 
 def delete_rate(db: Session, currency: str) -> None:
-    """Remove a rate. Every price in that currency becomes unrankable again, which is the
-    honest consequence and is visible on the plan as "no rate for X"."""
+    """Remove the rate in force today. Every price in that currency falls back to the
+    previous dated row, or becomes unrankable again when there is none, which is the honest
+    consequence and is visible on the plan as "no rate for X"."""
     code = normalize_currency(currency)
-    row = db.get(CurrencyRate, code)
-    if row is None:
+    rows = _in_force_rows(db, code)
+    if not rows:
         raise AppException(status_code=404, message=f"No rate on file for {code}.")
-    db.delete(row)
+    db.delete(rows[0])
     db.commit()
 
 
-def _serialize(r: CurrencyRate) -> dict:
+def _serialize(r: ExchangeRate) -> dict:
     return {
         "currency": r.currency,
         "rate_to_base": float(r.rate_to_base),
-        "as_of": r.as_of.isoformat() if r.as_of else None,
+        "as_of": r.effective_from.isoformat() if r.effective_from else None,
         "note": r.note,
         "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
