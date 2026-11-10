@@ -1,531 +1,634 @@
-# UI v2: the whole design plan
+# UI v2: the program
 
-Status: proposed, awaiting owner approval. Planning lane UI-V2-PLAN (10 Nov 2026), docs and
-static mocks only, no app code. Build lanes start after the owner approves this plan and answers
-the five decisions in section 12.
+Status: revision 2, proposed, awaiting owner review (lane UI-V2-PLAN, research and design only, no app code).
 
-- **Inputs:** the gap audit `documentation/uiux/playbook-uiux-audit.md` (branch
-  `crew/uiux-playbook-audit`, PR #2322, cited below as `AUDIT`), the owner rules from crew memory
-  (section 1), and the repo's own contract (`PRINCIPLES.md`, `documentation/reference/DESIGN-LANGUAGE.md`,
-  `documentation/reference/ADR-PRODUCT-STANDARDS.md`). The private playbook repo was not readable from
-  this sandbox. Every playbook reference comes through `AUDIT`, which cites it as `PB:<line>`.
-- **Mocks:** `documentation/uiux/ui-v2-mocks/index.html`. It is one self-contained file with
-  Before / After / Both views of the OI list, OI detail, quotation editor, System Settings and the
-  phone list. A "Component map" toggle labels every v2 element with its component and repo path, and
-  a "v2 dark" toggle shows the dark tokens. The same mapping is written out in a legend table under
-  each screen.
-- **Mock data:** the sandbox may not touch the shared dev DB (crew rule). Values therefore follow
-  dev-data formats as they appear in the frontend test fixtures: OI numbers `OI-YYMM-NNNN`, SO numbers
-  `SO41xxxx`, product codes `SRT382-6` / `SRTWC8613-RL` / `CB6633`, suppliers `FOSHAN WORKS` /
-  `DAFUYUAN` / `CHAOSHENG`, quotation number `SRT/Q/2026/0141`. Every person and company name is
-  masked (`R***** Kitchen Sdn Bhd`).
-- **Paths:** paths are relative to `sorento_crm_frontend/` unless they start with `documentation/` or
-  `sorento_crm_backend/`. File counts are non-test files and were measured on `main` at `6e6657e2`;
-  each row says how it was counted.
-
-## 1. What v2 is, in one paragraph
-
-v2 is not a redesign. The repo already has a strong contract: deferred delete, one CTA, line
-tabs, DataGrid everywhere, motion presets, never-stuck states. What it lacks is **one visual
-system applied evenly**. Today the same idea has two to five implementations (section 6). The
-brand colour is Tailwind blue rather than Sorento's own. Several owner rules live only in crew
-memory, so a reviewer cannot enforce them. v2 does three things:
-
-1. It writes the owner rules into the contract.
-2. It swaps the tokens to a Sorento palette and a denser type scale.
-3. It moves each page archetype onto one set of shared components, in waves, behind a "UI v2"
-   switch that defaults to OFF.
-
-### Owner rules (binding, they win over the playbook and over this plan)
-
-| # | Rule | Where v2 lands it |
+| Rev | Date | Change |
 | --- | --- | --- |
-| R1 | Every date dd/mm/yyyy, through one formatter | `lib/format/date.ts` (section 6.1) |
-| R2 | Standard DataGrid, one line per row | List archetype (5.1); `data-grid-table.tsx` forbids multi-line cells |
-| R3 | Every column sortable server-side | List archetype; backend sort keys where missing (OI Reserve, `AUDIT` H:491) |
-| R4 | Every dropdown filter multi-select | `FilterChip` wraps `SearchableMultiSelect` only (5.1) |
-| R5 | Grid select like Odoo: shift/drag, "Select all N" | Exists (`components/ui/data-grid-range-select.ts:8-21`); v2 adds "Select all N" (5.1) |
-| R6 | Right-click row menus, not row icons | NEW `DataGridRowMenu` (5.1, 7.2) |
-| R7 | Minimal UI; dialog or lightbox over side panels; no bloat | Interaction rules (7); Sheet retired for content (6.11) |
-| R8 | Detail header like OI: number and badge inline, one subtitle, actions right | `RecordHeader` (5.2) |
-| R9 | CRM forms = portal forms (same component) | Form archetype (5.3) |
-| R10 | History is a standard tab on every record | NEW `HistoryTab` (5.2) |
-| R11 | One image pipeline | Section 7.7 |
-| R12 | Sorento brand colour | Tokens (3.1); decision D1 |
+| 1 | 10 Nov 2026 | First plan |
+| 2 | 11 Nov 2026 | Reworked after the owner's D1-D5 answers (about 00:00) and the discovery round (`UI-V2-DISCOVERY.md`, owner about 00:10) |
 
-## 2. Principles
+**Companion files:**
+- `UI-V2-DISCOVERY.md`: findings, evidence, journeys, references.
+- `UI-V2-SCREEN-INVENTORY.md`: all 469 protected pages by archetype and area.
+- `ui-v2-mocks/index.html`: before/after mocks, theme picker, phone.
 
-1. **One way per idea.** For each UI concept (date, header, status pill, empty state, upload,
-   preview, filter, row menu) there is one component, and a second implementation is a review
-   defect. Section 6 lists today's duplicates and which one survives.
-2. **Data first, chrome last.** The first record row should sit high on the screen. The shell gets
-   thinner (48 px topbar, 224 px sidebar) and summary tiles become 28 px chips. Toolbars take one
-   row.
-3. **One primary per screen.** It sits top right, filled, in brand colour. Everything else is
-   outline, ghost, gear menu or row menu.
-4. **Quiet surfaces.** No hover lifts, no glow, no motion beyond `lib/motion.ts`. Colour carries
-   meaning (status, primary, danger) and never decoration.
-5. **Tokens or nothing.** Feature code uses semantic tokens (`bg-primary`, `text-muted-foreground`,
-   `Badge status`). A raw palette class or raw hex outside `components/ui` is a defect. Canvas and
-   print artwork are exempt (section 6.15).
-6. **Same everywhere.** List, detail, form and settings each have one layout. A user who learns one
-   order inquiry knows every record.
-7. **Simplest thing that works** (`PRINCIPLES.md` first section). v2 adds no theme panel, no font
-   picker and no layout builder. Every new component in section 6 replaces at least two existing
-   implementations.
+The playbook gap audit is `documentation/uiux/playbook-uiux-audit.md` (PR #2322, cited `AUDIT`).
 
-## 3. Tokens
+**Paths:** frontend paths are relative to `sorento_crm_frontend/` unless they start with `documentation/` or
+`sorento_crm_backend/`.
 
-All tokens live in `css/config.reui.css`. Today `:root` maps them to the Tailwind palette
-(`--primary: var(--color-blue-500)` at `:11`, dark `.dark` at `:126`). v2 defines its values under
-`:root[data-ui="v2"]` and `.dark[data-ui="v2"]`. The switch (section 10) sets that attribute, so
-every component already on tokens flips with no code change.
+## 0. The owner's answers this revision is built on
 
-### 3.1 Colour
-
-**Brand ramp: Sorento Red.** The repo already names it: `{ label: 'Sorento Red', value: '#b44d2e' }`
-(`components/common/ColorPicker.tsx:30`, the dealer-kit brand swatches). The logo SVGs still carry
-the Metronic pink `#F8285A` (`public/media/app/default-logo.svg`) and need the real Sorento mark
-(decision D1).
-
-| Token | Light | Dark | Use |
-| --- | --- | --- | --- |
-| `--brand-50` | `#fbf1ed` | `#2a1a14` | Selected row, active nav, active filter chip |
-| `--brand-100` | `#f6ddd3` | `#3a2219` | Hover on brand-tinted items |
-| `--brand-500` = `--primary` | `#b44d2e` | `#d9734f` | Primary button, links, focus ring, sort arrow |
-| `--brand-600` = `--primary-hover` | `#9a3f24` | `#e58a68` | Primary hover/pressed |
-| `--primary-foreground` | `#ffffff` | `#1a0d08` | Ink on a filled primary |
-
-Contrast was computed with the WCAG formula. White on `#b44d2e` is 5.2:1 and `#d9734f` on the dark
-background `#111113` is 5.9:1, so both pass AA for text. `css/design-tokens.test.ts` already asserts
-pairs and gets the v2 set added.
-
-**Neutrals.** Zinc stays. In light mode: `--background #fff`, `--canvas #f7f7f8` (page behind
-cards), `--border #ececee`, `--input #dcdce0`, `--muted-foreground #71717a`. In dark mode:
-`#111113` / `#0d0d0f` / `#26262b` / `#3a3a41` / `#a1a1aa`.
-
-**Status.** Every status is one `Badge` tone, with tinted background and ink of the same hue. Each
-pair passes 4.5:1.
-
-| Tone | Light bg / ink | Dark bg / ink | Meaning |
-| --- | --- | --- | --- |
-| success | `#ecfdf3` / `#067647` | `#0b2a1c` / `#47cd89` | Done, reserved, approved |
-| warning | `#fffaeb` / `#b54708` | `#2d1f06` / `#fdb022` | Waiting on someone, outstanding |
-| info | `#eff4ff` / `#3538cd` | `#1a1f3d` / `#a4bcfd` | In progress, needs a next step |
-| neutral | `#f4f4f5` / `#52525b` | `#26262b` / `#d4d4d8` | Draft, completed with nothing owed, parked |
-| danger | `#fef3f2` / `#b42318` | `#3a1210` / `#f97066` | Failed, rejected, overdue |
-
-`info` moves from violet (`--info: var(--color-violet-600)`) to indigo, because blue is no longer
-the primary.
-
-**Danger vs brand.** Both are warm reds. v2 keeps them apart by **use**, not hue alone. Danger is
-never a filled button: destructive actions are the deferred countdown (`DeferredActionButton`),
-drawn as danger text or an outline. Danger always comes with its word ("Delete", "Failed").
-Decision D1 asks the owner to accept this.
-
-### 3.2 Type
-
-Inter stays (`--font-sans`, `DESIGN-LANGUAGE.md` D12). The scale gets one step denser for data
-screens. Body is 13 px, where Metronic's `text-sm` gives 14 today.
-
-| Token | Size / line | Weight | Use |
-| --- | --- | --- | --- |
-| `--text-2xs` | 11 / 14 | 550 | Badge, count chip |
-| `--text-xs` | 12 / 16 | 500-550 | Column header, field label, caption, crumbs |
-| `--text-2sm` (body) | 13 / 19 | 400 | Table cell, input, menu item, body copy |
-| `--text-sm` | 14 / 20 | 600 | Section heading, dialog body emphasis |
-| `--text-base` | 16 / 24 | 650 | Dialog title |
-| `--text-xl` | 20 / 28 | 650, -0.015em | Page and record title |
-| `--text-2xl` | 24 / 32 | 650 | Dashboard figures only |
-
-Numbers in tables, totals, IDs and money use `tabular-nums`. Headings get `text-wrap: balance`,
-which is missing today (`AUDIT` "Headings balanced").
-
-### 3.3 Spacing, radius, density
-
-- **Spacing:** a 4 px grid: 4, 8, 12, 16, 20, 24, 32. Page padding is 20 px at 1280 and 12 px at 375.
-  The gap between cards is 12 px.
-- **Radius:** `--radius` moves from 0.5rem to 0.375rem. Controls get 6 px, menus and toasts 8 px,
-  cards and dialogs 12 px, and badges and chips 999 px.
-- **Control height:** 32 px default, 28 px small, 36 px large. A coarse pointer gets the invisible
-  44 px hit area that already exists (`COARSE_HIT_TARGET_CLASS`, `components/ui/primitive-classes.ts`).
-- **Density:** one token, `--row-h`. It is 36 px on desktop ("Comfortable") and 44 px under
-  `(pointer: coarse)`. Column header height is 34 px. Decision D3 asks whether a user-selectable
-  Compact (32 px) is wanted. The recommendation is no, until someone asks for it.
-- **Elevation:** three steps only. Cards are flat (border, no shadow). Menus and popovers get
-  `0 12px 32px rgb(0 0 0/.14)`. Dialogs get the same plus the existing scrim. Materials stay as
-  defined (`--material-*`, `DESIGN-LANGUAGE.md` section 2).
-
-### 3.4 Light and dark
-
-Both modes ship as tokens from wave 0, because the cost is the same token file. Dark mode keeps its
-current entry point (user menu, `app/components/partials/topbar/user-dropdown-menu.tsx:63`). Decision
-D2 asks whether dark gets its own visual QA pass in every wave or only at the end.
-
-## 4. Layout shell
-
-Only `Demo1Layout` is live (`app/(protected)/layout.tsx`, `app/components/layouts/demo1/layout.tsx`).
-The other nine demo layouts are unreferenced.
-
-| Part | Today | v2 |
+| # | Owner (11 Nov, gist) | What it means for v2 |
 | --- | --- | --- |
-| Sidebar | `demo1/components/sidebar.tsx` (30 lines) + `sidebar-menu.tsx` (338); menu `config/menu.config.tsx` (3,548 lines: `MENU_SIDEBAR :1542`, `MENU_SIDEBAR_COMPACT :1638`, `MENU_MEGA_MOBILE :3121`); Metronic demo entries remain (Billing, Invite a friend, Privacy Settings at `:1739,2929,3286`) | 224 px; 30 px items; group labels in sentence case; active item = `--brand-50` tint plus brand ink; icon rail + hover-open kept (`css/demos/demo1.css:89-118`); demo entries removed |
-| Topbar | `demo1/components/header.tsx` (187 lines), 64 px, the crumb lives here AND in `PageHeader` | 48 px: visible search field that opens the existing Cmd/Ctrl+K dialog (`app/components/partials/dialogs/search/search-dialog.tsx`), company switcher, notifications, avatar menu. Crumbs only in `PageHeader` |
-| Page container | `APP_SETTINGS.container: 'fixed'` (`config/settings.config.ts`) | Fluid up to 1600 px; lists use the full width, forms cap at 960 px |
-| Phone (375 px) | Vaul drawer behind `useIsMobile` (`header.tsx:85-90`); title, toggle, tiles, search and toolbar stack (about 60% of the screen before row 1, mock 5) | Page title moves INTO the 48 px bar; crumbs hidden; toolbar is one row (search, filter count, view toggle); filters in a bottom sheet |
-| Mobile bottom bar | None (only a public CTA strip, `app/(public)/c/[company]/[slug]/page.tsx:143`) | **Not added** (decision D4) |
-| AI bubble | Always floating (`app/components/common/AIAssistantBubble.tsx:595`) | Kept; it is the one floating element. On a phone it hides while a bottom sheet or a dialog is open |
+| D1 | "keep today's blue, Sorento blue. The theme or the brand should be customizable and selectable, pickable." | Blue stays the default. v2 gets a theme system: selectable presets, a custom brand colour, light and dark, all driven by tokens (section 5) |
+| D2 | Dark mode now, and "check properly in each phase, because this UI I want to do it properly" | Every phase's exit criteria include a dark-mode pass on every screen it touches (section 11) |
+| D3 | "row height, what's the issue? Isn't it now quite good?" | Density unchanged: 44 px rows, 14 px text, 40 px header (measured, `UI-V2-DISCOVERY.md` 2.2). No density option |
+| D4 | "for the phone, we should follow the playbook" | The phone follows the Foundryx playbook: bottom bar, floating main action, bottom selection and filter bars, and its list layout. Desktop keeps one line per row (section 8) |
+| D5 | "a new version rollout. The user can go back ... previous version and new version. But I need it to be very good before I even release to live. So this one should be a very long and detailed thing." | v2 is a complete parallel version behind a per-user version switch (section 6). Nothing reaches staff until every phase has passed its exit criteria and the owner has used v2 as their daily UI (sections 10, 12) |
+| - | Discovery round: "need more thinking, more exploring, more investigating before we make the coding" | The program starts with evidence (telemetry, fixtures, capture tooling) and owner-only use, and is long by design |
 
-## 5. Page archetypes
+## 1. Goals, non-goals, release bar
 
-Every protected page is one of six archetypes. A page that fits none needs a reason in its plan.
+**Goals**
+1. **One coherent UI.** Every screen is one of six archetypes, built from one set of components, so a user who knows
+   one record knows them all.
+2. **Less to read and fewer clicks.** Remove what the journeys show is in the way: two primaries at hand-offs, next
+   steps hidden in gears, 10-tab records, stacked dialogs, queue-then-collect exports (`UI-V2-DISCOVERY.md` section 4).
+3. **The owner's rules enforced by code and review,** not by memory.
+4. **A brand-able theme,** light and dark, that stays accessible whatever colour is picked.
+5. **A phone experience that follows the playbook.**
+6. **A zero-risk path:** v1 untouched and one click away until v1 is retired.
 
-### 5.1 List (mock 1, mock 5)
+**Non-goals**
+- No backend redesign. v2 reuses the same hooks, services and endpoints; backend work is limited to:
+  - sort keys where a column cannot sort
+  - "select all N" bulk endpoints
+  - the version and theme fields
+  - page-view telemetry
+- No new features hidden inside the redesign. A screen does what it does today; journey fixes change layout and
+  wording, never business rules. A business-rule change goes through its own lane.
+- No density change, no new fonts, no hover effects or decorative motion (`AUDIT` Q4 stands).
 
-Order from top to bottom:
+**Release bar** (all of these, before any non-owner user sees v2):
+- Every non-demo screen has a v2 implementation (387 pages = 469 minus 82 demo; `UI-V2-SCREEN-INVENTORY.md`).
+- Every screen has passed its archetype checklist (section 7) in light AND dark, at 1280 AND 375.
+- The visual, accessibility and performance gates (section 11) are green.
+- The owner has used v2 as their daily UI for at least two weeks with no open "v2 worse than v1" item.
 
-1. `PageHeader` with title and at most one CTA. A view toggle (List | Schedule | Board) sits in the
-   same slot.
-2. Optional `FacetChips`: count chips that are filter toggles, replacing KPI tiles above a list.
-3. The DataGrid card. Its toolbar row holds `ListSearchInput`, one `FilterChip` per filter
-   (multi-select, applied value inline: "Reserve: Needs reserve, Parked"), "+ Filter" chips for
-   unset filters, "Clear filters", and the Columns icon at the right.
-4. When any row is ticked, the selection bar replaces the toolbar: "N selected", "Select all {total}",
-   bulk actions, Clear.
-5. Rows: one line, `--row-h`, every column sortable, `truncate` + `title`, IDs `tabular-nums`
-   semibold, status via `Badge`.
-6. Pager: "1 - 25 of 312", page numbers, rows per page (25 default, kept; `AUDIT` section 6).
+## 2. Owner rules (binding; win over the playbook and this plan)
 
-**Row interactions:**
+| # | Rule | Source | Enforced by (phase 0) |
+| --- | --- | --- | --- |
+| R1 | Every date dd/mm/yyyy through one formatter | `PLAN-date-format-unify-04nov.md:6` | `lib/format/date.ts`; ESLint ban on date-fns `format` and `toLocale*String` in feature code |
+| R2 | Desktop: standard DataGrid, one line per row (+N pill for overflow) | `sales-targets-opportunities-26sep-acceptance-criteria.md:68` | `DataGridTable` renders cells `truncate` with no wrap; inventory test for multi-line cells |
+| R3 | Every column sortable server-side | `PLAN-portal-p4-requests-28oct.md:61` | Inventory test: `enableSorting: false` allowlist that only shrinks (521 today) |
+| R4 | Every dropdown filter multi-select | same | `FilterChip` accepts only multi; inventory test for single-select in list toolbars (34 files today) |
+| R5 | Grid selection like Odoo: shift/drag ranges, "Select all N" | `PLAN-grid-drag-select.md:7-8` | `data-grid-range-select.ts` (exists) + select-all-N (v2) |
+| R6 | Right-click row menus, no row icons | crew memory, owner | `DataGridRowMenu`; replaces D15's "..." column (`DESIGN-LANGUAGE.md:186`) |
+| R7 | Minimal UI; dialog or lightbox over side panels; no bloat | `CARD-project-party-roles-10nov.md:178`, commit `03be747b` | Inventory test for `SheetContent` (44 files); exact scope is open question Q2 |
+| R8 | Record header like OI: number + badge inline, one subtitle, actions right | owner | `RecordHeader` (v2) |
+| R9 | CRM forms = portal forms (same component) | owner | `components/v2/forms/` shared by portal and CRM |
+| R10 | History is a standard tab on every record | `PLAN-standard-history-10nov.md:11-12` | `HistoryTab`; checklist item D-8 |
+| R11 | One image pipeline | owner | `AttachmentImage` + `AttachmentPreviewModal`; inventory test for raw attachment `<img>` |
+| R12 | Brand colour selectable; Sorento blue default (D1) | owner 11 Nov | Theme system (section 5) |
+| R13 | Reuse the same component; no second implementation | `PLAN-standard-history-10nov.md:5-6` | Section 9 replacement map; reviewer checklist |
+| R14 | Plain words for errors; nothing stuck | `NEVER-STUCK-UI.md:4`, `PLAN-po-schedule-redesign-24sep.md:108` | `StateView`; never-stuck smoke |
 
-- Click opens the record (`rowHref`).
-- Right-click opens `DataGridRowMenu`. Its items come from the entity's `use<Entity>Actions(record)`
-  (D15, `DESIGN-LANGUAGE.md` section 5), plus three built-ins: Open, Open in new tab, Copy {id}.
-- If the right-clicked row is part of a selection, the menu acts on the selection ("Send 3 to
-  purchasing").
-- On touch, a 500 ms long press opens the same items in a vaul bottom sheet. That is the hold the
-  range select already uses for touch drags.
-- On the keyboard, Shift+F10 or the context-menu key opens it.
+Phase 0 writes R1-R14 into `documentation/reference/DESIGN-LANGUAGE.md` and `PR-CHECKLIST.md`, so a reviewer can
+hold a PR to them. Today 9 of them are not written anywhere a reviewer reads (`UI-V2-DISCOVERY.md` 3.2).
 
-**Phone:** the same grid in its box (owner Q2, no cards). The identifier column is pinned on coarse
-pointers, rows are 44 px, filters open in a sheet, and pagination is compact.
+## 3. Principles
 
-**Header filters per column type** (`PB:192-202`) are not adopted. Toolbar chips meet R4 and keep
-one place to look.
+1. **Subtract first.** The owner's recurring complaint is complexity (about 23 recorded sources). A v2 screen shows
+   fewer elements than its v1 screen unless it adds a missing state.
+2. **One way per idea.** One component per concept (section 9). A second implementation is a review defect.
+3. **The next step is the primary.** The step the record's state is waiting on is the one filled button. If the
+   viewer cannot take it, a status line says who it waits on, with no button.
+4. **Data first.** The first record row sits as high as the shell allows; summaries are chips, not tiles.
+5. **Tokens or nothing.** Feature code never names a palette colour or hex (canvas and print artwork exempt).
+6. **Same layout everywhere.** View and edit share tabs and order. A list behaves the same on every screen.
+7. **Evidence before ordering.** Waves are ordered by measured use (section 4.3), not by guesses.
+8. **Simplest thing that works** (`PRINCIPLES.md`). Every mechanism in this plan names the problem it solves today.
 
-### 5.2 Detail / record (mock 2)
+## 4. Scope: the screens
 
-Order from top to bottom:
+### 4.1 Inventory
 
+The full list is in `UI-V2-SCREEN-INVENTORY.md`. Summary (first-pass archetype, corrected as screens are opened):
+
+| Archetype | Pages | Share |
+| --- | --- | --- |
+| List | 177 | 46% of non-demo |
+| Detail (+ 23 sub-pages under a record) | 109 | 28% |
+| Form (create/edit pages; most creates are dialogs and are not pages) | 55 | 14% |
+| Settings | 17 | 4% |
+| Dashboard | 14 | 4% |
+| Wizard | 9 | 2% |
+| Redirect | 6 | - |
+| Metronic demo (retire, not migrate) | 82 | - |
+| **To build in v2** | **387** | |
+
+| Area | Pages | Area | Pages |
+| --- | --- | --- | --- |
+| project-sales | 54 (4 redirect) | user-management | 43 (14 settings) |
+| system-management | 49 | procurement-management | 40 |
+| master-data-management | 36 | dealer-kit | 20 |
+| scm | 18 (2 redirect) | order-management | 15 |
+| sales | 15 | sla-management | 14 |
+| inventory-management | 13 | my-requests | 13 |
+| marketing-management | 10 | complaint-management | 8 |
+| resource-management | 7 | workflow-forms-management | 7 |
+| forms-management, ideas, integration-management | 5 each | auth, ticket-management | 3 each |
+| finance | 2 | home, town | 1 each |
+
+The portal (`app/(auth)/portal`) is in scope for forms only (R9: the CRM and the portal share one form component).
+Its own shell is out of scope for v2 and gets its own plan after phase 7.
+
+### 4.2 Waves by area
+
+Each area wave migrates every page in the area at once, so a user never meets v1 and v2 screens side by side
+inside one module. The order below is provisional and is re-ordered on telemetry at the end of phase 0 (4.3).
+
+| Wave | Areas | Pages | Why this order |
+| --- | --- | --- | --- |
+| A | project-sales (OI, projects, quotations, SO, stock debt) | 50 | Most commits in the last 120 days (332 + 316); four of nine journeys (J1-J5) |
+| B | scm + procurement-management | 56 | Reorder (209 commits), PO/SPO/GRN, J7-J8 |
+| C | dealer-kit + marketing-management + portal forms | 30 | Price tags (J6), CRM = portal forms |
+| D | master-data-management + inventory-management | 49 | Product master (212 commits), J9 |
+| E | order-management, sales, my-requests, complaint, sla, ticket | 68 | Remaining staff modules |
+| F | system-management, user-management, integration, workflow, forms, resources, ideas, finance, home, town, auth | 134 | Admin and low-traffic screens |
+
+### 4.3 Evidence before ordering
+
+Today the app records no page views (`UI-V2-DISCOVERY.md` 3.3). Phase 0 adds one minimal record:
+- **Table:** `ui_page_views`, with columns `user_id`, `route` (pattern, ids replaced), `ui_version`,
+  `viewport` (phone/tablet/desktop), `ms_to_first_data`, `created_at`.
+- **Sending:** one beacon per route change, batched.
+- **Retention:** 90 days.
+
+It answers three questions:
+- Which screens to do first.
+- How many staff use a phone (the D4 effort question).
+- Whether v2 is faster than v1 (the performance gate).
+
+The audit log and session user-agent data that exist today cover only writes and devices (3.3), so they are used
+alongside it, not instead of it.
+
+## 5. Theme system (D1)
+
+### 5.1 What exists
+
+- Tokens alias the Tailwind palette in `css/config.reui.css` (`--primary: var(--color-blue-500)` at `:11`, dark at `:126-133`).
+- Light/dark/system comes from `next-themes`, stored only in the browser's localStorage (`providers/theme-provider.tsx`,
+  `storageKey="nextjs-theme"`), so a user's choice does not follow them to another device.
+- There is no brand setting.
+- **AA failure found:** the filled primary `blue-500` (`#3b82f6`) with white text measures 3.7:1, below WCAG AA (4.5:1)
+  for 14 px text.
+
+### 5.2 Token model
+
+There are three layers, and only the last is used by components:
+
+1. **Brand input:** one colour, plus a mode (light, dark, system).
+2. **Generated ramp:** `--brand-50 ... --brand-950`, 11 steps, generated in OKLCH from the input's hue and chroma.
+   The steps use fixed lightness targets per mode, as Linear does in LCH (`UI-V2-DISCOVERY.md` 5).
+3. **Semantic tokens** (what components use):
+   - `--primary`, `--primary-hover`, `--primary-foreground`, `--primary-soft`
+   - `--ring`, `--link`, `--selection`, `--nav-active`, `--chart-1`.
+
+**Fixed tokens** (neutrals, success, warning, info, danger, borders, materials) do not move with the brand, so status
+colours mean the same thing under every theme.
+
+| Semantic | Light picks | Dark picks |
+| --- | --- | --- |
+| `--primary` (filled button, link, sort arrow, focus ring) | the first step from 600 down whose contrast with white is >= 4.5:1 | the first step from 400 up whose contrast with `--background` is >= 4.5:1, with `--primary-foreground` = brand-950 |
+| `--primary-hover` | one step darker | one step lighter |
+| `--primary-soft` (selected row, active nav, active chip) | brand-50 | brand-950 at 60% |
+| `--ring` | `--primary` | `--primary` |
+
+The generator **guarantees AA**: if no step clears 4.5:1 with white (a very light brand such as yellow), the
+foreground flips to brand-950 ink. The theme panel shows the measured ratio either way, so a custom colour can never
+produce an unreadable button. `css/design-tokens.test.ts` asserts every preset in both modes.
+
+### 5.3 Presets
+
+| Preset | Input | Note |
+| --- | --- | --- |
+| **Sorento Blue (default)** | hue of `#3b82f6` | Same hue as today; the filled button uses the AA step (`#2563eb`-equivalent, 5.2:1). Exact `#3b82f6` kept only if the owner rejects that (open question Q1) |
+| Sorento Red | `#b44d2e` | The dealer-kit brand swatch (`components/common/ColorPicker.tsx:30`) |
+| Teal | `#0f766e` | |
+| Graphite | `#3f3f46` | Monochrome; primary is near-black |
+| Indigo | `#4f46e5` | |
+| Custom | any hex, or picked | Generated and guarded as above |
+
+Presets are data (a list in `lib/theme/presets.ts`). A sixth preset is one line, not a release.
+
+### 5.4 Who picks, and where it is stored
+
+Proposed, pending decision Q3:
+- **Company brand:** an admin picks it in Settings > Appearance. It is stored as `system_settings.theme`
+  (`{ preset, custom_hex }`) and applies to every user of that company.
+- **User:** each user picks light/dark/system in the avatar menu. It is stored as `users.theme_mode` and follows them
+  to any device, replacing the localStorage-only `next-themes` key.
+- **Not in scope:** a per-user brand override. That stays out until someone asks (simplest thing).
+- **Applying it:** `GET /me` returns `theme_mode` and the company theme. The protected layout already waits for the
+  session before drawing the shell (`app/(protected)/layout.tsx`, `ScreenLoader`), so the CSS variables are set on
+  `<html>` before the first v2 paint. There is no flash.
+- **Before sign-in:** the sign-in page uses the default preset.
+- **Picker UI:**
+  - A Settings > Appearance page with preset swatches, a custom colour input with a live contrast readout, and a
+    preview card (a mock row, a badge, a button in both modes).
+  - "Reset to Sorento Blue".
+  - The mocks include a working demo (`ui-v2-mocks/index.html`, "Theme" panel).
+
+### 5.5 What the theme does not touch
+
+- Status tones.
+- Danger.
+- Neutrals.
+- Chart status colours (only `--chart-1` follows the brand).
+- Print and PDF artwork (catalogues, tag sheets, quotation PDFs): those carry their own document theme
+  (`email_theme`, dealer-kit templates) and are out of scope.
+
+## 6. Version switch (D5)
+
+### 6.1 What the user sees
+
+- The avatar menu shows "Switch to the new version" (v1) or "Switch to the previous version" (v2).
+- One click switches immediately on the same route, keeping the URL and its list state.
+- The choice is remembered on the server (every device), defaults to v1, and can be changed any time, as often as
+  wanted.
+- Every v2 page also carries "Previous version" in the avatar menu, the one place users look (Salesforce, Jira and
+  GitHub all keep an in-page way back, `UI-V2-DISCOVERY.md` 5.1).
+
+### 6.2 Who can switch
+
+- **Phases 0-6:** only users holding the permission `ui.v2.preview`. At first that is the owner and crew test
+  accounts; nobody else sees the menu item. The permission system exists (`UserPermissionService`), so this needs no
+  new column.
+- **Phase 7 (pilot):** the permission is granted to a pilot role.
+- **Phase 8 (release):** v2 becomes available to everyone and then the default for new sign-ins. Users can still go
+  back.
+- **Phase 9 (sunset):** v1 is removed after a published date, only once v2 has been the default for a full cycle with
+  no open regression.
+
+### 6.3 Storage
+
+- `users.ui_version` (`'v1' | 'v2'`, default `'v1'`), returned by `GET /me` and the `get_user` builder (both manual dict
+  builders, `LESSONS-LEARNT.md`).
+- Written by `PUT /me/ui-version`.
+- **Kill switch:** `system_settings.ui_v2_enabled` (default true once phase 0 ships). When false, every user gets v1
+  regardless. It is one boolean, justified by release safety: a bad v2 deploy is reverted for everyone without a
+  rollback.
+
+### 6.4 How the code is organised
+
+Same routes, same data layer, two presentation layers:
+
+```
+app/(protected)/<area>/<route>/page.tsx      -> <Versioned v1={V1Client} v2={V2Client} />
+app/(protected)/<area>/<route>/components/   -> v1 (untouched until sunset)
+app/(protected)/<area>/<route>/_v2/          -> v2 screen client(s)
+components/v2/                               -> v2 archetype components (shell, grid chrome, RecordHeader, forms, StateView...)
+components/ui/                               -> primitives shared by both (Radix wrappers); v2 styling via tokens under [data-ui="v2"]
+hooks/, services/, lib/api-client            -> shared, unchanged (UI -> hooks -> services layering, PRINCIPLES.md)
+```
+
+- `<Versioned>` reads the version from the session context and renders one side.
+- The shell (`Demo1Layout` vs `components/v2/shell`) switches the same way, in `app/(protected)/layout.tsx`.
+- `<html data-ui="v2">` scopes the v2 token values, so a v1 screen keeps v1 tokens.
+- URL contracts (`page`, `limit`, `sort`, `dir`, filters, `from=`) are identical, so a link from v1 opens the same
+  record in v2 and back.
+
+### 6.5 Safe fallback
+
+| Failure | What happens |
+| --- | --- |
+| `/me` fails or returns no version | v1 |
+| Kill switch off | v1 for everyone |
+| A route has no v2 client yet (phases 1-6) | The v1 page renders inside the v2 shell with v1 tokens scoped to the content area, plus a small "previous-version screen" chip visible only to preview users, so gaps are visible to the owner and never to staff |
+| A v2 screen throws | The v2 error boundary shows the error state ("This screen hit a problem. Open it in the previous version." + button) and reports to `client_error_report` with `ui_version='v2'` |
+| A v2 screen is slower than its v1 budget (section 11.4) | The telemetry gate fails the wave; the screen is fixed before release |
+
+### 6.6 Cost of running two versions
+
+**Hooks and services are shared,** so a business fix lands once. Only presentation is duplicated, and only until
+sunset.
+
+**Rule while both exist:**
+- A bug fix in a screen's behaviour is made in the shared hook or service.
+- A fix that must touch v1 presentation also touches v2 in the same PR, once that screen's v2 exists.
+
+**Reviewer check:** a PR touching `components/` of a migrated route without its `_v2/` sibling needs a reason.
+
+## 7. Archetype specs and acceptance checklists
+
+**Every checklist item applies four times:** light 1280, dark 1280, light 375, dark 375. A screen passes when all
+four pass.
+
+**IDs:** L = list, D = detail, F = form, S = settings, B = dashboard, W = wizard, X = applies to all.
+
+### 7.0 Every screen (X)
+
+| ID | Check |
+| --- | --- |
+| X-1 | Built only from `components/v2/*` and `components/ui/*`; no raw palette class, raw hex, raw `<h1>`, native `title` on an icon button, `confirm()`, `toLocale*String` |
+| X-2 | One filled primary, top right (desktop) or the floating action (phone); verb + object label; a blocked primary shows its reason underneath (`BlockedReason`) |
+| X-3 | Every async surface ends in a `StateView` state (empty, no-match, error, no-access) or data within the never-stuck bound; loading shows the shape (skeleton) |
+| X-4 | Dates dd/mm/yyyy via `lib/format/date.ts`; money with "RM" in the heading (grids) or inside the field (inputs); numbers `tabular-nums` |
+| X-5 | No page-level sideways scroll at 375; nothing clipped at 1280 |
+| X-6 | Keyboard: every action reachable; focus visible (2 px ring); Esc closes the top surface only |
+| X-7 | axe-core: 0 serious/critical; text contrast >= 4.5:1 and UI boundaries >= 3:1 under every preset |
+| X-8 | No dialog opens on top of another dialog |
+| X-9 | Sentence case for labels, buttons, tabs, menu items; no UUIDs; no feature explanations |
+| X-10 | Visual baseline captured and approved (section 11.1) |
+| X-11 | Performance within budget (section 11.4) |
+
+### 7.1 List (L)
+
+**Desktop layout:**
+1. `PageHeader`: crumbs; title; right side holds one CTA (if the list has create) and a `ViewToggle` (List | Schedule
+   | Board) if the screen has views.
+2. Optional `FacetChips`: count chips that toggle a filter (replaces KPI tiles above lists).
+3. The grid card:
+   - Toolbar row: `ListSearchInput`, one `FilterChip` per filter (multi-select), "+ Filter" for unset ones, "Clear
+     filters", saved views, then Columns on the right.
+   - Selection mode replaces the toolbar with a selection bar: "N selected · Select all {total} · bulk actions ·
+     Clear".
+   - Rows: 44 px, 14 px, one line, `truncate` + `title`, +N pill for overflow; status via `Badge`.
+   - Pager: "1 - 25 of 312", page numbers, rows per page.
+
+**Rows:**
+- Click opens the record; Cmd/Ctrl+click opens a new tab.
+- Right-click opens `DataGridRowMenu` (Open, Open in new tab, Copy {id}, then the entity's actions). It acts on the
+  selection when the row is part of it.
+- Shift+F10 opens the same menu from the keyboard.
+
+**Phone (playbook, section 8):**
+- The list layout the playbook prescribes for phones.
+- The floating action for the CTA.
+- A bottom selection bar while selecting.
+- A filter bar that opens a bottom sheet.
+- A long press opens the row menu as a sheet.
+
+| ID | Check |
+| --- | --- |
+| L-1 | Every column sorts server-side, or the list's plan names why one cannot (allowlist entry) |
+| L-2 | Every dropdown filter is a multi-select `FilterChip`; the applied values read inline |
+| L-3 | One line per row on desktop; overflow uses a +N pill |
+| L-4 | Shift-click, drag and Shift+Arrow ranges; "Select all {total}" appears once a page is fully ticked; bulk actions apply to the whole result set |
+| L-5 | Right-click and Shift+F10 open the row menu; long press on touch; menu items = the record's gear items (D15) |
+| L-6 | Column show/hide/order/width saved per user (`user_list_column_configs`) |
+| L-7 | Page, sort, filters, search in the URL; Back from a record restores the exact row (M5-07) |
+| L-8 | Empty, no-match, error, no-access states via `StateView` |
+| L-9 | Phone layout per section 8, verified on a 375 capture |
+
+### 7.2 Detail / record (D)
+
+**Desktop layout:**
 1. Crumbs.
-2. **`RecordHeader`**: the record number at 20 px with the status `Badge` (and at most one more
-   badge) inline, then ONE subtitle line (linked parent document, "Raised by X on dd/mm/yyyy"). At
-   the right: `RecordNavigation` ("3 / 25 ‹ ›"), the gear `DetailActionsMenu`, and ONE primary
-   button. No card frame.
-3. **`RecordMeta`**: a single strip of up to 6 read-only key facts, directly under the header (the
-   ADR rule "read-only metadata sits directly under the page header").
-4. Line `Tabs` with count chips on tabs that hold lists. **History is always the last tab**
-   (`HistoryTab`).
-5. Tab bodies: DataGrids for lines, `FormSection` cards for field groups. Each has an explicit
-   empty state (heading + hint).
+2. `RecordHeader`:
+   - Number + status `Badge` (+ at most one more badge) inline.
+   - ONE subtitle line (parent document link, "Raised by X on dd/mm/yyyy").
+   - On the right: `RecordNavigation` ("3 / 25 ‹ ›"), gear, ONE primary.
+3. If the record waits on another role: a `WaitingOn` line under the header ("Waiting on CS to reserve 2 lines ·
+   requested by J***** on 10/11/2026").
+4. `RecordMeta` strip: at most 6 read-only key facts.
+5. Line tabs, **at most 6 including History**, with counts on list tabs. History is always last.
+6. Tab bodies: DataGrids for lines, `FormSection` cards for field groups, explicit empty states.
 
-View and Edit stay the same layout, with in-place inputs (ADR). `DetailActions` takes a single
-`primary` prop, so a second filled button cannot be passed. That fixes `OrderInquiryDetail.tsx:960-983`
-(Confirm and Reserve both filled) at the type level. The primary is the step the record's state is
-waiting for, and the other step moves to the top of the gear menu.
+**Phone (playbook):**
+- The header condenses as the page scrolls.
+- The primary becomes the floating action.
+- Tabs scroll sideways.
+- The gear opens as a bottom sheet.
 
-### 5.3 Form (mock 3)
+| ID | Check |
+| --- | --- |
+| D-1 | Header: number and badge inline, one subtitle, actions right, no card frame |
+| D-2 | Exactly one filled primary = the step the state waits on; other steps in the gear; when the viewer cannot act, `WaitingOn` instead of a disabled button |
+| D-3 | Gear: secondary actions, separator, Delete (deferred countdown) last |
+| D-4 | Prev/next pager keeps the current tab (`hooks/useUrlTab.ts`) |
+| D-5 | Read-only metadata under the header, never inside a tab body |
+| D-6 | At most 6 tabs; view and edit share the same tabs and order (ADR) |
+| D-7 | Every section renders, with a heading + hint empty state |
+| D-8 | History tab, last, using `HistoryTab` (tracked changes "old -> new" merged with notes and events, filterable by event type) |
+| D-9 | Exports end in a "ready" toast carrying the file link (section 9.4), not a separate drawer hunt |
 
-A form is one of two kinds:
+### 7.3 Form (F)
 
-- **Create:** a modal by default (ADR). A dedicated page is used only for complex, multi-tab or
-  file-centric flows.
-- **Edit:** the record page itself, or the record's editor route (quotation).
+- **Create** is a dialog by default; a page only for complex, multi-tab or file-centric flows (ADR).
+- **Edit** is in place on the record (same layout as view), or the record's editor route for document builders
+  (quotation).
+- Fields come from `components/v2/forms` (shared with the portal, R9): labels above inputs, sentence case, required
+  `*`, help text only where the portal shows one, 3 / 2 / 1 columns at 1280 / 768 / 375.
+- Errors sit inline. Submit scrolls to the first error and opens its section.
+- Autosaving forms show `AutosaveIndicator`. Dirty forms warn on leave with `ConfirmDialog` ("Leave without saving?",
+  "Keep editing" / "Leave").
 
-Layout:
+| ID | Check |
+| --- | --- |
+| F-1 | Same component in CRM and portal for the same form (R9) |
+| F-2 | Every select is `SearchableSelect` / `SearchableMultiSelect`, optional ones clearable |
+| F-3 | Dates use `DatePicker` (typed or picked, dd/mm/yyyy); no native `type="date"` |
+| F-4 | Money inputs show "RM" inside, right-aligned, tidy on blur; no browser number arrows; wheel never changes a value |
+| F-5 | Uploads use `FileDropzone` with per-file rows, progress and Try again; images through the one pipeline (R11) |
+| F-6 | A blocked Save says why underneath |
+| F-7 | The phone keyboard matches the field (`inputMode`) and the primary stays reachable above it |
 
-- `RecordHeader`, or the dialog title, with the primary at the right.
-- If the primary is blocked, **`BlockedReason`** shows the reason under it in plain words ("Line 3
-  needs a rate"). It does not pulse.
-- An autosaving form shows **`AutosaveIndicator`** ("Saving... / Saved 2:14 pm / Save failed +
-  Retry", moved out of `QuotationFormClient.tsx:828`).
-- Fields come from `components/common/Field.tsx` inside `FormSection` (`components/common/FormSection.tsx`).
-  Labels sit above inputs in sentence case, required fields carry a red asterisk, and the help line
-  appears only where the portal shows one. The grid is 3 columns at 1280, 2 at 768 and 1 at 375.
-- **CRM form = portal form (R9).** `Field`, `FormSection` and the field renderers move to one
-  `components/forms/` module used by both `app/(auth)/portal/components/*Form.tsx` and the CRM
-  dialogs.
-- Errors appear next to the field. Submit scrolls to the first error and opens its section, which
-  is the portal's behaviour today (`AUDIT` section 7.5) and becomes the shared default.
-- Grid-shaped inputs (quotation lines) use the DataGrid with an inline cell error, plus the header's
-  `BlockedReason`.
+### 7.4 Settings (S)
 
-### 5.4 Dashboard
+**Layout:**
+- `PageHeader`, then two columns: `SettingsNav` (grouped) | page.
+- The page is `SettingsSection` cards of `SettingsRow`s: label + one-line description left, control right; rows stack
+  on the phone.
+- `UnsavedChangesBar` appears only when dirty. Switches that save at once show a toast instead.
 
-- A row of `CountTile` (`components/common/CountTile.tsx`, kept) for at most 4 figures. Each tile is
-  a link to the list that the figure filters.
-- Charts use **one library, recharts**, through `components/ui/chart.tsx`. Today recharts is in 4
-  files and apexcharts in 8, of which 5 are Metronic demo pages. The 3 real apexcharts uses
-  (`scm/reorder` PlanTrendPopover, PlanRowPanel, SLATrackingDashboard) move to recharts, and
-  `css/components/apexcharts.css` (101 lines) goes away.
-- Chart colours come from `--chart-1..5`, re-derived from the v2 ramp (brand, indigo, green, amber,
-  zinc).
-- Under each dashboard, a table view of the same data, using the same DataGrid.
+**Phone:** `SettingsNav` becomes its own list page.
 
-### 5.5 Wizard
+| ID | Check |
+| --- | --- |
+| S-1 | No more than one level of grouping; every page reachable in two taps on the phone |
+| S-2 | Every row has a sentence-case label and at most one line of description |
+| S-3 | Save bar counts changes; Discard restores; leaving dirty asks |
+| S-4 | Settings > Appearance hosts the theme picker (section 5.4) |
 
-Used for imports, onboarding and the dealer kit:
+### 7.5 Dashboard (B)
 
-- A dialog when it has 3 steps or fewer, a page when it has more.
-- The step list sits in the header ("1 Upload · 2 Map columns · 3 Review"). Back is at the left and
-  the step's primary at the right.
-- The last step is a review screen. After submit, the wizard shows a done state that names the
-  result, with a link to it (as `ReserveConfirmDialog` does today, `AUDIT` RCD:169,266-270).
-- `ImportColumnMapper` and `ImportFeedbackSections` (`components/common/`) become steps 2 and 3 of a
-  shared `Wizard` shell.
+- At most 4 `CountTile`s, each a link to the list it filters.
+- Charts via recharts only (`components/ui/chart.tsx`).
+- A table view of every chart's data under it.
 
-### 5.6 Settings (mock 4)
+| ID | Check |
+| --- | --- |
+| B-1 | Chart colours from tokens; readable in both modes |
+| B-2 | Every figure clickable to its list; every chart has a table |
+| B-3 | Dashboard loads its tiles independently (one slow tile never blanks the page) |
 
-- `PageHeader`, then two columns: **`SettingsNav`** (grouped vertical list) and the page.
-- The page is a stack of **`SettingsSection`** cards made of **`SettingsRow`**s: label and an
-  optional one-line description on the left, the control (300 px) on the right. Rows stack at 375 px,
-  and at 375 px `SettingsNav` becomes its own list page.
-- Saving: **`UnsavedChangesBar`** sticks to the bottom only while something changed, says how many
-  ("2 unsaved changes") and offers Discard and Save changes. Changed rows get a brand left edge.
-  Settings that apply immediately (switches with server writes) say so with a toast and need no bar.
-- **System Settings as the first case:**
-  - Its 14 horizontal tabs (`user-management/settings/layout.tsx:321-386`) regroup into Company,
-    Operations, Messaging, Chatbot and AI, and System.
-  - The General form, a single card mislabelled "Social Settings" (`page.tsx:608`) holding about 30
-    unrelated fields with one "Save Settings" at `:1466`, splits into Company, Regional, and
-    Countdowns and defaults.
-  - Labels move to sentence case ("Shop Name" becomes "Company name").
-  - The hard-coded native currency list becomes a `SearchableSelect`.
+### 7.6 Wizard (W)
 
-## 6. Components: standardise, replace, retire
+- A dialog for 3 steps or fewer, a page for more.
+- The step list sits in the header; Back on the left, the step primary on the right.
+- The last step is a review. The done state names the result and links to it.
 
-Counts come from `rg -l` over `app components lib hooks modules providers services config`,
-excluding tests. "Demo" means the Metronic demo pages (`store-client`, `account`, `auth` demos,
-`app/components/layouts/demo2-10`).
+| ID | Check |
+| --- | --- |
+| W-1 | Steps keep what was entered when going Back |
+| W-2 | A long step (import, render) shows progress in words and finishes in a bounded time (never stuck) |
+| W-3 | The result lands in the same module (no hop to Import jobs for the outcome) |
 
-| # | Concept | Today (duplicates, files) | v2 keeps | v2 replaces / retires |
-| --- | --- | --- | --- | --- |
-| 6.1 | Date formatting | 11 helpers in `lib/helpers.ts` (`formatDateTimeInMalaysia :446` in 190 files, `formatDateInMalaysia :325` in 153, `formatDate :128` in 72, `formatDateTime :499` in 20, `formatDateSafe :187` 7, `formatDateTimeSafe :198` 4, `formatDateRange :469` 6, `formatMaybeDate :489` 5, plus 4 more); 34 local `format*Date*` definitions elsewhere (e.g. `lib/respondIoChatRender.ts:493`, `app/(auth)/view/complaint/page.tsx:64`); 17 files call date-fns `format` directly (48 calls); 75 files call `toLocale(Date)String` | NEW `lib/format/date.ts` exporting `formatDate` (dd/mm/yyyy), `formatDateTime` (dd/mm/yyyy, h:mm am), `formatDateRange`, `formatTime`; Malaysia time zone inside | Old helpers become re-exports (one lane), then call sites move per wave; ESLint `no-restricted-imports` on date-fns `format` and `toLocaleDateString` in feature code |
-| 6.2 | Page / record header | `PageHeader` 322 files (259 pages); Metronic `Toolbar`/`ToolbarHeading` 84/65 files (53 pages, 52 of them demo); `RecordHeaderCard` 3; `QuotationDocumentPageHeader` 1; `TargetPageHeader` 1; 14 pages with a raw `<h1>`; quotation editor draws PageHeader AND RecordHeaderCard (`QuotationFormClient.tsx:895,999`) | `PageHeader` (lists, settings, dashboards); `RecordHeader` (= `RecordHeaderCard`, flattened) for every record | `QuotationDocumentPageHeader`, `TargetPageHeader`, raw `<h1>`, the Toolbar partial (with the demo pages) |
-| 6.3 | Status pill | `Badge` 563 files; `STATUS_PILL_BASE` (`lib/status-pill.ts:103`) 56 files; 15 bespoke `*Status*Badge/Pill` components (`StatusPill`, `IdeaStatusBadge`, `TicketStatusBadge`, `BillingStatusBadge`, `OrderInquiryStatePill`, ...); 6 status-to-tone helpers (`lib/status-badge.ts:99`, `lib/complaint-status.ts:39`, `lib/price-tag-status.ts:34`, ...); price tag detail draws a custom span (`AUDIT` PTD:137) | `Badge status` + one `statusTone(domain, status)` map per domain in `lib/status/` | `STATUS_PILL_BASE`, the 15 wrappers (each becomes a one-line `Badge` call) |
-| 6.4 | Confirm / destructive | `DeferredActionButton` 7 files; `ConfirmDeleteDialog` (retired, still 26 importers); `alert-dialog` imported by 97 files, 95 hand-rolled; `ConfirmActionDialog` (scm) 7; 5 more bespoke confirms; `confirm-dismiss-dialog.tsx` 0 importers (dead) | `DeferredActionButton` / `useDeferredAction` for destructive; NEW `ConfirmDialog` (one shell, playbook wording) for irreversible sends | `ConfirmDeleteDialog` (26), hand-rolled AlertDialogs, `ConfirmActionDialog`, dead `confirm-dismiss-dialog.tsx` |
-| 6.5 | Empty / error / loading / no-access | `ListPageSkeleton` 174; `SectionSkeleton`; `LoadErrorState`/`QueryErrorState` 11/5; `ListLoadFailure` 5; `AccessDenied` (`app/components/common/AccessDenied.tsx:30`) 4; two different `EmptyState`s; 36 ad hoc `*Empty*`/`*ErrorState*` definitions; 10 files with hard-coded "don't have permission" | Skeletons as they are; NEW `StateView` with `kind="empty" / "no-match" / "error" / "no-access"` (heading + hint; error adds Try again; no-access names who can grant it and links back) | `LoadErrorState`, `QueryErrorState`, `ListLoadFailure`, `AccessDenied`, both `EmptyState`s and the ad hoc ones fold into `StateView`; `DataGridTableEmpty` renders `StateView` |
-| 6.6 | List grid | `DataGrid` 271, `PanelDataGrid` 50, `ListPager` 9, `ListPageToolbar` 0 (dead); `ui/table` 35 files + 79 raw `<table>` (guarded by `raw-table.inventory.test.ts`) | `DataGrid` (+ `PanelDataGrid` as its in-card form) | Dead `ListPageToolbar`; raw tables shrink per wave (allowlist only shrinks) |
-| 6.7 | Filters | Filter panel per list; Reserve single-select (`AUDIT` H:665); `SearchableMultiSelect` 155 files | NEW `FilterChip` (`components/ui/data-grid-filter-chip.tsx`) wrapping `SearchableMultiSelect`; NEW `FacetChips` | Per-list filter panels; KPI tiles above lists (`OrderInquiryStrip`, `SupplyKindCard`) |
-| 6.8 | Row actions | No row menu in any `data-grid*` file; ad hoc ContextMenus in Drive, QuotationLinesGrid, PurchaseOrdersPanel, QuotationScopeTabs; 53 files with `use<Entity>Actions(` | NEW `DataGridRowMenu` on `components/ui/context-menu.tsx`, fed by `use<Entity>Actions` | The ad hoc ContextMenus adopt it |
-| 6.9 | Upload | `FileDropzone` 38; portal `AttachmentDropzone` 3; `ResponseAttachmentDropzone` 2; `FileUploadZone` 0 (dead); `useFileUpload` 2 (demo); 15 raw `type="file"`; 11 native `onDrop` | `FileDropzone`, extended with per-file rows, progress, Try again, paste (from `AttachmentDropzone.tsx:271,318,392`) | `AttachmentDropzone`, `ResponseAttachmentDropzone`, dead `FileUploadZone` |
-| 6.10 | Image / preview | `AttachmentPreviewModal` 28; `PreviewModalChrome` 2; `PdfViewer` 4 + competing dead `PDFViewer` / `FilePreviewModal`; `DesignLightbox` 4; `TownLightbox` 1; `AttachmentImage` 3; **203 files with raw `<img>` (350 tags)**, `next/image` 0 | `AttachmentImage` (thumb) and `AttachmentPreviewModal` on `PreviewModalChrome` (lightbox) | Dead `PDFViewer` + `FilePreviewModal`; raw `<img>` for attachments moves to `AttachmentImage` per wave (logos and icons may stay `<img>`) |
-| 6.11 | Side panel vs dialog | `ui/sheet` 44 files, `ui/dialog` 353, vaul `ui/drawer` 4 | `Dialog` for content; vaul `Drawer` for phone sheets and the nav (D13) | Content Sheets (e.g. `QuotationHistorySheet`, price tag version history `RequestDesignSection.tsx:23,232`) become dialogs or the History tab |
-| 6.12 | Tabs | 98 `TabsList`: 87 line, 10 `default` (pills), 1 `button` | Line tabs; `ViewToggle` for a non-navigation switch | Hand-built List/Schedule button pairs (`OrderInquiriesClient.tsx:1515-1545`) |
-| 6.13 | Charts | recharts 4, apexcharts 8 (5 demo) | recharts via `components/ui/chart.tsx` | apexcharts + `css/components/apexcharts.css` |
-| 6.14 | Tooltips | `ui/tooltip` 35 files; native `title=` on about 1,446 elements | `Tooltip` restyled to the playbook's copy-tip look (the one adoption from `AUDIT` Q4) for icon buttons; `title` stays for truncated cell text | Native `title` on icon buttons (gear `DetailActionsMenu.tsx:121-122`, prev/next `RecordNavigation.tsx:77,99`) |
-| 6.15 | Raw colour | 998 raw palette classes in 194 non-demo files (amber 494, green 241, emerald 159, blue 126); 238 raw hex in 53 files, mostly canvas tag editors (`KonvaTagLayer.tsx` 33, `TagCanvasEditor.tsx` 30) | Tokens and `Badge` tones | Raw palette classes shrink per wave behind an inventory test (canvas and print artwork exempt) |
-| 6.16 | Toasts | `lib/toast.ts` 493 files; `sonner` only in `components/ui/sonner.tsx` and `lib/toast.ts` | Already one; keep | - |
-| 6.17 | Selects | `SearchableSelect` 323, `SearchableMultiSelect` 155; `ui/select` deleted; 2 native `<select>` | Keep | `eslint-dropdown-allowlist.mjs` (132 entries) is stale and gets re-measured |
-| 6.18 | Metronic leftovers | `app/components/layouts/demo2-10` (unreferenced), demo pages (`store-client`, `account/billing`, `invite-a-friend`, ...), duplicate theme toggle `dropdown-menu-user.tsx:50`, `css/styles.css` imports `image-input.css` twice (`:25,29`) | - | Removed in phase 5 |
+## 8. Phone (D4: follow the playbook)
 
-## 7. Interaction rules
+**Source and status:** this section follows the playbook's phone rules as cited in `AUDIT`.
 
-### 7.1 Primary action
+| Playbook rule (`AUDIT` cite) | v2 phone |
+| --- | --- |
+| Phones show stacked cards (`PB:179`) | Lists render the playbook's card layout below the tablet breakpoint: title line (ID + status badge), one subtitle line, up to two meta lines, chevron. Desktop keeps one line per row (R2). Scope per open question Q4 |
+| Selection bar: count, actions, clear (`PB:229-235`) | While selecting, a bottom bar replaces the nav: "N selected", up to 3 actions, More, Clear |
+| Text filter + column filters + "Showing n of N" (`PB:237`) | A filter bar under the top bar: search + "Filters (n)"; filters open in a bottom sheet; "Showing 25 of 312" |
+| Phone top bar condenses, main action floats (`PB:430-438`) | Top bar 56 px, condensing to 44 px on scroll with the title; the page primary is a floating action button bottom-right above the bottom bar |
+| System banners take their own height (`PB:439-445`) | Impersonation, offline and maintenance banners push content, never cover it |
+| Header actions stay together at the right (`PB:590`) | Record header: number + badge, subtitle; gear and pager in the condensed bar |
+| 360 px to desktop, no sideways page scroll (`PB:588`) | Unchanged mandate (375 and 1280) |
+| Bottom navigation (owner D4, "bottom bars") | A bottom bar of 4 destinations + More: Home, the user's top module (from telemetry), Search, Notifications, More (opens the full nav sheet) |
 
-- One filled primary per screen (page, record or dialog), top right, in brand colour.
-- The primary's label is a verb and its object: "Save quotation", "Reserve 2 lines", "Send to
-  purchasing".
-- When blocked, it shows `BlockedReason` underneath. A tooltip-only reason is not enough.
-- On a phone the primary stays in the header row. There is no floating action button.
+**Before phase 1 builds any phone screen,** every line above is checked against the playbook text (crew was asked
+for it on PR #2323) and corrected. The mocks (`ui-v2-mocks/index.html`, screen 5) draw this reading.
 
-### 7.2 Menus
+## 9. Components: inventory and replacement map
 
-| Where | Menu | Contents |
+Counts are non-test files, measured on `main` at `6e6657e2` (`rg -l` over `app components lib hooks`).
+
+### 9.1 Replacement map
+
+| Concept | Today (files) | v2 component (path) | Retired at sunset |
+| --- | --- | --- | --- |
+| Shell | `Demo1Layout` + `demo1/components/*` (header 187 lines, sidebar-menu 338); menu config 3,548 lines | `components/v2/shell/{AppShell,Sidebar,Topbar,BottomBar,MobileNavSheet}.tsx`; menu config reused | demo1, demo2-10 layouts |
+| Page title | `PageHeader` 322; Metronic `Toolbar` 84 (52 demo); raw `<h1>` 14 pages; bespoke 3 | `components/v2/PageHeader.tsx` | Toolbar partial, bespoke headers |
+| Record header | `DetailActions` 63, `RecordHeaderCard` 3, `RecordNavigation` 19 | `components/v2/record/{RecordHeader,RecordMeta,WaitingOn,RecordNavigation}.tsx` | - |
+| History | tab 8, sheet/drawer/panel 5, per-entity history components | `components/v2/record/HistoryTab.tsx` over `EventTimeline` | per-entity History components |
+| Status | `Badge` 563; `STATUS_PILL_BASE` 56; 15 bespoke pills; 6 tone helpers | `Badge` + `lib/status/<domain>.ts` tone maps | `STATUS_PILL_BASE`, bespoke pills |
+| Grid chrome | `DataGrid` 271, `PanelDataGrid` 50, `DataGridListToolbar` 144, `ListPageToolbar` 0 | `components/v2/grid/{GridToolbar,FilterChip,FacetChips,SelectionBar,RowMenu,PhoneCardList}.tsx` over the same `components/ui/data-grid*` engine | dead `ListPageToolbar` |
+| Confirm | `DeferredActionButton` 7; `ConfirmDeleteDialog` 26 (retired); `alert-dialog` 96; "Are you sure" 29 | `DeferredActionButton` (destructive) + `components/v2/ConfirmDialog.tsx` (irreversible sends) | `ConfirmDeleteDialog`, `confirm-dismiss-dialog.tsx` (0 importers) |
+| States | `ListLoadFailure` 5, `LoadErrorState`/`QueryErrorState` 11/5, `AccessDenied` 4, two `EmptyState`s, 36 ad hoc, 10 hard-coded "no permission" strings | `components/v2/StateView.tsx` (`empty`, `no-match`, `error`, `no-access`) | all listed |
+| Forms | `useForm` 87, `ui/form` 64, `FormSection` 4, `FormDialogScaffold` 7, `Field` 3; portal forms separate | `components/v2/forms/{Form,Field,FormSection,FormDialog,BlockedReason,AutosaveIndicator}.tsx`, used by portal and CRM | per-form scaffolds |
+| Dates | 11 helpers + 34 local + date-fns `format` in 17 + `toLocale*String` in 75 | `lib/format/date.ts` | old helpers |
+| Upload | `FileDropzone` 38, `AttachmentDropzone` 3, `ResponseAttachmentDropzone` 2, `FileUploadZone` 0, raw `type="file"` 15 | `FileDropzone` v2 (per-file rows, retry, paste) | the others |
+| Image | `AttachmentImage` 3, raw `<img>` 203 files, `AttachmentPreviewModal` 28, `PdfViewer` 4 + dead `PDFViewer`/`FilePreviewModal` | `AttachmentImage` + `AttachmentPreviewModal` (one pipeline) | dead viewers |
+| Side panel | `ui/sheet` 44, `ui/dialog` 353, `ui/drawer` 4 | `Dialog` (desktop), vaul `Drawer` (phone sheets) | content Sheets (scope per Q2) |
+| Tabs / toggles | 98 `TabsList` (87 line, 10 pill, 1 button); hand-built toggles | `Tabs` line; `components/v2/ViewToggle.tsx` | hand-built toggles |
+| Charts | recharts 4, apexcharts 8 (5 demo) | recharts via `components/ui/chart.tsx` | apexcharts |
+| Tooltip | `ui/tooltip` 35; native `title` on about 1,446 elements | `Tooltip` (playbook style) on icon buttons | `title` on icon buttons |
+| Toast | `lib/toast.ts` 493 (already one) | same, plus `toast.file(...)` for ready exports | - |
+| Theme | `next-themes` (localStorage) | `components/v2/theme/{ThemeProvider,ThemePicker}.tsx`, `lib/theme/{generate,presets}.ts` | localStorage key |
+| Version | none | `components/v2/Versioned.tsx`, `useUiVersion()` | at sunset |
+
+### 9.2 Component specs (each gets a vitest suite and a capture page, phase 0-4)
+
+| Component | Props in short | Notes |
 | --- | --- | --- |
-| Record header | Gear (`DetailActionsMenu`) | Secondary actions, separator, Delete last in danger ink (D6) |
-| List row | Right-click / long press (`DataGridRowMenu`) | Open, Open in new tab, Copy {id}, then the same `use<Entity>Actions` items as the gear (D15). Never Edit, since the row click is the edit path |
-| Grid line (editors) | Right-click | Insert above, Insert section above, Duplicate, Move up/down, Remove |
-| Avatar | Dropdown | Profile, Theme, "Try UI v2" (section 10), Sign out |
+| `RecordHeader` | `id`, `badges` (max 2), `subtitle` (one node), `pager`, `gear`, `primary` (one) | Type-level: a second primary cannot be passed |
+| `WaitingOn` | `who`, `what`, `since` | Replaces a disabled primary for a viewer who cannot act |
+| `RecordMeta` | up to 6 `{label, value}` | Truncates with title |
+| `HistoryTab` | `entityType`, `entityId`, `filters?` | One endpoint shape; merges audit changes, notes, events |
+| `FilterChip` | `label`, `options` (async ok), `value[]` | Multi only; inline summary "a, b +2" |
+| `SelectionBar` | `count`, `total`, `onSelectAll`, `actions` | "Select all {total}" after a full page |
+| `RowMenu` | `items` from `use<Entity>Actions` | Right-click, Shift+F10, long press |
+| `PhoneCardList` | `title`, `badge`, `subtitle`, `meta[]` per row | Playbook card |
+| `StateView` | `kind`, `title`, `hint`, `onRetry?`, `grantedBy?` | No buttons except Try again |
+| `ConfirmDialog` | `question`, `consequence`, `keepLabel`, `actionLabel` | Playbook wording |
+| `BlockedReason` | `reason` | Under a disabled primary |
+| `ThemePicker` | - | Presets, custom hex, live contrast, preview |
 
-There are no row icon buttons and no "..." column. A menu item shows its shortcut when it has one.
+### 9.3 Interaction rules (summary; the full text moves into `DESIGN-LANGUAGE.md` in phase 0)
 
-### 7.3 Confirm and undo
-
-| Action kind | Pattern |
+| Rule | Detail |
 | --- | --- |
-| Delete, Archive-as-delete, Unlink | Server-deferred countdown with Cancel (10 s / 5 s from System Settings). No dialog. Unchanged (`PRINCIPLES.md:255-262`) |
-| Irreversible send (reserve and send, issue, submit for approval) | `ConfirmDialog`. Title is a question with its object ("Reserve 3 lines on OI-2611-0142?"). The line under the title says what happens. The safe button is named for what it keeps ("Keep editing"). The action button is a verb and its object. No "Are you sure" (29 files today) |
-| Everything else (save, link, assign) | No confirm. Act and toast |
+| Primary | One per screen; the state's next step; verb + object |
+| Menus | Gear on records; right-click / Shift+F10 / long press on rows; no row icons, no "..." column |
+| Confirm | Delete/Archive/Unlink = deferred countdown (unchanged); irreversible sends = `ConfirmDialog` with playbook wording; everything else = no confirm |
+| No stacked dialogs | A dialog that needs another step replaces its content (step) instead of opening a second dialog |
+| Hand-offs | `WaitingOn` line; the role that must act sees the primary |
+| Toasts | Past tense, object, count ("Sent 2 lines to purchasing"); errors say what to do |
+| States | `StateView` only; no technical messages |
+| Uploads / images | One `FileDropzone`, one image pipeline |
+| Tabs | At most 6 per record including History |
 
-### 7.4 States
+### 9.4 Exports
 
-Every async surface ends in one of these within bounded time (`NEVER-STUCK-UI.md`):
+Today every export queues an RQ job and the file is collected elsewhere (`UI-V2-DISCOVERY.md` 4.10).
 
-| State | Component | Content |
+In v2:
+- The button shows progress in place ("Preparing PDF...").
+- When the job finishes, a toast carries the file ("Quotation SRT/Q/2026/0141 PDF is ready · Open"). The same file
+  stays in My Downloads.
+- If the job takes longer than the never-stuck bound, the toast says it will appear in My Downloads and stops waiting.
+
+No backend change: the toast polls the existing download row (`user_downloads.ready_at`).
+
+## 10. Phases and exit criteria
+
+**Effort** is in agent-days (one coder plus reviewer per lane), indicative. **Every phase ends with:** an owner
+walkthrough on the crew test copy, the gates in section 11 green for everything the phase touched (light and dark,
+1280 and 375), and the plan's Status line updated.
+
+| Phase | Scope | Exit criteria | Effort |
+| --- | --- | --- | --- |
+| **0 Foundations** | (a) R1-R14 + interaction rules into `DESIGN-LANGUAGE.md` / `PR-CHECKLIST.md`. (b) Page-view telemetry (4.3). (c) `users.ui_version`, `ui.v2.preview` permission, kill switch, `<Versioned>`, v2 error boundary, fallback chip. (d) Theme engine: generator, presets, AA guard, `users.theme_mode`, `system_settings.theme`, Appearance page. (e) v2 shell: sidebar, top bar, phone bottom bar + nav sheet. (f) `lib/format/date.ts`. (g) Deterministic UI fixture seed (`sorento_crm_backend/scripts/seed_ui_fixtures.py`, local `*_ci` only). (h) Capture + diff + axe tooling (11.1-11.3). (i) Inventory tests for R3, R4, R7, R11 (allowlists that only shrink) | Owner can switch v1 <-> v2 on any route and back; every preset passes AA in both modes (token tests); v2 shell captured on 6 routes x 4 variants; telemetry rows arriving; kill switch tested | 15-20 |
+| **1 List archetype** | `GridToolbar`, `FilterChip`, `FacetChips`, `SelectionBar` + select-all-N (backend bulk-by-filter where missing), `RowMenu`, `PhoneCardList`, `StateView`; reference screen: OI list | L-1..L-9 and X-1..X-11 on the OI list in 4 variants; component suites green; owner sign-off on the reference | 10-14 |
+| **2 Detail archetype** | `RecordHeader`, `WaitingOn`, `RecordMeta`, `HistoryTab` (one backend shape), `ConfirmDialog`, status tone maps; reference screens: OI detail, quotation document view | D-1..D-9 on both references; History tab works for every entity that has audit rows | 10-14 |
+| **3 Form archetype** | `components/v2/forms` shared with the portal, `BlockedReason`, `AutosaveIndicator`, `DatePicker` everywhere, `FileDropzone` v2, image pipeline; reference screens: quotation editor, price tag request (portal + CRM) | F-1..F-7 on both; the portal renders the same component | 10-14 |
+| **4 Settings, dashboard, wizard** | `SettingsNav/Section/Row`, `UnsavedChangesBar`, recharts-only dashboard kit, `Wizard`; reference screens: System Settings, one dashboard, GRN import | S, B, W checklists on each reference | 8-12 |
+| **5 Area waves A-F** | Every remaining page per area (4.2), built from the archetype kit; journey fixes from discovery (two primaries, gear-hidden next steps, tab budget, stacked dialogs, export toast) | Per area: every page passes its checklist in 4 variants; journeys in that area walked end to end in v2 by the owner; no "v2 worse than v1" items open | 90-120 (about 387 pages; most are thin lists and details on the kit) |
+| **6 Owner daily use** | The owner (and crew test accounts) use v2 as the daily UI; polish lanes from their notes | 2+ weeks with no open regression; telemetry shows v2 time-to-data <= v1 on the top 20 routes | 8-15 (polish) |
+| **7 Pilot** | `ui.v2.preview` to a pilot role (one team per main journey) | 2 weeks; switch-back rate and reasons reviewed; fixes shipped | 5-10 |
+| **8 Release** | v2 available to all, default for new sign-ins; users can go back | 4 weeks; switch-back rate low and falling; no open severity-1 | 3-5 |
+| **9 Sunset v1** | Announce a date; remove v1 presentation, `<Versioned>`, `users.ui_version`, the Metronic demos, dead components, apexcharts, date helper re-exports | v1 code deleted; inventory allowlists at zero or justified | 8-12 |
+
+**Total:** about 170-240 agent-days. Phases 1-4 can overlap after phase 0 (they share no files). Area waves can run
+two at a time.
+
+## 11. Testing strategy
+
+### 11.1 Visual regression
+
+- **Fixtures:** `seed_ui_fixtures.py` lays a fixed dataset (masked names, fixed dates, every status present, empty
+  and overfull records) on a local `*_ci` database, so a capture is the same on every run.
+- **Capture:**
+  - One script (`scripts/ui-capture.mjs`) signs in as the fixture admin, visits every route in a manifest generated
+    from `UI-V2-SCREEN-INVENTORY.md`, and saves PNGs.
+  - Variants per route: {v1, v2} x {light, dark} x {1280, 375} x {default, empty, error where reachable}.
+  - It uses the pre-installed Playwright library as a script, not a test runner spec, which keeps the standing
+    order "no new Playwright spec" (`CLAUDE.md`). Decision Q5 asks the owner to confirm.
+- **Diff:** pixelmatch against approved baselines with a 0.1% pixel threshold per image.
+  - Baselines live outside git (a release artifact store or the owner's Mac), keyed by route and variant.
+  - A diff over threshold is reviewed in a generated HTML report: side by side, slider, approve.
+- **When:** in the lane's sandbox for the routes a lane touched, and the full set at each phase exit.
+
+### 11.2 Accessibility
+
+- `axe-core` runs on every captured page in both modes: 0 serious or critical. Moderate findings are listed in the
+  phase report.
+- **Keyboard walk per archetype reference:** tab order, Shift+F10 row menu, Esc, focus return after dialogs.
+- **Token contrast tests** for every preset in both modes (`css/design-tokens.test.ts`).
+- Screen reader spot check (VoiceOver) on the five reference screens at phase 4.
+
+### 11.3 Component tests
+
+- Every `components/v2/*` component has a vitest suite: behaviour, a11y roles, and type-level rules (one primary,
+  multi-only filter).
+- The existing inventory tests are extended for R3/R4/R7/R11.
+
+### 11.4 Performance budgets (per route, measured by telemetry and the capture run)
+
+| Metric | Budget |
+| --- | --- |
+| Time to first data (route change to first row or record painted) | p75 <= v1's p75 for the same route; and <= 1.5 s on the fixture DB |
+| Interaction to next paint (row menu, filter apply, tab switch) | <= 200 ms p75 |
+| Layout shift | CLS <= 0.05 |
+| Route JS (first load) | <= v1 + 10% |
+| Theme or version switch | no unstyled frame; <= 300 ms to repaint |
+
+### 11.5 Journey tests
+
+The nine discovery journeys (J1-J9) are walked end to end in v2 by the tester with agent-browser at each area wave
+exit, then by the owner on the crew test copy. They are recorded as evidence runs, not specs.
+
+## 12. Risks
+
+| Risk | Likelihood | Mitigation |
 | --- | --- | --- |
-| Loading | `ListPageSkeleton` / `SectionSkeleton` | The shape of what is coming. A per-value "Calculating" for totals that recompute |
-| Empty (nothing yet) | `StateView kind="empty"` | Heading + hint, never a button (one-CTA rule) |
-| No match | `StateView kind="no-match"` | "No order inquiry matches these filters." Clear filters stays in the toolbar |
-| Error | `StateView kind="error"` | What failed in plain words, plus Try again |
-| No access | `StateView kind="no-access"` | "You need {permission label} to open this. Ask {role/admin}." plus a link back. Replaces the 10 hard-coded strings |
+| Two presentation layers drift (a v1 fix not mirrored) | High | Shared hooks and services; reviewer check (6.6); the long run is bounded by sunset |
+| The program is long, and priorities change mid-way | High | Waves are independent; v1 remains complete; any wave can pause |
+| Phone cards conflict with one line per row | Medium | Desktop keeps R2; phone follows the playbook (D4); scope per Q4 |
+| Custom brand colours break contrast | Medium | Generator AA guard + tests (5.2) |
+| Telemetry raises privacy questions | Low | Route patterns only (no ids, no query strings), staff users only, 90-day retention |
+| "Sort every column" needs backend keys that do not exist | Medium | Allowlist with reasons; each list lane measures it first |
+| Owner time for walkthroughs becomes the bottleneck | Medium | Phase exits batch the walkthrough; crew pre-checks with captures |
+| Visual baselines churn on unrelated changes | Medium | Fixture data is fixed; per-route approval; threshold tuned in phase 0 |
 
-### 7.5 Toasts
+## 13. Decisions for the owner
 
-- Use `lib/toast.ts` only.
-- Write in the past tense with the object and the count: "Sent 2 lines to purchasing", not "Success!"
-  or "{noun} saved".
-- Errors say what to do next. Success shows for 4 s and errors for 5 s (unchanged).
-- Undo stays inside the deferred countdown toast, so there is no second undo mechanism.
-
-### 7.6 Uploads
-
-- `FileDropzone` everywhere: drop, browse and paste.
-- Each file gets a row with name, size, progress and a result. A failure names the file and offers
-  Try again. One bad file does not fail the batch (today: one toast "Upload failed.",
-  `AttachmentDropzone.tsx:238`).
-
-### 7.7 One image pipeline (R11)
-
-1. Upload: `FileDropzone`.
-2. Storage: an `attachments` row through `app/services/storage_router.py` (exists).
-3. Thumbnail: `AttachmentImage`.
-4. Full view: `AttachmentPreviewModal` (lightbox, arrow keys, PDF via `PdfViewer`).
-
-No feature builds its own `<img src>` for an attachment, its own lightbox or its own upload.
-Quotation line photos, price tag designs, product images and complaint photos all use it.
-
-### 7.8 Keyboard
-
-| Shortcut | Action |
-| --- | --- |
-| Cmd/Ctrl+K | Search (exists) |
-| Shift+F10 / context-menu key | Row menu |
-| Enter | Open the focused row |
-| Cmd/Ctrl+Enter | Open in a new tab |
-| Shift+click / Shift+Arrow | Range select (exists) |
-| Esc | Closes a menu or dialog, never a deferred countdown (D7) |
-
-Keyboard-opened surfaces do not animate (`DESIGN-LANGUAGE.md` M2-01).
-
-## 8. What we take from the playbook and what we keep
-
-| Topic | Playbook (`AUDIT` cite) | v2 | Reason |
-| --- | --- | --- | --- |
-| Date display | "14 Nov 2026" (`PB:253`) | **Keep** dd/mm/yyyy | Owner rule R1; agreed `AUDIT` Q1 |
-| Smart view, phone cards | `PB:176-179` | **Keep** one line per row, grid scrolls in its box | R2; agreed Q2. v2 makes the phone grid usable instead (pinned ID column, 44 px rows) |
-| Other actions as icon buttons; row icons; RCT | `PB:114-141, 413-420` | **Keep** gear + right-click row menu | R6; agreed Q3 |
-| Foundryx red CTA with lean/light; hover pop; Hold to Copy; Clipboard; Quick Tool | `PB:83-92, 218-225, 394-427, 611-624` | **Keep** minimal UI, Sorento brand | R7, R12; agreed Q4 |
-| 3 s press-and-hold confirm | `PB:107-111` | **Keep** deferred countdown | Agreed Q5; no misclick and no reverse operation needed |
-| Styled tooltip | `PB:428` | **Take** | Agreed Q4; icon buttons need a visible label |
-| Dialog wording (question title, safe button named, verb + object) | `PB:105-106` | **Take** | Agreed Q5; one `ConfirmDialog` |
-| Blocked action says why | `PB:93-102` | **Take** the reason under it, **skip** the pulse | Plain text is enough; no motion for state |
-| No-access state with who can grant it | `PB:214` | **Take** | Missing today (10 ad hoc strings) |
-| Upload per-file rows + retry | `PB:300-305` | **Take** | One bad file must not hide the others |
-| Slim styled scrollbars | `PB:287` | **Take** (one CSS rule under `[data-ui="v2"]`) | Cheap, quieter on dense screens |
-| Balanced headings | `PB:542` | **Take** | One CSS rule |
-| "Showing n of N" | `PB:237` | **Take**, in the pager | Already partly there |
-| Money field "RM" inside, tidy on blur | `PB:279-283` | **Take** for standalone money inputs; **keep** "(RM)" in grid headings | The playbook's own Documents rule (`PB:483`) puts the unit in the heading |
-| Theme panel (palettes, font picker, size slider) | `PB:491-497` | **Skip** | No problem today that it solves (`PRINCIPLES.md` simplest thing) |
-| Tabs as segmented toggles | `PB:317-324` | **Keep** line tabs | Repo rule `PR-CHECKLIST.md:52-53` |
-| Phone top bar condenses, red action floats | `PB:430-438` | **Partly**: title moves into the bar; no floating action | R7 |
-| 50 rows per page | `PB:203-209` | **Keep** 25 | Faster first paint; user can change |
-| What the CRM does better (deferred delete, Odoo range select, server-saved columns, never-stuck, errors you can find, reduced transparency, visible autosave) | `AUDIT` section 7 | **Keep** and make them the shared defaults | Already proven here |
-
-## 9. Accessibility
-
-- **Contrast:** every text/background token pair is at least 4.5:1, and UI boundaries (input
-  borders, focus ring) are at least 3:1. `css/design-tokens.test.ts` asserts the v2 set in both
-  modes.
-- **Focus:** a 2 px `--primary` ring with a 2 px offset on every focusable element, never removed.
-  The selected row has both a tint and a check, never colour alone.
-- **Status:** the badge text always says the state. The tone is extra information, so a colour-blind
-  user loses nothing.
-- **Targets:** 44 px on coarse pointers (existing `::after` hit area) and 32 px on fine pointers.
-- **Labels:** every icon button has `aria-label` and the styled tooltip with the same words.
-  `DataGridRowMenu` is reachable by keyboard (Shift+F10) and announced as a menu.
-- **Motion and transparency:** `prefers-reduced-motion` and the reduced-transparency fallback stay
-  as today (`css/styles.css:80-132`, `components/ui/primitive-classes.ts:36-39`).
-- **Zoom:** pages work at 200% zoom and at 375 px with no page-level sideways scroll; only the grid
-  box scrolls sideways.
-- **Language:** sentence case, plain words, no UUIDs, no feature explanations in the UI (existing
-  rules).
-
-## 10. The "UI v2" switch
-
-**What it is.** One boolean per user, `users.ui_v2` (default `false`), toggled by "Try UI v2" in the
-avatar menu.
-
-Wiring:
-
-- The value is added to BOTH manual dict builders (`get_user` / `get_me`, see `LESSONS-LEARNT.md`).
-- The protected layout sets `<html data-ui="v2">` when it is on.
-- No feature-flag service and no tenant setting.
-
-There is nothing to reuse today: the inventory found no `ui_version` or flag mechanism. The closest
-per-user store is `UserListColumnConfig` (`sorento_crm_backend/app/models/user.py:868`), which is
-keyed per listing and is the wrong shape. Per the simplest-thing rule, one column is enough.
-
-**How screens move without a big bang:**
-
-1. **Token-level changes** (colour, type, radius, spacing, scrollbars, balanced headings) live in
-   CSS under `[data-ui="v2"]`. They apply to every screen that uses tokens, with no component
-   branching.
-2. **Structure-level changes** (`RecordHeader` without a card, `SettingsNav`, `FilterChip` row,
-   `RecordMeta`) are built as the v2 version of the shared component. A component reads
-   `useUiVersion()` **once, at its top**, and renders v1 or v2. The flag is never branched on inside
-   feature code.
-3. **Screens migrate in waves (section 11).** A screen is "v2-ready" when it uses only v2 shared
-   components. With the switch OFF, users keep v1 everywhere. With it ON they get v2 tokens
-   everywhere, plus v2 structure on migrated screens. Unmigrated screens still look coherent,
-   because tokens carry most of the change.
-4. **Rollout:**
-   1. The owner and crew turn it on for themselves (wave 0 onward).
-   2. A pilot group follows, by an admin bulk update.
-   3. The default flips to ON for everyone once wave 3 is done.
-   4. Phase 5 deletes the v1 branches, the column and the switch.
-
-**Trigger to revisit:** if the owner wants a company-wide switch rather than per user, that is a
-`system_settings` column and the same attribute. Decision D5.
-
-## 11. Migration path
-
-Sizes follow the crew lane sizes. Agent-days are rough and assume one coder per lane.
-
-| Phase | Scope | Lanes | Effort |
-| --- | --- | --- | --- |
-| **0 Foundations** | (a) Owner rules R1-R12 and this plan's interaction rules into `DESIGN-LANGUAGE.md` + `PR-CHECKLIST.md` (docs). (b) `users.ui_v2` column, avatar-menu toggle, `data-ui` attribute, `useUiVersion()`. (c) v2 tokens under `[data-ui="v2"]` in `config.reui.css` + token contrast tests. (d) `lib/format/date.ts` with the old helpers re-exporting it. (e) Shell: sidebar, 48 px topbar, Metronic demo menu entries removed. (f) Styled `Tooltip`; tooltips on gear and prev/next | 3 (docs S; switch + tokens M; shell M) | 4-6 days |
-| **1 List archetype** (first wave, decision D5) | `FilterChip`, `FacetChips`, `ViewToggle`, `DataGridRowMenu` (+ touch sheet), "Select all N", pinned ID column on coarse pointers, `--row-h`, `StateView` inside the grid. Backend: sort keys for every listed column that lacks one (start with OI Reserve). Migrate OI list first, then the 10 most-used lists (by `api_call_logs` counts) | 2 (grid components L; first 10 lists M) | 6-9 days |
-| **2 Detail archetype** | `RecordHeader` v2 (flat), `RecordMeta`, single-`primary` `DetailActions`, `HistoryTab` (on `EventTimeline`), `ConfirmDialog`, `Badge` replaces `STATUS_PILL_BASE` (56 files) and the 15 wrappers. Migrate OI detail, quotation document view, price tag request, PO, SO | 2 (components M; status-pill sweep M) | 5-7 days |
-| **3 Forms + uploads + images** | One `components/forms/` module shared by portal and CRM (R9); `BlockedReason`, `AutosaveIndicator`; `DatePicker` replaces native `type="date"`; `FileDropzone` per-file rows; `AttachmentDropzone` + `ResponseAttachmentDropzone` merged; attachment `<img>` to `AttachmentImage`; quotation editor single header + History tab | 2-3 (forms L; uploads/images M) | 7-10 days |
-| **4 Settings, dashboards, wizards** | `SettingsNav`, `SettingsSection`, `SettingsRow`, `UnsavedChangesBar`; System Settings regroup; recharts-only (3 apex uses); `Wizard` shell for imports | 2 (settings M; charts + wizard M) | 4-6 days |
-| **5 Flip and clean** | Default ON, then delete v1 branches and `users.ui_v2`. Delete dead code (`confirm-dismiss-dialog.tsx`, `ListPageToolbar`, `FilePreviewModal`, `PDFViewer`, `FileUploadZone`), `ConfirmDeleteDialog` importers, Metronic demo layouts and pages, the Toolbar partial, apexcharts, stale `eslint-dropdown-allowlist.mjs`. Raw palette inventory test turns into an error. Date helper re-exports deleted | 2 (cleanup M; sweep M) | 4-6 days |
-
-**Total:** about 12-14 lanes and 30-44 agent-days, spread over waves the owner can pause between.
-
-**Per-lane gates:** each wave's lanes run the normal `/feature` pipeline (`PRINCIPLES.md`). The
-browser pass covers 375 px and 1280 px with the switch ON and OFF.
-
-**Phases that can overlap:** 1 and 2 share no files after phase 0, so they can run in parallel
-lanes. 3 depends on 2 (`RecordHeader`). 4 depends only on 0.
-
-**Risks:**
-
-| Risk | Mitigation |
-| --- | --- |
-| Two looks for the same user during the waves | Tokens flip globally with the switch, so unmigrated screens differ only in structure, not in palette |
-| `useUiVersion()` branches linger | The phase 5 grep is the gate; a branch older than phase 5 is a defect |
-| Brand red reads as "error" | Danger is never a filled button (3.1); decision D1 |
-| Sorting every column needs backend keys that do not exist (UNVERIFIED for every list) | Each phase 1 list lane measures it first and adds the key or states why not |
-
-## 12. Decisions for the owner
-
-The five questions are filed in the crew report. Each has a recommendation.
-
-| # | Question | Options | Recommendation |
-| --- | --- | --- | --- |
-| D1 | Brand colour for the primary | (a) Sorento Red `#b44d2e` as `--primary`, danger kept apart by use; (b) keep today's blue and use Sorento Red only for the logo and active nav | **(a)**: it is the owner rule (R12), it passes AA, and the countdown pattern means danger is never a filled red button. Needs the real Sorento logo file |
-| D2 | Dark mode | (a) Tokens now, dark visual QA only in phase 5; (b) dark QA in every wave; (c) drop dark | **(a)**: tokens cost nothing extra, and a per-wave dark pass doubles browser time for a mode few users pick |
-| D3 | Density default | (a) Comfortable 36 px rows, 13 px text, no user option; (b) Compact 32 px; (c) a per-user choice | **(a)**: the mocks show 36 px still fits 20+ rows at 1280. Add a choice only when a user asks |
-| D4 | Mobile bottom bar | (a) No bar; title in the 48 px top bar, drawer nav; (b) 4-tab bottom bar (Home, OIs, Search, Notifications) | **(a)**: a one-line grid needs every vertical pixel, and the drawer already gives navigation. Revisit if phone sessions pass about 20% of staff traffic |
-| D5 | First wave and switch scope | (a) List archetype first, switch per user; (b) Detail first; (c) company-wide switch | **(a)**: `DataGrid` is in 271 files, so one wave changes the most screens, and a per-user switch lets the owner try v2 alone before anyone else sees it |
+These are filed in the crew report, each with a recommendation; see `UI-V2-DISCOVERY.md` section 7 for the full open
+list.
