@@ -13,13 +13,13 @@ All additive and idempotent. The seed is copied here, not imported, so the migra
 was written whatever the app module becomes.
 
 Revision ID: ppr_0001_party_roles
-Revises: pfc_0001_line_is_section
+Revises: qas_0001_quote_form_drafts
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "ppr_0001_party_roles"
-down_revision = "pfc_0001_line_is_section"
+down_revision = "qas_0001_quote_form_drafts"
 branch_labels = None
 depends_on = None
 
