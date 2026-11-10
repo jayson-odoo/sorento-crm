@@ -156,7 +156,16 @@ function DataGridTableDndRow<TData>({
  * the wrapper would replace the header's own name for a screen reader. Keyboard users move
  * columns from the header's own menu where a list offers one.
  */
-function DataGridTableDndRowsColumnHeader<TData>({ header }: { header: Header<TData, unknown> }) {
+function DataGridTableDndRowsColumnHeader<TData>({
+  header,
+  rowSpan,
+  merged = false,
+}: {
+  header: Header<TData, unknown>;
+  /** Column GROUPS: an ungrouped column spans both header rows, as the static header draws it. */
+  rowSpan?: number;
+  merged?: boolean;
+}) {
   const { props } = useDataGrid();
   const { column } = header;
   const noDrag = isFixedUtilityColumn(column.columnDef);
@@ -181,12 +190,15 @@ function DataGridTableDndRowsColumnHeader<TData>({ header }: { header: Header<TD
       dndStyle={style}
       dndDragging={isDragging}
       dndRef={setNodeRef}
+      rowSpan={rowSpan}
     >
       <div
         className={noDrag ? 'w-full select-none truncate' : 'w-full cursor-grab select-none truncate'}
         {...(noDrag ? {} : listeners)}
       >
-        {header.isPlaceholder ? null : flexRender(column.columnDef.header, header.getContext())}
+        {header.isPlaceholder && !merged
+          ? null
+          : flexRender(column.columnDef.header, header.getContext())}
       </div>
       {props.tableLayout?.columnsResizable && column.getCanResize() && (
         <DataGridTableHeadRowCellResize header={header} />
@@ -260,12 +272,23 @@ function DataGridTableDndRows<TData>({
 
   const headerRows = table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
     if (columnsDraggable) {
+      // Column GROUPS (the quotation grid's column headers): an ungrouped column spans both
+      // header rows from its placeholder, exactly as the static branch below draws them.
+      const groupRows = table.getHeaderGroups().length;
+      const mergedRows = groupRows > 1;
       return (
         <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
           <SortableContext items={orderedColumnIds} strategy={horizontalListSortingStrategy}>
-            {headerGroup.headers.map((header) => (
-              <DataGridTableDndRowsColumnHeader header={header} key={header.id} />
-            ))}
+            {headerGroup.headers
+              .filter((header) => !mergedRows || !skipMergedLeafHeader(header, groupRows))
+              .map((header) => (
+                <DataGridTableDndRowsColumnHeader
+                  header={header}
+                  key={header.id}
+                  merged={mergedRows}
+                  rowSpan={mergedRows ? headerRowSpan(header, groupRows) : undefined}
+                />
+              ))}
           </SortableContext>
         </DataGridTableHeadRow>
       );

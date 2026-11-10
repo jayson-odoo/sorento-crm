@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
@@ -893,6 +894,17 @@ const FLUSH = 'px-0';
  * hidden. The handle and the row menu only exist while editing (column visibility), so the
  * column order a user saves holds in both views.
  */
+/** The hidden anchor the quantity block of a grid scope follows (see its column). */
+const QTY_BLOCK = 'qty_block';
+
+/** Every leaf column id, in definition order. */
+function leafIds(columns: ColumnDef<GridRow>[]): string[] {
+  return columns.flatMap((column) => {
+    const children = (column as { columns?: ColumnDef<GridRow>[] }).columns;
+    return children?.length ? leafIds(children) : [String(column.id)];
+  });
+}
+
 const COLUMNS: ColumnDef<GridRow>[] = [
   {
     id: 'drag_handle',
@@ -1020,6 +1032,19 @@ const COLUMNS: ColumnDef<GridRow>[] = [
       cellClassName: `${NARROW} align-top`,
     },
   },
+  // Where a grid scope's quantity block sits (PROPOSAL-FORM-COLLAPSE, Q3): never drawn, but in
+  // the column order on every scope, so the reader's saved layout places the block the same way
+  // on each one. The block's own columns are data (per document) and follow it.
+  {
+    id: QTY_BLOCK,
+    header: () => null,
+    cell: () => null,
+    size: 0,
+    minSize: 0,
+    enableResizing: false,
+    enableHiding: false,
+    meta: { headerTitle: 'Quantities', draggable: false },
+  },
   {
     id: 'total',
     accessorFn: (row) => row.staged.draft.is_rate_only,
@@ -1076,7 +1101,7 @@ function matrixColumns(headers: MatrixHeader[], editable: boolean): ColumnDef<Gr
         return [];
       case 'description':
         return [{ ...column, footer: MATRIX_LABEL_FOOTER }];
-      case 'rate':
+      case QTY_BLOCK:
         return [column, ...quantity];
       case 'total':
         return [
@@ -1794,6 +1819,13 @@ export function QuotationLinesGrid({
     ],
   );
 
+  /**
+   * The reader's column order, held here so it can be completed before TanStack reads it: a
+   * column the saved order has never seen (this document's quantity columns, a header just added)
+   * goes where it is defined, after its neighbour, not to the far right.
+   */
+  const [columnOrder, setColumnOrder] = React.useState<string[]>([]);
+
   const columns = React.useMemo(
     () =>
       isMatrix
@@ -1817,9 +1849,14 @@ export function QuotationLinesGrid({
         ...columnVisibility,
         drag_handle: editing,
         row_actions: editing,
+        [QTY_BLOCK]: false,
       },
+      columnOrder: columnOrder.length
+        ? mergeColumnOrderWithLeafColumns(columnOrder, leafIds(columns))
+        : columnOrder,
     },
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnOrderChange: setColumnOrder,
     enableSorting: false,
     columnResizeMode: 'onChange',
   });
@@ -1891,9 +1928,10 @@ export function QuotationLinesGrid({
           // Rows render under the default layout while the saved one loads, rather than as
           // skeletons: an editor must never hide the lines somebody is about to type into.
           loadingMode="spinner"
-          // A grid scope's columns are DATA (its own headers), so nothing is saved for it: a stored
-          // order would be re-applied against whichever headers exist (see DataGrid's opt-out).
-          listingKey={isMatrix ? null : 'projects.projects.view::quotation-lines'}
+          // ONE per-user layout for edit and view, plain and grid scopes alike (PROPOSAL-FORM-
+          // COLLAPSE, Q3, owner 10 Nov 2026). A grid scope's own columns are data: they follow
+          // the hidden quantity-block anchor, and the merge above places any it has not seen.
+          listingKey="projects.projects.view::quotation-lines"
           tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
           tableClassNames={{ headerRow: 'text-xs' }}
           emptyMessage={lines.length === 0 ? emptyHint : filterEmptyHint}
@@ -1969,9 +2007,10 @@ export function QuotationLinesGrid({
                   <DataGridTableDndRows
                     handleDragEnd={handleRowDragEnd}
                     dataIds={visibleRows.map((row) => row.key)}
-                    // A grid scope's two header rows are its column headers, edited in place;
-                    // the product columns keep their order there rather than dragging.
-                    columnsDraggable={!isMatrix}
+                    // The fixed columns drag the DataGrid way on every scope (Q3); a grid
+                    // scope's own header columns do not (their order is the document's, moved
+                    // by their grips), so the block stays together.
+                    columnsDraggable
                   />
                 </DataGridScroller>
                 {editing && (
