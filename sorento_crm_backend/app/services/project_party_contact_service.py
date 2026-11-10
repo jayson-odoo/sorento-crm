@@ -78,6 +78,33 @@ def _clean(value: Any) -> Optional[str]:
     return text or None
 
 
+def clean_phone(value: Any) -> Optional[str]:
+    """A contact's number, checked and stored as E.164 (owner hand test 10 Nov: "we need some
+    verification for phone number"). Blank stays blank; letters or too few digits are a 422.
+
+    Normalised by the app's one MY-default normaliser (``phone_utils.normalize_msisdn``, the one
+    phone sign-in and the user <-> contact matcher use). A Malaysian number has 8 to 10 digits
+    after the 60; any other country code 8 to 15 digits in all, the E.164 ceiling."""
+    import re
+
+    from app.services.phone_utils import normalize_msisdn
+
+    text = _clean(value)
+    if not text:
+        return None
+    digits = normalize_msisdn(text) if not re.search(r"[A-Za-z]", text) else None
+    ok = bool(digits) and (
+        10 <= len(digits) <= 12 if digits.startswith("60") else 8 <= len(digits) <= 15
+    )
+    if not ok:
+        raise AppException(
+            status_code=422,
+            message="Enter a valid phone number, e.g. 012-345 6789.",
+            code="project_party_contact_phone_invalid",
+        )
+    return f"+{digits}"
+
+
 def list_contacts(db: Session, party: ProjectParty, *, include_inactive: bool = False) -> List[ProjectPartyContact]:
     query = db.query(ProjectPartyContact).filter(ProjectPartyContact.party_id == party.id)
     if not include_inactive:
@@ -108,7 +135,7 @@ def create_contact(db: Session, party: ProjectParty, payload: Dict[str, Any]) ->
         party_id=party.id,
         name=name,
         job_title=_clean(payload.get("job_title")),
-        phone=_clean(payload.get("phone")),
+        phone=clean_phone(payload.get("phone")),
         email=_clean(payload.get("email")),
         is_active=payload.get("is_active", True) is not False,
     )
@@ -138,7 +165,7 @@ def update_contact(db: Session, row: ProjectPartyContact, payload: Dict[str, Any
         row.name = name
     for field in ("job_title", "phone", "email"):
         if field in payload:
-            setattr(row, field, _clean(payload.get(field)))
+            setattr(row, field, clean_phone(payload.get(field)) if field == "phone" else _clean(payload.get(field)))
     if "is_active" in payload and payload["is_active"] is not None:
         row.is_active = bool(payload["is_active"])
     db.flush()
@@ -375,11 +402,9 @@ def fill_party_phone(
 ) -> Dict[str, Any]:
     """Save a number typed at send time: to the stakeholder and its party contact when a person
     was picked, else to the party's own line. Fills an EMPTY number only."""
-    number = _clean(phone)
-    if not number:
+    if not _clean(phone):
         raise AppException(status_code=422, message="Type the number first.", code="project_party_phone_required")
-    if len(number) > 50:
-        raise AppException(status_code=422, message="That number is too long.", code="project_party_phone_invalid")
+    number = clean_phone(phone)
     if str(party_id) not in {str(p) for p in _party_ids_on(db, project)}:
         raise AppException(
             status_code=404, message="That party is not on this project.", code="project_party_not_on_project"

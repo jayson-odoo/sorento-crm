@@ -567,3 +567,57 @@ def test_rv_the_project_parties_read_carries_address_and_email(v2):
     rows = as_user(v2, v2.owner).get(f"{PROJECTS}/{pid}/parties").json()["data"]
     row = next(r for r in rows if r["party_id"] == arch.id)
     assert (row["address"], row["email"]) == ("Lot 9", "a@arch.example")
+
+
+# ------------------------------------------------------------------ owner hand test 10 Nov ~17:25: contact validation
+
+
+@pytest.mark.parametrize("bad", ["01234", "13245t", "abc", "012-345 678x"])
+def test_ht_a_contact_phone_with_letters_or_too_short_is_422(v2, bad):
+    party = _party(v2, "architect")
+    res = as_user(v2, v2.owner).post(f"{PARTIES}/{party.id}/contacts", json={"name": "AR. CONTOH", "phone": bad})
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "project_party_contact_phone_invalid"
+
+
+@pytest.mark.parametrize(
+    "raw, stored",
+    [("012-345 6789", "+60123456789"), ("+60 3-2000 0002", "+60320000002"), ("60123456789", "+60123456789")],
+)
+def test_ht_a_valid_contact_phone_is_stored_normalised(v2, raw, stored):
+    party = _party(v2, "architect")
+    res = as_user(v2, v2.owner).post(f"{PARTIES}/{party.id}/contacts", json={"name": "AR. CONTOH", "phone": raw})
+    assert res.status_code in (200, 201), res.text
+    assert res.json()["phone"] == stored
+
+
+def test_ht_add_number_on_a_contact_is_validated_too(v2):
+    party = _party(v2, "architect")
+    person = _contact(v2, party, "AR. CONTOH")
+    c = as_user(v2, v2.owner)
+    ok = c.put(f"{PARTIES}/{party.id}/contacts/{person.id}", json={"phone": "019-000 0001"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["phone"] == "+60190000001"
+    # Last: a refused write rolls the shared test session back.
+    bad = c.put(f"{PARTIES}/{party.id}/contacts/{person.id}", json={"phone": "13245t"})
+    assert bad.status_code == 422, bad.text
+
+
+def test_ht_a_blank_phone_is_still_allowed(v2):
+    party = _party(v2, "architect")
+    res = as_user(v2, v2.owner).post(f"{PARTIES}/{party.id}/contacts", json={"name": "AR. CONTOH", "phone": "  "})
+    assert res.status_code in (200, 201), res.text
+    assert res.json()["phone"] is None
+
+
+def test_ht_a_contact_name_of_spaces_is_422(v2):
+    party = _party(v2, "architect")
+    res = as_user(v2, v2.owner).post(f"{PARTIES}/{party.id}/contacts", json={"name": "   "})
+    assert res.status_code == 422, res.text
+
+
+def test_ht_the_send_time_phone_fill_is_validated(v2):
+    party = _party(v2, "architect")
+    pid = _register(v2, party_links=[{"role": "architect", "party_id": party.id}]).json()["id"]
+    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{party.id}/phone", json={"phone": "01234"})
+    assert res.status_code == 422, res.text
