@@ -19,7 +19,6 @@
 
 import type {
   TagAccessory,
-  TagAccessoryBoxStyle,
   TagCombo,
   FeatureIconsLayerProps,
   TagSpecValue,
@@ -48,7 +47,7 @@ import {
 import type { PriceBadgeInput } from './price-badge';
 import { featureIconsFor, variantFeatureIcons, type FeatureIcon } from './feature-icons';
 import { accessoriesOf, partAtSlot } from './accessory-box';
-import { accessoryBoxStyleOf, drawableFeatureIcons } from './accessory-card';
+import { drawableFeatureIcons } from './accessory-card';
 import { priceWithUpgrade } from './upgrade-items';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
@@ -1343,8 +1342,6 @@ export interface TagLayerDisplay {
   accessories?: TagAccessory[];
   /** PRICETAG-ACCESSORY-DESIGNER: the box's card is being edited; the cards after the first fade. */
   accessoryEditing?: boolean;
-  /** S6: the box style the previewed product / combo names; the box draws it instead of its own design. */
-  accessoryBoxStyle?: TagAccessoryBoxStyle | null;
   /** PRICETAG-UPGRADE-VARIANTS S1: the rules a card's feature_icons element may draw (those with a
    *  signed url, `drawableFeatureIcons`) and the urls, by asset id. */
   cardIcons?: FeatureIcon[];
@@ -1479,7 +1476,7 @@ export function layerDisplay(
       const icons = { cardIcons: drawableFeatureIcons(featureIcons, assetUrls), iconUrls: assetUrls };
       // No data bound (the template editor with nothing previewed): absent, so samples draw.
       return data
-        ? { accessories: accessoriesOf(data, layer), accessoryBoxStyle: accessoryBoxStyleOf(data, layer), ...icons }
+        ? { accessories: accessoriesOf(data, layer), ...icons }
         : icons;
     }
 
