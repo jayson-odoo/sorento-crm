@@ -29,9 +29,16 @@ Records and figures follow your own permissions and your active company: if you 
 * **Complaints**, such as open complaints, how many a product has, or one complaint by its number.
 * **SLA tracking**, such as the dashboard's counts or recent tracking rows.
 * **Projects**, such as which projects are at a stage, one project by its code, its quotations, or the forecast.
+* **Comparing quotations**: on a project's page, ask "compare the two quotations for this project" or name them,
+  such as "compare PRJQ-2026-0006 and QT-2026-0004". A sent revision can be named too, such as "compare
+  PRJQ-2026-0007-A and PRJQ-2026-0007-B". The answer is one table: items, quantities, list and quoted prices,
+  discounts, and totals. It shows only the quotations you can open on the project page.
 * **Order totals**, such as delivered value by customer or average delivery time.
 
 If the question is vague, it may ask you back.
+
+If the assistant runs out of time before it finishes, it says what it had already looked up. Ask again, or ask a
+narrower question.
 
 To capture a product idea, use **Ideas > All ideas**: the assistant points you there and does not record the idea itself.
 

@@ -63,6 +63,8 @@ def test_default_design_constant_is_the_2088_cover():
 
 
 def test_cover_page_design_round_trips_create_get_and_list_with_an_empty_intro(api):
+    from app.services.quotation_cover_service import normalize_design
+
     client, *_ = api
     d = design(title=f"{MARKER} OFFER", show_letterhead=False, closing_html="<p>Thanks</p>")
     d["rows"][2]["shown"] = False
@@ -71,39 +73,65 @@ def test_cover_page_design_round_trips_create_get_and_list_with_an_empty_intro(a
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["kind"] == "cover_page"
-    assert body["design"] == d
+    # QUOTE-COVER-FIELDS: the 12-row shape is served normalized (sections, purpose dropped)
+    want = normalize_design(d)
+    assert body["design"] == want
     assert body["is_active"] is True
-    assert client.get(f"{TEMPLATES}/{body['id']}").json()["design"] == d
+    assert client.get(f"{TEMPLATES}/{body['id']}").json()["design"] == want
     listed = client.get(TEMPLATES, params={"kind": "cover_page"}).json()["data"]
-    assert [r["design"] for r in listed if r["id"] == body["id"]] == [d]
+    assert [r["design"] for r in listed if r["id"] == body["id"]] == [want]
 
 
 def test_update_round_trips_the_design(api):
+    from app.services.quotation_cover_service import normalize_design
+
     client, *_ = api
     made = post_design(client).json()
     d = design(title=f"{MARKER} NEW", closing_html="<p>Bye {{project_title}}</p>")
     d["rows"] = list(reversed(d["rows"]))
     put = client.put(f"{TEMPLATES}/{made['id']}", json={"design": d})
     assert put.status_code == 200, put.text
-    assert put.json()["design"] == d
-    assert client.get(f"{TEMPLATES}/{made['id']}").json()["design"] == d
+    assert put.json()["design"] == normalize_design(d)
+    assert client.get(f"{TEMPLATES}/{made['id']}").json()["design"] == normalize_design(d)
+
+
+def sectioned(**over):
+    """A valid design in the sections shape (QUOTE-COVER-FIELDS)."""
+    base = {
+        "show_letterhead": True,
+        "title": "QUOTATION",
+        "closing_html": "",
+        "sections": [
+            {
+                "style": "fields",
+                "label": "",
+                "columns": 2,
+                "rows": [
+                    {"source": "document_no", "label": "Reference No.", "shown": True, "column": 0},
+                    {"source": "date", "label": "Date", "shown": True, "column": 1},
+                ],
+            }
+        ],
+    }
+    base.update(over)
+    return base
 
 
 def _bad_unknown():
-    d = design()
-    d["rows"][3] = {"key": "fax", "shown": True, "label": "Fax"}
+    d = sectioned()
+    d["sections"][0]["rows"][0]["source"] = "nope"
     return d
 
 
-def _bad_duplicate():
-    d = design()
-    d["rows"][3] = dict(d["rows"][2])
+def _bad_column():
+    d = sectioned()
+    d["sections"][0]["rows"][1]["column"] = 2
     return d
 
 
-def _bad_missing():
-    d = design()
-    d["rows"] = d["rows"][:-1]
+def _bad_style():
+    d = sectioned()
+    d["sections"][0]["style"] = "banner"
     return d
 
 
@@ -114,13 +142,13 @@ def _bad_label():
 
 
 BAD = [
-    _bad_unknown(), _bad_duplicate(), _bad_missing(), _bad_label(),
+    _bad_unknown(), _bad_column(), _bad_style(), _bad_label(),
     design(title="x" * 61),
-    design(rows=[]),
+    sectioned(sections=[]),
 ]
 
 
-@pytest.mark.parametrize("bad", BAD, ids=["unknown", "duplicate", "missing", "label61", "title61", "norows"])
+@pytest.mark.parametrize("bad", BAD, ids=["unknown", "column", "style", "label61", "title61", "nosections"])
 def test_invalid_design_is_refused_on_create_and_update(api, bad):
     client, *_ = api
     refused = post_design(client, d=bad)
@@ -220,14 +248,20 @@ def test_document_patch_round_trips_the_closing(doc_api):
 
 
 def test_cover_default_endpoint_returns_the_default_design(api):
-    from app.services.quotation_cover_service import DEFAULT_DESIGN
+    from app.services.quotation_cover_service import default_design
 
     client, *_ = api
     res = client.get(f"{TEMPLATES}/cover-default")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body == DEFAULT_DESIGN
-    assert [r["key"] for r in body["rows"]] == KEYS and [r["label"] for r in body["rows"]] == LABELS
+    assert body == default_design()
+    assert [x["style"] for x in body["sections"]] == ["fields", "title"]
+    assert body["sections"][1]["rows"][0]["source"] == "project_title"
+    assert body["sections"][0]["columns"] == 1
+    assert [r["source"] for r in body["sections"][0]["rows"]] == [
+        "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",
+        "terms", "payment_terms", "validity", "salesperson_name",
+    ]
     assert body["title"] == "QUOTATION" and body["show_letterhead"] is True
 
 

@@ -59,6 +59,10 @@ KEYS = [
     "validity",
     "prepared_by",
 ]
+# Quotation Purpose no longer prints anywhere (owner, 10 Nov 2026, PROPOSAL-FORM-COLLAPSE): the
+# column stays, an existing value just stops showing. The design still lists the row.
+PRINTED_KEYS = [key for key in KEYS if key != "purpose"]
+PRINTED_LABELS = [label for label in LABELS if label != "Proposal Purpose"]
 
 
 def _full_document(db, env, *, purpose=f"{MARKER} Supply of sanitary ware", terms=TERMS):
@@ -113,6 +117,26 @@ def _force_layout_2(db, record):
     db.execute(
         text(f"update {table} set layout_version = 2, cover_design = null where id = :i"),
         {"i": str(record.id)},
+    )
+    db.expire_all()
+
+
+def _force_layout_3(db, record, design=None):
+    """guards sent layout 3 revisions (QUOTE-COVER-FIELDS): issue() now stamps layout 4, so the
+    layout-3 rendering is reached by forcing the stored layout and the legacy 12-row design."""
+    import json
+
+    from app.models.projects import ProjectQuotationIssue
+    from app.services.quotation_cover_service import DEFAULT_DESIGN
+
+    table = ProjectQuotationIssue.__tablename__
+    db.flush()
+    db.execute(
+        text(
+            f"update {table} set layout_version = 3, "
+            "cover_design = cast(:d as jsonb) where id = :i"
+        ),
+        {"i": str(record.id), "d": json.dumps(design or DEFAULT_DESIGN)},
     )
     db.expire_all()
 
@@ -206,8 +230,8 @@ def test_clean_terms_none_and_blank_are_empty():
 # ------------------------------------------------------------------ 2. layout_version
 
 
-def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_3():
-    from app.services.quotation_cover_service import COVER_LAYOUT_DESIGNED
+def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_4():
+    from app.services.quotation_cover_service import COVER_LAYOUT_SECTIONS
 
     from datetime import datetime
 
@@ -231,7 +255,7 @@ def test_an_issue_built_directly_is_layout_1_and_issue_stamps_layout_3():
 
         record = _issue(db, document, env["owner"])
         db.refresh(record)
-        assert record.layout_version == COVER_LAYOUT_DESIGNED
+        assert record.layout_version == COVER_LAYOUT_SECTIONS
 
 
 def test_cover_layout_constant_is_2():
@@ -250,10 +274,11 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         env = _setup(db)
         document = _full_document(db, env)
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         rows = cover_rows(db, document, record)
 
-        assert [r["key"] for r in rows] == KEYS
-        assert [r["label"] for r in rows] == LABELS
+        assert [r["key"] for r in rows] == PRINTED_KEYS
+        assert [r["label"] for r in rows] == PRINTED_LABELS
         by = {r["key"]: r for r in rows}
         assert by["reference"]["text"] == (
             f"{document.document_no}-A {env['project'].title}"
@@ -319,12 +344,12 @@ def test_pdf_layout_2_rows_in_order_with_uppercase_labels_and_no_fax():
             "CONTACT:",
             "ADD:",
             "EMAIL:",
-            "PROPOSAL PURPOSE:",
             "TERMS &amp; CONDITIONS:",
             "PAYMENT TERMS:",
             "VALIDITY:",
             "PREPARED BY:",
         ]
+        assert "PROPOSAL PURPOSE:" not in html  # never printed (owner, 10 Nov 2026)
         positions = []
         for label in labels:
             assert label in html, label
@@ -364,7 +389,9 @@ def test_pdf_layout_2_empty_purpose_row_is_omitted_and_script_is_escaped():
         env = _setup(db)
         _d, _r, html = _html_of(db, env, purpose="<script>alert(1)</script>")
         assert "<script>alert" not in html
-        assert "&lt;script&gt;" in html
+        # A stored purpose no longer prints at all, escaped or not.
+        assert "&lt;script&gt;" not in html
+        assert "PROPOSAL PURPOSE" not in html and "QUOTATION PURPOSE" not in html
 
 
 def test_pdf_layout_2_terms_print_on_the_cover_only_and_keep_their_structure():
@@ -439,7 +466,7 @@ def test_countersign_layout_2_returns_cover_rows_in_order_with_the_pdf_reference
         env = _setup(db)
         document, record, body = _sign_page(db, env)
         rows = body["cover_rows"]
-        assert [r["key"] for r in rows] == KEYS
+        assert [r["key"] for r in rows] == PRINTED_KEYS
         ref = f"{document.document_no}-A {env['project'].title}"
         assert rows[0]["text"] == ref
         assert body["our_ref"] == ref
@@ -452,6 +479,10 @@ def test_countersign_layout_2_omits_empty_rows():
     with blank_session() as db:
         env = _setup(db)
         _d, _r, body = _sign_page(db, env, purpose=None)
+        assert "purpose" not in [r["key"] for r in body["cover_rows"]]
+    with blank_session() as db:
+        env = _setup(db)
+        _d, _r, body = _sign_page(db, env)
         assert "purpose" not in [r["key"] for r in body["cover_rows"]]
 
 
@@ -542,6 +573,7 @@ def test_pdf_cover_prepared_by_falls_back_to_the_creator_when_the_project_has_no
         db.flush()
         document = _full_document(db, env)
         record = _issue(db, document, env["owner"])
+        _force_layout_3(db, record)  # guards sent layout 3 revisions (QUOTE-COVER-FIELDS)
         html = qpdf.build_issue_html(db, record)
         cover = html[: html.index(f"{MARKER} Townhouse")]
         assert re.search(r"PREPARED BY:.*?Baser Ramli", cover, re.S)

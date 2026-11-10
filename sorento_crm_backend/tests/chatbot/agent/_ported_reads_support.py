@@ -49,6 +49,8 @@ FIND = "crm_find"
 #: `crm_system_tool_capabilities_summary` is dropped (its route reads a catalog path the deployed image lacks):
 #: it is in no list here, and `test_ported_reads_access.py` pins that it is in no registry, label or turn.
 AC1_NAMES = [row[0] for row in AC1]
+#: AGENT-QUOTE-COMPARE: a panel-only read that runs in process (no MCP route), so it is in none of the AC-1 route tables.
+LOCAL_PORTED = ["crm_project_quotation_lines"]
 #: The tools Jev is told about and whose operator is checked (AC-8): AC-1 less `crm_find`.
 PORTED = [row for row in AC1 if row[0] != FIND]
 PORTED_NAMES = [row[0] for row in PORTED]

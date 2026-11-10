@@ -36,6 +36,7 @@ from app.models.status import Status
 from app.models.town import TownDay
 from app.scheduler.task_scheduler import scheduler_session
 from app.services.sales import invoiced_sales as inv
+from app.utils.date_format import fmt_day_label
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,6 @@ def _money(value: Any) -> str:
 def _account_label(name: Optional[str]) -> Optional[str]:
     match = _LABEL_RE.search(name or "")
     return match.group(1).strip() if match else None
-
-
-_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
@@ -109,7 +106,7 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
         "dealer_customer_count": int(row[4]),
     }
     compare = {
-        "label": f"{_WEEKDAYS[week_ago.weekday()]} {week_ago.day} {_MONTHS[week_ago.month - 1]}",
+        "label": fmt_day_label(week_ago),
         "last_week_amount": _money(row[5]),
         "last_week_invoice_count": int(row[6]),
     }

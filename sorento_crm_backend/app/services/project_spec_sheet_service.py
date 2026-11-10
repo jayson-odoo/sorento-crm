@@ -54,6 +54,7 @@ from app.services.storage_router import (
     normalize_provider,
     resolve_signed_url,
 )
+from app.services.project_quotation_service import line_text
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +362,9 @@ def _version_lines(db: Session, version_ids: Sequence[str]) -> List[tuple]:
             heading = (line.band_label or "").strip()
             if heading:
                 section = heading
+            # A heading row sets the section and is never an item itself (PROPOSAL-FORM-COLLAPSE).
+            if line.is_section:
+                continue
             lines.append((line, section))
     return lines
 
@@ -419,7 +423,7 @@ def snapshot_items(
             "line_id": line.id,
             "product_id": (driver or {}).get("product_id") or line.product_id,
             "code": (driver or {}).get("product_code") or line.product_code_snapshot or "",
-            "description": (driver or {}).get("description") or line.description_snapshot or "",
+            "description": (driver or {}).get("description") or line_text(line) or "",
             "brand": line.brand_snapshot or "",
             "image_attachment_id": line.image_attachment_id,
             "drawing_attachment_id": line.drawing_attachment_id,
