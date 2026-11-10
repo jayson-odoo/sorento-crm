@@ -40,6 +40,21 @@ The same holds for the bottom "Add a section" button and the right-click menu's 
 Fix: focus moves in the menus' `onCloseAutoFocus` (`settleMenuFocus`), which Radix runs after the
 content has unmounted. Not affected: Add a section (a button), Insert a line below (focuses nothing).
 
+## Round 2: B1, autosave brings a dropped empty heading back (crew pass on e9f4e0af6)
+
+- Repro: edit, right-click line 1 > Insert a section above, wait for the autosave, click away (the
+  empty heading goes), reopen edit: the empty heading is back.
+- Cause: `useQuotationFormAutosave.ts` skipped every change while `isDirty`
+  (`QuotationFormClient.tsx`, `dirty || edit.changedScopes.length > 0`) was false. Dropping the
+  heading returns the lines to the saved state, so that change never reached the draft, which still
+  held the heading.
+- Fix: once something has been edited, every later change is saved, a change back to the saved
+  state included. Save clears the server draft but keeps this tab's claim
+  (`quotation_form_draft_service.record_save`), so the form pauses its autosave once Save succeeds:
+  a refetch re-seeding the form while the page leaves cannot write the draft back.
+- AC-ISF05: an empty heading dropped after an autosave stays gone when the form is reopened.
+- AC-ISF06: after a successful Save, nothing writes the draft back.
+
 ## UAC
 
 - AC-ISF01: "Insert a section above" from a line's "..." menu adds one heading row directly above that
