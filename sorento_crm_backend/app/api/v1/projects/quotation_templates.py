@@ -74,6 +74,15 @@ def get_cover_default(
     return cover.default_design()
 
 
+@router.get("/quotation-templates/cover-sources")
+def get_cover_sources(
+    _user: dict = Depends(require_permission(VIEW)),
+):
+    """The fields a cover row can print (QUOTE-COVER-FIELDS), served so the designer's Source
+    list and the renderer cannot drift. Declared before ``/{template_id}``."""
+    return _envelope(cover.serialize_sources())
+
+
 @router.post("/quotation-templates/cover-preview", response_model=QuotationCoverPreviewResponse)
 def preview_cover_design(
     payload: QuotationDesignPreviewRequest,

@@ -177,6 +177,7 @@ export const BUTTON_LINK_VARIABLES: ParamVariable[] = [
   'view_url',
   'form_url',
   'discontinued_link',
+  'list_price_link',
   'system_url',
   'track_url',
 ];
