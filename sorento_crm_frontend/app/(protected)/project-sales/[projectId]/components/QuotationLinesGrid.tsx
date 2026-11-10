@@ -13,6 +13,9 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
+import { Selection } from '@tiptap/pm/state';
+import { docPosAtTextOffset, textOffsetAtPoint } from './quotationDescriptionCaret';
 import { RichDescription } from '@/components/common/RichDescription';
 import { richOneLine, richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { toast } from '@/lib/toast';
@@ -448,6 +451,9 @@ export function descriptionFromEditor(html: string): string {
  * The line description (QUOTE-DESC-RICHTEXT): the styled text in the cell, the shared rich text
  * editor (full toolbar, as the price tag description) in a popover anchored to it, since the
  * toolbar does not fit the column. A plain description shows and prints exactly as typed.
+ *
+ * One step to type (owner hand test, 10 Nov): the click on the cell opens the editor with its caret
+ * at the character clicked; Tab into the cell, Enter or Space opens it with the caret at the end.
  */
 function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
@@ -455,6 +461,41 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const { staged } = row;
   const value = staged.draft.description ?? '';
   const labelId = React.useId();
+  const [open, setOpen] = React.useState(false);
+  /** Where the caret goes when the editor arrives: a text offset, or null for the end. */
+  const caretAt = React.useRef<number | null>(null);
+  /** A pointer is pressing the cell: its click, not the focus it causes, opens the editor. */
+  const pressing = React.useRef(false);
+  /** Focus coming back to the cell as the editor closes must not open it again. */
+  const justClosed = React.useRef(false);
+  /** The editor while it is open, so a second click on the cell moves its caret. */
+  const editorRef = React.useRef<Editor | null>(null);
+
+  // Stable, so the editor's ready effect runs once per mount rather than on every keystroke.
+  const placeCaret = React.useCallback((editor: Editor) => {
+    editorRef.current = editor;
+    const offset = caretAt.current;
+    const at =
+      offset === null
+        ? Selection.atEnd(editor.state.doc).from
+        : docPosAtTextOffset(editor.state.doc, offset);
+    editor.commands.focus(at);
+  }, []);
+  const openAt = (offset: number | null) => {
+    caretAt.current = offset;
+    if (open && editorRef.current) placeCaret(editorRef.current);
+    else setOpen(true);
+  };
+  const onOpenChange = (next: boolean) => {
+    if (next) return; // Opening is the click / focus / key handlers' job, with the caret placed.
+    justClosed.current = true;
+    window.setTimeout(() => {
+      justClosed.current = false;
+    }, 100);
+    setOpen(false);
+    editorRef.current = null;
+    grid.markVisited(row.key);
+  };
 
   if (!grid.editing || staged.removed) {
     return <RichDescription value={value} className="text-xs" />;
@@ -462,7 +503,7 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
 
   const label = grid.labelOf(row);
   return (
-    <Popover onOpenChange={(open) => (open ? undefined : grid.markVisited(row.key))}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         {/* A div, not a <button>: the styled text holds block elements, which a button may not. */}
         <div
@@ -470,10 +511,26 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           tabIndex={0}
           aria-label={`Description on ${label}`}
           title="Edit description"
+          onPointerDown={() => {
+            pressing.current = true;
+          }}
+          onFocus={() => {
+            if (pressing.current || justClosed.current || open) return;
+            openAt(null);
+          }}
+          onBlur={() => {
+            pressing.current = false;
+          }}
+          onClick={(event) => {
+            // The popover's own toggle is not used: it would open with no caret.
+            event.preventDefault();
+            pressing.current = false;
+            openAt(textOffsetAtPoint(event.currentTarget, event.clientX, event.clientY));
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault();
-              event.currentTarget.click();
+              openAt(null);
             }
           }}
           className="block min-h-8 w-full min-w-0 cursor-text rounded-md border border-input bg-background px-2 py-1.5 text-left hover:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -490,6 +547,8 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
           align="start"
           collisionPadding={8}
           className="w-[min(28rem,calc(100vw-2rem))] p-2"
+          // The editor takes the focus itself, at the caret (placeCaret), not the first button.
+          onOpenAutoFocus={(event) => event.preventDefault()}
         >
           <span id={labelId} className="sr-only">
             {`Description text on ${label}`}
@@ -500,6 +559,7 @@ function DescriptionCell({ row: tableRow }: CellContext<GridRow, unknown>) {
             onChange={(html) =>
               grid.update(row.key, { description: descriptionFromEditor(html) })
             }
+            onEditorReady={placeCaret}
             placeholder="Type what the customer reads"
             minHeight={96}
           />

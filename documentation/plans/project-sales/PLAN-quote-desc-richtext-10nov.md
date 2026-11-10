@@ -36,3 +36,12 @@ Behaviour card (rules, readers table, questions): `CARD-quote-desc-richtext-10no
 - Browser (Playwright, sandbox stack): sign link at 1280 and 375 draws bold + red from the parser, no page overflow.
   The staff Lines tab threw "Rendered more hooks than during the previous render" in Next's Router on the sandbox
   stack with main's own code too, so the grid browser pass is left to the owner hand test (jsdom covers it).
+
+## Feedback round 1 (owner hand test, 10 Nov)
+
+- Owner: "for me to click twice to be able to edit the description is quite not user friendly". Now one step: the
+  click on the cell opens the shared editor (full toolbar) with its caret at the clicked character (click point read
+  as a text offset, `quotationDescriptionCaret.ts`, list markers marked `data-rt-marker` in `RichTextView`); Tab into
+  the cell, Enter or Space opens it with the caret at the end; Escape closes and the returning focus does not reopen.
+- Crew pass on 7ea1d6efc: plain text of a list put the marker on its own line ("• \nbullet one") in Excel, WhatsApp
+  and notifications; `_PlainText` now continues the marker's line (`tag_rich_text.py`).
