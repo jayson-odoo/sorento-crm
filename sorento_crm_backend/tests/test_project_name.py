@@ -385,7 +385,7 @@ def test_the_portal_refuses_a_non_text_name(world):
         assert res.status_code == 422, res.text
 
 
-def test_a_submit_only_clash_preview_carries_exactly_the_five_keys(v2):
+def test_a_submit_only_clash_preview_keeps_d8s_four_keys_without_the_name(v2):
     dev = developer(v2.db, v2.company_id, f"CONTOH Dev {uuid.uuid4().hex[:6]}")
     text = title("Redacted")
     _register(v2, title=text, developer_party_id=dev.id, name=NAME)
@@ -396,9 +396,8 @@ def test_a_submit_only_clash_preview_carries_exactly_the_five_keys(v2):
     candidates = res.json()["candidates"]
     assert candidates
     for candidate in candidates:
-        assert set(candidate) <= {"project_id", "project_code", "title", "name", "blocks"}
-    # The short label of the same project is part of what D8 lets them see.
-    assert NAME in [c.get("name") for c in candidates]
+        # D8 (owner): a submit-only salesperson learns code and title only; unchanged here.
+        assert set(candidate) == {"project_id", "project_code", "title", "blocks"}
 
 
 def test_the_clash_preview_names_the_candidate(v2):

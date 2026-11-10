@@ -10,6 +10,8 @@ portal registration form get the short name too (the portal extract keeps the va
   project row (like the title), max 80 (422 "Project name is too long"); the approver may set it on Approve.
 - The duplicate / already-registered / possible-duplicate links on the project page keep code + TITLE: they are
   the evidence of a title clash (Q4), so they show what was compared.
+- The clash preview of a submit-only salesperson stays D8's four keys (code and title, no name); staff see the
+  name beside the title.
 - Backfill: `sorento_crm_backend/scripts/backfill_project_names.py` (coded projects only; drafts and waiting
   registrations are named by their approver).
 
