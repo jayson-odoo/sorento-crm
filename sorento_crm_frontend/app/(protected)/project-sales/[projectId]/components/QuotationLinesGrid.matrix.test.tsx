@@ -748,3 +748,73 @@ describe('duplicating a column header', () => {
     expect(screen.queryByRole('menuitem', { name: 'Duplicate' })).toBeNull();
   });
 });
+
+/**
+ * PROPOSAL-FORM-COLLAPSE (owner, 10 Nov): "a heading shouldnt be tied to line", and it drags up
+ * and down like a line. A heading is its own row: one full-width bar with the line's drag handle,
+ * never numbered; removing it touches no line, and adding one adds a row of its own.
+ */
+describe('section heading rows', () => {
+  function heading(key: string, label: string): StagedQuotationLine {
+    const line = {
+      id: key,
+      version_id: 'v1',
+      is_section: true,
+      band_label: label,
+      quantity: '0.00',
+      unit_price: '0.00',
+      line_total: '0.00',
+    } as unknown as QuotationLine;
+    return { id: key, key, line, draft: serverToDraft(line), removed: false };
+  }
+  const rowOf = (key: string) =>
+    document.querySelector<HTMLTableRowElement>(`tr[data-line-key="${key}"]`) as HTMLTableRowElement;
+  const lines = () => [staged(TRAP, false), heading('h1', 'PAGE 1'), staged(WC, false)];
+
+  it('reads a heading as one full-width row and numbers only the lines', () => {
+    renderGrid({ lines: lines() });
+    const bar = rowOf('h1');
+    expect(bar.querySelectorAll('td')).toHaveLength(1);
+    expect(bar).toHaveTextContent('PAGE 1');
+    expect(rowOf('l1').querySelector('td')?.textContent?.trim()).toBe('1');
+    expect(rowOf('l2').querySelector('td')?.textContent?.trim()).toBe('2');
+  });
+
+  it('gives a heading the line drag handle and its own name box while editing', () => {
+    renderGrid({ lines: lines(), editing: true });
+    const bar = rowOf('h1');
+    expect(within(bar).getByRole('button', { name: 'Drag to reorder' })).toBeInTheDocument();
+    expect(within(bar).getByRole('textbox', { name: 'Section heading above WC8518-SH' })).toHaveValue('PAGE 1');
+    expect(within(bar).queryByRole('button', { name: /Row actions/ })).toBeNull();
+  });
+
+  it('Remove section drops the heading row only', async () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.contextMenu(rowOf('h1').querySelector('[data-section-key]') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove section' }));
+    expect(lastStaged(onStage).map((line) => line.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('Add a section adds a heading row of its own, then a line under it', () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
+    const next = lastStaged(onStage);
+    expect(next).toHaveLength(5);
+    expect(next[3].draft.is_section).toBeTruthy();
+    expect(next[3].draft.band_label ?? '').toBe('');
+    expect(next[4].draft.is_section ?? '').toBe('');
+  });
+
+  it('Insert a section above puts a heading row before that line and moves no line', async () => {
+    const onStage = vi.fn();
+    renderGrid({ lines: lines(), editing: true, onStage });
+    fireEvent.contextMenu(rowOf('l2').querySelector('td') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Insert a section above' }));
+    const next = lastStaged(onStage);
+    expect(next.map((line) => line.key).filter((key) => !key.startsWith('new:'))).toEqual(['l1', 'h1', 'l2']);
+    expect(next[2].draft.is_section).toBeTruthy();
+    expect(next[3].key).toBe('l2');
+  });
+});

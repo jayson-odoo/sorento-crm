@@ -92,8 +92,10 @@ import {
   emptyDraft,
   INLINE_CHECKED,
   isInlineChecked,
+  isSectionDraft,
   isUntouched,
   lineErrors,
+  sectionDraft,
   totalFromDrafts,
   trimAmount,
   type LineDraft,
@@ -113,6 +115,8 @@ interface GridRow {
   key: string;
   /** Position in the WHOLE scope, so a search hides rows without renumbering the rest. */
   index: number;
+  /** The item number: lines only, heading rows take none (PROPOSAL-FORM-COLLAPSE). */
+  number: number | null;
   staged: StagedQuotationLine;
 }
 
@@ -143,8 +147,10 @@ interface GridContextValue {
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
   act: (key: string, action: MenuAction) => void;
-  bandOpen: Set<string>;
+  /** Drops a heading row left without a name (blurred empty). */
   closeEmptyBand: (key: string) => void;
+  /** The name a heading row's box goes by: the line under it, else the end of the table. */
+  headingLabelOf: (row: GridRow) => string;
   openPreview: (kind: LineFileKind, shown: LineFileShown) => void;
   /** The row's name in every label (`describeLine`). */
   labelOf: (row: GridRow) => string;
@@ -238,7 +244,7 @@ function ItemCell({ row }: CellContext<GridRow, unknown>) {
   const notes = grid.itemNotes(row.original);
   return (
     <span className="block text-sm font-medium tabular-nums">
-      {row.original.index + 1}
+      {row.original.number ?? ''}
       {notes.length > 0 && (
         <span
           role="img"
@@ -827,15 +833,18 @@ function NotesButton({ row }: { row: GridRow }) {
   );
 }
 
-/** A section heading, drawn as a full-width row above the line that carries it (AC-QLG03). */
-function SectionBar({ row }: { row: GridRow }) {
+/**
+ * A section heading row (AC-QLG03; PROPOSAL-FORM-COLLAPSE, owner 10 Nov: "a heading shouldnt be
+ * tied to line"): one full-width bar of its own, with the line drag handle to move it up and down.
+ * Moving or removing a line never moves or drops it.
+ */
+function SectionRow({ row }: { row: GridRow }) {
   const grid = useGrid();
-  const { staged } = row;
-  const value = staged.draft.band_label ?? '';
-  if (!grid.editing || staged.removed) {
+  const value = row.staged.draft.band_label ?? '';
+  if (!grid.editing) {
     return (
       <span
-        className="block truncate text-sm font-semibold text-foreground uppercase"
+        className="block truncate px-3 py-1 text-sm font-semibold text-foreground uppercase"
         title={value}
       >
         {value}
@@ -844,19 +853,18 @@ function SectionBar({ row }: { row: GridRow }) {
   }
   return (
     // The whole bar answers a right-click (Rename, Remove section), not only its input.
-    <div data-section-key={row.key} className="w-full">
+    <div data-section-key={row.key} className="flex w-full items-center gap-1">
+      <DataGridTableDndRowHandle rowId={row.key} />
       <Input
         variant="sm"
         value={value}
         data-band-key={row.key}
-        aria-label={`Section heading on ${grid.labelOf(row)}`}
+        aria-label={`Section heading ${grid.headingLabelOf(row)}`}
         title={value}
         placeholder="e.g. BILL NO 3 PAGE 15/4, OPTIONAL ITEMS"
         maxLength={150}
         className="max-w-md font-semibold"
-        onChange={(event) =>
-          grid.update(row.key, { band_label: event.target.value })
-        }
+        onChange={(event) => grid.update(row.key, { band_label: event.target.value })}
         onBlur={() => grid.closeEmptyBand(row.key)}
       />
     </div>
@@ -1167,7 +1175,6 @@ export function QuotationLinesGrid({
   const headers = React.useMemo(() => optimistic ?? serverColumns ?? [], [optimistic, serverColumns]);
   const isMatrix = hasColumns(headers);
   const columnsEditable = editing && Boolean(matrix?.onChange);
-  const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
   const [preview, setPreview] = React.useState<{
     items: AttachmentPreviewItem[];
     index: number;
@@ -1287,33 +1294,48 @@ export function QuotationLinesGrid({
     };
   }, [instanceKey, isMatrix]);
 
-  const openBand = React.useCallback(
-    (key: string) => {
-      setBandOpen((previous) => new Set(previous).add(key));
-      // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
-      focusSoon(`[data-band-key="${key}"]`);
-    },
+  /** A heading row, new in this session, with nothing typed yet. */
+  const newHeading = React.useCallback((): StagedQuotationLine => {
+    nextNewId.current += 1;
+    return {
+      id: null,
+      key: `new:${instanceKey}:${nextNewId.current}`,
+      line: null,
+      draft: sectionDraft(),
+      removed: false,
+    };
+  }, [instanceKey]);
+
+  const focusHeading = React.useCallback(
+    // Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping.
+    (key: string) => focusSoon(`[data-band-key="${key}"]`),
     [focusSoon],
   );
 
-  const closeEmptyBand = React.useCallback((key: string) => {
-    const held = linesRef.current.find((line) => line.key === key);
-    if (held && (held.draft.band_label ?? '').trim() !== '') return;
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
-  }, []);
+  /** A heading row blurred with no name is not a heading: it goes, and no line moves. */
+  const closeEmptyBand = React.useCallback(
+    (key: string) => {
+      const held = linesRef.current.find((line) => line.key === key);
+      if (!held || !isSectionDraft(held.draft)) return;
+      if ((held.draft.band_label ?? '').trim() !== '') return;
+      commit(linesRef.current.filter((line) => line.key !== key));
+    },
+    [commit],
+  );
 
   const addLine = React.useCallback(
     (withSection: boolean) => {
       const added = newLine();
-      commit([...linesRef.current, added]);
-      if (withSection) openBand(added.key);
+      if (!withSection) {
+        commit([...linesRef.current, added]);
+        return;
+      }
+      // Add a section: a heading row of its own, then a line under it to start the section.
+      const heading = newHeading();
+      commit([...linesRef.current, heading, added]);
+      focusHeading(heading.key);
     },
-    [commit, newLine, openBand],
+    [commit, focusHeading, newHeading, newLine],
   );
 
   const act = React.useCallback(
@@ -1331,15 +1353,19 @@ export function QuotationLinesGrid({
           ]);
           return;
         }
-        case 'section':
-          openBand(key);
+        case 'section': {
+          // Insert a section above: a heading row of its own, before this line.
+          const heading = newHeading();
+          commit([...current.slice(0, index), heading, ...current.slice(index)]);
+          focusHeading(heading.key);
           return;
+        }
         case 'remove':
           onToggleRemoved?.(key);
           return;
       }
     },
-    [commit, newLine, onToggleRemoved, openBand],
+    [commit, focusHeading, newHeading, newLine, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -1355,10 +1381,14 @@ export function QuotationLinesGrid({
     [commit],
   );
 
-  const allRows = React.useMemo<GridRow[]>(
-    () => lines.map((staged, index) => ({ key: staged.key, index, staged })),
-    [lines],
-  );
+  const allRows = React.useMemo<GridRow[]>(() => {
+    let counted = 0;
+    return lines.map((staged, index) => {
+      const heading = isSectionDraft(staged.draft);
+      if (!heading) counted += 1;
+      return { key: staged.key, index, number: heading ? null : counted, staged };
+    });
+  }, [lines]);
   const visibleRows = React.useMemo(
     () =>
       rowFilter ? allRows.filter((row) => rowFilter(row.staged)) : allRows,
@@ -1436,13 +1466,21 @@ export function QuotationLinesGrid({
         : (row.staged.draft.product_id ?? '');
       return describeLine(
         row.staged.line,
-        row.index,
+        (row.number ?? row.index + 1) - 1,
         !row.staged.line && productId
           ? (productCodeOf(productId) ?? (row.staged.draft[PICKED_CODE_KEY] || null))
           : null,
       );
     },
     [productCodeOf],
+  );
+
+  const headingLabelOf = React.useCallback(
+    (row: GridRow) => {
+      const below = allRows.slice(row.index + 1).find((next) => !isSectionDraft(next.staged.draft));
+      return below ? `above ${labelOf(below)}` : 'at the end';
+    },
+    [allRows, labelOf],
   );
 
   /**
@@ -1488,8 +1526,8 @@ export function QuotationLinesGrid({
       selectProduct,
       toggleRemoved: (key) => onToggleRemoved?.(key),
       act,
-      bandOpen,
       closeEmptyBand,
+      headingLabelOf,
       openPreview,
       visited,
       markVisited,
@@ -1498,9 +1536,9 @@ export function QuotationLinesGrid({
     }),
     [
       act,
-      bandOpen,
       brandOptions,
       closeEmptyBand,
+      headingLabelOf,
       editing,
       fetchProducts,
       itemNotes,
@@ -1704,7 +1742,7 @@ export function QuotationLinesGrid({
       summary(
         headers,
         lines
-          .filter((line) => !line.removed)
+          .filter((line) => !line.removed && !isSectionDraft(line.draft))
           .map((line) => ({
             qty_cells: draftCells(line.draft),
             unit_price: line.draft.unit_price,
@@ -1824,14 +1862,9 @@ export function QuotationLinesGrid({
     ? (lines.find((line) => line.key === menuTarget.key) ?? null)
     : null;
 
-  const renderSection = React.useCallback(
-    (row: GridRow) => {
-      const label = (row.staged.draft.band_label ?? '').trim();
-      return label || (editing && bandOpen.has(row.key)) ? (
-        <SectionBar row={row} />
-      ) : null;
-    },
-    [bandOpen, editing],
+  const renderHeadingRow = React.useCallback(
+    (row: GridRow) => (isSectionDraft(row.staged.draft) ? <SectionRow row={row} /> : null),
+    [],
   );
 
   const galleryItems = preview?.items ?? [];
@@ -1843,13 +1876,8 @@ export function QuotationLinesGrid({
     }, 0);
   };
   const removeSection = (key: string) => {
-    update(key, { band_label: '' });
-    setBandOpen((previous) => {
-      if (!previous.has(key)) return previous;
-      const next = new Set(previous);
-      next.delete(key);
-      return next;
-    });
+    // The heading row alone: no line moves (PROPOSAL-FORM-COLLAPSE).
+    commit(linesRef.current.filter((line) => line.key !== key));
   };
 
   return (
@@ -1869,7 +1897,7 @@ export function QuotationLinesGrid({
           tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
           tableClassNames={{ headerRow: 'text-xs' }}
           emptyMessage={lines.length === 0 ? emptyHint : filterEmptyHint}
-          renderGroupHeader={renderSection}
+          renderFullRow={renderHeadingRow}
           rowClassName={(row: GridRow) =>
             row.staged.removed
               ? 'text-muted-foreground line-through opacity-70'

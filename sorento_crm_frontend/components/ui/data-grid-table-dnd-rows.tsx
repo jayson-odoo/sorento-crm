@@ -103,6 +103,19 @@ function DataGridTableDndRow<TData>({
     previousRow ? (previousRow.original as TData) : null,
   );
 
+  // A row drawn whole (a section heading row): one cell across every visible column, still a
+  // sortable item, so it drags like any other row.
+  const fullRow = props.renderFullRow?.(row.original as TData);
+  if (fullRow != null) {
+    return (
+      <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} dndRef={setNodeRef} dndStyle={style}>
+        <td colSpan={row.getVisibleCells().length} className="bg-muted/50 px-1 py-1">
+          {fullRow}
+        </td>
+      </DataGridTableBodyRow>
+    );
+  }
+
   return (
     <Fragment>
       {groupHeader != null && (

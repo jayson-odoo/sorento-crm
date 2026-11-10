@@ -151,6 +151,12 @@ export interface DataGridProps<TData extends object> {
    */
   renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;
   /**
+   * Optional: draw THIS row as one full-width cell instead of its columns (the quotation
+   * grid's section heading rows). Return null for an ordinary row. Only the draggable-rows
+   * table (`DataGridTableDndRows`) honours it; the row keeps its drag identity.
+   */
+  renderFullRow?: (row: any) => ReactNode | null;
+  /**
    * Optional per-user per-listing key for persisting column visibility/order.
    * Expected to be the RBAC view permission slug (e.g. `order_management.orders.view`).
    *
