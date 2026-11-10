@@ -16,6 +16,7 @@ from app.dependencies import (
 )
 from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
+from app.services.cost_access import require_cost_view
 from app.services import product_list_price_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
@@ -300,7 +301,11 @@ def get_product(
         raise handle_internal_error(str(e))
 
 
-@router.get("/{product_id}/purchase-history")
+@router.get(
+    "/{product_id}/purchase-history",
+    # SUPPLIER-COST-ACCESS: every row is a supplier and a PO unit cost.
+    dependencies=[Depends(require_cost_view(get_current_user_or_api_key))],
+)
 def get_product_purchase_history(
     product_id: str,
     limit: int = Query(

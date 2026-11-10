@@ -1,5 +1,5 @@
 """Product schemas."""
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -413,6 +413,15 @@ class ProductVariantRef(BaseModel):
 
 class ProductResponse(ProductBase):
     id: str
+
+    @field_serializer("cost_price")
+    def _cost_for_reader(self, value: Optional[Decimal]) -> Optional[Decimal]:
+        """Null unless the request's user holds `products.cost.view` (SUPPLIER-COST-ACCESS,
+        `app/services/cost_access.py`). Every route that returns a product, nested ones
+        (promotions, certificates, incoming stock) included, goes through here."""
+        from app.services.cost_access import cost_hidden
+
+        return None if cost_hidden() else value
     is_discontinued: bool = False
     # When the discontinue-notify scheduler last noticed this product (issue #1287).
     # Null while available or before the first tick after discontinuing.
