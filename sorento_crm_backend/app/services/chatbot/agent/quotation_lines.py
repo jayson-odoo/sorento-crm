@@ -24,7 +24,8 @@ def _num(value: Any) -> float | None:
 def _line(row: Any) -> dict[str, Any]:
     listed = row.list_price_snapshot
     unit = Decimal(row.unit_price or 0)
-    discount = round(float((listed - unit) / listed * 100), 2) if listed else None
+    # Below list only: a line priced above list is not a discount (a negative one cannot be verified in an answer).
+    discount = round(float((listed - unit) / listed * 100), 2) if listed and unit <= listed else None
     return {
         "code": row.product_code_snapshot,
         "description": row.description_snapshot,
