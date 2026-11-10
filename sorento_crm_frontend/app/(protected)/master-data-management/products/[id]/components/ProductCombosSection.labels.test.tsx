@@ -19,17 +19,36 @@ vi.mock('@/hooks/usePermissions', () => ({
 // tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
 // keep pinning what they always did.
 vi.mock('@/components/ui/rich-text-editor', () => {
+  // A stand-in with just enough of the editor API for "insert at the caret": insertContent appends.
   const Stand = (props: {
     value?: string;
     onChange: (v: string) => void;
+    onEditorReady?: (editor: unknown) => void;
     'aria-labelledby'?: string;
-  }) => (
-    <textarea
-      aria-labelledby={props['aria-labelledby']}
-      value={props.value ?? ''}
-      onChange={(e) => props.onChange(e.target.value)}
-    />
-  );
+  }) => {
+    const html = React.useRef(props.value ?? '');
+    html.current = props.value ?? '';
+    React.useEffect(() => {
+      const chain = {
+        focus: () => chain,
+        insertContent: (content: string) => {
+          html.current = html.current.replace(/<\/p>$/, `${content}</p>`) || `<p>${content}</p>`;
+          props.onChange(html.current);
+          return chain;
+        },
+        run: () => true,
+      };
+      props.onEditorReady?.({ chain: () => chain, getHTML: () => html.current });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <textarea
+        aria-labelledby={props['aria-labelledby']}
+        value={props.value ?? ''}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    );
+  };
   return { RichTextEditor: Stand, default: Stand };
 });
 const previewProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
@@ -206,11 +225,33 @@ describe('part labels', () => {
 });
 
 describe('description fields', () => {
-  it('Insert field opens the field picker limited to the combo fields', () => {
+  it('Insert field opens the field picker limited to the combo fields, never the description itself', () => {
     show();
     fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
     expect(screen.getByRole('dialog', { name: 'Insert field' })).toBeInTheDocument();
     expect(insertDialog.props?.groups).toEqual(['Combo', 'Combo positions']);
+    expect(insertDialog.props?.omitPaths).toEqual(['combo.description']);
+  });
+
+  it("the picker names this combo's positions by their codes (review S3)", () => {
+    show();
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    const data = insertDialog.props?.data as { kind: string; product: { slots: { main: { code: string }; fixed: { code: string }[] } } };
+    expect(data.kind).toBe('product');
+    expect(data.product.slots.main.code).toBe('SRTBF11829');
+    expect(data.product.slots.fixed.map((p) => p.code)).toEqual(['SRTWB2380', 'SRTW2600']);
+  });
+
+  it('an inserted field is saved at once, not only on a later blur (review S4)', () => {
+    show({ ...COMBO, description: '<p>Intro</p>' } as ProductComboRow);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    act(() => {
+      (insertDialog.props?.onDone as (c: string) => void)('{{combo.parts}}');
+    });
+    expect(updateComboMutate).toHaveBeenCalledWith(
+      { comboId: 'combo-b', write: { description: '<p>Intro{{combo.parts}}</p>' } },
+      expect.anything(),
+    );
   });
 
   it('"Each part prints as" opens the part line on the default, and a change saves on close', async () => {

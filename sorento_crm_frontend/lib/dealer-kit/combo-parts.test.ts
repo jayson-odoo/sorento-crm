@@ -149,6 +149,39 @@ describe('{{combo.parts}}', () => {
     expect(blocks[1].runs.every((run) => run.bold)).toBe(true);
   });
 
+  it('a label, name or description holding a field token is printed as text, never resolved (review B1)', () => {
+    const data = bathroom({
+      main_label: '{{combo.parts}}',
+      part_labels: { 'id-SRTWB2380': '{{slot.fixed.1.code}}' },
+      description: '<p>Hi {{combo.parts}}</p>',
+    });
+    const sole = {
+      id: 's', type: 'text', slot_binding: null, text_override: null,
+      props: { kind: 'text', text: '{{combo.parts}}' },
+    } as unknown as TagLayer;
+    const viaDescription = {
+      id: 'd', type: 'text', slot_binding: null, text_override: null,
+      props: { kind: 'text', text: '{{combo.description}}' },
+    } as unknown as TagLayer;
+    const soleText = blocksPlainText(layerRichBlocks(sole, data, 'print')!);
+    expect(soleText.split('\n')[0]).toBe('SRTBF11829 (combo.parts)');
+    expect(soleText).toContain('SRTWB2380 (slot.fixed.1.code)');
+    expect(() => layerRichBlocks(viaDescription, data, 'print')).not.toThrow();
+  });
+
+  it('a rich layer with the description among other text splices the parts inside it, formatting kept (review S1)', () => {
+    const data = bathroom({ description: '<p><strong>5 IN 1</strong></p><p>{{combo.parts}}</p>' });
+    const layer = {
+      id: 'r', type: 'text', slot_binding: null, text_override: null,
+      props: { kind: 'text', text: '<p>Package: {{combo.description}}</p>' },
+    } as unknown as TagLayer;
+    const blocks = layerRichBlocks(layer, data, 'print')!;
+    const lines = blocks.map((b) => b.runs.map((r) => r.text).join(''));
+    expect(lines.slice(0, 3)).toEqual(['Package: 5 IN 1', 'SRTBF11829 (CABINET)', 'L780xW480xH400mm']);
+    expect(lines.join('\n')).not.toContain('{{');
+    expect(blocks[1].runs.every((run) => run.bold)).toBe(true);
+  });
+
   it('offers the part fields the owner named, and a default line', () => {
     expect(PART_FIELDS.map((f) => f.path)).toEqual([
       'part.code',

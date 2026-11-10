@@ -20,6 +20,7 @@ import {
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import { DEFAULT_PARTS_LINE, PART_FIELDS } from '@/lib/dealer-kit/combo-parts';
 import type { MergeFieldGroup } from '@/lib/dealer-kit/merge-fields';
+import type { TagBindingData, TagPartData } from '@/lib/dealer-kit/tag-template-types';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { RichTextView } from '@/components/dealer-kit/RichTextView';
 import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
@@ -143,6 +144,44 @@ function MoneyField({
 
 /** The fields the combo Description offers: the combo's own, and its positions (rule 3). */
 const DESCRIPTION_FIELD_GROUPS: MergeFieldGroup[] = ['Combo', 'Combo positions'];
+/** A description cannot hold itself. */
+const DESCRIPTION_OMITS = ['combo.description'];
+
+/**
+ * The combo's positions as the Insert field picker names them ("Fixed 1 code: SRTWB2380"): the main
+ * product, the fixed parts, every option of each group, the upgrades, in part order.
+ */
+function positionsBinding(combo: ProductComboRow, productCode: string | undefined): TagBindingData {
+  const row = (code: string, productId: string): TagPartData => ({
+    product_id: productId,
+    code,
+    name: code,
+    dimensions: '',
+  });
+  const groups: { role: string; size: number; picks: TagPartData[] }[] = [];
+  for (const part of combo.parts) {
+    if (part.is_upgrade || !part.choice_group) continue;
+    const group = groups.find((g) => g.role === part.choice_group);
+    if (group) {
+      group.picks.push(row(part.code, part.product_id));
+      group.size += 1;
+    } else groups.push({ role: part.choice_group, size: 1, picks: [row(part.code, part.product_id)] });
+  }
+  return {
+    kind: 'product',
+    product: {
+      code: productCode ?? '',
+      slots: {
+        main: row(productCode ?? '', combo.host_product_id),
+        fixed: combo.parts
+          .filter((part) => !part.is_upgrade && !part.choice_group)
+          .map((part) => row(part.code, part.product_id)),
+        groups,
+        upgrades: combo.parts.filter((part) => part.is_upgrade).map((part) => row(part.code, part.product_id)),
+      },
+    },
+  } as unknown as TagBindingData;
+}
 
 /**
  * "Each part prints as" (COMBO-SETTINGS-UX rule 3): the combo's own part line, the rich template
@@ -222,10 +261,12 @@ function PartsLineField({
  */
 function DescriptionField({
   combo,
+  productCode,
   onSave,
   onSavePartsLine,
 }: {
   combo: ProductComboRow;
+  productCode?: string;
   onSave: (next: string | null, revert: () => void) => void;
   onSavePartsLine: (next: string | null, revert: () => void) => void;
 }) {
@@ -241,10 +282,18 @@ function DescriptionField({
     if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
   };
+  // Saved at once: closing the dialog hands focus back to its button, so the editor's own blur
+  // (the usual save) may never come.
   const insertAtCaret = (content: string) => {
-    if (content) editorRef.current?.chain().focus().insertContent(content).run();
     setInsertOpen(false);
+    const editor = editorRef.current;
+    if (!content || !editor) return;
+    editor.chain().focus().insertContent(content).run();
+    const html = editor.getHTML();
+    setDraft(html);
+    if (html !== saved) onSave(html, () => setDraft(saved));
   };
+  const positions = useMemo(() => positionsBinding(combo, productCode), [combo, productCode]);
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <div className="min-w-0 space-y-1.5">
@@ -275,9 +324,10 @@ function DescriptionField({
         <InsertFieldDialog
           open={insertOpen}
           value=""
-          data={null}
+          data={positions}
           specKeys={[]}
           groups={DESCRIPTION_FIELD_GROUPS}
+          omitPaths={DESCRIPTION_OMITS}
           onCancel={() => setInsertOpen(false)}
           onDone={insertAtCaret}
         />
@@ -874,6 +924,7 @@ function ComboBlock({
           <div className="sm:col-span-2">
             <DescriptionField
               combo={combo}
+              productCode={productCode}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
               onSavePartsLine={(next, revert) => onComboWrite({ parts_line: next }, revert)}
             />
@@ -906,9 +957,11 @@ function ComboBlock({
           {/* The main product's own label (COMBO-SETTINGS-UX): it leads `{{combo.parts}}`. */}
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
             <div className="min-w-0">
-              <p className="truncate font-medium" title={productCode}>
-                {productCode || 'Main product'}
-              </p>
+              {productCode ? (
+                <p className="truncate font-medium" title={productCode}>
+                  {productCode}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">Main product</p>
               {canEdit ? (
                 <div className="pt-1">

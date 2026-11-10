@@ -1,8 +1,7 @@
 # PLAN: combo settings UX (one accessory add, preview with choices, description variables)
 
-Status: Build (owner approved mock v2 + own Combos tab, 10 Nov ~16:40). Track: LEAD, size M, migration (combo_0001).
-frontend only (no migration, no backend change, no auth/RBAC change; expected diff ~400 lines incl.
-tests).
+Status: Review (owner approved mock v2 + own Combos tab, 10 Nov ~16:40; reviewer round 1 fixed).
+Track: LEAD, size M, one additive migration (`combo_0001_part_labels`), no auth/RBAC change.
 Lane: COMBO-SETTINGS-UX. Mocks: `documentation/plans/dealer-kit/mocks/combo-settings-ux-v1.html`, `...-v2.html` (dev rows).
 
 Owner ask (10 Nov ~15:45 MYT, on SRTKS7061-BL's Combos tab): three controls per accessories block
@@ -161,3 +160,17 @@ tokens and one plain-text gap. No backend change is needed.
 | `{{combo.parts}}` | `lib/dealer-kit/combo-parts.ts`, `merge-fields.ts` (plain), `product-block.ts` (rich splice, also inside the description) |
 | Labels, Insert field, Each part prints as | `ProductCombosSection.tsx` (`LabelField`, `DescriptionField`, `PartsLineField`) |
 | BE | migration `combo_0001_part_labels`; `product_combo.py` model/schema/service; `tag_data_service.py` `_part_row.dimensions_lwh`, `_combo_object` labels + line; `schemas/price_tag.py` |
+
+## Reviewer round 1 (10 Nov)
+
+- B1 fixed: a label / name / description holding `{{...}}` prints as text (`combo-parts.ts`
+  `fieldValue` drops the braces), so `{{combo.parts}}` typed into a label cannot recurse.
+- S1: test for the parts list spliced inside a description among other text.
+- S2: each preview picker is named on screen; N4: pickers only while a published template draws.
+- S3: the Insert field picker names this combo's positions by code ("Fixed 1 code: SRTWB2380").
+  The mock's "Fields read" readout under the description is dropped: the picker already names
+  each position's current part, and `{{combo.parts}}` (the owner's chosen tool) has no positions.
+- S4: an inserted field saves at once; S5: the description's picker omits `{{combo.description}}`.
+- Not changed (nits): N1 brackets with markup inside, N2 editor `mergeFields` token protection,
+  N3 `previewParts` mirrors `price-tag-draft-lines.ts` `partsFromCombo` (same output; kept local
+  to avoid widening the lane).

@@ -166,9 +166,11 @@ describe('ComboTagPreview, preview with choices', () => {
     ]);
   });
 
-  it('offers a picker per pick-one group, by code, starting on No pick', async () => {
+  it('offers a picker per pick-one group, by code, starting on No pick, named on screen (review S2)', async () => {
     draw();
     const tap = await screen.findByLabelText('Preview TAP');
+    expect(screen.getByText('TAP')).toBeInTheDocument();
+    expect(screen.getByText('Upgrade')).toBeInTheDocument();
     expect((tap as HTMLSelectElement).value).toBe('');
     expect([...tap.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
       'No pick',
@@ -217,5 +219,17 @@ describe('ComboTagPreview, preview with choices', () => {
       ]),
     );
     expect(screen.queryByLabelText(/^Preview /)).toBeNull();
+  });
+
+  it('shows no pickers while there is no published template to draw (review N4)', async () => {
+    state.links = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ComboTagPreview combo={SINK_COMBO as never} description={null} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('No price tag template linked');
+    expect(screen.queryByLabelText('Preview TAP')).toBeNull();
   });
 });

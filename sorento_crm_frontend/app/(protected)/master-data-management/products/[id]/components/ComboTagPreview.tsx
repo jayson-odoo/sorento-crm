@@ -257,7 +257,8 @@ export function ComboTagPreview({
 
   // One picker per pick-one group and one for the upgrades (Q1 (a): starts on No pick).
   const pickers =
-    choices.length > 0 ? (
+    // Only when there is a tag to redraw: a pick against "No price tag template" changes nothing.
+    choices.length > 0 && link?.published ? (
       <div className="flex flex-wrap gap-2">
         {choices.map((choice) => {
           const value = choice.options.some(
@@ -266,7 +267,8 @@ export function ComboTagPreview({
             ? picks[choice.role]
             : '';
           return (
-            <div key={choice.role} className="w-full min-w-0 sm:w-52">
+            <div key={choice.role} className="w-full min-w-0 space-y-1 sm:w-52">
+              <p className="text-xs text-muted-foreground">{choice.role}</p>
               <SearchableSelect
                 clearable
                 truncateTriggerLabel

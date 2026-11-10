@@ -49,6 +49,8 @@ interface InsertFieldDialogProps {
    *  tag description passes `['Product', 'Specs']`: it cannot address a
    *  line, a set or a combo part. */
   groups?: MergeFieldGroup[];
+  /** Paths left out of the list (a combo description cannot insert itself). */
+  omitPaths?: string[];
   onCancel: () => void;
   onDone: (content: string) => void;
 }
@@ -59,6 +61,7 @@ export function InsertFieldDialog({
   data,
   specKeys,
   groups,
+  omitPaths,
   onCancel,
   onDone,
 }: InsertFieldDialogProps) {
@@ -80,7 +83,10 @@ export function InsertFieldDialog({
 
   // The previewed combo's own positions, when the data carries them.
   const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : undefined;
-  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups, slots), [specKeys, groups, slots]);
+  const catalog = useMemo(
+    () => mergeFieldCatalog(specKeys, groups, slots).filter((field) => !omitPaths?.includes(field.path)),
+    [specKeys, groups, slots, omitPaths],
+  );
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();

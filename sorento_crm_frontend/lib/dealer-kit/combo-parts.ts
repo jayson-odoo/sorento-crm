@@ -49,11 +49,16 @@ function fieldValue(part: TagPartData, label: string, field: string): string {
                 ? part.dimensions
                 : '';
   const text = isRich(raw) ? richPlainText(raw) : (raw ?? '');
-  return text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(' ');
+  return (
+    text
+      // A value is text: braces go, so a label typed as `{{combo.parts}}` can never be read as a
+      // field again (it would splice the list into itself without end).
+      .replace(/\{\{|\}\}/g, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(' ')
+  );
 }
 
 /** The main product, the fixed parts, then the chosen option of each group, each with its label. */
