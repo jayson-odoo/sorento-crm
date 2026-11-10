@@ -1906,19 +1906,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {/* Sales Order - D-P5: the same dropzone the form uses, in
               `readOnly` mode - same tiles, same ordering, same preview
               modal, but no drop area, no paste, no remove, no per-tile
-              Extract. Shown only when the request carries a file. */}
-          {attachments.length > 0 && (
-            <div className="space-y-1.5">
-              <Label>Sales Order</Label>
-              <AttachmentDropzone
-                kind="price_tag_request"
-                submissionId={request.id}
-                attachments={attachments}
-                onChange={() => {}}
-                readOnly
-              />
-            </div>
-          )}
+              Extract; its own empty state when no file was attached. */}
+          <div className="space-y-1.5">
+            <Label>Sales Order</Label>
+            <AttachmentDropzone
+              kind="price_tag_request"
+              submissionId={request.id}
+              attachments={attachments}
+              onChange={() => {}}
+              readOnly
+            />
+          </div>
 
           {/* Lines: same table the edit form uses, cells read-only. */}
           <div className="space-y-1.5">

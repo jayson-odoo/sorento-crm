@@ -122,12 +122,14 @@ vi.mock('@/components/dealer-kit/PriceTagLivePreview', async () => {
   return {
     PriceTagLivePreview: (props: {
       onReadyChange?: (s: { missing: string[]; drawn: boolean; failed: boolean }) => void;
+      popup?: { open: boolean; footer?: React.ReactNode };
     }) => {
       const { onReadyChange } = props;
       React.useEffect(() => {
         onReadyChange?.({ ...previewReport });
       }, [onReadyChange]);
-      return null;
+      // PRICETAG-REQUEST-LAYOUT: the popup's footer holds Approve.
+      return props.popup?.open ? <div data-testid="sheet-popup">{props.popup.footer}</div> : null;
     },
   };
 });
@@ -147,7 +149,7 @@ import {
   lookupTagItems,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption, chooseTypedItems } from '@/test-utils';
+import { selectOption, chooseTypedItems, approveViaPreview } from '@/test-utils';
 
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
@@ -240,13 +242,14 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     asMock(lookupTagPreviewForRequest).mockResolvedValue(tagPreview);
   });
 
-  it('offers Save Draft, Escalate to marketing and Approve, and no Submit', async () => {
+  it('offers Save Draft, Escalate to marketing and Preview (Approve inside it), and no Submit', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
 
     expect(screen.getByRole('button', { name: 'Save Draft' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /escalate to marketing/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /^approve$/i })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
   });
 
@@ -254,7 +257,7 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
 
-    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+    expect(await approveViaPreview()).toBe(true);
 
     await waitFor(() => expect(submitAndApprove).toHaveBeenCalled());
     const [id, doc] = asMock(submitAndApprove).mock.calls[0];
@@ -265,12 +268,12 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     expect(toasts.success).toHaveBeenCalledWith('Tag approved');
   });
 
-  it('with an item that has no template, Approve stays clickable; the click says so on the line and sends nothing (owner, 5 Nov)', async () => {
+  it('with an item that has no template, Preview stays clickable; the click says so on the line and opens nothing (owner, 5 + 10 Nov)', async () => {
     previewReport.missing = ['CBF-1234'];
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
 
-    const approve = screen.getByRole('button', { name: /^approve$/i });
+    const approve = screen.getByRole('button', { name: 'Preview' });
     expect(approve).toBeEnabled();
     expect(approve.parentElement).not.toHaveAttribute('title');
     // Nothing is said until the click.
@@ -286,6 +289,7 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     expect(anchor).toHaveTextContent('No tag template yet.');
     expect(anchor.textContent).not.toMatch(/escalate/i);
     expect(screen.queryByTestId('approve-blocked')).toBeNull();
+    expect(screen.queryByTestId('sheet-popup')).toBeNull();
     expect(submitAndApprove).not.toHaveBeenCalled();
   });
 
@@ -294,7 +298,7 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     await selectOption('Customer', 'ZZTD01');
     chooseTypedItems();
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
-    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     expect(await screen.findByText('Pick a set or a product for this line.')).toBeInTheDocument();
 
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
