@@ -102,7 +102,7 @@ def _world(db, *, developer_address="Level 8, Menara Contoh\n50450 Kuala Lumpur"
     w.developer = _party(db, w.company_id, "developer", "PARAGON CONTOH SDN BHD", address=developer_address, phone="03-0000 0001")
     w.project = register_project(
         db, company_id=w.company_id, actor_user_id=w.owner, developer_party_id=w.developer.id,
-        title=f"{MARKER} Taman Contoh {_uid()[:8]}",
+        title=f"{MARKER} Taman Contoh {_uid()}",
     )
     profile = db.get(ProjectSalesProfile, w.project.id)
     if profile is None:

@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -13,12 +13,16 @@ vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 
 const listParties = vi.fn();
 const listPartyContacts = vi.fn();
+const createParty = vi.fn();
+const updateParty = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../_shared/services/projectService')>();
   return {
     ...actual,
     listParties: (...a: unknown[]) => listParties(...a),
     listPartyContacts: (...a: unknown[]) => listPartyContacts(...a),
+    createParty: (...a: unknown[]) => createParty(...a),
+    updateParty: (...a: unknown[]) => updateParty(...a),
     getPartiesOnProject: async () => [
       { party_id: 'p-dev', party_type: 'developer', role: 'developer', name: 'PARAGON CONTOH SDN BHD', phone: '03-0001', address: 'No 1, Jalan Paragon', email: 'info@paragon.example', contacts: [] },
       { party_id: 'p-arch', party_type: 'architect', role: 'architect', name: 'ARKITEK CONTOH', phone: null, contacts: [] },
@@ -33,6 +37,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
 });
 
 type Opt = { value: string; label: string; description?: string; group?: string };
+const selectCreate: Record<string, ((q: string) => unknown) | undefined> = {};
 // Renders what fetchOptions returns, grouped, and lets a test pick one.
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
@@ -41,13 +46,16 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options,
     onOptionChange,
     onChange,
+    createOption,
   }: {
     id?: string;
     fetchOptions?: (q: string) => Promise<Opt[]>;
     options?: Opt[];
     onOptionChange?: (o: Opt | null) => void;
     onChange: (v: string) => void;
+    createOption?: { onCreate: (q: string) => unknown };
   }) => {
+    selectCreate[id ?? ''] = createOption?.onCreate;
     const [rows, setRows] = React.useState<Opt[]>(options ?? []);
     React.useEffect(() => {
       if (fetchOptions) void fetchOptions('').then(setRows);
@@ -185,6 +193,36 @@ describe('the To party picker', () => {
     // A one-party role already filled on the project is not offered.
     const roles = within(screen.getByTestId('quotation-recipient-role')).getAllByRole('button').map((b) => b.textContent);
     expect(roles).toEqual(['Main contractor', 'Trading house']);
+  });
+
+  it('a party made in the picker takes the role it is added in as its usual role', async () => {
+    listParties.mockResolvedValue({ data: [] });
+    createParty.mockResolvedValue({ id: 'p-new', name: 'BARU CONTOH', party_type: 'main_contractor', is_active: true });
+    updateParty.mockResolvedValue({ id: 'p-new', name: 'BARU CONTOH', party_type: 'trading_house', is_active: true });
+    const onChange = vi.fn();
+    const { rerender } = wrap(<QuotationRecipientPicker projectId="pr1" value={{}} locked={false} onChange={onChange} />);
+    await screen.findByTestId('quotation-recipient-party');
+    // The role list loads on its own query; create once it is there.
+    await waitFor(async () => {
+      await act(async () => {
+        await selectCreate['quotation-recipient-party']!('BARU CONTOH');
+      });
+      expect(createParty).toHaveBeenCalled();
+    });
+    expect(createParty).toHaveBeenCalledWith(expect.objectContaining({ name: 'BARU CONTOH', party_type: 'main_contractor' }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={client}>
+        <QuotationRecipientPicker
+          projectId="pr1"
+          value={{ recipient_party_id: 'p-new', recipient_role: 'main_contractor', recipient_name_snapshot: 'BARU CONTOH' }}
+          locked={false}
+          onChange={onChange}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Trading house' }));
+    await waitFor(() => expect(updateParty).toHaveBeenCalledWith('p-new', { party_type: 'trading_house' }));
   });
 
   it('once issued, the party is shown and cannot be changed', async () => {
