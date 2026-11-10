@@ -871,3 +871,34 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+describe('PROJECT-NAME header and The development (owner 10 Nov)', () => {
+  const LONG =
+    'CADANGAN MEMBINA 54 UNIT RUMAH TERES DUA TINGKAT DI ATAS LOT 161268, MUKIM KUALA KUANTAN';
+
+  it('the header shows the short name, not the title', () => {
+    projectFixture = project({ name: '54 Teres 2 Tingkat, Permatang Badak Perdana', title: LONG });
+    const { container } = renderDetail();
+    const header = container.querySelector('header')!;
+    expect(within(header).getByRole('heading', { level: 2 })).toHaveTextContent(
+      '54 Teres 2 Tingkat, Permatang Badak Perdana',
+    );
+    expect(within(header).queryByText(LONG)).toBeNull();
+  });
+
+  it('with no name the header falls back to the title', () => {
+    projectFixture = project({ name: null, title: LONG });
+    const { container } = renderDetail();
+    const header = container.querySelector('header')!;
+    expect(within(header).getByRole('heading', { level: 2 })).toHaveTextContent(LONG);
+  });
+
+  it('The development opens with the full Project title, before Developer', () => {
+    projectFixture = project({ name: 'Short', title: LONG, developer_name: 'Contoh Land' });
+    renderDetail();
+    const label = screen.getByText('Project title');
+    expect(label.closest('div')).toHaveTextContent(LONG);
+    const developer = screen.getByText('Developer');
+    expect(label.compareDocumentPosition(developer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

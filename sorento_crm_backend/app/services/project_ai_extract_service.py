@@ -27,6 +27,9 @@ _PARTY_FIELDS = (
 
 NOT_FOUND = {"status": "not_found"}
 
+#: Same cap as `projects.name`.
+_NAME_MAX_LEN = 80
+
 
 def _text(value: Any) -> str:
     return " ".join(str(value or "").split())
@@ -134,4 +137,6 @@ def propose(db: Session, *, company_id: str, values: Dict[str, Any]) -> Dict[str
     out["mukim"] = _text(values.get("mukim")) or None
     out["customer"] = _customer(db, company_id, _text(values.get("customer_name")))
     out["title"] = str(values.get("title") or "").strip() or None
+    # The short name (PROJECT-NAME): plain text, never longer than the column.
+    out["name"] = (_text(values.get("name"))[:_NAME_MAX_LEN].strip() or None)
     return out

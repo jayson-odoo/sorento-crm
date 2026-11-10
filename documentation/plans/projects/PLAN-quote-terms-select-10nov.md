@@ -1,6 +1,6 @@
 # PLAN: Quote payment terms from an AutoCount-synced select, validity as number + interval
 
-Status: Review (BE + FE built and green; Q1-Q5 answered). Track: L (new master table + migration + ESB
+Status: Merge-ready (owner hand test passed 10 Nov ~16:45; chained after #2301, migration on pname_0001_project_lead_name). Track: L (new master table + migration + ESB
 ingest entity; the push side is the shared-service lane SS-PAYMENT-TERMS). UAC:
 `quote-terms-select-10nov-acceptance-criteria.md`.
 

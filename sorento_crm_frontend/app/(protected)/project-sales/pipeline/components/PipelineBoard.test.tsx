@@ -207,4 +207,20 @@ describe('PipelineBoard', () => {
     // Same hover the grid row uses (components/ui/data-grid-table.tsx).
     expect(link.closest('li')?.className).toMatch(/hover:bg-muted\/40/);
   });
+
+  it('shows the short project name on a card, and the title when there is none (PROJECT-NAME)', () => {
+    render(
+      <PipelineBoard
+        statuses={[status()]}
+        projects={[
+          project({ id: 'p1', title: 'Cadangan Pembangunan Blok A', name: 'Setia Tower A' }),
+          project({ id: 'p2', project_code: 'PRJ-000002', title: 'Bangunan Tanpa Nama', name: null }),
+        ]}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Setia Tower A')).toHaveAttribute('title', 'Cadangan Pembangunan Blok A');
+    expect(screen.queryByText('Cadangan Pembangunan Blok A')).toBeNull();
+    expect(screen.getByText('Bangunan Tanpa Nama')).toBeInTheDocument();
+  });
 });
