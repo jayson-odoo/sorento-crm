@@ -15,7 +15,6 @@ import pytest
 from app.models.base import company_scope
 from app.models.payment_term import PaymentTerm
 from app.models.projects import (
-    Project,
     ProjectQuotationDocument,
     QuotationDocumentDraft,
     QuotationDocumentSnapshot,
