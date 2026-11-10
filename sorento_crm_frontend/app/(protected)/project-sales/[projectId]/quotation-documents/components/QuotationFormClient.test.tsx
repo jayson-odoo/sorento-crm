@@ -1078,6 +1078,10 @@ describe('QuotationFormClient edit', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save proposal' })).toBeDisabled();
+    // UIUX-QUICK-WINS item 5: the blocked Save says why, under it, and is described by it.
+    expect(screen.getByRole('button', { name: 'Save proposal' })).toHaveAccessibleDescription(
+      'This draft is open somewhere else. Reload to edit it here.',
+    );
     expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
     // The fields are locked: the whole form body is inert.
     expect(screen.getByLabelText('Your Ref').closest('[inert]')).not.toBeNull();

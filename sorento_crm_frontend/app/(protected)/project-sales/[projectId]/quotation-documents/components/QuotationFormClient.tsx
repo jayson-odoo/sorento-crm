@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
+import { quotationSaveBlockedReason } from '../quotationSaveBlocked';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { FormSection } from '@/components/common/FormSection';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -881,6 +882,14 @@ export function QuotationFormClient({
     (isEdit && (saved.isLoading || quotations.isLoading)) ||
     !header;
   const failed = isEdit && (saved.isError || (!saved.isLoading && !saved.data));
+  const saveBlockedReason = quotationSaveBlockedReason({
+    viewOnly: Boolean(viewOnly),
+    discarding: Boolean(discard.pending),
+    failed,
+    loading,
+    letterReady,
+    columnsBusy,
+  });
 
   // The party is fixed once revision A is issued (owner Q5 a): a new party gets its own proposal.
   const recipientLocked = isEdit && (saved.data?.issue_count ?? 0) > 0;
@@ -945,21 +954,25 @@ export function QuotationFormClient({
                 }
               />
             )}
-            <Button
-              type="button"
-              disabled={
-                isSaving ||
-                columnsBusy ||
-                loading ||
-                failed ||
-                !letterReady ||
-                Boolean(viewOnly) ||
-                Boolean(discard.pending)
-              }
-              onClick={() => void save()}
-            >
-              {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
-            </Button>
+            {/* UIUX-QUICK-WINS item 5: a blocked Save says why, under the button. */}
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                type="button"
+                disabled={isSaving || saveBlockedReason !== null}
+                aria-describedby={saveBlockedReason ? 'quotation-save-blocked' : undefined}
+                onClick={() => void save()}
+              >
+                {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
+              </Button>
+              {saveBlockedReason && !isSaving ? (
+                <p
+                  id="quotation-save-blocked"
+                  className="max-w-64 text-right text-xs text-muted-foreground"
+                >
+                  {saveBlockedReason}
+                </p>
+              ) : null}
+            </div>
           </>
         }
       />
