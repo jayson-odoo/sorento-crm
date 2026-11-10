@@ -47,10 +47,9 @@ export default function StockInquiryDeleteDialog({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete Stock Inquiry</AlertDialogTitle>
+          <AlertDialogTitle>Delete stock inquiry?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete this stock inquiry? This action
-            cannot be undone.
+            The stock inquiry is deleted for good. This cannot be undone.
             {inquiry.product_code && (
               <div className="mt-2">
                 <strong>Product Code:</strong> {inquiry.product_code}
@@ -59,13 +58,13 @@ export default function StockInquiryDeleteDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep stock inquiry</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isDeleting ? 'Deleting...' : 'Delete'}
+            {isDeleting ? 'Deleting...' : 'Delete stock inquiry'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

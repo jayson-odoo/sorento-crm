@@ -45,16 +45,15 @@ export default function GRNDeleteDialog({
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete GRN?</DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete the GRN{' '}
-            <strong>{grn.picking_number}</strong>? This action cannot be
-            undone.
+            GRN <strong>{grn.picking_number}</strong> is deleted for good. This
+            cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={closeDialog}>
-            Cancel
+            Keep GRN
           </Button>
           <Button
             variant="destructive"
@@ -64,7 +63,7 @@ export default function GRNDeleteDialog({
             {deleteMutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete
+            Delete GRN
           </Button>
         </DialogFooter>
       </DialogContent>

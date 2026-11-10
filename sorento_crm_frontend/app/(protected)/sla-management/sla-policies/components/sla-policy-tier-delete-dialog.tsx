@@ -47,14 +47,14 @@ const SLAPolicyTierDeleteDialog = ({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
+          <AlertDialogTitle>Delete tier?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete tier{' '}
-            <strong className="text-foreground">{tier.tier_name}</strong> (Level {tier.tier_level})? This action cannot be undone.
+            Tier{' '}
+            <strong className="text-foreground">{tier.tier_name}</strong> (Level {tier.tier_level}) is deleted for good. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep tier</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
@@ -66,7 +66,7 @@ const SLAPolicyTierDeleteDialog = ({
                 Deleting...
               </>
             ) : (
-              'Delete'
+              'Delete tier'
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

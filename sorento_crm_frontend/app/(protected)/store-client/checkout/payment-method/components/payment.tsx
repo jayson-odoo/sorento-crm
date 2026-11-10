@@ -341,21 +341,21 @@ export function Payment() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Remove Payment Method</DialogTitle>
+                  <DialogTitle>Remove payment method?</DialogTitle>
                 </DialogHeader>
                 <DialogBody className="text-sm">
-                  Are you sure you want to remove this payment method? This
-                  action cannot be undone.
+                  The payment method is removed from your account. This cannot
+                  be undone.
                 </DialogBody>
                 <DialogFooter>
                   <Button
                     variant="destructive"
                     onClick={() => handleRemove(index)}
                   >
-                    Yes, Remove
+                    Remove payment method
                   </Button>
                   <DialogClose asChild>
-                    <Button variant="outline">Cancel</Button>
+                    <Button variant="outline">Keep payment method</Button>
                   </DialogClose>
                 </DialogFooter>
               </DialogContent>

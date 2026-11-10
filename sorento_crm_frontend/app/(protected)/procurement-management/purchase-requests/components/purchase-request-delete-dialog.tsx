@@ -50,10 +50,9 @@ export default function PurchaseRequestDeleteDialog({
     <AlertDialog open={open} onOpenChange={closeDialog}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {entityLabel}</AlertDialogTitle>
+          <AlertDialogTitle>Delete {entityLabel}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete this record? This action cannot be
-            undone.
+            This record is deleted for good. This cannot be undone.
             {(request.customer_name || request.project_title) && (
               <span className="mt-2 block">
                 <strong>
@@ -64,13 +63,13 @@ export default function PurchaseRequestDeleteDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>Keep {entityLabel}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isDeleting ? 'Deleting...' : 'Delete'}
+            {isDeleting ? 'Deleting...' : `Delete ${entityLabel}`}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -63,14 +63,14 @@ export function usePromotionActions(
     <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete promotion?</DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete this promotion? This action cannot be undone.
+            The promotion is deleted for good. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-            Cancel
+            Keep promotion
           </Button>
           <Button
             variant="destructive"

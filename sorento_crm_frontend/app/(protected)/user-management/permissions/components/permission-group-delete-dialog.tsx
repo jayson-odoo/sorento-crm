@@ -89,14 +89,14 @@ const PermissionGroupDeleteDialog = ({
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete selected permissions?</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete selected permissions ?
+          The selected permissions are deleted for good. This cannot be undone.
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={closeDialog}>
-            Cancel
+            Keep permissions
           </Button>
           <Button
             variant="destructive"
@@ -106,7 +106,7 @@ const PermissionGroupDeleteDialog = ({
             {mutation.status === 'pending' && (
               <LoaderCircleIcon className="animate-spin" />
             )}
-            Delete
+            Delete permissions
           </Button>
         </DialogFooter>
       </DialogContent>

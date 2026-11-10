@@ -61,17 +61,16 @@ export default function ContactDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete Contact</DialogTitle>
+          <DialogTitle>Delete contact?</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete the contact{' '}
-          <strong>{contact?.phone_number}</strong>
-          {contact?.name ? ` (${contact.name})` : ''}? Related access agent assignments will be
-          removed. SLA tracking references will be cleared. This action cannot be undone.
+          Contact <strong>{contact?.phone_number}</strong>
+          {contact?.name ? ` (${contact.name})` : ''} is deleted for good. Related access agent
+          assignments are removed and SLA tracking references are cleared. This cannot be undone.
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            Keep contact
           </Button>
           <Button
             variant="destructive"

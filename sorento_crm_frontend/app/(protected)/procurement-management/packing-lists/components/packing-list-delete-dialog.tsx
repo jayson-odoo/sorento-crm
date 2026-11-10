@@ -45,16 +45,15 @@ export default function PackingListDeleteDialog({
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete packing list?</DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete the packing list{' '}
-            <strong>{packingList.shipment_number}</strong>? This action cannot be
-            undone.
+            Packing list <strong>{packingList.shipment_number}</strong> is
+            deleted for good. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={closeDialog}>
-            Cancel
+            Keep packing list
           </Button>
           <Button
             variant="destructive"
@@ -64,7 +63,7 @@ export default function PackingListDeleteDialog({
             {deleteMutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete
+            Delete packing list
           </Button>
         </DialogFooter>
       </DialogContent>

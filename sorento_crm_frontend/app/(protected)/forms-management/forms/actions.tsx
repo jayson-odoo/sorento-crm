@@ -59,15 +59,15 @@ export function useFormActions(
     <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete form</DialogTitle>
+          <DialogTitle>Delete form?</DialogTitle>
           <DialogDescription>
-            Are you sure you want to delete <strong>{form.name}</strong> ({form.code})?
-            This action cannot be undone.
+            Form <strong>{form.name}</strong> ({form.code}) is deleted for good.
+            This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-            Cancel
+            Keep form
           </Button>
           <Button
             variant="destructive"

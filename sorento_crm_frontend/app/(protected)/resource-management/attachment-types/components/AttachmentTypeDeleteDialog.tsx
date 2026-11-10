@@ -40,15 +40,15 @@ export default function AttachmentTypeDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>Delete attachment type?</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete the attachment type{' '}
-          <strong>{attachmentType?.type_name}</strong>? This action cannot be undone.
+          Attachment type <strong>{attachmentType?.type_name}</strong> is deleted
+          for good. This cannot be undone.
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            Keep attachment type
           </Button>
           <Button
             variant="destructive"
@@ -58,7 +58,7 @@ export default function AttachmentTypeDeleteDialog({
             {deleteMutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete
+            Delete attachment type
           </Button>
         </DialogFooter>
       </DialogContent>

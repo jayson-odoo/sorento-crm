@@ -31,11 +31,11 @@ export default function ComplaintResolutionDeleteDialog({ open, closeDialog, row
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm delete</DialogTitle>
+          <DialogTitle>Delete resolution?</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete the resolution{' '}
-          <strong className="text-foreground">{row.name}</strong>? This action cannot be undone.
+          Resolution{' '}
+          <strong className="text-foreground">{row.name}</strong> is deleted for good. This cannot be undone.
         </DialogDescription>
         {(row.complaint_count ?? 0) > 0 && (
           <p className="text-sm text-amber-600">
@@ -44,7 +44,7 @@ export default function ComplaintResolutionDeleteDialog({ open, closeDialog, row
         )}
         <DialogFooter>
           <Button variant="outline" onClick={closeDialog}>
-            Cancel
+            Keep resolution
           </Button>
           <Button
             variant="destructive"
@@ -52,7 +52,7 @@ export default function ComplaintResolutionDeleteDialog({ open, closeDialog, row
             disabled={deleteMutation.isPending}
           >
             {deleteMutation.isPending && <LoaderCircleIcon className="animate-spin" />}
-            Delete
+            Delete resolution
           </Button>
         </DialogFooter>
       </DialogContent>

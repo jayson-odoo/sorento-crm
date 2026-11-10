@@ -455,22 +455,22 @@ export default function ContactAccessTypesAdmin() {
       <Dialog open={!!deleteTypeCode} onOpenChange={(open) => !open && setDeleteTypeCode(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete access type</DialogTitle>
+            <DialogTitle>Delete access type?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete the access type &quot;{deleteTypeCode}&quot;? This may
+            Access type &quot;{deleteTypeCode}&quot; is deleted for good. This may
             affect contacts and content visibility.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTypeCode(null)}>
-              Cancel
+              Keep access type
             </Button>
             <Button
               variant="destructive"
               onClick={() => deleteTypeCode && deleteTypeMutation.mutate(deleteTypeCode)}
               disabled={deleteTypeMutation.isPending}
             >
-              Delete
+              Delete access type
             </Button>
           </DialogFooter>
         </DialogContent>
