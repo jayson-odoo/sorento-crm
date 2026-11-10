@@ -75,7 +75,8 @@ describe('CoverPageCard sections (layout 4)', () => {
 
   it('prints the footer with its label and the signature block', () => {
     render(<CoverPageCard cover={cover} wide />);
-    expect(screen.getByText('Fax: 03-0000 0003')).toBeInTheDocument();
+    expect(screen.getByText('Fax:')).toBeInTheDocument();
+    expect(screen.getByText('03-0000 0003')).toBeInTheDocument();
     expect(screen.getByText('Prepared by,')).toBeInTheDocument();
     expect(screen.getByText('Person D')).toBeInTheDocument();
   });

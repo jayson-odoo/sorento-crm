@@ -255,7 +255,8 @@ def test_cover_default_endpoint_returns_the_default_design(api):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body == default_design()
-    assert len(body["sections"]) == 1 and body["sections"][0]["style"] == "fields"
+    assert [x["style"] for x in body["sections"]] == ["fields", "title"]
+    assert body["sections"][1]["rows"][0]["source"] == "project_title"
     assert body["sections"][0]["columns"] == 1
     assert [r["source"] for r in body["sections"][0]["rows"]] == [
         "document_no", "date", "attn", "to_name", "to_tel", "to_address", "to_email",

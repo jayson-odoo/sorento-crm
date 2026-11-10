@@ -55,7 +55,9 @@ function CellValue({ cell }: { cell: CoverCell }) {
       dangerouslySetInnerHTML={sanitizedHtml(cell.html)}
     />
   ) : (
-    <span className="min-w-0 whitespace-pre-line break-words">{cell.text}</span>
+    <span className="block min-w-0 whitespace-pre-line break-words">
+      {cell.text}
+    </span>
   );
 }
 
@@ -73,14 +75,9 @@ function SectionColumn({
 }) {
   if (section.style === 'title') {
     return (
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-1 text-center text-base font-semibold">
         {cells.map((cell, index) => (
-          <p
-            key={index}
-            className="whitespace-pre-line break-words text-center text-base font-semibold"
-          >
-            {cell.text}
-          </p>
+          <CellValue key={index} cell={cell} />
         ))}
       </div>
     );
@@ -106,10 +103,10 @@ function SectionColumn({
     return (
       <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
         {cells.map((cell, index) => (
-          <p key={index} className="whitespace-pre-line break-words">
-            {cell.label ? `${cell.label}: ` : ''}
-            {cell.text}
-          </p>
+          <div key={index} className="flex min-w-0 gap-1">
+            {cell.label && <span className="shrink-0">{cell.label}:</span>}
+            <CellValue cell={cell} />
+          </div>
         ))}
       </div>
     );

@@ -743,6 +743,7 @@ export type QuotationCoverPreviewBody = Partial<{
   document_id: string;
   doc_date: string | null;
   attn_name: string | null;
+  subject_title: string | null;
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;

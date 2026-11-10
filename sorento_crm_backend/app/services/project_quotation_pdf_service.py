@@ -828,6 +828,13 @@ def _cover_value(cell: Dict[str, Any]) -> str:
     return "<br/>".join(_cell(cell["text"]).splitlines())
 
 
+def _numbered_label(cell: Dict[str, Any]) -> str:
+    """The bold label of a numbered item. Block html (the terms) starts on its own line under
+    the label, so the colon stays with the label rather than alone above the text."""
+    label = escape(cell["label"].upper())
+    return f"<strong>{label}:</strong>" if "html" in cell else f"<strong>{label}</strong>: "
+
+
 def _cover_column_html(style: str, cells: List[Dict[str, Any]], start: int) -> str:
     """One column of one section, in the section's style. ``start`` numbers a numbered section
     on from the previous column."""
@@ -836,7 +843,7 @@ def _cover_column_html(style: str, cells: List[Dict[str, Any]], start: int) -> s
     if style == "numbered":
         items = "".join(
             "<li>"
-            + (f"<strong>{escape(c['label'].upper())}</strong>: " if c["label"] else "")
+            + (_numbered_label(c) if c["label"] else "")
             + f"{_cover_value(c)}</li>"
             for c in cells
         )
@@ -850,7 +857,11 @@ def _cover_column_html(style: str, cells: List[Dict[str, Any]], start: int) -> s
         )
     rows = "".join(
         (
-            f"<tr><th>{escape(c['label'])}</th><td>: {_cover_value(c)}</td></tr>"
+            (
+                f"<tr><th>{escape(c['label'])}:</th><td>{_cover_value(c)}</td></tr>"
+                if "html" in c
+                else f"<tr><th>{escape(c['label'])}</th><td>: {_cover_value(c)}</td></tr>"
+            )
             if c["label"]
             else f'<tr><td colspan="2">{_cover_value(c)}</td></tr>'
         )
@@ -1236,6 +1247,15 @@ def build_filename(issue: ProjectQuotationIssue) -> str:
     return f"{stem}-{safe}.pdf"
 
 
+#: Stands in for the Total Pages value while the pages are counted. Digits only, so escaping
+#: leaves it as is, and no real value prints it.
+TOTAL_PAGES_MARK = "1+0000"
+
+
+def _fill_total_pages(html: str, pages: int) -> str:
+    return html.replace(TOTAL_PAGES_MARK, f"1+{max(pages - 1, 0)}")
+
+
 def _prints_total_pages(issue: ProjectQuotationIssue) -> bool:
     """A layout 4 design with a shown Total Pages row."""
     if layout_of(issue) < COVER_LAYOUT_SECTIONS:
@@ -1253,7 +1273,10 @@ def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, 
     Raises ``PDFRenderingUnavailable`` when WeasyPrint cannot render, so a host without
     cairo/pango returns a clear message instead of a 500 nobody can diagnose.
     """
-    html = build_issue_html(db, issue)
+    # A Total Pages row is built with a placeholder the width of a real count, so the counting
+    # pass below lays the row out exactly as the printed one.
+    counted = _prints_total_pages(issue)
+    html = build_issue_html(db, issue, total_pages=TOTAL_PAGES_MARK if counted else None)
     try:
         from weasyprint import HTML  # noqa: WPS433 (guarded optional dep)
         from weasyprint.urls import URLFetcher  # noqa: WPS433
@@ -1268,11 +1291,10 @@ def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, 
         def _html(source: str) -> Any:
             return HTML(string=source, url_fetcher=URLFetcher(allowed_protocols=("data",)))
 
-        if _prints_total_pages(issue):
-            # Two passes: the first counts the pages, the second prints "1+N" (the cover and the
-            # rest). The row adds no line of its own, so the count does not move between passes.
+        if counted:
+            # One build, two renders: count the pages, then print "1+N" (the cover and the rest).
             pages = len(_html(html).render().pages)
-            html = build_issue_html(db, issue, total_pages=f"1+{max(pages - 1, 0)}")
+            html = _fill_total_pages(html, pages)
         pdf_bytes = _html(html).write_pdf()
     except Exception as e:
         raise PDFRenderingUnavailable(

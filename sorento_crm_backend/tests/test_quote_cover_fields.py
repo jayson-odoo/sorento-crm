@@ -156,12 +156,18 @@ def test_cover_default_route_serves_the_sections_default(api):
 # ------------------------------------------------------------------ the design
 
 
-def test_default_design_is_todays_rows_in_one_single_column_section_without_purpose():
+def test_default_design_is_todays_rows_in_one_single_column_section_then_the_title_band():
     from app.services.quotation_cover_service import default_design
 
     d = default_design()
     assert d["show_letterhead"] is True and d["title"] == "QUOTATION" and d["closing_html"] == ""
-    assert len(d["sections"]) == 1
+    assert len(d["sections"]) == 2
+    assert d["sections"][1] == {
+        "style": "title",
+        "label": "Project Title:",
+        "columns": 1,
+        "rows": [{"source": "project_title", "label": "", "shown": True, "column": 0}],
+    }
     section = d["sections"][0]
     assert section["style"] == "fields" and section["columns"] == 1 and section["label"] == ""
     assert [r["source"] for r in section["rows"]] == DEFAULT_SOURCES
@@ -220,9 +226,12 @@ def test_a_legacy_design_is_read_as_one_section_with_purpose_dropped():
     legacy = legacy_design()
     legacy["rows"][1]["shown"] = False
     legacy["rows"][0]["label"] = "Our Ref"
+    legacy["rows"][2]["label"] = "  "  # the old cover printed the default label for a blank one
     for clean in (normalize_design(legacy), validate_design(legacy)):
         assert "rows" not in clean
-        (section,) = clean["sections"]
+        section, title = clean["sections"]
+        assert title["style"] == "title" and title["rows"][0]["source"] == "project_title"
+        assert section["rows"][2]["label"] == "Attn"
         assert section["style"] == "fields" and section["columns"] == 1
         sources = [r["source"] for r in section["rows"]]
         assert sources == [
@@ -415,15 +424,22 @@ def test_pdf_layout_4_prints_bands_columns_title_numbered_terms_signature_and_fo
 
 
 def test_pdf_total_pages_counts_the_rendered_pdf(monkeypatch):
+    """One HTML build with a placeholder laid out like the real value, then the count fills it."""
     pytest.importorskip("weasyprint")
     from app.services import project_quotation_pdf_service as qpdf
 
-    seen = []
-    real = qpdf.build_issue_html
+    seen, filled = [], []
+    real_build, real_fill = qpdf.build_issue_html, qpdf._fill_total_pages
 
     def spy(db, issue, total_pages=None):
         seen.append(total_pages)
-        return real(db, issue, total_pages=total_pages)
+        return real_build(db, issue, total_pages=total_pages)
+
+    def fill_spy(html, pages):
+        assert qpdf.TOTAL_PAGES_MARK in html  # the row was laid out in the counting pass
+        out = real_fill(html, pages)
+        filled.append((pages, out))
+        return out
 
     with blank_session() as db:
         env = _setup(db)
@@ -431,14 +447,16 @@ def test_pdf_total_pages_counts_the_rendered_pdf(monkeypatch):
         document = _document(db, env)
         record = _issue(db, document, env["owner"])
         monkeypatch.setattr(qpdf, "build_issue_html", spy)
+        monkeypatch.setattr(qpdf, "_fill_total_pages", fill_spy)
         try:
             pdf, _name = qpdf.render_issue_pdf(db, record)
         except qpdf.PDFRenderingUnavailable:
             pytest.skip("WeasyPrint native libraries missing")
         assert pdf.startswith(b"%PDF")
-        assert len(seen) == 2 and seen[0] is None
-        first, rest = seen[1].split("+")
-        assert first == "1" and int(rest) >= 1
+        assert seen == [qpdf.TOTAL_PAGES_MARK]
+        ((pages, html),) = filled
+        assert pages >= 2
+        assert f"1+{pages - 1}" in html and qpdf.TOTAL_PAGES_MARK not in html
 
 
 def test_pdf_without_a_total_pages_row_renders_once(monkeypatch):
@@ -520,3 +538,93 @@ def test_designer_preview_returns_sections_with_sample_values():
         right = {c["source"]: c["text"] for c in sections[0]["cells"][1]}
         assert right["total_pages"] == "1+3"
         assert payload["cover_rows"]
+
+
+def test_pdf_layout_4_escapes_every_label_and_value_and_cleans_the_terms():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    evil = "<b>x</b>&"
+    d = sheet_design()
+    for section in d["sections"]:
+        section["label"] = f"{section['style']} {evil}"
+        for item in section["rows"]:
+            item["label"] = f"{item['source']} {evil}"
+    with blank_session() as db:
+        env = _setup(db)
+        _system_settings(db, fax=f"03 {evil}")
+        _activate(db, env, d)
+        document = _document(
+            db,
+            env,
+            recipient_name_snapshot=f"{MARKER} {evil}",
+            subject_title=f"{MARKER} title {evil}",
+            signatory_name=f"{MARKER} sig {evil}",
+            terms_html=f"<p>{MARKER} ok</p><script>alert(1)</script>",
+        )
+        record = _issue(db, document, env["owner"])
+        html = qpdf.build_issue_html(db, record, total_pages="1+3")
+        cover = html.split('<section class="cover', 1)[1].split("</section>", 1)[0]
+        assert "<b>x</b>" not in cover
+        safe = "&lt;b&gt;x&lt;/b&gt;&amp;"
+        for style in ("fields", "title", "numbered", "signature"):
+            assert f"{style} {safe}" in cover, style
+        for source in ("to_name", "prepared_by_name", "company_fax"):
+            assert f"{source} {safe}" in cover, source
+        assert "TERMS &lt;B&gt;X&lt;/B&gt;&amp;" in cover  # numbered labels print upper case
+        assert f"{MARKER} {safe}" in cover and f"{MARKER} title {safe}" in cover
+        assert f"{MARKER} sig {safe}" in cover and f"03 {safe}" in cover
+        assert "<script" not in cover and f"{MARKER} ok" in cover
+
+
+def test_pdf_terms_html_never_follows_a_bare_colon():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        _activate(db, env, sheet_design())
+        document = _document(db, env)
+        record = _issue(db, document, env["owner"])
+        cover = qpdf.build_issue_html(db, record).split('<section class="cover', 1)[1]
+        assert "<strong>PRICE BASIS:</strong><p>" in cover
+        assert ": <p>" not in cover
+
+
+def test_pdf_default_design_prints_the_terms_label_beside_the_terms():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        record = _issue(db, document, env["owner"])
+        cover = qpdf.build_issue_html(db, record).split('<section class="cover', 1)[1]
+        assert "<th>Terms &amp; Conditions:</th><td><p>" in cover
+        assert "<td>: <p>" not in cover
+
+
+def test_draft_preview_uses_the_typed_title_and_signatory_and_the_number_only_reference():
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        env = _setup(db)
+        _activate(db, env, sheet_design())
+        document = _document(db, env)
+        out = qdocs.preview_cover(
+            db,
+            project=env["project"],
+            payload={
+                "document_id": document.id,
+                "subject_title": f"{MARKER} typed title",
+                "signatory_name": f"{MARKER} typed signer",
+            },
+        )
+        cells = {
+            c["source"]: c.get("text")
+            for s in out["cover_sections"]
+            for col in s["cells"]
+            for c in col
+        }
+        assert cells["project_title"] == f"{MARKER} typed title"
+        assert cells["prepared_by_name"] == f"{MARKER} typed signer"
+        assert cells["prepared_by_phone"] == "012-000 0001"  # saved, not typed
+        assert cells["document_no"].startswith(document.document_no)
+        assert env["project"].title not in cells["document_no"]

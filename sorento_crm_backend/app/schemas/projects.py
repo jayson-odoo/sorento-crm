@@ -2530,6 +2530,9 @@ class QuotationCoverPreviewRequest(BaseModel):
     terms_html: Optional[str] = Field(default=None, max_length=50000)
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    subject_title: Optional[str] = Field(default=None, max_length=2000)
+    signatory_name: Optional[str] = Field(default=None, max_length=120)
+    signatory_phone: Optional[str] = Field(default=None, max_length=60)
 
 
 class QuotationDesignPreviewRequest(BaseModel):

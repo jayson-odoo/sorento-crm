@@ -2259,6 +2259,10 @@ _PREVIEW_FIELDS = (
     "cover_letter_html",
     "cover_closing_html",
     "terms_html",
+    # QUOTE-COVER-FIELDS: the Project Title band and the Prepared by block.
+    "subject_title",
+    "signatory_name",
+    "signatory_phone",
 )
 
 
@@ -2285,8 +2289,6 @@ def preview_cover(
         base.update(
             document_no=saved.document_no,
             subject_title=saved.subject_title,
-            signatory_name=saved.signatory_name,
-            signatory_phone=saved.signatory_phone,
             created_by=saved.created_by,
             company_id=saved.company_id,
             kind=saved.kind,

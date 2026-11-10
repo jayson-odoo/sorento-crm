@@ -416,6 +416,7 @@ export function QuotationFormClient({
       ...(documentId ? { document_id: documentId } : {}),
       doc_date: h.doc_date || null,
       attn_name: h.attn_name ?? null,
+      subject_title: h.subject_title ?? null,
       recipient_name_snapshot: h.recipient_name_snapshot ?? null,
       recipient_address_snapshot: h.recipient_address_snapshot ?? null,
       recipient_phone_snapshot: h.recipient_phone_snapshot ?? null,

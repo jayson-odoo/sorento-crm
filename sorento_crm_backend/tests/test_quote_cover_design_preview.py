@@ -28,7 +28,10 @@ DEFAULT_SOURCES = [
 
 
 def shown_sources(d):
-    return [SOURCE_OF[r["key"]] for r in d["rows"] if r["shown"] and r["key"] in SOURCE_OF]
+    """A legacy design's shown rows as sources, then the Project Title band every normalized
+    design ends with (QUOTE-COVER-FIELDS)."""
+    rows = [SOURCE_OF[r["key"]] for r in d["rows"] if r["shown"] and r["key"] in SOURCE_OF]
+    return rows + ["project_title"]
 TEMPLATES = f"{PS}/config/quotation-templates"
 
 
@@ -129,7 +132,7 @@ def test_project_preview_with_no_design_follows_the_default_design(api):
     out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert out["cover_title"] == "QUOTATION" and out["cover_show_letterhead"] is True
     keys = [r["key"] for r in out["cover_rows"]]
-    assert keys == [k for k in DEFAULT_SOURCES if k in keys]
+    assert keys == [k for k in DEFAULT_SOURCES + ["project_title"] if k in keys]
     assert {"document_no", "attn", "payment_terms", "validity"} <= set(keys)
     assert [r["label"] for r in out["cover_rows"]][0] == LABELS[0]
 

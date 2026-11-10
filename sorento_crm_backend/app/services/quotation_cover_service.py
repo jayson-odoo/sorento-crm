@@ -67,7 +67,7 @@ DEFAULT_DESIGN: Dict[str, Any] = {
 
 def default_design() -> Dict[str, Any]:
     """The design a new cover page starts from: today's rows (minus Quotation Purpose, owner
-    10 Nov) in one single-column section."""
+    10 Nov) in one single-column section, then the Project Title band."""
     return normalize_design(DEFAULT_DESIGN)
 
 
@@ -130,13 +130,15 @@ def serialize_sources() -> List[Dict[str, str]]:
 
 def normalize_design(raw: Dict[str, Any]) -> Dict[str, Any]:
     """A design in the sections shape. One saved before this lane (``rows`` of fixed keys) becomes
-    one single-column ``fields`` section, Quotation Purpose dropped. Already sectioned: a copy."""
+    one single-column ``fields`` section (Quotation Purpose dropped) and a Project Title band.
+    Already sectioned: a copy."""
     if "sections" in raw or not isinstance(raw.get("rows"), list):
         return copy.deepcopy(raw)
     rows = [
         {
             "source": _LEGACY_SOURCE[item["key"]],
-            "label": item.get("label", ""),
+            # The old cover printed the default label for a blank one; keep that on the page.
+            "label": (item.get("label") or "").strip() or ROW_LABELS[item["key"]],
             "shown": item.get("shown", True),
             "column": 0,
         }
@@ -147,7 +149,17 @@ def normalize_design(raw: Dict[str, Any]) -> Dict[str, Any]:
         "show_letterhead": raw.get("show_letterhead", True),
         "title": raw.get("title", ""),
         "closing_html": raw.get("closing_html") or "",
-        "sections": [{"style": "fields", "label": "", "columns": 1, "rows": rows}],
+        "sections": [
+            {"style": "fields", "label": "", "columns": 1, "rows": rows},
+            # The title used to ride on Reference No.; it now prints in its own band (owner
+            # 10 Nov), so a design saved before keeps printing it.
+            {
+                "style": "title",
+                "label": "Project Title:",
+                "columns": 1,
+                "rows": [{"source": "project_title", "label": "", "shown": True, "column": 0}],
+            },
+        ],
     }
 
 
@@ -230,10 +242,6 @@ def validate_design(raw: Any) -> Dict[str, Any]:
         "closing_html": closing,
         "sections": clean_sections,
     }
-
-
-def is_sectioned(design: Optional[Dict[str, Any]]) -> bool:
-    return isinstance(design, dict) and isinstance(design.get("sections"), list)
 
 
 _ALLOWED = {"p", "strong", "em", "u", "ul", "ol", "li"}
