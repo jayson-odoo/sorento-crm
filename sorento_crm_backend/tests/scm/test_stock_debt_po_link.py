@@ -976,3 +976,178 @@ def test_every_write_of_a_press_carries_one_request_id(scm_app, fake_ss):
     ids = [h.get("X-Request-ID") for h in fake_ss.headers("/api/v1/autocount/po-links")]
     assert len(ids) == 4 and all(ids)
     assert ids[0] == ids[1] and ids[2] == ids[3] and ids[0] != ids[2]
+
+
+# --------------------------------------------------------------------------- B12: one CRM line per row
+# AC-E2E-DB3 B12 (10 Nov, crew ruling (b)): SS v2 makes link / change link / unlink a replace, so the
+# AutoCount row gets a new DtlKey (`replacedLines`), and SS pushes the read-back to the PO ingest
+# DURING the call. Whichever arrives first, the CRM keeps ONE line per AutoCount row: the existing
+# line (same id) is re-keyed, never shown as removed, and no duplicate or retired copy carries a ref.
+
+
+def _push_po(w, details):
+    """The PO ingest push SS sends with the read-back: `details` = (dtl, qty, warehouse, so_ref, seq)."""
+    from app.services.document_ingest_service import DocumentIngestService
+
+    po = w["po"]
+    record = {
+        "source_ref": po.source_ref, "po_number": po.po_number, "status": "open",
+        "supplier_code": po.supplier.supplier_code,
+        "lines": [
+            {"source_ref": f"{DB}:12008:{dtl}", "product_code": w["product"].product_code,
+             "warehouse_code": wh.warehouse_code, "qty_ordered": qty, "from_so_line_ref": so_ref,
+             "line_number": seq}
+            for dtl, qty, wh, so_ref, seq in details
+        ],
+    }
+    result = DocumentIngestService(w["db"], company_id=SORENTO_COMPANY_ID).ingest("purchase_orders", [record])
+    w["db"].flush()
+    return result
+
+
+def _answer(details, replaced):
+    return 200, {
+        "operationId": "op-b12", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12008, "docNo": "202609-S0029",
+        "replacedLines": [{"oldDtlKey": o, "newDtlKey": n} for o, n in replaced],
+        "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+            {"DtlKey": dtl, "ItemCode": "X", "Location": wh.warehouse_code, "Qty": qty,
+             "FromSODtlKey": int(so_ref.split(":")[2]) if so_ref else None}
+            for dtl, qty, wh, so_ref, _seq in details
+        ]},
+    }
+
+
+def _sends(w, path, details, replaced, order):
+    """SS's answer for `path`; with order "ingest_first" the ingest push lands inside the call."""
+    def handler(request):
+        if order == "ingest_first":
+            _push_po(w, details)
+        return _answer(details, replaced)
+    return handler
+
+
+def _lines_of(w):
+    from app.models.procurement import PurchaseOrderLine
+
+    w["db"].flush()
+    w["db"].expire_all()
+    return w["db"].query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id).all()
+
+
+def _assert_one_line_per_row(w, details, *, kept_id=None, kept_dtl=None):
+    lines = _lines_of(w)
+    refs = sorted(l.source_ref for l in lines)
+    assert refs == sorted(f"{DB}:12008:{d[0]}" for d in details), [
+        (l.source_ref, l.line_status, l.removed_unreferenced) for l in lines]
+    for line in lines:
+        assert line.line_status == "open" and not line.removed_unreferenced, (
+            line.source_ref, line.line_status, line.removed_unreferenced)
+    by_ref = {l.source_ref: l for l in lines}
+    for dtl, qty, wh, so_ref, _seq in details:
+        line = by_ref[f"{DB}:12008:{dtl}"]
+        assert float(line.qty_ordered) == qty
+        assert line.from_so_line_ref == so_ref
+        assert line.warehouse_id == wh.id
+    if kept_id is not None:
+        assert by_ref[f"{DB}:12008:{kept_dtl}"].id == kept_id
+
+
+ORDERS = ["answer_first", "ingest_first"]
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_b12_whole_row_link_keeps_one_line(scm_app, fake_ss, order):
+    w = _world(scm_app, fake_ss)
+    w["po_line"].qty_ordered = Decimal("120")  # whole row: link qty == row qty
+    w["db"].flush()
+    so_ref = w["so_line"].source_ref
+    details = [(12303, 120, w["mwh"], so_ref, 80)]
+    fake_ss.answers["/api/v1/autocount/po-links"] = _sends(w, "po-links", details, [(12009, 12303)], order)
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "done"
+    if order == "answer_first":
+        _push_po(w, details)
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12303)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_b12_unlink_keeps_one_line(scm_app, fake_ss, order):
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    details = [(12308, 500, w["hq"], None, 80)]
+    fake_ss.answers["/api/v1/autocount/po-links/unlink"] = _sends(
+        w, "po-links/unlink", details, [(12009, 12308)], order)
+    resp = w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
+    assert resp.json()["results"][0]["outcome"] == "done", resp.text
+    if order == "answer_first":
+        _push_po(w, details)
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12308)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_b12_change_link_keeps_one_line(scm_app, fake_ss, order):
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    _o, other = _demand(w["db"], w["product"], w["mwh"], qty=30, required_date=_months_ahead(1),
+                        so_number=f"{w['marker']}-SO2")
+    other.source_ref = f"{DB}:11999:12001"
+    w["db"].flush()
+    c = w["c"]
+    sid = c.post(SNAP, json={"name": "two", "filters": {"query": w["marker"], "only_debt": False}}).json()["id"]
+    row_id = next(r["row_id"] for r in c.get(f"{SNAP}/{sid}/rows", params={"limit": 200}).json()["data"]
+                  if r["product_code"] == f"{w['marker']}-A")
+    details = [(12307, 500, w["hq"], other.source_ref, 80)]
+    fake_ss.answers["/api/v1/autocount/po-links/relink"] = _sends(
+        w, "po-links/relink", details, [(12009, 12307)], order)
+    resp = c.post(f"{SNAP}/{sid}/rows/{row_id}/po-link/relink", json={"moves": [
+        {"po_line_id": w["po_line"].id, "to_sales_order_line_id": other.id},
+    ]})
+    assert resp.json()["results"][0]["outcome"] == "done", resp.text
+    if order == "answer_first":
+        _push_po(w, details)
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12307)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_b12_split_keeps_one_line_per_row(scm_app, fake_ss, order):
+    w = _world(scm_app, fake_ss)
+    so_ref = w["so_line"].source_ref
+    details = [(12009, 380, w["hq"], None, 16), (12080, 120, w["mwh"], so_ref, 32)]
+    fake_ss.answers["/api/v1/autocount/po-links"] = _sends(w, "po-links", details, [], order)
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "done"
+    if order == "answer_first":
+        _push_po(w, details)
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12009)
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_b12_split_that_replaces_the_row_keeps_one_line_per_row(scm_app, fake_ss, order):
+    w = _world(scm_app, fake_ss)
+    so_ref = w["so_line"].source_ref
+    details = [(12310, 380, w["hq"], None, 80), (12311, 120, w["mwh"], so_ref, 96)]
+    fake_ss.answers["/api/v1/autocount/po-links"] = _sends(w, "po-links", details, [(12009, 12310)], order)
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "done"
+    if order == "answer_first":
+        _push_po(w, details)
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12310)
+
+
+def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss, monkeypatch):
+    """Redis down: ingest cannot pair, so `_apply` merges its duplicate into the existing line."""
+    from app.services import autocount_idempotency as idem
+    from app.services.scm import stock_debt_po_link_service as svc
+
+    monkeypatch.setattr(svc, "attempt_store", lambda: None)
+    monkeypatch.setattr(idem, "attempt_store", lambda: None)
+    w = _world(scm_app, fake_ss)
+    w["po_line"].qty_ordered = Decimal("120")
+    w["db"].flush()
+    details = [(12303, 120, w["mwh"], w["so_line"].source_ref, 80)]
+    fake_ss.answers["/api/v1/autocount/po-links"] = _sends(w, "po-links", details, [(12009, 12303)], "ingest_first")
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "done"
+    _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12303)
