@@ -15,7 +15,7 @@ import {
   shopToday,
   signedPercent,
 } from '../lib/townFormat';
-import type { TownTarget } from './TownPanel';
+import type { TownTarget } from './TownLightbox';
 
 function Card({
   question,

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
 import { changePercent, count, rm0, sceneSelection, separateLabels, stackTags, tagLabel, townFrame } from '../lib/townFormat';
-import type { TownTarget } from './TownPanel';
+import type { TownTarget } from './TownLightbox';
 
 /**
  * The town in 3D, ported from the approved mock (`documentation/plans/dashboard/mock/sorento-town-mock.html`,

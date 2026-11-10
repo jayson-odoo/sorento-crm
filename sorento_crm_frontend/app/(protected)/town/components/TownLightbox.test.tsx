@@ -61,7 +61,7 @@ describe('TownLightbox', () => {
     });
 
     it('shows no supplier text and does not crash when the rows are redacted', () => {
-      const redacted = { ...incoming, shipments: incoming.shipments.map(({ supplier: _s, ...r }) => r) };
+      const redacted = { ...incoming, shipments: incoming.shipments.map((r) => ({ ...r, supplier: undefined })) };
       render(<TownLightbox snapshot={snap(redacted)} target={{ kind: 'port' }} onClose={noop} />);
       expect(screen.getByText('ZZT-SHIP-1')).toBeTruthy();
       expect(screen.queryByText(/Acme Trading/)).toBeNull();

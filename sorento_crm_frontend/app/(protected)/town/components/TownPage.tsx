@@ -10,7 +10,7 @@ import { useTownSnapshot } from '@/hooks/useTownSnapshot';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { isPending } from '@/types/town.types';
 import { TownCards } from './TownCards';
-import { TownPanel, type TownTarget } from './TownPanel';
+import { TownLightbox, type TownTarget } from './TownLightbox';
 
 // The scene (and three.js with it) is fetched only when this page shows it.
 const TownScene = dynamic(() => import('./TownScene').then((m) => m.TownScene), { ssr: false });
@@ -74,7 +74,7 @@ export function TownPage() {
           </div>
         </div>
       ) : null}
-      {snapshot ? <TownPanel snapshot={snapshot} target={target} onClose={() => setTarget(null)} /> : null}
+      {snapshot ? <TownLightbox snapshot={snapshot} target={target} onClose={() => setTarget(null)} /> : null}
     </div>
   );
 }

@@ -32,8 +32,32 @@ export interface TownSnapshot {
   shops: TownShop[];
   warehouses: { pool: string; on_hand: number; available: number; locations: number }[];
   reorder: { below_count: number; set_count: number };
-  deliveries?: { to_deliver: number };
+  /** `customers`: up to 6 destinations for the lorries, earliest due first: the key of a shop in
+   * `shops`, or null when that customer has no shop in the town (TOWN-V2 Q6). */
+  deliveries?: { to_deliver: number; customers?: (string | null)[] };
   approvals: { total: number; purchase_requests: number; quotation_documents: number };
+  /** Open shipments from overseas suppliers (TOWN-V2). Absent on a snapshot built before it existed. */
+  incoming?: TownIncoming;
+}
+
+/** One open shipment. `supplier` is absent on the redacted and wallboard variants. */
+export interface TownShipment {
+  shipment_number: string | null;
+  container: string | null;
+  supplier?: string | null;
+  eta: string | null;
+  products: number;
+  quantity: number;
+  late: boolean;
+}
+
+/** Two plain states (owner, 10 Nov): incoming = ETA today or later, or unknown; late = ETA passed.
+ * Exact counts; `shipments` holds up to 30 incoming rows (soonest first) then up to 30 late rows. */
+export interface TownIncoming {
+  incoming: number;
+  late: number;
+  next_eta: string | null;
+  shipments: TownShipment[];
 }
 
 /** Nothing stored yet (the first tick of the day has not run). */

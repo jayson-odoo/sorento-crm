@@ -2,14 +2,12 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { isPending, type TownPayload, type TownSnapshot } from '@/types/town.types';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { isPending, type TownPayload, type TownShipment, type TownSnapshot } from '@/types/town.types';
 import { boughtToday, count, rm, shopLabel, shopToday } from '../lib/townFormat';
-
-/** The sheet's close button is 16px; on a touch screen its hit area grows to 44px (as COARSE_HIT_TARGET_CLASS does). */
-const CLOSE_HIT_AREA =
-  "[&_[data-slot=sheet-close]]:pointer-coarse:after:absolute [&_[data-slot=sheet-close]]:pointer-coarse:after:left-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:top-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:min-h-11 [&_[data-slot=sheet-close]]:pointer-coarse:after:min-w-11 [&_[data-slot=sheet-close]]:pointer-coarse:after:-translate-x-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:-translate-y-1/2 [&_[data-slot=sheet-close]]:pointer-coarse:after:content-['']";
 
 export type TownTarget =
   | { kind: 'sales' }
@@ -17,15 +15,17 @@ export type TownTarget =
   | { kind: 'shop'; key: string }
   | { kind: 'low' }
   | { kind: 'deliver' }
-  | { kind: 'approve' };
+  | { kind: 'approve' }
+  | { kind: 'port' };
 
-/** The existing screens a panel opens (each is permission-checked by its own page). */
+/** The existing screens a lightbox opens (each is permission-checked by its own page). */
 const ROUTES = {
   sales: '/sales/sales-and-outstanding',
   invoices: '/finance/billing-documents',
   reorder: '/scm/reorder',
   deliveries: '/scm/sales-orders',
   approvals: '/procurement-management/purchase-requests',
+  shipments: '/procurement-management/packing-lists',
 } as const;
 
 function Rows({ rows }: { rows: [string, ReactNode][] }) {
@@ -45,10 +45,58 @@ function Rows({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
+function Shipments({ title, rows, total, late }: { title: string; rows: TownShipment[]; total: number; late?: boolean }) {
+  if (!total) return null;
+  const supplier = rows.some((row) => row.supplier);
+  return (
+    <section className="mt-4 first:mt-0">
+      <h3 className="flex items-center gap-2 text-sm font-semibold">
+        {title}
+        <Badge variant={late ? 'destructive' : 'secondary'} appearance={late ? 'light' : undefined} size="sm">
+          {count(total)}
+        </Badge>
+      </h3>
+      <div className="mt-1.5 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-xs text-muted-foreground">
+              <th className="py-1.5 pe-3 text-start font-medium">Shipment</th>
+              <th className="hidden py-1.5 pe-3 text-start font-medium sm:table-cell">Container</th>
+              {supplier ? <th className="py-1.5 pe-3 text-start font-medium">Supplier</th> : null}
+              <th className="py-1.5 pe-3 text-start font-medium">ETA</th>
+              <th className="hidden py-1.5 pe-3 text-end font-medium sm:table-cell">Products</th>
+              <th className="py-1.5 text-end font-medium">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${row.shipment_number ?? ''}-${index}`} className="border-b border-border last:border-0">
+                <td className="whitespace-nowrap py-1.5 pe-3">{row.shipment_number ?? '-'}</td>
+                <td className="hidden whitespace-nowrap py-1.5 pe-3 sm:table-cell">{row.container ?? '-'}</td>
+                {supplier ? (
+                  <td className="max-w-40 truncate py-1.5 pe-3" title={row.supplier ?? undefined}>
+                    {row.supplier ?? '-'}
+                  </td>
+                ) : null}
+                <td className="whitespace-nowrap py-1.5 pe-3">{row.eta ? formatDateInMalaysia(row.eta) : 'No ETA'}</td>
+                <td className="hidden py-1.5 pe-3 text-end tabular-nums sm:table-cell">{count(row.products)}</td>
+                <td className="py-1.5 text-end tabular-nums">{count(row.quantity)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {total > rows.length ? (
+        <p className="mt-1.5 text-sm text-muted-foreground">+ {count(total - rows.length)} more</p>
+      ) : null}
+    </section>
+  );
+}
+
 function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta: string; content: ReactNode } {
   const { today, compare, reorder, deliveries, approvals } = snapshot;
   const link = (href: string, label: string) => (
-    <Button asChild variant="outline" size="sm" className="mt-3">
+    <Button asChild variant="outline" size="sm" className="mt-4">
       <Link href={href}>{label}</Link>
     </Button>
   );
@@ -142,11 +190,44 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
           </>
         ),
       };
+    case 'port': {
+      const incoming = snapshot.incoming;
+      const total = incoming ? incoming.incoming + incoming.late : 0;
+      return {
+        title: 'Incoming shipments',
+        meta: total ? 'Open shipments from overseas suppliers' : '',
+        content: (
+          <>
+            {incoming && total ? (
+              <>
+                <Shipments
+                  title="Incoming"
+                  rows={incoming.shipments.filter((row) => !row.late)}
+                  total={incoming.incoming}
+                />
+                <Shipments
+                  title="Late"
+                  rows={incoming.shipments.filter((row) => row.late)}
+                  total={incoming.late}
+                  late
+                />
+              </>
+            ) : (
+              <div className="py-6 text-center">
+                <h3 className="text-sm font-semibold">Nothing on the way</h3>
+              </div>
+            )}
+            {link(ROUTES.shipments, 'Open packing lists')}
+          </>
+        ),
+      };
+    }
   }
 }
 
-/** What a tap on a building or a card opens, beside both views. */
-export function TownPanel({
+/** What a tap on a building, a label or a card opens: a centred lightbox over the town (owner, 10 Nov:
+ * popups over side panels). Escape, the close button or a click outside closes it. */
+export function TownLightbox({
   snapshot,
   target,
   onClose,
@@ -156,22 +237,18 @@ export function TownPanel({
   onClose: () => void;
 }) {
   const shown = target && !isPending(snapshot) ? body(snapshot, target) : null;
-  // Not modal and no scrim: the town behind stays tappable. Escape closes, focus moves in.
+  const wide = target?.kind === 'port';
   return (
-    <Sheet open={shown !== null} onOpenChange={(open) => !open && onClose()} modal={false}>
-      <SheetContent
-        side="right"
-        overlay={false}
-        className={`inset-3 start-auto h-auto max-h-[85dvh] gap-0 rounded-lg p-4 sm:inset-y-24 sm:w-80 sm:max-w-none ${CLOSE_HIT_AREA}`}
-      >
-        <SheetHeader className="space-y-0 pe-8 text-start">
-          <SheetTitle>{shown?.title}</SheetTitle>
-          <SheetDescription className={shown?.meta ? 'text-xs' : 'sr-only'}>
+    <Dialog open={shown !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className={wide ? 'sm:max-w-2xl' : 'sm:max-w-md'}>
+        <DialogHeader className="mb-2 space-y-0 pe-8 text-start">
+          <DialogTitle>{shown?.title}</DialogTitle>
+          <DialogDescription className={shown?.meta ? 'text-xs' : 'sr-only'}>
             {shown?.meta || shown?.title}
-          </SheetDescription>
-        </SheetHeader>
-        <SheetBody className="p-0">{shown?.content}</SheetBody>
-      </SheetContent>
-    </Sheet>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>{shown?.content}</DialogBody>
+      </DialogContent>
+    </Dialog>
   );
 }
