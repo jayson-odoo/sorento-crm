@@ -985,6 +985,12 @@ export interface TagCombo {
   accessory_box_style?: TagAccessoryBoxStyle | null;
   choices: { role: string; options: TagComboOption[] }[];
   upgrades: TagComboUpgrade[];
+  /** COMBO-SETTINGS-UX: the main product's own label ("CABINET"); absent on an older payload. */
+  main_label?: string | null;
+  /** COMBO-SETTINGS-UX: "Each part prints as", a rich line of `{{part.*}}` fields; null = the default. */
+  parts_line?: string | null;
+  /** COMBO-SETTINGS-UX: each part's label, by part product id (only the parts that have one). */
+  part_labels?: Record<string, string>;
 }
 
 /**
@@ -1004,6 +1010,8 @@ export interface TagPartData {
   code: string;
   name: string;
   dimensions: string;
+  /** COMBO-SETTINGS-UX: the same measurement as `L780xW480xH400mm`; '' with none, absent on an older payload. */
+  dimensions_lwh?: string;
   spec_lines?: string[];
   specs?: TagSpecValue[];
   images?: TagImage[];

@@ -100,11 +100,23 @@ def doc_reads_variants(doc) -> bool:
     return False
 
 
+def pick_one_groups(parts) -> set:
+    """The choice groups that ARE a choice: 2+ non-upgrade parts. A group with one part resolves on
+    the spot (CARD-pricetag-combo-render-04nov.md:134), so it is a fixed part everywhere
+    (COMBO-SETTINGS-UX owner round 1, 10 Nov)."""
+    sizes: dict[str, int] = {}
+    for part in parts or []:
+        if not part.is_upgrade and part.choice_group:
+            sizes[part.choice_group] = sizes.get(part.choice_group, 0) + 1
+    return {role for role, size in sizes.items() if size > 1}
+
+
 def combo_shape(combo) -> dict:
     """A combo's fixed-part count, choice groups (name, option count) in part order, upgrade count."""
     fixed = 0
     upgrades = 0
     sizes: dict[str, int] = {}
+    choices = pick_one_groups(combo.parts)
     # Counted by the part ROWS, never through the joined `part_product`: the company-scope loader
     # criteria on a scoped session reach that join and return None for a product the session
     # cannot see, which used to drop every part. `part_product_id` is NOT NULL with a RESTRICT
@@ -112,7 +124,7 @@ def combo_shape(combo) -> dict:
     for part in combo.parts or []:
         if part.is_upgrade:
             upgrades += 1
-        elif part.choice_group:
+        elif part.choice_group in choices:
             sizes[part.choice_group] = sizes.get(part.choice_group, 0) + 1
         else:
             fixed += 1
@@ -177,8 +189,9 @@ def missing_positions(needs: dict, combo, parts) -> list[str]:
         if picked >= need or (mine and need == 1):
             continue
         out.append(f"{role}: pick {need - picked} more.")
+    choices = pick_one_groups(combo.parts)
     fixed = [
-        p for p in combo.parts or [] if not p.is_upgrade and not p.choice_group
+        p for p in combo.parts or [] if not p.is_upgrade and p.choice_group not in choices
     ]
     held = {product_id for _role, product_id in rows if product_id}
     for part in fixed[: needs.get("fixed") or 0]:
