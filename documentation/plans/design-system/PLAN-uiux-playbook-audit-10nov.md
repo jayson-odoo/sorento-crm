@@ -1,6 +1,6 @@
 # PLAN: UI/UX playbook gap audit (UIUX-PLAYBOOK-AUDIT)
 
-Status: audit written, draft PR open, waiting on the owner's answers to Q1-Q5 (small fix track: docs only, no code, no migration).
+Status: audit written, agreed differences Q1-Q5 recorded (crew, 10 Nov, all option a), PR ready for review (small fix track: docs only, no code, no migration).
 
 ## Journey
 
@@ -37,7 +37,7 @@ Docs only. Layer: none (no FE/BE change). Evidence gathered by read-only Explore
 1. Read playbook SKILL.md, knowledge/decisions.md, skim reference/clarity-draft.html. Done.
 2. Gather CRM evidence per playbook section (subagents, max 15-line conclusions each). Done.
 3. Write the audit doc, draft PR with only the doc (+ this plan). Done.
-4. One `crew report --ask` with at most 5 agreed-difference questions, each with a recommendation.
+4. One `crew report --ask` with at most 5 agreed-difference questions, each with a recommendation. Done (answered 10 Nov, recorded in audit section 6).
 5. Final report + `crew report --done`.
 
 ## DoD (small fix track, docs only)

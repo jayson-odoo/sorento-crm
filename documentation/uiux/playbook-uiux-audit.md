@@ -1,7 +1,8 @@
 # Foundryx UI/UX playbook: gap audit of the Sorento CRM frontend
 
 Lane UIUX-PLAYBOOK-AUDIT, 10 Nov 2026. Read-only: no app code, no mock, no root `playbook-uiux.md`
-(that file means "playbook applied" and waits for the owner's answers to the questions in section 6).
+(that file means "playbook applied"; it comes with the later apply step, carrying the agreed
+differences recorded in section 6).
 
 - **Playbook audited against:** `foundryxkay/playbook-UIUX` at `c7dfb32`, skill
   `skills/foundryx-playbook-uiux/SKILL.md` (cited below as `PB:<line>`), `knowledge/decisions.md`,
@@ -228,17 +229,19 @@ global slim scrollbars and balanced headings (one CSS file each, but they touch 
 so they ride the switch at step 7); the right-click row menu the owner already asked for (not built in
 any `UI/data-grid*` file).
 
-## 6. Agreed-difference candidates (conflicts)
+## 6. Agreed differences (conflicts)
 
-Each needs the owner's answer before `playbook-uiux.md` is written. Filed as one `crew report --ask` (Q1-Q5).
+Filed as one `crew report --ask` (Q1-Q5). **Decided 10 Nov 2026** by crew from the existing owner
+rules (owner informed after); every answer is option (a), the recommendation. These win over the
+playbook for this system and go into `playbook-uiux.md` at the apply step.
 
-| # | Playbook | CRM / owner rule | Recommendation |
+| # | Playbook | CRM / owner rule | Agreed (10 Nov 2026) |
 | --- | --- | --- | --- |
-| Q1 | Dates read "14 Nov 2026" (`PB:253`, `draft:1337`) | dd/mm/yyyy via one shared formatter (`FE/lib/helpers.ts:128,446`) | **Keep ours.** The shared helpers already output dd/mm/yyyy; the owner rule names it |
-| Q2 | Smart view with info lines; cards on phones (`PB:176-179`) | Standard DataGrid, one line per row; phones scroll inside the box (`H:344-407`, `UI/data-grid-table.tsx:1016`) | **Keep ours.** Adopt only what fits one line: header filter by column type later (`PB:192-202`) |
-| Q3 | Other Actions as header icon buttons; row icon buttons; RCT on the right button (`PB:114-141`, `PB:413-420`) | Gear menu in the header (`C/DetailActions.tsx:60-87`); right-click row menu (owner) | **Keep ours.** RCT takes over the right button the owner reserved for row menus |
-| Q4 | Minimal-UI clashes: Foundryx red CTA with lean and light; hover pop on everything; Hold to Copy, Clipboard, Quick Tool, floating AI only when locked (`PB:83-92`, `PB:218-225`, `PB:394-427`, `PB:611-624`) | Sorento blue `--primary` (`FE/css/config.reui.css:11`), no hover lift, AI bubble always shown (`AIAssistantBubble.tsx:595`) | **Keep ours.** Brand colour and minimal UI; adopt only the styled tooltip (`PB:428`) since it replaces, not adds |
-| Q5 | 3 s press-and-hold confirm dialog (`PB:103-113`) | Delete/Archive/Unlink: server-deferred countdown, no dialog (`PRINCIPLES.md:255-262`); other irreversible sends keep a click-confirm dialog (`RCD`) | **Keep the countdown; no hold** (a hold is new behaviour). **Adopt the playbook's dialog words** for the remaining dialogs (quick win 6) |
+| Q1 | Dates read "14 Nov 2026" (`PB:253`, `draft:1337`) | dd/mm/yyyy via one shared formatter (`FE/lib/helpers.ts:128,446`) | **Keep ours:** dd/mm/yyyy |
+| Q2 | Smart view with info lines; cards on phones (`PB:176-179`) | Standard DataGrid, one line per row; phones scroll inside the box (`H:344-407`, `UI/data-grid-table.tsx:1016`) | **Keep ours:** one line per row. Header filter by column type (`PB:192-202`) stays a candidate since it fits one line |
+| Q3 | Other Actions as header icon buttons; row icon buttons; RCT on the right button (`PB:114-141`, `PB:413-420`) | Gear menu in the header (`C/DetailActions.tsx:60-87`); right-click row menu (owner) | **Keep ours:** gear menu + right-click row menu; no RCT |
+| Q4 | Minimal-UI clashes: Foundryx red CTA with lean and light; hover pop on everything; Hold to Copy, Clipboard, Quick Tool, floating AI only when locked (`PB:83-92`, `PB:218-225`, `PB:394-427`, `PB:611-624`) | Sorento blue `--primary` (`FE/css/config.reui.css:11`), no hover lift, AI bubble always shown (`AIAssistantBubble.tsx:595`) | **Keep ours:** Sorento brand + minimal UI. **Adopt** only the styled tooltip (`PB:428`) |
+| Q5 | 3 s press-and-hold confirm dialog (`PB:103-113`) | Delete/Archive/Unlink: server-deferred countdown, no dialog (`PRINCIPLES.md:255-262`); other irreversible sends keep a click-confirm dialog (`RCD`) | **Keep ours:** deferred countdown, no 3 s hold. **Adopt** the playbook's dialog wording (question title, safe button named for what it keeps, verb + object action) for the remaining dialogs (quick win 6) |
 
 Smaller differences, recorded but not asked (the repo rule already decides them): line tabs, not
 segmented toggles (`PR-CHECKLIST.md:52-53`, `UI/tabs.tsx:103-131`); "Nothing matches" has no Clear filters
