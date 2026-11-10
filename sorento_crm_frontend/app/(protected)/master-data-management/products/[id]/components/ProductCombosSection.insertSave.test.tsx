@@ -135,6 +135,16 @@ beforeEach(() => {
 });
 
 describe('real editor: inserted fields save as plain tokens', () => {
+  it('the description chips and the Insert field box never show a part id (owner 22:33)', async () => {
+    const withToken = { ...COMBO, description: `<p>{{${partRef('p-basin')}.label}}</p>` } as ProductComboRow;
+    const { container } = show(withToken);
+    await waitFor(() => expect(container.querySelector('[data-merge-field]')?.textContent).toBe('BASIN - SRTWB2380: label'));
+    expect(container.textContent ?? '').not.toContain(partRef('p-basin'));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    const tokenLabel = insertDialog.props?.tokenLabel as (path: string) => string | null;
+    expect(tokenLabel(`${partRef('p-basin')}.label`)).toBe('BASIN - SRTWB2380: label');
+  });
+
   it('saves {{part.main.code}}, not the chip name the editor shows', async () => {
     const { container } = show();
     const saved = await insert('{{part.main.code}}');
@@ -169,5 +179,7 @@ describe('real editor: inserted fields save as plain tokens', () => {
     await waitFor(() =>
       expect(view.container.querySelector('[data-merge-field]')?.textContent).toBe('Removed part: code'),
     );
+    // No part id in anything the reader sees (owner 22:33).
+    expect(view.container.textContent ?? '').not.toMatch(/\{\{part\./);
   });
 });

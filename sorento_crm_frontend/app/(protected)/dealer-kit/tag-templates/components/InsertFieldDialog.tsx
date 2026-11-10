@@ -53,6 +53,10 @@ interface InsertFieldDialogProps {
   omitPaths?: string[];
   /** Fields the caller builds itself (a combo's Parts, named by the part), after the catalog's. */
   extraFields?: MergeField[];
+  /** A token's readable name. Given, the Content box shows each token by its name (read-only;
+   *  fields are added by clicking them) so no reference a person should not read (a part id)
+   *  ever shows; null keeps the token itself. */
+  tokenLabel?: (path: string) => string | null;
   onCancel: () => void;
   onDone: (content: string) => void;
 }
@@ -65,6 +69,7 @@ export function InsertFieldDialog({
   groups,
   omitPaths,
   extraFields,
+  tokenLabel,
   onCancel,
   onDone,
 }: InsertFieldDialogProps) {
@@ -146,19 +151,39 @@ export function InsertFieldDialog({
             <Label htmlFor="merge-field-content" className="text-xs text-muted-foreground">
               Content
             </Label>
-            <textarea
-              id="merge-field-content"
-              ref={contentRef}
-              className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
-              value={content}
-              onChange={(e) => {
-                setContent(e.target.value);
-                rememberCaret();
-              }}
-              onSelect={rememberCaret}
-              onKeyUp={rememberCaret}
-              onClick={rememberCaret}
-            />
+            {tokenLabel ? (
+              <div
+                id="merge-field-content"
+                role="textbox"
+                aria-readonly="true"
+                className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+              >
+                {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {
+                  const path = piece.match(/^\{\{\s*([A-Za-z0-9_.]+)\s*\}\}$/)?.[1];
+                  return path ? (
+                    <span key={index} className="rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                      {tokenLabel(path) ?? piece}
+                    </span>
+                  ) : (
+                    <span key={index}>{piece}</span>
+                  );
+                })}
+              </div>
+            ) : (
+              <textarea
+                id="merge-field-content"
+                ref={contentRef}
+                className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
+                value={content}
+                onChange={(e) => {
+                  setContent(e.target.value);
+                  rememberCaret();
+                }}
+                onSelect={rememberCaret}
+                onKeyUp={rememberCaret}
+                onClick={rememberCaret}
+              />
+            )}
           </div>
 
           <Input

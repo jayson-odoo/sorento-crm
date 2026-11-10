@@ -106,4 +106,30 @@ describe('Insert field, Combo group (AC-4.2)', () => {
     expect(screen.getByText(/SRTBF11829 \(CABINET\)/)).toBeInTheDocument();
     expect(screen.getByText(/SRTWB2380 \(BASIN\)/)).toBeInTheDocument();
   });
+
+  it('shows no part id anywhere: the list and the Content box read the part by name (owner 22:33)', () => {
+    const ID = '0279c3b5fd784da7b8a468168c23043d';
+    const path = `part.${ID}.label`;
+    const onDone = vi.fn();
+    const { container } = render(
+      <InsertFieldDialog
+        open
+        value=""
+        data={null}
+        specKeys={[]}
+        groups={['Parts']}
+        extraFields={[{ path, token: `{{${path}}}`, label: 'Test - ACC-SRT4003: label', group: 'Parts', hideToken: true }]}
+        tokenLabel={(p) => (p === path ? 'Test - ACC-SRT4003: label' : null)}
+        onCancel={vi.fn()}
+        onDone={onDone}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Test - ACC-SRT4003: label' }));
+    const shown = `${document.body.textContent ?? ''} ${[...document.querySelectorAll('[title]')].map((el) => el.getAttribute('title')).join(' ')} ${[...container.ownerDocument.querySelectorAll('textarea, input')].map((el) => (el as HTMLInputElement).value).join(' ')}`;
+    expect(shown).not.toMatch(/[0-9a-f]{32}/);
+    expect(screen.getAllByText('Test - ACC-SRT4003: label').length).toBeGreaterThan(1);
+    // What is inserted is still the token.
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(onDone).toHaveBeenCalledWith(`{{${path}}}`);
+  });
 });

@@ -283,6 +283,7 @@ function DescriptionField({
           groups={DESCRIPTION_FIELD_GROUPS}
           omitPaths={DESCRIPTION_OMITS}
           extraFields={partFields}
+          tokenLabel={chipLabel}
           onCancel={() => setInsertOpen(false)}
           onDone={insertAtCaret}
         />
