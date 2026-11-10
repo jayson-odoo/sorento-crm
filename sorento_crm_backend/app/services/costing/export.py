@@ -26,7 +26,7 @@ _MODE_LABELS = {"add": "Add", "multiply": "Multiply"}
 
 
 def format_date(d: date) -> str:
-    return f"{d.day} {d:%b} {d.year}"
+    return d.strftime("%d/%m/%Y")
 
 
 def _num(value) -> Optional[float]:

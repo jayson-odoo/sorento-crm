@@ -70,7 +70,7 @@ def serialize_row(row: dict) -> dict:
     """The contract's `Row`: Decimals to floats at 6 dp, dates to ISO."""
     out = dict(row)
     for key in ("list_price", "unit_cost", "rate_to_base", "sst_factor", "transport_value", "landing",
-                "markup_pct", "final", "margin_pct"):
+                "markup_pct", "final", "margin_pct", "category_transport_value"):
         out[key] = _f6(row[key])
     ups = row["units_per_base"]
     out["units_per_base"] = float(ups) if ups is not None else None
@@ -165,6 +165,8 @@ def _assemble(base, basis_row: dict, profile) -> dict:
         "sst_factor": basis_row["sst_factor"],
         "transport_mode": basis_row["transport_mode"], "transport_value": basis_row["transport_value"],
         "transport_source": basis_row["transport_source"],
+        "category_transport_mode": basis_row["category_transport_mode"],
+        "category_transport_value": basis_row["category_transport_value"],
         "landing": landing,
         "cost_method": basis_row["cost_method"], "cost_method_source": basis_row["cost_method_source"],
         "cost_method_supplier_id": basis_row["cost_method_supplier_id"],

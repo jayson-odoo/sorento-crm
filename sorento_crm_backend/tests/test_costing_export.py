@@ -2,7 +2,7 @@
 AC-CG-09, AC-CG-05 (blank + reason), AC-AX-01.
 
 Contract 4.5: same query as /rows minus paging. Row 1 is the title
-`Costing - <Company standard | CODE NAME> - as of <d MMM yyyy>`; row 2 the headers; data from
+`Costing - <Company standard | CODE NAME> - as of <dd/mm/yyyy>`; row 2 the headers; data from
 row 3. Numeric cells are numbers, unknown is an EMPTY cell, Note = reason texts joined by "; ".
 
 Choices the contract leaves open (the coder follows these):
@@ -66,11 +66,11 @@ def _setup(costing_env):
 def test_ac_cg_09_title_row_names_the_view_and_the_as_of_date(costing_env):
     e, w = _setup(costing_env)
     ws = _sheet(_export(e, as_of="2026-11-11"))
-    assert ws.cell(row=1, column=1).value == "Costing - Company standard - as of 11 Nov 2026"
+    assert ws.cell(row=1, column=1).value == "Costing - Company standard - as of 11/11/2026"
 
     ws = _sheet(_export(e, as_of="2026-10-31", party_id=w.customer.id))
     assert ws.cell(row=1, column=1).value == (
-        "Costing - 304-R017 RELATED - BATHPLUS SDN BHD - as of 31 Oct 2026"
+        "Costing - 304-R017 RELATED - BATHPLUS SDN BHD - as of 31/10/2026"
     )
 
 
@@ -136,7 +136,7 @@ def test_ac_cg_09_note_joins_reason_texts_with_semicolons(costing_env):
     assert _v(cells, "Landing (RM)") is None
     assert _v(cells, "Cost") == A(7.5)
     note = _v(cells, "Note")
-    assert note == "No rate for EUR on 11 Nov 2026; No transport rule"
+    assert note == "No rate for EUR on 11/11/2026; No transport rule"
 
 
 def test_ac_cg_09_party_export_has_party_price_markup_and_margin(costing_env):

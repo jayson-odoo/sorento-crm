@@ -167,6 +167,25 @@ def test_ac_cg_05_row_level_values_are_marked_by_their_source(costing_env):
     assert row["cost_method_supplier_id"] == w.sup_a.id
 
 
+def test_a_row_always_reports_its_category_rule_even_under_a_product_override(costing_env):
+    """Clearing an override in edit falls back to this rule, so the page needs it on the row."""
+    e, w = _setup(costing_env)
+    e.override(w.wb, transport_mode="multiply", transport_value="1.5")
+    cat = e.category("Unruled2")
+    bare = e.item("NR-2", category=cat, list_price="100")
+    e.cost_link(bare, w.sup_a, cost="34.50", currency="RMB", primary=True)
+    e.db.commit()
+    r = e.rows(as_of="2026-11-11")
+    overridden = e.row_of(r, "CGB9032B")
+    assert overridden["transport_source"] == "product" and overridden["transport_mode"] == "multiply"
+    assert overridden["category_transport_mode"] == "add"
+    assert overridden["category_transport_value"] == A(8.0)
+    inherited = e.row_of(r, "T-1001")
+    assert (inherited["category_transport_mode"], inherited["category_transport_value"]) == ("multiply", A(1.07))
+    none = e.row_of(r, "NR-2")
+    assert none["category_transport_mode"] is None and none["category_transport_value"] is None
+
+
 # ------------------------------------------------------------------ AC-CG-07 filters
 
 

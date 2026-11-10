@@ -284,6 +284,7 @@ def compute(ctx: CostContext, product_id: str) -> dict:
     ov = ctx.overrides.get(product_id)
     method, method_source = effective_method(ov, ctx.profile, ctx.default_method)
     mode, value, tsource = resolve_transport(ctx, product_id)
+    rule = ctx.rules.get(ctx.category_of.get(product_id))
     links = ctx.links.get(product_id, [])
 
     out = {
@@ -294,6 +295,8 @@ def compute(ctx: CostContext, product_id: str) -> dict:
         "unit_cost": None, "currency": None, "rate_to_base": None, "rate_effective_from": None,
         "sst_factor": ctx.sst,
         "transport_mode": mode, "transport_value": value, "transport_source": tsource,
+        "category_transport_mode": rule.mode if rule is not None else None,
+        "category_transport_value": Decimal(rule.value) if rule is not None else None,
         "reasons": [], "skipped": [], "po_number": None, "po_date": None,
     }
 
@@ -374,5 +377,5 @@ def reason_text(reason: dict) -> str:
     """The UI/Excel wording of a reason code."""
     if reason["code"] == "no_rate":
         d = reason["date"]
-        return f"No rate for {reason['currency']} on {d.day} {d:%b} {d.year}"
+        return f"No rate for {reason['currency']} on {d:%d/%m/%Y}"
     return REASON_TEXT[reason["code"]]
