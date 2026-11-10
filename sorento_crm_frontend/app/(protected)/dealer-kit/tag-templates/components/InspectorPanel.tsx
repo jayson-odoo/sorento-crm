@@ -298,8 +298,6 @@ interface InspectorPanelProps {
   /** The box being edited and the element selected in it; the element inspector replaces the box one. */
   accessoryEdit?: { layerId: string; target: 'card' | 'footer'; elementId: string | null } | null;
   onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
-  /** S6: "Box style from <product or combo>: <name>" while previewing an owner that overrides the box. */
-  accessoryBoxStyleNote?: string | null;
   /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
    *  header inspector replaces the box one, as the element inspector does in card editing. */
   accessoryHeaderSelected?: AccessoryRect | null;
@@ -341,7 +339,6 @@ export function InspectorPanel({
   accessoryTemplate,
   accessoryEdit,
   onUpdateAccessoryElement,
-  accessoryBoxStyleNote,
   accessoryHeaderSelected,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
@@ -690,7 +687,6 @@ export function InspectorPanel({
                 onSaveAccessoryTemplate ? () => onSaveAccessoryTemplate(layer.id) : undefined
               }
               template={accessoryTemplate ?? null}
-              boxStyleNote={accessoryBoxStyleNote ?? null}
               onPatch={(changes) => onUpdateProps(layer.id, changes)}
             />
           )}
@@ -2127,7 +2123,6 @@ function AccessoriesInspector({
   onEditFooter,
   onSaveTemplate,
   template,
-  boxStyleNote,
   onPatch,
 }: {
   props: AccessoriesLayerProps;
@@ -2135,7 +2130,6 @@ function AccessoriesInspector({
   onEditFooter?: () => void;
   onSaveTemplate?: () => void;
   template: { name: string; usedIn: number } | null;
-  boxStyleNote: string | null;
   /** Only these props change (not the whole props sent back). */
   onPatch: (changes: Partial<AccessoriesLayerProps>) => void;
   fit?: { count: number; lines: number };
@@ -2318,7 +2312,6 @@ function AccessoriesInspector({
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
-      {boxStyleNote && <p className="text-xs text-muted-foreground">{boxStyleNote}</p>}
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Columns</Label>
         <SearchableSelect

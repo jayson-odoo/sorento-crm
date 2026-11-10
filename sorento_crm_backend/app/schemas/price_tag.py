@@ -1431,6 +1431,11 @@ class TagCombo(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    #: COMBO-SETTINGS-UX: the main product's label, the rich-text template repeated per part, and
+    #: `{part_product_id: label}` for every labelled part. Declared here or `response_model` drops them.
+    main_label: Optional[str] = None
+    parts_line: Optional[str] = None
+    part_labels: dict[str, str] = {}
     free_items: Optional[str] = None
     #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
     accessories: list[TagAccessory] = []
@@ -1455,6 +1460,8 @@ class ProductTagData(BaseModel):
     code: str
     name: str
     dimensions: str
+    #: COMBO-SETTINGS-UX: the flyer's `L780xW480xH400mm` form, "" when none is recorded.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []
@@ -1595,6 +1602,8 @@ class TagPartData(BaseModel):
     code: str
     name: str
     dimensions: str = ""
+    #: COMBO-SETTINGS-UX: `L780xW480xH400mm`; "" when none is recorded or the part was pinned before it.
+    dimensions_lwh: str = ""
     spec_lines: list[str] = []
     specs: list[SpecValue] = []
     images: list[TagImage] = []

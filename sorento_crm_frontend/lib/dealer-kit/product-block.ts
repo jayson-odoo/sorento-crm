@@ -19,7 +19,6 @@
 
 import type {
   TagAccessory,
-  TagAccessoryBoxStyle,
   TagCombo,
   FeatureIconsLayerProps,
   TagSpecValue,
@@ -48,12 +47,13 @@ import {
 import type { PriceBadgeInput } from './price-badge';
 import { featureIconsFor, variantFeatureIcons, type FeatureIcon } from './feature-icons';
 import { accessoriesOf, partAtSlot } from './accessory-box';
-import { accessoryBoxStyleOf, drawableFeatureIcons } from './accessory-card';
+import { drawableFeatureIcons } from './accessory-card';
 import { priceWithUpgrade } from './upgrade-items';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
 import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
+import { comboPartsHtml } from './combo-parts';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -722,7 +722,9 @@ export function layerRichBlocks(
         ? resolveSlotText({ slot_binding: 'price_tag_description', props: layer.props }, data)
         : path === 'combo.description'
           ? (comboOf(data)?.description ?? null)
-          : null;
+          : path === 'combo.parts'
+            ? comboPartsHtml(data)
+            : null;
     if (isRich(value)) source = value as string;
   } else if (!isRich(source)) {
     const inline = richTokenInText(source, data, layer.props);
@@ -742,7 +744,9 @@ export function layerRichBlocks(
   return richBlocksWithFields(source, data, mode, layer);
 }
 
-const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
+const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description|combo\.parts)\s*\}\}/g;
+/** Inside a description itself only the parts list is spliced (a description never pulls itself in). */
+const PARTS_TOKEN = /\{\{\s*(combo\.parts)\s*\}\}/g;
 
 /** The stored value behind a rich description token, rich or not. */
 function richTokenValue(
@@ -750,6 +754,7 @@ function richTokenValue(
   data: TagBindingData | null | undefined,
   props: TagLayerProps | undefined,
 ): string | null {
+  if (path === 'combo.parts') return comboPartsHtml(data);
   return path === 'product.price_tag_description'
     ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
     : (comboOf(data)?.description ?? null);
@@ -808,12 +813,13 @@ function spliceRichTokens(
   data: TagBindingData | null | undefined,
   mode: MergeFieldMode,
   layer: Pick<TagLayer, 'props'>,
+  tokens: RegExp = RICH_TOKEN,
 ): RichBlock[] | null {
   const out: RichBlock[] = [{ ...entry, runs: [] }];
   let spliced = false;
   for (const run of entry.runs) {
     let at = 0;
-    for (const match of run.text.matchAll(RICH_TOKEN)) {
+    for (const match of run.text.matchAll(tokens)) {
       const value = richTokenValue(match[1], data, layer.props);
       const blocks = isRich(value) ? richBlocksWithFields(value, data, mode, layer, false) : null;
       if (!blocks) continue;
@@ -822,7 +828,10 @@ function spliceRichTokens(
       if (start > at) out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at, start), data, mode, layer));
       blocks.forEach((block, index) => {
         const runs = block.runs.map((own) => underTokenMarks(run, own));
-        if (index === 0) out[out.length - 1].runs.push(...runs);
+        // A token alone at the start of its paragraph takes the spliced block's own shape (a bullet,
+        // a heading), so a list's first item keeps its marker; text before it joins it as before.
+        if (index === 0 && out[out.length - 1].runs.length === 0) out[out.length - 1] = { ...block, runs };
+        else if (index === 0) out[out.length - 1].runs.push(...runs);
         else out.push({ ...block, runs });
       });
       at = start + match[0].length;
@@ -847,7 +856,7 @@ export function richBlocksWithFields(
   if (!isRich(value)) return null;
   const out: RichBlock[] = [];
   for (const entry of parseRichText(value)) {
-    const spliced = spliceData && layer ? spliceRichTokens(entry, data, mode, layer) : null;
+    const spliced = layer ? spliceRichTokens(entry, data, mode, layer, spliceData ? RICH_TOKEN : PARTS_TOKEN) : null;
     if (spliced) {
       out.push(...spliced);
       continue;
@@ -1343,8 +1352,6 @@ export interface TagLayerDisplay {
   accessories?: TagAccessory[];
   /** PRICETAG-ACCESSORY-DESIGNER: the box's card is being edited; the cards after the first fade. */
   accessoryEditing?: boolean;
-  /** S6: the box style the previewed product / combo names; the box draws it instead of its own design. */
-  accessoryBoxStyle?: TagAccessoryBoxStyle | null;
   /** PRICETAG-UPGRADE-VARIANTS S1: the rules a card's feature_icons element may draw (those with a
    *  signed url, `drawableFeatureIcons`) and the urls, by asset id. */
   cardIcons?: FeatureIcon[];
@@ -1479,7 +1486,7 @@ export function layerDisplay(
       const icons = { cardIcons: drawableFeatureIcons(featureIcons, assetUrls), iconUrls: assetUrls };
       // No data bound (the template editor with nothing previewed): absent, so samples draw.
       return data
-        ? { accessories: accessoriesOf(data, layer), accessoryBoxStyle: accessoryBoxStyleOf(data, layer), ...icons }
+        ? { accessories: accessoriesOf(data, layer), ...icons }
         : icons;
     }
 

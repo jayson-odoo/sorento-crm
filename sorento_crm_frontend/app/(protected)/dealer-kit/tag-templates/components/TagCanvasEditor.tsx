@@ -263,7 +263,6 @@ import {
   accessoryDesign,
   accessoryDesignChanged,
   accessoryEditItems,
-  effectiveBoxProps,
   designKey,
   linkCorrectionPatches,
   type AccessoryDesign,
@@ -1923,7 +1922,6 @@ export function TagCanvasEditor({
     const display = layer.props.kind === 'accessories' ? { ...shown, accessoryDropMarker: true } : shown;
     if (headerDragId === layer.id) return { ...display, accessoryHeaderHidden: true };
     if (accessoryEdit?.layerId !== layer.id) return display;
-    // Under edit the box's OWN design is what is edited, never a previewed owner's override.
     return {
       ...display,
       accessories: accessoryEditItems(
@@ -1931,17 +1929,14 @@ export function TagCanvasEditor({
         layer.props.kind === 'accessories' ? layer.props.list : undefined,
       ),
       accessoryEditing: true,
-      accessoryBoxStyle: null,
     };
   };
   /** PRICETAG-HEADER-DRAG: the layout of a box whose header can be handled on the canvas (the one
-   *  KonvaTagLayer draws), else null: not a box, locked, hidden, under card edit, or drawn in a
-   *  previewed owner's box style (that style is what shows, so a drag here would not be what is seen). */
+   *  KonvaTagLayer draws), else null: not a box, locked, hidden, or under card edit. */
   const headerLayoutFor = (box: TagLayer | undefined) => {
     if (!box || box.props.kind !== 'accessories' || box.locked || box.visible === false) return null;
     if (accessoryEdit?.layerId === box.id) return null;
     const display = displayFor(box);
-    if (display?.accessoryBoxStyle) return null;
     const items = display?.accessories ?? sampleAccessories();
     const layout = box.props.card
       ? cardBoxLayout(items.length, box.props, box.width_mm, box.height_mm)
@@ -1963,20 +1958,6 @@ export function TagCanvasEditor({
     updateLayerPropsLinked(activeHeaderSel, {
       headerPos: { x_mm: rect.x_mm + dx, y_mm: rect.y_mm + dy },
     } as Partial<TagLayerProps>);
-  };
-  /** "Box style from <combo or product>: <name>" while the previewed owner overrides this box. */
-  const boxStyleNoteOf = (layer: TagLayer | null | undefined): string | null => {
-    if (!layer || layer.props.kind !== 'accessories') return null;
-    const data = dataOf(layer);
-    const style = layerDisplay(layer, data, assetUrls, library.featureIcons)?.accessoryBoxStyle;
-    if (!style || !data) return null;
-    const source =
-      data.kind === 'line'
-        ? (data.line.combo?.name ?? data.line.code)
-        : data.kind === 'product'
-          ? (data.product.combo?.name ?? data.product.code)
-          : '';
-    return `Box style from ${source}: ${style.name}`;
   };
   const drawnLayer = (layer: TagLayer): TagLayer => {
     if (accessoryEdit?.layerId !== layer.id || accessoryEdit.target !== 'footer') return layer;
@@ -4105,8 +4086,7 @@ export function TagCanvasEditor({
       if (!items) continue;
       const fit = { count: items.length, lines: accessoryLineCount(items) };
       fits.set(layer.id, fit);
-      // The previewed owner's box style, when it names one, is what prints (and what can overflow).
-      const props = effectiveBoxProps(layer.props, display?.accessoryBoxStyle);
+      const props = layer.props;
       dropped += props.card
         ? cardDropped(fit.count, props, layer.width_mm, layer.height_mm)
         : accessoryBoxLayout(fit.count, props, layer.width_mm, layer.height_mm, fit.lines).dropped;
@@ -5683,7 +5663,6 @@ export function TagCanvasEditor({
               accessoryTemplate={accessoryTemplateOf(selectedLayer)}
               accessoryEdit={accessoryEdit}
               onUpdateAccessoryElement={updateAccessoryElement}
-              accessoryBoxStyleNote={boxStyleNoteOf(selectedLayer)}
               accessoryHeaderSelected={
                 selectedLayer && activeHeaderSel === selectedLayer.id
                   ? (headerLayoutFor(selectedLayer)?.header?.text ?? null)
