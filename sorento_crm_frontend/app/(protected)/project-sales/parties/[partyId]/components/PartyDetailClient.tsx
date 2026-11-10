@@ -149,6 +149,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
               label="Phone"
               value={party.phone}
             />
+            <Field label="Fax" value={party.fax} />
             <Field label="Email" value={party.email} />
             <Field label="Address" value={party.address} />
           </CardContent>

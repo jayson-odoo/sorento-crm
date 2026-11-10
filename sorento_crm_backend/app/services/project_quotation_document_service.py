@@ -51,9 +51,13 @@ from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
     COVER_LAYOUT_DESIGNED,
+    COVER_LAYOUT_SECTIONS,
     cover_payload,
     cover_reference,
     cover_rows,
+    cover_sections,
+    flat_rows,
+    normalize_design,
     sender_of,
     default_design,
     design_of,
@@ -227,12 +231,14 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
             "recipient_name_snapshot": None,
             "recipient_address_snapshot": None,
             "recipient_phone_snapshot": None,
+            "recipient_fax_snapshot": None,
         }
     return {
         "recipient_party_id": party.id,
         "recipient_name_snapshot": party.name,
         "recipient_address_snapshot": party.address,
         "recipient_phone_snapshot": party.phone,
+        "recipient_fax_snapshot": party.fax,
     }
 
 
@@ -396,6 +402,7 @@ _RECIPIENT_FIELDS = (
     "recipient_name_snapshot",
     "recipient_address_snapshot",
     "recipient_phone_snapshot",
+    "recipient_fax_snapshot",
 )
 _SCOPE_FIELDS = ("scope_label", "series_id", "notes")
 
@@ -700,13 +707,14 @@ def issue(
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
         cover_closing_rendered=document.cover_closing_html,
+        # Normalized: a design saved before QUOTE-COVER-FIELDS is frozen in the sections shape.
         cover_design=(
-            copy.deepcopy(active_design.design)
+            normalize_design(active_design.design)
             if active_design is not None and active_design.design
             else default_design()
         ),
         terms_rendered=document.terms_html,
-        layout_version=COVER_LAYOUT_DESIGNED,
+        layout_version=COVER_LAYOUT_SECTIONS,
         payment_terms=document.payment_terms,
         validity=document.validity,
         grand_total=ZERO,
@@ -960,6 +968,7 @@ def make_quotation(
         recipient_name_snapshot=proposal.recipient_name_snapshot,
         recipient_address_snapshot=proposal.recipient_address_snapshot,
         recipient_phone_snapshot=proposal.recipient_phone_snapshot,
+        recipient_fax_snapshot=proposal.recipient_fax_snapshot,
         recipient_email_snapshot=proposal.recipient_email_snapshot,
         attn_name=proposal.attn_name,
         quotation_purpose=proposal.quotation_purpose,
@@ -1213,6 +1222,7 @@ def serialize_document(
         "recipient_name_snapshot": document.recipient_name_snapshot,
         "recipient_address_snapshot": document.recipient_address_snapshot,
         "recipient_phone_snapshot": document.recipient_phone_snapshot,
+        "recipient_fax_snapshot": document.recipient_fax_snapshot,
         "recipient_email_snapshot": document.recipient_email_snapshot,
         "quotation_purpose": document.quotation_purpose,
         "payment_terms": document.payment_terms,
@@ -1371,6 +1381,7 @@ def update_document(
         "recipient_name_snapshot",
         "recipient_address_snapshot",
         "recipient_phone_snapshot",
+        "recipient_fax_snapshot",
         "recipient_email_snapshot",
         "quotation_purpose",
         "payment_terms",
@@ -2164,12 +2175,21 @@ def serialize_sign_page(
             else None
         )
         layout3 = layout_of(record) >= COVER_LAYOUT_DESIGNED
-        cover = cover_rows(db, document, record, project, design_of(record) if layout3 else None)
+        sections = None
+        if layout_of(record) >= COVER_LAYOUT_SECTIONS:
+            # Total pages stays blank here: only the PDF knows its page count.
+            sections = cover_sections(db, document, record, project, design_of(record))
+            cover = flat_rows(sections)
+        else:
+            cover = cover_rows(
+                db, document, record, project, design_of(record) if layout3 else None
+            )
         our_ref = cover_reference(document, record, project)
         if layout3:
             designed = cover_payload(
                 cover,
                 design_of(record),
+                sections=sections,
                 intro=record.cover_letter_rendered,
                 closing=record.cover_closing_rendered,
                 sender_name=None,
@@ -2180,6 +2200,7 @@ def serialize_sign_page(
         "our_ref": our_ref,
         "document_kind": (document.kind if document is not None else None) or KIND_PROPOSAL,
         "cover_rows": cover,
+        "cover_sections": designed.get("cover_sections"),
         "cover_title": designed.get("cover_title"),
         "cover_show_letterhead": designed.get("cover_show_letterhead"),
         "cover_intro_html": designed.get("cover_intro_html"),
@@ -2230,6 +2251,7 @@ _PREVIEW_FIELDS = (
     "recipient_name_snapshot",
     "recipient_address_snapshot",
     "recipient_phone_snapshot",
+    "recipient_fax_snapshot",
     "recipient_email_snapshot",
     "quotation_purpose",
     "payment_terms",
@@ -2237,6 +2259,10 @@ _PREVIEW_FIELDS = (
     "cover_letter_html",
     "cover_closing_html",
     "terms_html",
+    # QUOTE-COVER-FIELDS: the Project Title band and the Prepared by block.
+    "subject_title",
+    "signatory_name",
+    "signatory_phone",
 )
 
 
@@ -2302,11 +2328,15 @@ def preview_cover(
     active = templates.active_template(
         db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
     )
-    design = active.design if active is not None and active.design else default_design()
+    design = normalize_design(
+        active.design if active is not None and active.design else default_design()
+    )
     sender = sender_of(db, document.company_id)
+    sections = cover_sections(db, document, draft, project, design)
     return cover_payload(
-        cover_rows(db, document, draft, project, design),
+        flat_rows(sections),
         design,
+        sections=sections,
         intro=document.cover_letter_html,
         closing=document.cover_closing_html,
         noun=document_noun(document),
