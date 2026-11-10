@@ -1999,6 +1999,11 @@ class ProjectQuotationDocumentBase(BaseModel):
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class ProjectQuotationFormScopeCreate(BaseModel):
@@ -2347,6 +2352,11 @@ class QuotationTemplateBase(BaseModel):
     body_html: str = ""
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
@@ -2372,6 +2382,11 @@ class QuotationTemplateUpdate(BaseModel):
     design: Optional[Dict[str, Any]] = None
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
 
 
 class QuotationTemplateResponse(QuotationTemplateBase):
@@ -2619,6 +2634,11 @@ class QuotationCoverPreviewRequest(BaseModel):
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
+    # QUOTE-TERMS-SELECT: the picked AutoCount term and the validity pair; the service sets the
+    # two texts above from them (app/services/quote_terms_service.py).
+    payment_term_id: Optional[str] = None
+    validity_value: Optional[int] = None
+    validity_unit: Optional[str] = None
     terms_html: Optional[str] = Field(default=None, max_length=50000)
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)

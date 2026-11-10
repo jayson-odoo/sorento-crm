@@ -295,6 +295,23 @@ def get_quotation_letter_templates(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/projects/{project_id}/quotation-documents/payment-terms")
+def get_quotation_payment_terms(
+    project_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The quotation form's Payment Terms select (QUOTE-TERMS-SELECT): the project's company's
+    active AutoCount terms. Declared before ``/{document_id}``."""
+    from app.services import quote_terms_service as quote_terms
+
+    try:
+        project = _editable_project(db, project_id, current_user, write=False)
+        return {"data": quote_terms.list_terms(db, company_id=str(project.company_id))}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post(
     "/projects/{project_id}/quotation-documents/cover-preview",
     response_model=QuotationCoverPreviewResponse,

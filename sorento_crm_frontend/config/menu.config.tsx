@@ -646,6 +646,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'master_data.item_classes.view',
           },
           {
+            title: 'Payment Terms',
+            path: '/master-data-management/payment-terms',
+            permission: 'master_data.payment_terms.view',
+          },
+          {
             title: 'Units of Measure',
             path: '/master-data-management/units-of-measure',
             permission: 'master_data.units_of_measure.view',
@@ -2082,6 +2087,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       title: 'Item Classes',
       path: '/master-data-management/item-classes',
       permission: 'master_data.item_classes.view',
+    },
+    {
+      title: 'Payment Terms',
+      path: '/master-data-management/payment-terms',
+      permission: 'master_data.payment_terms.view',
     },
     {
       title: 'Units of Measure',

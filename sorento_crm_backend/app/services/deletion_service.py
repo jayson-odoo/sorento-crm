@@ -43,6 +43,7 @@ from app.models.finance import BillingDocument
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import SPOAllocation, Supplier
+from app.models.payment_term import PaymentTerm
 from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
@@ -135,6 +136,7 @@ ENTITY_MODELS: dict[str, type] = {
     "sales_agents": SalesAgent,
     "brands": Brand,
     "item_classes": ItemClass,
+    "payment_terms": PaymentTerm,
     **{name: spec.header_model for name, spec in DOCUMENT_SPECS.items()},
 }
 
@@ -153,13 +155,16 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
     "sales_agents": ("is_active", False),
     "brands": ("is_active", False),
     "item_classes": ("is_active", False),
+    "payment_terms": ("is_active", False),
 }
 
 # Masters whose deletion only ever deactivates, even with no referrer the catalogue probe sees.
 # Contact access is keyed by item class CODE (`respond_contacts.allowed_item_class_codes`, no
 # FK), so a hard delete would turn the class's products into "No class" and change what those
 # contacts see (TAG-BRAND-CLASS D7; the Item Classes screen refuses that delete with 409).
-DEACTIVATE_ONLY = {"item_classes"}
+# QUOTE-TERMS-SELECT: a quotation or terms template may name a payment term, so it is only ever
+# deactivated (hidden from new picks; what already prints keeps printing).
+DEACTIVATE_ONLY = {"item_classes", "payment_terms"}
 
 
 class DeletionService:

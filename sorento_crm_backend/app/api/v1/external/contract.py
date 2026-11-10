@@ -87,7 +87,8 @@ router = APIRouter()
 # it names" note here was wrong and has been removed.
 FIELDS_ADDED: dict[str, list[str]] = {
     "products": ["is_discontinued", "remark", "brand_code", "item_type_code", "item_class_code"],
-    "customers": ["market_segment_code", "region", "sales_agent_code"],
+    # v2.14 (QUOTE-TERMS-SELECT): `payment_terms_code` = AutoCount Debtor.DisplayTerm, stored.
+    "customers": ["market_segment_code", "region", "sales_agent_code", "payment_terms_code"],
     "sales_orders": [
         "customer_segment",
         "customer_region",
@@ -170,6 +171,9 @@ FIELDS_ADDED: dict[str, list[str]] = {
     "consignment_returns_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
     # v2.11 (ITEM-CLASS-MASTER): a new master entity, the brands shape.
     "item_classes": ["code", "name", "description", "is_active"],
+    # v2.14 (QUOTE-TERMS-SELECT): AutoCount Terms as a master.
+    # AutoCount Terms has two fields: code = DisplayTerm (prints), rule = Terms (calculation).
+    "payment_terms": ["code", "rule", "is_active"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -295,7 +299,8 @@ FIELD_NOTES: dict[str, str] = {
 # stays in the vocabulary as the value a pre-2.1 integration may still be
 # checking for, even though nothing emits it any more.
 FIELDS_REMOVED: dict[str, list[str]] = {
-    "customers": ["credit_limit", "payment_terms_days", "payment_terms_code"],
+    # `payment_terms_code` left this list at v2.14: it is accepted and stored again (Debtor.DisplayTerm).
+    "customers": ["credit_limit", "payment_terms_days"],
     "suppliers": ["payment_terms_code"],
 }
 
