@@ -1,6 +1,6 @@
 # PLAN: configurable project party roles + proposal To picker (lane PROJECT-PARTY-ROLES)
 
-Status: Plan (behaviour card pending owner answer). Track: full (migration + permission surface).
+Status: Plan (behaviour card CARD-project-party-roles-10nov.md posted, waiting on owner). Track: full (migration + permission surface).
 
 Owner rulings, 10 Nov 2026:
 1. Project party roles are configurable like the lead source: an admin adds, edits, renames and
