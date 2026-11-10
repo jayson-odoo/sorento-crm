@@ -64,7 +64,8 @@ def attempt_store() -> Optional[Any]:
     return _client()
 
 
-def _store_failed() -> None:
+def store_failed() -> None:
+    """Skip the store for `_DOWN_SECONDS` after an error (shared with `po_replace_hint`)."""
     global _down_until
     _down_until = time.monotonic() + _DOWN_SECONDS
 
@@ -101,7 +102,7 @@ def send_with_attempts(
             attempt = int(store.get(name) or 0)
         except Exception:  # noqa: BLE001
             logger.warning("autocount write: attempt store unreachable, using the intent key")
-            _store_failed()
+            store_failed()
             store = None
     answer = send(attempt_key(base_key, attempt))
     if not is_definite_refusal(answer):
@@ -117,5 +118,5 @@ def send_with_attempts(
             store.set(name, attempt, ex=_TTL_SECONDS)
         except Exception:  # noqa: BLE001
             logger.warning("autocount write: could not record the refusal for a new attempt")
-            _store_failed()
+            store_failed()
     return answer

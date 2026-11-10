@@ -8,7 +8,9 @@ records the row it is replacing; the ingest pairs that vanished row with the ONE
 the same product, qty and SO link, so the CRM line (same id) is re-keyed instead.
 
 Kept in the same Redis as the attempt count (no schema), for a few minutes. With Redis down
-nothing is recorded and `StockDebtPoLinkService._apply` merges the ingest's duplicate instead.
+nothing is recorded and `StockDebtPoLinkService._apply` merges the ingest's duplicate instead:
+still one line under the same id, but the ingest has already released that line's order inquiry
+links as removed in AutoCount, and the merge cannot bring those back (degraded path).
 """
 from __future__ import annotations
 
@@ -45,23 +47,34 @@ def remember(old_ref: str, *, qty: Any, from_so_ref: Optional[str]) -> None:
                   json.dumps({"qty": _qty(qty), "so": _so(from_so_ref)}), ex=_TTL_SECONDS)
     except Exception:  # noqa: BLE001
         logger.warning("po link: could not record the replace hint")
-        idem._store_failed()
+        idem.store_failed()
+
+
+def forget(old_ref: Optional[str]) -> None:
+    """The replace was refused: AutoCount kept the row, so its hint must not pair anything."""
+    store = idem.attempt_store()
+    if store is None or not old_ref:
+        return
+    try:
+        store.delete(f"{_PREFIX}{old_ref.strip()}")
+    except Exception:  # noqa: BLE001
+        idem.store_failed()
 
 
 def lookup(refs: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """`{old_ref: {"qty": str, "so": ref or None}}` for the refs that have a live hint."""
+    """`{old_ref: {"qty": str, "so": ref or None}}` for the refs that have a live hint (one MGET)."""
+    refs = list(refs)
     store = idem.attempt_store()
-    if store is None:
+    if store is None or not refs:
         return {}
     found: Dict[str, Dict[str, Any]] = {}
     try:
-        for ref in refs:
-            raw = store.get(f"{_PREFIX}{ref.strip()}")
+        for ref, raw in zip(refs, store.mget([f"{_PREFIX}{ref.strip()}" for ref in refs])):
             if raw:
                 found[ref] = json.loads(raw)
     except Exception:  # noqa: BLE001
         logger.warning("po ingest: replace hints unreachable, no pairing")
-        idem._store_failed()
+        idem.store_failed()
         return {}
     return found
 

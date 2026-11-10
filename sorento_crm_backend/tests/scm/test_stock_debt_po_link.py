@@ -92,6 +92,13 @@ class MemoryStore:
         self.data[name] = str(value).encode()  # Redis answers bytes
         return True
 
+    def mget(self, names):
+        return [self.data.get(name) for name in names]
+
+    def delete(self, name):
+        self.data.pop(name, None)
+        return 1
+
 
 @pytest.fixture(autouse=True)
 def refusal_store(monkeypatch):
@@ -987,10 +994,27 @@ def test_every_write_of_a_press_carries_one_request_id(scm_app, fake_ss):
 # line (same id) is re-keyed, never shown as removed, and no duplicate or retired copy carries a ref.
 
 
-def _push_po(w, details):
-    """The PO ingest push SS sends with the read-back: `details` = (dtl, qty, warehouse, so_ref, seq)."""
+def _push_po(w, details, *, own_session=False):
+    """The PO ingest push SS sends with the read-back: `details` = (dtl, qty, warehouse, so_ref, seq).
+
+    `own_session`: as on db3, the push is another request in its own transaction, so the link
+    request's loaded copies of these lines are stale when its `_apply` runs. Emulated in the one
+    test session: after the push, every line the session held gets its pre-push values back as
+    if loaded (no change history), exactly what an un-expired identity map would show."""
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    from app.models.procurement import PurchaseOrderLine
     from app.services.document_ingest_service import DocumentIngestService
 
+    if own_session:
+        held = [o for o in w["db"].identity_map.values() if isinstance(o, PurchaseOrderLine)]
+        before = {o: {c.key: getattr(o, c.key) for c in PurchaseOrderLine.__table__.columns} for o in held}
+        result = _push_po(w, details)
+        assert all(r.outcome.value in ("created", "updated", "unchanged") for r in result.records)
+        for obj, values in before.items():
+            for key, value in values.items():
+                set_committed_value(obj, key, value)
+        return result
     po = w["po"]
     record = {
         "source_ref": po.source_ref, "po_number": po.po_number, "status": "open",
@@ -1024,7 +1048,7 @@ def _sends(w, path, details, replaced, order):
     """SS's answer for `path`; with order "ingest_first" the ingest push lands inside the call."""
     def handler(request):
         if order == "ingest_first":
-            _push_po(w, details)
+            _push_po(w, details, own_session=True)
         return _answer(details, replaced)
     return handler
 
@@ -1178,6 +1202,13 @@ def test_b12_ingest_first_without_the_hint_still_keeps_one_line(scm_app, fake_ss
     (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
     assert result["outcome"] == "done"
     _assert_one_line_per_row(w, details, kept_id=w["po_line"].id, kept_dtl=12303)
+    # The claim ingest raised on its duplicate moved to the kept line, not SET NULL / gone.
+    claims = w["db"].execute(
+        text("SELECT po_line_id FROM scm.order_link_claim WHERE po_line_id = :id"),
+        {"id": w["po_line"].id},
+    ).scalars().all()
+    assert str(w["po_line"].id) in {str(c) for c in claims if c}, claims
+    # Degraded path (no hint): ingest already released the old line as removed, its OI links go.
 
 
 def test_b12_ingest_pairs_a_hinted_row_with_its_replacement(scm_app, fake_ss):
@@ -1241,3 +1272,24 @@ def test_a_raising_second_send_keeps_the_stored_attempt(refusal_store):
     assert refusal_store.get(f"{idem._PREFIX}base") is None
     idem.send_with_attempts(refusal_store, "base", lambda key: sent.append(key) or {"outcome": "done"})
     assert sent == ["base", idem.attempt_key("base", 1), "base"]
+
+
+def test_b12_a_refused_replace_drops_its_hint(scm_app, fake_ss, refusal_store):
+    """AutoCount kept the row: a later re-save of it must not be paired from a stale hint."""
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    assert not [k for k in refusal_store.data if "po_replace" in k]
+
+
+def test_b12_a_done_replace_records_its_hint_before_the_send(scm_app, fake_ss, refusal_store):
+    w = _world(scm_app, fake_ss)
+    seen = []
+
+    def answer(request):
+        seen.extend(k for k in refusal_store.data if "po_replace" in k)
+        return _done_split(request)
+
+    fake_ss.answers["/api/v1/autocount/po-links"] = answer
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    assert seen == [f"sorento:autocount_write:po_replace:{DB}:12008:12009"]

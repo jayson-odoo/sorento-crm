@@ -1832,7 +1832,11 @@ class DocumentIngestService(MasterRefResolver):
         from app.services.scm import po_replace_hint
 
         incoming_refs = {values["source_ref"] for values in line_values}
-        vanished = [ref for ref in by_ref if ref not in incoming_refs]
+        # A line already retired before this push is history, not a row being replaced now.
+        vanished = [
+            ref for ref, row in by_ref.items()
+            if ref not in incoming_refs and row.line_status != CANCELLED
+        ]
         if not vanished:
             return 0
         hints = po_replace_hint.lookup(vanished)

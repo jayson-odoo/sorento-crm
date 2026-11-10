@@ -27,7 +27,7 @@ from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.stock_debt_snapshot import StockDebtSnapshotRow
-from app.services.autocount_idempotency import attempt_store, send_with_attempts
+from app.services.autocount_idempotency import attempt_store, is_definite_refusal, send_with_attempts
 from app.services.error_handler import AppException, handle_not_found
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.project_supply_service import ProjectSupplyService
@@ -50,6 +50,16 @@ _REASONS = {
     "WRITE_DISABLED": SWITCHED_OFF,
     "WRITE_NOT_ALLOWED": SWITCHED_OFF,
 }
+
+
+#: B12 merge: what the PO ingest writes on a line, so what the duplicate it created knows better.
+#: The planner's `moq_snapshot` / `order_multiple_snapshot` are the CRM's own and stay.
+_INGEST_OWNED = (
+    "product_id", "warehouse_id", "qty_ordered", "qty_received", "qty_cancelled",
+    "cancelled_by_cancel_doc", "removed_unreferenced", "unit_cost", "discount", "line_total", "uom",
+    "currency", "expected_date", "line_status", "source_system", "from_so_line_ref",
+    "from_po_line_ref", "from_po_number", "line_no", "from_so_external",
+)
 
 
 def _keys(ref: Optional[str]) -> Optional[Tuple[str, int, int]]:
@@ -351,11 +361,14 @@ class StockDebtPoLinkService:
         same intent goes as a new attempt (STOCKDEBT-LINK-IDEM-KEY), since the Shared Service
         replays a stored refusal for the same key and body forever. Any unconfirmed answer keeps
         the key, so a timeout retry still replays and never splits the PO row twice."""
-        return send_with_attempts(
+        answer = send_with_attempts(
             attempt_store(),
             self._intent_key(path, body, po_line),
             lambda key: self._send(path, body, key=key),
         )
+        if is_definite_refusal(answer):  # nothing was replaced: the B12 hint must not pair
+            po_replace_hint.forget(po_line.source_ref)
+        return answer
 
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
@@ -410,10 +423,8 @@ class StockDebtPoLinkService:
                         text(f'UPDATE {referrer} SET "{column}" = :keep WHERE "{column}" = :dup'),
                         {"keep": str(keep.id), "dup": str(dup.id)},
                     )
-                for column in PurchaseOrderLine.__table__.columns:
-                    if column.key in ("id", "purchase_order_id", "company_id", "created_at", "source_ref"):
-                        continue
-                    setattr(keep, column.key, getattr(dup, column.key))
+                for column in _INGEST_OWNED:
+                    setattr(keep, column, getattr(dup, column))
                 self.db.delete(dup)
                 self.db.flush()
         except Exception:  # noqa: BLE001
