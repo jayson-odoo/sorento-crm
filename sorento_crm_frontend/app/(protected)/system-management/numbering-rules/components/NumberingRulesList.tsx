@@ -123,7 +123,7 @@ export default function NumberingRulesList() {
 
   if (isForbidden) {
     return (
-      <AccessDenied description="Only people whose role includes View Running Numbers can open this. Ask an administrator if you need it." />
+      <AccessDenied inline description="Only people whose role includes View Running Numbers can open this. Ask an administrator if you need it." />
     );
   }
 

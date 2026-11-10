@@ -14,7 +14,7 @@ describe('orderInquiryMainAction', () => {
     expect(orderInquiryMainAction({ ...base, stagedCount: 2 })).toBe('reserve');
   });
 
-  it('Reserve is the main action when there is nothing left to confirm', () => {
+  it('Reserve is the main action when nothing is left to confirm (the OI waits on CS)', () => {
     expect(orderInquiryMainAction({ ...base, confirmDisabled: true })).toBe('reserve');
   });
 

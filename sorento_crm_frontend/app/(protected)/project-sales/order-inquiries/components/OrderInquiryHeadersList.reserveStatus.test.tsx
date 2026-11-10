@@ -222,6 +222,20 @@ describe('UIUX-QUICK-WINS item 2: Reserve filter multi-select, column sortable',
     ) as HTMLElement;
     expect(within(th).getByRole('button', { name: 'Reserve' })).toBeInTheDocument();
   });
+
+  it('clicking the Reserve header asks the server to sort by it', async () => {
+    renderList();
+    await screen.findByText('OI-0001');
+    const th = (await screen.findAllByRole('columnheader')).find((el) =>
+      /Reserve/.test(el.textContent ?? ''),
+    ) as HTMLElement;
+    fireEvent.click(within(th).getByRole('button', { name: 'Reserve' }));
+    await waitFor(() =>
+      expect(listSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: 'reserve_status', dir: 'asc' }),
+      ),
+    );
+  });
 });
 
 describe('AC-SN-43 toolbar Actions menu', () => {

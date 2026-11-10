@@ -247,10 +247,12 @@ Binding for every new or changed screen. Where the Foundryx UI/UX playbook diffe
 - **Confirm dialogs (non-destructive sends; destructive ones are deferred actions, D7):** the
   title is a question about what happens ("Reserve 3 lines on OI-2611-0004?"), the line under it
   says what happens in plain words, never "Are you sure...", the safe button is named for what
-  it keeps ("Keep editing", "Keep supplier"), the action is verb + object ("Reserve and send to
-  Mei"). No press-and-hold.
+  it keeps ("Keep editing", "Keep inactive"), the action is verb + object ("Reserve and send to
+  Mei"). No press-and-hold. The legacy delete dialogs that still exist carry the same wording
+  ("Delete supplier?", "Keep supplier") but are still due to move to the deferred action.
 - **No access is one shared state:** `AccessDenied` (`app/components/common/AccessDenied.tsx`)
-  names who can open the area and offers the way back; never hand-rolled "Forbidden - ..." text
+  names who can open the area and offers the way back (full page), or sits `inline` in a list,
+  tab or panel whose page header and navigation stay usable; never hand-rolled "Forbidden - ..." text
   (a guard test, `app/components/common/AccessDenied.test.tsx`, enforces it).
 
 ## 7. Responsive

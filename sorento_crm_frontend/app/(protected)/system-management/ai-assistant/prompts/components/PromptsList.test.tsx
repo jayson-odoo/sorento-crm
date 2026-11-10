@@ -155,7 +155,7 @@ describe('PromptsList (standard DataGrid)', () => {
     useHasPermission.mockReturnValue(false);
     renderList();
     // UIUX-QUICK-WINS item 7: the shared no-access state, naming who can open it.
-    expect(screen.getByText("You don't have access to this page")).toBeInTheDocument();
+    expect(screen.getByText("You don't have access to this")).toBeInTheDocument();
     expect(screen.getByText(/role includes AI assistant settings/)).toBeInTheDocument();
   });
 

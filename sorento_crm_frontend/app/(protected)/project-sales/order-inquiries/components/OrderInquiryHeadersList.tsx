@@ -487,6 +487,8 @@ export function OrderInquiryHeadersList() {
       },
       {
         id: 'reserve_status',
+        // An accessor is what lets TanStack sort the column (getCanSort); the server orders it.
+        accessorFn: (row) => row.reserve_status ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Reserve" column={column} />,
         size: 190,
         meta: { headerTitle: 'Reserve' },

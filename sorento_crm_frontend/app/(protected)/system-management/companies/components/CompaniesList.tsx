@@ -108,7 +108,7 @@ export default function CompaniesList() {
 
   if (denied) {
     return (
-      <AccessDenied description="Only superadmins can manage companies." />
+      <AccessDenied inline description="Only superadmins can manage companies." />
     );
   }
 

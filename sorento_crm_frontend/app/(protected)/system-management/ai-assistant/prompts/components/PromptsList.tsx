@@ -249,7 +249,7 @@ export function PromptsList() {
 
   if (!hasPermission) {
     return (
-      <AccessDenied description="Only people whose role includes AI assistant settings can open this. Ask an administrator if you need it." />
+      <AccessDenied inline description="Only people whose role includes AI assistant settings can open this. Ask an administrator if you need it." />
     );
   }
 
