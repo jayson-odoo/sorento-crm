@@ -12,9 +12,11 @@ const BASE = '/api/v1/project-sales';
 
 export interface PaymentTermOption {
   id: string;
+  /** AutoCount DisplayTerm. */
   code: string;
-  description: string | null;
-  /** What prints: the description, else the code. */
+  /** AutoCount Terms, the calculation rule (e.g. "Net 0th Next 1 Month"); never printed. */
+  rule: string | null;
+  /** What prints and what the picker shows: the DisplayTerm. */
   label: string;
 }
 

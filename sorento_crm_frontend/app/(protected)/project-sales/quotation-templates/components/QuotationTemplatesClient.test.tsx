@@ -85,7 +85,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 vi.mock('../../_shared/hooks/usePaymentTerms', () => ({
   usePaymentTermOptions: () => ({
-    data: [{ id: 'pt-cbd', code: 'C.B.D.', description: 'CASH BEFORE DELIVERY', label: 'CASH BEFORE DELIVERY' }],
+    data: [{ id: 'pt-cbd', code: 'CASH BEFORE DELIVERY', rule: 'C.O.D.', label: 'CASH BEFORE DELIVERY' }],
     isLoading: false,
     error: null,
     refetch: vi.fn(),

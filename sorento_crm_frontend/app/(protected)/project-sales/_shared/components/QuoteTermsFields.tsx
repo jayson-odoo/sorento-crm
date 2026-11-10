@@ -66,8 +66,7 @@ export function QuoteTermsFields({
     const list: SearchableSelectOption[] = (terms.data ?? []).map((term) => ({
       value: term.id,
       label: term.label,
-      searchText: `${term.label} ${term.code}`,
-      description: term.description && term.code !== term.label ? term.code : undefined,
+      // One line per term, the DisplayTerm only (owner hand test, 10 Nov 2026).
     }));
     // A term picked before it was deactivated in AutoCount still shows as picked.
     if (termId && !list.some((option) => option.value === termId)) {

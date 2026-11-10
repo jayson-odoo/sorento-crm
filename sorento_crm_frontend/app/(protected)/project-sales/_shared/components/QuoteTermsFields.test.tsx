@@ -11,7 +11,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     'aria-label'?: string;
     value: string;
     onChange: (v: string) => void;
-    options?: { value: string; label: string }[];
+    options?: { value: string; label: string; description?: string }[];
     clearable?: boolean;
   }) => (
     <select
@@ -23,7 +23,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     >
       <option value="">none</option>
       {(props.options ?? []).map((o) => (
-        <option key={o.value} value={o.value}>
+        <option key={o.value} value={o.value} data-second-line={o.description ?? ''}>
           {o.label}
         </option>
       ))}
@@ -32,8 +32,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 const terms = [
-  { id: 'pt-cbd', code: 'C.B.D.', description: 'CASH BEFORE DELIVERY', label: 'CASH BEFORE DELIVERY' },
-  { id: 'pt-30', code: '30 DAYS', description: null, label: '30 DAYS' },
+  // Real AutoCount rows (crew probe, 10 Nov): DisplayTerm (= code = label) and Terms (rule) only.
+  { id: 'pt-cbd', code: 'CASH BEFORE DELIVERY', rule: 'C.O.D.', label: 'CASH BEFORE DELIVERY' },
+  { id: 'pt-30', code: '30 DAYS', rule: 'Net 0th Next 0 Month', label: '30 DAYS' },
 ];
 let lastProjectId: string | undefined;
 vi.mock('../hooks/usePaymentTerms', () => ({
@@ -81,6 +82,14 @@ describe('QuoteTermsFields', () => {
       payment_term_id: 'pt-cbd',
       payment_terms: 'CASH BEFORE DELIVERY',
     });
+  });
+
+  it('shows one line per term, the DisplayTerm only (owner hand test, 10 Nov)', () => {
+    renderFields({});
+    const select = screen.getByLabelText('Payment Terms') as HTMLSelectElement;
+    for (const option of Array.from(select.options).slice(1)) {
+      expect(option.dataset.secondLine).toBe('');
+    }
   });
 
   it('clearing the select clears the pick and the text', () => {
