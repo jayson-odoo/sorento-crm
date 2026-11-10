@@ -69,6 +69,7 @@ _APPROVAL_FILTERS = ("pending", "resubmitted", "rejected", "approved", "draft")
 _MACHINE_AUTH_METHODS = frozenset({"api_key", "integration_api_key", "connector"})
 
 _PROFILE_KEYS = (
+    "name",
     "registered_company_name",
     "location",
     "address",

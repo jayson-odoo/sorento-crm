@@ -211,6 +211,8 @@ class ProjectRegisterRequest(BaseModel):
     """
 
     title: str = Field(..., min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -246,6 +248,8 @@ class ProjectRegisterRequest(BaseModel):
 
 class ProjectUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -288,6 +292,8 @@ class ProjectApproveRequest(BaseModel):
     and a field sent here wins over what the project already carries."""
 
     title: Optional[str] = Field(None, min_length=1)
+    # Short project name (PROJECT-NAME): optional, at most 80, blank clears it.
+    name: Optional[str] = Field(None, max_length=80)
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None
     template_id: Optional[str] = None
@@ -350,6 +356,8 @@ class ProjectResponse(BaseModel):
     id: str
     project_code: Optional[str] = None
     title: str
+    # Short name for headers and pickers; null shows the title (PROJECT-NAME).
+    name: Optional[str] = None
     outcome: str
     loss_reason: Optional[str] = None
     admin_ref: Optional[str] = None
@@ -716,6 +724,7 @@ class ProjectLeadInformant(BaseModel):
 
 class ProjectLeadBase(ProjectLeadInformant):
     title: str = Field(min_length=1)
+    name: Optional[str] = Field(None, max_length=80)
     customer_id: Optional[str] = Field(
         None,
         description=(
@@ -762,6 +771,7 @@ class ProjectLeadCreate(ProjectLeadBase):
 
 class ProjectLeadUpdate(ProjectLeadInformant):
     title: Optional[str] = Field(None, min_length=1)
+    name: Optional[str] = Field(None, max_length=80)
     customer_id: Optional[str] = None
     developer_party_id: Optional[str] = None
     source: Optional[str] = None
@@ -786,6 +796,7 @@ class ProjectLeadResponse(BaseModel):
     id: str
     lead_code: str
     title: str
+    name: Optional[str] = None
 
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
@@ -882,6 +893,9 @@ class ProjectLeadQualifyRequest(BaseModel):
 
     title: Optional[str] = Field(
         None, description="Defaults to the lead's title. Split a masterplan here."
+    )
+    name: Optional[str] = Field(
+        None, max_length=80, description="Defaults to the lead's name (PROJECT-NAME)."
     )
     developer_party_id: Optional[str] = None
     type_id: Optional[str] = None

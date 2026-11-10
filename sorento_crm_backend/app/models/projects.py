@@ -317,6 +317,10 @@ class Project(Base, CompanyScopedMixin):
     # Comparison key for the registration lock. Minimal normalisation (casefold +
     # whitespace collapse) so "Phase 3A" and "Phase 3B" stay distinct.
     normalised_title = Column(Text, nullable=False)
+    # The short name people call the development (PROJECT-NAME, owner 10 Nov): shown in the
+    # header and pickers so the legal title stops bloating them. Optional, never unique and never
+    # part of the registration lock; a blank name shows the title instead (`project_display_name`).
+    name = Column(String(80), nullable=True)
 
     developer_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), nullable=True
@@ -832,6 +836,8 @@ class ProjectLead(Base, CompanyScopedMixin):
     )
 
     title = Column(Text, nullable=False)
+    # Short name, carried onto the project it qualifies into (PROJECT-NAME Q5).
+    name = Column(String(80), nullable=True)
     # Kept for the informational near-duplicate hint on the list (AC-O3). Same
     # normalisation as `projects.normalised_title` so a lead can be compared against
     # registered projects with the one shared helper, NOT to enforce anything.

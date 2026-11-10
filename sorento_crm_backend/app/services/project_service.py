@@ -55,6 +55,22 @@ REJECTED_LABEL = "Rejected"
 RESUBMITTED_LABEL = APPEALED_LABEL
 
 
+#: PROJECT-NAME: the short name's cap, the same as the column.
+PROJECT_NAME_MAX_LEN = 80
+
+
+def clean_project_name(value: Any) -> Optional[str]:
+    """A typed or extracted name as stored: whitespace collapsed, blank as null."""
+    text = " ".join(str(value or "").split())
+    return text or None
+
+
+def project_display_name(project) -> str:
+    """What a person recognises the project by: its short name, else its title (PROJECT-NAME
+    rule 7). Notifications and labels use this; documents keep the full title."""
+    return clean_project_name(getattr(project, "name", None)) or (getattr(project, "title", None) or "")
+
+
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
     "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
@@ -836,6 +852,7 @@ def serialize_projects(
                 "id": project.id,
                 "project_code": project.project_code,
                 "title": project.title,
+                "name": project.name,
                 "outcome": project.outcome,
                 "loss_reason": project.loss_reason,
                 "admin_ref": project.admin_ref,
@@ -1141,6 +1158,7 @@ def list_projects(
         query = query.filter(
             or_(
                 func.lower(Project.title).like(needle),
+                func.lower(Project.name).like(needle),
                 func.lower(Project.project_code).like(needle),
             )
         )
@@ -1313,6 +1331,7 @@ _PROFILE_FIELDS = (
 )
 
 _PROJECT_FIELDS = (
+    "name",
     "type_id",
     "template_id",
     "loss_reason",
@@ -1342,7 +1361,8 @@ def apply_sales_details(
 
     for key in _PROJECT_FIELDS:
         if key in payload:
-            setattr(project, key, payload[key])
+            value = clean_project_name(payload[key]) if key == "name" else payload[key]
+            setattr(project, key, value)
 
     db.flush()
 
