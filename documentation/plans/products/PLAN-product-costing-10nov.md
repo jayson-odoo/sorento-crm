@@ -1,7 +1,6 @@
 # PLAN: Product costing - Purchasing vs Pricing tabs + party costing (Bath Plus, dealers)
 
-Status: Plan, owner answered Q1-Q4 (10 Nov 23:3x), Q5 answered 23:4x and 23:5x (costing on the PARTY, not a partner table); Q6/Q7 (a) taken as working answers; card + mock v4 (`mockups/product-costing-10nov-mockup.html`) on PR #2321. Build only after approval.
-Track: full (migration + cost permission gating).
+Status: Plan final (card v4 + mock v4; all questions answered 10-11 Nov); waiting on crew's confirmation of owner approval of mock v4 before build. Track: full (migration + new permission + cost gating).
 
 Lane: PRODUCT-COSTING. Source: owner + management meeting 9 Nov 2026 "Project Internal Costing",
 owner's workbook Internal_Costing_Formula.xls (numbers are the owner's draft). Depends on
@@ -214,21 +213,20 @@ WB 245, selling RM 79.00, one product under each method (suppliers A primary RMB
 - Product override "Selected supplier" whose link is later deleted: "Selected supplier no longer
   linked", no fallback.
 
-## 6. Open questions (card v4)
+## 6. Answers to card v4 (crew, 11 Nov)
 
-- Q8 Which record is the costing party. (a) the `customers` (debtor) row, with a separate
-  `customer_costing_profiles` table; (b) `projects.parties`, adding dealers and partners as party
-  rows and types. Rec (a): every party that buys (the only kind that needs a buy price) is already a
-  debtor; parties reach it through `customer_id`; (b) duplicates every dealer and pollutes the
-  project role list.
-- Q9 Bath Plus. (a) use its existing debtor row if the dev check finds one, else create it with the
-  Customers > New form under its AutoCount debtor code; (b) seed it in the migration. Rec (a): a
-  migration cannot know the real debtor code, and a guessed one would split from the AutoCount row.
-- Working answers (crew, 23:5x): Q6 (a) product > party > company default; Q7 (a) party margin at
-  standard selling price.
-- Calls flagged for veto: exchange rates group-wide; "Average" = mean of current supplier prices;
-  product selection static; profile editing needs a new manage permission (management + admin);
-  no party type added for costing.
+- Q8 (a): the costing party is the `customers` (debtor) row, profile in separate tables.
+- Q9 (a): Bath Plus ALREADY exists as a debtor on the dev copy (`sorento_prod_1104`, 4 Nov prod
+  copy): `customer_code` 304-R017, name "RELATED - BATHPLUS SDN BHD", `debtor_type` project,
+  `autocount_debtor_type` IC, `customer_type` company, active. Use that row. No seed in the
+  migration; the hand-test setup step creates its profile at 8%.
+- Q6 (a) and Q7 (a) stand; every call flagged for veto is accepted. Mock v4 stands unless the owner
+  objects.
+- Correction found while writing the UAC: #2319 grants `products.cost.view` to `admin, director,
+  purchasing_manager, purchasing, purchasing_executive` (`sca_0001_products_cost_view.py`,
+  `GRANT_ROLE_SLUGS`, read from dev data there). There is no `management` / `manager` role slug in
+  that set, so "management" here = `director` (+ `admin`); `products.party_costing.manage` is
+  granted to those two only (AC-AX-04).
 
 ## 7. Build shape (after approval)
 
@@ -244,6 +242,77 @@ WB 245, selling RM 79.00, one product under each method (suppliers A primary RMB
   Costing tab, Products > Party costing index, dated Currency rates panel, Costing section on
   System Settings.
 
+## 8. Dependency on SUPPLIER-COST-ACCESS (#2319)
+
+Build uses #2319's `app/services/cost_access.py` (`COST_VIEW_PERM`, `require_cost_view`,
+`COST_AUDIT_KEYS`, `cost_hidden`) and its permission row. #2319 is an open draft (11 Nov). Two
+ways to build: (a) wait for #2319 to merge, then branch the build off main (one alembic chain,
+no foreign commits in this PR); (b) merge #2319's head into this branch now and re-merge main once
+#2319 lands (this PR then shows #2319's diff until it merges). Preferred (a); the build can start
+on the parts that do not touch the gate (rates, landing cost, methods) under (a) as well, with the
+gate wired in when #2319 is on main. Either way the migration's `down_revision` chains after
+`sca_0001_products_cost_view`. `markup_pct`
+joins `COST_AUDIT_KEYS` so History masks it (AC-PC-09).
+
+## 9. Slices (one lane, one PR; commits per slice)
+
+1. Exchange rates: `exchange_rates` table + seed, rate-in-force service, `load_rates` switch,
+   dated Currency rates panel.
+2. Costing core: settings (SST, default method), category transport rule + product override,
+   product cost-method override, pure `costing_service`, product costing endpoint, Purchasing tab
+   columns, Pricing tab (view + edit).
+3. Party costing: profile + products tables, CRUD + link/unlink, per-party list-query resource +
+   export, Products > Party costing index, customer Costing tab, Pricing tab Party prices card,
+   `useProductTargetPicker` without a source product.
+4. Hardening: access sweep (API key, contact session, customer payloads, MCP catalog), customer
+   merge carry, migration grants, History masking.
+
+One additive migration file for the lane (grown slice by slice before the first push of build),
+revision id <= 32 chars, re-parented with `scripts/alembic-reparent.sh` before the PR is marked
+ready. Checked on a scratch copy in this sandbox (upgrade, downgrade, upgrade); the shared dev DB
+gets a `crew-migration:` block of `IF NOT EXISTS` DDL.
+
+## 10. Red-first test list (tester writes these before any implementation)
+
+Backend, pytest on Postgres only (`tests/_pg_fixture.py`), each seeding its own chain (CI's DB is
+empty). Every row names the AC it pins.
+
+| File | Tests (AC) |
+|---|---|
+| `tests/test_costing_exchange_rates.py` | unique (currency, effective_from) -> 409 (ER-01); rate <= 0 refused (ER-01); in force on 31 Oct / 1 Nov / 1 Dec boundaries (ER-02); no row before D -> no-rate result, never 1 (ER-03); MYR row refused (ER-03); entry 1.6 units-per-MYR -> 0.625 stored, both directions returned (ER-07); add / edit / delete each write an audit row (ER-06); delete goes through the deferred-action registry (ER-06); routes keep `scm.dashboard.view` / `scm.config.manage` (ER-07) |
+| `tests/test_scm_load_rates_dated.py` | `load_rates` returns today's in-force row with `as_of` = effective_from; a future row is ignored until its day (freeze date) (ER-04); an existing planner caller (`reorder_engine` conversion) gets the same number it got from `scm.currency_rate` for the seeded rows (ER-04) |
+| `tests/test_costing_landing.py` (pure, no DB) | the five AC-LC-01 figures to full precision; 2 dp half-up only in the display helper (31.71875 -> 31.72, 212.355 -> 212.36); ADD applied after SST (kill: ADD before SST gives 32.51875); no transport rule -> +0 and flag (ST-03); product override beats category rule (ST-02) |
+| `tests/test_costing_methods.py` | primary: in-force row by date, `standard` packaging first, else cheapest named (LC-02); no primary -> "Set a primary supplier" (LC-03); selected supplier + its link deleted -> "no longer linked" (LC-03); average 40.014583 with EUR link skipped and named (LC-03; kill: counting the skipped link as 0 gives 30.01); last PO at the PO-date rate -> 31.425926 (LC-03; kill: today's rate gives 31.71875); precedence product > party > company, with source named (LC-04; kill: swapped order); no fallback (LC-05); selected supplier refused on a party profile and as company default (LC-06) |
+| `tests/test_costing_settings.py` | SST and default method read with defaults 1.10 / primary, write audited (ST-01); category rule and product override CRUD, mode in (add, multiply), value > 0 (ST-02) |
+| `tests/test_product_costing_routes.py` | Purchasing rows: per-link landing, selling = list_price on every row, mark-up 149.06 / 131.50 / 45.76, EUR link "no rate" (PT-01); Pricing payload: breakdown steps, method + source, last PO check, achieved mark-up (PT-02); Party prices card lists each party holding the product with party price + margin (PT-03); `products.list_price` unchanged after every costing write and no AutoCount client is called (monkeypatched to fail) (PT-04); 403 without `products.cost.view` (PT-05) |
+| `tests/test_party_costing_profiles.py` | one profile per customer, markup >= 0, method enum without selected (PC-01, LC-06); add 2 then same 2 -> 2 rows; 501 ids -> 422; one product on two parties (PC-02); Bath Plus-shaped fixture (code 304-R017, 8%) WB 245 -> 34.25625 / 130.61% (PC-03); manage permission required for create / edit / link / unlink, view permission alone -> 403 (PC-08); unlink goes through the deferred-action registry (PC-08); profile + link audit rows, `markup_pct` masked for a reader without cost view (PC-09) |
+| `tests/test_party_costing_list_export.py` | per-party list-query resource: columns, filters (category, brand, method), search, as-of date changes the rate used (PC-05); export workbook read back with openpyxl: header names party + as-of, numeric cells are numbers, no-cost row blank + note (PC-06); index resource lists only customers with a profile, with debtor type + group (PC-07) |
+| `tests/test_party_costing_access.py` | every costing route: no cost view -> 403, admin bypass -> 200 (AX-01); bare `X-API-Key` -> 401/403, contact portal session -> 401/403 (AX-02); customer detail / list / list-query export / portal order payloads carry no `markup`/`costing` key (AX-03); MCP catalog (`sorento_crm_mcp`) exposes no costing tool or path (AX-02) |
+| `tests/test_party_costing_customer_merge.py` | merge with profile on retired only -> moves; on both -> survivor's kept, products unioned, logged (PC-10) |
+| `tests/test_costing_migration.py` | upgrade on a scratch schema: tables, constraints, seed of one dated row per `scm.currency_rate` row, rerun adds nothing (ER-05); `products.party_costing.manage` granted to admin + director only (AX-04); downgrade drops only what it added |
+
+Frontend, vitest (jsdom), next to the component:
+
+| File | Tests (AC) |
+|---|---|
+| `products/[id]/components/ProductDetail.purchasingTab.test.tsx` | tab label Purchasing, `?tab=suppliers` opens it, columns + no-rate cell (PT-01) |
+| `products/[id]/components/ProductPricingTab.test.tsx` | hidden without cost view, `?tab=pricing` falls back to Overview (PT-05); breakdown with method chip + source (PT-02); edit swaps in place, method select clearable, options show preview figures, selected supplier select appears only for that method (PT-02); every empty state text, never "0.00" for unknown (LC-05); Party prices card (PT-03) |
+| `order-management/customers/components/CustomerDetail.costingTab.test.tsx` | Costing tab only with cost view, on view and edit (PC-04); empty state has no body button, header "Set up costing" only with manage (PC-04) |
+| `.../PartyCostingList.test.tsx` | columns with explicit `size`, `tableLayout: { width: 'fixed', columnsResizable: true }`, `exportConfig.kind = 'listQuery'`, As of control, Remove is a DeferredActionButton (PC-05, PC-06, PC-08) |
+| `.../PartyCostingIndex.test.tsx` | columns, row opens `/order-management/customers/{id}?tab=costing` (PC-07) |
+| `scm/policies/components/CurrencyRatesPanel.dated.test.tsx` | dated rows with status (Scheduled / In force / Past), both directions, entry in units-per-MYR converts, delete is deferred, no confirm (ER-06, ER-07) |
+| `products/[id]/components/ProductTargetPicker.noSource.test.tsx` | the hook works with no source product and marks already-added ids (PC-02) |
+
+Browser pass (agent-browser, cloud): sidebar from `/` to a product (Purchasing, Pricing, edit
+method), to Customers > 304-R017 Costing tab (set up 8%, add WB 245 via the picker, export), to
+Products > Party costing, to SCM Currency rates (add a 1 Dec row); a user without cost view sees
+none of it; 375 px and 1280 px.
+
+Kill tests (reviewer): ADD before SST; average counting a skipped link as 0; last PO at today's
+rate; rate lookup with `<` instead of `<=`; precedence party > product; removing
+`require_cost_view` from any one costing route; `markup_pct` dropped from `COST_AUDIT_KEYS`. Each
+must turn at least one test red.
+
 ## Status log
 
 
@@ -252,3 +321,4 @@ WB 245, selling RM 79.00, one product under each method (suppliers A primary RMB
 - 10 Nov 23:3x: owner answered Q1-Q4; card v2 (sections 2-7) + mock v2. Q5 renamed Bath Plus, being re-asked by crew.
 - 10 Nov 23:4x: Q5 answered as a generic business partner model; card v3 (3.3, 6, 7) + mock v3, Q6-Q7 asked.
 - 10 Nov 23:5x: costing moves onto the party (customers row + profile table), card v4 (3.3, 6, 7) + mock v4, Q8-Q9 asked.
+- 11 Nov: Q8 (a), Q9 (a) answered (Bath Plus = 304-R017); plan final, UAC file, red-first test list (section 10). Waiting on owner approval of mock v4.
