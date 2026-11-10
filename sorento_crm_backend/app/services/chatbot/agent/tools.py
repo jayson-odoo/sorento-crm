@@ -380,11 +380,14 @@ QUOTATION_LINES_SCHEMA: dict[str, Any] = {
     "function": {
         "name": QUOTATION_LINES,
         "description": (
-            "The lines of a project's quotation documents, to compare them: per document and scope the version, "
-            "total and each line (code, description, qty, uom, list price, unit price, discount %, line total). "
-            "Without refs: every document at its current versions. refs narrows to a document number "
-            "(PRJQ-2026-0006) or an issued revision (PRJQ-2026-0007-B); a ref that matches nothing is listed in "
-            "not_found. project_id is the open page's project or comes from crm_projects_find."
+            "A project's quotation documents with their lines. Alone enough to compare them: do not call the "
+            "quotations list first. Per document and scope: version, total, lines (code, description, qty, uom, "
+            "list price, unit price, discount %, line total, rate_only). A rate_only line is priced per unit and "
+            "is not in the scope total. refs narrows to a document number or an issued revision (document number, "
+            "a dash, its revision label: PRJQ-2026-0007-B, QT-2026-0003-R1); no match goes in not_found. "
+            "project_id is the open page's project or from crm_projects_find. Show a comparison as one compact "
+            "markdown table: a row per item code, a column per document with qty x unit price (discount %) = line "
+            "total, a totals row, then one sentence on the differences."
         ),
         "parameters": {
             "type": "object",
