@@ -19,3 +19,7 @@
   (its OI links released by the ingest are the documented loss).
 - U11 (B12) No hint, two candidates, or another qty / SO link: ingest does not pair (removal +
   create, as before). A refused replace drops its hint.
+- U12 (B13) An unlink answered with `FromSODtlKey 0` clears the CRM line's `from_so_line_ref`. A PO
+  ingest push naming SO DtlKey 0 (`db:doc:0`) clears it like `null`; an absent field keeps it.
+  SS still omits an empty link from its push (lane SS-PO-LINK-NULL), so an unlink made in
+  AutoCount itself stays stale in the CRM until that SS lane lands.

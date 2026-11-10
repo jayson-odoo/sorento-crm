@@ -493,7 +493,8 @@ class StockDebtPoLinkService:
             if linked:
                 line.from_so_line_ref = so_ref
                 linked_line = line
-            elif detail.get("FromSODtlKey") is None:
+            # B13 (db3, 10 Nov): AutoCount answers 0, not null, for a row with no link.
+            elif detail.get("FromSODtlKey") in (None, 0):
                 line.from_so_line_ref = None
             location = detail.get("Location")
             if location:

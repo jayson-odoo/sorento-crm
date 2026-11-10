@@ -1430,7 +1430,13 @@ class DocumentIngestService(MasterRefResolver):
                     ILLEGAL_CHARACTERS_RE.sub("", line.product_name or "").strip() or None
                 )
         if "from_so_line_ref" in line.model_fields_set:
-            values["from_so_line_ref"] = line.from_so_line_ref
+            ref = line.from_so_line_ref
+            # B13 (AC-E2E-DB3, 10 Nov): AutoCount's `FromSODtlKey 0` means the row has NO link.
+            # A ref naming DtlKey 0 is that explicit unlink, so it clears like a `null` does,
+            # never an unresolvable ref (AC-RL-47 keeps those). Absent stays "unknown".
+            if ref and ref.strip().rsplit(":", 1)[-1] == "0":
+                ref = None
+            values["from_so_line_ref"] = ref
         if "from_po_line_ref" in line.model_fields_set:
             values["from_po_line_ref"] = line.from_po_line_ref
         if "from_po_number" in line.model_fields_set:
