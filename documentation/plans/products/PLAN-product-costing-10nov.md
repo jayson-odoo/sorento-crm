@@ -398,3 +398,14 @@ No dev copy is reachable from the cloud, so the check ran on a main-shaped copy:
 - `alembic downgrade -1`: the six tables and the manage permission gone, `products.cost.view` kept
   (owned by #2319), `scm.currency_rate` untouched (2 rows);
 - upgrade again: same result; `alembic heads` = `pc_0001_product_costing` only.
+
+## 12. Known limits and named triggers (reviewer S5)
+
+- GET /rows costs only the current page in the default view (sort by code, Has cost off). With
+  "Has cost" on, or a sort on Landing / Final / Mark-up / Margin, every filtered product is costed
+  in Python per request, and every historical `product_supplier_costs` row of those links is
+  loaded (constant query count, no N+1; reviewer estimate 1-2 s at ~5,000 products, not measured).
+  Trigger to build more: a costing page request measured over 1 s, or over ~10,000 products. Then
+  filter cost rows to `effective_from <= as_of` in SQL and cache the costed set per request.
+- Native `type="date"` inputs ("As of", "Effective from") display in the browser's locale, like the
+  55 existing date inputs in the app; the values the page itself prints are dd/mm/yyyy.
