@@ -90,6 +90,14 @@ def _keywords(db):
     return [k.keyword for k in db.query(LookupOptionKeyword).all()]
 
 
+def _alias_options(db):
+    # Only this revision's set. The blank schema is not empty of lookup options: tests/conftest.py
+    # seeds the project_party_role set into every create_all schema (PROJECT-PARTY-ROLES, #2300).
+    return db.query(LookupOption).join(LookupSet, LookupOption.set_id == LookupSet.id).filter(
+        LookupSet.set_key == ALIAS_SET_KEY
+    )
+
+
 # ------------------------------------------------------------------ the revision
 
 
@@ -172,7 +180,7 @@ def test_a_type_matched_by_name_and_existing_option_and_keyword_are_reused_case_
     db.flush()
     _call(db)
     assert db.query(LookupSet).filter_by(set_key=ALIAS_SET_KEY).count() == 1
-    assert db.query(LookupOption).count() == 1
+    assert _alias_options(db).count() == 1
     assert _keywords(db) == ["VIDEOS"]
 
 
@@ -181,7 +189,7 @@ def test_a_label_with_no_attachment_type_is_skipped_and_no_type_is_created(db):
     before = db.query(AttachmentType).count()
     _call(db)
     assert db.query(AttachmentType).count() == before
-    assert db.query(LookupOption).count() == 1  # only photo's
+    assert _alias_options(db).count() == 1  # only photo's
 
 
 def test_a_skipped_file_type_label_is_logged_at_info_and_a_matched_one_is_not(db, caplog):
@@ -195,7 +203,7 @@ def test_a_skipped_file_type_label_is_logged_at_info_and_a_matched_one_is_not(db
 
 def test_with_no_types_at_all_no_option_is_created(db):
     _call(db)
-    assert db.query(LookupOption).count() == 0 and db.query(LookupOptionKeyword).count() == 0
+    assert _alias_options(db).count() == 0 and db.query(LookupOptionKeyword).count() == 0
 
 
 def test_second_upgrade_adds_no_keywords_or_rows(db):
@@ -203,10 +211,10 @@ def test_second_upgrade_adds_no_keywords_or_rows(db):
     _type(db, "cert", "Certificate")
     _cat(db, "ZZT WC A", class_label="Water Closet")
     _call(db)
-    counts = (db.query(LookupSet).count(), db.query(LookupOption).count(), db.query(LookupOptionKeyword).count())
+    counts = (db.query(LookupSet).count(), _alias_options(db).count(), db.query(LookupOptionKeyword).count())
     assert counts[2] == len(FILE_TYPE_WORDS["photo"]) + len(FILE_TYPE_WORDS["certificate"])
     _call(db)
-    assert (db.query(LookupSet).count(), db.query(LookupOption).count(), db.query(LookupOptionKeyword).count()) == counts
+    assert (db.query(LookupSet).count(), _alias_options(db).count(), db.query(LookupOptionKeyword).count()) == counts
 
 
 def test_downgrade_is_a_no_op(db):
