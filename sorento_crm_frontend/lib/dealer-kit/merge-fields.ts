@@ -24,7 +24,7 @@
  */
 
 import { isRich, richPlainText } from './rich-text';
-import { comboPartsHtml } from './combo-parts';
+import { comboPartField, comboPartsHtml } from './combo-parts';
 import { comboPositions } from './combo-slots';
 import { formatTagPrice } from './price-badge';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
@@ -52,6 +52,7 @@ export type MergeFieldGroup =
   | 'Line'
   | 'Combo'
   | 'Combo positions'
+  | 'Parts'
   | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
@@ -302,6 +303,10 @@ function resolvePath(
     const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
   }
+
+  // COMBO-SETTINGS-UX: a per-part field of the combo description, tied to the part's product.
+  const partValue = comboPartField(data, path);
+  if (partValue !== null) return partValue;
 
   if (path === 'combo.parts') {
     // A plain layer reads the list as plain lines; a rich one splices it (`product-block`).

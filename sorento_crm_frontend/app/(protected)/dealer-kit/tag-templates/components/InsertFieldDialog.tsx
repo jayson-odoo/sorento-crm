@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Parts', 'Combo positions', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;
@@ -51,6 +51,8 @@ interface InsertFieldDialogProps {
   groups?: MergeFieldGroup[];
   /** Paths left out of the list (a combo description cannot insert itself). */
   omitPaths?: string[];
+  /** Fields the caller builds itself (a combo's Parts, named by the part), after the catalog's. */
+  extraFields?: MergeField[];
   onCancel: () => void;
   onDone: (content: string) => void;
 }
@@ -62,6 +64,7 @@ export function InsertFieldDialog({
   specKeys,
   groups,
   omitPaths,
+  extraFields,
   onCancel,
   onDone,
 }: InsertFieldDialogProps) {
@@ -84,8 +87,11 @@ export function InsertFieldDialog({
   // The previewed combo's own positions, when the data carries them.
   const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : undefined;
   const catalog = useMemo(
-    () => mergeFieldCatalog(specKeys, groups, slots).filter((field) => !omitPaths?.includes(field.path)),
-    [specKeys, groups, slots, omitPaths],
+    () =>
+      [...mergeFieldCatalog(specKeys, groups, slots), ...(extraFields ?? [])].filter(
+        (field) => !omitPaths?.includes(field.path),
+      ),
+    [specKeys, groups, slots, omitPaths, extraFields],
   );
 
   const matches = useMemo(() => {

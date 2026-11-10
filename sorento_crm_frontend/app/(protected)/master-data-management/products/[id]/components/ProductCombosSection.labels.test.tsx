@@ -18,6 +18,7 @@ vi.mock('@/hooks/usePermissions', () => ({
 // PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
 // tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
 // keep pinning what they always did.
+const editorProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 vi.mock('@/components/ui/rich-text-editor', () => {
   // A stand-in with just enough of the editor API for "insert at the caret": insertContent appends.
   const Stand = (props: {
@@ -26,6 +27,7 @@ vi.mock('@/components/ui/rich-text-editor', () => {
     onEditorReady?: (editor: unknown) => void;
     'aria-labelledby'?: string;
   }) => {
+    editorProps.last = props as unknown as Record<string, unknown>;
     const html = React.useRef(props.value ?? '');
     html.current = props.value ?? '';
     React.useEffect(() => {
@@ -49,7 +51,9 @@ vi.mock('@/components/ui/rich-text-editor', () => {
       />
     );
   };
-  return { RichTextEditor: Stand, default: Stand };
+  const insertMergeFieldText = (editor: { chain: () => { insertContent: (c: string) => unknown } }, text: string) =>
+    editor.chain().insertContent(text);
+  return { RichTextEditor: Stand, default: Stand, insertMergeFieldText };
 });
 const previewProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 vi.mock('./ComboTagPreview', () => ({
@@ -132,7 +136,7 @@ vi.mock('../../hooks/useProductComboImage', () => ({
 }));
 
 import { ProductCombosSection } from './ProductCombosSection';
-import { DEFAULT_PARTS_LINE } from '@/lib/dealer-kit/combo-parts';
+import { partRef } from '@/lib/dealer-kit/combo-part-fields';
 
 const part = (over: Partial<ProductComboPartRow> & Pick<ProductComboPartRow, 'id' | 'code'>): ProductComboPartRow =>
   ({
@@ -224,16 +228,33 @@ describe('part labels', () => {
   });
 });
 
-describe('description fields', () => {
-  it('Insert field opens the field picker limited to the combo fields, never the description itself', () => {
+describe('description fields (owner ruling 20:1x: ONE description box)', () => {
+  it('Insert field offers the combo fields and a Parts group naming each part, never the description itself', () => {
     show();
     fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
     expect(screen.getByRole('dialog', { name: 'Insert field' })).toBeInTheDocument();
-    expect(insertDialog.props?.groups).toEqual(['Combo', 'Combo positions']);
-    expect(insertDialog.props?.omitPaths).toEqual(['combo.description']);
+    expect(insertDialog.props?.groups).toEqual(['Combo', 'Parts']);
+    expect(insertDialog.props?.omitPaths).toEqual(['combo.description', 'combo.parts']);
+    const extra = insertDialog.props?.extraFields as { label: string }[];
+    const owners = [...new Set(extra.map((f) => f.label.split(': ')[0]))];
+    expect(owners).toEqual(['All parts (one line each)', 'CABINET - SRTBF11829', 'BASIN - SRTWB2380', 'SRTW2600']);
   });
 
-  it("the picker names this combo's positions by their codes (review S3)", () => {
+  it('there is no separate "Each part prints as" box any more', () => {
+    show();
+    expect(screen.queryByRole('button', { name: 'Each part prints as' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Insert part field' })).toBeNull();
+  });
+
+  it('the description holds fields as chips named by the part', () => {
+    show();
+    expect(editorProps.last?.mergeFields).toBe(true);
+    const label = editorProps.last?.mergeFieldLabel as (path: string) => string | null;
+    expect(label('part.main.code')).toBe('CABINET - SRTBF11829: code');
+    expect(label(`${partRef('p-basin')}.label`)).toBe('BASIN - SRTWB2380: label');
+  });
+
+  it("the picker's preview data falls back to this combo's parts by code (review S3)", () => {
     show();
     fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
     const data = insertDialog.props?.data as { kind: string; product: { slots: { main: { code: string }; fixed: { code: string }[] } } };
@@ -256,35 +277,24 @@ describe('description fields', () => {
     show({ ...COMBO, description: '<p>Intro</p>' } as ProductComboRow);
     fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
     act(() => {
-      (insertDialog.props?.onDone as (c: string) => void)('{{combo.parts}}');
+      (insertDialog.props?.onDone as (c: string) => void)('{{part.main.code}}');
     });
     expect(updateComboMutate).toHaveBeenCalledWith(
-      { comboId: 'combo-b', write: { description: '<p>Intro{{combo.parts}}</p>' } },
+      { comboId: 'combo-b', write: { description: '<p>Intro{{part.main.code}}</p>' } },
       expect.anything(),
     );
   });
 
-  it('"Each part prints as" opens the part line on the default, and a change saves on close', async () => {
-    show();
-    fireEvent.click(screen.getByRole('button', { name: 'Each part prints as' }));
-    const editor = (await screen.findByLabelText('Each part prints as')) as HTMLTextAreaElement;
-    expect(editor.value).toBe(DEFAULT_PARTS_LINE);
-    expect(screen.getByRole('button', { name: 'Insert part field' })).toBeInTheDocument();
-    fireEvent.change(editor, { target: { value: '<p>- {{part.code}}</p>' } });
-    // The preview follows the draft line before it is saved.
-    expect((previewProps.last?.partsLine as string) ?? '').toBe('<p>- {{part.code}}</p>');
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    expect(updateComboMutate).toHaveBeenCalledWith(
-      { comboId: 'combo-b', write: { parts_line: '<p>- {{part.code}}</p>' } },
-      expect.anything(),
-    );
-  });
-
-  it('closing the part line unchanged saves nothing', async () => {
-    show();
-    fireEvent.click(screen.getByRole('button', { name: 'Each part prints as' }));
-    await screen.findByLabelText('Each part prints as');
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    expect(updateComboMutate).not.toHaveBeenCalled();
+  it('"All parts (one line each)" drops one editable line per part, tied to each part', () => {
+    show({ ...COMBO, description: '<p>Intro</p>' } as ProductComboRow);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    act(() => {
+      (insertDialog.props?.onDone as (c: string) => void)('{{combo.all_parts}}');
+    });
+    const saved = (updateComboMutate.mock.calls.at(-1)?.[0] as { write: { description: string } }).write.description;
+    expect(saved).toContain('<p><strong>{{part.main.code}} ({{part.main.label}})</strong></p>');
+    expect(saved).toContain(`<p><strong>{{${partRef('p-basin')}.code}} ({{${partRef('p-basin')}.label}})</strong></p>`);
+    expect(saved).toContain(`<p><strong>{{${partRef('p-waste')}.code}}</strong></p>`);
+    expect(saved).not.toContain('combo.all_parts');
   });
 });

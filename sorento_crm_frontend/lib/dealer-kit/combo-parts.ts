@@ -12,6 +12,8 @@
  * before them), and a paragraph that held a part field and came out blank is dropped.
  */
 
+import { parsePartPath, refOf } from './combo-part-fields';
+import { formatTagPrice } from './price-badge';
 import { isRich, richPlainText, toEditorHtml } from './rich-text';
 import type { TagBindingData, TagPartData } from './tag-template-types';
 
@@ -106,4 +108,40 @@ export function comboPartsHtml(data: TagBindingData | null | undefined): string 
     .join('')
     // Backstop: whatever the values held, the list never carries itself (or the description).
     .replace(SELF_TOKEN, '');
+}
+
+/**
+ * One per-part field of the combo description (`{{part.main.code}}`, `{{part.<ref>.label}}`,
+ * `{{group.<ref>.code}}`; see `combo-part-fields.ts`), or null when `path` is not one. Found by the
+ * part's product, never its position; a part or group the line does not carry prints ''. A group
+ * prints the option the line picked (nothing picked: '').
+ */
+export function comboPartField(data: TagBindingData | null | undefined, path: string): string | null {
+  const parsed = parsePartPath(path);
+  if (!parsed) return null;
+  if (!data) return '';
+  const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : null;
+  const combo = data.kind === 'line' ? data.line.combo : data.kind === 'product' ? data.product.combo : null;
+  if (!slots || !combo) return '';
+  const labels = combo.part_labels ?? {};
+  let part: TagPartData | null | undefined;
+  if (parsed.kind === 'main') part = slots.main;
+  else if (parsed.kind === 'part') {
+    part = [...slots.fixed, ...slots.groups.flatMap((group) => group.picks), ...slots.upgrades].find(
+      (candidate) => refOf(candidate.product_id) === parsed.ref,
+    );
+  } else part = slots.groups.find((group) => group.role === parsed.role)?.picks[0];
+  if (!part) return '';
+  const label = parsed.kind === 'main' ? (combo.main_label ?? '') : part.product_id ? (labels[part.product_id] ?? '') : '';
+  if (parsed.field === 'list_price') {
+    return part.list_price == null ? '' : formatTagPrice(Number(part.list_price), false);
+  }
+  if (parsed.field === 'sell_price') {
+    if (parsed.kind !== 'group') return '';
+    const option = (combo.choices ?? [])
+      .find((choice) => choice.role === parsed.role)
+      ?.options.find((candidate) => candidate.product_id === part?.product_id);
+    return option?.sell_price == null ? '' : formatTagPrice(Number(option.sell_price), false);
+  }
+  return fieldValue(part, label, parsed.field);
 }
