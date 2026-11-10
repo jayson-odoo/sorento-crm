@@ -2034,6 +2034,11 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
+    # QUOTE-AUTOSAVE: a new proposal's first real edit creates the record AND writes its draft in
+    # one commit (card Q2), so the number and the typing land together.
+    form_draft: Optional[Dict[str, Any]] = Field(
+        default=None, description="The form's whole state, stored as the new document's draft."
+    )
     # Capped on what comes in (not on the response, which echoes whatever is stored).
     cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
     cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
@@ -2068,6 +2073,11 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
         default=None,
         description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
         "quotation_scope_issued for a scope any version of which has been issued.",
+    )
+    # QUOTE-AUTOSAVE: the form's whole state at Save. Present, the same commit writes a `saved`
+    # History entry from it and clears the draft; a Save the server refuses writes neither.
+    form_state: Optional[Dict[str, Any]] = Field(
+        default=None, description="The form's whole state at Save, kept as a History entry."
     )
 
 
@@ -2203,8 +2213,50 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     current_revision_label: Optional[str] = None
     next_revision_label: Optional[str] = None
 
+    # QUOTE-AUTOSAVE: the read page's "Unsaved draft, last edited 2:14 PM by Aina" strip.
+    has_form_draft: bool = False
+    form_draft_at: Optional[datetime] = None
+    form_draft_by_name: Optional[str] = None
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class QuotationFormDraftWrite(BaseModel):
+    """An autosave: the form's whole state and the draft revision it was built on."""
+
+    doc: Dict[str, Any]
+    base_rev: int = Field(ge=0)
+
+
+class QuotationFormDraftWriteResponse(BaseModel):
+    rev: int
+    updated_at: Optional[datetime] = None
+
+
+class QuotationFormDraftResponse(BaseModel):
+    """The draft the form opens on. ``doc`` null means none: open on the record."""
+
+    doc: Optional[Dict[str, Any]] = None
+    rev: int = 0
+    updated_at: Optional[datetime] = None
+    updated_by_name: Optional[str] = None
+
+
+class QuotationHistoryEntryResponse(BaseModel):
+    id: str
+    kind: str
+    grand_total: Optional[Decimal] = None
+    created_at: Optional[datetime] = None
+    created_by_name: Optional[str] = None
+
+
+class QuotationHistoryEntryDetailResponse(QuotationHistoryEntryResponse):
+    doc: Dict[str, Any]
+
+
+class QuotationHistoryRestoreRequest(BaseModel):
+    base_rev: int = Field(ge=0)
 
 
 class MakeQuotationRequest(BaseModel):

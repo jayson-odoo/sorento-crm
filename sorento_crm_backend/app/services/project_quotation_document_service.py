@@ -43,6 +43,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
     QuotationSignature,
 )
+from app.services import quotation_form_draft_service as _form_drafts
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
@@ -1264,6 +1265,8 @@ def serialize_document(
         # approval service cannot drift - this repo has been bitten by a manual builder silently
         # dropping a new column more than once (`get_user`, `system_settings`).
         **approvals.serialize_approval(db, document, viewer_id=viewer_id),
+        # QUOTE-AUTOSAVE: whether a form draft is waiting, for the read page's strip.
+        **_form_drafts.draft_summary(db, document),
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }

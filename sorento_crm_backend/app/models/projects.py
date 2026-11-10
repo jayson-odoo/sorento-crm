@@ -1293,6 +1293,78 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     )
 
 
+class QuotationDocumentDraft(Base):
+    """A proposal / quotation form's work in progress (QUOTE-AUTOSAVE), one row per document.
+
+    The tag designer's ``page.draft_doc`` split (``models/dealer_kit.py:132``): the form autosaves
+    its whole state into ``doc`` about once a second, overwritten in place and never history.
+    Save applies it through the ordinary PATCH, so the floor-breach alert and audit fire once per
+    Save rather than once per keystroke burst, writes a ``QuotationDocumentSnapshot`` and sets
+    ``doc`` back to NULL.
+
+    Its own table rather than columns on the document for two reasons. The document is audited,
+    and a column there would write an audit row carrying the whole form every second. And an
+    autosave must not move the document's ``updated_at``, which reads as "the record changed".
+
+    ``rev`` is bumped by every write, discard, restore and Save, and the row is kept (``doc``
+    NULL) rather than deleted, so the counter never goes backwards: a tab writes only over the
+    revision it last read, and a second tab or a second person is stopped instead of silently
+    overwriting the first.
+    """
+
+    __tablename__ = "quotation_document_drafts"
+    __audit_skip__ = "autosave work in progress, overwritten about once a second"
+    __table_args__ = ({"schema": "projects"},)
+
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # `none_as_null` so "no draft" is one SQL NULL, never the JSON value null (dealer_kit.py:127).
+    doc = Column(JSONB(none_as_null=True), nullable=True)
+    rev = Column(Integer, nullable=False, server_default="0", default=0)
+    updated_by = Column(String(100), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+
+class QuotationDocumentSnapshot(Base):
+    """One entry in a proposal / quotation's History (QUOTE-AUTOSAVE).
+
+    The form's whole state at a deliberate moment, in the shape the form holds it, so Restore can
+    load it straight back into the draft. Immutable once written, the tag designer's
+    ``PageVersion`` rule. ``kind``: ``saved`` (every Save), ``before_restore`` (the draft a
+    Restore replaced) and ``conflict`` (a stale tab's refused autosave, kept so nothing typed is
+    lost).
+
+    Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only through its document, which carries the partition,
+    and every read goes through the document lookup first.
+    """
+
+    __tablename__ = "quotation_document_snapshots"
+    __audit_skip__ = "insert-only form history, itself a trail"
+    __table_args__ = (
+        Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
+        CheckConstraint(
+            "kind IN ('saved', 'before_restore', 'conflict')",
+            name="ck_quotation_document_snapshots_kind",
+        ),
+        {"schema": "projects"},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(20), nullable=False)
+    doc = Column(JSONB, nullable=False)
+    grand_total = Column(Numeric(18, 2), nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+
 class QuotationTemplate(Base, CompanyScopedMixin):
     """The company's standing cover letter and terms, as prose with merge fields in it.
 
