@@ -95,13 +95,14 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
 .dialog .row:hover { background: var(--accent-soft); }
 .dialog .row code { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .side { display: grid; gap: 14px; }
+.lbl { font: inherit; font-size: 12.5px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); width: 11rem; max-width: 100%; }
 @media (prefers-reduced-motion: no-preference) { .tag { transition: opacity .15s; } }
 </style>
 
 <div class="wrap">
   <header style="display:grid;gap:6px">
     <h1>Combos tab: one add, preview with choices, description fields</h1>
-    <p class="sub">Mock v2 for COMBO-SETTINGS-UX, on the dev copy's real rows (sorento_prod_1104, 10 Nov). Pick a TAP in the first preview and switch the parts list layout in the second: the tag redraws, nothing is saved. No new tab or page: these are the same combo blocks in the existing Combos card on the product page; the box style popover and the Insert field dialog are drawn open here only to show them.</p>
+    <p class="sub">Mock v2 for COMBO-SETTINGS-UX, on the dev copy's real rows (sorento_prod_1104, 10 Nov). Pick a TAP in the first preview; in the second, edit a part label or switch the part line: the tag redraws, nothing is saved. No new tab or page: these are the same combo blocks in the existing Combos card on the product page; the "Each part prints as" popover is drawn open here only to show it. Box style is gone (owner 10 Nov).</p>
   </header>
 
   <!-- Combo 1: kitchen sink, real rows -->
@@ -127,9 +128,7 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
           </div>
         </div>
         <div class="field">
-          <span class="label">Accessories included
-            <button class="icon-btn" aria-label="Box style" aria-expanded="true">⚙</button>
-            <span class="q">· Box style: tag template's own box</span></span>
+          <span class="label">Accessories included <span class="q">· box style removed: every tag uses its template's own box</span></span>
           <ul class="acc-list">
             <li><span class="thumb"></span><span class="t"><b>BK002</b> DRAINER</span><button class="icon-btn" aria-label="Edit for this list">✎</button><button class="icon-btn" aria-label="Remove BK002">✕</button></li>
             <li><span class="thumb"></span><span class="t"><b>SRTBK7005</b> PULL-OUT DRAINER</span><button class="icon-btn" aria-label="Edit for this list">✎</button><button class="icon-btn" aria-label="Remove SRTBK7005">✕</button></li>
@@ -145,11 +144,7 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
               <div class="o grey"><span><b>SRTBK6001</b> Drainer</span><small>discontinued</small></div>
             </div>
           </div>
-          <div class="pop" aria-label="Box style popover (opened from the gear)">
-            <span class="label">Box style</span>
-            <select id="box-1"><option>Tag template's own box</option><option>Grey box</option><option>White card</option></select>
-            <span class="q" style="color:var(--muted)">Clearable; empty = the tag template's own box.</span>
-          </div>
+
         </div>
       </div>
 
@@ -189,7 +184,7 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
     </div>
   </section>
 
-  <!-- Combo 2: bathroom furniture, real rows -->
+  <!-- Combo 2: bathroom furniture, real rows, part labels + customizable parts list -->
   <section class="card combo" aria-label="Combo SRTBF11829 + SRTMCB8083-BL">
     <div class="combo-head">
       <div><h2>SRTBF11829 + SRTMCB8083-BL</h2><span class="host">on SRTBF11829 · List price RM 2,715.00 · Sell price RM 2,099.00 · 4 fixed parts, no choices</span></div>
@@ -200,36 +195,28 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
           <span class="label">Description</span>
           <div class="editor">
             <div class="toolbar"><span>B</span><span>I</span><span>U</span><span>Colour</span><span>List</span><span class="ins">{ } Insert field</span></div>
-            <div class="text"><b>5 IN 1 BATHROOM FURNITURE</b><br><span class="tok">{{combo.parts}}</span></div>
-          </div>
-          <div class="reads">
-            <span>Today this description is typed by hand, part by part (code, description, dimensions). With the field it follows the parts and their master data.</span>
-            <span class="warn">Empty on record: SRTWB2380 has no price tag description and no dimensions; SRTMCB8083-BL has no price tag description; SRTWT6203-GM and SRTW2600 have no dimensions.</span>
+            <div class="text"><span class="tok">{{combo.parts}}</span> <button class="btn" style="padding:1px 6px;font-size:11.5px" aria-expanded="true">Each part prints as…</button></div>
           </div>
         </div>
-        <div class="dialog" aria-label="Insert field dialog, as opened from the toolbar">
-          <span class="label">Insert field <span class="q">· Combo and Combo positions only</span></span>
-          <div class="row"><span>All parts as a list (main first)</span><code>{{combo.parts}}</code></div>
-          <div class="row"><span>Combo name</span><code>{{combo.name}}</code></div>
-          <div class="row"><span>Combo accessories included</span><code>{{combo.free_items}}</code></div>
-          <div class="row"><span>Main dimensions</span><code>{{slot.main.dimensions}}</code></div>
-          <div class="row"><span>Fixed 1 code: SRTWB2380</span><code>{{slot.fixed.1.code}}</code></div>
-          <div class="row"><span>Fixed 3 price tag description: Basin Cold Tap…</span><code>{{slot.fixed.3.price_tag_description}}</code></div>
-          <div class="row"><span>Fixed 2 dimensions: 800 x 130 x 700 mm</span><code>{{slot.fixed.2.dimensions}}</code></div>
+        <div class="pop" style="max-width:100%" aria-label="Each part prints as (popover from the parts list field)">
+          <span class="label">Each part prints as <span class="q">· repeated for the main product, then each fixed part, then the chosen option of each pick-one group</span></span>
+          <div class="editor">
+            <div class="toolbar"><span>B</span><span>I</span><span>U</span><span>Colour</span><span class="ins">{ } Insert part field</span></div>
+            <div class="text" style="min-height:48px"><b><span class="tok">{{part.code}}</span> (<span class="tok">{{part.label}}</span>)</b><br><span class="tok">{{part.dimensions_lwh}}</span></div>
+          </div>
+          <span style="color:var(--muted)">Part fields: code, label, name, price tag description, dimensions (L780xW480xH400mm), dimensions (780 x 480 x 400 mm).</span>
+          <div class="seg" role="group" aria-label="Try another part line" id="shape">
+            <button aria-pressed="true" data-shape="a">code (label) / dimensions</button><button aria-pressed="false" data-shape="b">- code (price tag description)</button>
+          </div>
         </div>
         <div class="field">
-          <span class="label">Accessories included <button class="icon-btn" aria-label="Box style">⚙</button></span>
+          <span class="label">Accessories included</span>
           <p class="sub" style="font-size:13px">No accessories</p>
           <div class="picker"><input id="acc-add-2" placeholder="Add accessory or product" aria-label="Add accessory or product" style="border-color:var(--line)"></div>
         </div>
       </div>
       <div class="preview">
-        <div class="pv-head">
-          <div class="seg" role="group" aria-label="Parts list layout (Q2)" id="shape">
-            <button aria-pressed="true" data-shape="a">Q2 (a) code (description)</button><button aria-pressed="false" data-shape="b">Q2 (b) + dimensions line</button>
-          </div>
-          <div class="picks"><span style="color:var(--muted)">No pick-one parts: nothing to choose</span></div>
-        </div>
+        <div class="pv-head"><div class="picks"><span style="color:var(--muted)">No pick-one parts: nothing to choose</span></div></div>
         <div class="stage">
           <div class="tag">
             <div class="code">SRTBF11829</div>
@@ -238,7 +225,20 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
             <div class="price"><span class="lp">LP RM 2,715</span><span class="sp">RM 2,099</span></div>
           </div>
         </div>
-        <p class="sub" style="font-size:12px;padding:8px 10px">Empty fields: no "( )" when a part has no price tag description, no line when it has no dimensions. A multi-line price tag description is joined onto one line. SRTBF11829's own price tag description was not in the data pull; shown as "CABINET" from the typed text.</p>
+        <p class="sub" style="font-size:12px;padding:8px 10px">Empty fields: "( )" goes when the label is empty, and a line whose only field is empty is dropped (SRTWB2380 has no dimensions; SRTWT6203-GM and SRTW2600 none either). The main product's dimensions are SRTBF11829's own (780 x 480 x 400 mm on its page).</p>
+      </div>
+    </div>
+    <div class="parts">
+      <div style="display:grid;gap:6px">
+        <b style="font-size:12px;color:var(--muted)">Parts, each with its own Label (new, empty by default)</b>
+        <div class="group" style="border-style:solid">
+          <div class="row"><span><b>SRTBF11829</b> <span style="color:var(--muted)">main product</span></span><span><label for="lb0">Label</label> <input id="lb0" class="lbl" data-i="0" value="CABINET"></span></div>
+          <div class="row"><span><b>SRTWB2380</b> · Fixed part</span><span><label for="lb1">Label</label> <input id="lb1" class="lbl" data-i="1" value="BASIN"></span></div>
+          <div class="row"><span><b>SRTMCB8083-BL</b> · Fixed part</span><span><label for="lb2">Label</label> <input id="lb2" class="lbl" data-i="2" value="MIRROR CABINET"></span></div>
+          <div class="row"><span><b>SRTWT6203-GM</b> · Fixed part</span><span><label for="lb3">Label</label> <input id="lb3" class="lbl" data-i="3" value="BASIN COLD TAP"></span></div>
+          <div class="row"><span><b>SRTW2600</b> · Fixed part</span><span><label for="lb4">Label</label> <input id="lb4" class="lbl" data-i="4" value=""></span></div>
+        </div>
+        <span style="color:var(--muted);font-size:12px">Clear a label to see its "( )" go. SRTW2600 is left empty on purpose.</span>
       </div>
     </div>
   </section>
@@ -250,7 +250,7 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
         <thead><tr><th>Element</th><th>Existing component (repo path)</th><th>Change</th></tr></thead>
         <tbody>
           <tr><td>Add accessory or product (one picker)</td><td><code>products/[id]/components/AccessoryListField.tsx</code> + <code>components/common/SearchableSelect.tsx</code> (option <code>group</code>)</td><td>3 selects become 1, grouped Accessories / Products, Create kept</td></tr>
-          <tr><td>Box style gear + popover</td><td><code>components/ui/popover</code>, same <code>fetchBoxStyleOptions</code> select</td><td>Moved out of the block; style name in the label</td></tr>
+          <tr><td>Box style</td><td><code>AccessoryListField.tsx</code>, <code>accessory-card.ts</code> <code>accessoryBoxStyleOf</code></td><td>Removed (owner 10 Nov): control gone, renderers stop applying it; column drop later</td></tr><tr><td>Part label</td><td><code>ProductCombosSection.tsx</code> <code>PartRow</code>; new column <code>product_combo_parts.label</code> + <code>product_combos.main_label</code></td><td>Text input per part, blur-save</td></tr><tr><td>Each part prints as</td><td><code>components/ui/popover</code> + <code>RichTextEditor</code> + <code>InsertFieldDialog</code>; new column <code>product_combos.parts_line</code></td><td>Opened from the parts list field; one line template per combo</td></tr>
           <tr><td>Preview TAP / Upgrade pickers</td><td><code>products/[id]/components/ComboTagPreview.tsx</code>, <code>SearchableSelect</code></td><td>Sends picks as line <code>parts</code>; server draws (no BE change)</td></tr>
           <tr><td>Insert field in the description</td><td><code>dealer-kit/tag-templates/components/InsertFieldDialog.tsx</code>, pattern from <code>ProductSpecificationsTab.tsx:278</code></td><td>Groups Combo + Combo positions, positions named by real codes</td></tr>
           <tr><td>New fields</td><td><code>lib/dealer-kit/merge-fields.ts</code></td><td><code>combo.parts</code>, <code>slot.*.dimensions</code>, plain description resolves its own fields</td></tr>
@@ -292,22 +292,35 @@ td code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; 
       : 'No tap chosen and the combo has no sell price, so the tag prints the list price and each option\'s own price, no single sell figure (today\'s print rule).';
   }
   var parts = [
-    ['SRTBF11829', 'CABINET', '780 x 480 x 400 mm'],
+    ['SRTBF11829', 'L780xW480xH400mm', ''],
     ['SRTWB2380', '', ''],
-    ['SRTMCB8083-BL', '', '800 x 130 x 700 mm'],
-    ['SRTWT6203-GM', 'Basin Cold Tap Brass Gunmetal', ''],
-    ['SRTW2600', 'Popup Waste 80mm (c/w Overflow) Brass', '']
+    ['SRTMCB8083-BL', 'L800xW130xH700mm', ''],
+    ['SRTWT6203-GM', '', 'Basin Cold Tap Brass Gunmetal'],
+    ['SRTW2600', '', 'Popup Waste 80mm (c/w Overflow) Brass']
   ];
-  function draw2(shape) {
-    var out = ['5 IN 1 BATHROOM FURNITURE'];
-    parts.forEach(function (p) {
-      out.push('- ' + p[0] + (p[1] ? ' (' + p[1] + ')' : ''));
-      if (shape === 'b' && p[2]) out.push('  ' + p[2]);
+  var shape = 'a';
+  function draw2(next) {
+    if (next) shape = next;
+    var box = document.getElementById('desc2');
+    box.innerHTML = '';
+    document.querySelectorAll('.lbl').forEach(function (input) {
+      var p = parts[Number(input.dataset.i)], label = input.value.trim();
+      var head = document.createElement('div');
+      if (shape === 'a') {
+        var b = document.createElement('b');
+        b.textContent = p[0] + (label ? ' (' + label + ')' : '');
+        head.appendChild(b);
+        box.appendChild(head);
+        if (p[1]) { var d = document.createElement('div'); d.textContent = p[1]; box.appendChild(d); }
+      } else {
+        head.textContent = '- ' + p[0] + (p[2] ? ' (' + p[2] + ')' : '');
+        box.appendChild(head);
+      }
     });
-    document.getElementById('desc2').textContent = out.join('\n');
     document.querySelectorAll('#shape button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.shape === shape)); });
   }
   document.querySelectorAll('#shape button').forEach(function (b) { b.addEventListener('click', function () { draw2(b.dataset.shape); }); });
+  document.querySelectorAll('.lbl').forEach(function (i) { i.addEventListener('input', function () { draw2(); }); });
   tap.addEventListener('change', draw1);
   draw1(); draw2('a');
 })();
