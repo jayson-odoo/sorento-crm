@@ -1813,6 +1813,8 @@ class PortalService:
             return (
                 "debtor_code",
                 "debtor_name",
+                # PRICETAG-REQUEST-LAYOUT: after the pair, so its mirror is the last write.
+                "customers",
                 "needed_by_date",
                 "notes",
                 "price_mode",

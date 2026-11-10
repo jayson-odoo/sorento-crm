@@ -639,6 +639,7 @@ _PTAG_ADAPTER = RevisionAdapter(
     snapshot_form_fields=(
         "debtor_code",
         "debtor_name",
+        "customers",
         "needed_by_date",
         "notes",
         "price_mode",
@@ -655,6 +656,7 @@ _PTAG_ADAPTER = RevisionAdapter(
         "doc_number": "Request number",
         "debtor_code": "Dealer code",
         "debtor_name": "Dealer",
+        "customers": "Customers",
         "promotion_id": "Promotion",
         "needed_by_date": "Need by",
         "notes": "Notes",
