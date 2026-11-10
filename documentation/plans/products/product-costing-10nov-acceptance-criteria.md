@@ -1,6 +1,6 @@
 # UAC: Product costing (lane PRODUCT-COSTING)
 
-Plan: `PLAN-product-costing-10nov.md`. Mock v4: `mockups/product-costing-10nov-mockup.html`.
+Plan: `PLAN-product-costing-10nov.md`. Mock v5: `mockups/product-costing-10nov-mockup.html`.
 Answers: owner 10 Nov 23:3x / 23:4x / 23:5x; crew 23:5x+ (Q6 a, Q7 a, Q8 a, Q9 a, vetoable calls accepted).
 Cost permission `products.cost.view` comes from SUPPLIER-COST-ACCESS (PR #2319,
 `app/services/cost_access.py`: `COST_VIEW_PERM`, `require_cost_view`, `COST_AUDIT_KEYS`).
@@ -60,50 +60,62 @@ a reason, never 0.
 - AC-LC-06 "Selected supplier" is offered only as a product override, never on a party profile
   or as the company default.
 
-## Product tabs (PT)
+## Costing page (CG) - v5, the workbook in the system (owner 11 Nov 00:2x)
 
-- AC-PT-01 The product Suppliers tab is renamed Purchasing (`?tab=suppliers` still opens it).
-  Per link: supplier code, primary, lead time, currency, unit cost, landing cost (RM), selling
-  (RM, the product's AutoCount list price on every row), mark-up if bought here =
-  (selling - landing) / landing. WB 245 at RM 79: A 149.06%, B 131.50%, L 45.76%, D "No rate for
-  EUR on <date>" and no mark-up.
-- AC-PT-02 A new Pricing tab, only with `products.cost.view`: cost basis breakdown (method
-  chip + source, supplier cost, rate with its effective date, SST, transport with its source,
-  landing cost), last PO price as a check, selling price read-only, achieved mark-up =
-  (selling - basis) / basis. Edit swaps in place: cost method (clearable to company default;
-  each option previews its basis and mark-up), selected supplier, transport override.
-- AC-PT-03 Pricing tab "Party prices" card: every party whose costing list holds the product:
-  party, mark-up, method used, party price, party margin. Read-only.
-- AC-PT-04 The selling price is never written: no costing route or job sends a price to
+- AC-CG-01 Products > Costing is one DataGrid page, visible only with `products.cost.view`
+  (menu item absent, route 403 otherwise). Columns in Sheet1 order: Category, Code, Name,
+  Supplier, Cost (currency + amount), Rate (units per MYR 1, as the workbook writes it), SST,
+  Transport (mode + value), Landing (RM), Cost method, Mark-up, Final (RM), Selling (RM), Margin.
+  Fixed layout, resizable, explicit sizes, saved column choices (`listingKey`).
+- AC-CG-02 A party picker sits above the grid: empty = "Company standard" (default); a customer
+  (e.g. 304-R017 RELATED - BATHPLUS SDN BHD) = that party's view. The picked party and filters
+  live in the URL.
+- AC-CG-03 Company standard view: every active product; Mark-up = achieved = (selling - landing)
+  / landing; Final = Selling = AutoCount `list_price`; no Margin column. WB 245: 149.06%.
+- AC-CG-04 Party view: the party's products only; Mark-up = the row's mark-up, else the party's;
+  Final = landing x (1 + mark-up); Margin = (selling - final) / final. WB 245 at 8%: 34.25625 ->
+  34.26, 130.61%. Jacuzzi row at 10%: 1692.375 -> 1861.6125, 114.81%. Header chips: party
+  mark-up, party cost method, "as of" date, product count.
+- AC-CG-05 Unknown values are blank with a reason pill ("No cost", "No rate for EUR on <date>",
+  "Set a primary supplier", "No transport rule"), never 0. A value set on the row (not inherited)
+  carries a marker.
+- AC-CG-06 A row opens to its suppliers: supplier, primary, lead time, cost, landing, final at
+  this view's mark-up, margin if bought there (WB 245, Bath Plus: A 130.61%, B 114.35%, L 34.96%).
+- AC-CG-07 Filters: Category, Brand, Cost method, Has cost; search by code / name; "As of" date
+  (default today) changes which supplier cost and rate are used.
+- AC-CG-08 Edit / Save in place (same grid, same columns): editable cells are Mark-up (party view
+  only; clearing returns to the party's), Transport (the product's override; clearing returns to
+  the category rule) and Cost method (the product's override; clearing returns to party / company
+  default). Transport and method edits say "applies to every party". Landing, Final and Margin
+  recompute while typing. Save sends one batch; every changed cell writes one audit row. Cost,
+  rate and SST are not editable here. Editing needs `products.party_costing.manage`.
+- AC-CG-09 Export: the whole filtered set to Excel through the list-query export, Sheet1 column
+  order, numbers as numbers, a header row naming the view (Company standard or the party) and the
+  "as of" date.
+- AC-CG-10 Import from Excel (Sales > Targets import shape): Test first writes nothing and reports
+  every row as will change / unchanged / skipped with the reason; Import is enabled only after a
+  Test of the same file and writes only Mark-up, Transport and Cost method. A Cost column is
+  ignored and reported ("Supplier costs come in through Upload cost price"). Needs
+  `products.party_costing.manage`.
+- AC-CG-11 Row History: who changed that row's mark-up, transport or method, when, old -> new.
+- AC-CG-12 Add products / Remove (party view): the shared product picker, up to 500 per add;
+  Remove is an Unlink deferred action. A party's default mark-up and method are edited from the
+  header chips (manage permission).
+- AC-CG-13 Settings dialog from the page header: three line tabs, Exchange rates (dated, AC-ER),
+  SST and default method (AC-ST-01), Transport by category (AC-ST-02).
+- AC-CG-14 The selling price is never written: no costing route or job sends a price to
   AutoCount or changes `products.list_price`.
-- AC-PT-05 Without `products.cost.view` the Pricing tab is absent and its routes answer 403;
-  a `?tab=pricing` link falls back to Overview.
 
-## Party costing (PC)
+## Party data (PC)
 
-- AC-PC-01 A costing profile belongs to one `customers` row: mark-up % (required, >= 0),
-  optional cost method override (Primary / Average / Last PO), active. At most one per customer.
-- AC-PC-02 A profile's products are a static set; adding a product twice is a no-op; one
-  product can be on many parties. Add takes up to 500 product ids per call.
-- AC-PC-03 Party price = landing x (1 + mark-up). Party margin = (selling - party price) /
-  party price. Bath Plus (304-R017, 8%), WB 245: 34.25625 -> 34.26; margin 130.61% at RM 79.
-- AC-PC-04 The customer page has a Costing tab only with `products.cost.view` (view and edit
-  pages alike). No profile: empty state (heading + hint, no body button) and the header CTA
-  "Set up costing" (only with `products.party_costing.manage`).
-- AC-PC-05 The party costing list: Code, Name, Category, Cost method (+ source), Unit cost,
-  Transport, Landing (RM), Party price (RM), Selling (RM), Party margin, Note; search, Category /
-  Brand / Cost method filters, "As of" date (default today), fixed-layout resizable DataGrid.
-- AC-PC-06 Excel export of that list: the columns in the plan section 3.3, numbers as numbers,
-  header row naming the party and the "as of" date; unknown cost exported blank with its note.
-- AC-PC-07 Products > Party costing index: every customer with a profile (code, party,
-  AutoCount debtor type, customer group, mark-up, method, products, status); a row opens the
-  customer's Costing tab.
-- AC-PC-08 Create / edit a profile and add / remove its products needs
-  `products.party_costing.manage` (+ `products.cost.view`); remove is an Unlink deferred action.
-- AC-PC-09 Profile changes and product link / unlink are audited; `markup_pct` is masked in
-  History for a reader without `products.cost.view`.
+- AC-PC-01 A costing profile belongs to one `customers` row: default mark-up % (required,
+  >= 0), optional cost method override (Primary / Average / Last PO), active. At most one per customer.
+- AC-PC-02 A profile's products are a static set with an optional per-row mark-up override;
+  adding a product twice is a no-op; one product can be on many parties.
+- AC-PC-09 Profile, row mark-up and link / unlink changes are audited; mark-up values are masked
+  in History for a reader without `products.cost.view`.
 - AC-PC-10 A customer merge carries the profile and its products onto the survivor (survivor's
-  profile wins if both have one; product sets are unioned).
+  profile wins if both have one; product sets are unioned, survivor's row mark-up wins).
 
 ## Access (AX)
 
@@ -111,8 +123,8 @@ a reason, never 0.
   `products.cost.view`: 403 without it. Admin / superadmin pass by the existing bypass.
 - AC-AX-02 A bare `X-API-Key` caller and a contact (portal) session get 401/403 on every costing
   route; no portal route and no MCP tool serves costing.
-- AC-AX-03 Customer list, customer detail, customer export, the portal and MCP payloads carry
-  no costing field.
+- AC-AX-03 Customer list, customer detail, customer export, product payloads, the portal and MCP
+  carry no costing field.
 - AC-AX-04 The migration grants `products.party_costing.manage` by role slug to `admin` and
   `director` only (the management roles in #2319's `sca_0001_products_cost_view` grant set,
   read from dev data there); not to `purchasing_manager`, `purchasing`, `purchasing_executive`,

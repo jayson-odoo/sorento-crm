@@ -73,237 +73,128 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;back
 .method{display:inline-flex;gap:6px;align-items:center;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--primary-soft);color:var(--primary);border:1px solid var(--primary-border)}
 @media(max-width:600px){.dl{grid-template-columns:1fr;gap:0 16px}.dl dd{text-align:left;margin-bottom:8px}.dl dd.big{font-size:17px}}
 .v2{display:inline-block;font-size:11px;color:var(--primary);border:1px solid var(--primary-border);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.cellin{display:inline-flex;align-items:center;justify-content:flex-end;height:26px;min-width:56px;padding:0 6px;border:1px solid var(--primary-border);border-radius:6px;background:var(--card);font-variant-numeric:tabular-nums}
+.cellsel{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 6px;border:1px solid var(--primary-border);border-radius:6px;background:var(--card)}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--primary);margin-left:4px;vertical-align:middle}
+tr.exp td{background:var(--muted-bg);white-space:normal}
+.sub td{font-size:12px}
+.party{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.party .sel{min-width:260px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.chips b{color:var(--fg);font-weight:500}
 </style>
 </head>
 <body>
 <div class="page">
-<h1>Product costing: Purchasing, Pricing, party costing</h1>
-<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v4 on the owner's answers of 10 Nov (23:3x, 23:4x, 23:5x).</p>
-<ul class="lead" style="padding-left:20px">
-<li>Exchange rates are dated, with history.</li>
-<li>SST is one company setting.</li>
-<li>Transport is set per category, with a per-product override.</li>
-<li>Mark-up is the achieved mark-up, read-only.</li>
-<li>The selling price is AutoCount's list price and is never written back.</li>
-<li>The cost basis is a method: company default, with a per-product override.</li>
-<li>Costing belongs to the <b>party</b>: any customer (debtor), whether a dealer, Bath Plus (AutoCount AED_BATHPLUS, 8%) or later others, can have a costing profile: its products, its mark-up and an optional cost method. There is no separate partner table. Cost method precedence: product, then party, then company default.</li>
-</ul>
-<p class="lead">Case: WB 245 basin (CGB9032B) from the owner's workbook. The RM 79.00 selling price, suppliers B, L and D, and the September rate are illustrative inputs. Items tagged <span class="v2">v2</span> changed on 23:3x and <span class="v2">v4</span> on 23:5x. The dealer "300-D0xx" and its 12% are illustrative, to show a second party.</p>
+<h1>Product costing: the workbook in the system</h1>
+<p class="lead" style="margin-bottom:4px">Lane PRODUCT-COSTING, mock v5 on the owner's note of 11 Nov (00:2x): one costing page that is the owner's Internal_Costing_Formula workbook (Sheet1) inside the system, delivered the way Sales &gt; Targets was. One grid, the same toolbar, Edit / Save in place, Excel export and import, history per row.</p>
+<p class="lead">WB 245 (CGB9032B, RMB 34.50, +RM 8, 8%) is the workbook's own row. The other rows use the workbook's category rules with masked codes and illustrative prices. Party = the customer (debtor) record. Bath Plus = 304-R017 "RELATED - BATHPLUS SDN BHD". Management only (<code>products.cost.view</code>). Nothing is written back to AutoCount.</p>
 
 <!-- Frame 1 -->
 <section class="frame">
-<h2>1. Product detail, Purchasing tab <small class="muted">(today's Suppliers tab, renamed and extended)</small></h2>
-<p class="note">Who sees it: <code>procurement.product_suppliers.view</code> + <code>products.cost.view</code> (#2319). Each supplier's cost becomes an MYR landing cost at the rate in force today, then it is compared with the product's single selling price.</p>
+<h2>1. Products &gt; Costing <small class="muted">(the page; Bath Plus picked)</small></h2>
+<p class="note">The party picker defaults to <b>Company standard</b>. In that view Mark-up is the achieved mark-up and Final is the AutoCount selling price, both read-only. Picking a party (here Bath Plus) shows its products at its mark-up. A row opens to its suppliers ("margin if bought from this supplier"). Columns follow Sheet1 left to right.</p>
 <div class="screen"><div class="inner">
-  <div class="ph"><span class="t">WB 245 Basin</span><span class="sub">CGB9032B</span><span class="sp"></span><button class="btn">&#8249;</button><button class="btn">&#8250;</button><button class="btn pri">Edit</button></div>
-  <div class="meta"><span>Category <b>Ceramics / Basin</b></span><span>Brand <b>Sorento</b></span><span>Status <b>Active</b></span></div>
-  <div class="tabs"><span>Overview</span><span>Stock</span><span>Purchases</span><span class="on">Purchasing</span><span class="new">Pricing</span><span>Attachments</span><span>Promotions</span><span>Variants</span><span>History</span></div>
-  <div class="tw"><table>
-    <colgroup><col style="width:120px"><col style="width:90px"><col style="width:90px"><col style="width:80px"><col style="width:100px"><col style="width:150px"><col style="width:110px"><col style="width:160px"></colgroup>
-    <thead><tr><th>Supplier code</th><th>Primary</th><th class="n">Lead time</th><th>Currency</th><th class="n">Unit cost</th><th class="n">Landing cost (RM)</th><th class="n">Selling (RM)</th><th class="n">Mark-up if bought here</th></tr></thead>
+  <div class="ph"><span class="t">Costing</span><span class="sp"></span><button class="btn">Settings</button><button class="btn">Import from Excel</button><button class="btn pri">Edit</button></div>
+  <div class="party">
+    <div class="sel">Pricing for: RELATED - BATHPLUS SDN BHD (304-R017)<span class="x">&#x2715; &#9662;</span></div>
+    <div class="chips"><span>Party mark-up <b>8%</b></span><span>Cost method <b>Company default (Primary supplier)</b></span><span>Rates <b>as of 11 Nov 2026</b></span><span>Products <b>8</b></span></div>
+  </div>
+  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Filters</button><button class="btn">Columns</button><button class="btn">Add products</button><button class="btn">Export</button></div>
+  <div class="tw"><table style="min-width:1480px">
+    <colgroup><col style="width:120px"><col style="width:110px"><col style="width:150px"><col style="width:90px"><col style="width:110px"><col style="width:80px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:170px"><col style="width:80px"><col style="width:100px"><col style="width:100px"><col style="width:90px"></colgroup>
+    <thead><tr><th>Category</th><th>Code</th><th>Name</th><th>Supplier</th><th class="n">Cost</th><th class="n">Rate</th><th class="n">SST</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th><th class="n">Selling (RM)</th><th class="n">Margin</th></tr></thead>
     <tbody>
-      <tr><td title="Supplier A">SUP-A01</td><td><span class="pill pri">Primary</span></td><td class="n">45 d</td><td>RMB</td><td class="n">34.50</td><td class="n">31.72</td><td class="n">79.00</td><td class="n"><b>149.06%</b></td></tr>
-      <tr><td title="Supplier B">SUP-B07</td><td></td><td class="n">60 d</td><td>RMB</td><td class="n">38.00</td><td class="n">34.13</td><td class="n">79.00</td><td class="n">131.50%</td></tr>
-      <tr><td title="Local supplier">SUP-L02</td><td></td><td class="n">7 d</td><td>MYR</td><td class="n">42.00</td><td class="n">54.20</td><td class="n">79.00</td><td class="n">45.76%</td></tr>
-      <tr><td title="Supplier D">SUP-D03</td><td></td><td class="n">30 d</td><td>EUR</td><td class="n">7.50</td><td class="n"><span class="pill warn">No rate for EUR on 10 Nov</span></td><td class="n">79.00</td><td class="n muted">-</td></tr>
+      <tr><td>Ceramics</td><td>CGB9032B</td><td title="WB 245 Basin">WB 245 Basin</td><td>SUP-A01</td><td class="n">RMB 34.50</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">31.72</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>34.26</b></td><td class="n">79.00</td><td class="n">130.61%</td></tr>
+      <tr class="exp sub"><td colspan="14">
+        <div class="tw" style="margin:2px 0"><table><colgroup><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col style="width:130px"><col style="width:120px"><col style="width:150px"></colgroup>
+        <thead><tr><th>Supplier</th><th>Primary</th><th class="n">Lead time</th><th class="n">Cost</th><th class="n">Landing (RM)</th><th class="n">Final at 8% (RM)</th><th class="n">Margin if bought here</th></tr></thead>
+        <tbody>
+          <tr><td>SUP-A01</td><td><span class="pill pri">Primary</span></td><td class="n">45 d</td><td class="n">RMB 34.50</td><td class="n">31.72</td><td class="n">34.26</td><td class="n">130.61%</td></tr>
+          <tr><td>SUP-B07</td><td></td><td class="n">60 d</td><td class="n">RMB 38.00</td><td class="n">34.13</td><td class="n">36.86</td><td class="n">114.35%</td></tr>
+          <tr><td>SUP-L02</td><td></td><td class="n">7 d</td><td class="n">MYR 42.00</td><td class="n">54.20</td><td class="n">58.54</td><td class="n">34.96%</td></tr>
+        </tbody></table></div></td></tr>
+      <tr><td>WC</td><td>WC-5xx</td><td>WC (masked)</td><td>SUP-A01</td><td class="n">RMB 310.00</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">221.13</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>238.82</b></td><td class="n">599.00</td><td class="n">150.82%</td></tr>
+      <tr><td>Jacuzzi</td><td>JZ-1xx</td><td>Jacuzzi (masked)</td><td>SUP-J02</td><td class="n">RMB 2,450.00</td><td class="n">1.6</td><td class="n">1.10</td><td>+ RM 8.00</td><td class="n">1,692.38</td><td>Primary supplier</td><td class="n">10%<span class="dot" title="Row mark-up, overrides the party's 8%"></span></td><td class="n"><b>1,861.61</b></td><td class="n">3,999.00</td><td class="n">114.81%</td></tr>
+      <tr><td>Taps</td><td>T-1xx</td><td>Basin tap (masked)</td><td>SUP-A01</td><td class="n">RMB 120.00</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.07</td><td class="n">88.28</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>95.34</b></td><td class="n">189.00</td><td class="n">98.24%</td></tr>
+      <tr><td>Kitchen sinks</td><td>K-2xx</td><td>Kitchen sink (masked)</td><td>SUP-B07</td><td class="n">RMB 260.00</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.10</td><td class="n">196.63</td><td>Selected supplier<span class="dot" title="Product override"></span></td><td class="n">8%</td><td class="n"><b>212.36</b></td><td class="n">459.00</td><td class="n">116.15%</td></tr>
+      <tr><td>Shower</td><td>S-3xx</td><td>Shower set (masked)</td><td>SUP-E05</td><td class="n">USD 20.00</td><td class="n">0.2273</td><td class="n">1.10</td><td>x 1.07</td><td class="n">103.58</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>111.86</b></td><td class="n">239.00</td><td class="n">113.66%</td></tr>
+      <tr><td>Hose</td><td>H-0xx</td><td>Hose (masked)</td><td>SUP-A01</td><td class="n">RMB 6.80</td><td class="n">1.6</td><td class="n">1.10</td><td>x 1.07</td><td class="n">5.00</td><td>Primary supplier</td><td class="n">8%</td><td class="n"><b>5.40</b></td><td class="n">15.00</td><td class="n">177.65%</td></tr>
+      <tr><td>Accessories</td><td>A-4xx</td><td>Accessory (masked)</td><td class="muted">-</td><td class="n muted">-</td><td class="n muted">-</td><td class="n">1.10</td><td>x 1.07</td><td class="n muted">-</td><td>Primary supplier</td><td class="n">8%</td><td class="n muted">-</td><td class="n">25.00</td><td><span class="pill warn">No cost</span></td></tr>
     </tbody></table></div>
-  <p class="ann">Landing cost = unit cost x rate in force today (RMB 1 = 0.625000 MYR, i.e. MYR 1 = 1.6 RMB, from 1 Nov 2026) x SST 1.10, then the Ceramics transport + RM 8.00. MYR row: 42.00 x 1.10 + 8 = 54.20. Mark-up = (selling - landing) / landing. A row opens to its dated cost list, as it does today.</p>
+  <p class="ann">Workbook formula, one row: 34.50 / 1.6 = 21.5625, x 1.10 = 23.71875, + 8 = 31.71875 landing, x 1.08 = 34.25625 final. Rate is units per MYR 1, as the workbook writes it, taken from the dated rate in force on the "as of" day. Margin = (selling - final) / final. A dot marks a value set on that row rather than inherited. Filters: Category, Brand, Cost method, Has cost. Each row's menu has <b>History</b>, showing who changed its mark-up, transport or method, when, and from what.</p>
+
+  <h3 style="font-size:13px;margin:18px 0 8px">Edit (same grid, cells become inputs; one Save for the page)</h3>
+  <div class="tw"><table style="min-width:900px">
+    <colgroup><col style="width:110px"><col style="width:150px"><col style="width:160px"><col style="width:110px"><col style="width:210px"><col style="width:90px"><col style="width:100px"></colgroup>
+    <thead><tr><th>Code</th><th>Name</th><th>Transport</th><th class="n">Landing (RM)</th><th>Cost method</th><th class="n">Mark-up</th><th class="n">Final (RM)</th></tr></thead>
+    <tbody>
+      <tr><td>CGB9032B</td><td>WB 245 Basin</td><td><span class="cellsel">Category: + RM 8.00 &#9662;</span></td><td class="n">31.72</td><td><span class="cellsel">Company default &#9662;</span></td><td class="n"><span class="cellin">8</span> %</td><td class="n">34.26</td></tr>
+      <tr><td>JZ-1xx</td><td>Jacuzzi (masked)</td><td><span class="cellsel">Category: + RM 8.00 &#9662;</span></td><td class="n">1,692.38</td><td><span class="cellsel">Company default &#9662;</span></td><td class="n"><span class="cellin">10</span> %</td><td class="n">1,861.61</td></tr>
+    </tbody></table></div>
+  <p class="ann">Editable: <b>Mark-up</b> (this party's row, cleared = the party's 8%), <b>Transport</b> (the product's override, cleared = the category rule), <b>Cost method</b> (the product's override, cleared = the party's or the company default). Transport and method belong to the product, so a change shows "applies to every party". Landing, Final and Margin recompute as you type. Save writes one audited change per changed cell. Cost, rate and SST are not edited here: supplier costs come in through the existing Upload cost price, and rates and SST through Settings. In Company standard view only Transport and Cost method are editable.</p>
 </div></div>
 </section>
 
 <!-- Frame 2 -->
 <section class="frame">
-<h2>2. Product detail, Pricing tab, view <small class="muted">(new; method shown next to the cost)</small></h2>
-<p class="note">Who sees it: <code>products.cost.view</code> only. The selling price is AutoCount's list price, read-only and never written back. The mark-up is computed. The cost basis follows this product's method (the company default here).</p>
-<div class="screen"><div class="inner">
-  <div class="tabs"><span>Overview</span><span>Stock</span><span>Purchases</span><span>Purchasing</span><span class="on">Pricing</span><span>Attachments</span><span>History</span></div>
-  <div class="grid2">
-    <div class="card"><h3>Cost basis <span class="method">Primary supplier, SUP-A01</span><span class="v2">v2</span></h3>
-      <dl class="dl">
-        <dt>Cost method</dt><dd>Primary supplier <span class="muted">(company default)</span></dd>
-        <dt>Supplier cost in force</dt><dd>RMB 34.50, since 1 Oct 2026</dd>
-        <dt>x rate RMB 0.625000 (MYR 1 = 1.6 RMB), from 1 Nov 2026</dt><dd>21.56</dd>
-        <dt>x SST 1.10</dt><dd>23.72</dd>
-        <dt>+ transport, Ceramics rule</dt><dd>8.00</dd>
-        <div class="rule"></div>
-        <dt><b>Landing cost</b></dt><dd class="big">RM 31.72</dd>
-        <dt>Last purchase price (check)</dt><dd class="muted">RMB 34.50, PO-2610-0xx, 14 Oct 2026</dd>
-      </dl>
-    </div>
-    <div class="card"><h3>Selling price</h3>
-      <dl class="dl">
-        <dt>Selling price (AutoCount list price)</dt><dd class="big">RM 79.00</dd>
-        <dt>Mark-up on landing cost</dt><dd><b>149.06%</b></dd>
-      </dl>
-    </div>
-  </div>
-  <div class="card" style="margin-top:14px"><h3>Party prices <span class="v2">v4</span></h3>
-    <div class="tw"><table>
-      <colgroup><col style="width:150px"><col style="width:90px"><col style="width:230px"><col style="width:130px"><col style="width:170px"></colgroup>
-      <thead><tr><th>Party</th><th class="n">Mark-up</th><th>Cost method used</th><th class="n">Party price (RM)</th><th class="n">Party margin at RM 79.00</th></tr></thead>
-      <tbody>
-        <tr><td>Bath Plus</td><td class="n">8%</td><td>Primary supplier, SUP-A01 <span class="muted">(company default)</span></td><td class="n"><b>34.26</b></td><td class="n">130.61%</td></tr>
-        <tr><td title="Illustrative dealer">Dealer 300-D0xx (masked)</td><td class="n">12%</td><td>Average of supplier prices <span class="muted">(party override)</span></td><td class="n"><b>44.82</b></td><td class="n">76.28%</td></tr>
-      </tbody></table></div>
-    <p class="ann">Read-only here. A product joins or leaves a party from that party's Costing tab. Party margin = (selling - party price) / party price (Q7 a). Method precedence: product override, then party override, then company default (Q6 a).</p>
-  </div>
-  <p class="ann">Empty states: "No cost (method: Primary supplier)", "Set a primary supplier", "No rate for EUR on 10 Nov", "Selected supplier no longer linked", and "No transport rule" (adds + 0 and stays flagged). An unknown cost is never shown as 0. A method never silently falls back to another.</p>
+<h2>2. Settings <small class="muted">(dialog from the page header)</small></h2>
+<div class="screen" style="max-width:760px"><div class="inner">
+  <div class="tabs"><span class="on">Exchange rates</span><span>SST and method</span><span>Transport by category</span></div>
+  <div class="tw"><table>
+    <colgroup><col style="width:90px"><col style="width:130px"><col style="width:140px"><col style="width:110px"><col></colgroup>
+    <thead><tr><th>Currency</th><th>Effective from</th><th class="n">Units per MYR 1</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>RMB</td><td>1 Dec 2026</td><td class="n">1.6300</td><td><span class="pill">Scheduled</span></td><td class="muted">Q4 budget</td></tr>
+      <tr><td>RMB</td><td>1 Nov 2026</td><td class="n">1.6000</td><td><span class="pill ok">In force</span></td><td class="muted">Workbook rate</td></tr>
+      <tr><td>RMB</td><td>1 Sep 2026</td><td class="n">1.6200</td><td><span class="pill">Past</span></td><td></td></tr>
+      <tr><td>USD</td><td>1 Nov 2026</td><td class="n">0.2273</td><td><span class="pill ok">In force</span></td><td></td></tr>
+    </tbody></table></div>
+  <p class="ann">Rates are dated, and the one used is the latest on or before the date. The SCM planner reads the same table. The other two tabs hold SST (1.10) with the default cost method (Primary supplier), and one rule per category (Add RM 8 for Ceramics / WC / Jacuzzi; x 1.07 for Accessories / Taps / Hose / Valves / Shower; x 1.10 for Kitchen sinks). Every change is audited.</p>
 </div></div>
 </section>
 
 <!-- Frame 3 -->
 <section class="frame">
-<h2>3. Pricing tab, edit: choosing the cost method <span class="v2">v2</span></h2>
-<p class="note">The layout is the same as in view. The method becomes a clearable select: clearing it returns to the company default. Each option previews the cost basis it would give on this product today, so the effect is visible before saving. "Selected supplier" adds a supplier select. The transport override sits below it.</p>
-<div class="screen"><div class="inner">
-  <div class="grid2">
-    <div class="card"><h3>Cost basis</h3>
-      <div class="sel">Primary supplier (company default)<span class="x">&#x2715; &#9662;</span></div>
-      <div class="menu">
-        <div class="on"><span>Primary supplier, SUP-A01</span><span>RM 31.72 &middot; 149.06%</span></div>
-        <div><span>Selected supplier, SUP-B07</span><span>RM 34.13 &middot; 131.50%</span></div>
-        <div><span>Average of supplier prices (3 of 4; SUP-D03 no EUR rate)</span><span>RM 40.01 &middot; 97.43%</span></div>
-        <div><span>Last PO price, 14 Oct 2026 at MYR 1 = 1.62 RMB</span><span>RM 31.43 &middot; 151.38%</span></div>
-      </div>
-      <p class="ann">Average = the simple mean of the landing costs of every linked supplier with a cost and a rate on the date. It moves only when a price list or rate changes. Last PO converts at the rate in force on the PO date (1.62 from 1 Sep), which is why it differs from the primary supplier's figure at the same RMB 34.50.</p>
-    </div>
-    <div class="card"><h3>Transport</h3>
-      <dl class="dl"><dt>Category rule (Ceramics)</dt><dd>Add RM 8.00 per unit</dd></dl>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-        <div class="sel muted">Override mode: none<span class="x">&#9662;</span></div>
-        <div class="sel muted">Value<span class="x"></span></div>
-      </div>
-      <p class="ann">Leave it empty to use the category rule. An override shows as "Product override" in the breakdown and the export.</p>
-    </div>
+<h2>3. Import from Excel <small class="muted">(the Sales &gt; Targets import, same shape)</small></h2>
+<div class="screen" style="max-width:760px"><div class="inner">
+  <div class="sel muted" style="margin-bottom:10px">costing-bath-plus-2026-11-11.xlsx (exported from this page, edited)</div>
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px">
+    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Rows</div><b>8</b></div>
+    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Will change</div><b>2</b></div>
+    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Unchanged</div><b>5</b></div>
+    <div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Skipped</div><b>1</b></div>
   </div>
-</div></div>
-</section>
-
-<!-- Frame 4 -->
-<section class="frame">
-<h2>4. Customer detail, Costing tab <span class="v2">v4</span> <small class="muted">(Order management &gt; Customers &gt; Bath Plus)</small></h2>
-<p class="note">The party is the existing customer (debtor) record. Its detail page gets a Costing tab, shown only with <code>products.cost.view</code>, using the same permission-gated tab pattern as Branches and Billing documents. The view and edit pages carry the same tab. The profile's mark-up and method sit under the header, followed by the party costing list. A dealer never sees this page or any cost.</p>
-<div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Bath Plus Sdn Bhd</span><span class="sub">300-B0xx</span><span class="sp"></span><button class="btn">&#8249;</button><button class="btn">&#8250;</button><button class="btn">Edit costing</button><button class="btn pri">Add products</button></div>
-  <div class="meta"><span>Debtor type <b>(from the debtor row)</b></span><span>Costing mark-up <b>8%</b></span><span>Cost method <b>Company default (Primary supplier)</b></span><span>Products <b>5</b></span></div>
-  <div class="tabs"><span>Details</span><span>Branches</span><span>Asks</span><span>Billing documents</span><span class="on">Costing</span></div>
-  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Category</button><button class="btn">Brand</button><button class="btn">Cost method</button><button class="btn">As of 10 Nov 2026</button><button class="btn">Export</button></div>
-  <div class="tw"><table style="min-width:1350px">
-    <colgroup><col style="width:100px"><col style="width:140px"><col style="width:100px"><col style="width:190px"><col style="width:100px"><col style="width:80px"><col style="width:100px"><col style="width:110px"><col style="width:90px"><col style="width:120px"><col style="width:120px"></colgroup>
-    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Cost method</th><th class="n">Unit cost</th><th>Transport</th><th class="n">Landing (RM)</th><th class="n">Party price (RM)</th><th class="n">Selling (RM)</th><th class="n">Party margin</th><th>Note</th></tr></thead>
+  <div class="tw"><table><colgroup><col style="width:110px"><col style="width:130px"><col style="width:130px"><col></colgroup>
+    <thead><tr><th>Code</th><th>Column</th><th>Change</th><th>Why</th></tr></thead>
     <tbody>
-      <tr><td>CGB9032B</td><td title="WB 245 Basin">WB 245 Basin</td><td>Ceramics</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 34.50</td><td>+ RM 8.00</td><td class="n">31.72</td><td class="n"><b>34.26</b></td><td class="n">79.00</td><td class="n">130.61%</td><td></td></tr>
-      <tr><td>T-1xx</td><td>Basin tap (masked)</td><td>Taps</td><td>Primary supplier, SUP-A01</td><td class="n">RMB 120.00</td><td>x 1.07</td><td class="n">88.28</td><td class="n"><b>95.34</b></td><td class="n">189.00</td><td class="n">98.24%</td><td></td></tr>
-      <tr><td>K-2xx</td><td>Kitchen sink (masked)</td><td>Kitchen sinks</td><td>Selected supplier, SUP-B07</td><td class="n">RMB 260.00</td><td>x 1.10</td><td class="n">196.63</td><td class="n"><b>212.36</b></td><td class="n">459.00</td><td class="n">116.15%</td><td class="muted">Product override</td></tr>
-      <tr><td>S-3xx</td><td>Shower set (masked)</td><td>Shower</td><td>Primary supplier, SUP-E05</td><td class="n">USD 20.00</td><td>x 1.07</td><td class="n">103.58</td><td class="n"><b>111.86</b></td><td class="n">239.00</td><td class="n">113.66%</td><td class="muted">USD 4.40 from 1 Nov</td></tr>
-      <tr><td>A-4xx</td><td>Accessory (masked)</td><td>Accessories</td><td>Primary supplier</td><td class="n muted">-</td><td>x 1.07</td><td class="n muted">-</td><td class="n muted">-</td><td class="n">25.00</td><td class="n muted">-</td><td><span class="pill warn">No cost</span></td></tr>
+      <tr><td>JZ-1xx</td><td>Mark-up</td><td>8% -&gt; 10%</td><td></td></tr>
+      <tr><td>H-0xx</td><td>Transport</td><td>x 1.07 -&gt; x 1.10</td><td>Product override</td></tr>
+      <tr><td>A-4xx</td><td>Cost</td><td class="muted">ignored</td><td>Supplier costs come in through Upload cost price</td></tr>
     </tbody></table></div>
-  <p class="ann">"Edit costing" (a modal) sets the mark-up %, the cost method (clearable back to "Company default"; offers Primary supplier, Average or Last PO price) and Active. It needs the new <code>products.party_costing.manage</code> (management + admin). Remove on a row = Unlink, with a countdown. Excel columns: Party, Party code, Code, Name, Category, Cost method, Method source (product / party / company), Supplier code, Currency, Unit cost, Rate (MYR per unit), Rate effective from, SST, Transport mode, Transport value, Transport source, Landing cost (MYR), Party mark-up %, Party price (MYR), Selling price (MYR), Party margin %, Note. Values are numbers. The sheet header states the party and the "as of" date.</p>
-</div></div>
-</section>
-
-<section class="frame">
-<h2>5. Costing tab on a customer with no profile yet <span class="v2">v4</span> <small class="muted">(a dealer, e.g. 300-D0yy)</small></h2>
-<p class="note">Any customer can get a profile. An empty state is shown with no button in the body; the only call to action is in the header.</p>
-<div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Dealer (masked)</span><span class="sub">300-D0yy</span><span class="sp"></span><button class="btn pri">Set up costing</button></div>
-  <div class="tabs"><span>Details</span><span>Branches</span><span>Asks</span><span>Billing documents</span><span class="on">Costing</span></div>
-  <div class="card" style="text-align:center;padding:28px"><h3 style="margin:0 0 4px">No costing profile</h3><p class="muted" style="margin:0">This customer has no mark-up or products for costing yet.</p></div>
-</div></div>
-</section>
-
-<section class="frame">
-<h2>6. Products &gt; Party costing <span class="v2">v4</span> <small class="muted">(every party with a costing profile)</small></h2>
-<p class="note">This index finds the parties that have costing. A row opens that customer's Costing tab. No party type is added: the existing AutoCount debtor type and customer group are the columns to filter on. It needs <code>products.cost.view</code>.</p>
-<div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Party costing</span><span class="sp"></span></div>
-  <div class="toolbar"><div class="search">Search party or code</div><button class="btn">Debtor type</button><button class="btn">Customer group</button><button class="btn">Status</button><button class="btn">Export</button></div>
-  <div class="tw"><table>
-    <colgroup><col style="width:110px"><col style="width:200px"><col style="width:150px"><col style="width:150px"><col style="width:90px"><col style="width:220px"><col style="width:90px"><col style="width:90px"></colgroup>
-    <thead><tr><th>Code</th><th>Party</th><th>AutoCount debtor type</th><th>Customer group</th><th class="n">Mark-up</th><th>Cost method</th><th class="n">Products</th><th>Status</th></tr></thead>
-    <tbody>
-      <tr><td>300-B0xx</td><td>Bath Plus Sdn Bhd</td><td class="muted">(as pushed)</td><td class="muted">-</td><td class="n">8%</td><td class="muted">Company default (Primary supplier)</td><td class="n">5</td><td><span class="pill ok">Active</span></td></tr>
-      <tr><td>300-D0xx</td><td title="Illustrative">Dealer (masked)</td><td class="muted">(as pushed)</td><td class="muted">-</td><td class="n">12%</td><td>Average of supplier prices</td><td class="n">2</td><td><span class="pill ok">Active</span></td></tr>
-    </tbody></table></div>
-  <p class="ann">Bath Plus: if its debtor row already exists (crew checks the dev copy), its profile is set up from its Costing tab. If not, staff create it with Customers &gt; New under the debtor code AutoCount will use. When AutoCount later pushes that debtor, the existing code merge folds the two rows into one and keeps the profile.</p>
-</div></div>
-</section>
-
-<section class="frame">
-<h2>7. Add products to a party <span class="v2">v4</span> <small class="muted">(modal, the shared product picker)</small></h2>
-<p class="note">This is the picker the "Copy to other products" dialogs use: search, Category / Brand filters, shift-tick, and "Select all N" for the filtered set (up to 500 per add). Products already on the party show as already added. The selection is a fixed set.</p>
-<div class="screen" style="max-width:640px"><div class="inner">
-  <div class="ph"><span class="t">Add products to Bath Plus</span></div>
-  <div class="toolbar"><div class="search">Search code or name</div><button class="btn">Category: Ceramics</button><button class="btn">Brand</button></div>
-  <div class="tw"><table>
-    <colgroup><col style="width:40px"><col style="width:110px"><col><col style="width:110px"></colgroup>
-    <thead><tr><th></th><th>Code</th><th>Name</th><th>Category</th></tr></thead>
-    <tbody>
-      <tr><td>&#9745;</td><td>CGB9032B</td><td>WB 245 Basin</td><td class="muted">Already added</td></tr>
-      <tr><td>&#9745;</td><td>CGB90xxA</td><td>Basin (masked)</td><td>Ceramics</td></tr>
-      <tr><td>&#9744;</td><td>WC-5xx</td><td>WC (masked)</td><td>Ceramics</td></tr>
-    </tbody></table></div>
-  <div class="toolbar" style="margin-top:10px"><span class="muted">1 selected &middot; Select all 48</span><span style="flex:1"></span><button class="btn">Cancel</button><button class="btn pri">Add 1 product</button></div>
-</div></div>
-</section>
-
-<!-- Frame 5 -->
-<section class="frame">
-<h2>8. Exchange rates, dated with history <span class="v2">v2</span> <small class="muted">(the existing SCM Currency rates panel, extended)</small></h2>
-<p class="note">One row per currency per effective date. The rate used for a date is the latest row on or before it. Future-dated rows take effect on their day. Every add, edit and delete is audited. MYR is 1 by definition and has no row. Existing rates are carried over as their first row.</p>
-<div class="screen"><div class="inner">
-  <div class="ph"><span class="t">Exchange rates</span><span class="sp"></span><button class="btn pri">Add rate</button></div>
-  <div class="tw"><table>
-    <colgroup><col style="width:90px"><col style="width:130px"><col style="width:170px"><col style="width:180px"><col style="width:120px"><col></colgroup>
-    <thead><tr><th>Currency</th><th>Effective from</th><th class="n">MYR per 1 unit</th><th class="n">Units per MYR 1</th><th>Status</th><th>Note</th></tr></thead>
-    <tbody>
-      <tr><td>RMB</td><td>1 Dec 2026</td><td class="n">0.613497</td><td class="n">1.6300</td><td><span class="pill">Scheduled</span></td><td class="muted">Q4 budget rate</td></tr>
-      <tr><td>RMB</td><td>1 Nov 2026</td><td class="n">0.625000</td><td class="n">1.6000</td><td><span class="pill ok">In force</span></td><td class="muted">Workbook rate</td></tr>
-      <tr><td>RMB</td><td>1 Sep 2026</td><td class="n">0.617284</td><td class="n">1.6200</td><td><span class="pill">Past</span></td><td></td></tr>
-      <tr><td>USD</td><td>1 Nov 2026</td><td class="n">4.400000</td><td class="n">0.2273</td><td><span class="pill ok">In force</span></td><td></td></tr>
-    </tbody></table></div>
-  <p class="ann">Add rate (modal): currency, effective from, and the rate entered either as "MYR per 1 unit" or as "MYR 1 = x units" (the workbook's 1.6). Removing a row is a deferred action with a countdown, no confirm dialog. The SCM planner reads the same table at today's date, so there is one source of rates.</p>
-</div></div>
-</section>
-
-<!-- Frame 6 -->
-<section class="frame">
-<h2>9. Costing settings <small class="muted">(System Settings, Costing section)</small></h2>
-<div class="screen"><div class="inner">
-  <div class="grid2">
-    <div class="card"><h3>Company settings</h3><dl class="dl"><dt>SST</dt><dd>10% (x 1.10)</dd><dt>Default cost method <span class="v2">v2</span></dt><dd>Primary supplier</dd><dt>Party mark-ups</dt><dd class="muted">on each party's costing profile <span class="v2">v4</span></dd></dl></div>
-    <div class="card"><h3>Transport by category</h3>
-      <div class="tw"><table><thead><tr><th>Category</th><th>Mode</th><th class="n">Value</th></tr></thead><tbody>
-        <tr><td>Ceramics / WC / Jacuzzi</td><td>Add per unit</td><td class="n">RM 8.00</td></tr>
-        <tr><td>Accessories / Taps / Hose / Valves / Shower</td><td>Multiply</td><td class="n">x 1.07</td></tr>
-        <tr><td>Kitchen sinks</td><td>Multiply</td><td class="n">x 1.10</td></tr>
-        <tr><td>Glass (example)</td><td class="muted" colspan="2">No rule (adds 0, flagged)</td></tr>
-      </tbody></table></div></div>
-  </div>
+  <div class="toolbar" style="margin-top:10px"><span class="muted">Test writes nothing. Import is enabled after a Test of the same file.</span><span style="flex:1"></span><button class="btn">Test</button><button class="btn pri">Import 2 changes</button></div>
 </div></div>
 </section>
 
 <!-- Map -->
 <section class="frame">
-<h2>Element to component map</h2>
+<h2>Element to component map <small class="muted">(reused from Sales &gt; Targets first)</small></h2>
 <div class="tw"><table class="map">
-<colgroup><col style="width:34%"><col></colgroup>
-<thead><tr><th>Element</th><th>Component (repo path, <code>sorento_crm_frontend/</code>)</th></tr></thead>
+<colgroup><col style="width:30%"><col></colgroup>
+<thead><tr><th>Element</th><th>Existing component (repo path, <code>sorento_crm_frontend/</code>)</th></tr></thead>
 <tbody>
-<tr><td>Header, prev/next, Edit</td><td><code>components/common/PageHeader.tsx</code>, <code>components/common/RecordNavigation.tsx</code> (already on <code>products/[id]/components/ProductDetail.tsx</code>)</td></tr>
-<tr><td>Line tabs (Purchasing, Pricing)</td><td><code>components/ui/tabs.tsx</code> in <code>ProductDetail.tsx:314-355</code>. Suppliers is renamed Purchasing and keeps its <code>?tab=suppliers</code> alias. Pricing is gated on <code>products.cost.view</code>.</td></tr>
-<tr><td>Purchasing grid + open row cost list</td><td><code>components/common/PanelDataGrid.tsx</code>, extended from <code>products/[id]/components/ProductSuppliersTab.tsx</code></td></tr>
-<tr><td>Method chip, Primary pill, warnings</td><td><code>components/ui/badge.tsx</code></td></tr>
-<tr><td>Pricing cards, breakdown</td><td><code>components/ui/card.tsx</code> + <code>components/common/Field.tsx</code></td></tr>
-<tr><td>Cost method select, supplier select, transport override mode</td><td><code>components/common/SearchableSelect.tsx</code> (clearable; option label carries the preview figure), <code>components/ui/number-input.tsx</code> for the transport value</td></tr>
-<tr><td>Party costing index, party costing list, toolbar, As of, Excel export</td><td><code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> <code>exportConfig={{kind:'listQuery'}}</code> (as in <code>products/components/ProductsList.tsx:1170</code>), resource in <code>sorento_crm_backend/app/services/list_query_registry.py</code></td></tr>
-<tr><td>Costing tab on the customer</td><td><code>app/(protected)/order-management/customers/components/CustomerDetail.tsx:31-49</code> (<code>CUSTOMER_TABS</code> + <code>useCustomerTabs</code>, gated like Branches / Billing), shared with <code>customers/[id]/edit</code></td></tr>
-<tr><td>Edit costing modal</td><td><code>components/common/FormDialogScaffold.tsx</code>; mark-up via <code>components/ui/number-input.tsx</code>; cost method via <code>SearchableSelect.tsx</code> (clearable); Active via <code>components/ui/switch.tsx</code></td></tr>
-<tr><td>Add products to a party</td><td><code>products/[id]/components/ProductTargetPicker.tsx</code> (<code>useProductTargetPicker</code>, made to work without a source product) in a <code>FormDialogScaffold.tsx</code> modal. Remove = Unlink via <code>components/common/DeferredActionButton.tsx</code></td></tr>
-<tr><td>Empty state</td><td>Heading + hint, no body button (<code>documentation/reference/DESIGN-LANGUAGE.md</code> section 6); the CTA "Set up costing" in the header</td></tr>
-<tr><td>Exchange rates (dated)</td><td><code>app/(protected)/scm/policies/components/CurrencyRatesPanel.tsx</code> extended to a dated list; add/edit in <code>FormDialogScaffold.tsx</code>; delete via <code>DeferredActionButton.tsx</code></td></tr>
-<tr><td>Costing settings</td><td>A new section on <code>app/(protected)/user-management/settings</code></td></tr>
+<tr><td>Page shell, grid card, toolbar (search, Filters, Columns, Export), pager</td><td>The Sales &gt; Targets list: <code>app/(protected)/sales/targets/components/SalesTargetsView.tsx:439-537</code> = <code>components/ui/data-grid.tsx</code> + <code>components/ui/data-grid-list-toolbar.tsx</code> + <code>components/ui/data-grid-table.tsx</code> + <code>components/ui/data-grid-pagination.tsx</code> in <code>components/ui/card.tsx</code>, header from <code>components/common/PageHeader.tsx</code>, search from <code>components/common/ListSearchInput.tsx</code>, fixed + resizable columns, <code>listingKey</code> for saved column choices</td></tr>
+<tr><td>Export</td><td><code>DataGridListToolbar exportConfig={{kind:'listQuery'}}</code> (server export of the whole filtered set, as <code>master-data-management/products/components/ProductsList.tsx:1170</code>); the sheet keeps Sheet1's column order</td></tr>
+<tr><td>Import from Excel (Test, then Import; per-row report)</td><td>The same shape as <code>sales/targets/components/DealerTargetImportDialog.tsx</code>: <code>components/common/FileDropzone.tsx</code> + <code>components/common/CountTile.tsx</code> + report table; backend shape <code>sorento_crm_backend/app/services/sales/dealer_target_import.py</code> (pure parse + dry run in a rolled-back savepoint) and <code>app/api/v1/sales/targets.py:209-226</code> (template + import routes)</td></tr>
+<tr><td>Edit / Save in place</td><td>The Sales &gt; Targets record's edit mode (<code>sales/targets/components/TargetRecord.tsx</code> <code>TeamFigures</code> / <code>FigureInput</code>, NumberInput in cells, one Save); cell inputs <code>components/ui/number-input.tsx</code> (<code>NumberInput</code> / <code>LiveNumberInput</code>, as in <code>scm/components/SupplierSheet.tsx</code>) and <code>components/common/SearchableSelect.tsx</code> (clearable)</td></tr>
+<tr><td>Party picker</td><td><code>components/common/CustomerDebtorCombobox.tsx</code> with <code>pickOnly</code> (the stock inquiry / new product application customer picker); cleared = "Company standard"</td></tr>
+<tr><td>Row expand (suppliers)</td><td>A grid under an open row, as <code>products/[id]/components/ProductSuppliersTab.tsx:99</code> already draws its cost list (<code>components/common/PanelDataGrid.tsx</code> <code>expanded</code>; nested-grid rules in <code>components/ui/data-grid.nested.test.tsx</code>)</td></tr>
+<tr><td>Add products to a party</td><td><code>products/[id]/components/ProductTargetPicker.tsx</code> (<code>useProductTargetPicker</code>, made to work without a source product)</td></tr>
+<tr><td>Row History</td><td><code>components/common/RowActionsMenu.tsx</code> opening <code>components/audit/AuditTrail.tsx</code> for the row's product and party</td></tr>
+<tr><td>Settings dialog</td><td><code>components/common/FormDialogScaffold.tsx</code> + line tabs <code>components/ui/tabs.tsx</code>; the rates tab extends <code>app/(protected)/scm/policies/components/CurrencyRatesPanel.tsx</code> to dated rows</td></tr>
+<tr><td>No cost, Primary pills</td><td><code>components/ui/badge.tsx</code></td></tr>
 </tbody></table></div>
+<p class="ann">Dropped from v4 because this page covers them: the product Pricing tab, the Purchasing tab extension (now the row expand), the customer Costing tab, the Party costing index, and the separate settings page.</p>
 </section>
 </div>
 </body>
