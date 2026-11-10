@@ -37,4 +37,22 @@ describe('Insert field, Combo group (AC-4.2)', () => {
     open(['Product', 'Specs']);
     expect(screen.queryByText('{{combo.name}}')).toBeNull();
   });
+
+  it('lists "All parts as a list" and leaves out an omitted path (COMBO-SETTINGS-UX review S6)', () => {
+    render(
+      <InsertFieldDialog
+        open
+        value=""
+        data={null}
+        specKeys={[]}
+        groups={['Combo', 'Combo positions']}
+        omitPaths={['combo.description']}
+        onCancel={vi.fn()}
+        onDone={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('{{combo.parts}}')).toBeInTheDocument();
+    expect(screen.getByText('{{combo.name}}')).toBeInTheDocument();
+    expect(screen.queryByText('{{combo.description}}')).toBeNull();
+  });
 });

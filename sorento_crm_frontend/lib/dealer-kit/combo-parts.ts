@@ -51,9 +51,9 @@ function fieldValue(part: TagPartData, label: string, field: string): string {
   const text = isRich(raw) ? richPlainText(raw) : (raw ?? '');
   return (
     text
-      // A value is text: braces go, so a label typed as `{{combo.parts}}` can never be read as a
-      // field again (it would splice the list into itself without end).
-      .replace(/\{\{|\}\}/g, '')
+      // A value is text: EVERY brace goes (removing only pairs can leave two halves that touch, as
+      // in `{}}{combo.parts}{{}`), so a value can never be read as a field again.
+      .replace(/[{}]/g, '')
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
@@ -103,5 +103,7 @@ export function comboPartsHtml(data: TagBindingData | null | undefined): string 
         })
         .join(''),
     )
-    .join('');
+    .join('')
+    // Backstop: whatever the values held, the list never carries itself (or the description).
+    .replace(SELF_TOKEN, '');
 }

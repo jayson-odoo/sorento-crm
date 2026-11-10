@@ -167,6 +167,13 @@ describe('{{combo.parts}}', () => {
     expect(soleText.split('\n')[0]).toBe('SRTBF11829 (combo.parts)');
     expect(soleText).toContain('SRTWB2380 (slot.fixed.1.code)');
     expect(() => layerRichBlocks(viaDescription, data, 'print')).not.toThrow();
+    // Removing braces must not build a new token out of what is left (review round 2).
+    for (const sneaky of ['{}}{combo.parts}{{}', '{}}{ combo.parts }{{}', '{{{combo.parts}}}']) {
+      const again = bathroom({ main_label: sneaky, description: '<p>Hi {{combo.parts}}</p>' });
+      expect(() => layerRichBlocks(sole, again, 'print')).not.toThrow();
+      expect(() => layerRichBlocks(viaDescription, again, 'print')).not.toThrow();
+      expect(blocksPlainText(layerRichBlocks(sole, again, 'print')!)).not.toContain('{');
+    }
   });
 
   it('a rich layer with the description among other text splices the parts inside it, formatting kept (review S1)', () => {
