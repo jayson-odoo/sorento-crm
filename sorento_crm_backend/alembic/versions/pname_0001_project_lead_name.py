@@ -9,13 +9,13 @@ registration lock (card Q4).
 Plan: documentation/plans/projects/PLAN-project-name-10nov.md.
 
 Revision ID: pname_0001_project_lead_name
-Revises: ptag_0021_icon_conditions
+Revises: qas_0001_quote_form_drafts
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "pname_0001_project_lead_name"
-down_revision = "ptag_0021_icon_conditions"
+down_revision = "qas_0001_quote_form_drafts"
 branch_labels = None
 depends_on = None
 
