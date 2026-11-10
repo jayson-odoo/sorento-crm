@@ -43,9 +43,10 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
 
 
 #: Per-record histories whose cost values are masked for a reader without `products.cost.view`
-#: (SUPPLIER-COST-ACCESS). A purchase order's own history is not: its page is a purchasing
-#: screen that shows the same costs.
-_COST_MASKED_ENTITY_TYPES = frozenset({"product"})
+#: (SUPPLIER-COST-ACCESS): a product, and a packing list (its lines carry PO unit cost, and
+#: warehouse roles read it). A purchase order's own history is not: its page is a purchasing
+#: screen behind `scm.dashboard.view`.
+_COST_MASKED_ENTITY_TYPES = frozenset({"product", "inbound_shipments"})
 
 
 def _is_audit_admin(db: Session, user_id: str) -> bool:

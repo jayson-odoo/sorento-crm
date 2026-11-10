@@ -556,3 +556,26 @@ def test_parked_cost_row_delete_refused_without_cost_permission(env):
     with pytest.raises(AppException) as err:
         _delete_product_supplier_cost(env.db, {"requested_by_id": editor["id"], "entity_id": str(uuid.uuid4())})
     assert err.value.status_code == 403
+
+
+def test_packing_list_history_masks_unit_cost_without_permission(env):
+    from app.models.audit import AuditLog
+
+    shipment_id = str(uuid.uuid4())
+    row = AuditLog(
+        id=str(uuid.uuid4()), entity_type="inbound_shipments", entity_id=shipment_id, action="UPDATE",
+        old_values={"unit_cost": "9.10"}, new_values={"unit_cost": "9.99", "remarks": "re-quoted"},
+    )
+    env.db.add(row)
+    env.db.commit()
+    params = {"entity_type": "inbound_shipments", "entity_id": shipment_id}
+    warehouse = env.user("procurement.packing_lists.view")
+    r = env.get(warehouse, AUDIT_URL, **params)
+    assert r.status_code == 200, r.text
+    (entry,) = [e for e in r.json()["data"] if e["id"] == str(row.id)]
+    assert entry["new_values"] == {"unit_cost": "hidden", "remarks": "re-quoted"}
+    assert "9.99" not in r.text and "9.10" not in r.text
+    buyer = env.user("procurement.packing_lists.view", COST_PERM)
+    r = env.get(buyer, AUDIT_URL, **params)
+    (entry,) = [e for e in r.json()["data"] if e["id"] == str(row.id)]
+    assert entry["new_values"]["unit_cost"] == "9.99"
