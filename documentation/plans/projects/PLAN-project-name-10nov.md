@@ -1,6 +1,6 @@
 # PLAN: PROJECT-NAME (short project name in the header, lean registration page 1)
 
-Status: Scouting (behaviour card being written). Track: normal (additive migration). Card:
+Status: Card v1 + mock v1 posted, waiting on the owner (Q1-Q5, mock approval). Build not started. Track: normal (additive migration). Card:
 `CARD-project-name-10nov.md`. Mock: `mockups/project-name-10nov.html` (after the card).
 
 ## Journey
