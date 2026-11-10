@@ -75,7 +75,7 @@ origin/main a4af6565.
 1. New column `projects.projects.name` `VARCHAR(80)`, nullable, additive. Not unique, not part of the lock.
 2. Register page 1 (Check) stays exactly as today: Project title * (textarea, first field) + Developer + AI extract +
    Check. Nothing added.
-3. Register page 2: "Who and what" opens with **Project name** (input, optional, max 80, counter at 70+), then type
+3. Register page 2: "Who and what" opens with **Project name** (input, optional, max 80, counter always shown as in the approved mock), then type
    and template. The section summary shows the name, else the title.
 4. AI extract (the existing button on page 1; it takes text and photos) gains a **Project name** row. On confirm the
    name lands in the page 2 field; a typed name is never overwritten (same rule as the title). The extract also

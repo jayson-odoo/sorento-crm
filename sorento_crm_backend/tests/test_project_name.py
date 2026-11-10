@@ -393,8 +393,12 @@ def test_a_submit_only_clash_preview_carries_exactly_the_five_keys(v2):
         f"{STAFF}/clash-preview", json={"title": text, "developer_party_id": dev.id}
     )
     assert res.status_code == 200, res.text
-    for candidate in res.json()["candidates"]:
+    candidates = res.json()["candidates"]
+    assert candidates
+    for candidate in candidates:
         assert set(candidate) <= {"project_id", "project_code", "title", "name", "blocks"}
+    # The short label of the same project is part of what D8 lets them see.
+    assert NAME in [c.get("name") for c in candidates]
 
 
 def test_the_clash_preview_names_the_candidate(v2):
@@ -406,3 +410,19 @@ def test_the_clash_preview_names_the_candidate(v2):
     )
     assert res.status_code == 200, res.text
     assert NAME in [c.get("name") for c in res.json()["candidates"]]
+
+
+def test_qualify_refuses_a_long_name_in_details_with_422_not_500(v2):
+    """Reviewer: `details` is a free dict, so the length check must sit in the service."""
+    lead = _lead(v2).json()
+    res = as_user(v2, v2.owner).post(
+        f"{LEADS}/{lead['id']}/qualify", json={"details": {"name": "N" * 81}}
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_the_portal_collapses_whitespace_inside_the_name(world):
+    from ._project_registration_support import create_draft, registration
+
+    draft = create_draft(world, name="Residensi  \t Contoh   Phase 2")
+    assert registration(world, draft["id"]).name == NAME

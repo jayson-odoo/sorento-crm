@@ -111,9 +111,9 @@ MANAGE_PERMISSION = "projects.projects.manage"
 
 def _clean_name(value: Any) -> Optional[str]:
     """The short name as stored (PROJECT-NAME): one rule with the project's."""
-    from app.services.project_service import clean_project_name
+    from app.services.project_service import checked_project_name
 
-    return clean_project_name(value)
+    return checked_project_name(value)
 
 
 def _clean_title(raw: Optional[str]) -> str:

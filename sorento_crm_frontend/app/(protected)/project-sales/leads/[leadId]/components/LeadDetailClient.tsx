@@ -246,7 +246,11 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
           <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={projectDisplayName(lead)} lines={2} dialogTitle="Lead name" />
+            <TruncatedTextCell
+              text={projectDisplayName(lead)}
+              lines={2}
+              dialogTitle={lead.name?.trim() ? 'Lead name' : 'Lead title'}
+            />
           </h2>
           <p className="text-sm text-muted-foreground">
             {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}

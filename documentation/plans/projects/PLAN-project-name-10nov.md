@@ -1,6 +1,6 @@
 # PLAN: PROJECT-NAME (short project name in the header, lean registration page 1)
 
-Status: Build in progress (card v1.1 answered Q1 a, Q2 a, Q3 a, Q4 a, Q5 b; mock v1 approved 10 Nov). Track: normal (additive migration `pname_0001_project_lead_name`). Track: normal (additive migration). Card:
+Status: Build in progress (card v1.1 answered Q1 a, Q2 a, Q3 a, Q4 a, Q5 b; mock v1 approved 10 Nov). Track: normal (additive migration `pname_0001_project_lead_name`). Card:
 `CARD-project-name-10nov.md`. Mock: `mockups/project-name-10nov.html` (after the card).
 
 ## Journey

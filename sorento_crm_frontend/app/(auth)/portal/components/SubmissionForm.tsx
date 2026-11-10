@@ -1438,7 +1438,11 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
     // DO-derived ones.
     const aiValues = payload.values;
     const widgetByName: Record<string, WidgetKind | undefined> = {};
-    for (const f of fieldDefs) widgetByName[f.name] = f.widget;
+    const maxLengthByName: Record<string, number | undefined> = {};
+    for (const f of fieldDefs) {
+      widgetByName[f.name] = f.widget;
+      maxLengthByName[f.name] = f.maxLength;
+    }
     setFields((prev) => {
       const next = { ...prev };
       for (const [name, value] of Object.entries(aiValues)) {
@@ -1449,7 +1453,9 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
             .filter(Boolean)
             .join(', ');
         } else {
-          next[name] = value;
+          // A field with a cap (the project name, 80) keeps an over-long AI value inside it.
+          const cap = maxLengthByName[name];
+          next[name] = cap && typeof value === 'string' ? value.slice(0, cap) : value;
         }
       }
       // A new extracted customer name is free text: it no longer matches the picked customer.

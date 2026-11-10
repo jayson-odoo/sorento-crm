@@ -66,6 +66,19 @@ def clean_project_name(value: Any) -> Optional[str]:
     return text or None
 
 
+def checked_project_name(value: Any) -> Optional[str]:
+    """`clean_project_name`, refusing a name longer than the column with a 422 rather than
+    letting the database answer a 500 (a free-form `details` dict reaches here unvalidated)."""
+    name = clean_project_name(value)
+    if name and len(name) > PROJECT_NAME_MAX_LEN:
+        raise AppException(
+            status_code=422,
+            message=f"Project name is too long (at most {PROJECT_NAME_MAX_LEN} characters).",
+            code="project_name_too_long",
+        )
+    return name
+
+
 def project_display_name(project) -> str:
     """What a person recognises the project by: its short name, else its title (PROJECT-NAME
     rule 7). Notifications and labels use this; documents keep the full title."""
@@ -1362,7 +1375,7 @@ def apply_sales_details(
 
     for key in _PROJECT_FIELDS:
         if key in payload:
-            value = clean_project_name(payload[key]) if key == "name" else payload[key]
+            value = checked_project_name(payload[key]) if key == "name" else payload[key]
             setattr(project, key, value)
 
     db.flush()
