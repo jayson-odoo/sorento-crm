@@ -1,6 +1,6 @@
 # PLAN: release sweep red on main 6e6657e2 (RELEASE-FIX-11NOV, 11 Nov 2026)
 
-Status: in progress. Small fix track (tests only expected, no migration, no RBAC change).
+Status: done (PR #2325). Small fix track (tests only, no migration, no RBAC change).
 
 ## Failing on origin/main 6e6657e261 (passing at prod e731f224)
 
@@ -12,6 +12,8 @@ Status: in progress. Small fix track (tests only expected, no migration, no RBAC
   - test_a_type_matched_by_name_and_existing_option_and_keyword_are_reused_case_aside
   - test_a_label_with_no_attachment_type_is_skipped_and_no_type_is_created
   - test_with_no_types_at_all_no_option_is_created
+- tests/chatbot/test_closed_lists_validate.py (1 test, found in review, same cause as lec_0004)
+  - test_a_word_two_items_share_names_neither
 
 ## Approach
 
@@ -28,3 +30,15 @@ behaviour is right (code only if it is a real bug). No merged migration is chang
   the `project_party_role` lookup set and its 8 options into every `create_all` schema, the blank scratch
   schema included. lec_0004 counted ALL `lookup_options` rows, so 0 became 8 and 1 became 9. The
   migration and the seed are both right. Fix: count only the options of the `attachment_type_alias` set.
+- closed lists (review round 1): `query(LookupOption).one()` on the blank schema raised
+  MultipleResultsFound for the same seed. It now picks its fixture option by value. lec_0004 also asserts
+  the global option count moves only by the alias options, so a write into another set still fails.
+
+## Evidence
+
+- main 6e6657e261: the 3 files give 7 failed, 41 passed. Branch: 48 passed. Kill test (main's copies of the
+  3 files put back on the branch): the same 7 fail.
+- Migration pool as the sweep runs it (`tests/test_migration_*.py`, 135 files, `-p no:xdist`, bootstrapped
+  throwaway DB): 354 and lec_0004 pass. 13 others fail on local-role limits only (a non-superuser cannot
+  touch `pg_index` or `session_replication_role`, `audit_logs` is append-only, the local password's `%`
+  breaks alembic config interpolation). None of those files is touched here.
