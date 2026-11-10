@@ -41,6 +41,9 @@ Plan: `PLAN-quote-terms-select-10nov.md`. Lane PR #2305.
 
 - **E1** Terms template default (Quotation Templates > Terms > Edit Default / Add).
 - **E2** A new quotation copies the active template's term and validity (picks and texts).
+- **E2b** Owner Q3: when the project's customer carries AutoCount debtor terms
+  (`payment_terms_code`, customer feed contract 2.14) naming an active synced term, that term is
+  the new quotation's default instead of the template's; validity stays the template's.
 - **E3** The quotation form's Terms tab edits its own copy; the cover preview prints the picks
   before save.
 - **E4** Issue freezes the printed text as before; nothing already issued changes.

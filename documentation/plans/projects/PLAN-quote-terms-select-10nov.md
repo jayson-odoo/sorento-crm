@@ -1,7 +1,6 @@
 # PLAN: Quote payment terms from an AutoCount-synced select, validity as number + interval
 
-Status: Build (BE + FE written; crew answered Q1 = ESB ingest entity, Q5 = keep legacy text; Q2-Q4
-on the recommendations until the owner answers). Track: L (new master table + migration + ESB
+Status: Review (BE + FE built and green; Q1-Q5 answered). Track: L (new master table + migration + ESB
 ingest entity; the push side is the shared-service lane SS-PAYMENT-TERMS). UAC:
 `quote-terms-select-10nov-acceptance-criteria.md`.
 
@@ -11,8 +10,8 @@ Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templa
 ## Scout (file:line)
 
 - Storage today: free `Text` columns `payment_terms` + `validity` on three tables,
-  `sorento_crm_backend/app/models/projects.py:1209-1210` (terms template),
-  `:1327-1328` (per-quotation copy), `:1400-1401` (issue snapshot, frozen at issue).
+  `sorento_crm_backend/app/models/projects.py:1209-1210` (per-quotation copy),
+  `:1327-1328` (terms template), `:1400-1401` (issue snapshot, frozen at issue).
 - Schemas: `app/schemas/projects.py:1972-1973`, `:2253-2254`, `:2278-2279`, `:2522-2523`
   (all `Optional[str]`, max 2000).
 - Template service: `app/services/project_quotation_template_service.py:435-436, 480, 548-549`.
@@ -52,11 +51,12 @@ Lane: QUOTE-TERMS-SELECT. Owner ask, 10 Nov 2026 ~14:45 MYT, on Quotation Templa
 
 - Q1 (crew): ESB ingest entity `payment_terms`, contract 2.14, pushed by foundryx-shared-service
   (lane SS-PAYMENT-TERMS). Contract posted on PR #2305.
-- Q2 (recommended, owner pending): a term prints its AutoCount Description, else its code.
-- Q3 (recommended, owner pending): default from the Terms template only. Follow-up trigger: the
-  owner wants the customer's AutoCount debtor terms as the default, which needs
-  `Debtor.DisplayTerm` back on the customer feed.
-- Q4 (recommended, owner pending): `1 WEEK` / `2 WEEKS`, upper-case, 1..999.
+- Q2 (owner, 10 Nov 15:10 MYT): a term prints its AutoCount Description, else its code.
+- Q3 (owner): YES, a new quotation defaults its payment term from the project customer's
+  AutoCount debtor terms (`Debtor.DisplayTerm`, back on the customer feed as `payment_terms_code`,
+  stored on `customers.payment_terms_code`), when that code names an active synced term; the Terms
+  template's term otherwise. Validity always from the template.
+- Q4 (owner): `1 WEEK` / `2 WEEKS`, upper-case, 1..999.
 - Q5 (crew): unmatched legacy text is kept and printed, shown as `Current: ...`.
 
 ## Build notes
