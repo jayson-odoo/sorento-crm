@@ -254,7 +254,24 @@ vi.mock('../[documentId]/components/useQuotationEditSession', async (importOrigi
   };
 });
 
+// QUOTE-AUTOSAVE crew pass: Discard draft's options are read back (what it refreshes on commit).
+const deferredOptions = vi.fn();
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (options: unknown) => {
+    deferredOptions(options);
+    return {
+      pending: null,
+      isPending: false,
+      isBlocked: false,
+      start: vi.fn(),
+      cancel: vi.fn(),
+      countdown: null,
+    };
+  },
+}));
+
 import { QuotationFormClient } from './QuotationFormClient';
+import { quotationDocumentKey } from '../../../_shared/hooks/useQuotationDocuments';
 import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
 
 function project(overrides: Partial<Project> = {}): Project {
@@ -873,6 +890,38 @@ describe('QuotationFormClient edit', () => {
     expect(await screen.findByText(/^Saved/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Discard draft' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('crew pass step 9: leaving the form refreshes the proposal record, so its page shows the draft', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const view = render(
+      <QueryClientProvider client={client}>
+        <QuotationFormClient projectId="p1" documentId="d1" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'left via Back' } });
+    invalidate.mockClear();
+    view.unmount();
+    expect(invalidate).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: quotationDocumentKey('p1', 'd1') }),
+    );
+  });
+
+  it('crew pass step 14: Discard draft refreshes the proposal record when it commits', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    const options = deferredOptions.mock.calls.at(-1)![0] as {
+      actionKey: string;
+      invalidateKeys?: unknown[][];
+    };
+    expect(options.actionKey).toBe('quotation_form_draft.discard');
+    expect(options.invalidateKeys).toEqual(
+      expect.arrayContaining([quotationDocumentKey('p1', 'd1')]),
+    );
   });
 
   it('QUOTE-AUTOSAVE: opens on the draft when there is one, not on the record', async () => {
