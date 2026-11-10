@@ -13,7 +13,11 @@ const links = vi.hoisted(() => ({
   assignTemplateToProducts: vi.fn(),
 }));
 const products = vi.hoisted(() => ({ getProducts: vi.fn() }));
-const deferred = vi.hoisted(() => ({ start: vi.fn(), input: null as Record<string, unknown> | null }));
+const deferred = vi.hoisted(() => ({
+  start: vi.fn(),
+  input: null as Record<string, unknown> | null,
+  isPending: false,
+}));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
 vi.mock('../../services/productTagTemplateService', async (orig) => ({
@@ -25,7 +29,14 @@ vi.mock('@/lib/toast', () => ({ toast }));
 vi.mock('@/hooks/useDeferredAction', () => ({
   useDeferredAction: (input: Record<string, unknown>) => {
     deferred.input = input;
-    return { start: deferred.start, cancel: vi.fn(), isPending: false, isBlocked: false, pending: null, countdown: null };
+    return {
+      start: deferred.start,
+      cancel: vi.fn(),
+      isPending: deferred.isPending,
+      isBlocked: false,
+      pending: null,
+      countdown: null,
+    };
   },
 }));
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-product-category-select-query', () => ({
@@ -46,13 +57,14 @@ const row = (id: string, code: string) => ({
 });
 const PAGE = [row('p1', 'SRTKS-7040-WH'), row('p2', 'SRTKS-7848-SS'), row('p3', 'SRTKS-8050-BK')];
 
-function mount() {
+function mount(onOpenChange = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <TemplateProductsDialog open onOpenChange={vi.fn()} templateId={T} templateName="Kitchen sink A6" />
+      <TemplateProductsDialog open onOpenChange={onOpenChange} templateId={T} templateName="Kitchen sink A6" />
     </QueryClientProvider>,
   );
+  return { client, onOpenChange };
 }
 
 const box = (code: string) => screen.findByRole('checkbox', { name: `Select ${code}` });
@@ -62,6 +74,7 @@ const isTicked = (el: HTMLElement) =>
 beforeEach(() => {
   vi.clearAllMocks();
   deferred.input = null;
+  deferred.isPending = false;
   links.listTemplateProductIds.mockResolvedValue(['p1', 'p2']);
   links.assignTemplateToProducts.mockResolvedValue({ changed: 1 });
   products.getProducts.mockResolvedValue({ data: PAGE, pagination: { total: 3, page: 1, limit: 25 } });
@@ -201,5 +214,25 @@ describe('TemplateProductsDialog', () => {
         expect.objectContaining({ tag_template_id: T, status: 'active' }),
       ),
     );
+  });
+
+  it('a link made elsewhere while the dialog is open is neither a phantom add nor a phantom removal', async () => {
+    links.listTemplateProductIds
+      .mockResolvedValueOnce(['p1', 'p2'])
+      .mockResolvedValue(['p1', 'p2', 'p3']); // someone links p3 on the product page meanwhile
+    const { client } = mount();
+    await waitFor(async () => expect(isTicked(await box('SRTKS-7040-WH'))).toBe(true));
+    await client.invalidateQueries({ queryKey: ['tag-template-product-ids', T] });
+    await waitFor(() => expect(links.listTemplateProductIds).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('2 use this template')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('cannot be closed while the removals count down (it holds the only Cancel)', async () => {
+    deferred.isPending = true;
+    const { onOpenChange } = mount();
+    await box('SRTKS-7040-WH');
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });

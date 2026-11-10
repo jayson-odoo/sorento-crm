@@ -414,8 +414,9 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
             limit: MAX_COPY_TARGETS,
             onSelectAll: () => void selectAllMatching(),
             onClear: () => {
-              // Merge mode: undoing an active "Select all" goes back to the ticks before it, and
-              // any other Clear goes back to the seed. Copy dialogs: Clear empties.
+              // Merge mode: a Clear (banner or strip) while a "Select all" is active undoes it,
+              // back to the ticks before it; any other Clear goes back to the seed, never to
+              // nothing. Copy dialogs: Clear empties.
               // `matchingActive` is this render's value: the toolbar resets the rows first.
               const restore = mergeSelectAll
                 ? ((matchingActive ? beforeMatching.current : null) ?? seed.current ?? {})
