@@ -124,12 +124,27 @@ def format_dimensions_mm(length, width, height) -> Optional[str]:
     parts = [length, width, height]
     if not any(part is not None for part in parts):
         return None
+    return " x ".join(_dimension_number(part) for part in parts) + " mm"
+
+
+def _dimension_number(part) -> str:
+    """One measurement as printed (``-`` when missing); the number rule `format_dimensions_mm`
+    documents, shared with `format_dimensions_lwh`."""
+    return "-" if part is None else f"{Decimal(str(part)).normalize():f}"
+
+
+def format_dimensions_lwh(length, width, height) -> str:
+    """The flyer's ``L780xW480xH400mm`` form, or ``""`` when no dimension is recorded.
+
+    Same numbers, trailing-zero rule and ``-`` for a single missing dimension as
+    `format_dimensions_mm` (``L800xW-xH700mm``).
+    """
+    if length is None and width is None and height is None:
+        return ""
     return (
-        " x ".join(
-            "-" if part is None else f"{Decimal(str(part)).normalize():f}"
-            for part in parts
-        )
-        + " mm"
+        f"L{_dimension_number(length)}x"
+        f"W{_dimension_number(width)}x"
+        f"H{_dimension_number(height)}mm"
     )
 
 
@@ -330,8 +345,8 @@ def _spec_raw_text(raw) -> str:
     return str(raw)
 
 
-def dimensions_text(product: Product, spec_row=None) -> str:
-    """Dimensions from the reviewed spec values, else from the product master.
+def _measured_dimensions(product: Product, spec_row=None) -> tuple:
+    """(length, width, height) from the reviewed spec values, else from the product master.
 
     The spec values win because they are what somebody checked against the
     printed flyer; the master columns are an import and are wrong often enough
@@ -345,16 +360,23 @@ def dimensions_text(product: Product, spec_row=None) -> str:
             for key in _SPEC_DIMENSION_KEYS
         ]
         if any(value is not None for value in measured):
-            return format_dimensions_mm(*measured) or ""
+            return tuple(measured)
 
     return (
-        format_dimensions_mm(
-            product.dimensions_length,
-            product.dimensions_width,
-            product.dimensions_height,
-        )
-        or ""
+        product.dimensions_length,
+        product.dimensions_width,
+        product.dimensions_height,
     )
+
+
+def dimensions_text(product: Product, spec_row=None) -> str:
+    """Dimensions from the reviewed spec values, else from the product master."""
+    return format_dimensions_mm(*_measured_dimensions(product, spec_row)) or ""
+
+
+def dimensions_lwh_text(product: Product, spec_row=None) -> str:
+    """`dimensions_text`'s measurements in the flyer's ``L780xW480xH400mm`` form."""
+    return format_dimensions_lwh(*_measured_dimensions(product, spec_row))
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +405,7 @@ def product_tag_data(
         "code": product.product_code or "",
         "name": product.product_name or "",
         "dimensions": dimensions_text(product, spec_row),
+        "dimensions_lwh": dimensions_lwh_text(product, spec_row),
         "spec_lines": spec_lines(db, product, spec_row),
         # Key by key, beside the rendered sentence: `{{spec.material}}` asks a
         # question `spec_lines` cannot answer (D58).
@@ -751,6 +774,7 @@ def _part_row(
         "code": data["code"],
         "name": data["name"],
         "dimensions": data["dimensions"],
+        "dimensions_lwh": data["dimensions_lwh"],
         "spec_lines": data["spec_lines"],
         "specs": data["specs"],
         "images": data["images"],
@@ -1263,6 +1287,12 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
         "id": combo.id,
         "name": combo.name,
         "description": combo.description,
+        "main_label": combo.main_label,
+        "parts_line": combo.parts_line,
+        # Every labelled part (fixed, option or upgrade), by product id.
+        "part_labels": {
+            part.part_product_id: part.label for part in parts if (part.label or "").strip()
+        },
         "free_items": names_text(accessories),
         "accessories": accessories,
         "accessory_box_style": box_style_for(db, combo_id=combo.id),
@@ -1897,6 +1927,9 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     row["combo"] = _combo_with_picks(pinned.get("combo"), line, tag)
     if isinstance(row["combo"], dict):
         row["combo"].setdefault("accessory_box_style", None)
+        row["combo"].setdefault("main_label", None)
+        row["combo"].setdefault("parts_line", None)
+        row["combo"].setdefault("part_labels", {})
     # PRICETAG-ACCESSORIES (A9): the pinned list, pictures re-signed. A row pinned before the
     # list existed carries none and keeps the text it was pinned with.
     if "accessories" in pinned:
