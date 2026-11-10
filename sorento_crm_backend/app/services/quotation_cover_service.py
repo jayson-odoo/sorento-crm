@@ -408,6 +408,10 @@ def rows_for_design(
     rows: List[Dict[str, Any]] = []
     for item in design["rows"]:
         key = item["key"]
+        # Quotation Purpose no longer prints anywhere: cover, sign page, preview (owner, 10 Nov
+        # 2026). The column and any stored value stay; a design still lists the row.
+        if key == "purpose":
+            continue
         value = values.get(key) or ""
         if not item.get("shown", True) or not value:
             continue
