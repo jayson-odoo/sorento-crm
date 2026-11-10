@@ -12,7 +12,7 @@ sales-side roles today (project.customer.service, marketing_*), which are exactl
 lane takes cost away from. Nothing is revoked; a role missing here is granted in the RBAC UI.
 
 Revision ID: sca_0001_products_cost_view
-Revises: town_0001_view_perm
+Revises: combo_0001_part_labels
 Create Date: 2026-11-10
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "sca_0001_products_cost_view"
-down_revision = "town_0001_view_perm"
+down_revision = "combo_0001_part_labels"
 branch_labels = None
 depends_on = None
 
