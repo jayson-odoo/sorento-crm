@@ -870,3 +870,90 @@ def test_a_failing_store_is_skipped_for_a_while(monkeypatch):
     for _ in range(3):
         assert idem.send_with_attempts(idem.attempt_store(), "base", lambda key: refused) == refused
     assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------- SS write API v2
+# STOCKDEBT-LINK-IDEM-KEY-2 (10 Nov): SS #230 turned link / unlink / relink on. A VENDOR_UNSUPPORTED
+# refusal SS stored before this lane shipped has no attempt count in Redis, so the first press would
+# replay it. VENDOR_UNSUPPORTED changed nothing, so that press asks again ONCE on the next attempt.
+
+_UNSUPPORTED = (409, {
+    "operationId": None, "outcome": "refused", "errorCode": "VENDOR_UNSUPPORTED", "message": "",
+})
+
+
+def _replay_then(live):
+    """The first key sent is SS's stored VENDOR_UNSUPPORTED answer; any other key gets `live`."""
+    stored = []
+
+    def answer(request):
+        key = request.headers.get("Idempotency-Key")
+        if not stored:
+            stored.append(key)
+        if key == stored[0]:
+            return _UNSUPPORTED
+        return live(request) if callable(live) else live
+    return answer
+
+
+def test_a_stored_vendor_unsupported_is_asked_again_in_the_same_press(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _replay_then(_done_split)
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "done"
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k2 and k1 != k2
+    # The press that got `done` keeps its key: a later timeout retry replays, never a 2nd split.
+    fake_ss.answers["/api/v1/autocount/po-links"] = (504, {"code": "TIMEOUT", "message": "slow"})
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    assert _keys_sent(fake_ss)[2] == k2
+
+
+def test_a_live_vendor_unsupported_is_asked_again_only_once(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _UNSUPPORTED
+    (result,) = w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]}).json()["results"]
+    assert result["outcome"] == "refused" and result["error_code"] == "VENDOR_UNSUPPORTED"
+    assert len(_keys_sent(fake_ss)) == 2
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    keys = _keys_sent(fake_ss)
+    assert len(keys) == 4 and len(set(keys)) == 4
+
+
+def test_another_refusal_is_not_asked_again_in_the_same_press(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    assert len(_keys_sent(fake_ss)) == 1
+
+
+def test_unlink_asks_again_after_vendor_unsupported(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    unlink = "/api/v1/autocount/po-links/unlink"
+    fake_ss.answers[unlink] = _UNSUPPORTED
+    w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
+    k1, k2 = _keys_sent(fake_ss, unlink)
+    assert k1 and k2 and k1 != k2
+
+
+def test_vendor_unsupported_is_asked_again_with_redis_down(scm_app, fake_ss, monkeypatch):
+    from app.services.scm import stock_debt_po_link_service as svc
+
+    monkeypatch.setattr(svc, "attempt_store", lambda: None)
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _UNSUPPORTED
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k2 and k1 != k2
+
+
+def test_every_write_of_a_press_carries_one_request_id(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w), _link_item(w, 100)]})
+    w["c"].post(_url(w, "/link"), json={"lines": [_link_item(w)]})
+    ids = [h.get("X-Request-ID") for h in fake_ss.headers("/api/v1/autocount/po-links")]
+    assert len(ids) == 3 and all(ids)
+    assert ids[0] == ids[1] and ids[2] != ids[0]
