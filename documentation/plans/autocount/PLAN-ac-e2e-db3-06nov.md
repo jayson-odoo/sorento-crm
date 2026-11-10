@@ -59,3 +59,15 @@ UAC: `ac-e2e-db3-06nov-acceptance-criteria.md` (alongside).
   telling crew.
 - Every created/edited db3 document is listed in the test report's inventory (no deletes; AutoCount has
   no delete door anyway).
+
+## Phase 2: SS write API v2 rerun (crew GO 11 Nov 2026)
+
+SS #230 (main 4193fdc4) adds link existing row, change link, unlink, delete line, cancel (DELETE by DocNo) for QT/SO/PO;
+SPO stays VENDOR_UNSUPPORTED. Owner wants LINKING results by morning. Resume notes (account may switch):
+- Handoff with every path, env and secret location: `.claude/handoffs/20261111T0000Z-ac-e2e-db3-v2.md` (worktree-local).
+- Stack: CRM worktree `sorento_crm-ac-e2e-db3-stack` on a new local branch = origin/main + #2223 head (never pushed),
+  DB `sorento_staging_acdb3`; SS worktree `foundryx-shared-service-ac-e2e-db3` on SS main 4193fdc4, DB
+  `foundryx_service_acdb3`. Fixtures: `crew/state/files/AC-E2E-DB3/reseed.sh <TAG>`; read-back `ac_read.py` there.
+- Linking cases: L1 link an existing whole row, L2 change link, L3 unlink, L4 split + relocate regression, L5 SPO
+  refused, P pull-back; each: AutoCount read-back, SO qty before/after, SS `ac_api_call_log` rows, screenshot.
+- Progress (update as it lands): stack rebuild [ ], L1 [ ], L2 [ ], L3 [ ], L4 [ ], L5 [ ], P [ ], docs [ ].
