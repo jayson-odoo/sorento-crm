@@ -77,7 +77,7 @@ def test_gap_sample_request_staff_moves_to_delivered_show_in_my_requests(world):
     w = world
     coord = s.make_user(w.sc.db, perms=[srso.SR_VIEW, srso.SR_PROCESS], name="ZZT Coordinator")
     w.sc.db.commit()
-    sid = s.ok(w.rep.me.call("POST", srso.SR_PORTAL, json=w.sr_body()), 201).json()["id"]
+    sid = s.ok(w.rep.me.call("POST", srso.SR_PORTAL, json=w.sr_me_body()), 201).json()["id"]
     s.ok(w.rep.me.call("POST", f"{srso.SR_PORTAL}/{sid}/submit"))
     path = f"{srso.SR}/{sid}/move"
 

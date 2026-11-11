@@ -343,13 +343,15 @@ def assert_portal_customer_allowed(db: Session, *, contact_id: str, customer_id:
         )
 
 
-def validate_submit(db: Session, req: SampleRequest) -> None:
+def validate_submit(db: Session, req: SampleRequest, *, staff_rules: Optional[bool] = None) -> None:
     """The refusals of AC-SR-02/03/06/21/22, in the contract's order."""
     require_project = require_project_flag(db)
 
     # SAMPLE-REQUEST-V2 rules 1-2: a staff request is for an AutoCount debtor and ships to a party.
     # The portal's form (external contacts, and a limited salesperson until slice 2) keeps text.
-    staff = (req.source or "staff") == "staff"
+    # Slice 2: a salesperson's own request through My Requests is held to the staff rules too
+    # (`staff_rules=True`); an external contact on the public portal is not.
+    staff = staff_rules if staff_rules is not None else (req.source or "staff") == "staff"
     if staff and not req.customer_id:
         raise _incomplete("customer_id", "Pick the customer.")
     if not (req.customer_id or _clean(req.customer_name)):
@@ -435,6 +437,7 @@ def _apply(
     *,
     actor_user_id: Optional[str] = None,
     slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
 ) -> None:
     """Copy a (partial) payload onto the header and replace the lines when given. ``actor_user_id``
     and ``slugs`` (the caller's permission slugs) gate the ship-to party's project writes."""
@@ -459,7 +462,7 @@ def _apply(
         if field in data:
             setattr(req, field, data[field] or None)
     _check_source(db, req)
-    _apply_ship_to(db, req, data, actor_user_id=actor_user_id, slugs=slugs)
+    _apply_ship_to(db, req, data, actor_user_id=actor_user_id, slugs=slugs, ship_to=ship_to)
     if req.quotation_document_id and (
         lines is not None or "quotation_document_id" in data or "quotation_issue_id" in data
     ):
@@ -504,6 +507,7 @@ def _apply_ship_to(
     *,
     actor_user_id: Optional[str] = None,
     slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
 ) -> None:
     """Ship to is a party (SAMPLE-REQUEST-V2 card rules 2 and 4), the proposal "To" rule
     (`project_quotation_document_service.apply_recipient_pick`) applied to a sample request.
@@ -524,9 +528,10 @@ def _apply_ship_to(
     from app.models.projects import ProjectParty, ProjectPartyContact
     from app.services import project_party_contact_service as party_contacts
 
-    # Staff only in slice 1: the portal's form (an external contact, or a limited salesperson until
-    # slice 2) keeps typed text, and a portal caller must not link parties to projects.
-    if (req.source or "staff") != "staff":
+    # Staff, and (slice 2) a salesperson's own request through My Requests (`ship_to=True`, set only
+    # by that mount, with the signed-in CRM user as the actor). An external contact on the public
+    # portal keeps typed text and can never link parties to projects.
+    if (req.source or "staff") != "staff" and not ship_to:
         return
     party_present = "ship_to_party_id" in data
     contact_ids = list(
@@ -654,6 +659,8 @@ def create_draft(
     contact_id: Optional[str] = None,
     space_id: Optional[str] = None,
     slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+    actor_user_id: Optional[str] = None,
 ) -> SampleRequest:
     req = SampleRequest(
         source=source,
@@ -667,7 +674,9 @@ def create_draft(
         goods_from="either",
         board_mounting=False,
     )
-    _apply(db, req, data, actor_user_id=salesperson_id, slugs=slugs)
+    _apply(
+        db, req, data, actor_user_id=actor_user_id or salesperson_id, slugs=slugs, ship_to=ship_to
+    )
     db.add(req)
     db.flush()
     return req
@@ -680,6 +689,8 @@ def update_draft(
     actor: Actor,
     data: Dict[str, Any],
     slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+    actor_user_id: Optional[str] = None,
 ) -> None:
     if not is_owner(req, actor):
         raise _forbidden("Only the person who raised this request can edit it.")
@@ -689,7 +700,14 @@ def update_draft(
             message="A submitted request cannot be edited. Cancel it and raise a new one.",
             code="SAMPLE_REQUEST_NOT_EDITABLE",
         )
-    _apply(db, req, data, actor_user_id=actor.user_id, slugs=slugs)
+    _apply(
+        db,
+        req,
+        data,
+        actor_user_id=actor_user_id or actor.user_id,
+        slugs=slugs,
+        ship_to=ship_to,
+    )
 
 
 def assert_deletable(db: Session, request_id: str, user_id: Optional[str]) -> SampleRequest:
@@ -760,13 +778,15 @@ def _label(db: Session, key: str) -> str:
     return _statuses(db)[key].label
 
 
-def submit(db: Session, req: SampleRequest, *, actor: Actor) -> None:
+def submit(
+    db: Session, req: SampleRequest, *, actor: Actor, staff_rules: Optional[bool] = None
+) -> None:
     if not is_owner(req, actor):
         raise _forbidden("Only the person who raised this request can submit it.")
     frm = status_key(db, req)
     if frm != DRAFT or not _edge_exists(db, frm, SUBMITTED):
         raise illegal_move(frm, SUBMITTED)
-    validate_submit(db, req)
+    validate_submit(db, req, staff_rules=staff_rules)
     _set_status(db, req, SUBMITTED)
     req.submitted_at = datetime.utcnow()
     db.flush()
@@ -1775,9 +1795,15 @@ PORTAL_HIDDEN = (
 )
 
 
-def serialize_portal_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
+#: The ship-to party a salesperson's own form (My Requests) reads back; the public portal never.
+SHIP_TO_KEYS = ("ship_to_party_id", "ship_to_role")
+
+
+def serialize_portal_detail(db: Session, req: SampleRequest, *, ship_to: bool = False) -> Dict[str, Any]:
     out = serialize_detail(db, req)
     for key in PORTAL_HIDDEN:
+        if ship_to and key in SHIP_TO_KEYS:
+            continue
         out.pop(key, None)
     return out
 

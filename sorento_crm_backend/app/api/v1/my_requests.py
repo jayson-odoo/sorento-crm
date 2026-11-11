@@ -259,6 +259,10 @@ def _token_for(
     # The scope the portal's own request would carry (`_portal_token_scope`), for the rest of it.
     set_company_scope(db, portal_contact_scope(db, str(token.contact_id)))
     _act_through(request, db, str(token.contact_id))
+    # SAMPLE-REQUEST-V2 slice 2: the signed-in CRM user behind this token. A public portal token
+    # never carries it, so routes shared with the portal can tell the two callers apart (the
+    # sample request ship-to rules run for this caller only, with this user's own grants).
+    setattr(token, "crm_user_id", str(current_user["id"]))
     if getattr(request.state, "impersonation_session_id", None):
         # An admin viewing as the salesperson: a comment records them, as a portal
         # impersonation does (``portal._comment_acting_user_id``). An attribute, not a column.

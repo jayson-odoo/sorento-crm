@@ -20,8 +20,19 @@ from tests._portal_p4_sr_so_support import (  # noqa: F401
 )
 
 
+#: My Requests reads back the ship-to party (SAMPLE-REQUEST-V2 slice 2); the public portal never.
+SHIP_TO_KEYS = {"ship_to_party_id", "ship_to_role"}
+
+
+def _body(api, w, **over):
+    """A salesperson's own form sends the staff body (debtor + ship-to party, owner Q1 a, 11 Nov);
+    an external contact on the portal keeps today's typed body."""
+    portals = [w.rep.portal] + ([w.other.portal] if w.other is not None else [])
+    return w.sr_body(**over) if any(api is p for p in portals) else w.sr_me_body(**over)
+
+
 def _create(api, w, **over):
-    return s.ok(api.call("POST", SR_PORTAL, json=w.sr_body(**over)), 201).json()
+    return s.ok(api.call("POST", SR_PORTAL, json=_body(api, w, **over)), 201).json()
 
 
 def _mounted(w):
@@ -32,7 +43,7 @@ def test_p4_sr_parity_create_and_list_columns_equal_the_portal(world):
     w = world
     mine = _create(w.rep.me, w)
     theirs = _create(w.rep.portal, w)
-    assert set(mine) == set(theirs)
+    assert set(mine) - SHIP_TO_KEYS == set(theirs)
     assert (mine["source"], mine["status"]) == (theirs["source"], theirs["status"]) == ("portal", "draft")
     assert s.shape(mine["request_no"]) == s.shape(theirs["request_no"]) and mine["request_no"].startswith("SR-")
     row = sr_row(w, mine["id"])
@@ -53,11 +64,11 @@ def _walk(api, w) -> list:
     out = []
     d = _create(api, w)
     out.append(("create", d["status"]))
-    r = api.call("PUT", f"{SR_PORTAL}/{d['id']}", json=w.sr_body(ship_to_name="ZZT changed site"))
+    r = api.call("PUT", f"{SR_PORTAL}/{d['id']}", json=_body(api, w, ship_to_name="ZZT changed site"))
     out.append(("update", r.status_code, r.json().get("ship_to_name")))
     r = api.call("POST", f"{SR_PORTAL}/{d['id']}/submit")
     out.append(("submit", r.status_code, r.json().get("status")))
-    r = api.call("PUT", f"{SR_PORTAL}/{d['id']}", json=w.sr_body())
+    r = api.call("PUT", f"{SR_PORTAL}/{d['id']}", json=_body(api, w))
     out.append(("update_after_submit", r.status_code, r.json().get("code")))
     r = api.call("POST", f"{SR_PORTAL}/{d['id']}/submit")
     out.append(("resubmit", r.status_code, r.json().get("code")))
