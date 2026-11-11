@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Template products v3</title>
+<!--
+  PRICETAG-TEMPLATE-PRODUCTS mock v3 (owner 10 Nov 23:4x: no Linked / Add tabs, we always keep it in one view).
+  Static, sample names only (public repo; the cloud sandbox has no dev DB). Hand-test runs on real data.
+
+  ONE view: the shared product grid, where a tick means "uses this template". It opens with the
+  template's current products already ticked; searching / filtering finds more to tick; unticking takes
+  one off; one Save applies both. Same model as the product page's own link field
+  (ProductTagTemplatesSection.tsx :119, value = the linked set) and the same grid as Copy to other products.
+
+  Element -> reused component (paths under sorento_crm_frontend/):
+  A. Designer toolbar "Products (12)": app/(protected)/dealer-kit/tag-templates/[id]/page.tsx toolbarTrailing
+       (:592), ToolbarTrailingAction from tag-templates/components/CanvasToolbar.tsx (same as Versions).
+  B. Modal shell: components/ui/dialog in CopyComboDialog.tsx's layout
+       (app/(protected)/master-data-management/products/[id]/components/CopyComboDialog.tsx :129). No tabs.
+  C. Search: components/common/ListSearchInput in DataGridListToolbar's searchSlot, inside
+       useProductTargetPicker (app/(protected)/master-data-management/products/[id]/components/ProductTargetPicker.tsx :67).
+  D. Filters: components/ui/data-grid-list-toolbar.tsx `filters` (custom): the picker's two
+       components/common/SearchableMultiSelect (Category, Brand) plus one components/common/SearchableSelect
+       "Show: All products / Uses this template" (clearable), which sends tag_template_id to the products list.
+  E. Tick column: components/ui/data-grid-select-column.tsx buildSelectColumn (shift / drag ticks).
+  F. "Select all N matching": data-grid-list-toolbar.tsx `selectAllMatching` (:234), cap 500 (MAX_COPY_TARGETS).
+  G. Grid: components/ui/data-grid (DataGrid, DataGridTable, DataGridPagination); the picker's columns
+       (Product Code with the discontinued grey hint, Product Name, Category, Brand).
+  H. Footer change count: pickedLine() pattern from ProductTargetPicker.tsx ("12 use this template, +37, -1").
+  I. Save = adds via POST /dealer-kit/tag-templates/{id}/assign with product_ids
+       (sorento_crm_backend/app/api/v1/dealer_kit/tag_templates.py:542), then removals via hooks/useDeferredAction.tsx
+       on tag_template.unassign_products (sorento_crm_backend/app/services/record_actions.py:1822) with product_ids:
+       the Save button counts down "Removing 1 in 5s" with Cancel (no confirm dialog). Save with no removals
+       commits at once.
+  Picker change: useProductTargetPicker takes an options object { excludeProductId?, initialSelection?,
+  extraParams? }; the two copy dialogs keep their behaviour. Backend: products list gains tag_template_id;
+  GET /dealer-kit/tag-templates/{id}/product-ids seeds the ticks.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --sel:#eff6ff;
+          --canvas:#eceff3; --chip:#eef2ff; --chipfg:#3730a3; --okbg:#ecfdf5; --okfg:#047857; --tag:#c2410c; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#132036; --canvas:#1d2129; --chip:#1e2547; --chipfg:#c7d2fe; --okbg:#0b2a20; --okfg:#6ee7b7; --tag:#fdba74; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --sel:#132036; --canvas:#1d2129; --chip:#1e2547; --chipfg:#c7d2fe; --okbg:#0b2a20; --okfg:#6ee7b7; --tag:#fdba74; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:28px 0 8px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .k { display:inline-block; min-width:18px; padding:0 5px; border-radius:4px; background:var(--tag); color:#fff; font-size:10px; font-weight:700; text-align:center; margin-inline-end:4px; vertical-align:middle; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; white-space:nowrap; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn.on { outline:2px solid var(--primary); outline-offset:1px; }
+  .badge { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .badge.ok { background:var(--okbg); color:var(--okfg); border-color:transparent; }
+  .designer { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; max-width:1180px; position:relative; }
+  .dhead { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .toolbar { display:flex; gap:6px; padding:8px 12px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .spacer { flex:1; }
+  .canvas { background:var(--canvas); min-height:640px; position:relative; }
+  .scrim { position:absolute; inset:0; background:rgba(15,17,21,.45); display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:12px; width:100%; max-width:1024px; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  .mh { padding:16px 20px 0; font-weight:600; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tabs { display:flex; gap:20px; border-bottom:1px solid var(--line); padding:0 20px; margin-top:8px; }
+  .tabs span { padding:8px 0; font-size:13px; color:var(--muted); }
+  .tabs span.on { color:var(--fg); border-bottom:2px solid var(--primary); font-weight:600; }
+  .mb { padding:14px 20px; display:flex; flex-direction:column; gap:10px; }
+  .tb { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .search { border:1px solid var(--line); border-radius:8px; padding:6px 10px; width:256px; max-width:100%; font-size:13px; }
+  .banner { background:var(--sel); border-radius:8px; padding:8px 12px; font-size:13px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .banner a { color:var(--primary); text-decoration:none; }
+  .grid { border:1px solid var(--line); border-radius:8px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; table-layout:fixed; min-width:700px; font-size:13px; }
+  th, td { text-align:start; padding:8px 10px; border-bottom:1px solid var(--line); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  tr.picked td { background:var(--sel); }
+  .box { width:16px; height:16px; border:1.5px solid var(--muted); border-radius:4px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; }
+  .box.x { background:var(--primary); border-color:var(--primary); color:#fff; }
+  .disc { color:var(--muted); font-size:12px; margin-inline-start:6px; font-weight:400; }
+  .pager { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; font-size:12px; color:var(--muted); flex-wrap:wrap; gap:6px; }
+  .mf { display:flex; gap:8px; justify-content:flex-end; align-items:center; padding:12px 20px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .pop { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--card); width:280px; display:flex; flex-direction:column; gap:8px; box-shadow:0 6px 20px rgba(0,0,0,.12); }
+  .ms { border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:13px; }
+  .notes { max-width:1180px; font-size:13px; }
+  .notes li { margin:4px 0; }
+  .phone { width:375px; max-width:100%; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--card); }
+</style>
+</head>
+<body>
+<h1>Tag Template designer: one view, ticked = uses this template</h1>
+<p class="muted">Mock v3, 10 Nov. No tabs. The grid is the shared picker behind "Copy to other products" (<code>ProductTargetPicker.tsx</code>); it opens with the template's products already ticked. Orange letters match the component map in this file's source and in the plan.</p>
+
+<h2>1. Open: the 12 products that use it are ticked; "Uses this template" filter shows just them</h2>
+<div class="designer">
+  <div class="dhead"><b>Kitchen sink A6 (LP + SP)</b><span class="badge ok">Live v4</span><span class="spacer"></span><span class="muted">Saved</span><button class="btn primary">Publish</button><button class="btn">Back to templates</button></div>
+  <div class="toolbar"><button class="btn">Text</button><button class="btn">Field</button><button class="btn">Image</button><span class="spacer"></span><button class="btn">Versions</button><button class="btn on"><span class="k">A</span>Products (12)</button><button class="btn">Save</button><button class="btn">Settings</button><button class="btn">Full screen</button></div>
+  <div class="canvas" style="min-height:560px">
+    <div class="scrim">
+      <div class="modal">
+        <div class="mh"><span class="k">B</span>Products for Kitchen sink A6 (LP + SP)</div>
+        <div class="mb">
+          <div class="tb">
+            <span class="k">C</span><input class="search" placeholder="Search products..." aria-label="Search products">
+            <span class="k">D</span><button class="btn">Filters (1)</button>
+            <span class="muted">Show: Uses this template</span>
+          </div>
+          <div class="grid">
+            <table>
+              <colgroup><col style="width:44px"><col style="width:180px"><col style="width:300px"><col style="width:160px"><col style="width:140px"></colgroup>
+              <thead><tr><th><span class="box x">&#10003;</span></th><th>Product Code</th><th>Product Name</th><th>Category</th><th>Brand</th></tr></thead>
+              <tbody>
+                <tr class="picked"><td><span class="k">E</span></td><td><b>SRTKS-7040-WH</b></td><td>Ceramic sink 70x40, white</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+                <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-7848-SS</b></td><td>Topmount sink 78x48, stainless</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+                <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-8545-GR</b></td><td>Granite sink 85x45, grey</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+              </tbody>
+            </table>
+            <div class="pager"><span><span class="k">G</span>Rows per page 25</span><span>1 - 12 of 12</span></div>
+          </div>
+        </div>
+        <div class="mf"><span class="muted"><span class="k">H</span>12 use this template</span><span class="spacer"></span><button class="btn">Cancel</button><button class="btn primary" disabled style="opacity:.5">Save</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>2. Same view: clear Show, search "SRTKS", Category Kitchen Sink, Select all; untick one</h2>
+<div class="modal" style="max-width:1024px">
+  <div class="mh">Products for Kitchen sink A6 (LP + SP)</div>
+  <div class="mb">
+    <div class="tb"><input class="search" value="SRTKS" aria-label="Search products"><button class="btn">Filters (1)</button><span class="muted">Category: Kitchen Sink</span></div>
+    <div class="banner"><span class="k">F</span>All 48 products that match are selected. <a href="#">Clear selection</a></div>
+    <div class="grid">
+      <table>
+        <colgroup><col style="width:44px"><col style="width:180px"><col style="width:300px"><col style="width:160px"><col style="width:140px"></colgroup>
+        <thead><tr><th><span class="box x">&#10003;</span></th><th>Product Code</th><th>Product Name</th><th>Category</th><th>Brand</th></tr></thead>
+        <tbody>
+          <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-6045-SS</b></td><td>Single bowl 60x45, stainless</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+          <tr><td><span class="box"></span></td><td><b>SRTKS-7040-WH</b></td><td>Ceramic sink 70x40, white</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+          <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-7848-SS</b></td><td>Topmount sink 78x48, stainless</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+          <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-8050-BK</b></td><td>Undermount sink 80x50, black</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+          <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-1160-GR</b><span class="disc">Discontinued</span></td><td>Double bowl 116x50, granite grey</td><td>Kitchen Sink</td><td>Sorento</td></tr>
+        </tbody>
+      </table>
+      <div class="pager"><span>Rows per page 25</span><span>1 - 25 of 48 &nbsp; &lsaquo; 1 2 &rsaquo;</span></div>
+    </div>
+  </div>
+  <div class="mf"><span class="muted">48 use this template after Save: 37 added, 1 removed</span><span class="spacer"></span><button class="btn">Cancel</button><button class="btn primary"><span class="k">I</span>Save</button></div>
+</div>
+<p class="muted">Save links the 37 at once, then the button reads "Removing 1 in 5s" with Cancel (no confirm dialog); SRTKS-7040-WH then prints with its other template. Ticks made in the first state survive the search and filter change.</p>
+
+<h2>3. 375px: full-width modal, the grid scrolls sideways inside its border</h2>
+<div class="phone">
+  <div class="mh" style="font-size:14px">Products for Kitchen sink A6...</div>
+  <div class="mb" style="padding:10px 12px">
+    <div class="tb"><input class="search" value="SRTKS" style="flex:1"><button class="btn">Filters (1)</button></div>
+    <div class="banner">All 48 selected. <a href="#">Clear</a></div>
+    <div class="grid"><table style="min-width:520px"><colgroup><col style="width:40px"><col style="width:150px"><col style="width:330px"></colgroup><tbody>
+      <tr class="picked"><td><span class="box x">&#10003;</span></td><td><b>SRTKS-6045-SS</b></td><td>Single bowl 60x45</td></tr>
+      <tr><td><span class="box"></span></td><td><b>SRTKS-7040-WH</b></td><td>Ceramic sink 70x40</td></tr>
+    </tbody></table></div>
+  </div>
+  <div class="mf" style="padding:10px 12px"><span class="muted">+37, -1</span><span class="spacer"></span><button class="btn primary">Save</button></div>
+</div>
+
+<h2>Behaviour</h2>
+<ul class="notes">
+  <li>Only <b>dealer_kit.tag_templates.manage</b> sees the Products button. Salespeople and the request form are unchanged.</li>
+  <li>Link never changes a default a product already has. A product with no template gets this one as its Default LP / SP (for the price types it fits); one with a single template keeps that one as default. Unlinking a product's default leaves its remaining lone template as default. Today's rules in <code>product_tag_template_service</code> (bulk_assign, _lone_link_is_default).</li>
+  <li>The product page "Price tag templates" card reads and writes the same rows, so a change made here shows there at once, and the other way round.</li>
+  <li>One Save adds or removes at most 500 products, the picker's existing cap; the footer says so when the change is larger.</li>
+</ul>
+</body>
+</html>

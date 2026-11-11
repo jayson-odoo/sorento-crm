@@ -34,6 +34,12 @@ vi.mock('../../tag-sizes/hooks/useTagSizes', () => ({
 }));
 vi.mock('../components/TagVersionViewer', () => ({ TagVersionViewer: () => null }));
 vi.mock('../components/TemplateVersionsSheet', () => ({ TemplateVersionsSheet: () => null }));
+// PRICETAG-TEMPLATE-PRODUCTS: react-query hooks with no QueryClientProvider here.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
+vi.mock('../../hooks/useProductTagTemplates', () => ({
+  useTemplateProductIds: () => ({ data: undefined }),
+  useTemplateComboIds: () => ({ data: undefined }),
+}));
 
 const link = vi.hoisted(() => ({
   push: vi.fn(async () => ({})),
