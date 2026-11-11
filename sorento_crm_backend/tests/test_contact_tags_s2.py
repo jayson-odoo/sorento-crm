@@ -53,6 +53,7 @@ AGENTS_EDIT = "user_management.access_agents.edit"
 STOCK_EDIT = "inventory.stock.edit"
 OUTBOUND_EDIT = "system.respond_workspaces.edit"
 COST = "purchase_orders.cost"
+SELLABLE = "inventory.sellable"
 
 
 @pytest.fixture
@@ -368,10 +369,12 @@ def test_current_agents_allow_and_deny(client, db):
 
 
 def test_current_field_reveal_granted_row_matches(client, db):
-    tag = _stag(client, db, {"field_reveals": {COST: True}})
+    # COST-ACCESS-UNIFIED: the cost key follows the linked user's permission now, so the stored-row
+    # case is pinned on a key that still follows its stored row.
+    tag = _stag(client, db, {"field_reveals": {SELLABLE: True}})
     contact = _holder(client, db, [tag])
     assert _read(client, contact)["status"] == "differs"
-    db.add(ContactFieldReveal(respond_contact_id=contact.id, field_key=COST, granted=True))
+    db.add(ContactFieldReveal(respond_contact_id=contact.id, field_key=SELLABLE, granted=True))
     db.flush()
     assert _read(client, contact)["status"] == "matches"
 
