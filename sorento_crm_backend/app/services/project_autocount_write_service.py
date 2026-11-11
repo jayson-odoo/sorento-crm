@@ -46,6 +46,7 @@ from app.models.projects import (
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.autocount_idempotency import attempt_store, send_with_attempts
+from app.services.project_quotation_service import line_text
 from app.services.set_driver_pricing import split_set_driver_price
 from app.services.project_so_delta_service import (
     VERB_ADVANCE,
@@ -228,7 +229,7 @@ def build_quotation_lines(
     for line in sorted(lines, key=lambda l: (l.sort_order or 0)):
         if getattr(line, "is_rate_only", False):
             out.skipped.append(
-                {"code": line.product_code_snapshot, "description": line.description_snapshot}
+                {"code": line.product_code_snapshot, "description": line_text(line)}
             )
             continue
         qty = _dec(line.quantity)
@@ -270,7 +271,7 @@ def build_quotation_lines(
         out.lines.append(
             {
                 "itemCode": line.product_code_snapshot,
-                "description": line.description_snapshot,
+                "description": line_text(line),
                 "uom": _ac_uom(line.uom, line.product_id, base_uoms),
                 "qty": qty,
                 "unitPrice": _dec(line.unit_price),

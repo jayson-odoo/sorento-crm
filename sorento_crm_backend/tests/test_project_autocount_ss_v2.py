@@ -426,3 +426,31 @@ def test_a_refused_write_is_logged_with_its_outcome_and_code(qt_api, fake_ss, ca
 
     line = " ".join(r.getMessage() for r in caplog.records)
     assert "outcome=refused" in line and "errorCode=DOC_STALE" in line
+
+
+def test_a_styled_line_description_goes_to_autocount_as_plain_text(qt_api, fake_ss):
+    """#2326 / #2329: a quotation line's description is stored as markup; AutoCount gets the plain
+    reading (`project_quotation_service.line_text`), never the raw markup."""
+    from app.models.projects import ProjectQuotationLine
+    from tests.test_quotation_line_description_rich import PLAIN_SENTENCE, STYLED
+
+    client, db, world = qt_api
+    line = (
+        db.query(ProjectQuotationLine)
+        .filter(
+            ProjectQuotationLine.version_id == world.version.id,
+            ProjectQuotationLine.product_code_snapshot == world.p1.product_code,
+        )
+        .one()
+    )
+    line.description_snapshot = STYLED
+    db.commit()
+    fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations")] = (
+        200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world))
+    )
+
+    client.post(_qt_url(world))
+
+    [create] = fake_ss.to("POST", "/api/v1/autocount/documents/quotations")
+    [sent] = [l for l in fake_ss.body(create)["lines"] if l["itemCode"] == world.p1.product_code]
+    assert sent["description"] == PLAIN_SENTENCE
