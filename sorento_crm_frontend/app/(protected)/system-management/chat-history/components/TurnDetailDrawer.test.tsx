@@ -167,7 +167,9 @@ function openAllSections() {
     'section-customer-scope-trigger',
     'section-session-trigger',
   ]) {
-    fireEvent.click(screen.getByTestId(testId));
+    // TRACE-ENTITY-TOOL: Tool opens by itself when the turn called one; open only a closed section.
+    const trigger = screen.getByTestId(testId);
+    if (trigger.getAttribute('data-state') !== 'open') fireEvent.click(trigger);
   }
 }
 
