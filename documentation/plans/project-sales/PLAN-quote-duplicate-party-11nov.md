@@ -1,6 +1,6 @@
 # PLAN: Duplicate for another party (lane QUOTE-DUPLICATE-PARTY, PR #2340)
 
-Status: Build (owner "yeah duplicate", 11 Nov ~16:00 MYT). Track: full (additive migration, size M).
+Status: Built, reviewed (reviewer READY after round 1, security review ready), browser pass done; waiting on the owner hand test. Owner "yeah duplicate", 11 Nov ~16:00 MYT. Track: full (additive migration, size M).
 Supersedes the multi-recipient design of this lane (dropped by the owner; its card and mock are deleted).
 UAC: `quote-duplicate-party-11nov-acceptance-criteria.md`.
 
