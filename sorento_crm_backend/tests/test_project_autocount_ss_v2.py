@@ -569,3 +569,64 @@ def test_a_bare_vendor_error_keeps_the_key(qt_api, fake_ss, attempts):
 
     keys = [r.headers["Idempotency-Key"] for r in fake_ss.to("POST", path)]
     assert len(set(keys)) == 1, keys
+
+
+def test_a_lost_answer_on_the_fresh_edit_key_never_jams_the_edit(qt_api, fake_ss, attempts):
+    """Re-review should-fix: the base key is held (B14) and the `-r` edit lands but its answer is
+    lost; the next press's body differs, so `-r` conflicts too. A conflict on the `-r` line moves
+    that line on (an edit is absolute values under a stamp check), so the edit is never stuck."""
+    import copy
+
+    import httpx
+
+    client, db, world = qt_api
+    _issue2(db, world)
+    held = _answer_qt(fake_ss, world)
+    before = copy.deepcopy(held)
+    before[0]["Qty"] = "999"  # AutoCount differs, so the edit carries a row
+    state = {"landed": False, "r_body": None}
+
+    def get(_request):
+        return (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held if state["landed"] else before))
+
+    def patch(request):
+        key = request.headers["Idempotency-Key"]
+        if key.endswith("-update-edit"):
+            return (409, refused_body("IDEMPOTENCY_CONFLICT", ""))  # held from 6 Nov
+        if state["r_body"] is None:
+            state["r_body"] = request.content
+            state["landed"] = True
+            raise httpx.ReadTimeout("answer lost")  # landed, answer lost
+        if request.content != state["r_body"] and key == state.get("r_key", key):
+            return (409, refused_body("IDEMPOTENCY_CONFLICT", ""))
+        return (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held))
+
+    def patch_tracking(request):
+        if state["r_body"] is None and not request.headers["Idempotency-Key"].endswith("-update-edit"):
+            state["r_key"] = request.headers["Idempotency-Key"]
+        return patch(request)
+
+    fake_ss.answers[("GET", QT_DOC_PATH)] = get
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = patch_tracking
+
+    first = client.post(_qt_url(world)).json()
+    second = client.post(_qt_url(world)).json()
+
+    assert first["outcome"] == "unreachable", first
+    assert second["outcome"] == "done", second
+
+
+def test_a_held_key_never_says_nothing_was_changed(qt_api, fake_ss):
+    """SS may hold an answer for a write that landed, so IDEMPOTENCY_CONFLICT is never shown as
+    'Nothing was changed'."""
+    client, _db, world = qt_api
+    fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations")] = (
+        409, refused_body("IDEMPOTENCY_CONFLICT", "")
+    )
+
+    body = client.post(_qt_url(world)).json()
+
+    assert "Nothing was changed" not in body["message"]
+    assert body["message"] == (
+        "AutoCount still holds an earlier press of this change. Check it in AutoCount, then press again."
+    )

@@ -163,9 +163,16 @@ def _trim_sentence(message: Optional[str]) -> str:
 _CODE_SHAPE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 
 
+_FRESH_KEY_HELD = "FRESH_EDIT_KEY_HELD"
+HELD_TEXT = "AutoCount still holds an earlier press of this change. Check it in AutoCount, then press again."
+
+
 def _refused_text(answer: Dict[str, Any]) -> str:
     """A refusal in words. Never a blank reason (AC-E2E-DB3 B14): with no message the code is
-    named (only a plain UPPER_SNAKE code, never other text from SS)."""
+    named (only a plain UPPER_SNAKE code, never other text from SS). A held key never says
+    "Nothing was changed": SS may hold an answer for a write that landed."""
+    if answer.get("errorCode") == "IDEMPOTENCY_CONFLICT":
+        return HELD_TEXT
     reason = _trim_sentence(answer.get("message"))
     if reason:
         return f"AutoCount refused: {reason}. Nothing was changed."
@@ -321,18 +328,32 @@ class ProjectAutocountWriteService:
         answer = send_with_attempts(
             attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
         )
+        sent = base_key
         if edit and answer.get("errorCode") == "IDEMPOTENCY_CONFLICT":
             # AC-E2E-DB3 B14: SS holds this key for an older body (a 6 Nov edit, before the
-            # bodies changed), so it can never be replayed. An edit sets absolute values, so it is
-            # safe to send under its own fresh line of keys; a create or an add never is.
-            answer = send_with_attempts(
-                attempt_store(), f"{base_key}-r", lambda key: self._call(lambda c: call(c, key))
-            )
+            # bodies changed), so it can never be replayed. An edit sets absolute values under a
+            # stamp check, so it is safe to send under its own fresh line of keys; a create or an
+            # add never is. On that line a conflict counts as a definite refusal (re-review: a
+            # lost answer there must not jam it too), so the line moves on and is asked once more.
+            sent = f"{base_key}-r"
+
+            def send_fresh(key: str) -> Dict[str, Any]:
+                got = self._call(lambda c: call(c, key))
+                if got.get("errorCode") == "IDEMPOTENCY_CONFLICT":
+                    return {**got, "outcome": "refused", "errorCode": _FRESH_KEY_HELD}
+                return got
+
+            for _ in range(2):
+                answer = send_with_attempts(attempt_store(), sent, send_fresh)
+                if answer.get("errorCode") != _FRESH_KEY_HELD:
+                    break
+            if answer.get("errorCode") == _FRESH_KEY_HELD:
+                answer = {**answer, "errorCode": "IDEMPOTENCY_CONFLICT"}
         if answer.get("outcome") not in _DONE:
             # One line per write that did not land, so a refusal on a live stack can be read back.
             logger.warning(
                 "autocount write %s: outcome=%s errorCode=%s",
-                base_key,
+                sent,
                 str(answer.get("outcome"))[:40],
                 str(answer.get("errorCode"))[:64],
             )
