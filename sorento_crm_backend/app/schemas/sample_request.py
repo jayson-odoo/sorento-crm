@@ -28,6 +28,12 @@ class SampleRequestWrite(BaseModel):
     scope_note: Optional[str] = Field(None, max_length=255)
     delivery_date: Optional[Date] = None
     delivery_mode: Optional[Literal["driver", "self_deliver", "self_collect"]] = None
+    #: SAMPLE-REQUEST-V2: the ship-to party; a party not on the project yet is linked in
+    #: `ship_to_role`. `ship_to_contact_ids` are that party's people: their names fill the contact
+    #: person ("A & B"), the phone is the first one's, and they join the project's stakeholders.
+    ship_to_party_id: Optional[str] = Field(None, max_length=64)
+    ship_to_role: Optional[str] = Field(None, max_length=32)
+    ship_to_contact_ids: Optional[List[str]] = Field(None, max_length=20)
     ship_to_name: Optional[str] = Field(None, max_length=255)
     ship_to_address: Optional[str] = None
     site_contact_name: Optional[str] = Field(None, max_length=255)

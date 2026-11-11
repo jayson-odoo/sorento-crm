@@ -143,6 +143,18 @@ def world():
 
         cat = seed_catalogue(db)
         customer = make_customer(db, company_id)
+        # SAMPLE-REQUEST-V2: a staff request ships to a party; every staff draft below picks this one.
+        from app.models.projects import ProjectParty
+
+        ship_party = ProjectParty(
+            id=uid(),
+            company_id=company_id,
+            party_type="trading_house",
+            name=f"{MARKER} ship-to party",
+            address=f"{MARKER} 1 Jalan Ujian, Klang",
+        )
+        db.add(ship_party)
+        db.flush()
         project = make_project(db, company_id, admin)
         other_project = make_project(db, company_id, admin)
         db.commit()
@@ -173,6 +185,7 @@ def world():
                     cat=cat,
                     version=version,
                     customer=customer,
+                    ship_party=ship_party,
                     project=project,
                     other_project=other_project,
                     perms=perms,
@@ -185,6 +198,10 @@ def world():
 
 
 def _draft(w, user=None, **over):
+    # SAMPLE-REQUEST-V2 rules 1-2: a staff submit needs a debtor and a ship-to party.
+    over.setdefault("customer_id", w.customer.id)
+    over.setdefault("ship_to_party_id", w.ship_party.id)
+    over.setdefault("ship_to_role", "trading_house")
     body = full_payload(product_id=w.cat.plain.id, **over)
     res = w.api.as_(user or w.sales).post(SR, json=body)
     assert res.status_code == 201, res.text
@@ -797,6 +814,9 @@ def test_delivered_no_longer_touches_project_samples(world):
             project_id=world.project.id,
             project_title=None,
             quotation_version_id=world.version,
+            customer_id=world.customer.id,
+            ship_to_party_id=world.ship_party.id,
+            ship_to_role="trading_house",
         ),
     )
     if res.status_code == 201:
@@ -1141,11 +1161,23 @@ def test_review_r12_customer_name_sort_uses_the_debtor_name_too(world):
     world.db.flush()
     ids = {}
     for tag, over in (
-        ("a", {"customer_name": f"{MARKER} aaa typed"}),
+        ("a", {"customer_id": None, "customer_name": f"{MARKER} aaa typed"}),
         ("m", {"customer_id": mid.id, "customer_name": None}),
-        ("z", {"customer_name": f"{MARKER} zzz typed"}),
+        ("z", {"customer_id": None, "customer_name": f"{MARKER} zzz typed"}),
     ):
-        ids[tag] = _submitted(world, **over)
+        if over["customer_id"] is None:
+            # A typed customer comes from the portal's form now (SAMPLE-REQUEST-V2 rule 1: a staff
+            # submit needs the debtor); the sort still has to read it.
+            rid = _draft(world, **over)["id"]
+            from app.models.sample_request import SampleRequest
+
+            world.db.get(SampleRequest, rid).source = "portal"
+            world.db.flush()
+            sub = _submit(world, rid)
+            assert sub.status_code in (200, 201), sub.text
+            ids[tag] = rid
+        else:
+            ids[tag] = _submitted(world, **over)
     res = world.api.as_(world.coord).get(
         SR, params={"sort": "customer_name", "dir": "asc", "limit": 200}
     )

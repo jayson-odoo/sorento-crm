@@ -11,8 +11,6 @@ Every name is invented.
 """
 from __future__ import annotations
 
-from sqlalchemy import text
-
 from app.models.projects import (
     ProjectParty,
     ProjectPartyContact,
@@ -81,21 +79,12 @@ def _create(w, **over):
     return w.api.as_(w.sales).post(SR, json=_body(w, **over))
 
 
-def _sales_owns_project(w):
-    """The salesperson may raise requests on the project (`_assert_own_project`)."""
-    w.db.execute(
-        text("update projects.projects set owner_user_id = :u where id = :p"),
-        {"u": w.sales, "p": w.project.id},
-    )
-    w.db.flush()
-
 
 # ------------------------------------------------------------------ rule 2: ship to = a party
 
 
 def test_picking_a_party_of_the_project_fills_name_and_address(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="No. 12, Jalan Perindustrian 3, Klang")
     _link(w.db, w.project, party)
     res = _create(w, ship_to_party_id=party.id)
@@ -109,7 +98,6 @@ def test_picking_a_party_of_the_project_fills_name_and_address(world):
 
 def test_a_party_without_address_takes_the_project_site_address(world):
     w = world
-    _sales_owns_project(w)
     _site_address(w.db, w.project)
     party = _party(w.db, "Arkitek Lima", party_type="consultant")
     _link(w.db, w.project, party, role="consultant")
@@ -119,7 +107,6 @@ def test_a_party_without_address_takes_the_project_site_address(world):
 
 def test_a_typed_address_wins_over_the_party_address(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Party address")
     _link(w.db, w.project, party)
     d = _create(w, ship_to_party_id=party.id, ship_to_address="Gate B, loading bay").json()
@@ -128,7 +115,6 @@ def test_a_typed_address_wins_over_the_party_address(world):
 
 def test_a_party_not_on_the_project_needs_a_role(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Delta Interior Works", party_type="subcontractor")
     res = _create(w, ship_to_party_id=party.id)
     assert res.status_code == 422, res.text
@@ -137,7 +123,6 @@ def test_a_party_not_on_the_project_needs_a_role(world):
 
 def test_a_party_not_on_the_project_is_linked_in_the_role_given(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Delta Interior Works", party_type="subcontractor")
     res = _create(w, ship_to_party_id=party.id, ship_to_role="subcontractor")
     assert res.status_code == 201, res.text
@@ -154,7 +139,6 @@ def test_another_companys_party_is_refused(world):
     from ._sample_request_seed import second_company
 
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Foreign Co", company_id=second_company(w.db))
     res = _create(w, ship_to_party_id=party.id, ship_to_role="trading_house")
     assert res.status_code == 422, res.text
@@ -178,7 +162,6 @@ def test_without_a_project_any_party_is_accepted_and_nothing_is_linked(world):
 
 def test_several_contacts_print_a_and_b_with_the_first_ones_phone(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Klang", phone="0331112222")
     _link(w.db, w.project, party)
     mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
@@ -192,7 +175,6 @@ def test_several_contacts_print_a_and_b_with_the_first_ones_phone(world):
 
 def test_picked_contacts_join_the_projects_stakeholders(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Klang")
     _link(w.db, w.project, party)
     mei = _contact(w.db, party, "Mei Ling Tan")
@@ -207,7 +189,6 @@ def test_picked_contacts_join_the_projects_stakeholders(world):
 
 def test_a_contact_of_another_party_is_refused(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Klang")
     _link(w.db, w.project, party)
     other = _party(w.db, "Someone Else")
@@ -219,7 +200,6 @@ def test_a_contact_of_another_party_is_refused(world):
 
 def test_changing_the_party_clears_the_old_contact(world):
     w = world
-    _sales_owns_project(w)
     first = _party(w.db, "Bintang Trading", address="Klang")
     second = _party(w.db, "Arkitek Lima", party_type="consultant", address="Kajang")
     _link(w.db, w.project, first)
@@ -238,7 +218,6 @@ def test_changing_the_party_clears_the_old_contact(world):
 def test_the_customer_can_be_the_ship_to_party(world):
     """Owner Q2 a: shipping to the customer is picking it like any party."""
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Nusantara Builders", party_type="main_contractor", address="Shah Alam")
     party.customer_id = w.customer.id
     _link(w.db, w.project, party, role="main_contractor")
@@ -256,7 +235,6 @@ def _submit(w, rid):
 
 def test_staff_submit_needs_a_ship_to_party(world):
     w = world
-    _sales_owns_project(w)
     d = _create(w, ship_to_name=f"{MARKER} typed site").json()
     res = _submit(w, d["id"])
     assert res.status_code == 422, res.text
@@ -265,7 +243,6 @@ def test_staff_submit_needs_a_ship_to_party(world):
 
 def test_staff_submit_needs_a_debtor_not_a_typed_customer(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Klang")
     _link(w.db, w.project, party)
     d = _create(w, customer_id=None, customer_name=f"{MARKER} typed buyer", ship_to_party_id=party.id).json()
@@ -276,7 +253,6 @@ def test_staff_submit_needs_a_debtor_not_a_typed_customer(world):
 
 def test_staff_submit_with_a_party_and_a_debtor_passes(world):
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "Bintang Trading", address="Klang")
     _link(w.db, w.project, party)
     d = _create(w, ship_to_party_id=party.id).json()
@@ -288,7 +264,6 @@ def test_staff_submit_with_a_party_and_a_debtor_passes(world):
 def test_staff_submit_needs_a_shipping_address(world):
     """No address on the party and no site address: the address is required on submit."""
     w = world
-    _sales_owns_project(w)
     party = _party(w.db, "No Address Sdn Bhd")
     _link(w.db, w.project, party)
     d = _create(w, ship_to_party_id=party.id).json()
@@ -301,7 +276,6 @@ def test_staff_submit_needs_a_shipping_address(world):
 def test_an_old_free_text_draft_keeps_its_text_until_a_party_is_picked(world):
     """Card example E: nothing is rewritten; the typed Ship To stays on the row."""
     w = world
-    _sales_owns_project(w)
     d = _create(w, ship_to_name="site office, Lot 22", scope_note="show unit").json()
     got = w.api.as_(w.sales).get(f"{SR}/{d['id']}").json()
     assert got["ship_to_name"] == "site office, Lot 22"

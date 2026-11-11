@@ -345,6 +345,11 @@ def validate_submit(db: Session, req: SampleRequest) -> None:
     """The refusals of AC-SR-02/03/06/21/22, in the contract's order."""
     require_project = require_project_flag(db)
 
+    # SAMPLE-REQUEST-V2 rules 1-2: a staff request is for an AutoCount debtor and ships to a party.
+    # The portal's form (external contacts, and a limited salesperson until slice 2) keeps text.
+    staff = (req.source or "staff") == "staff"
+    if staff and not req.customer_id:
+        raise _incomplete("customer_id", "Pick the customer.")
     if not (req.customer_id or _clean(req.customer_name)):
         raise _incomplete("customer_id", "Pick the customer, or type the customer name.")
     if require_project:
@@ -356,8 +361,12 @@ def validate_submit(db: Session, req: SampleRequest) -> None:
         raise _incomplete("delivery_date", "Enter the Request Delivery Date.")
     if not req.delivery_mode:
         raise _incomplete("delivery_mode", "Choose a delivery mode.")
+    if staff and not req.ship_to_party_id:
+        raise _incomplete("ship_to_party_id", "Pick who the samples go to.")
     if not _clean(req.ship_to_name):
         raise _incomplete("ship_to_name", "Enter the ship-to name.")
+    if staff and not _clean(req.ship_to_address):
+        raise _incomplete("ship_to_address", "Enter the shipping address.")
     if not req.lines and not req.board_mounting:
         raise _incomplete("lines", "Add at least one item.")
     if req.board_mounting and not _clean(req.board_label):
@@ -440,6 +449,7 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
         if field in data:
             setattr(req, field, data[field] or None)
     _check_source(db, req)
+    _apply_ship_to(db, req, data)
     if req.quotation_document_id and (
         lines is not None or "quotation_document_id" in data or "quotation_issue_id" in data
     ):
@@ -471,6 +481,115 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
             for index, line in enumerate(line_dicts, start=1)
         ]
     db.flush()
+
+
+def _ship_to_invalid(code: str, field: str, message: str) -> AppException:
+    return AppException(status_code=422, message=message, code=code, details={"field": field})
+
+
+def _apply_ship_to(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
+    """Ship to is a party (SAMPLE-REQUEST-V2 card rules 2 and 4), the proposal "To" rule
+    (`project_quotation_document_service.apply_recipient_pick`) applied to a sample request.
+
+    Keyed on presence like every draft save. A new ``ship_to_party_id`` reloads the printed block
+    from that party: its name, its address or else the project's site address, and clears the old
+    contact. A party not on the project yet is linked in ``ship_to_role`` first (no project: nothing
+    is linked). ``ship_to_contact_ids`` are that party's people: "A & B", the first one's phone, and
+    they join the project's stakeholders. A text field present in ``data`` was typed and wins.
+    """
+    from app.models.projects import ProjectParty, ProjectPartyContact
+    from app.services import project_party_contact_service as party_contacts
+
+    party_present = "ship_to_party_id" in data
+    contact_ids = list(
+        dict.fromkeys(str(c) for c in (data.get("ship_to_contact_ids") or []) if c)
+    )
+    if not party_present and data.get("ship_to_contact_ids") is None:
+        return
+    party_id = data.get("ship_to_party_id") if party_present else req.ship_to_party_id
+    changing = party_present and str(party_id or "") != str(req.ship_to_party_id or "")
+    if not party_id:
+        if changing:
+            req.ship_to_party_id = None
+        if contact_ids:
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_CONTACT_NOT_OF_PARTY",
+                "ship_to_contact_ids",
+                "Pick the ship-to party first, then its contact.",
+            )
+        return
+
+    project = db.get(Project, req.project_id) if req.project_id else None
+    # The ORM query is company-scoped (ProjectParty is CompanyScopedMixin); a project pins it to
+    # the project's own company on top of that.
+    party = (
+        db.query(ProjectParty)
+        .filter(ProjectParty.id == str(party_id))
+        .first()
+        if _is_uuid(party_id)
+        else None
+    )
+    owner_company = (project.company_id if project is not None else None) or req.company_id
+    if party is None or (owner_company and str(party.company_id) != str(owner_company)):
+        raise _ship_to_invalid(
+            "SAMPLE_REQUEST_SHIP_TO_INVALID", "ship_to_party_id", "That party was not found."
+        )
+    if project is not None and party.id not in party_contacts._party_ids_on(db, project):
+        role = data.get("ship_to_role")
+        if not role:
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_SHIP_TO_ROLE_REQUIRED",
+                "ship_to_role",
+                f"{party.name} is not on this project yet. Pick the role it plays.",
+            )
+        party_contacts.add_party_link(db, project, role, party.id)
+
+    contacts: List[Any] = []
+    if contact_ids:
+        rows = {}
+        if all(_is_uuid(c) for c in contact_ids):
+            rows = {
+                row.id: row
+                for row in db.query(ProjectPartyContact).filter(
+                    ProjectPartyContact.id.in_(contact_ids),
+                    ProjectPartyContact.party_id == party.id,
+                    ProjectPartyContact.is_active.is_(True),
+                )
+            }
+        if len(rows) != len(contact_ids):
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_CONTACT_NOT_OF_PARTY",
+                "ship_to_contact_ids",
+                f"Pick the contact from the people at {party.name}.",
+            )
+        contacts = [rows[c] for c in contact_ids]
+        if project is not None:
+            party_contacts.add_registered_contacts(db, project, contact_ids)
+
+    loaded: Dict[str, Any] = {}
+    if changing:
+        site = None
+        if project is not None and not party.address:
+            from app.models.projects import ProjectSalesProfile
+
+            profile = db.get(ProjectSalesProfile, project.id)
+            site = _clean(getattr(profile, "address", None))
+        loaded.update(
+            ship_to_party_id=party.id,
+            ship_to_name=party.name,
+            ship_to_address=_clean(party.address) or site,
+            site_contact_name=None,
+            site_contact_phone=None,
+        )
+    if contacts:
+        first = contacts[0]
+        loaded.update(
+            site_contact_name=" & ".join(c.name for c in contacts),
+            site_contact_phone=party_contacts.display_phone(first.phone),
+        )
+    for field, value in loaded.items():
+        if field == "ship_to_party_id" or field not in data:
+            setattr(req, field, value)
 
 
 def create_draft(
@@ -1483,6 +1602,19 @@ def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return db.query(User.name).filter(User.id == user_id).scalar()
 
 
+def _ship_to_role(db: Session, req: SampleRequest, project: Optional[Project]) -> Optional[str]:
+    """The role the ship-to party plays on the request's project (the first, when several);
+    NULL without a project or once the party is off it."""
+    if not req.ship_to_party_id or project is None:
+        return None
+    from app.services import project_party_contact_service as party_contacts
+
+    for role, party_id in party_contacts.project_party_roles(db, project):
+        if str(party_id) == str(req.ship_to_party_id):
+            return role
+    return None
+
+
 def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
     ctx = _names(db, [req])
     project = ctx["projects"].get(req.project_id) if req.project_id else None
@@ -1521,6 +1653,8 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "quotation_issue_id": req.quotation_issue_id,
             "quotation_ref": _source_ref(db, req),
             "scope_note": req.scope_note,
+            "ship_to_party_id": req.ship_to_party_id,
+            "ship_to_role": _ship_to_role(db, req, project),
             "ship_to_address": req.ship_to_address,
             "site_contact_name": req.site_contact_name,
             "site_contact_phone": req.site_contact_phone,

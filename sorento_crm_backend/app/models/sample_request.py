@@ -101,6 +101,13 @@ class SampleRequest(Base, CompanyScopedMixin):
     request_date = Column(Date, nullable=False, server_default=func.current_date())
     delivery_date = Column(Date, nullable=True)
     scope_note = Column(String(255), nullable=True)
+    #: SAMPLE-REQUEST-V2: the party the samples go to (a party of the project, not necessarily the
+    #: customer). `ship_to_name` / `ship_to_address` / `site_contact_*` stay the printed snapshot.
+    ship_to_party_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.parties.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     ship_to_name = Column(String(255), nullable=True)
     ship_to_address = Column(Text, nullable=True)
     site_contact_name = Column(String(255), nullable=True)
@@ -172,6 +179,7 @@ class SampleRequest(Base, CompanyScopedMixin):
         Index("ix_sample_requests_salesperson", "salesperson_id"),
         Index("ix_sample_requests_contact", "contact_id"),
         Index("ix_sample_requests_consignment_order", "consignment_order_id"),
+        Index("ix_sample_requests_ship_to_party", "ship_to_party_id"),
         {"schema": "projects"},
     )
 
