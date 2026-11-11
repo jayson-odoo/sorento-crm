@@ -935,3 +935,13 @@ export function renameFontFamilyInLayers(
   });
   return changed ? next : layers;
 }
+
+/** The z_index a new layer takes: one above the highest finite one, so a layer saved without a
+ *  z_index never makes it NaN. */
+export function nextLayerZ(layers: readonly { z_index?: unknown }[]): number {
+  let max = 0;
+  for (const layer of layers) {
+    if (typeof layer.z_index === 'number' && Number.isFinite(layer.z_index)) max = Math.max(max, layer.z_index);
+  }
+  return layers.length > 0 ? max + 1 : 1;
+}

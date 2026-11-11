@@ -112,7 +112,11 @@ export function ReaderInspector({
         onCancel={() => setInsertOpen(false)}
         onDone={(text) => {
           setInsertOpen(false);
-          if (textLayer) onUpdateProps(textLayer.id, { text });
+          if (!textLayer) return;
+          // As the designer does: a slot-bound (or already overridden) layer keeps its words in
+          // `text_override`; props.text would be hidden behind it.
+          if (textLayer.slot_binding || textLayer.text_override != null) onUpdate(textLayer.id, { text_override: text });
+          else onUpdateProps(textLayer.id, { text });
         }}
       />
     </div>

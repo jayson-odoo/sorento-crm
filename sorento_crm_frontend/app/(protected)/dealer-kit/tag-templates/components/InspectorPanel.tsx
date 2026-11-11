@@ -1319,10 +1319,9 @@ function TableInspector({
     <section>
       <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Table</h4>
       <div className="flex flex-col gap-2">
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput label="Rows" value={props.rows.length} onChange={() => undefined} min={props.rows.length} max={props.rows.length} />
-          <NumberInput label="Columns" value={props.columns.length} onChange={() => undefined} min={props.columns.length} max={props.columns.length} />
-        </div>
+        <p className="text-xs text-muted-foreground">
+          {props.rows.length} rows x {props.columns.length} columns
+        </p>
         <div className="grid grid-cols-2 gap-2">
           <NumberInput
             label="Cell row"

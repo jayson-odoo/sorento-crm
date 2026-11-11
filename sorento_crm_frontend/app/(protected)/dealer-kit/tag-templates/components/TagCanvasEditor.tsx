@@ -116,6 +116,7 @@ import {
   topmostChildAt,
   transformGroup,
   ungroupLayers,
+  nextLayerZ,
   zoomAt,
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
@@ -1100,7 +1101,7 @@ export function TagCanvasEditor({
     const minY = Math.min(...children.map((l) => l.y_mm));
     const maxX = Math.max(...children.map((l) => l.x_mm + l.width_mm));
     const maxY = Math.max(...children.map((l) => l.y_mm + l.height_mm));
-    const maxZ = Math.max(...layers.map((l) => l.z_index)) + 1;
+    const maxZ = nextLayerZ(layers);
 
     const groupId = newLayerId();
     const groupLayer: TagLayer = {
@@ -1158,7 +1159,7 @@ export function TagCanvasEditor({
   const centerX = doc.width_mm / 2;
   const centerY = doc.height_mm / 2;
   const maxZ = useMemo(
-    () => (layers.length > 0 ? Math.max(...layers.map((l) => l.z_index)) + 1 : 1),
+    () => nextLayerZ(layers),
     [layers],
   );
 
@@ -4000,7 +4001,7 @@ export function TagCanvasEditor({
             delete props.cropRect;
             next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
           } else {
-            const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const z = nextLayerZ(prev);
             const fitted = fitPastedImage(natural, canvas);
             // A menu Paste: the picture's corner at the click point, pulled back to stay on the canvas.
             if (at) {
@@ -5443,6 +5444,23 @@ export function TagCanvasEditor({
                       disabled={tableMenu.col + tableMenu.colSpan >= tableMenu.props.columns.length}
                     >
                       Merge cells
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan,
+                            tableMenu.col + tableMenu.colSpan - 1,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.row + tableMenu.rowSpan >= tableMenu.props.rows.length}
+                    >
+                      Merge down
                     </ContextMenuItem>
                     {tableMenu.merged && (
                       <ContextMenuItem

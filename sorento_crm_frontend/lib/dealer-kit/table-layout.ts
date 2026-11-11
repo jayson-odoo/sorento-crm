@@ -112,7 +112,20 @@ function coveredSet(props: TableLayerProps): Set<string> {
   return covered;
 }
 
-export function tableLayout(props: TableLayerProps, layerWidth_mm: number, measure: TableMeasure): TableLayout {
+/** The grid exactly rows x columns: a missing cell is blank, an extra one is dropped. */
+function withFullGrid(props: TableLayerProps): TableLayerProps {
+  const fits =
+    props.cells.length === props.rows.length &&
+    props.cells.every((row) => row.length === props.columns.length);
+  if (fits) return props;
+  return {
+    ...props,
+    cells: props.rows.map((_, r) => props.columns.map((__, c) => props.cells[r]?.[c] ?? { text: '' })),
+  };
+}
+
+export function tableLayout(source: TableLayerProps, layerWidth_mm: number, measure: TableMeasure): TableLayout {
+  const props = withFullGrid(source);
   const total = props.columns.reduce((sum, col) => sum + col.width_mm, 0);
   const scale = total > 0 ? layerWidth_mm / total : 1;
   const columnWidths = props.columns.map((col) => col.width_mm * scale);

@@ -1372,7 +1372,7 @@ export function normalizeLayer(layer: TagLayer, index: number): TagLayer {
     visible: layer.visible !== false,
     locked: layer.locked === true,
     rotation_deg: rotation,
-    z_index: layer.z_index ?? index,
+    z_index: typeof layer.z_index === 'number' && Number.isFinite(layer.z_index) ? layer.z_index : index,
     slot_binding: layer.slot_binding ?? null,
     text_override: layer.text_override ?? null,
   };

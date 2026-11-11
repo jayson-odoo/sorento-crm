@@ -324,8 +324,8 @@ async function choose(label: RegExp) {
     return;
   }
   const trigger = screen.getAllByRole('button', { name: /^export/i })[0];
-  fireEvent.mouseDown(trigger);
-  fireEvent.click(trigger);
+  // Radix opens its menu on pointerdown, which fireEvent.mouseDown/click never sends.
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
   fireEvent.click(await screen.findByRole('menuitem', { name: label }));
 }
 
@@ -336,8 +336,7 @@ describe('SpecSheetReader export formats (B5)', () => {
     expect(screen.getAllByRole('button', { name: /^export/i }).length).toBeGreaterThan(0);
     const trigger = screen.getAllByRole('button', { name: /^export/i })[0];
     if (!screen.queryByRole('button', { name: /powerpoint/i })) {
-      fireEvent.mouseDown(trigger);
-      fireEvent.click(trigger);
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     }
     expect(await screen.findByText(/powerpoint/i)).toBeInTheDocument();
   });

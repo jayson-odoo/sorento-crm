@@ -1543,11 +1543,17 @@ export default function TagSheetRenderer({
   // B5: the PowerPoint worker reads this once the page is up; a thumbnail preview does not set it.
   useEffect(() => {
     if (preview || typeof window === 'undefined') return;
-    (window as unknown as { __tagSheetLayout?: unknown }).__tagSheetLayout = buildLayoutExport(
-      doc,
-      resolvedData,
-      { assets, images, featureIcons },
-    );
+    // Only the PowerPoint worker asks (?layout=1): a price tag print never pays for it.
+    if (new URLSearchParams(window.location.search).get('layout') !== '1') return;
+    try {
+      (window as unknown as { __tagSheetLayout?: unknown }).__tagSheetLayout = buildLayoutExport(
+        doc,
+        resolvedData,
+        { assets, images, featureIcons },
+      );
+    } catch {
+      // The layout is a side product; a layer it cannot read must never break the print.
+    }
   }, [doc, resolvedData, assets, images, featureIcons, preview]);
 
   if (preview) {
@@ -1631,7 +1637,7 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: resolved.fontFamily,
         fontSize: `${tableFontMm(resolved)}mm`,
-        color: resolved.color,
+        color: safeColour(resolved.color, '#000000'),
         textAlign: resolved.align,
       }}
     >
@@ -1648,7 +1654,7 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
               height: `${c.height_mm}mm`,
               boxSizing: 'border-box',
               padding: `${c.cell.padding_mm ?? 1}mm`,
-              background: c.cell.fill || undefined,
+              backgroundColor: c.cell.fill ? safeColour(c.cell.fill) : undefined,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: align === 'top' ? 'flex-start' : align === 'bottom' ? 'flex-end' : 'center',
@@ -1676,7 +1682,7 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
               top: `${horizontal ? e.y1_mm - half : e.y1_mm - half}mm`,
               width: `${horizontal ? e.x2_mm - e.x1_mm + e.width_mm : e.width_mm}mm`,
               height: `${horizontal ? e.width_mm : e.y2_mm - e.y1_mm + e.width_mm}mm`,
-              backgroundColor: e.color,
+              backgroundColor: safeColour(e.color, '#000000'),
             }}
           />
         );

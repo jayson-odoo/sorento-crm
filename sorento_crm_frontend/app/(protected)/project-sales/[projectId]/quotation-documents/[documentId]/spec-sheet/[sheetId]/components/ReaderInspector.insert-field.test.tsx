@@ -83,4 +83,28 @@ describe('Insert field on the spec sheet page Inspector', () => {
     expect((changes as { text: string }).text).toContain('{{doc.subject_title}}');
     expect((changes as { text: string }).text.startsWith('Re: ')).toBe(true);
   });
+
+  it('a layer that already has a text override gets the content as the override', () => {
+    const controller = { updateLayer: vi.fn(), updateLayerProps: vi.fn() };
+    const overridden = { ...LAYER, text_override: 'Typed words' } as unknown as TagLayer;
+    render(
+      <ReaderInspector
+        pageKey="k1"
+        layer={overridden}
+        layers={[overridden]}
+        controller={controller as never}
+        mode="page"
+        onModeChange={vi.fn()}
+        onApplyAll={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    fireEvent.change(screen.getByPlaceholderText('Search fields...'), { target: { value: 'doc.subject' } });
+    fireEvent.click(screen.getByText('Subject title'));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(controller.updateLayerProps).not.toHaveBeenCalled();
+    const [id, changes] = controller.updateLayer.mock.calls[0];
+    expect(id).toBe('title');
+    expect((changes as { text_override: string }).text_override).toContain('{{doc.subject_title}}');
+  });
 });

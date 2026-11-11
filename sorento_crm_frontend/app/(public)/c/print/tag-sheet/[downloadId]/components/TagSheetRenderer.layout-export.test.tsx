@@ -5,7 +5,7 @@
  * from `tableLayout`. Written test-FIRST.
  */
 import { render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { defaultAccessoriesPropsFor } from '@/lib/dealer-kit/accessory-card';
 import type { TagLayer, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -20,8 +20,14 @@ type Exposed = {
 };
 const exposed = () => (window as unknown as { __tagSheetLayout?: Exposed }).__tagSheetLayout;
 
+beforeEach(() => {
+  // The PowerPoint worker opens the print page with ?layout=1; nothing else asks for the layout.
+  window.history.replaceState({}, '', '/?layout=1');
+});
+
 afterEach(() => {
   delete (window as unknown as { __tagSheetLayout?: unknown }).__tagSheetLayout;
+  window.history.replaceState({}, '', '/');
 });
 
 function tableProps() {
@@ -187,5 +193,14 @@ describe('window.__tagSheetLayout, accessories box and price badge (B5)', () => 
     await waitFor(() => expect(exposed()).toBeTruthy());
     const texts = exposed()!.pages[0].layers.filter((l) => l.kind === 'text').map((l) => String(l.text));
     expect(texts.some((t) => t.includes('100'))).toBe(true);
+  });
+});
+
+describe('window.__tagSheetLayout is built only when asked for', () => {
+  it('a normal print (no ?layout=1) never builds it', async () => {
+    window.history.replaceState({}, '', '/');
+    render(<TagSheetRenderer doc={DOC} resolvedData={{ [TAG_ID]: DATA }} assets={{}} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(exposed()).toBeUndefined();
   });
 });

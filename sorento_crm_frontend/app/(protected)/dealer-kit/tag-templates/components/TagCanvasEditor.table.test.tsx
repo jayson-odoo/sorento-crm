@@ -158,3 +158,37 @@ describe('table context menu', () => {
     expect(screen.queryByRole('menuitem', { name: /Insert row below/ })).toBeNull();
   });
 });
+
+describe('Merge down', () => {
+  it('merges the clicked cell with the one below; disabled on the last row', () => {
+    let latest: TagLayer[] = [];
+    const { container } = render(
+      <TagCanvasEditor
+        doc={{ width_mm: 80, height_mm: 60, layers: [tableLayer('tbl')] }}
+        onChange={vi.fn()}
+        onLayersChange={(next) => {
+          latest = next;
+        }}
+      />,
+    );
+    const host = container.querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
+    // (10, 7) mm is the first cell of the first row of the 6 mm rows at (5, 5).
+    fireEvent.contextMenu(host, { clientX: 10 * CANVAS_PX_PER_MM, clientY: 7 * CANVAS_PX_PER_MM });
+    const item = screen.getByRole('menuitem', { name: /Merge down/ });
+    expect(item.getAttribute('aria-disabled')).not.toBe('true');
+    fireEvent.click(item);
+    const cells = (latest.find((l) => (l.type as string) === 'table')!.props as unknown as { cells: { rowSpan?: number }[][] }).cells;
+    expect(cells[0][0].rowSpan).toBe(2);
+  });
+
+  it('is disabled on the last row', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={{ width_mm: 80, height_mm: 60, layers: [tableLayer('tbl')] }} onChange={vi.fn()} />,
+    );
+    const host = container.querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
+    // Row 3 of 3 spans y 17..23 mm.
+    fireEvent.contextMenu(host, { clientX: 10 * CANVAS_PX_PER_MM, clientY: 20 * CANVAS_PX_PER_MM });
+    const item = screen.getByRole('menuitem', { name: /Merge down/ });
+    expect(item.getAttribute('aria-disabled') === 'true' || item.hasAttribute('data-disabled')).toBe(true);
+  });
+});
