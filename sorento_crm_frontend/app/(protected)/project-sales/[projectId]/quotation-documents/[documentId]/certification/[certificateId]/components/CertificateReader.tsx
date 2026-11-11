@@ -186,7 +186,8 @@ export function CertificateReader({
   // "Go to box": bring the box into the middle of the viewer and outline it for a moment. The
   // pages (and their boxes) exist only once the file has loaded, so a jump asked for on open
   // waits for its box; the outline starts when the box is found, not when the jump was asked.
-  // A new jump or leaving the page cancels a jump still waiting.
+  // A new jump or leaving the page cancels a jump still waiting. `onFound` runs once the box is
+  // on screen.
   const seekTimer = React.useRef<number | null>(null);
   const cancelSeek = React.useCallback(() => {
     if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
@@ -194,7 +195,7 @@ export function CertificateReader({
   }, []);
   React.useEffect(() => cancelSeek, [cancelSeek]);
   const goToBox = React.useCallback(
-    (index: number) => {
+    (index: number, onFound?: () => void) => {
       cancelSeek();
       let tries = 0;
       const seek = () => {
@@ -203,6 +204,7 @@ export function CertificateReader({
         if (node) {
           revealInViewer(node);
           setFlashed(index);
+          onFound?.();
           return;
         }
         if (tries++ < 100) seekTimer.current = window.setTimeout(seek, 100);
@@ -218,13 +220,22 @@ export function CertificateReader({
     return () => window.clearTimeout(timer);
   }, [flashed]);
 
-  // Opening a certificate from the list lands on its first box: one click from the row.
+  // Opening a certificate from the list lands on its first box: one click from the row. The
+  // certificate counts as landed only once its box is on screen, so a jump that was cancelled
+  // before it got there (StrictMode's mount, cleanup, mount on a certificate whose data was
+  // already cached, i.e. every second open) is asked again instead of being skipped.
   const landedRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (!detail || landedRef.current === detail.certificate_id) return;
-    landedRef.current = detail.certificate_id;
+    const id = detail.certificate_id;
     const first = boxOrder(detail.boxes)[0];
-    if (first !== undefined) goToBox(first);
+    if (first === undefined) {
+      landedRef.current = id;
+      return;
+    }
+    goToBox(first, () => {
+      landedRef.current = id;
+    });
   }, [detail, goToBox]);
 
   const removeAt = React.useCallback(
