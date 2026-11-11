@@ -375,3 +375,61 @@ describe('struck labels on the edit form', () => {
     expect(labels()).not.toContain('Sales Order');
   });
 });
+
+describe('owner hand test 11 Nov, Design Ready (marketing proof waiting on the salesperson)', () => {
+  const DESIGN_READY = () =>
+    baseRequest({
+      status: 'proof_ready',
+      self_review: false,
+      lines: [],
+      attachments: [],
+      revision: {
+        enabled: true,
+        allowed: false,
+        used: 0,
+        max: 0,
+        remaining: 0,
+        blocked_reason: 'Marketing is working on this request. Wait for their proof.',
+      },
+    });
+
+  it('Preview is the filled main button', async () => {
+    asMock(getRequest).mockResolvedValue(DESIGN_READY());
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    expect(screen.getByRole('button', { name: 'Preview' }).className).toMatch(/bg-primary/);
+  });
+
+  it('shows no status sentence under the number, only the number and the position', async () => {
+    asMock(getRequest).mockResolvedValue(DESIGN_READY());
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    expect(screen.queryByText(/Marketing is working on this request/)).toBeNull();
+    expect(await screen.findByText(/1 \/ 1/)).toBeInTheDocument();
+  });
+
+  it('has no Cross-check card', async () => {
+    asMock(getRequest).mockResolvedValue(DESIGN_READY());
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    expect(screen.queryByText('Cross-check')).toBeNull();
+    expect(screen.queryByText('Request Lines')).toBeNull();
+  });
+
+  it('the request number is never truncated (375px: it gets its own line)', async () => {
+    asMock(getRequest).mockResolvedValue(DESIGN_READY());
+    render(<PriceTagRequestForm requestId="req-1" />);
+    const number = await screen.findByText('PT-202609-0001');
+    expect(number.closest('.truncate')).toBeNull();
+  });
+});
+
+describe('an approved request keeps Edit as the main button', () => {
+  it('Edit is filled and Preview is outline', async () => {
+    asMock(getRequest).mockResolvedValue(APPROVED());
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    expect(screen.getByRole('button', { name: 'Edit' }).className).toMatch(/bg-primary/);
+    expect(screen.getByRole('button', { name: 'Preview' }).className).not.toMatch(/bg-primary/);
+  });
+});

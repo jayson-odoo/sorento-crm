@@ -930,7 +930,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           </TabsTrigger>
           <TabsTrigger value="attachments">
             <Paperclip />
-            <span>Sales Order</span>
+            {/* Owner hand test 11 Nov: no "Sales Order" wording on the request's files. */}
+            <span>Files</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1498,12 +1499,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               what the salesperson attached, upload stays portal-only (D4). */}
           <Card>
             <CardHeader className="py-3 px-4">
-              <CardTitle className="text-base">Sales Order</CardTitle>
+              <CardTitle className="text-base">Files</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4">
               {attachments.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  No sales order files attached.
+                  No files attached.
                 </p>
               ) : (
                 <div className="space-y-1">

@@ -232,7 +232,7 @@ describe('PriceTagRequestForm - one gear with Duplicate and Download PDF; Edit i
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 
-  it('hides Edit and shows the blocked reason in the header line when the policy refuses it', async () => {
+  it('hides Edit and shows no status sentence in the header when the policy refuses it', async () => {
     asMock(getRequest).mockResolvedValue(
       baseRequest({ status: 'ready', portal_draft_at: null, revision: BLOCKED_POLICY }),
     );
@@ -241,7 +241,8 @@ describe('PriceTagRequestForm - one gear with Duplicate and Download PDF; Edit i
     await screen.findByText('PT-202609-0001');
 
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
+    // Owner hand test 11 Nov struck the status sentence under the number: no reason line.
+    expect(screen.queryByText('You have used all 3 revisions.')).toBeNull();
   });
 });
 

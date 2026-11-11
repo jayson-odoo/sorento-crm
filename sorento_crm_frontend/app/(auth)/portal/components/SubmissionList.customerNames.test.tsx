@@ -27,6 +27,8 @@ const ROW = {
   customer_name: 'ZZT Construction Sdn Bhd +1',
   customer_names: 'ZZT Construction Sdn Bhd, ZZT Bath Studio',
   needed_by_date: null,
+  revision_no: 1,
+  last_revised_at: '2026-11-11T07:00:00Z',
 };
 
 vi.mock('../lib/price-tag-request-service', async (importOriginal) => ({
@@ -96,5 +98,15 @@ describe('the summary mapping carries every name', () => {
     const [row] = await service.listRequestsAsSummaries();
     expect(row.customer_name).toBe('ZZT Construction Sdn Bhd +1');
     expect(row.customer_names).toBe('ZZT Construction Sdn Bhd, ZZT Bath Studio');
+  });
+});
+
+describe('owner hand test 11 Nov: no revision wording on a price tag card', () => {
+  it('an edited request reads Edited, never Rev or Revised', async () => {
+    window.localStorage.setItem('sorento.portalView', 'board');
+    render(<KindSubmissionList kind="price_tag_request" canCreate={false} />);
+    await screen.findByText('ZZT Construction Sdn Bhd +1', { selector: 'p, p *' });
+    expect(screen.queryByText(/\bRev\b|Revis/)).toBeNull();
+    expect(screen.getAllByText(/Edited/).length).toBeGreaterThan(0);
   });
 });

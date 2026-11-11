@@ -114,7 +114,6 @@ import {
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
-import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
   AIExtractDialog,
@@ -470,11 +469,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // header line uses - review round 3 folds the price tag header into the
   // SAME one muted truncating line, rather than its own separate blocked-
   // reason sentence under a bold doc-number + colored pill.
-  // Owner hand test 11 Nov: editing your own request is not a revision, so no budget line is
-  // shown (price tags have no cap anyway); a reason Edit is unavailable still is.
-  const revisionStatusText = revisionPolicy && !revisionPolicy.allowed
-    ? (revisionPolicy.blocked_reason ?? null)
-    : null;
+  // Owner hand test 11 Nov: the request page's one main button is Preview while the tag waits on
+  // the salesperson (Design Ready) or when there is nothing to edit; otherwise Edit.
+  const previewIsMain = isProofReady || !revisionPolicy?.allowed;
   const { revise } = useReviseSubmission(
     'price_tag_request',
     effectiveId,
@@ -1953,26 +1950,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </div>
         </FormSection>
 
-        {isProofReady && (
-          /* Same `attachments` state the Sales Order card above reads (not
-             `request.attachments`, which is only ever the snapshot from the
-             initial fetch) - one source, so the two can never show a different
-             file list for the same request. */
-          <POCrossCheckViewer
-            attachments={attachments}
-            lines={request.lines.map((l) => ({
-              id: l.id,
-              code: l.code,
-              name: l.name,
-              line_type: l.line_type,
-              quantity: l.quantity,
-              list_price: null,
-              sell_price: null,
-              show_promo_price: l.show_promo_price,
-              marketing_price_override: null,
-            }))}
-          />
-        )}
       </>
     );
 
@@ -1994,27 +1971,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               <ArrowLeft className="size-4 mr-1" /> Back
             </Button>
           )}
-          <div className="flex min-w-0 items-center gap-2">
-            {/* R3-5/review round 3: the SAME one muted truncating line the
-                legacy kinds' header carries - doc number, revision status
-                (budget or blocked reason), neighbour counter - beside the
-                gear rather than a separate bold heading + colored pill. */}
-            {(request.doc_number || revisionStatusText || neighbours) && (
-              <span className="min-w-0 truncate text-sm text-muted-foreground">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {/* The number and the position nav only (owner hand test 11 Nov struck the status
+                sentence). Never truncated: on a phone it takes its own line above the buttons. */}
+            {(request.doc_number || neighbours) && (
+              <span className="basis-full text-right text-sm text-muted-foreground break-words sm:basis-auto">
                 {request.doc_number}
-                {revisionStatusText && (
-                  <>
-                    {request.doc_number && <span aria-hidden> · </span>}
-                    <span className="text-xs text-muted-foreground/70">
-                      {revisionStatusText}
-                    </span>
-                  </>
-                )}
                 {neighbours && (
                   <>
-                    {(request.doc_number || revisionStatusText) && (
-                      <span aria-hidden> · </span>
-                    )}
+                    {request.doc_number && <span aria-hidden> · </span>}
                     <span className="text-xs text-muted-foreground/70">
                       {neighbours.position} / {neighbours.total}
                     </span>
@@ -2027,15 +1992,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 Controlled open state so the menu closes itself once the download settles,
                 instead of sitting open with a stale item until an outside click. */}
             {/* Owner hand test 11 Nov: the design opens from a button (no inline design bloating
-                the page) and Edit is the page's main button. */}
+                the page). One main button: Preview while the tag waits on the salesperson or when
+                there is nothing to edit ("preview supposed to be CTA", owner, Design Ready), else
+                Edit. */}
             {(isOwnProof || showDesignPreview) && (
-              <Button variant="outline" size="sm" onClick={() => setDesignOpen(true)}>
+              <Button
+                variant={previewIsMain ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => setDesignOpen(true)}
+              >
                 <Eye className="size-4 mr-1" />
                 Preview
               </Button>
             )}
             {revisionPolicy?.allowed && (
-              <Button size="sm" onClick={startEdit}>
+              <Button variant={previewIsMain ? 'outline' : 'primary'} size="sm" onClick={startEdit}>
                 <PencilLine className="size-4 mr-1" />
                 Edit
               </Button>

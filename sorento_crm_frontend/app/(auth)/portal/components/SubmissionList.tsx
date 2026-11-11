@@ -915,12 +915,14 @@ function SubmissionCard({
           </p>
           {revisionBadgeLabel(row.revision_no) && (
             <Badge variant="secondary">
-              {revisionBadgeLabel(row.revision_no)}
+              {/* Owner hand test 11 Nov: a salesperson edits their own price tag request; the
+                  word revision never shows for it. */}
+              {row.kind === 'price_tag_request' ? 'Edited' : revisionBadgeLabel(row.revision_no)}
             </Badge>
           )}
           {row.has_revision_draft && (
             <Badge variant="warning" data-testid="revising-chip">
-              Revising
+              {row.kind === 'price_tag_request' ? 'Editing' : 'Revising'}
             </Badge>
           )}
         </div>
@@ -979,7 +981,7 @@ function SubmissionCard({
         )}
         {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
-            Revised{' '}
+            {row.kind === 'price_tag_request' ? 'Edited' : 'Revised'}{' '}
             {formatDateInMalaysia(row.last_revised_at)}
           </p>
         ) : (
