@@ -541,7 +541,7 @@ describe('PriceTagRequestDetail', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tabs (D25, D10, AC-S1-6, AC-S1-7): Request / Lines / Sales Order replace
+// Tabs (D25, D10, AC-S1-6, AC-S1-7): Request / Lines / Files replace
 // the four stacked cards; the standalone Proof card, the Proof TAB and their
 // duplicate "Open the designer" button are gone - the design lives in the
 // designer, one click away through the header's own primary CTA. The Lines
@@ -549,7 +549,7 @@ describe('PriceTagRequestDetail', () => {
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestDetail - tabs', () => {
-  it('renders the tabs in order: Request, Lines, Sales Order', async () => {
+  it('renders the tabs in order: Request, Lines, Files', async () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
