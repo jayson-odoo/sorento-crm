@@ -1,6 +1,7 @@
 # PLAN: restore the supplier lines in the production-candidate parser prompt (PARSER-SUPPLIER-RESTORE)
 
-Status: in progress (small fix track: prompt text + gold + one guard test, no migration, no auth change). 11 Nov 2026.
+Status: built, gate passed, publish package ready for the owner (small fix track: prompt text + gold + harness + one guard
+test, no migration, no auth change). 11 Nov 2026. Package: `PROMPT-parser-supplier-restore-b1c59343.md`.
 
 ## Problem (owner, prod Chatbot Console, 11 Nov ~16:50 MYT, parser v72 production)
 
@@ -33,8 +34,9 @@ Status: in progress (small fix track: prompt text + gold + one guard test, no mi
 1. Build candidate files, diff vs 289da7e5 and v71, record md5s.
 2. Gold rows in `scripts/chatbot_eval/gold/parser_supplier_restore.jsonl` (fake personal names): supplier-only name ->
    supplier entity / PO side; real customer stays customer; both-sides name -> party_side unclear.
-3. Gate on the dev copy, parser-level, x1, mini/flash-lite per crew caps, ledger before + after: candidate vs 289da7e5.
-   Regression controls: `parser_report_filter_all.jsonl` (the set 289da7e5 was gated on).
+3. Gate on the dev copy sorento_prod_1104, parser-level, x1, gemini-3.5-flash-lite (ORG key in-process only, crew
+   decision 11 Nov), ledger before + after: candidate vs 289da7e5. Regression: `parser_report_filter_all.jsonl`.
+   Result: supplier gold A 5/12, B 10/12 (taiyang rows 0/5 vs 5/5); filter_all no regression. USD 0.2818.
 4. Publish package for the owner: text files, md5s, Prompts page steps, after-checks.
 5. Guard test red-first, then the candidate file that makes it green.
 
