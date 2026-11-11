@@ -152,7 +152,13 @@ def test_migration_file_has_the_pinned_revision_and_is_the_single_head():
 
     cfg = Config(str(BACKEND / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["pc_0001_product_costing"]
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    # One head, with this revision in its chain: a later lane's migration chains onto it
+    # (AC-QTSO-CRM's acqs_0001), so pinning it as THE head would fail on the next merge.
+    assert len(heads) == 1, heads
+    chain = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
+    assert "pc_0001_product_costing" in chain
 
 
 # ------------------------------------------------------------------ tables and constraints
