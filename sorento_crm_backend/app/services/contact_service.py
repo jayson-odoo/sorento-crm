@@ -227,8 +227,6 @@ class ContactService:
             empty=total == 0
         )
     
-    COST_REVEAL_KEY = "purchase_orders.cost"
-
     def _order_by(self, q, sort_field: str, desc: bool, viewer_id: Optional[str], include_linked_users: bool) -> list:
         """ORDER BY for the list: every grid column sorts on the server (ACCESS-SHEET-FIXES, owner
         27 Oct). A multi-value cell sorts by the first value it shows; an empty cell sorts last both
@@ -237,7 +235,6 @@ class ContactService:
 
         from app.models.access import (
             ContactAccessType,
-            ContactFieldReveal,
             ContactTag,
             RespondContactCustomer,
             respond_contact_access_types as type_pivot,
@@ -356,15 +353,22 @@ class ContactService:
         return case(ranked, value=RespondContact.id, else_=None) if ranked else None
 
     def _cost_visible_ids(self, contact_ids: list[str]) -> set[str]:
-        """The contacts among ``contact_ids`` whose linked user holds `products.cost.view`."""
-        from app.services.cost_access import contact_ids_who_can_view_cost
+        """The contacts among ``contact_ids`` whose linked user holds `products.cost.view`, in one
+        query: the same expression the list filter and sort use."""
+        if not contact_ids:
+            return set()
+        from app.services.cost_access import contact_cost_visible_expr
 
-        return contact_ids_who_can_view_cost(self.db, contact_ids)
+        return {
+            str(cid)
+            for (cid,) in self.db.query(RespondContact.id).filter(
+                RespondContact.id.in_(contact_ids), contact_cost_visible_expr()
+            )
+        }
 
     def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
-            ContactFieldReveal,
             RespondContactCustomer,
             respond_contact_access_types as pivot,
         )

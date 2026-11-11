@@ -616,7 +616,7 @@ def _po_last_cost(rows: list[dict], b: _Builder) -> None:
     Only `Warehouse` and `Supplier` stay "if any": a line bought with no warehouse
     stated, or a PO with no supplier, answers with that one field absent.
 
-    RESTRICTED: the three money fields to a contact holding `purchase_orders.cost` (the
+    RESTRICTED: the three money fields to a contact whose linked user holds `products.cost.view` (key `purchase_orders.cost`; the
     whole-domain gate the chatbot lane applies before this tool is ever called is belt
     and braces alongside this); `Supplier` to a contact holding
     `purchase_orders.supplier` - the SAME key `_purchase_orders_placed` already uses for

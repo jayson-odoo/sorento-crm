@@ -68,13 +68,13 @@ def contact_ids_who_can_view_cost(db: Session, contact_pks: Iterable[Optional[st
         from app.models.base import company_scope
         from app.models.user import User, UserStatus
 
-        with company_scope(db, None):
+        with db.begin_nested(), company_scope(db, None):
             rows = (
                 db.query(User.id, User.respond_contact_id)
                 .filter(User.respond_contact_id.in_(ids), User.status == UserStatus.ACTIVE.value)
                 .all()
             )
-        return {str(contact) for user_id, contact in rows if can_view_cost(db, str(user_id))}
+            return {str(contact) for user_id, contact in rows if can_view_cost(db, str(user_id))}
     except Exception:
         logger.warning("contact cost visibility lookup failed; treating as hidden", exc_info=True)
         return set()
