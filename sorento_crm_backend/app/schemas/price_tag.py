@@ -1400,6 +1400,11 @@ class TagAccessory(BaseModel):
     sell_price: Optional[float] = None
     spec_lines: Optional[list[str]] = None
     price_tag_description: Optional[str] = None
+    #: SPEC-SHEET-DESIGNER-PARITY B2, a catalogue product only: the card fields of the same names.
+    brand: Optional[str] = None
+    description: Optional[str] = None
+    spec_sheet_description: Optional[str] = None
+    dimensions: Optional[str] = None
 
 
 class TagComboOption(BaseModel):

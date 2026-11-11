@@ -639,6 +639,13 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
         product = products.get(str(product_id)) if product_id else None
         return (product.product_name if product is not None else None) or fallback or ""
 
+    def default_text(product_id):
+        """The product's own spec sheet text (field, else description), what an override replaces."""
+        product = products.get(str(product_id)) if product_id else None
+        if product is None:
+            return ""
+        return product.spec_sheet_description or product.description or ""
+
     def brand_of(product_id):
         product = products.get(str(product_id)) if product_id else None
         return brands.get(str(product.brand_id), "") if product and product.brand_id else ""
@@ -652,7 +659,7 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
             {
                 "key": None,
                 "source": "set",
-                "_override": overrides.get(str(part.get("product_id"))),
+                "spec_sheet_description": default_text(part.get("product_id")),
                 "product_id": part.get("product_id"),
                 "code": part.get("product_code") or "",
                 "name": name_of(part.get("product_id"), part.get("description")),
@@ -668,7 +675,7 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 {
                     "key": picked,
                     "source": "picked",
-                    "_override": overrides.get(str(other["product_id"])),
+                    "spec_sheet_description": default_text(other["product_id"]),
                     "product_id": other["product_id"],
                     "code": other["code"],
                     "name": name_of(other["product_id"], other["description"]),
@@ -696,7 +703,9 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
-                "_description": setting.get("description") or "",
+                "description": setting.get("description") or "",
+                "accessory_descriptions": dict(overrides),
+                "spec_sheet_description_default": default_text(item["product_id"]),
                 "edited": key in edits,
                 "template": "page" if accessories else "single",
                 # Print-only (underscore keys never leave the API): the quoted unit price.
@@ -1195,7 +1204,9 @@ def build_print_payload(
             part_product = products.get(str(acc["product_id"])) if acc.get("product_id") else None
             part_fields = _product_fields(db, part_product, spec_cache)
             photo = _image(acc["_photo"], urls)
-            sheet_text = acc.get("_override") or part_fields["spec_sheet_description"]
+            sheet_text = (page["accessory_descriptions"].get(str(acc.get("product_id")))) or part_fields[
+                "spec_sheet_description"
+            ]
             # B1/B2: the same item as a TagAccessory, for the shared Accessories box.
             cards.append(
                 {
@@ -1247,7 +1258,7 @@ def build_print_payload(
                 "drawing": _image(page["_drawing"], urls),
                 "barcode": fields["barcode"],
                 "description": fields["description"],
-                "spec_sheet_description": page["_description"] or fields["spec_sheet_description"],
+                "spec_sheet_description": page["description"] or fields["spec_sheet_description"],
                 "accessories": cards,
                 "parts": parts,
                 "own_parts": parts,
@@ -1987,6 +1998,9 @@ def detail_view(
             "hidden": False,
             "picked": [],
             "accessories": [],
+            "description": "",
+            "accessory_descriptions": {},
+            "spec_sheet_description_default": "",
             "edited": COVER_KEY in edits,
             "template": "cover",
         }
