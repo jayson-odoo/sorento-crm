@@ -381,3 +381,83 @@ def remembered_summary(delta: dict[str, list[str]], *, dry_run: bool) -> str:
         f"{lead} {len(delta['kept'])} thing{'s' if len(delta['kept']) != 1 else ''} from "
         f"before, learned {len(delta['new'])}, forgot {len(delta['cleared'])}."
     )
+
+
+def event_fields(event: dict[str, Any]) -> dict[str, Any]:
+    """An event's own fields. `TurnTrace.add` spreads them flat beside `kind`; a few
+    older rows and fixtures nest them under `payload`. Read both the same way."""
+    nested = event.get("payload")
+    return nested if isinstance(nested, dict) else event
+
+
+def named_tool_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The tool this turn used: the LAST `tool` event that carries a `name`, as its fields.
+
+    TRACE-ENTITY-TOOL (owner, 11 Nov 2026, turn #8322): the business lane writes the real
+    call (`name`, `args`, `envelope`, `ms`) and `turn/fetch.py::_fetch_one` then writes a
+    bare `{"domain": ...}` event for the same call, so a reader taking the last tool event
+    showed "Tool: -". Every reader (drawer, console, analytics) picks through this one rule.
+    """
+    for event in reversed(events):
+        if not isinstance(event, dict) or event.get("kind") != "tool":
+            continue
+        fields = event_fields(event)
+        if fields.get("name"):
+            return fields
+    return None
+
+
+#: Codes listed per typed word on the `resolve` event; the rest are counted as `more`.
+RESOLVE_CODE_CAP = 10
+
+
+def resolve_event(
+    payload: dict[str, Any] | None,
+    *,
+    unplaced: dict[str, str] | None,
+    not_checked: dict[str, str] | None,
+) -> dict[str, Any] | None:
+    """The `resolve` trace event: what each typed word matched in the code lookup.
+
+    TRACE-ENTITY-TOOL: `turn_runtime.resolve_kinds` asks the in-process resolver what every
+    named token IS, and nothing of its answer reached the trace, so the drawer could not say
+    which product "srtwc286" became. Per typed word: the matched codes (first
+    `RESOLVE_CODE_CAP`, then a `more` count), the match tiers, the entity kinds. Then the
+    words the resolver could not place, and the words it never looked up (past its token
+    ceiling). Codes only, never a row id. None when the resolver had nothing to report.
+    """
+    resolved = (payload or {}).get("resolved") if isinstance(payload, dict) else None
+    resolutions = resolved.get("resolutions") if isinstance(resolved, dict) else None
+    words: list[dict[str, Any]] = []
+    for resolution in resolutions if isinstance(resolutions, list) else []:
+        if not isinstance(resolution, dict):
+            continue
+        matches = [m for m in resolution.get("matches") or [] if isinstance(m, dict)]
+        codes: list[str] = []
+        tiers: list[str] = []
+        kinds: list[str] = []
+        for match in matches:
+            code = str(match.get("canonical_code") or "").strip()
+            if code and code not in codes:
+                codes.append(code)
+            for value, bucket in ((match.get("match_tier"), tiers), (match.get("entity_type"), kinds)):
+                if value and str(value) not in bucket:
+                    bucket.append(str(value))
+        words.append(
+            {
+                "word": str(resolution.get("token") or ""),
+                "codes": codes[:RESOLVE_CODE_CAP],
+                "more": max(0, len(codes) - RESOLVE_CODE_CAP),
+                "tiers": tiers,
+                "kinds": kinds,
+                "ambiguous": bool(resolution.get("ambiguous")),
+            }
+        )
+    event = {
+        "words": words,
+        "unplaced": list(dict.fromkeys((unplaced or {}).values())),
+        "not_checked": list(dict.fromkeys((not_checked or {}).values())),
+    }
+    if not words and not event["unplaced"] and not event["not_checked"]:
+        return None
+    return event
