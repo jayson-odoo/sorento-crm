@@ -42,12 +42,14 @@ ENTITY = "sample_request"
 DRAFT = "draft"
 SUBMITTED = "submitted"
 PROCESSING = "processing"
+#: Retired by the owner's 11 Nov ruling (migration srv2_0002 moved its rows to Processing). Kept
+#: as a name only so an old row or a History entry that still says it reads correctly.
 CUSTOMER_CONFIRMED = "customer_confirmed"
 DELIVERED = "delivered"
 CANCELLED = "cancelled"
 
 #: What the coordinator queue shows until a filter says otherwise (AC-SR-51).
-DEFAULT_OPEN = (SUBMITTED, PROCESSING, CUSTOMER_CONFIRMED)
+DEFAULT_OPEN = (SUBMITTED, PROCESSING)
 
 #: PS-SAMPLE-TRACKING rule 1: the two stages, by status KEY. Draft, Cancelled and any key an
 #: admin adds sit outside both. The graph itself is unchanged (owner Q2 a, 2 Nov).
@@ -865,25 +867,21 @@ def move(
     if not allowed:
         raise _forbidden("You cannot make this move.")
 
+    # Owner ruling 11 Nov: Delivered comes only from linking the AutoCount consignment, and
+    # Customer confirmed is gone. Refused before the graph is asked, whatever an admin edited.
+    if to == DELIVERED:
+        raise AppException(
+            status_code=409,
+            message="A sample request is delivered by linking its AutoCount consignment, not by hand.",
+            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
+        )
+    if to == CUSTOMER_CONFIRMED:
+        raise illegal_move(frm, to)
     # Draft -> Submitted is `submit`, which carries the validation.
     if to == SUBMITTED or not _edge_exists(db, frm, to):
         raise illegal_move(frm, to)
 
-    if to == DELIVERED and req.consignment_order_id:
-        raise AppException(
-            status_code=409,
-            message="This request is delivered by its linked consignment, not by hand.",
-            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
-        )
-
     reason = _clean(reason)
-    if to in (CUSTOMER_CONFIRMED, DELIVERED) and on is None:
-        raise AppException(
-            status_code=422,
-            message="Enter the date.",
-            code="SAMPLE_REQUEST_DATE_REQUIRED",
-            details={"field": "date"},
-        )
     if to == CANCELLED and frm == PROCESSING and not reason:
         raise AppException(
             status_code=422,
@@ -903,12 +901,7 @@ def move(
         )
 
     _set_status(db, req, to)
-    if to == CUSTOMER_CONFIRMED:
-        req.confirmed_at = on
-    elif to == DELIVERED:
-        req.delivered_at = on
-        req.return_due = _add_loan(on, req.loan_value, req.loan_unit)
-    elif to == CANCELLED:
+    if to == CANCELLED:
         req.cancelled_at = datetime.utcnow()
         req.cancel_reason = reason
     db.flush()
@@ -918,7 +911,7 @@ def move(
 # ------------------------------------------------------------------ Stage 2: the consignment
 
 #: Where the sample team may link (or change) the consignment: after Start processing.
-CONSIGNMENT_OPEN = (PROCESSING, CUSTOMER_CONFIRMED, DELIVERED)
+CONSIGNMENT_OPEN = (PROCESSING, DELIVERED)
 CONSIGNMENT_CANCELLED = "cancelled"
 
 
@@ -993,7 +986,7 @@ def _undeliver(db: Session, req: SampleRequest, *, actor_id: Optional[str], why:
     """Back to the last Stage 1 step it reached (owner Q4 a)."""
     if status_key(db, req) != DELIVERED:
         return
-    back = CUSTOMER_CONFIRMED if req.confirmed_at else PROCESSING
+    back = PROCESSING
     _set_status(db, req, back)
     req.delivered_at = None
     req.return_due = None
@@ -1093,10 +1086,37 @@ def _resync(db: Session, req: SampleRequest, cg) -> None:
     if status_key(db, req) not in CONSIGNMENT_OPEN:
         return
     delivery = consignment_delivery(db, cg)
-    if delivery is None:
-        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
+    if cg.status == CONSIGNMENT_CANCELLED:
+        _void(db, req, cg)
+    elif delivery is None:
+        # Live but with no date to deliver on: not a void, so the link stays.
+        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} has no delivery date")
     else:
         _deliver_by(db, req, delivery[0], actor_id=None, no=cg.so_number)
+
+
+def _void(db: Session, req: SampleRequest, cg) -> None:
+    """Owner ruling 11 Nov: a voided consignment STAYS voided. The request lets go of it (so a
+    later "restore" of that CG never delivers it again), goes back to Processing until a new
+    consignment is linked, and its History keeps the voided one."""
+    from app.services import audit_service
+
+    no = cg.so_number
+    req.consignment_order_id = None
+    req.consignment_no = None
+    db.flush()
+    if status_key(db, req) == DELIVERED:
+        _undeliver(db, req, actor_id=None, why=f"{no} voided")
+    audit_service.record(
+        db,
+        event="sample_request_consignment_voided",
+        entity_type=SampleRequest.__audit_entity_type__,
+        entity_id=str(req.id),
+        old_values={"consignment_no": no},
+        new_values={"consignment_no": None},
+        description=f"Consignment {no} voided: back to Processing until a new consignment is linked.",
+        company_id=req.company_id,
+    )
 
 
 def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
