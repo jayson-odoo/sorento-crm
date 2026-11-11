@@ -639,6 +639,7 @@ _PTAG_ADAPTER = RevisionAdapter(
     snapshot_form_fields=(
         "debtor_code",
         "debtor_name",
+        "customers",
         "needed_by_date",
         "notes",
         "price_mode",
@@ -655,6 +656,7 @@ _PTAG_ADAPTER = RevisionAdapter(
         "doc_number": "Request number",
         "debtor_code": "Dealer code",
         "debtor_name": "Dealer",
+        "customers": "Customers",
         "promotion_id": "Promotion",
         "needed_by_date": "Need by",
         "notes": "Notes",
@@ -796,6 +798,12 @@ def _jsonable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, (str, int, float, bool)):
         return value
+    # A JSON column (a price tag request's `customers`) stays a JSON list/object; `str()` on
+    # it stored Python repr text the diff could not compare (crew browser pass, 11 Nov).
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
     return str(value)
 
 
@@ -1362,6 +1370,8 @@ class PortalRevisionService:
         fields: list[dict] = []
 
         def _display(name: str, value: Any) -> Optional[str]:
+            if name == "customers":
+                return _customer_names(snapshot)
             if name in (adapter.lookup_fields or {}):
                 key = str(value or "").strip().lower()
                 return labels.get(name, {}).get(key) if key else None
@@ -1477,7 +1487,13 @@ class PortalRevisionService:
                 # An id is never shown (no UUID in the UI); a re-pick reads as the
                 # Customer name change. The snapshot still carries it.
                 continue
+            if name in ("debtor_code", "debtor_name") and current.get("customers") is not None:
+                # PRICETAG-REQUEST-LAYOUT: the pair only mirrors the first customer; the
+                # Customers change below says it once, by name.
+                continue
             before, after = previous.get(name), current.get(name)
+            if name == "customers":
+                before, after = _customer_names(previous), _customer_names(current)
             if before == after:
                 continue
             changes.append(
@@ -1684,6 +1700,12 @@ class PortalRevisionService:
         #    side effect, so a replay yields one revision, not two voids and two restarts.
         current_revision_no = int(getattr(row, adapter.revision_no_attr, 0) or 0)
         if expected_revision_no is None or int(expected_revision_no) != current_revision_no:
+            if source_entity_type == "price_tag_request":
+                # Owner hand test 11 Nov: a salesperson edits their own request; the word
+                # revision never reaches them.
+                raise handle_conflict(
+                    "This request changed while you were editing it. Reload to see the latest."
+                )
             raise handle_conflict(
                 f"This {adapter.label} was revised while you were working on it. "
                 f"Reload to see revision {current_revision_no}."
@@ -1697,7 +1719,9 @@ class PortalRevisionService:
         # 2. The reason is the only thing this journey asks for, so it is required -
         #    any non-empty length, by explicit decision (no character floor).
         reason_text = (reason or "").strip()
-        if not reason_text:
+        # Owner hand test 11 Nov (PRICETAG-REQUEST-LAYOUT): a salesperson editing their own
+        # price tag request is editing, not revising - the form asks for no reason.
+        if not reason_text and source_entity_type != "price_tag_request":
             raise handle_unprocessable("Tell us what changed and why.")
         if len(reason_text) > REASON_MAX_LEN:
             raise handle_unprocessable(
@@ -1786,7 +1810,7 @@ class PortalRevisionService:
             kind=KIND_REVISION,
             version_no=self._next_version_no(source_entity_type, str(row.id)),
             revision_no=new_revision_no,
-            reason=reason_text,
+            reason=reason_text or None,
             contact_id=token.contact_id,
             invalidated=invalidated or None,
             voided_stages=voided_stages,
@@ -1814,6 +1838,8 @@ class PortalRevisionService:
             str(row.id),
             reason=(
                 f"Revision {new_revision_no} submitted by the contact. Reason: {reason_text}"
+                if reason_text
+                else f"Revision {new_revision_no} submitted by the contact."
             ),
         )
 
@@ -2023,10 +2049,12 @@ class PortalRevisionService:
                 stage = self._stage_code_for_tracker(tracker) or "this stage"
                 stage_label = str(stage).replace("_", " ")
                 title = f"Revision {revision_no}: {display_number} - stop work"
+                # A price tag edit carries no reason (owner hand test 11 Nov): no empty line.
+                reason_line = f"Reason: {reason}\n\n" if reason else ""
                 body = (
                     f"{adapter.label.capitalize()} {display_number} was revised by {who}. "
                     f"Your {stage_label} stage was voided - stop work on the previous "
-                    f"version.\n\nReason: {reason}\n\n"
+                    f"version.\n\n{reason_line}"
                     f"The {adapter.label} has restarted from the first stage.\n\n"
                     f"Open: {full_link}"
                 )
@@ -2173,6 +2201,9 @@ def _revision_label(row: PortalFormRevision) -> str:
         return "Original (reconstructed)" if row.is_reconstructed else "Original"
     if row.kind == KIND_RESUBMISSION:
         return APPEALED_LABEL
+    if row.source_entity_type == "price_tag_request":
+        # Owner hand test 11 Nov: the salesperson edits their own request; it is not a revision.
+        return f"Edit {row.revision_no}"
     return f"Revision {row.revision_no}"
 
 
@@ -2182,6 +2213,37 @@ def _line_summary(line: dict) -> str:
     if qty not in (None, ""):
         parts.append(f"x{qty}")
     return " ".join(parts)
+
+
+def _customer_names(snapshot: dict) -> Optional[str]:
+    """A price tag request's customers as one readable line (PRICETAG-REQUEST-LAYOUT); a snapshot
+    taken before the list existed reads as its one dealer."""
+    customers = snapshot.get("customers")
+    if customers is None:
+        return snapshot.get("debtor_name") or None
+    if isinstance(customers, str):
+        customers = _parse_stored_customers(customers)
+    if not isinstance(customers, list):
+        return None
+    names = [str(c.get("name") or "").strip() for c in customers if isinstance(c, dict)]
+    return ", ".join(n for n in names if n) or None
+
+
+def _parse_stored_customers(text: str) -> Any:
+    """A snapshot written before `_jsonable` kept lists holds the list's Python repr. Read it
+    as JSON or as a Python literal (``ast.literal_eval`` evaluates literals only, never code);
+    anything else reads as nothing."""
+    import ast
+    import json
+
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError, MemoryError, RecursionError, TypeError):
+        return None
 
 
 def _diff_lines(previous: Any, current: Any) -> list[dict]:

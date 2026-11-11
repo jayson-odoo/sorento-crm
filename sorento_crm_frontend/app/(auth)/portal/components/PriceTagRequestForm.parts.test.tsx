@@ -48,6 +48,10 @@ vi.mock('../lib/price-tag-request-service', async () => {
 });
 
 /** Same native-select stand-in the other form suites use: a pick is one change. */
+// PRICETAG-REQUEST-LAYOUT: Customers is a multi-select now; its stand-in is a native select
+// labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
+vi.mock('@/components/dealer-kit/RequestCustomersSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -100,7 +104,7 @@ import {
   type ProductCombosLookup,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
-import { selectOption } from '@/test-utils';
+import { selectOption, chooseTypedItems } from '@/test-utils';
 
 const mockCombos = vi.mocked(lookupProductCombos);
 const mockCreate = createRequest as ReturnType<typeof vi.fn>;
@@ -169,8 +173,8 @@ async function addLine() {
 /** Customer first: the Sales Order & Lines section is collapsed until one is picked. */
 async function startWithALine() {
   render(<PriceTagRequestForm />);
-  await selectOption('Debtor', 'ZZTD01');
-  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+  await selectOption('Customer', 'ZZTD01');
+  chooseTypedItems();
   await addLine();
 }
 

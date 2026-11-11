@@ -106,7 +106,10 @@ export function RevisionHistory({
   loading,
   error,
   currentAttachments = [],
+  title = 'Revision history',
 }: {
+  /** The card's heading; a price tag request calls its edits History (owner, 11 Nov). */
+  title?: string;
   entries: PortalRevisionEntry[];
   loading?: boolean;
   error?: string | null;
@@ -135,7 +138,7 @@ export function RevisionHistory({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Revision history</CardTitle>
+        <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         {loading ? (
