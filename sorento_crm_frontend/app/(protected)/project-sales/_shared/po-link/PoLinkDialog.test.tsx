@@ -384,3 +384,47 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     expect(cells[headers.indexOf('Open')]).toHaveTextContent(/^70$/);
   });
 });
+
+describe('Change PO: a line covered by two PO lines (D2)', () => {
+  const twoPos = soLine({
+    status: 'pinned', short_qty: 0, assigned_qty: 120,
+    now: {
+      so_status: 'open', open_qty: 120,
+      po_links: [
+        { po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 60, open_qty: 60, location_code: 'MWH-BB' },
+        { po_line_id: 'po-3', po_number: '202609-S0029', po_line_no: 3, qty: 60, open_qty: 60, location_code: 'HQ' },
+      ],
+    },
+  });
+
+  it('reads "Covered by more than one PO line", not "No PO linked", and cannot be sent', () => {
+    const { dialog } = renderDialog([twoPos], 'change');
+    expect(dialog).toHaveTextContent('Covered by more than one PO line');
+    expect(dialog).not.toHaveTextContent('No PO linked');
+    const send = within(dialog).queryByRole('button', { name: /^Change \d+ lines?$/ });
+    expect(send === null || (send as HTMLButtonElement).disabled).toBe(true);
+    expect(changePoLines).not.toHaveBeenCalled();
+  });
+});
+
+describe('A refused or failed result offers Try again (D3)', () => {
+  it.each(['refused', 'vendor_error'] as const)('a %s card re-sends exactly that line and shows the new result', async (outcome) => {
+    linkPoLines
+      .mockResolvedValueOnce({
+        results: [result({ outcome, error_code: outcome === 'refused' ? 'FIELD_REQUIRED' : 'VENDOR_ERROR', message: 'PurchaseAgent is required.' })],
+      })
+      .mockResolvedValueOnce({ results: [result({ outcome: 'done' })] });
+    const { dialog } = renderDialog();
+    fireEvent.change(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 line' }));
+    const card = await screen.findByTestId('po-link-result');
+    const retry = await within(card).findByRole('button', { name: /try again/i });
+    fireEvent.click(retry);
+    await waitFor(() => expect(linkPoLines).toHaveBeenCalledTimes(2));
+    expect(linkPoLines.mock.calls[1]).toEqual([
+      'snap', 'row', [{ sales_order_line_id: 'sol-1', po_line_id: 'po-3', qty: 120 }],
+    ]);
+    await waitFor(() => expect(screen.getByTestId('po-link-result')).toHaveTextContent('Linked'));
+    expect(within(screen.getByTestId('po-link-result')).queryByRole('button', { name: /try again/i })).toBeNull();
+  });
+});

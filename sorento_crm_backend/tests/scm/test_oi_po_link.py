@@ -730,3 +730,15 @@ def test_the_worklist_says_which_rows_are_in_autocount(scm_app, fake_ss):
     by_id = {r["id"]: r for r in listing.json()["data"]}
     flags = {k: by_id[w["rows"][k].id]["in_autocount"] for k in ("a", "b", "c", "none")}
     assert flags == {"a": True, "b": True, "c": True, "none": False}
+
+
+def test_oi_options_lines_carry_the_location_and_delivery_date_like_stock_debt(scm_app, fake_ss):
+    """D1: the dialog's Location and Delivery date columns read `location_code` / `delivery_date`
+    on each line; Order Inquiry left them out, so the dialog showed "-"."""
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "a", "c")})
+    assert resp.status_code == 200, resp.text
+    first = next(l for l in resp.json()["lines"] if l["sales_order_line_id"] == w["so_line"].id)
+    assert "location_code" in first and "delivery_date" in first, sorted(first)
+    assert first["location_code"] == w["mwh"].warehouse_code
+    assert first["delivery_date"] == w["so_line"].required_date.isoformat()
