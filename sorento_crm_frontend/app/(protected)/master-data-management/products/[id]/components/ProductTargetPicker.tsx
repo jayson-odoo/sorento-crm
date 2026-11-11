@@ -219,7 +219,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         ),
         size: 160,
         meta: { headerTitle: 'Product Code' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorKey: 'product_name',
@@ -241,7 +242,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         },
         size: 280,
         meta: { headerTitle: 'Product Name' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorFn: (row) => row.category?.category_name ?? '',
@@ -259,7 +261,8 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         },
         size: 160,
         meta: { headerTitle: 'Category' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
       {
         accessorFn: (row) => row.brand?.brand_name ?? '',
@@ -277,11 +280,12 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
         },
         size: 140,
         meta: { headerTitle: 'Brand' },
-        enableSorting: true,
+        // Another row source (combos) answers in its own fixed order.
+        enableSorting: !fetchRows,
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sourceProductId, rowDisabledReason, rowHint],
+    [sourceProductId, rowDisabledReason, rowHint, fetchRows],
   );
 
   const table = useReactTable({
@@ -296,7 +300,17 @@ export function useProductTargetPicker(source: string | ProductTargetPickerOptio
     onRowSelectionChange: (updater) => {
       // A hand tick or untick after "Select all" makes it a hand-picked set again.
       setMatchingActive(false);
-      setRowSelection(updater);
+      setRowSelection((current) => {
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        if (!rowDisabledReason) return next;
+        // A ticked row that can no longer be ticked (a linked combo the template stopped fitting)
+        // is never dropped by the page's untick-all: once off it could not come back.
+        const kept = { ...next };
+        rows.forEach((row) => {
+          if (current[row.id] && rowDisabledReason(row)) kept[row.id] = true;
+        });
+        return kept;
+      });
     },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,

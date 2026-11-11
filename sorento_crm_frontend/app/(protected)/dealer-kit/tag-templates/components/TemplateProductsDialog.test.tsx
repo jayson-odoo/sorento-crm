@@ -315,5 +315,45 @@ describe('TemplateProductsDialog', () => {
       await waitFor(() => expect(links.assignTemplateToProducts).toHaveBeenCalledWith(T, [], ['c2']));
       await waitFor(() => expect(deferred.start).toHaveBeenCalledWith({ combo_ids: ['c1'] }));
     });
+
+    it('Select all skips combos the template cannot print', async () => {
+      const page = [
+        combo('c1', 'SRTKS-7040-WH', 'Sink + tap'),
+        combo('c2', 'SRTKS-8050-BK', 'Sink + waste kit'),
+        combo('c3', 'SRTKS-1160-GR', 'Sink + tap + rack', 'Needs 3 fixed parts; this combo has 2'),
+      ];
+      links.listTemplateCombos.mockImplementation(async (_t: string, params: { pageSize: number }) =>
+        params.pageSize > 100
+          ? { data: [...page, combo('c4', 'SRTKS-9050-SS', 'Sink + rack')], pagination: { total: 4, page: 1, limit: 501 } }
+          : { data: page, pagination: { total: 30, page: 1, limit: 25 } },
+      );
+      mount();
+      await showCombos();
+      await waitFor(async () => expect(isTicked(await comboBox('SRTKS-7040-WH'))).toBe(true));
+      fireEvent.click(screen.getByRole('checkbox', { name: /select all/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /Select all 30 records/ }));
+      await waitFor(() =>
+        expect(screen.getByText('5 use this template after Save: 2 added, 0 removed')).toBeTruthy(),
+      );
+    });
+
+    it('unticking the whole page never removes a linked combo that can no longer be ticked', async () => {
+      links.listTemplateComboIds.mockResolvedValue(['c1', 'c3']);
+      mount();
+      await waitFor(() => expect(screen.getByText('4 use this template')).toBeTruthy());
+      fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), { ctrlKey: false, button: 0 });
+      fireEvent.click(await screen.findByText('Type: Products'));
+      fireEvent.click(await screen.findByRole('option', { name: 'Combos' }));
+      const trigger = document.querySelector<HTMLElement>('button[aria-label^="Filters"]');
+      fireEvent.pointerDown(trigger as HTMLElement, { ctrlKey: false, button: 0 });
+      await waitFor(async () => expect(isTicked(await comboBox('SRTKS-1160-GR'))).toBe(true));
+      const header = screen.getByRole('checkbox', { name: /select all/i });
+      fireEvent.click(header); // page partly ticked: the header first ticks the rest
+      fireEvent.click(header); // then unticks the page
+      await waitFor(() =>
+        expect(screen.getByText('3 use this template after Save: 0 added, 1 removed')).toBeTruthy(),
+      );
+      expect(isTicked(await comboBox('SRTKS-1160-GR'))).toBe(true);
+    });
   });
 });

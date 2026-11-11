@@ -242,7 +242,11 @@ export function TemplateProductsDialog({ open, onOpenChange, templateId, templat
       // Said now: a Cancel on the removals' countdown does not undo these.
       toast.success(`Linked ${linkedLine(productOnly(adding).length, comboOnly(adding).length)}`);
       if (result.skipped) {
-        toast.error(`${plural(result.skipped, 'combo')} skipped: this template cannot print it`);
+        toast.error(
+          `${plural(result.skipped, 'combo')} skipped: this template cannot print ${
+            result.skipped === 1 ? 'it' : 'them'
+          }`,
+        );
       }
       setBaseline((current) => [...(current ?? []), ...adding]);
     }

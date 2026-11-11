@@ -651,3 +651,100 @@ class TestCombos:
                   "payload": {"combo_ids": [str(uuid.uuid4()) for _ in range(501)]}},
         )
         assert res.status_code == 400, res.text
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round on c0d07c97 (B4, B5)
+# ---------------------------------------------------------------------------
+
+
+def _archive(db, template_id: str) -> None:
+    from datetime import datetime
+
+    from app.models.dealer_kit import TagTemplate
+
+    db.get(TagTemplate, template_id).archived_at = datetime.utcnow()
+    db.flush()
+
+
+class TestArchivedDefaultsAndComboScope:
+    def test_a_default_held_by_an_archived_template_never_breaks_a_bulk_add(self, env):
+        """B4: archived A still holds the saved Default LP / SP; the card shows B (the only fitting
+        live template). Saving B's shown default must clear A's stale flag, not violate the
+        one-default index."""
+        from app.models.dealer_kit import ProductTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        p = _product(db, ref)
+        a, b = _template(db, "A"), _template(db, "B")
+        db.add(ProductTagTemplate(product_id=p, template_id=a, default_list=True, default_selling=True))
+        db.add(ProductTagTemplate(product_id=p, template_id=b))
+        db.flush()
+        _archive(db, a)
+        assert _card(c, p) == {b: (True, True)}
+        new = _template(db, "New")
+        res = c.post(f"{DK}/tag-templates/{new}/assign", json={"product_ids": [p], "action": "add"})
+        assert res.status_code == 200, res.text
+        assert _card(c, p) == {b: (True, True), new: (False, False)}
+
+    def test_same_for_a_combo(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        _h, combo = _host_combo(db, ref)
+        a, b = _template(db, "A"), _template(db, "B")
+        db.add(ComboTagTemplate(combo_id=combo, template_id=a, default_list=True, default_selling=True))
+        db.add(ComboTagTemplate(combo_id=combo, template_id=b))
+        db.flush()
+        _archive(db, a)
+        new = _template(db, "New")
+        res = c.post(f"{DK}/tag-templates/{new}/assign", json={"combo_ids": [combo], "action": "add"})
+        assert res.status_code == 200, res.text
+        shown = {r["id"]: (r["default_list"], r["default_selling"])
+                 for r in c.get(f"{DK}/combos/{combo}/tag-templates").json()}
+        assert shown == {b: (True, True), new: (False, False)}
+
+    def test_the_combo_list_never_shows_another_companys_combo(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        _h, mine = _host_combo(db, ref)
+        foreign = _foreign_host_combo(db)
+        t = _template(db, "Pick")
+        for cid in (mine, foreign):
+            db.add(ComboTagTemplate(combo_id=cid, template_id=t))
+        db.flush()
+        listed = {r["id"] for r in c.get(f"{DK}/tag-templates/{t}/combos",
+                                         params={"limit": 501}).json()["data"]}
+        assert mine in listed and foreign not in listed
+        linked = c.get(f"{DK}/tag-templates/{t}/combos", params={"linked": "true", "limit": 501})
+        assert [r["id"] for r in linked.json()["data"]] == [mine]
+
+    def test_the_combo_list_skips_combos_on_inactive_hosts(self, env):
+        from app.models.product import Product
+
+        db, c, _ = env
+        ref = _reference(db)
+        host, combo = _host_combo(db, ref)
+        db.get(Product, host).is_active = False
+        db.flush()
+        t = _template(db, "Pick")
+        listed = {r["id"] for r in c.get(f"{DK}/tag-templates/{t}/combos",
+                                         params={"limit": 501}).json()["data"]}
+        assert combo not in listed
+
+    def test_preview_counts_picked_combos(self, env):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        db, c, _ = env
+        ref = _reference(db)
+        _h1, linked = _host_combo(db, ref)
+        _h2, other = _host_combo(db, ref)
+        t = _template(db, "Pick")
+        db.add(ComboTagTemplate(combo_id=linked, template_id=t))
+        db.flush()
+        res = c.post(f"{DK}/tag-templates/{t}/assign/preview", json={"combo_ids": [linked, other]})
+        assert res.json() == {"matched": 2, "already_linked": 1}

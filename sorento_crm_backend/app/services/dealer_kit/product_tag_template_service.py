@@ -36,7 +36,7 @@ import uuid
 from typing import Iterable, Optional
 
 from sqlalchemy import and_, false, func, or_
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, joinedload, selectinload
 
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
 from app.models.product import Product
@@ -592,12 +592,21 @@ def _freeze_shown_defaults(db: Session, link_model, owner_attr: str, owner_ids) 
     if not ids:
         return
     by_owner: dict[str, list] = {}
+    stale = False
     for link, template in (
         db.query(link_model, TagTemplate)
         .join(TagTemplate, TagTemplate.id == link_model.template_id)
-        .filter(owner_col.in_(ids), TagTemplate.archived_at.is_(None))
+        .filter(owner_col.in_(ids))
         .all()
     ):
+        if template.archived_at is not None:
+            # A link to an archived template stays for a restore but cannot hold a default (as in
+            # `_replace_links`); clearing its flag first keeps the one-default index satisfied.
+            if link.default_list or link.default_selling:
+                link.default_list = False
+                link.default_selling = False
+                stale = True
+            continue
         by_owner.setdefault(str(getattr(link, owner_attr)), []).append((link, template))
     wanted: list[tuple[object, str]] = []
     for rows in by_owner.values():
@@ -614,6 +623,8 @@ def _freeze_shown_defaults(db: Session, link_model, owner_attr: str, owner_ids) 
                 elif template.id == target and not getattr(link, flag):
                     wanted.append((link, flag))
     if not wanted:
+        if stale:
+            db.flush()
         return
     # One default per type per owner (partial unique indexes): clear before setting.
     db.flush()
@@ -950,7 +961,12 @@ def combo_rows(
     """The combos the designer's Products view lists: matched on the combo name or the host's
     code, narrowed by the host's category / brand, each with why the template cannot print it."""
     template = _template_or_404(db, template_id)
-    q = _scoped(db, Product).join(ProductCombo, ProductCombo.host_product_id == Product.id)
+    # Active hosts only, as the product rows of the same view (`status=active`).
+    q = (
+        _scoped(db, Product)
+        .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+        .filter(Product.is_active.is_(True))
+    )
     if query and query.strip():
         needle = f"%{query.strip()}%"
         q = q.filter(or_(ProductCombo.name.ilike(needle), Product.product_code.ilike(needle)))
@@ -972,6 +988,12 @@ def combo_rows(
     total = q.count()
     pairs = (
         q.with_entities(ProductCombo, Product)
+        # One query per page, not one per row: parts for the fit check, the host's names.
+        .options(
+            selectinload(ProductCombo.parts),
+            joinedload(Product.category),
+            joinedload(Product.brand),
+        )
         .order_by(Product.product_code, ProductCombo.name, ProductCombo.id)
         .offset((page - 1) * limit)
         .limit(limit)
