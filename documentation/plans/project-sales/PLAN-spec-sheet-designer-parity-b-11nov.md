@@ -1,8 +1,8 @@
 # PLAN: spec sheet designer parity, slice B
 
-Status: Plan (full track: migration + new export surface). Branch
-`claude/spec-sheet-designer-parity-b-2sv9bf`, PR "SPEC-SHEET-DESIGNER-PARITY B:". Slice A is
-PR #2331 (frozen at 716f0cb7 for the owner's hand test); this branch starts from that head.
+Status: in review, PR #2349 (full track: migration + new export surface). B1-B7 built; reviewer READY, security ready, browser passes done; UAC `spec-sheet-designer-parity-b-11nov-acceptance-criteria.md`; migration timed (UAC AC-M.2).
+Branch `claude/spec-sheet-designer-parity-b2-2sv9bf`, PR #2349, on main after slice A (#2331)
+merged as c3169d9c; the earlier PR #2336 is superseded.
 
 Owner answers (11 Nov): 1 (a), 2 (c), 3 (a), 4 (a) through the standard export/download flow;
 mock approved ("ok good", `mock-spec-sheet-designer-parity-11nov.html`); 15:40 ruling: a
