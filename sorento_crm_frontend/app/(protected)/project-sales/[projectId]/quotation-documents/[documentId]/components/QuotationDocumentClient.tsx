@@ -55,10 +55,7 @@ import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
-import {
-  documentNoun,
-  sendRevisionLabel,
-} from '../../../../_shared/services/quotationDocumentService';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 import { projectDisplayName } from '../../../../_shared/lib/projectName';
 
 /**
@@ -255,13 +252,6 @@ export function QuotationDocumentClient({
   const record = document.data;
   const canEdit = project.data.can_edit;
   const standing = quotationStanding(record);
-  // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
-  // the next revision is always the one after whatever the customer currently holds.
-  const nextIssueNo = (record.current_issue_no ?? 0) + 1;
-  const sendLabel = sendRevisionLabel(
-    record.next_revision_label ?? `R${nextIssueNo}`,
-    record.recipient_name_snapshot,
-  );
   const latestIssue = issues.data?.[0] ?? null;
   const sorentoSignature = record.signatory_signature ?? null;
   /**
@@ -625,31 +615,19 @@ export function QuotationDocumentClient({
               {action.kind === 'send' && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={mutations.issue.isPending}
-                      // A long party name truncates rather than pushing the page sideways at 375px.
-                      className="max-w-full min-w-0"
-                      title={sendLabel}
-                    >
-                      {/* The owner on "Issue R1": "call this Send to Customer" (#1341), then on
-                          "Send to Customer A" (QUOTE-HEADER-TIDY, 11 Nov 2026): A read as a
-                          customer, so the label names the revision and the To party. The
-                          revision stays because R2 is a different paper from R1. The API and the
-                          status names keep "issue". */}
-                      <span className="truncate">{sendLabel}</span>
+                    <Button type="button" size="sm" disabled={mutations.issue.isPending}>
+                      {/* Just "Send", then Email or WhatsApp (QUOTE-HEADER-TIDY, owner hand test
+                          11 Nov 2026: "simple as that"). "Send to Customer A" read as a customer
+                          called A; the revision and the party now show only in the WhatsApp
+                          prompt's title. The API and the status names keep "issue". */}
+                      Send
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
-                  {/* Capped to the screen and wrapping: the items carry the party name too. */}
-                  <DropdownMenuContent
-                    align="end"
-                    className="max-w-[calc(100vw-2rem)] [&_[role=menuitem]]:whitespace-normal"
-                  >
+                  <DropdownMenuContent align="end">
                     <DropdownMenuItem onSelect={() => mutations.issue.mutate(documentId)}>
                       <Mail className="size-4" aria-hidden />
-                      {`${sendLabel} by email`}
+                      Email
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() =>
@@ -659,7 +637,7 @@ export function QuotationDocumentClient({
                       }
                     >
                       <MessageCircle className="size-4" aria-hidden />
-                      {`${sendLabel} via WhatsApp`}
+                      WhatsApp
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

@@ -21,12 +21,11 @@ and line should be collapsible, then here just show project name so it doesn't c
 4. View mode: the Header tab wraps the letterhead and the lines each in `components/common/FormSection.tsx`, the
    same fold the edit form uses, open on arrival, no persistence, same folded summaries (shared helpers).
 
-5. Owner addition (11 Nov ~16:30): the primary CTA "Send to Customer A" read as a customer called A. It now
-   names the revision and the To party (`recipient_name_snapshot`): "Send rev A to <party>" on a proposal,
-   "Send R1 to <party>" on a quotation (R1 already says revision), "the customer" when there is no To party.
-   Its menu items read "<same> by email" / "<same> via WhatsApp" and the WhatsApp prompt's title matches.
-   One helper, `sendRevisionLabel` (`_shared/services/quotationDocumentService.ts`). The success toast keeps
-   "Sent to the customer as <our ref> (R1)": it names the full ref, so it does not read as a name.
+5. Send CTA. Owner addition (11 Nov ~16:30): "Send to Customer A" read as a customer called A. Owner hand test
+   (11 Nov): "here should just show Send then email or whatsapp, simple as that". The CTA reads just "Send",
+   its items "Email" and "WhatsApp". The revision and the party show only in the WhatsApp prompt's title
+   ("Send rev A to <party> via WhatsApp", following the party picked in its Send to), through
+   `sendRevisionLabel` (`_shared/services/quotationDocumentService.ts`).
 
 Proposals and quotations share these components, so both get it.
 

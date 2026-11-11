@@ -9,6 +9,5 @@
 4. In view mode, the Header card and the Lines card each fold and unfold from their heading; folded, each shows
    a one-line summary (Header: To, title, date, total; Lines: N scopes, total).
 5. Same behaviour on a phone (375px) and desktop (1280px), no sideways scroll.
-6. The send CTA reads "Send rev A to <To party>" on a proposal ("Send R1 to <To party>" on a quotation, "the
-   customer" with no To party); never "Send to Customer A". Its Email / WhatsApp items and the WhatsApp prompt
-   title carry the same words.
+6. The send CTA reads just "Send"; its items read "Email" and "WhatsApp" (never "Send to Customer A"). The
+   WhatsApp prompt's title names the revision and the party: "Send rev A to <party> via WhatsApp".

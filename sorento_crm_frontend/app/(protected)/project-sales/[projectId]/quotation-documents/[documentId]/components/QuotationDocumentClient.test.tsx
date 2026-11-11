@@ -547,7 +547,7 @@ describe('QuotationDocumentClient signing gate', () => {
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(sign).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('opens Issue once a signature is on the draft', async () => {
@@ -556,7 +556,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    const issue = await screen.findByRole('button', { name: 'Send R1 to Nadi Cergas Sdn Bhd' });
+    const issue = await screen.findByRole('button', { name: 'Send' });
     expect(issue).toBeEnabled();
     expect(screen.queryByText('Sign it first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
@@ -572,7 +572,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send rev C to Nadi Cergas Sdn Bhd' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
   it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never the Send CTA', async () => {
@@ -587,7 +587,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Send for approval' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('leaves Issue alone once a manager has approved', async () => {
@@ -601,7 +601,7 @@ describe('QuotationDocumentClient signing gate', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send R1 to Nadi Cergas Sdn Bhd' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
   it('E4: an issued document that carries no signature leads with Sign, not the Send CTA', async () => {
@@ -631,7 +631,7 @@ describe('QuotationDocumentClient signing gate', () => {
     renderScreen();
 
     expect(await screen.findByRole('button', { name: 'Sign' })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('shows the captured signature read-only in the signatures panel', async () => {
@@ -1215,13 +1215,14 @@ describe('QuotationDocumentClient the Send CTA (AC-QF057)', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Send R1 to Nadi Cergas Sdn Bhd' })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: /^Issue/ })).toBeNull();
   });
 
-  // QUOTE-HEADER-TIDY (owner, 11 Nov 2026 ~16:30): "Send to Customer A" read as a customer
-  // called A. The CTA names the revision and the document's To party instead.
-  it('names the revision and the To party on the CTA and its menu, never "the Send CTA"', async () => {
+  // QUOTE-HEADER-TIDY, owner hand test (11 Nov 2026): "here should just show Send then email or
+  // whatsapp, simple as that". No revision and no party on the CTA or its menu; the WhatsApp
+  // prompt keeps them in its title.
+  it('reads just Send, then Email or WhatsApp, with the revision and party only in the prompt', async () => {
     const user = userEvent.setup();
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
@@ -1230,26 +1231,30 @@ describe('QuotationDocumentClient the Send CTA (AC-QF057)', () => {
         recipient_name_snapshot: 'PGB Contoh Group',
       }),
     );
+    issueQuotationDocument.mockResolvedValue({
+      id: 'i1',
+      document_id: 'd1',
+      issue_no: 1,
+      revision_label: 'A',
+      our_ref_text: 'SRT/Q/2026/0141 (A)',
+      issued_at: '2026-10-30T02:00:00',
+      issued_by: 'u1',
+      issued_by_name: 'SALES REP A',
+      grand_total: '0.00',
+      scope_count: 0,
+    });
+    createQuotationSignLink.mockResolvedValue({ token: 'tok', path: '/quotation-sign/tok', expires_at: null });
     renderScreen();
 
-    const cta = await screen.findByRole('button', { name: 'Send rev A to PGB Contoh Group' });
+    const cta = await screen.findByRole('button', { name: 'Send' });
+    expect(screen.queryByText(/PGB Contoh Group/)).toBeNull();
     expect(screen.queryByText(/Send to Customer/)).toBeNull();
     await user.click(cta);
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'WhatsApp' }));
     expect(
-      await screen.findByRole('menuitem', { name: 'Send rev A to PGB Contoh Group by email' }),
+      await screen.findByText('Send rev A to PGB Contoh Group via WhatsApp'),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('menuitem', { name: 'Send rev A to PGB Contoh Group via WhatsApp' }),
-    ).toBeInTheDocument();
-  });
-
-  it('says "the customer" on the CTA when the document has no To party yet', async () => {
-    getQuotationDocument.mockResolvedValue(
-      quotationDocument({ signatory_signature: signature(), recipient_name_snapshot: null }),
-    );
-    renderScreen();
-
-    expect(await screen.findByRole('button', { name: 'Send R1 to the customer' })).toBeEnabled();
   });
 
   it('says Send it to the customer first on the exports of a draft, never Issue it first', async () => {
@@ -1566,7 +1571,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const send = await screen.findByRole('button', { name: 'Send for approval' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E1: an UNSIGNED below-floor draft leads with Send for approval; Sign is not a primary button', async () => {
@@ -1696,7 +1701,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it('E3: once signed there is no primary button, only "With a manager for approval"', async () => {
@@ -1708,7 +1713,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await screenReady();
     expect(await screen.findByText('With a manager for approval')).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
@@ -1720,7 +1725,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
 
     const sign = await screen.findByRole('button', { name: 'Sign' });
     expect(primaryButtons()).toEqual([sign]);
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
   });
 
   it.each([
@@ -1737,11 +1742,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
         }),
       'R3',
     ],
-  ])('E5: %s and signed leads with an enabled Send %s to the To party', async (_name, make, revision) => {
+  ])('E5: %s and signed leads with an enabled Send (next revision %s)', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
-    const send = await screen.findByRole('button', { name: `Send ${revision} to Nadi Cergas Sdn Bhd` });
+    const send = await screen.findByRole('button', { name: 'Send' });
     expect(send).toBeEnabled();
     expect(primaryButtons()).toEqual([send]);
   });
@@ -1815,7 +1820,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       await screen.findByText('You can read this quotation but not change it.'),
     ).toBeInTheDocument();
     expect(primaryButtons()).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /^Send (rev \S+|R\d+) to / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send for approval' })).toBeNull();
   });
 });
@@ -2099,14 +2104,14 @@ describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP
       expires_at: null,
     });
     renderScreen();
-    await user.click(await screen.findByRole('button', { name: 'Send R1 to Nadi Cergas Sdn Bhd' }));
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
     return user;
   }
 
   it('E1: pressing the button sends nothing yet and offers Email and WhatsApp', async () => {
     await openSendMenu();
-    expect(await screen.findByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd by email' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd via WhatsApp' })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: 'Email' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'WhatsApp' })).toBeInTheDocument();
     expect(issueQuotationDocument).not.toHaveBeenCalled();
   });
 
@@ -2120,7 +2125,7 @@ describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP
 
   it('E2: Email sends once and opens no WhatsApp prompt', async () => {
     const user = await openSendMenu();
-    await user.click(await screen.findByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd by email' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     expect(issueQuotationDocument).toHaveBeenCalledWith('p1', 'd1');
     expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
@@ -2128,7 +2133,7 @@ describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP
 
   it('E2: Email confirms with the sent-to-customer toast', async () => {
     const user = await openSendMenu();
-    await user.click(await screen.findByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd by email' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Email' }));
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith('Sent to the customer as SRT/Q/2026/0141 (R1)'),
     );
@@ -2136,7 +2141,7 @@ describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP
 
   it('E3: WhatsApp sends once, then opens the prompt for the returned revision', async () => {
     const user = await openSendMenu();
-    await user.click(await screen.findByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd via WhatsApp' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeInTheDocument();
   });
@@ -2144,7 +2149,7 @@ describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP
   it('E4: a failed send opens no prompt', async () => {
     const user = await openSendMenu();
     issueQuotationDocument.mockRejectedValue(new Error('refused'));
-    await user.click(await screen.findByRole('menuitem', { name: 'Send R1 to Nadi Cergas Sdn Bhd via WhatsApp' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'WhatsApp' }));
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(screen.queryByText('Send R1 to Nadi Cergas Sdn Bhd via WhatsApp')).toBeNull();
@@ -2393,7 +2398,7 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
 
     const gear = await screen.findByRole('button', { name: 'Proposal actions' });
     const printer = await screen.findByTitle('View downloads for SRT/Q/2026/0141-R2');
-    const send = await screen.findByRole('button', { name: /^Send (rev \S+|R\d+) to / });
+    const send = await screen.findByRole('button', { name: 'Send' });
     expect(gear.compareDocumentPosition(printer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(printer.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
