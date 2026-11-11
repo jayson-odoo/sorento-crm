@@ -933,3 +933,44 @@ describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
     expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
   });
 });
+
+describe('{{product.spec_sheet_description}} (SPEC-SHEET-DESIGNER-PARITY B1)', () => {
+  it('is offered in the Product group of Insert field', () => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === 'product.spec_sheet_description');
+    expect(field).toMatchObject({ group: 'Product', label: 'Spec sheet description' });
+  });
+
+  it('prints the product spec sheet description, else its plain description', () => {
+    const token = '{{product.spec_sheet_description}}';
+    expect(
+      renderMergeFields(token, product({ spec_sheet_description: 'Sheet copy', description: 'Plain' }), 'print'),
+    ).toBe('Sheet copy');
+    expect(renderMergeFields(token, product({ description: 'Plain' }), 'print')).toBe('Plain');
+  });
+
+  it('prints the line value on a spec sheet page, else the line description', () => {
+    const token = '{{product.spec_sheet_description}}';
+    expect(
+      renderMergeFields(token, line({ spec_sheet_description: 'Sheet copy', description: 'Plain' }), 'print'),
+    ).toBe('Sheet copy');
+    expect(renderMergeFields(token, line({ description: 'Close coupled WC' }), 'print')).toBe('Close coupled WC');
+  });
+
+  it("a layer pointed at a part prints that PART's text, not the line's", () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'AV-0120',
+      name: 'AV-0120',
+      dimensions: '',
+      description: 'Angle valve, chrome',
+      spec_sheet_description: 'Valve sheet copy',
+    };
+    const data = line({ spec_sheet_description: 'Wall hung WC', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    expect(renderMergeFields('{{product.spec_sheet_description}}', data, 'print', layer)).toBe('Valve sheet copy');
+  });
+
+  it('prints empty, never the token, on a row with neither', () => {
+    expect(renderMergeFields('{{product.spec_sheet_description}}', line(), 'print')).toBe('');
+  });
+});

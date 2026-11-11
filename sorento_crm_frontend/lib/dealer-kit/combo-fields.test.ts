@@ -516,6 +516,8 @@ describe('Combo merge tokens (AC-4.2)', () => {
       'product.price_tag_description',
       // SPEC-SHEET-DESIGNER-PARITY: the plain catalogue description, added after it.
       'product.description',
+      // SPEC-SHEET-DESIGNER-PARITY B1: the spec sheet text, else the description.
+      'product.spec_sheet_description',
       'product.list_price',
       'product.sell_price',
       'product.currency',
