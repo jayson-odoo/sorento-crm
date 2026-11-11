@@ -1933,6 +1933,11 @@ class TemplateAssignFilter(BaseModel):
     category_ids: list[str] = Field(default_factory=list, max_length=500)
     item_class_ids: list[str] = Field(default_factory=list, max_length=500)
     family_codes: list[str] = Field(default_factory=list, max_length=500)
+    # PRICETAG-TEMPLATE-PRODUCTS: the designer's picked products; ANDed with the kinds above.
+    product_ids: list[str] = Field(default_factory=list, max_length=500)
+    # Owner hand test 11 Nov: the designer links combos too (combo_tag_template, the combo page's
+    # rows). Combos are picked by id only; the product filters above never reach them.
+    combo_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class TemplateAssignIn(TemplateAssignFilter):
@@ -1946,6 +1951,33 @@ class TemplateAssignPreviewOut(BaseModel):
 
 class TemplateAssignOut(BaseModel):
     changed: int
+    # Picked combos the template cannot print (`template_needs.fit_reason`); omitted when none.
+    skipped: Optional[int] = None
+
+
+class TemplateComboRow(BaseModel):
+    """One combo in the template designer's Products view (PRICETAG-TEMPLATE-PRODUCTS)."""
+
+    id: str
+    name: str
+    host_product_id: str
+    host_code: str
+    host_name: str
+    category_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    # Why this template cannot print the combo, or None when it can.
+    fit_reason: Optional[str] = None
+
+
+class TemplateComboPage(BaseModel):
+    total: int
+    page: int
+    limit: int
+
+
+class TemplateComboListOut(BaseModel):
+    data: list[TemplateComboRow]
+    pagination: TemplateComboPage
 
 
 class TagPreviewLineIn(BaseModel):

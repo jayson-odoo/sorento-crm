@@ -21,7 +21,7 @@ vi.mock('../hooks/useReserveRowOptions', () => ({
           isLoading: false,
           defaultWarehouseId: 'BRW',
           options: [{ value: 'BRW', label: 'BRW' }],
-          availableQtyByWarehouseId: {},
+          onHandQtyByWarehouseId: {},
         },
       ]),
     ),

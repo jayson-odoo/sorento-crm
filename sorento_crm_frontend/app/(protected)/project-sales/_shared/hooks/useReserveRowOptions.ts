@@ -42,16 +42,17 @@ export interface ReserveRowOptionsResult {
   isLoading: boolean;
   defaultWarehouseId: string | null;
   options: SearchableSelectOption[];
-  /** `available_qty` at every pool this row's own product carries - the Reserved
-   * default recomputes from whichever one is chosen (AC-RS-28/AC-RS-55). */
-  availableQtyByWarehouseId: Record<string, number>;
+  /** Plain on hand (`stock.quantity_on_hand`) at every pool this row's own product
+   * carries - the same figure the Stock status screen prints (RESERVE-DIALOG-ON-HAND,
+   * owner 11 Nov 2026: no SO subtracted, no SPO added). */
+  onHandQtyByWarehouseId: Record<string, number>;
 }
 
 const EMPTY_RESULT: ReserveRowOptionsResult = {
   isLoading: false,
   defaultWarehouseId: null,
   options: [],
-  availableQtyByWarehouseId: {},
+  onHandQtyByWarehouseId: {},
 };
 
 /**
@@ -128,14 +129,14 @@ export function useReserveRowOptions(
       const poolLocations = query?.data?.locations ?? [];
 
       const options: SearchableSelectOption[] = [];
-      const availableQtyByWarehouseId: Record<string, number> = {};
+      const onHandQtyByWarehouseId: Record<string, number> = {};
       for (const loc of poolLocations) {
         if (!loc.warehouse_id) continue;
-        const available = loc.available_qty != null ? Number(loc.available_qty) : null;
-        if (available != null) availableQtyByWarehouseId[loc.warehouse_id] = available;
+        const onHand = loc.qty_on_hand != null ? Number(loc.qty_on_hand) : null;
+        if (onHand != null) onHandQtyByWarehouseId[loc.warehouse_id] = onHand;
         options.push({
           value: loc.warehouse_id,
-          label: available != null ? `${loc.location ?? ''}  available ${available}` : (loc.location ?? ''),
+          label: onHand != null ? `${loc.location ?? ''}  on hand ${onHand}` : (loc.location ?? ''),
         });
       }
 
@@ -154,7 +155,7 @@ export function useReserveRowOptions(
           options[0]?.value ??
           null,
         options,
-        availableQtyByWarehouseId,
+        onHandQtyByWarehouseId,
       };
     });
     return result;
