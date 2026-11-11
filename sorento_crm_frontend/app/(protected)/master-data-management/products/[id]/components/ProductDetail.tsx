@@ -84,10 +84,17 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   );
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
-  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
-  // The pager carries `?tab=` to the next product (NAV-KEEP-TAB); Suppliers hidden by
+  // SUPPLIER-COST-ACCESS: cost price, the last purchase price, Purchase History and Suppliers
+  // are for purchasing and management (`products.cost.view`); the API refuses them otherwise.
+  const canViewCost = useHasPermission('products.cost.view');
+  const canViewSupplierLinks = useHasPermission('procurement.product_suppliers.view');
+  const canViewSuppliers = canViewCost && canViewSupplierLinks;
+  // The pager carries `?tab=` to the next product (NAV-KEEP-TAB); a tab hidden by
   // permission falls back to Overview rather than an empty panel.
-  const activeTab = requestedTab === 'suppliers' && !canViewSuppliers ? 'overview' : requestedTab;
+  const activeTab =
+    (requestedTab === 'suppliers' && !canViewSuppliers) || (requestedTab === 'purchases' && !canViewCost)
+      ? 'overview'
+      : requestedTab;
   const canEditProduct = useHasPermission('master_data.products.edit');
 
   // Tab badge counts - same hooks the tab content components use, so React
@@ -102,7 +109,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const promotionsCount = Array.isArray(promotionsData) ? promotionsData.length : 0;
   // Same query the Purchase History tab reads, so the Overview's cost and the orders that
   // prove it can never disagree.
-  const { data: purchaseHistory } = useProductPurchaseHistory(productId || null);
+  const { data: purchaseHistory } = useProductPurchaseHistory(canViewCost && productId ? productId : null);
   const purchaseCost = purchaseHistory?.cost ?? null;
   const variantsCount = Array.isArray(product?.variants) ? product.variants.length : 0;
   // Same query the Combos tab reads, so opening it costs no second request.
@@ -324,10 +331,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <Boxes />
                 <span>Stock</span>
               </TabsTrigger>
-              <TabsTrigger value="purchases">
-                <Receipt />
-                <span>Purchase History</span>
-              </TabsTrigger>
+              {canViewCost ? (
+                <TabsTrigger value="purchases">
+                  <Receipt />
+                  <span>Purchase History</span>
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger value="attachments">
                 <Paperclip />
                 <span>Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}</span>
@@ -419,14 +428,16 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                             : '-'}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-muted-foreground">Cost Price</p>
-                        <p className="font-medium text-lg">
-                          {product.cost_price != null
-                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.cost_price)
-                            : '-'}
-                        </p>
-                      </div>
+                      {canViewCost ? (
+                        <div>
+                          <p className="text-muted-foreground">Cost Price</p>
+                          <p className="font-medium text-lg">
+                            {product.cost_price != null
+                              ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.cost_price)
+                              : '-'}
+                          </p>
+                        </div>
+                      ) : null}
                       <div>
                         <p className="text-muted-foreground">Invoice Price</p>
                         <p className="font-medium text-lg">
@@ -450,35 +461,39 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       />
                     </div>
 
-                    {/* Cost Price above is a figure somebody typed. This one is money that
-                        actually moved, and it names the order it came from - a cost with no
-                        provenance cannot be checked, and the planning that runs on it cannot
-                        be trusted either. */}
-                    <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
-                      <p className="text-muted-foreground">Last purchase price</p>
-                      {purchaseCost?.status === 'ok' ? (
-                        <>
-                          <p className="text-lg font-medium">
-                            {formatUnitCost(purchaseCost.unit_cost, purchaseCost.currency)}
-                            <span className="ms-1 text-xs font-normal text-muted-foreground">
-                              per unit
-                            </span>
+                    {canViewCost ? (
+                      <>
+                      {/* Cost Price above is a figure somebody typed. This one is money that
+                          actually moved, and it names the order it came from - a cost with no
+                          provenance cannot be checked, and the planning that runs on it cannot
+                          be trusted either. */}
+                      <div className="mt-4 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                        <p className="text-muted-foreground">Last purchase price</p>
+                        {purchaseCost?.status === 'ok' ? (
+                          <>
+                            <p className="text-lg font-medium">
+                              {formatUnitCost(purchaseCost.unit_cost, purchaseCost.currency)}
+                              <span className="ms-1 text-xs font-normal text-muted-foreground">
+                                per unit
+                              </span>
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {purchaseCost.po_number} ·{' '}
+                              {purchaseCost.supplier_name ?? 'no supplier on the order'} ·{' '}
+                              {formatDateSafe(purchaseCost.issue_date)}
+                              {purchaseCost.currency ? '' : ` · ${NO_CURRENCY_NOTE}`}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {purchaseCost?.status === 'no_price_recorded'
+                              ? 'Purchased before, but no unit cost was recorded on any order.'
+                              : 'Never purchased, so there is no cost from history.'}
                           </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {purchaseCost.po_number} ·{' '}
-                            {purchaseCost.supplier_name ?? 'no supplier on the order'} ·{' '}
-                            {formatDateSafe(purchaseCost.issue_date)}
-                            {purchaseCost.currency ? '' : ` · ${NO_CURRENCY_NOTE}`}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {purchaseCost?.status === 'no_price_recorded'
-                            ? 'Purchased before, but no unit cost was recorded on any order.'
-                            : 'Never purchased, so there is no cost from history.'}
-                        </p>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                      </>
+                    ) : null}
                   </div>
 
                   <div>
@@ -629,9 +644,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             </TabsContent>
 
             {/* Tab: Purchase History */}
-            <TabsContent value="purchases">
-              <ProductPurchaseHistoryTab productId={productId} />
-            </TabsContent>
+            {canViewCost ? (
+              <TabsContent value="purchases">
+                <ProductPurchaseHistoryTab productId={productId} />
+              </TabsContent>
+            ) : null}
 
             {/* Tab: Attachments */}
             <TabsContent value="attachments">

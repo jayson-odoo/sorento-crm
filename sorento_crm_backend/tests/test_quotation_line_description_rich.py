@@ -321,28 +321,3 @@ def test_line_text_of_a_styled_list_reads_one_item_per_line():
     assert quotes.line_text(SimpleNamespace(description_snapshot=value)) == (
         "• WC c/w seat\n• angle valve"
     )
-
-
-def test_the_agent_compares_a_rich_line_description_as_plain_text():
-    """AGENT-QUOTE-COMPARE (#2315) read description_snapshot raw, so after #2304 the agent's
-    `crm_project_quotation_lines` compared the editor's HTML instead of the words."""
-    from decimal import Decimal
-
-    from app.services.chatbot.agent.quotation_lines import _line
-
-    def row(description):
-        return SimpleNamespace(
-            list_price_snapshot=None,
-            unit_price=Decimal("10"),
-            product_code_snapshot="WC-1",
-            description_snapshot=description,
-            quantity=Decimal("1"),
-            uom="pc",
-            line_total=Decimal("10"),
-            is_rate_only=False,
-        )
-
-    rich = "<p><strong>WC</strong> c/w seat</p><ul><li><p>angle valve</p></li></ul>"
-    assert _line(row(rich))["description"] == "WC c/w seat\n• angle valve"
-    assert _line(row("WC c/w seat"))["description"] == "WC c/w seat"  # plain reads as stored
-    assert _line(row(None))["description"] is None

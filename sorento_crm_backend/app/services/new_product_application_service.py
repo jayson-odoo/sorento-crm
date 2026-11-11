@@ -1653,6 +1653,9 @@ def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict
 #: Item group, base UOM and list price are staff-only; the portal sees cost, lead time and
 #: the supplier (PQ1).
 _PORTAL_HIDDEN = ("opened_category_name", "opened_base_uom_name", "opened_list_price")
+#: SUPPLIER-COST-ACCESS (management, 9 Nov 2026): cost price is never shown to a dealer, which
+#: replaces PQ1's "the portal sees cost". Dropped from the header and every line on the portal.
+_PORTAL_HIDDEN_COST = ("cost_price",)
 
 
 def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = False) -> Dict[str, Any]:
@@ -1730,7 +1733,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
             "resolved_at": _iso(l.resolved_at),
         }
         if portal:
-            for key in _PORTAL_HIDDEN:
+            for key in (*_PORTAL_HIDDEN, *_PORTAL_HIDDEN_COST):
                 out.pop(key, None)
         return out
 
@@ -1813,6 +1816,8 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     if portal:
         out.pop("feedback_by_name")
         out.pop("feedback_at")
+        for key in _PORTAL_HIDDEN_COST:
+            out.pop(key, None)
     return out
 
 

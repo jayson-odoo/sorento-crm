@@ -176,7 +176,7 @@ def test_registry_carries_the_contact_grants():
 
 
 def test_dispatch_denies_a_tool_whose_contact_grant_is_missing(held):
-    held.update({"scm.purchase_orders.view"})
+    held.update({"products.cost.view"})  # SUPPLIER-COST-ACCESS: PO cost's staff slug
     rec = Rec()
     out = _dispatch(COST, {"query": "x"}, rec, ctx=_ctx())
     assert out.status == "denied" and rec.calls == []

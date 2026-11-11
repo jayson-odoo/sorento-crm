@@ -121,6 +121,15 @@ ALLOWED = {
     "app/services/ai_trace.py",
     # Its test: patches `agent.tools.trace_safe` to prove the panel strips through that one function.
     "tests/test_agentic_knowledge_panel.py",
+    # DEALER-ACCESS-SCREEN (#2294): the salesperson's Dealer access screen writes through the AI agent's ONE
+    # grant path (`agent.contact_grant` plan/execute, `agent.writes._contact_plan`/`_contact_execute`) so the
+    # checks, texts and audit rows are the agent's own, the alternative being a second, drifting copy in core
+    # (PLAN-dealer-access-screen-09nov.md). Unlike the module surfaces at the top, this is a CORE caller and an
+    # exception to "core never imports the package", like `contact_service.py` above. Lift trigger: when the
+    # package moves behind HTTP, or a second core caller needs the grant path, move `agent.contact_grant` and
+    # `agent.writes._contact_plan`/`_contact_execute` into a core service and drop this entry. Its tests live
+    # under tests/chatbot/agent/ (MAIN-RED-11NOV).
+    "app/services/dealer_access_screen.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",

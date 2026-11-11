@@ -29,9 +29,13 @@ vi.mock('@/components/common/BackToList', () => ({
   useBackToListHref: () => '/master-data-management/products',
 }));
 
+const purchaseHistoryCalls = vi.hoisted(() => ({ ids: [] as (string | null)[] }));
 vi.mock('../../hooks/useProducts', () => ({
   useProduct: () => ({ data: PRODUCT, isLoading: false }),
-  useProductPurchaseHistory: () => ({ data: undefined }),
+  useProductPurchaseHistory: (id: string | null) => {
+    purchaseHistoryCalls.ids.push(id);
+    return { data: undefined };
+  },
 }));
 
 const grantedPerms = vi.hoisted(() => ({ granted: new Set<string>() }));
@@ -89,6 +93,8 @@ const PRODUCT = {
   barcode: null,
   base_uom: null,
   list_price: 100,
+  cost_price: 77.5,
+  invoice_price: 88,
   variants: [],
   field_attachments: [],
 };
@@ -113,11 +119,44 @@ describe('S1: the Suppliers tab is gated on procurement.product_suppliers.view',
     expect(screen.queryByRole('tab', { name: /Suppliers/i })).not.toBeInTheDocument();
   });
 
-  it('renders the Suppliers tab for a caller with the permission', async () => {
-    grantedPerms.granted = new Set(['procurement.product_suppliers.view']);
+  it('renders the Suppliers tab for a caller with the permission and the cost permission', async () => {
+    grantedPerms.granted = new Set(['procurement.product_suppliers.view', 'products.cost.view']);
     renderDetail();
 
     await screen.findAllByText('ZZT Kitchen Sink');
     expect(screen.getByRole('tab', { name: /Suppliers/i })).toBeInTheDocument();
+  });
+});
+
+describe('SUPPLIER-COST-ACCESS: cost is for products.cost.view only', () => {
+  it('hides Suppliers, Purchase History, Cost Price and the last purchase price without it', async () => {
+    // A sales role today: it holds the product-suppliers slug through the cpc1 sweep.
+    grantedPerms.granted = new Set(['procurement.product_suppliers.view']);
+    purchaseHistoryCalls.ids = [];
+    renderDetail();
+
+    await screen.findAllByText('ZZT Kitchen Sink');
+    expect(screen.queryByRole('tab', { name: /Suppliers/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Purchase History/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Cost Price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Last purchase price')).not.toBeInTheDocument();
+    expect(screen.queryByText('RM77.50')).not.toBeInTheDocument();
+    // The purchase-history query is never fired (the API would refuse it).
+    expect(purchaseHistoryCalls.ids.every((id) => id === null)).toBe(true);
+    // List and invoice price stay (crew Q3).
+    expect(screen.getAllByText('List Price').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Invoice Price').length).toBeGreaterThan(0);
+  });
+
+  it('shows them with it', async () => {
+    grantedPerms.granted = new Set(['procurement.product_suppliers.view', 'products.cost.view']);
+    purchaseHistoryCalls.ids = [];
+    renderDetail();
+
+    await screen.findAllByText('ZZT Kitchen Sink');
+    expect(screen.getByRole('tab', { name: /Purchase History/i })).toBeInTheDocument();
+    expect(screen.getByText('Cost Price')).toBeInTheDocument();
+    expect(screen.getByText('Last purchase price')).toBeInTheDocument();
+    expect(purchaseHistoryCalls.ids).toContain('prod-1');
   });
 });

@@ -42,6 +42,13 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
 }
 
 
+#: Per-record histories whose cost values are masked for a reader without `products.cost.view`
+#: (SUPPLIER-COST-ACCESS): a product, and a packing list (its lines carry PO unit cost, and
+#: warehouse roles read it). A purchase order's own history is not: its page is a purchasing
+#: screen behind `scm.dashboard.view`.
+_COST_MASKED_ENTITY_TYPES = frozenset({"product", "inbound_shipments"})
+
+
 def _is_audit_admin(db: Session, user_id: str) -> bool:
     slugs = UserPermissionService(db).get_user_role_slugs(user_id)
     return bool(slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
@@ -351,9 +358,22 @@ def get_audit_logs(
     status_labels = _status_labels(db, items)
     if include_children and entity_types and len(entity_types) == 1 and entity_id:
         record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
+    # SUPPLIER-COST-ACCESS: a product's History shows THAT cost changed, who and when, with
+    # the values hidden from a reader without `products.cost.view` (admins hold it by bypass).
+    from app.services.cost_access import holds_cost_view, mask_audit_values
+
+    mask_cost = (
+        not is_audit_admin
+        and single_type in _COST_MASKED_ENTITY_TYPES
+        and not holds_cost_view(db, current_user)
+    )
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
+        if mask_cost:
+            old, new, masked = mask_audit_values(payload.get("old_values"), payload.get("new_values"))
+            payload["old_values"], payload["new_values"] = old, new
+            payload["masked_fields"] = masked or None
         # Attribution precedence: acting contact -> staff user -> "System". Contact
         # first only on a contact or legacy row: a staff row also carries the user's
         # linked WhatsApp contact (plan 8.1), and there the user is the name.
