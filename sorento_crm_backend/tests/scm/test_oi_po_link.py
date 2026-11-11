@@ -920,3 +920,48 @@ def test_every_line_skipped_gives_each_line_its_own_plain_reason(scm_app, fake_s
     k1, = _keys_sent(fake_ss, BATCH)
     _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
     assert len(set(_keys_sent(fake_ss, BATCH))) == 2  # refused released the key: a new attempt
+
+
+# --------------------------------------------------------------------------- batch: review round 5
+
+
+def test_a_batch_answer_from_ss_with_an_outcome_never_falls_back_to_per_line_writes(scm_app, fake_ss):
+    """S1: only a route that is missing (the client raised, no operationId) falls back. A
+    NOT_FOUND vendor_error WITH an operationId may have touched AutoCount: no per-line retry."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (404, {
+        "operationId": "op-1", "outcome": "vendor_error", "errorCode": "NOT_FOUND", "message": "",
+        "links": [], "freeLine": None, "skipped": [],
+    })
+    lines = [_item(w, "so_line", 4), _item(w, "other", 3)]
+    resp = _oi_link(w, lines)
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["vendor_error", "vendor_error"]
+    assert fake_ss.bodies(PO_LINKS) == []
+    _oi_link(w, lines)
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k1 == k2
+
+
+def test_after_a_partial_batch_the_replace_hint_still_pairs_the_free_row(scm_app, fake_ss):
+    """S2: one line is skipped, so the free row keeps 496, not 500 - 7. The hint must match it
+    (and the ingest pairs the re-keyed free row with the same CRM line)."""
+    from app.services.scm import po_replace_hint
+
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    assert _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)]).status_code == 200
+    hints = po_replace_hint.lookup([w["po_line"].source_ref])
+    assert w["po_line"].source_ref in hints
+    assert po_replace_hint.matches(hints[w["po_line"].source_ref], {"qty_ordered": Decimal("496"), "from_so_line_ref": None})
+
+
+def test_the_result_reports_the_qty_ss_linked_not_the_qty_asked(scm_app, fake_ss):
+    """S3: SS answers links[].qty as a decimal string; that is what the result says."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(links=((11988, 11990, 2, 12080),))
+    resp = _oi_link(w, [_item(w, "so_line", 4)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "done" and result["qty"] == 2
