@@ -29,6 +29,10 @@ export interface SpecSheetRow {
   marker: string;
   hidden: boolean;
   accessories: string[];
+  /** Per-sheet "Spec sheet description" override of the page's item; '' = none. */
+  description?: string;
+  /** The same for accessories, by product id. */
+  accessory_descriptions?: Record<string, string>;
 }
 
 export interface SpecSheetAccessory {
@@ -39,6 +43,8 @@ export interface SpecSheetAccessory {
   code: string;
   name: string;
   brand: string;
+  /** The product's own spec sheet text (field, else description). */
+  spec_sheet_description?: string;
 }
 
 export type SpecSheetPageTemplate = 'cover' | 'page' | 'single';
@@ -59,6 +65,10 @@ export interface SpecSheetPage {
   hidden: boolean;
   picked: string[];
   accessories: SpecSheetAccessory[];
+  /** The override typed on this sheet ('' = none), and the product text it replaces. */
+  description?: string;
+  accessory_descriptions?: Record<string, string>;
+  spec_sheet_description_default?: string;
   edited: boolean;
   template: SpecSheetPageTemplate;
 }

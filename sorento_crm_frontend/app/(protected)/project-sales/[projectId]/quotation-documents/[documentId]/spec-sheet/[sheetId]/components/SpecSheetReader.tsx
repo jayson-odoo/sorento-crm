@@ -115,6 +115,8 @@ function rowOf(page: SpecSheetPage): SpecSheetRow {
     marker: page.marker,
     hidden: page.hidden,
     accessories: page.picked,
+    description: page.description ?? '',
+    accessory_descriptions: page.accessory_descriptions ?? {},
   };
 }
 

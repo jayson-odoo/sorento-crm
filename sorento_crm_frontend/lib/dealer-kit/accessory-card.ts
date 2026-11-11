@@ -409,7 +409,7 @@ export function accessoryBinding(item: TagAccessory): TagBindingData {
       id: item.id,
       code: item.code ?? '',
       name: item.name ?? '',
-      dimensions: '',
+      dimensions: item.dimensions ?? '',
       spec_lines: item.spec_lines ?? ownLines,
       specs: item.specs ?? [],
       images: [],
@@ -419,6 +419,9 @@ export function accessoryBinding(item: TagAccessory): TagBindingData {
       barcode: null,
       // A catalogue product's and an upgrade's own copy; a library accessory's (or an older pin's) spec.
       price_tag_description: item.price_tag_description ?? spec,
+      brand: item.brand ?? undefined,
+      description: item.description ?? null,
+      spec_sheet_description: item.spec_sheet_description ?? null,
     },
   };
 }
@@ -914,6 +917,52 @@ export function defaultUpgradeCard(): CardLayout {
       },
     ],
   };
+}
+
+/**
+ * SPEC-SHEET-DESIGNER-PARITY B2: the card an Accessories box starts with on a spec sheet template:
+ * the picture above, a bold "BRAND CODE" line, then the spec sheet description.
+ */
+export function defaultSpecSheetCard(): CardLayout {
+  return {
+    width_mm: 54,
+    height_mm: 40,
+    elements: [
+      { id: 'picture', kind: 'picture', field: 'picture', x_mm: 2, y_mm: 1.5, width_mm: 50, height_mm: 18, fit: 'contain' },
+      {
+        id: 'title',
+        kind: 'text',
+        field: null,
+        text: '{{product.brand}} {{product.code}}',
+        x_mm: 2,
+        y_mm: 20.5,
+        width_mm: 50,
+        height_mm: 4.4,
+        fontSize: 7,
+        fontWeight: 700,
+        align: 'left',
+        lineHeight: 1.1,
+      },
+      {
+        id: 'description',
+        kind: 'text',
+        field: 'spec_sheet_description',
+        x_mm: 2,
+        y_mm: 25.5,
+        width_mm: 50,
+        height_mm: 13.5,
+        fontSize: 6,
+        fontWeight: 400,
+        align: 'left',
+        lineHeight: 1.15,
+      },
+    ],
+  };
+}
+
+/** The props a new Accessories box starts with: the spec sheet's designed card there, else the price tag default. */
+export function defaultAccessoriesPropsFor(specSheet: boolean): AccessoriesLayerProps {
+  return specSheet ? { ...defaultAccessoriesProps(), card: defaultSpecSheetCard() } : defaultAccessoriesProps();
 }
 
 // ---------------------------------------------------------------------------

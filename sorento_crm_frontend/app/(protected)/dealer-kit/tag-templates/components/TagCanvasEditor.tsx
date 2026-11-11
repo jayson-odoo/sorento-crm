@@ -272,6 +272,7 @@ import {
   cardBoxLayout,
   cardDropped,
   cardFromLegacy,
+  defaultAccessoriesPropsFor,
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
@@ -1281,9 +1282,9 @@ export function TagCanvasEditor({
         ACCESSORY_DEFAULT_BOX_MM.width_mm,
         ACCESSORY_DEFAULT_BOX_MM.height_mm,
       ),
-      props: defaultAccessoriesProps(),
+      props: defaultAccessoriesPropsFor(specSheet),
     });
-  }, [addLayer, makeBaseLayer]);
+  }, [addLayer, makeBaseLayer, specSheet]);
 
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
