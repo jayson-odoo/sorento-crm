@@ -2381,7 +2381,7 @@ export function OrderInquiriesClient({
           mode="reserve"
           requestedQty={editingRow.requested_qty ?? '0'}
           locationOptions={editingOptions.options}
-          availableQtyByLocation={editingOptions.availableQtyByWarehouseId}
+          onHandQtyByLocation={editingOptions.onHandQtyByWarehouseId}
           defaultLocationId={editingRow.reserve_warehouse_id ?? editingOptions.defaultWarehouseId}
           onStage={saveEditedReserve}
         />
