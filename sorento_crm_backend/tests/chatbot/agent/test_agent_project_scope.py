@@ -376,3 +376,33 @@ def test_f_a_project_row_says_how_many_quotation_documents_it_has(world):
     rows = {r["id"]: r for r in _list(world, world.owner)["data"]}
     assert rows[world.mine.id]["quotation_document_count"] == 2
     assert rows[world.theirs[0].id]["quotation_document_count"] == 0
+
+
+@pytest.mark.parametrize("extra", [{"outcome": "won"}, {"status_key": "final_negotiation"}, {"only_critical": "true"}])
+def test_e_an_empty_me_read_with_another_filter_never_says_they_own_none(world, extra):
+    """Review round 6: "which of my projects are won?" emptied by `outcome` is not "you own none"."""
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    catalog = _list_catalog()
+    catalog[LIST]["inputSchema"]["properties"].update({k: {"type": "string"} for k in ("outcome", "status_key", "only_critical", "page", "sort", "dir")})
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}, "empty": True})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST, {"owner_user_ids": "me", **extra, "limit": "50"},
+                                   call=rec, catalog=catalog, timeout=5.0)
+    assert out.status == "empty"
+    assert out.message == agent_tools.NONE_OF_YOURS_MATCH
+
+
+def test_e_paging_and_sorting_are_not_filters(world):
+    from app.services.chatbot.agent import tools as agent_tools
+    from tests.chatbot.agent._ported_reads_support import Recorder
+
+    catalog = _list_catalog()
+    catalog[LIST]["inputSchema"]["properties"].update({k: {"type": "string"} for k in ("page", "sort", "dir")})
+    rec = Recorder(result={"data": [], "pagination": {"total": 0}, "empty": True})
+    with panel_turn(world.sales):
+        out = agent_tools.dispatch(world.db, make_ctx(world.sales), LIST,
+                                   {"owner_user_ids": "me", "limit": "100", "page": "1", "sort": "title", "dir": "asc"},
+                                   call=rec, catalog=catalog, timeout=5.0)
+    assert out.message == agent_tools.NONE_OF_YOURS

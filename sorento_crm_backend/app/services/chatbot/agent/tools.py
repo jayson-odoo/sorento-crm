@@ -801,6 +801,20 @@ NONE_OF_YOURS = (
 )
 
 
+NONE_OF_YOURS_MATCH = "None of the asker's projects match this read (they may own others that do not)."
+#: Arguments that page or order a read and narrow nothing.
+_NOT_FILTERS = frozenset({"limit", "page", "sort", "dir"})
+
+
+def _empty_message(name: str, filters: dict, self_ids: set[str]) -> str:
+    """The line for an empty read. A "me" read with no other filter says the asker owns none; one that another filter
+    emptied ("my won projects") says none of theirs match, never that they own none (review round 6)."""
+    if not self_ids or SELF_ID_ARGS.get(name) not in filters:
+        return NO_ROWS_MESSAGE
+    others = [k for k, v in filters.items() if k != SELF_ID_ARGS[name] and k not in _NOT_FILTERS and v not in (None, "", [], False)]
+    return NONE_OF_YOURS_MATCH if others else NONE_OF_YOURS
+
+
 def with_owner_counts(name: str, data: Any, *, filtered: bool = False) -> Any:
     """`data` with `count_by_owner` and `your_projects` (rows whose `owner_is_viewer` is true) when the page holds every
     matching row, else a note saying how to get them. A read already filtered by owner gets neither: its one owner
@@ -1589,7 +1603,7 @@ def _dispatch_inner(
         axis = clean.get("group_by")
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
-        return ToolResult("empty", data={"applied_filters": filters}, message=NONE_OF_YOURS if self_ids else NO_ROWS_MESSAGE)
+        return ToolResult("empty", data={"applied_filters": filters}, message=_empty_message(name, filters, self_ids))
     data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
     message = (
