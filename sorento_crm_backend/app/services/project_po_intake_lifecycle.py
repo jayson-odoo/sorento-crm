@@ -558,6 +558,9 @@ class POIntakeLifecycleMixin:
                 elapsed_ms=result.elapsed_ms,
             )
             self.db.commit()
+        except AppException as exc:
+            # Already a sentence written for the user (the PO removed mid-read, say).
+            return self._fail(version, _reason(exc))
         except Exception:  # noqa: BLE001
             # Outside the read's own guard until 11 Nov 2026: one odd page answer raised
             # here, escaped this method, and the task's last-resort write put

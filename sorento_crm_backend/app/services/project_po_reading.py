@@ -147,8 +147,10 @@ def _nullable(kind: str) -> Dict[str, Any]:
 # `_po_extractor_fallback`), sent as the reader's structured-output schema. JSON mode
 # alone lets a model answer a top-level array: on 11 Nov 2026 a 22-page customer PO
 # came back with page 5 as an array holding one page object, and the read failed with
-# "'list' object has no attribute 'get'". The keys are the prompt's own, so a page read
-# under the schema persists exactly as one read without it.
+# "'list' object has no attribute 'get'". The keys are exactly the prompt's own. Keys
+# the prompt never asks for (a header total, an annotation's struck_parts) cannot come
+# back under the schema; ``persist_pages`` still reads them when an older answer has
+# them, and the total falls back to the sum of the lines, as it did in practice.
 PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
     {
         "header": _strict_object(

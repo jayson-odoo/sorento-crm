@@ -243,6 +243,9 @@ def _one_page_object(parsed: object) -> tuple[Optional[dict], Optional[str]]:
     """
     if isinstance(parsed, dict):
         return parsed, None
+    if parsed == []:
+        # Nothing on the page, said as an array: the same answer as ``{}``.
+        return {}, None
     if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
         return parsed[0], None
     if isinstance(parsed, list) and len(parsed) > 1 and all(isinstance(i, dict) for i in parsed):
