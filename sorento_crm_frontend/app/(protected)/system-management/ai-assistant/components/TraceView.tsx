@@ -102,7 +102,7 @@ function SpanInspector({ span, stacked }: { span: TraceSpan; stacked?: boolean }
         <Badge variant={KIND_VARIANT[span.span_kind] ?? 'secondary'} appearance="light">
           {span.span_kind}
         </Badge>
-        <span className="text-sm font-medium">{span.name}</span>
+        <span className="min-w-0 break-all text-sm font-medium">{span.name}</span>
         {span.status === 'error' ? (
           <Badge variant="destructive" appearance="light">
             error
@@ -114,7 +114,7 @@ function SpanInspector({ span, stacked }: { span: TraceSpan; stacked?: boolean }
         <span>{span.latency_ms} ms</span>
         {isLLM ? (
           <>
-            <span>model: {span.request_model || '-'}</span>
+            <span className="break-all">model: {span.request_model || '-'}</span>
             <span>
               tokens: {span.tokens_in} in / {span.tokens_out} out
             </span>
@@ -347,8 +347,8 @@ export function TraceView({ messageId, stacked = false }: { messageId: string; s
         </CardContent>
       </Card>
 
-      <div className={cn('grid gap-4', !stacked && 'lg:grid-cols-2')} data-testid="trace-panels">
-        <Card className="overflow-hidden">
+      <div className={cn('grid grid-cols-1 gap-4', !stacked && 'lg:grid-cols-2')} data-testid="trace-panels">
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle className="text-sm">Pipeline waterfall</CardTitle>
           </CardHeader>
@@ -362,7 +362,7 @@ export function TraceView({ messageId, stacked = false }: { messageId: string; s
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle className="text-sm">Node inspector</CardTitle>
           </CardHeader>
