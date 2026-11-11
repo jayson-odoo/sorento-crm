@@ -1467,7 +1467,8 @@ export function QuotationLinesGrid({
    */
   const history = useUndoHistory<StagedQuotationLine[]>(lines);
   /** What the grid last staged, by value: anything else arriving is a change from outside. */
-  const lastStaged = React.useRef(JSON.stringify(lines));
+  const [initialStaged] = React.useState(() => JSON.stringify(lines));
+  const lastStaged = React.useRef(initialStaged);
   /** The row and fields the last keystroke edited, so a run of them is one step. */
   const lastEdit = React.useRef<{ key: string; fields: string } | null>(null);
   // A change the grid did not make (a column change reshaping the cells, a restored or discarded

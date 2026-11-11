@@ -3504,6 +3504,30 @@ describe('QuotationVersionEditor Undo / Redo', () => {
     expect(ids()).toEqual(['l2']);
   });
 
+  it('a change the grid did not make (a column reshape, a restored draft) starts the history afresh', async () => {
+    // A header change restages the reshaped cells from outside the grid (`stageForColumns`); an
+    // Undo across it would bring back cells under keys the server no longer holds.
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled();
+
+    act(() => {
+      const held = session?.scopes[QUOTATION.id]?.lines ?? [];
+      session?.stageScope(
+        QUOTATION.id,
+        held.map((row) => ({ ...row, draft: { ...row.draft, quantity: '4' } })),
+      );
+    });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled());
+    fireEvent.keyDown(screen.getByRole('table'), { key: 'z', ctrlKey: true });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ids()).toEqual(['l2']);
+    expect(stagedBody()[0]).toMatchObject({ quantity: '4' });
+  });
+
   it('typing one field is one Undo step, not one per keystroke', async () => {
     listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
     await renderEditing();

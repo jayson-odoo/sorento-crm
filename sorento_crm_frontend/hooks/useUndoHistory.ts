@@ -41,8 +41,10 @@ export function useUndoHistory<T>(initialState: T): UndoHistory<T> {
   const pastRef = useRef<T[]>([]);
   // Future states (for redo), most recent at end.
   const futureRef = useRef<T[]>([]);
-  // Current snapshot, used to push onto past when a new state arrives.
-  const currentRef = useRef<T>(structuredClone(initialState));
+  // Current snapshot, used to push onto past when a new state arrives. Copied once, on mount,
+  // not on every render: the quotation editor's state is every staged line.
+  const [initialSnapshot] = useState(() => structuredClone(initialState));
+  const currentRef = useRef<T>(initialSnapshot);
 
   // Trigger re-renders when undo/redo availability changes.
   const [, forceRender] = useState(0);
