@@ -181,3 +181,14 @@ export function placeTags(
     return null;
   });
 }
+
+/** TOWN-PROJECT-CITY: "Dealers RM 300 · Projects RM 150 · Other RM 30" (adds up to the day's figure), or the invoice
+ * counts for a viewer without amounts; null on a snapshot built before the split existed. */
+export function splitLine(today: TownSnapshot['today']): string | null {
+  const s = today.split;
+  if (!s) return null;
+  const parts = ([['Dealers', s.dealer], ['Projects', s.project], ['Other', s.other]] as const).map(([label, part]) =>
+    part.amount != null ? `${label} ${rm0(part.amount)}` : `${label} ${count(part.invoice_count)}`,
+  );
+  return parts.join(' · ') + (s.dealer.amount == null ? ' invoices' : '');
+}

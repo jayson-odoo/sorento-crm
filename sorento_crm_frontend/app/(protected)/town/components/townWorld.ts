@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { TownDueCustomer, TownShipment, TownShop, TownSnapshot } from '@/types/town.types';
+import type { TownDueCustomer, TownShipment, TownShop, TownSite, TownSnapshot, TownTradingHouse } from '@/types/town.types';
 import {
   changePercent,
   count,
@@ -12,6 +12,7 @@ import {
   type ScreenBox,
 } from '../lib/townFormat';
 import { DEFAULT_VIEW, cameraPosition, dragView, pinchZoom, stepZoom, wheelZoom, type TownView } from '../lib/townCamera';
+import { STAGES, STATES, STATE_BY, mapXZ, siteLook, stateKeyOf, type StateDef } from '../lib/townMap';
 import { EASE, mulberry32, trapezoid, type SaleBeat, type Trapezoid } from '../lib/townMotion';
 import { townTip, type TipSubject } from '../lib/townTips';
 import type { TownTarget } from './TownLightbox';
@@ -23,6 +24,12 @@ import type { TownTarget } from './TownLightbox';
  * orders due, ships at anchor, and DOM label pills projected from 3D anchors. Rendered on demand only:
  * frames are drawn while something moves, never while the tab is hidden. The world is rebuilt per
  * snapshot on one long-lived renderer; the camera view and the motion clock carry across rebuilds.
+ *
+ * TOWN-PROJECT-CITY (owner-approved mock v2, 11 Nov): the town is a map of Malaysia. The island above is
+ * Selangor (HQ at Shah Alam, Port Klang west, north up); every other state is an island built with the same
+ * slab, beach and foam (`lib/townMap.ts` places them), joined by causeways like the bridge. Each state's street
+ * holds its dealers, its open projects as sites (look = the project's own dates, flag = our sales stage) and its
+ * trading houses as glass towers. A state pill or `flyTo` moves the camera; reset returns to Shah Alam.
  */
 
 export interface TownTipState {
@@ -51,6 +58,7 @@ export interface WorldOptions {
 }
 
 export interface WorldHandle {
+  flyTo: (key: string) => void;
   dispose: () => void;
   zoom: (direction: 1 | -1) => void;
   reset: () => void;
@@ -63,6 +71,8 @@ const SHIP_CAP = 6;
 const LATE_CAP = 12;
 const DEG = Math.PI / 180;
 const TGT = new THREE.Vector3(-2.5, 0, -2.5);
+const HOME_TGT = TGT.clone();
+
 const INTRO_FROM: TownView = { yaw: DEFAULT_VIEW.yaw - 62 * DEG, tilt: 68 * DEG, zoom: 0.5 };
 const INTRO_S = 2.4;
 
@@ -123,6 +133,8 @@ interface Slot {
   si: number;
   pool: number;
   flash: number;
+  exit?: number;
+  tail?: THREE.Vector3[];
 }
 
 interface Particle {
@@ -130,6 +142,7 @@ interface Particle {
 }
 
 interface Label {
+  isState?: boolean;
   el: HTMLButtonElement;
   anchor: THREE.Vector3;
   fixed: boolean;
@@ -142,7 +155,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xe6eef1, 150, 340);
   const fog = scene.fog;
-  const cam = new THREE.PerspectiveCamera(30, 1, 4, 760);
+  const cam = new THREE.PerspectiveCamera(30, 1, 4, 4000);
   let baseDist = 120;
   let labelsDirty = true;
   let raf = 0;
@@ -311,8 +324,8 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       const r = rIsland(a) + off;
       return new THREE.Vector2(Math.cos(a) * r, -Math.sin(a) * r);
     });
-  function slab(off: number, depth: number, bevel: number, top: number) {
-    let g: THREE.BufferGeometry = new THREE.ExtrudeGeometry(new THREE.Shape(outline(off)), {
+  function slab(off: number, depth: number, bevel: number, top: number, pts?: THREE.Vector2[]) {
+    let g: THREE.BufferGeometry = new THREE.ExtrudeGeometry(new THREE.Shape(pts ?? outline(off)), {
       depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 1, steps: 1,
     });
     g.rotateX(-Math.PI / 2);
@@ -342,7 +355,65 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   const foam = mesh(new THREE.ShapeGeometry(foamShape, 1).rotateX(-Math.PI / 2), basicMat({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false }), { cast: false, receive: false });
   foam.position.y = SEA + 0.24;
   foam.renderOrder = 1;
-  const seaGeo = new THREE.PlaneGeometry(480, 480, 120, 120);
+
+  /* ======== TOWN-PROJECT-CITY: the other states, same slab, beach and foam as the live island ======== */
+  interface Isle { d: StateDef; cx: number; cz: number; wa: number; sd: number; ux: number; uz: number }
+  const isles: Isle[] = STATES.filter((d) => d.key !== 'selangor').map((d) => {
+    const [cx, cz] = mapXZ(d.e, d.n);
+    const [ax, az] = mapXZ(Math.cos(d.rot * DEG), Math.sin(d.rot * DEG));
+    const par = d.parent ? STATE_BY[d.parent] : null;
+    const [px, pz] = par ? mapXZ(par.e, par.n) : [cx - ax, cz - az];
+    const ul = Math.hypot(cx - px, cz - pz) || 1;
+    return { d, cx, cz, wa: Math.atan2(az, ax), sd: [...d.key].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 997, 7) / 50, ux: (cx - px) / ul, uz: (cz - pz) / ul };
+  });
+  const isleBy = Object.fromEntries(isles.map((i) => [i.d.key, i])) as Record<string, Isle>;
+  const rIsle = (i: Isle, a: number) => {
+    const t = a - i.wa;
+    const base = 1 / Math.sqrt((Math.cos(t) / i.d.rx) ** 2 + (Math.sin(t) / i.d.ry) ** 2);
+    return base * (1 + 0.05 * Math.sin(3 * a + i.sd) + 0.03 * Math.sin(5 * a + 2 * i.sd) + 0.015 * Math.sin(9 * a + 3 * i.sd));
+  };
+  const isleOutline = (i: Isle, off: number, nseg = 120) =>
+    Array.from({ length: nseg }, (_, k) => {
+      const a = (k / nseg) * Math.PI * 2;
+      const r = rIsle(i, a) + off;
+      return new THREE.Vector2(i.cx + Math.cos(a) * r, -(i.cz + Math.sin(a) * r));
+    });
+  /** the edge of a state's land toward (x, z), `inset` back toward its centre */
+  const edgeToward = (key: string, x: number, z: number, inset = 0): [number, number] => {
+    if (key === 'selangor') {
+      const a = Math.atan2(z, x);
+      const r = rIsland(a) - inset;
+      return [Math.cos(a) * r, Math.sin(a) * r];
+    }
+    const i = isleBy[key];
+    const a = Math.atan2(z - i.cz, x - i.cx);
+    const r = rIsle(i, a) - inset;
+    return [i.cx + Math.cos(a) * r, i.cz + Math.sin(a) * r];
+  };
+  const centreOf = (key: string): [number, number] => (key === 'selangor' ? [0, 0] : [isleBy[key].cx, isleBy[key].cz]);
+  {
+    const grass: THREE.BufferGeometry[] = [];
+    const beach: THREE.BufferGeometry[] = [];
+    isles.forEach((i) => {
+      const depth = Math.min(1.9, 0.9 + Math.min(i.d.rx, i.d.ry) * 0.06);
+      grass.push(paint(slab(0, depth, 0.45, 0, isleOutline(i, 0)), (x, y, z, ny, c) => {
+        if (ny > 0.92) c.copy(GRASS_A).lerp(GRASS_B, 0.5 + 0.5 * Math.sin(x * 0.21) * Math.sin(z * 0.17 + 1));
+        else if (ny > 0.3) c.set(0xc3d497);
+        else c.set(0xd9c39d).multiplyScalar(0.7 + 0.3 * clamp((y + 2.4) / 2.4, 0, 1));
+      }));
+      beach.push(paint(slab(0, 1.1, 0.5, -0.72, isleOutline(i, 2.0)), (_x, _y, _z, ny, c) => { c.set(ny > 0.6 ? 0xeedcb4 : 0xd6c19a); }));
+      const fs = new THREE.Shape(isleOutline(i, 4.1));
+      fs.holes.push(new THREE.Path(isleOutline(i, 2.3).reverse()));
+      const f = mesh(new THREE.ShapeGeometry(fs, 1).rotateX(-Math.PI / 2), foam.material as THREE.Material, { cast: false, receive: false });
+      f.position.y = SEA + 0.24;
+      f.renderOrder = 1;
+    });
+    mesh(merge(grass), stdMat(), { cast: false });
+    mesh(merge(beach), stdMat(), { cast: false });
+  }
+  const [seaCx, seaCz] = mapXZ(120, 20);
+  const seaGeo = new THREE.PlaneGeometry(1500, 1500, 300, 300);
+  seaGeo.translate(seaCx, 0, -seaCz);
   seaGeo.rotateX(-Math.PI / 2);
   {
     const p = seaGeo.attributes.position;
@@ -352,7 +423,14 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i);
       const z = p.getZ(i);
-      const k = smooth(clamp((Math.hypot(x, z) - rIsland(Math.atan2(-z, x)) - 3) / 17, 0, 1));
+      let gap = Math.hypot(x, z) - rIsland(Math.atan2(-z, x));
+      for (const i of isles) {
+        const dx = x - i.cx;
+        const dz = z - i.cz;
+        if (Math.abs(dx) > 90 || Math.abs(dz) > 90) continue;
+        gap = Math.min(gap, Math.hypot(dx, dz) - rIsle(i, Math.atan2(dz, dx)));
+      }
+      const k = smooth(clamp((gap - 3) / 17, 0, 1));
       _c.copy(shallow).lerp(deep, k);
       col[i * 3] = _c.r;
       col[i * 3 + 1] = _c.g;
@@ -374,7 +452,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       transformed.y += sin(position.x * 0.31 + uTime * 0.9) * 0.10 + sin(position.z * 0.37 - uTime * 0.7) * 0.08 + sin((position.x - position.z) * 0.83 + uTime * 1.5) * 0.03;`,
       );
   };
-  mesh(seaGeo, seaMat, { cast: false }).position.y = SEA;
+  mesh(seaGeo, seaMat, { cast: false, receive: false }).position.y = SEA;
 
   /* ======== streets: plaza, ring road, high street, spokes, port road, bridge; dashed centre lines ======== */
   const HS = 20.3;
@@ -395,7 +473,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   mesh(
     merge([
       disc(9.0, 0.025, PAVE), disc(3.6, 0.035, PAVE2), ring(RING - 1.1, RING + 1.1, 96, 0.03, ROAD), ring(HS - 1.1, HS + 1.1, 160, 0.03, ROAD),
-      ...SPOKES.map((d) => radialRoad(d, RING + 1.0, HS - 1.0)), radialRoad(PA, HS + 1.0, 25.4, 2.6), radialRoad(BRIDGE_D, HS + 1.0, 29.0),
+      ...SPOKES.map((d) => radialRoad(d, RING + 1.0, HS - 1.0)), radialRoad(PA, HS + 1.0, 25.4, 2.6), radialRoad(BRIDGE_D, HS + 1.0, 29.0), radialRoad(44, HS + 1.0, 29.0), radialRoad(92, HS + 1.0, 29.0),
     ]),
     stdMat(),
     { cast: false },
@@ -418,13 +496,55 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   dashRing(RING);
   dashRing(HS);
   SPOKES.forEach((d) => dashLine(d, RING + 2, HS - 2));
-  dashLine(BRIDGE_D, HS + 2, 140, 0.065);
+
+  /* ======== TOWN-PROJECT-CITY: causeways between states (the live bridge, generalised) and each state's street ======== */
+  const causeway = (ax: number, az: number, bx: number, bz: number, parts: THREE.BufferGeometry[]) => {
+    const len = Math.hypot(bx - ax, bz - az);
+    const ry = faceTo(bx - ax, bz - az);
+    const cx = (ax + bx) / 2;
+    const cz = (az + bz) / 2;
+    parts.push(P(BOX, ROAD, cx, -0.32, cz, 2.6, 0.38, len, ry), P(BOX, 0xb8b0a3, cx, -0.62, cz, 2.9, 0.3, len, ry));
+    const sx = Math.cos(ry);
+    const sz = -Math.sin(ry);
+    for (const side of [-1.4, 1.4]) parts.push(P(BOX, 0xf4f1ea, cx + sx * side, 0.06, cz + sz * side, 0.12, 0.28, len, ry));
+    const pier = CYL(0.42, 0.5, 2.6, 8);
+    for (let d = 5; d < len - 4; d += 7) parts.push(P(pier, 0xb8b0a3, ax + ((bx - ax) * d) / len, -3.0, az + ((bz - az) * d) / len));
+    for (let d = 1; d < len; d += 1.7) dashes.push([ax + ((bx - ax) * d) / len, 0.065, az + ((bz - az) * d) / len, ry]);
+  };
+  /** a state's street: through its centre along the way the causeway arrives (west to east for a state reached by sea) */
+  interface Street { key: string; ox: number; oz: number; ux: number; uz: number; len: number }
+  const streets: Record<string, Street> = {};
+  {
+    const parts: THREE.BufferGeometry[] = [];
+    isles.forEach((i) => {
+      if (i.d.parent && i.d.key !== 'perak') {
+        const [pcx, pcz] = centreOf(i.d.parent);
+        const from = i.d.parent === 'selangor' ? polar(26, i.d.exit ?? 0) : edgeToward(i.d.parent, i.cx, i.cz, 2.0);
+        const to = edgeToward(i.d.key, pcx, pcz, 2.0);
+        causeway(from[0], from[1], to[0], to[1], parts);
+      }
+      const [e0x, e0z] = edgeToward(i.d.key, i.cx - i.ux * 99, i.cz - i.uz * 99, 2.2);
+      const [e1x, e1z] = edgeToward(i.d.key, i.cx + i.ux * 99, i.cz + i.uz * 99, 2.2);
+      const len = Math.hypot(e1x - e0x, e1z - e0z);
+      streets[i.d.key] = { key: i.d.key, ox: e0x, oz: e0z, ux: i.ux, uz: i.uz, len };
+      const ry = faceTo(i.ux, i.uz);
+      parts.push(P(BOX, PAVE, (e0x + e1x) / 2, 0.02, (e0z + e1z) / 2, 5.4, 0.035, len, ry), P(BOX, ROAD, (e0x + e1x) / 2, 0.03, (e0z + e1z) / 2, 2.2, 0.04, len, ry));
+      for (let d = 1; d < len - 0.5; d += 1.7) dashes.push([e0x + i.ux * d, 0.045, e0z + i.uz * d, ry]);
+    });
+    mesh(merge(parts), stdMat(), { cast: false });
+  }
+  /** a point on a state's street, `along` units in from where the causeway lands, `side` units off its centre line */
+  const streetAt = (key: string, along: number, side = 0): [number, number] => {
+    const s = streets[key];
+    return [s.ox + s.ux * along + s.uz * side, s.oz + s.uz * along - s.ux * side];
+  };
   const dashM = inst(P(BOX, 0xffffff, 0, 0, 0, 0.13, 0.02, 0.6), stdMat({ roughness: 0.7 }), dashes.length, 'dashes', { cast: false });
   dashes.forEach(([x, y, z, ry], i) => setInst(dashM, i, x, y, z, ry));
   {
     // the bridge: a causeway off the island to customers outside the town
     const parts: THREE.BufferGeometry[] = [];
-    const len = 150 - 26;
+    const [pk0, pk1] = edgeToward('perak', ...polar(26, BRIDGE_D), 2.0);
+    const len = Math.hypot(pk0, pk1) - 26;
     const [cx, cz] = polar(26 + len / 2, BRIDGE_D);
     const ry = faceOut(BRIDGE_D);
     parts.push(P(BOX, ROAD, cx, -0.32, cz, 2.6, 0.38, len, ry), P(BOX, 0xb8b0a3, cx, -0.62, cz, 2.9, 0.3, len, ry));
@@ -434,7 +554,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       parts.push(P(BOX, 0xf4f1ea, cx + ox, 0.06, cz + oz, 0.12, 0.28, len, ry));
     }
     const pier = CYL(0.42, 0.5, 2.6, 8);
-    for (let r = 31; r < 150; r += 7) {
+    for (let r = 31; r < 26 + len - 3; r += 7) {
       const [x, z] = polar(r, BRIDGE_D);
       parts.push(P(pier, 0xb8b0a3, x, -3.0, z));
     }
@@ -469,15 +589,23 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       g.textAlign = 'center';
       g.fillStyle = '#8fa3bd';
       g.font = '600 40px Inter, sans-serif';
-      g.fillText(night ? 'CLOSED FOR THE DAY' : 'SOLD TODAY', 512, 82);
+      g.fillText(night ? 'CLOSED FOR THE DAY' : 'SOLD TODAY', 512, 70);
       g.fillStyle = '#ffffff';
       g.font = '700 124px Inter, sans-serif';
       const inv = `${count(Math.round(board.inv))} invoices`;
-      g.fillText(full ? rm0(String(board.amount)) : inv, 512, 224);
+      g.fillText(full ? rm0(String(board.amount)) : inv, 512, 196);
       g.font = '600 44px Inter, sans-serif';
       g.fillStyle = '#c8d3e1';
       const vs = pct == null || !snapshot.compare ? '' : `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}% vs all of ${snapshot.compare.label}`;
-      g.fillText((full ? `${inv}   ` : '') + vs, 512, 318);
+      g.fillText((full ? `${inv}   ` : '') + vs, 512, 270);
+      const split = (snapshot.today as { split?: Record<'dealer' | 'project' | 'other', { amount?: string; invoice_count: number }> }).split;
+      if (split) {
+        g.font = '600 40px Inter, sans-serif';
+        const part = (label: string, v: { amount?: string; invoice_count: number }) => `${label} ${v.amount != null ? rm0(v.amount) : count(v.invoice_count)}`;
+        const line = [part('Dealers', split.dealer), part('Projects', split.project), part('Other', split.other)].join('  ·  ');
+        g.fillStyle = '#f2c46d';
+        g.fillText(line + (split.dealer.amount == null ? ' invoices' : ''), 512, 352);
+      }
     }
     boardTex.needsUpdate = true;
     invalidate();
@@ -513,18 +641,66 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   drawn.filter((s) => s.kind !== 'shop').forEach((s, k) => order.splice(Math.min(order.length, 5 + k * 10), 0, s));
   const beatKeys = new Set(beat?.shops.map((s) => s.key) ?? []);
   const prevDocs = new Map(prev?.shops.map((s) => [s.key, s.today_docs]) ?? []);
-  const A0 = -60;
-  const A1 = 104;
+  // TOWN-PROJECT-CITY: a shop stands in its own state; Selangor keeps the live high street (now -60..30, the
+  // project quarter takes 52..86), every other state its own street; no state = the "State not set" islet
+  const stateOf = (s: TownShop) => stateKeyOf(s.state);
+  const home = order.filter((s) => stateOf(s) === 'selangor');
+  const A0 = 104;
+  const A1 = 214;
+  const perState: Record<string, number> = {};
+  const v3 = (p: [number, number]) => new THREE.Vector3(p[0], 0, p[1]);
+  /** the road from the live high street to `along` units down a state's street: exit bearing + waypoints over each causeway */
+  const countIn = (list: { state: string | null }[] | undefined, st: string) => (list ?? []).filter((r) => stateKeyOf(r.state) === st).length;
+  const extra = snapshot;
+  /** where a state's row of buildings starts down its street, so shops + sites + towers sit centred on it */
+  const startOf = (st: string) => {
+    const shops = order.filter((s) => stateOf(s) === st).length;
+    const len = Math.ceil(shops / 2) * 2.9 + Math.ceil(countIn(extra.projects?.sites, st) / 2) * 3.7 + Math.ceil(countIn(extra.trading_houses?.rows, st) / 2) * 3.0 + 2.6;
+    return Math.max(3.4, (streets[st].len - len) / 2);
+  };
+  const routeTo = (st: string, along: number): { exit: number; tail: THREE.Vector3[] } | null => {
+    const chain: string[] = [];
+    for (let k: string | undefined = st; k && k !== 'selangor'; k = STATE_BY[k].parent) chain.unshift(k);
+    if (!chain.length || STATE_BY[chain[0]].parent !== 'selangor') return null; // reached by sea, not by road
+    const tail: THREE.Vector3[] = [];
+    let prev = 'selangor';
+    for (const k of chain) {
+      if (prev !== 'selangor') tail.push(v3(centreOf(prev)), v3(edgeToward(prev, ...centreOf(k), 2.0)));
+      tail.push(v3(edgeToward(k, ...centreOf(prev), 2.0)));
+      prev = k;
+    }
+    tail.push(v3(streetAt(st, along)));
+    return { exit: STATE_BY[chain[0]].exit ?? BRIDGE_D, tail };
+  };
   const slots: Slot[] = order.map((s, i) => {
-    const a = A0 + ((A1 - A0) * i) / Math.max(1, order.length - 1);
-    const inner = i % 2 === 0;
-    const [x, z] = polar(inner ? 17.6 : 23.0, a);
+    const st = stateOf(s);
+    let a = NaN;
+    let inner = false;
+    let x: number;
+    let z: number;
+    let ry: number;
+    let road: { exit: number; tail: THREE.Vector3[] } | null = null;
+    if (st === 'selangor') {
+      const hi = home.indexOf(s);
+      a = A0 + ((A1 - A0) * hi) / Math.max(1, home.length - 1);
+      inner = hi % 2 === 0;
+      [x, z] = polar(inner ? 17.6 : 23.0, a);
+      ry = inner ? faceOut(a) : faceIn(a);
+    } else {
+      const k = (perState[st] = (perState[st] ?? -1) + 1);
+      const side = k % 2 ? 1 : -1;
+      const along = startOf(st) + 0.8 + Math.floor(k / 2) * 2.9;
+      [x, z] = streetAt(st, along, side * 2.75);
+      const S = streets[st];
+      ry = faceTo(-S.uz * side, S.ux * side);
+      road = routeTo(st, along);
+    }
     const rank = s.rank ?? shopsK.indexOf(s) + 1;
     const floors = s.kind === 'shop' ? (rank <= 6 ? 3 : rank <= 16 ? 2 : 1) : 0;
     // a shop that is about to play the sale beat starts the way the last snapshot showed it
     const lit = beatKeys.has(s.key) ? (prevDocs.get(s.key) ?? 0) > 0 : s.today_docs > 0;
     return {
-      s, a, x, z, ry: inner ? faceOut(a) : faceIn(a), inner, floors, stall: s.kind !== 'shop', lit, litK: lit ? 1 : 0,
+      s, a, x, z, ry, inner, floors, stall: s.kind !== 'shop', lit, litK: lit ? 1 : 0, exit: road?.exit, tail: road?.tail,
       variant: [0, 1, 2, 0, 2, 1][i % 6], tint: WALLS[(i * 5) % WALLS.length], slate: SLATE[(i * 3) % SLATE.length],
       h: s.kind === 'shop' ? floors * FH + 0.95 : 2.0, lift: 0, liftTo: 0, sq: 0, rise: 0, delay: 0, gi: -1, ui: [], ri: -1, si: -1, pool: -1, flash: 0,
     };
@@ -657,9 +833,156 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   }
   slots.filter((s) => s.lit).forEach(addPool);
 
+
+  /* ======== TOWN-PROJECT-CITY: project sites (look = the project's own timeline; flag = our sales stage) and trading
+   * houses (slate-blue glass towers, lit on a project invoice today), in the same materials as the live town ======== */
+  const mapSnap = snapshot;
+  const SIDE = 3.0;
+  const H2 = SIDE / 2;
+  const fence = () => [
+    ...([[0, -H2, SIDE, 0.06], [-H2, 0, 0.06, SIDE], [H2, 0, 0.06, SIDE], [-0.95, H2, 1.1, 0.06], [0.95, H2, 1.1, 0.06]] as number[][]).map(([x, z, w, d]) => P(BOX, 0xdfe5eb, x, 0, z, w, 0.55, d)),
+    ...[-H2, H2].flatMap((x) => [-H2, H2].map((z) => P(BOX, 0x8a96a3, x, 0, z, 0.09, 0.62, 0.09))),
+  ];
+  const siteBoard = (x: number, z: number, face: number, band: number) => [
+    P(BOX, 0x7d8896, x - 0.38, 0, z, 0.06, 0.95, 0.06), P(BOX, 0x7d8896, x + 0.38, 0, z, 0.06, 0.95, 0.06),
+    P(BOX, face, x, 0.58, z, 1.0, 0.56, 0.05), P(BOX, band, x, 0.98, z, 1.0, 0.11, 0.06),
+  ];
+  const crane = (h: number) => [
+    P(BOX, 0xe9b23c, 1.05, 0, -1.05, 0.2, h, 0.2), P(BOX, 0xe9b23c, 0.1, h, -1.05, 3.6, 0.15, 0.17), P(BOX, 0x39434f, -1.25, h - 0.18, -1.05, 0.55, 0.3, 0.42),
+    P(BOX, 0xf1ece2, 1.05, h - 0.55, -0.82, 0.36, 0.42, 0.36), P(BOX, 0x2b313a, 0.75, h - 1.3, -1.05, 0.03, 1.3, 0.03),
+  ];
+  const bands = (w: number, h: number, step: number, col: number) => {
+    const out: THREE.BufferGeometry[] = [];
+    for (let y = 0.45; y < h - 0.3; y += step) out.push(P(BOX, col, 0, y, 0, w + 0.04, 0.32, w + 0.04));
+    return out;
+  };
+  function siteGeo(look: string) {
+    const pad = (c: number) => P(BOX, c, 0, 0, 0, SIDE, 0.06, SIDE);
+    const parts: THREE.BufferGeometry[] = [];
+    if (look === 'plain') {
+      // a tidy prepared plot: levelled pad, neat edging, survey pegs, a hoarding with the Sorento band, a site cabin, a board
+      parts.push(pad(0xd9c7a5), ...([[0, -H2, SIDE + 0.1, 0.12], [0, H2, SIDE + 0.1, 0.12], [-H2, 0, 0.12, SIDE + 0.1], [H2, 0, 0.12, SIDE + 0.1]] as number[][]).map(([x, z, w, d]) => P(BOX, 0xf4f1ea, x, 0, z, w, 0.12, d)));
+      parts.push(...[[-0.7, -0.6], [0.7, -0.6], [-0.7, 0.4], [0.7, 0.4]].map(([x, z]) => P(BOX, 0xdc4b3e, x, 0.06, z, 0.07, 0.36, 0.07)));
+      parts.push(P(BOX, 0xffffff, 0, 0, -H2 + 0.05, SIDE - 0.2, 0.72, 0.07), P(BOX, 0x2f63d0, 0, 0.5, -H2 + 0.03, SIDE - 0.2, 0.13, 0.08));
+      parts.push(P(BOX, 0xe6ebf1, 0.85, 0.06, 0.55, 1.05, 0.62, 0.62), P(BOX, 0x94a3b8, 0.85, 0.68, 0.55, 1.12, 0.07, 0.69), P(BOX, 0x42566b, 0.85, 0.3, 0.87, 0.4, 0.24, 0.02));
+      parts.push(...siteBoard(-0.75, 1.0, 0xffffff, 0x2f63d0));
+    } else if (look === 'before') {
+      parts.push(pad(0xcbb796), ...fence());
+      parts.push(...([[0, -0.75, 1.9, 0.07], [0, 0.55, 1.9, 0.07], [-0.95, -0.1, 0.07, 1.37], [0.95, -0.1, 0.07, 1.37]] as number[][]).map(([x, z, w, d]) => P(BOX, 0xffffff, x, 0.06, z, w, 0.02, d)));
+      parts.push(...siteBoard(-0.6, 1.05, 0xfef3c7, 0xf59e0b));
+    } else if (look === 'ground') {
+      parts.push(pad(0xc8b69a), ...fence(), P(BOX, 0x9ca3af, -0.15, 0.06, -0.3, 2.1, 0.22, 1.8));
+      parts.push(P(BOX, 0x334155, 0.8, 0.06, 0.8, 0.95, 0.22, 0.62), P(BOX, 0xe9b23c, 0.8, 0.28, 0.8, 0.75, 0.42, 0.52), P(BOX, 0xe9b23c, 0.5, 0.66, 0.55, 0.14, 0.14, 1.05, 0.6, 0.5), P(BOX, 0x39434f, 0.85, 0.72, 0.9, 0.36, 0.3, 0.4));
+    } else if (look === 'frame') {
+      parts.push(pad(0xc8b69a), P(BOX, 0x9ca3af, 0, 0.06, 0, 2.5, 0.22, 2.5));
+      for (const [x, z] of [[-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1], [0, -1.1], [0, 1.1]]) parts.push(P(BOX, 0x94a3b8, x, 0.25, z, 0.14, 3.4, 0.14));
+      for (let y = 1.15; y < 3.7; y += 1.15) parts.push(P(BOX, 0xb4bcc6, 0, y, 0, 2.4, 0.1, 2.4));
+      parts.push(...crane(5.8));
+    } else if (look === 'clad') {
+      parts.push(pad(0xc8b69a), P(BOX, 0xe7e2d6, 0, 0.06, 0, 2.4, 3.4, 2.4), ...bands(2.4, 3.4, 0.95, 0x7fa0bf));
+      parts.push(...[-1.1, 1.1].flatMap((x) => [-1.1, 1.1].map((z) => P(BOX, 0x94a3b8, x, 3.4, z, 0.14, 0.9, 0.14))), P(BOX, 0xb4bcc6, 0, 4.3, 0, 2.4, 0.1, 2.4), ...crane(6.2));
+    } else {
+      parts.push(pad(0xddd5c6), P(BOX, 0xf3efe6, 0, 0.06, 0, 2.45, 4.3, 2.45), ...bands(2.45, 4.3, 0.92, 0x8aa6c1), P(BOX, 0xd6d0c4, 0, 4.36, 0, 2.6, 0.22, 2.6), P(BOX, 0x86c17a, 1.15, 0.06, 1.25, 0.5, 0.5, 0.4));
+    }
+    return merge(parts, 0.3);
+  }
+  const siteFlagGeo = keep(new THREE.PlaneGeometry(0.85, 0.5, 8, 1).translate(0.425, 0, 0));
+  const pennantGeo = (() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0.3, 0, 0.5, 0.15, 0], 3));
+    g.computeVertexNormals();
+    return keep(g);
+  })();
+  const extraBlobs: [number, number, number, number, number][] = [];
+  const mapBlockers: [number, number, number][] = [];
+  const sitesBy: Record<string, TownSite[]> = {};
+  (mapSnap.projects?.sites ?? []).forEach((p) => (sitesBy[stateKeyOf(p.state)] ??= []).push(p));
+  const towersBy: Record<string, TownTradingHouse[]> = {};
+  (mapSnap.trading_houses?.rows ?? []).forEach((r) => (towersBy[stateKeyOf(r.state)] ??= []).push(r));
+  /** where each state's n-th site / tower stands: Selangor's on the live island (the arc 52..86 beside the high street),
+   * every other state's further down its own street, past its shops */
+  const quarterAt = (st: string, k: number, tower: boolean): [number, number, number] => {
+    if (st === 'selangor') {
+      if (tower) {
+        const a = [60, 77, 69][k % 3];
+        const [x, z] = polar(16.4, a);
+        return [x, z, faceOut(a)];
+      }
+      const a = 56 + (k % 3) * 12.5;
+      const [x, z] = polar(24.3, a);
+      return [x, z, faceIn(a)];
+    }
+    const shops = perState[st] == null ? 0 : perState[st] + 1;
+    const nSites = sitesBy[st]?.length ?? 0;
+    const along0 = startOf(st) + 0.8 + Math.ceil(shops / 2) * 2.9 + 0.6;
+    const side = k % 2 ? 1 : -1;
+    const along = tower ? along0 + Math.ceil(nSites / 2) * 3.7 + 1.4 + Math.floor(k / 2) * 3.0 : along0 + 1.5 + Math.floor(k / 2) * 3.7;
+    const [x, z] = streetAt(st, along, side * (tower ? 3.1 : 3.4));
+    const S = streets[st];
+    return [x, z, faceTo(-S.uz * side, S.ux * side)];
+  };
+  const quarterGate = (st: string): { a: number; exit?: number; tail?: THREE.Vector3[] } | null => {
+    if (st === 'selangor') return { a: 68 };
+    const shops = perState[st] == null ? 0 : perState[st] + 1;
+    const road = routeTo(st, startOf(st) + 0.8 + Math.ceil(shops / 2) * 2.9 + 1.4);
+    return road ? { a: NaN, ...road } : null;
+  };
+  const siteFlags: THREE.Mesh[] = [];
+  Object.entries(sitesBy).forEach(([st, list]) =>
+    list.forEach((p, k) => {
+      const [x, z, ry] = quarterAt(st, k, false);
+      const look = siteLook(p, snapshot.day);
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = ry;
+      scene.add(g);
+      const m = mesh(siteGeo(look), stdMat(), { parent: g });
+      mesh(merge([P(CYL(0.035, 0.035, p.final_negotiation ? 1.75 : 1.4, 6), 0x64748b)]), stdMat(), { parent: g }).position.set(1.3, 0, 1.3);
+      const f = mesh(siteFlagGeo.clone(), new THREE.MeshStandardMaterial({ color: (p.stage && STAGES[p.stage]?.color) || 0x9ca3af, side: THREE.DoubleSide, flatShading: true, roughness: 0.8 }), { parent: g });
+      f.position.set(1.3, 1.12, 1.3);
+      siteFlags.push(f);
+      if (p.final_negotiation) mesh(pennantGeo, basicMat({ color: 0xdc2626, side: THREE.DoubleSide }), { parent: g, cast: false }).position.set(1.3, 1.45, 1.3);
+      const tip = (): TipSubject => ({ kind: 'site', site: p });
+      const open = () => select({ kind: 'site', key: p.key });
+      pickables.push([m, open, tip], [f, open, tip]);
+      extraBlobs.push([x, z, ry, SIDE * 1.15, SIDE * 1.15]);
+      mapBlockers.push([x, z, 2.4]);
+    }),
+  );
+  const towerGeo = merge(
+    [
+      P(BOX, 0x4f6580, 0, 0, 0, 2.4, 6.6, 2.4), P(BOX, 0x3d5068, 0, 0, 0, 2.5, 0.2, 2.5), P(BOX, 0x334255, 0, 6.6, 0, 2.55, 0.22, 2.55),
+      P(BOX, 0x8a96a3, 0.45, 6.82, -0.35, 0.9, 0.45, 0.7), P(BOX, 0x5b6673, -0.6, 6.82, 0.5, 0.4, 0.3, 0.4), P(BOX, 0x2d3a4b, 0, 0, 1.21, 0.8, 0.95, 0.03),
+    ],
+    0.3,
+  );
+  const towerWinGeo = merge(Array.from({ length: 6 }, (_, k) => P(BOX, 0xffffff, 0, 1.15 + k * 0.92, 0, 2.44, 0.42, 2.44)));
+  const towerList = Object.entries(towersBy).flatMap(([st, list]) => list.map((r, k) => ({ r, st, at: quarterAt(st, k, true) })));
+  const towerM = inst(towerGeo, stdMat(), towerList.length, 'trading houses');
+  const towerWinM = inst(towerWinGeo, basicMat(), towerList.length, 'trading house windows', { cast: false, receive: false });
+  const towerPoolM = inst(keep(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)), poolMat, towerList.length, 'trading house pools', { cast: false, receive: false });
+  towerPoolM.count = 0;
+  towerList.forEach(({ r, at: [x, z, ry] }, i) => {
+    setInst(towerM, i, x, 0, z, ry);
+    setInst(towerWinM, i, x, 0, z, ry);
+    towerWinM.setColorAt(i, r.today_docs > 0 ? WIN.litDay : WIN.offDay);
+    if (r.today_docs > 0) {
+      const k = towerPoolM.count++;
+      setInst(towerPoolM, k, x + Math.sin(ry) * 2.3, 0.06, z + Math.cos(ry) * 2.3, 0, 4.2, 1, 4.2);
+    }
+    extraBlobs.push([x, z, ry, 3.6, 3.6]);
+    mapBlockers.push([x, z, 2.4]);
+  });
+  const towerTip = (i: number) => {
+    const r = towerList[i]?.r;
+    return r ? ({ kind: 'trading_house', row: r } as TipSubject) : null;
+  };
+  const openTower = (i: number) => towerList[i] && select({ kind: 'trading_house', key: towerList[i].r.key });
+  pickables.push([towerM, openTower, towerTip], [towerWinM, openTower, towerTip]);
+
   /* ======== warehouses (low stock lives here), depot (lorries), approvals office ======== */
   const wh = snapshot.warehouses.slice(0, 6);
-  const WHP = [[14.6, 160], [14.6, 181], [14.6, 202], [24.0, 166], [24.0, 187], [24.0, 208]];
+  const WHP = [[14.6, 318], [14.6, 339], [14.6, 0], [24.0, 324], [24.0, 345], [24.0, 6]];
   const whSlot = wh.map((w, i) => {
     const [r, d] = WHP[i];
     const [x, z] = polar(r, d);
@@ -694,7 +1017,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   depot.position.set(dx, 0, dz);
   depot.rotation.y = depotRy;
   pickables.push([depot, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' })]);
-  const [ofx, ofz] = polar(15.2, 128);
+  const [ofx, ofz] = polar(15.2, 296);
   const office = mesh(
     merge(
       [
@@ -708,13 +1031,13 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     stdMat(),
   );
   office.position.set(ofx, 0, ofz);
-  office.rotation.y = faceOut(128);
+  office.rotation.y = faceOut(296);
   pickables.push([office, () => select({ kind: 'approve' }), () => ({ kind: 'approve' })]);
   // contact shadows: a soft dark blob under every building
   const blobs: [number, number, number, number, number][] = [
     ...slots.map((s): [number, number, number, number, number] => [s.x, s.z, s.ry, s.stall ? 2.6 : SW * 1.55, s.stall ? 1.8 : SD * 1.6]),
     ...whSlot.map((w): [number, number, number, number, number] => [w.x, w.z, w.ry, 6.4, 4.4]),
-    [dx, dz, depotRy, 7.4, 5.2], [ofx, ofz, faceOut(128), 4.9, 4.2], [0, 0, 0, 7.4, 7.4],
+    [dx, dz, depotRy, 7.4, 5.2], [ofx, ofz, faceOut(296), 4.9, 4.2], [0, 0, 0, 7.4, 7.4], ...extraBlobs,
   ];
   const blobMat = basicMat({
     map: radTex([[0, 'rgba(255,255,255,1)'], [0.55, 'rgba(255,255,255,0.55)'], [1, 'rgba(255,255,255,0)']]),
@@ -725,7 +1048,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
 
   /* ======== street lamps on the high street kerb: off by day, neutral white after dark ======== */
   const lampAt = slots.filter((s) => s.inner).map((s) => s.a);
-  for (let a = 112; a < 296; a += 12) if (![110, 200, 232, 257, 287].some((d) => Math.abs(a - d) < 6)) lampAt.push(a);
+  for (let a = 226; a < 410; a += 12) if (![232, 257, 287, 380, 404].some((d) => Math.abs(a - d) < 6)) lampAt.push(a % 360);
   const lampM = inst(merge([P(CYL(0.05, 0.07, 1.9, 6), 0x55606e), P(BOX, 0x55606e, 0, 1.84, 0, 0.12, 0.06, 0.12)]), stdMat(), lampAt.length, 'lamps', { receive: false });
   const headM = inst(merge([P(keep(new THREE.SphereGeometry(0.17, 8, 6)), 0xffffff, 0, 1.98, 0)]), basicMat(), lampAt.length, 'lamp heads', { cast: false, receive: false });
   const lampPoolMat = basicMat({
@@ -755,9 +1078,29 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     if (SPOKES.some((d) => angleOff(deg, d) * DEG * r < 1.9 && r > RING && r < HS)) continue;
     if (angleOff(deg, BRIDGE_D) * DEG * r < 2.2 && r > HS) continue;
     if (angleOff(deg, PA) < 17 && r > HS - 1) continue;
-    if (blockers.some(([bx, bz, br]) => Math.hypot(x - bx, z - bz) < br)) continue;
+    if ([...blockers, ...mapBlockers].some(([bx, bz, br]) => Math.hypot(x - bx, z - bz) < br)) continue;
+    if ([44, 92].some((d) => angleOff(deg, d) * DEG * r < 2.2 && r > HS)) continue;
     if (treeAt.some(([tx, tz]) => Math.hypot(x - tx, z - tz) < 1.5)) continue;
     treeAt.push([x, z]);
+  }
+  for (const i of isles) {
+    const S = streets[i.d.key];
+    const want = Math.min(46, Math.round((i.d.rx * i.d.ry) / 7));
+    let got = 0;
+    for (let tries = 0; got < want && tries < want * 40; tries++) {
+      const a = rng() * Math.PI * 2;
+      const r = Math.sqrt(rng()) * (rIsle(i, a) - 2.6);
+      const x = i.cx + Math.cos(a) * r;
+      const z = i.cz + Math.sin(a) * r;
+      const along = (x - S.ox) * S.ux + (z - S.oz) * S.uz;
+      const off = Math.abs((x - S.ox) * S.uz - (z - S.oz) * S.ux);
+      if (off < 3.9 && along > -1 && along < S.len + 1) continue;
+      if (off < 5.8 && along > startOf(i.d.key) - 1 && along < S.len - startOf(i.d.key) + 3) continue;
+      if ([...blockers, ...mapBlockers].some(([bx, bz, br]) => Math.hypot(x - bx, z - bz) < br)) continue;
+      if (treeAt.some(([tx, tz]) => Math.hypot(x - tx, z - tz) < 1.5)) continue;
+      treeAt.push([x, z]);
+      got++;
+    }
   }
   const roundTree = merge([P(CYL(0.12, 0.16, 0.75, 6), 0x8b6b4f), P(keep(new THREE.IcosahedronGeometry(0.85, 0)), 0x7fae6a, 0, 1.4, 0), P(keep(new THREE.IcosahedronGeometry(0.55, 0)), 0x8dbb74, 0.32, 1.92, 0.18)], 0.3, 1.0);
   const pineTree = merge([P(CYL(0.11, 0.14, 0.6, 6), 0x7d5f45), P(keep(new THREE.ConeGeometry(0.78, 1.4, 7)), 0x5f8f57, 0, 1.25, 0), P(keep(new THREE.ConeGeometry(0.56, 1.1, 7)), 0x6b9b60, 0, 1.95, 0)], 0.3, 1.0);
@@ -797,6 +1140,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   let animDock: (t: number, dt: number) => void = () => undefined;
   let staticDock: () => void = () => undefined;
   let animAnchors: (t: number) => void = () => undefined;
+  let animCoaster: (t: number) => void = () => undefined;
   let wakeStep: (t: number) => void = () => undefined;
   const anchorRows: TownShipment[] = [];
   const lateRows: TownShipment[] = [];
@@ -903,6 +1247,30 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       });
     animAnchors(0);
     const dockShip = mesh(shipGeo, stdMat());
+    {
+      // TOWN-PROJECT-CITY: Sabah, Sarawak and Labuan orders go by sea, round Johor and across the South China Sea
+      const coaster = mesh(shipGeo, stdMat());
+      coaster.scale.setScalar(0.8);
+      const sea = new THREE.CatmullRomCurve3(
+        [PL(14, SEA, 9.8), v3(mapXZ(-46, -18)), v3(mapXZ(-24, -84)), v3(mapXZ(26, -116)), v3(mapXZ(104, -122)), v3(mapXZ(150, -62)), v3(edgeToward('sarawak', ...mapXZ(120, -40), -3.5))].map((v) => v.setY(SEA)),
+        false, 'centripetal',
+      );
+      const L = sea.getLength();
+      const prof = trapezoid(L, 11, 1.6);
+      const cycle = prof.T * 2 + 8;
+      pickables.push([coaster, () => select({ kind: 'deliver' }), () => ({ kind: 'coaster' })]);
+      animCoaster = (t) => {
+        const c = ((t % cycle) + cycle) % cycle;
+        const back = c > prof.T + 4;
+        const s = c < prof.T ? prof.at(c) : back ? L - prof.at(Math.min(prof.T, c - prof.T - 4)) : L;
+        const u = clamp(s / L, 0, 1);
+        const p = sea.getPointAt(u);
+        const tg = sea.getTangentAt(u);
+        coaster.position.set(p.x, SEA + 0.06 * Math.sin(t * 1.3), p.z);
+        coaster.rotation.set(0.02 * Math.sin(t), Math.atan2(-tg.z, tg.x) + (back ? Math.PI : 0), 0);
+      };
+      animCoaster(0);
+    }
     pickables.push(
       [anchorM, openPort, (i) => (anchorRows[i] ? { kind: 'shipment', row: anchorRows[i] } : portTip())],
       [lateM, openPort, (i) => (lateRows[i] ? { kind: 'shipment', row: lateRows[i] } : portTip())],
@@ -1043,20 +1411,21 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   const depotDoor = new THREE.Vector3(dx, 0, dz).addScaledVector(depotF, 2.0);
   const wrapDeg = (d: number) => (((d % 360) + 540) % 360) - 180;
   const v2 = (p: [number, number]) => new THREE.Vector3(p[0], 0, p[1]);
-  function centreline(to: Slot | null) {
-    const exitDeg = to ? to.a : BRIDGE_D;
+  type Dest = { a: number; exit?: number; tail?: THREE.Vector3[]; flash?: number };
+  function centreline(to: Dest | null) {
+    const exitDeg = to ? (to.exit ?? to.a) : BRIDGE_D;
     const d = wrapDeg(exitDeg - SPOKE_D);
     const dir = Math.sign(d) || 1;
     const endDeg = SPOKE_D + d;
     const pts = [depotIn.clone(), depotDoor.clone(), v2(polar(16.6, SPOKE_D)), v2(polar(18.4, SPOKE_D)), v2(polar(HS, SPOKE_D + dir * 4.5))];
     const from = SPOKE_D + dir * 10;
-    const ringTo = to ? endDeg : endDeg - dir * 4.5;
+    const ringTo = to && !to.tail ? endDeg : endDeg - dir * 4.5;
     const steps = Math.max(1, Math.ceil(Math.abs(ringTo - from) / 6));
     for (let s = 0; s <= steps; s++) {
       const a = from + ((ringTo - from) * s) / steps;
       if (dir * (ringTo - a) >= -0.01) pts.push(v2(polar(HS, a)));
     }
-    if (!to) [22.2, 25, 40, 70, 100, 128].forEach((r) => pts.push(v2(polar(r, BRIDGE_D))));
+    if (to?.tail) pts.push(v2(polar(22.2, exitDeg)), v2(polar(25, exitDeg)), ...to.tail);
     return new THREE.CatmullRomCurve3(pts, false, 'centripetal');
   }
   function lanes(cl: THREE.CatmullRomCurve3) {
@@ -1088,24 +1457,41 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     0.2,
     0.5,
   );
-  interface Trip { c: TownDueCustomer; to: Slot | null; out: THREE.CatmullRomCurve3; back: THREE.CatmullRomCurve3; p1: Trapezoid; p2: Trapezoid; waitC: number; cycle: number; offset: number; at: boolean }
+  interface Trip { c: TownDueCustomer | null; project?: string; to: Dest | null; out: THREE.CatmullRomCurve3; back: THREE.CatmullRomCurve3; p1: Trapezoid; p2: Trapezoid; waitC: number; cycle: number; offset: number; at: boolean }
   const due = (customers ?? []).slice(0, LORRY_CAP);
-  // a customer whose shop is not drawn has nowhere to drive to in the town: its lorry waits at the depot
-  const driving = due.filter((c) => c.key === null || slots.some((s) => s.s.key === c.key));
+  // a customer whose shop is not drawn, or stands in a state reached by sea, has no road: its lorry waits at the depot
+  const destOf = (c: TownDueCustomer): Dest | null => {
+    const slot = c.key ? slots.find((s) => s.s.key === c.key) : null;
+    if (!slot) return null;
+    return slot.tail ? slot : slot.exit == null && Number.isFinite(slot.a) ? slot : null;
+  };
+  const driving = due.filter((c) => destOf(c));
   const waiting: (TownDueCustomer | null)[] = customers
     ? due.filter((c) => !driving.includes(c))
     : Array.from({ length: Math.min(PARKED_CAP, deliveries?.to_deliver ?? 0) }, () => null);
-  const trips: Trip[] = driving.map((c, k) => {
-    const to = c.key ? (slots.find((s) => s.s.key === c.key) ?? null) : null;
+  // TOWN-PROJECT-CITY: a project order's lorry drives to the gate of its state's project quarter, never to a site
+  // (no order carries a project link); East Malaysia goes by the coaster, State not set has no road
+  const projectRuns = (deliveries?.project_states ?? [])
+    .slice(0, 3)
+    .map((p) => ({ name: p.state ?? 'State not set', to: quarterGate(stateKeyOf(p.state)) }))
+    .filter((p): p is { name: string; to: Dest } => !!p.to);
+  const trip = (c: TownDueCustomer | null, to: Dest, k: number, project?: string): Trip => {
     const { out, back } = lanes(centreline(to));
-    const p1 = trapezoid(out.getLength(), VMAX, ACC);
-    const p2 = trapezoid(back.getLength(), VMAX, ACC);
-    const waitC = to ? 3.4 : 2.0;
-    return { c, to, out, back, p1, p2, waitC, cycle: p1.T + waitC + p2.T + 2.6, offset: k * 2.4, at: false };
-  });
+    const vmax = to.tail ? VMAX * 2.4 : VMAX;
+    const p1 = trapezoid(out.getLength(), vmax, ACC);
+    const p2 = trapezoid(back.getLength(), vmax, ACC);
+    const waitC = 3.4;
+    return { c, project, to, out, back, p1, p2, waitC, cycle: p1.T + waitC + p2.T + 2.6, offset: k * 2.4, at: false };
+  };
+  const trips: Trip[] = [
+    ...driving.map((c, k) => trip(c, destOf(c) as Dest, k)),
+    ...projectRuns.map((p, k) => trip(null, p.to, driving.length + k, p.name)),
+  ];
   const lorryM = inst(lorryGeo, stdMat({ roughness: 0.7 }), trips.length + waiting.length, 'lorries');
   const lorryTip = (i: number): TipSubject => {
-    const c = i < trips.length ? trips[i].c : waiting[i - trips.length];
+    const tr = i < trips.length ? trips[i] : null;
+    if (tr?.project) return { kind: 'project_lorry', state: tr.project };
+    const c = tr ? tr.c : waiting[i - trips.length];
     return c ? { kind: 'lorry', customer: c } : { kind: 'deliver' };
   };
   pickables.push([lorryM, () => select({ kind: 'deliver' }), lorryTip]);
@@ -1141,7 +1527,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
         tr.at = false;
       } else if (lt < p1.T + waitC) {
         poseLorry(i, tr.out, p1, p1.T);
-        if (!tr.at && tr.to) tr.to.flash = 1; // the customer's shop flashes when its lorry arrives
+        if (!tr.at && tr.to && 'flash' in tr.to) tr.to.flash = 1; // the customer's shop flashes when its lorry arrives
         tr.at = true;
       } else if (lt < p1.T + waitC + p2.T) poseLorry(i, tr.back, p2, lt - p1.T - waitC);
       else poseLorry(i, tr.back, p2, p2.T);
@@ -1150,7 +1536,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   const staticLorries = () => trips.forEach((tr, i) => poseLorry(i, tr.out, tr.p1, tr.to ? tr.p1.T : tr.p1.T * 0.32));
 
   const animFlags = (t: number) =>
-    flags.forEach((f, k) => {
+    [...flags, ...siteFlags].forEach((f, k) => {
       const p = f.geometry.attributes.position;
       for (let i = 0; i < p.count; i++) {
         const x = p.getX(i);
@@ -1340,7 +1726,15 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     });
   }
 
+  function flyTo(key: string) {
+    if (key === 'all') return tweenTo({ zoom: 0.19, tilt: 62 * DEG }, 0.9, v3(mapXZ(112, 14)).setY(0));
+    if (key === 'selangor' || key === 'home') return tweenTo({ ...DEFAULT_VIEW }, 0.8, HOME_TGT.clone());
+    const d = STATE_BY[key];
+    const [x, z] = centreOf(key);
+    tweenTo({ zoom: d.rx > 30 ? 1.2 : 1.6, tilt: DEFAULT_VIEW.tilt }, 0.9, new THREE.Vector3(x, 0, z));
+  }
   /* ======== DOM labels: pills projected from 3D anchors; fixed ones never dropped, tags culled on collision ======== */
+  const tipText = (s: TipSubject) => townTip(snapshot, s);
   let labels: Label[] = [];
   /** A pill that is not shown (during the fly-in, or culled) takes no pointer and no keyboard focus. */
   const setLabelState = (el: HTMLButtonElement, state: 'hidden' | 'shown' | 'culled') => {
@@ -1390,14 +1784,15 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       if (e.pointerType !== 'mouse') return;
       const r = el.getBoundingClientRect();
       const st = stage.getBoundingClientRect();
-      hover({ ...townTip(snapshot, tip()), x: r.left + r.width / 2 - st.left, y: r.top - st.top });
+      hover({ ...tipText(tip()), x: r.left + r.width / 2 - st.left, y: r.top - st.top });
     });
     el.addEventListener('pointerleave', () => hover(null));
     labelLayer.appendChild(el);
     labels.push({ el, anchor, fixed, w: 0, h: 0 });
   }
   const total = deliveries ? deliveries.to_deliver : null;
-  addLabel({ text: `${total == null ? '-' : count(total)} to deliver`, dot: 'deliver' }, new THREE.Vector3(dx, 4.2, dz), true, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' }));
+  const projOrders = (deliveries as { project_orders?: number } | undefined)?.project_orders ?? 0;
+  addLabel({ text: `${total == null ? '-' : count(total)} to deliver${projOrders ? ` · ${count(projOrders)} projects` : ''}`, dot: 'deliver' }, new THREE.Vector3(dx, 4.2, dz), true, () => select({ kind: 'deliver' }), () => ({ kind: 'deliver' }));
   if (incoming) {
     const any = incoming.incoming + incoming.late;
     addLabel({ text: any ? `Incoming: ${count(incoming.incoming)}` : 'Incoming: none', dot: 'port' }, PL(CRANE_X, 10.2, 1.9), true, () => select({ kind: 'port' }), () => ({ kind: 'port' }));
@@ -1409,8 +1804,34 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   addLabel({ text: `! ${count(snapshot.reorder.below_count)} low`, tone: 'red' }, new THREE.Vector3(wc[0], 4.4, wc[1]), true, () => select({ kind: 'low' }), () => ({ kind: 'low' }));
   const approvals = snapshot.approvals.total;
   addLabel({ text: approvals ? `${count(approvals)} waiting approval` : 'Approvals: all clear', dot: 'approve' }, new THREE.Vector3(ofx, 5.9, ofz), true, () => select({ kind: 'approve' }), () => ({ kind: 'approve' }));
+  {
+    // a pill per state: its counts; click flies the camera there
+    const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+    STATES.forEach((d) => {
+      const dealers = slots.filter((s) => stateOf(s.s) === d.key);
+      const lit = dealers.filter((s) => s.s.today_docs > 0).length;
+      const nSites = sitesBy[d.key]?.length ?? 0;
+      const nTowers = towersBy[d.key]?.length ?? 0;
+      const bits = [dealers.length ? `${plural(dealers.length, 'dealer')}${lit ? `, ${lit} lit` : ''}` : '', nSites ? plural(nSites, 'site') : '', nTowers ? plural(nTowers, 'trading house', 'trading houses') : ''].filter(Boolean);
+      const [cx, cz] = d.key === 'selangor' ? polar(26.5, 330) : centreOf(d.key);
+      addLabel(
+        { text: d.name, dot: lit ? 'lit' : undefined, muted: bits.length ? ` ${bits.join(' · ')}` : undefined },
+        new THREE.Vector3(cx, d.key === 'selangor' ? 3 : 4.5, cz),
+        false,
+        () => (d.key === 'selangor' ? flyTo('selangor') : flyTo(d.key)),
+        () => ({ kind: 'state', name: d.name, detail: bits.join(' · ') }),
+      );
+      labels[labels.length - 1].isState = true;
+      labels[labels.length - 1].el.dataset.townLabel = 'state';
+    });
+    const pj = mapSnap.projects;
+    if (pj && (pj.more || pj.dormant)) {
+      const [x, z] = polar(26.8, 69);
+      addLabel({ text: [pj.more ? `+${count(pj.more)} more projects` : '', pj.dormant ? `+${count(pj.dormant)} dormant` : ''].filter(Boolean).join(' · ') }, new THREE.Vector3(x, 0.6, z), true, () => select({ kind: 'projects' }), () => ({ kind: 'projects' }));
+    }
+  }
   if (others) {
-    const [x, z] = polar(HS, 22);
+    const [x, z] = polar(HS, 222);
     addLabel({ text: `+${count(others)} more bought today`, dot: 'lit' }, new THREE.Vector3(x, 0.6, z), true, () => select({ kind: 'bought' }), () => ({ kind: 'bought', others }));
   }
   tagged.forEach((shop) => {
@@ -1447,20 +1868,25 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       }
       const p = project(L.anchor, w, h);
       const on = p.front && p.x > -40 && p.x < w + 40 && p.y > -20 && p.y < h + 40;
-      return on || L.fixed ? { x: p.x, y: p.y - L.h / 2, w: L.w, h: L.h } : null;
+      const overview = view.current.zoom < 0.45;
+      if (overview && !L.isState) return null;
+      return on ? { x: p.x, y: p.y - L.h / 2, w: L.w, h: L.h } : null;
     };
     const fixedL = labels.filter((L) => L.fixed);
     const tagL = labels.filter((L) => !L.fixed);
-    const fixedBoxes = fixedL.map((L) => box(L) as ScreenBox);
+    const fixedAll = fixedL.map((L) => box(L));
+    const fixedBoxes = fixedAll.filter((b): b is ScreenBox => !!b);
     const stageView = { left: 0, right: w, bottom: 0, top: h };
-    const spots = separateLabels(fixedBoxes, boardBox, stageView, 6);
-    const placed = [boardBox, ...fixedBoxes.map((b, i) => ({ ...b, ...spots[i] }))];
+    const onSpots = separateLabels(fixedBoxes, boardBox, stageView, 6);
+    let k = 0;
+    const spots = fixedAll.map((b) => (b ? onSpots[k++] : null));
+    const placed = [boardBox, ...fixedBoxes.map((b, i) => ({ ...b, ...onSpots[i] }))];
     const tagSpots = placeTags(tagL.map(box), placed, stageView);
     const put = (L: Label, at: { x: number; y: number } | null) => {
       if (at) L.el.style.transform = `translate3d(${Math.round(at.x - L.w / 2)}px, ${Math.round(at.y - L.h / 2)}px, 0)`;
       if (L.el.dataset.state !== 'hidden') setLabelState(L.el, at ? 'shown' : 'culled');
     };
-    fixedL.forEach((L, i) => put(L, spots[i]));
+    fixedL.forEach((L, i) => put(L, spots[i] ?? null));
     tagL.forEach((L, i) => put(L, tagSpots[i]));
     positionChip();
     labelsDirty = false;
@@ -1485,9 +1911,12 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     cam.position.set(TGT.x + x, TGT.y + y, TGT.z + z);
     cam.lookAt(TGT);
     cam.updateMatrixWorld();
+    sun.position.set(TGT.x - 59.5, 70, TGT.z - 5.5);
+    sun.target.position.copy(TGT);
+    sun.target.updateMatrixWorld();
     const d = baseDist / v.zoom;
     fog.near = d + 12;
-    fog.far = d + 175;
+    fog.far = Math.max(d + 175, d * 1.7 + 160);
     boardGroup.rotation.y = Math.atan2(cam.position.x - boardGroup.position.x, cam.position.z - boardGroup.position.z);
     boardGroup.updateMatrixWorld();
     labelsDirty = true;
@@ -1568,7 +1997,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
   let fpsEMA = 60;
   let slowT = 0;
   let inertia = 0;
-  let camTween: { from: TownView; to: TownView; t: number; dur: number } | null = null;
+  let camTween: { from: TownView; to: TownView; t: number; dur: number; tf?: THREE.Vector3; tt?: THREE.Vector3 } | null = null;
   const moving = () => motion.current;
   const continuous = () =>
     intro.on || intro.rise || !!camTween || inertia !== 0 || fx.on || !!boardAnim || lighting.size > 0 || slots.some((s) => s.flash > 0 || s.lift !== s.liftTo) || moving();
@@ -1617,6 +2046,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       const e = camTween.dur ? EASE(clamp(camTween.t / camTween.dur, 0, 1)) : 1;
       const { from, to } = camTween;
       view.current = { yaw: lerp(from.yaw, to.yaw, e), tilt: lerp(from.tilt, to.tilt, e), zoom: lerp(from.zoom, to.zoom, e) };
+      if (camTween.tf && camTween.tt) TGT.lerpVectors(camTween.tf, camTween.tt, e);
       placeCam();
       if (e >= 1) camTween = null;
     }
@@ -1646,6 +2076,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     animLorries(t);
     animAnchors(t);
     animDock(t, dt);
+    animCoaster(t);
     wakeStep(t);
     trees.forEach((tr) => placeTree(tr, 0.03, t));
     animFlags(t);
@@ -1764,7 +2195,7 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     }
     setHover(hit.p[3] ? hit.p[3](hit.i) : null);
     canvas.style.cursor = 'pointer';
-    hover({ ...townTip(snapshot, subject), x: hit.x, y: hit.y });
+    hover({ ...tipText(subject), x: hit.x, y: hit.y });
   };
   const onUp = (e: PointerEvent) => {
     touches.delete(e.pointerId);
@@ -1805,9 +2236,9 @@ export function mountWorld(o: WorldOptions): WorldHandle {
       invalidate();
     }
   };
-  const tweenTo = (to: Partial<TownView>, dur: number) => {
+  const tweenTo = (to: Partial<TownView>, dur: number, target?: THREE.Vector3) => {
     takeOver();
-    camTween = { from: { ...view.current }, to: { ...view.current, ...to }, t: 0, dur: reduced ? 0 : dur };
+    camTween = { from: { ...view.current }, to: { ...view.current, ...to }, t: 0, dur: reduced ? 0 : dur, tf: target ? TGT.clone() : undefined, tt: target };
     invalidate();
   };
   canvas.addEventListener('pointerdown', onDown);
@@ -1888,12 +2319,13 @@ export function mountWorld(o: WorldOptions): WorldHandle {
     hemi.dispose();
   };
   return {
+    flyTo,
     dispose,
     zoom: (direction) => tweenTo({ zoom: stepZoom(view.current.zoom, direction) }, 0.2),
     reset: () => {
       const dy = Math.atan2(Math.sin(view.current.yaw - DEFAULT_VIEW.yaw), Math.cos(view.current.yaw - DEFAULT_VIEW.yaw));
       view.current = { ...view.current, yaw: DEFAULT_VIEW.yaw + dy };
-      tweenTo(DEFAULT_VIEW, 0.5);
+      tweenTo(DEFAULT_VIEW, 0.5, HOME_TGT.clone());
     },
     setMotion: (on) => {
       motion.current = on;

@@ -8,6 +8,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, Dia
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { isPending, type TownPayload, type TownShipment, type TownSnapshot } from '@/types/town.types';
 import { boughtToday, count, rm, shopLabel, shopToday } from '../lib/townFormat';
+import { siteTimeline, siteTitle, stageLabel } from '../lib/townMap';
 
 export type TownTarget =
   | { kind: 'sales' }
@@ -16,7 +17,10 @@ export type TownTarget =
   | { kind: 'low' }
   | { kind: 'deliver' }
   | { kind: 'approve' }
-  | { kind: 'port' };
+  | { kind: 'port' }
+  | { kind: 'site'; key: string }
+  | { kind: 'trading_house'; key: string }
+  | { kind: 'projects' };
 
 /** The existing screens a lightbox opens (each is permission-checked by its own page). */
 const ROUTES = {
@@ -129,6 +133,12 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
             <Rows
               rows={[
                 ...(full ? ([['Invoiced today', rm(today.amount as string)]] as [string, ReactNode][]) : []),
+                ...(today.split
+                  ? (['dealer', 'project', 'other'] as const).map((k): [string, ReactNode] => [
+                      { dealer: 'Dealers', project: 'Projects', other: 'Other' }[k],
+                      today.split?.[k].amount != null ? rm(today.split[k].amount as string) : `${count(today.split?.[k].invoice_count ?? 0)} invoices`,
+                    ])
+                  : []),
                 ['Invoices', count(today.invoice_count)],
                 ['Credit notes', count(today.credit_note_count)],
                 ['Customers', count(today.customer_count)],
@@ -178,6 +188,53 @@ function body(snapshot: TownSnapshot, target: TownTarget): { title: string; meta
             {full ? link(ROUTES.invoices, 'Open invoices') : null}
           </>
         ),
+      };
+    }
+    case 'site': {
+      const site = snapshot.projects?.sites.find((s) => s.key === target.key);
+      if (!site) return { title: 'Project site', meta: '', content: null };
+      return {
+        title: siteTitle(site),
+        meta: `${stageLabel(site.stage)}${site.final_negotiation ? ' · final negotiation' : ''}`,
+        content: (
+          <>
+            <Rows
+              rows={[
+                ['Stage', stageLabel(site.stage)],
+                ['Final negotiation', site.final_negotiation ? 'Yes' : 'No'],
+                ['State', site.state ?? 'State not set'],
+                ['Timeline', siteTimeline(site, snapshot.day)],
+                ...(site.estimated_value ? ([['Estimated value', rm(site.estimated_value)]] as [string, ReactNode][]) : []),
+              ]}
+            />
+            {site.name ? link(`/project-sales/${site.key}`, 'Open project') : null}
+          </>
+        ),
+      };
+    }
+    case 'trading_house': {
+      const row = snapshot.trading_houses?.rows.find((r) => r.key === target.key);
+      if (!row) return { title: 'Trading house', meta: '', content: null };
+      return {
+        title: row.name ?? 'Trading house',
+        meta: row.today_docs ? 'Bought today' : 'No project invoice today',
+        content: (
+          <Rows
+            rows={[
+              ['State', row.state ?? 'State not set'],
+              ['Open projects it is on', count(row.open_projects)],
+              ['Project invoices today', count(row.today_docs)],
+            ]}
+          />
+        ),
+      };
+    }
+    case 'projects': {
+      const p = snapshot.projects;
+      return {
+        title: `${count(p?.open_count ?? 0)} open projects`,
+        meta: p ? `${count(p.sites.length)} on the map · +${count(p.more)} more · ${count(p.dormant)} dormant` : '',
+        content: p ? <Rows rows={p.sites.map((s): [string, ReactNode] => [siteTitle(s), `${stageLabel(s.stage)} · ${s.state ?? 'State not set'}`])} /> : null,
       };
     }
     case 'low':

@@ -15,6 +15,7 @@ import {
   shopLabel,
   shopToday,
   signedPercent,
+  splitLine,
 } from '../lib/townFormat';
 import type { TownTarget } from './TownLightbox';
 
@@ -101,6 +102,7 @@ export function TownCards({
             </>
           ) : null}
         </span>
+        {splitLine(today) ? <span className="text-xs text-muted-foreground">{splitLine(today)}</span> : null}
       </Card>
       <Card
         question="Who bought today?"

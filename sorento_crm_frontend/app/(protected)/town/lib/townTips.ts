@@ -1,6 +1,7 @@
 import { formatDateInMalaysia } from '@/lib/helpers';
-import type { TownDueCustomer, TownShipment, TownShop, TownSnapshot } from '@/types/town.types';
+import type { TownDueCustomer, TownShipment, TownShop, TownSite, TownSnapshot, TownTradingHouse } from '@/types/town.types';
 import { count, rm0, shopLabel, shortName } from './townFormat';
+import { LOOK_WORDS, siteLook, siteTitle, stageLabel } from './townMap';
 
 /** What the pointer is over. A mouse shows its tooltip; a tap on touch opens the lightbox instead. */
 export type TipSubject =
@@ -13,7 +14,13 @@ export type TipSubject =
   | { kind: 'approve' }
   | { kind: 'port' }
   | { kind: 'shipment'; row: TownShipment }
-  | { kind: 'lorry'; customer: TownDueCustomer };
+  | { kind: 'lorry'; customer: TownDueCustomer }
+  | { kind: 'site'; site: TownSite }
+  | { kind: 'trading_house'; row: TownTradingHouse }
+  | { kind: 'projects' }
+  | { kind: 'state'; name: string; detail: string }
+  | { kind: 'project_lorry'; state: string }
+  | { kind: 'coaster' };
 
 const orders = (n: number) => `${count(n)} order${n === 1 ? '' : 's'} due today or overdue`;
 
@@ -78,5 +85,29 @@ export function townTip(snapshot: TownSnapshot, subject: TipSubject): { title: s
       const shop = snapshot.shops.find((s) => s.key === customer.key);
       return { title: `Lorry to ${shop ? shopLabel(shop) : 'Dealer'}`, detail: orders(customer.orders) };
     }
+    case 'site': {
+      const { site } = subject;
+      return {
+        title: siteTitle(site),
+        detail: `${stageLabel(site.stage)}${site.final_negotiation ? ', final negotiation' : ''} · ${LOOK_WORDS[siteLook(site, snapshot.day)]}`,
+      };
+    }
+    case 'trading_house': {
+      const { row } = subject;
+      return {
+        title: row.name ?? 'Trading house',
+        detail: `${count(row.open_projects)} open project${row.open_projects === 1 ? '' : 's'} · ${row.today_docs ? 'bought today' : 'no project invoice today'}`,
+      };
+    }
+    case 'projects': {
+      const p = snapshot.projects;
+      return { title: 'Open projects', detail: p ? `${count(p.open_count)} open · ${count(p.dormant)} dormant` : 'None' };
+    }
+    case 'state':
+      return { title: subject.name, detail: subject.detail || 'Nothing here today' };
+    case 'project_lorry':
+      return { title: 'Lorry to a project', detail: `Project orders to ${subject.state}` };
+    case 'coaster':
+      return { title: 'Coaster to East Malaysia', detail: 'Sabah, Sarawak and Labuan orders go by sea from Port Klang' };
   }
 }

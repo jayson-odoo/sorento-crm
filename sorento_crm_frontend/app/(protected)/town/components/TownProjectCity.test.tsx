@@ -23,7 +23,7 @@ const FULL = {
   projects: { open_count: 33, more: 32, dormant: 3, sites: [SITE] },
   trading_houses: { more: 0, rows: [TH] },
 };
-const { name: _n, code: _c, estimated_value: _v, ...ANON_SITE } = SITE;
+const ANON_SITE = { key: SITE.key, stage: SITE.stage, final_negotiation: SITE.final_negotiation, state: SITE.state, launch_date: SITE.launch_date, delivery_date: SITE.delivery_date };
 const REDACTED = {
   ...FULL,
   today: { ...FULL.today, amount: undefined, split: { dealer: { invoice_count: 3 }, project: { invoice_count: 2 }, other: { invoice_count: 1 } } },

@@ -2,12 +2,13 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { WebGLRenderer } from 'three';
-import { Minus, Pause, Play, Plus, RotateCcw } from 'lucide-react';
+import { Map as MapIcon, Minus, Pause, Play, Plus, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { localStore } from '@/lib/storage';
 import type { TownSnapshot } from '@/types/town.types';
 import { DEFAULT_VIEW, type TownView } from '../lib/townCamera';
+import { STATES, stateKeyOf } from '../lib/townMap';
 import { newSales } from '../lib/townMotion';
 import type { TownTarget } from './TownLightbox';
 import { createTownRenderer, mountWorld, type TownTipState, type WorldHandle } from './townWorld';
@@ -35,11 +36,22 @@ const prefersReduced = () => {
 
 const LEGEND = [
   ['bg-amber-500', 'Lit shop = bought today'],
-  ['bg-red-600', 'Red = low stock or late'],
+  ['bg-slate-600', 'Glass tower = trading house'],
+  ['bg-stone-400', 'Site = open project (its own dates)'],
+  ['bg-teal-600', 'Flag = sales stage'],
+  ['bg-red-600', 'Red = low stock, late, final negotiation'],
   ['bg-blue-600', 'Lorries = to deliver'],
   ['bg-violet-600', 'Violet = waiting approval'],
-  ['bg-cyan-700', 'Ships = incoming'],
+  ['bg-cyan-700', 'Ships = incoming, coaster = East Malaysia'],
 ] as const;
+
+/** The state chips under the stage (TOWN-PROJECT-CITY): states with a dealer, site or trading house first. */
+function statesByUse(snapshot: TownSnapshot) {
+  const used = new Set(
+    [...snapshot.shops.map((s) => s.state), ...(snapshot.projects?.sites ?? []).map((s) => s.state), ...(snapshot.trading_houses?.rows ?? []).map((r) => r.state)].map(stateKeyOf),
+  );
+  return STATES.map((s) => ({ key: s.key, name: s.name, used: used.has(s.key) })).sort((a, b) => Number(b.used) - Number(a.used));
+}
 
 export function TownScene({
   snapshot,
@@ -222,6 +234,9 @@ export function TownScene({
           <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Zoom in" title="Zoom in" onClick={() => worldRef.current?.zoom(1)}>
             <Plus />
           </Button>
+          <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Whole map" title="Whole map" onClick={() => worldRef.current?.flyTo('all')}>
+            <MapIcon />
+          </Button>
           <Button type="button" variant="ghost" mode="icon" size="sm" aria-label="Reset view" title="Reset view" onClick={() => worldRef.current?.reset()}>
             <RotateCcw />
           </Button>
@@ -231,6 +246,20 @@ export function TownScene({
             Tap any building
           </div>
         ) : null}
+      </div>
+      <div role="group" aria-label="Go to a state" className="flex gap-1.5 overflow-x-auto border-t border-border bg-background/80 px-3 py-2">
+        {statesByUse(snapshot).map(({ key, name, used }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => worldRef.current?.flyTo(key)}
+            className={`shrink-0 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium hover:bg-accent ${
+              used ? 'bg-background text-foreground' : 'bg-transparent text-muted-foreground'
+            }`}
+          >
+            {name}
+          </button>
+        ))}
       </div>
       <div
         role="group"

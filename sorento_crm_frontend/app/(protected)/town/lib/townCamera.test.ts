@@ -16,12 +16,12 @@ import { townTip } from './townTips';
 const deg = (rad: number) => (rad * 180) / Math.PI;
 
 describe('town camera', () => {
-  it('starts at the view the town always had: 45 degrees round, ~41 degrees up, no zoom', () => {
-    expect(DEFAULT_VIEW.yaw).toBeCloseTo(Math.PI / 4);
+  it('starts north up over Shah Alam (TOWN-PROJECT-CITY): 142 degrees round, ~41 degrees up, the live scale', () => {
+    expect(deg(DEFAULT_VIEW.yaw)).toBeCloseTo(142);
     expect(deg(DEFAULT_VIEW.tilt)).toBeCloseTo(deg(Math.atan2(70, 80)));
     expect(DEFAULT_VIEW.zoom).toBe(1);
     const [x, y, z] = cameraPosition(DEFAULT_VIEW, 3);
-    expect([x, y, z].map((v) => Math.round(v))).toEqual([80 * Math.cos(Math.PI / 4), 73, 80 * Math.sin(Math.PI / 4)].map(Math.round));
+    expect([x, y, z].map((v) => Math.round(v))).toEqual([80 * Math.cos(142 * (Math.PI / 180)), 73, 80 * Math.sin(142 * (Math.PI / 180))].map(Math.round));
   });
 
   it('turns on a sideways drag and tilts on an up-down drag, within 20 and 80 degrees', () => {
@@ -37,18 +37,18 @@ describe('town camera', () => {
     expect(deg(TILT_MAX)).toBeCloseTo(80);
   });
 
-  it('zooms by wheel, pinch and buttons, never outside 0.7x to 2.2x', () => {
+  it('zooms by wheel, pinch and buttons, never outside 0.13x (all of Malaysia) to 2.2x', () => {
     expect(wheelZoom(1, -100)).toBeGreaterThan(1);
     expect(wheelZoom(1, 100)).toBeLessThan(1);
     expect(wheelZoom(2.1, -100000)).toBe(ZOOM_MAX);
-    expect(wheelZoom(0.8, 100000)).toBe(ZOOM_MIN);
+    expect(wheelZoom(0.2, 100000)).toBe(ZOOM_MIN);
     expect(pinchZoom(1, 100, 200)).toBe(2);
     expect(pinchZoom(1, 100, 1000)).toBe(ZOOM_MAX);
-    expect(pinchZoom(1, 100, 10)).toBe(ZOOM_MIN);
+    expect(pinchZoom(1, 100, 5)).toBe(ZOOM_MIN);
     expect(stepZoom(1, 1)).toBeCloseTo(1.25);
     expect(stepZoom(1, -1)).toBeCloseTo(0.8);
     expect(stepZoom(2.2, 1)).toBe(ZOOM_MAX);
-    expect([ZOOM_MIN, ZOOM_MAX]).toEqual([0.7, 2.2]);
+    expect([ZOOM_MIN, ZOOM_MAX]).toEqual([0.13, 2.2]);
   });
 });
 
