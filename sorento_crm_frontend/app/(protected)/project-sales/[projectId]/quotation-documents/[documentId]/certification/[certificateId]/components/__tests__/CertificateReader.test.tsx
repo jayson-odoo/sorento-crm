@@ -341,7 +341,9 @@ describe('unsaved boxes ask before leaving (shared useUnsavedChangesGuard)', () 
   }
   function click(link: Element) {
     const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
-    link.dispatchEvent(event);
+    act(() => {
+      link.dispatchEvent(event);
+    });
     return event;
   }
   const went = () => [...router.push.mock.calls, ...router.replace.mock.calls].map((c) => c[0]);
@@ -365,7 +367,8 @@ describe('unsaved boxes ask before leaving (shared useUnsavedChangesGuard)', () 
     expect(click(back).defaultPrevented).toBe(true);
     expect(leaveTitle()).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
-    expect(leaveTitle()).toBeNull();
+    // The dialog animates out.
+    await waitFor(() => expect(leaveTitle()).toBeNull());
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     expect(went()).toEqual([]);
   });

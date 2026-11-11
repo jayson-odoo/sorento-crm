@@ -7,7 +7,7 @@
  * Answered by one AlertDialog: "Leave with unsaved changes?" with Keep editing / Leave without saving.
  */
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const push = vi.fn();
@@ -37,7 +37,9 @@ function Page({ dirty }: { dirty: boolean }) {
 function clickLink(name: string, init: MouseEventInit = {}) {
   const link = screen.getByText(name);
   const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init });
-  link.dispatchEvent(event);
+  act(() => {
+    link.dispatchEvent(event);
+  });
   return event;
 }
 
@@ -65,12 +67,13 @@ describe('useUnsavedChangesGuard', () => {
     expect(dialogTitle()).toBeNull();
   });
 
-  it('asks before a same-site link leaves, and Keep editing stays', () => {
+  it('asks before a same-site link leaves, and Keep editing stays', async () => {
     render(<Page dirty />);
     expect(clickLink('Sidebar link').defaultPrevented).toBe(true);
     expect(dialogTitle()).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
-    expect(dialogTitle()).toBeNull();
+    // The dialog animates out.
+    await waitFor(() => expect(dialogTitle()).toBeNull());
     expect(push).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
   });

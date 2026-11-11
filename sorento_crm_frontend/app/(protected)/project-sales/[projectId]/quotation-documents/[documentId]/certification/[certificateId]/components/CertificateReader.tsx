@@ -18,6 +18,7 @@ import { expandBoxesForDefault, type PageBox } from '@/components/common/pdf-vie
 import { CoverageCodeEditor } from '@/app/(protected)/master-data-management/certificates/components/CoverageCodeEditor';
 
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { VALIDITY } from '../../../../../../_shared/lib/quotationCertificateDisplay';
 import { projectCrumbs } from '../../../../../../_shared/lib/crumbs';
 import {
@@ -172,6 +173,9 @@ export function CertificateReader({
       setSelected(null);
     }
   }, [detail, dirty]);
+
+  // Unsaved boxes ask before any way out: a link, the browser's Back, a refresh or close.
+  const leaveGuard = useUnsavedChangesGuard(dirty);
 
   const canEdit = Boolean(detail?.can_edit);
   const canDefaults = Boolean(detail?.can_edit_defaults);
@@ -481,6 +485,7 @@ export function CertificateReader({
           )}
         </aside>
       </div>
+      {leaveGuard}
     </div>
   );
 }
