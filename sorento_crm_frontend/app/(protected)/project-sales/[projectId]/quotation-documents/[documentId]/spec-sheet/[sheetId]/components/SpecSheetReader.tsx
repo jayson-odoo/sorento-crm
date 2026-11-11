@@ -46,7 +46,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable';
-import { useSidePanelWidths } from '@/lib/dealer-kit/useSidePanelWidths';
+import { useMinWidth, useSidePanelWidths } from '@/lib/dealer-kit/useSidePanelWidths';
 import type {
   TagLayer,
   TagLayerProps,
@@ -155,6 +155,9 @@ export function SpecSheetReader({
   const [inspectorCollapsed, setInspectorCollapsed] = React.useState(false);
   // Pages / Inspector widths: dragged like the template designer's, and kept with its widths.
   const panels = useSidePanelWidths();
+  // The Inspector shows from Tailwind's `lg` (1024px) up, as its old `hidden lg:block` did and as
+  // the template designer's Inspector does; below that the drawer on a phone, nothing between.
+  const wideEnough = useMinWidth(1024);
 
   const listHref = `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet`;
   const sheetHref = (id: string) => `${listHref}/${id}`;
@@ -535,13 +538,16 @@ export function SpecSheetReader({
     ? (selectedLayers.find((l) => l.id === selection.layerId) ?? null)
     : null;
   const targetKey = selection?.pageKey ?? editing.lastKey() ?? null;
-  // Keyboard undo from a page's canvas: the same per-page history the Undo / Redo buttons step.
-  // Stable for the memoised pages; it reads the latest `editing` through a ref.
-  const editingRef = React.useRef(editing);
-  editingRef.current = editing;
-  const onHistory = React.useCallback((key: string, step: -1 | 1) => {
-    if (step < 0) editingRef.current.undo(key);
-    else editingRef.current.redo(key);
+  // Keyboard undo from a page's canvas does exactly what the Undo / Redo buttons do: it steps
+  // `targetKey` (the selected page, else the page edited last), whichever canvas heard the key.
+  // Stable for the memoised pages; it reads the latest `editing` and target through a ref.
+  const historyRef = React.useRef({ editing, targetKey });
+  historyRef.current = { editing, targetKey };
+  const onHistory = React.useCallback((_key: string, step: -1 | 1) => {
+    const { editing: now, targetKey: key } = historyRef.current;
+    if (!key) return;
+    if (step < 0) now.undo(key);
+    else now.redo(key);
   }, []);
 
   // The page an apply started from while it runs: every OTHER page is read-only for that round
@@ -1065,7 +1071,7 @@ export function SpecSheetReader({
                     </div>
                   </div>
                 </ResizablePanel>
-                {canEdit && !isMobile && !inspectorCollapsed && (
+                {canEdit && wideEnough && !inspectorCollapsed && (
                   <>
                     <ResizableHandle
                       withHandle
@@ -1121,7 +1127,7 @@ export function SpecSheetReader({
                 )}
               </ResizablePanelGroup>
             </div>
-            {canEdit && !isMobile && inspectorCollapsed && (
+            {canEdit && wideEnough && inspectorCollapsed && (
               <CollapsiblePanel
                 title="Inspector"
                 side="end"

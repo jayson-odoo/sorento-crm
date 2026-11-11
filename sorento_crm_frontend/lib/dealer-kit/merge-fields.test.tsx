@@ -916,6 +916,19 @@ describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
     ).toBe('Close coupled WC');
   });
 
+  it('a layer pointed at a part (an accessory) prints that PART\'s description, not the line\'s', () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'AV-0120',
+      name: 'AV-0120',
+      dimensions: '',
+      description: 'Angle valve, chrome',
+    };
+    const data = line({ description: 'Wall hung WC', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    expect(renderMergeFields('{{product.description}}', data, 'print', layer)).toBe('Angle valve, chrome');
+  });
+
   it('prints empty, never the token, on a row frozen before the field existed', () => {
     expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
   });

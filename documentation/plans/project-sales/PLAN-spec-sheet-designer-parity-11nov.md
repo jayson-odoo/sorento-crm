@@ -1,14 +1,15 @@
 # PLAN: spec sheet designer parity with the price tag designer
 
-Status: Slice A in build (small fix track: FE only, no migration, no auth/RBAC change). Slice B is a
-behaviour card waiting on the owner; no code for it until answered.
+Status: Slice A in review, hand test posted (small fix track: FE + one additive backend field, no
+migration, no auth/RBAC change). Slice B: owner answered 1 (a), 3 (a), 4 (a) via the standard
+export/download flow, mock approved; Q2 pending. Slice B build starts after slice A's hand test.
 
 Lane: SPEC-SHEET-DESIGNER-PARITY. Owner feedback 11 Nov 2026 (spec sheet SS1 Draft).
 
 ## Slice A (fixes)
 
-1. "Add accessory" options show the code once (code + name only when they differ), fixed in the
-   shared option label builder.
+1. "Add accessory" options show the code once (code + name only when they differ): the page's
+   `accessoryOptionsFor` (ReaderPage.tsx) now uses the shared `codeWithName` builder.
 2. Clipboard parity: Cmd/Ctrl+C / X / V / D and context-menu Paste work in the spec sheet designer
    as in the price tag designer (elements and OS-clipboard images).
 3. Resizable Pages and Inspector panels, same component/behaviour as the template designer.

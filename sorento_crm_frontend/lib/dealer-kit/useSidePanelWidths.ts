@@ -114,3 +114,24 @@ export function useSidePanelWidths() {
     },
   };
 }
+
+/**
+ * Whether the viewport is at least `px` wide (false until mounted). Reads `innerWidth` on each
+ * media-query change, the way `useIsMobile` does, so it also answers where `matchMedia` is a stub.
+ */
+export function useMinWidth(px: number): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => setWide(window.innerWidth >= px);
+    update();
+    const mql = window.matchMedia?.(`(min-width: ${px}px)`);
+    mql?.addEventListener?.('change', update);
+    window.addEventListener('resize', update);
+    return () => {
+      mql?.removeEventListener?.('change', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [px]);
+  return wide;
+}

@@ -151,10 +151,12 @@ function TwoPages({
   state,
   active,
   readOnly = false,
+  onHistory,
 }: {
   state: Record<string, TagLayer[]>;
   active: 'a' | 'b';
   readOnly?: boolean;
+  onHistory?: (page: 'a' | 'b', step: -1 | 1) => void;
 }) {
   const [selected, setSelected] = React.useState<{ page: string; id: string | null }>({
     page: active,
@@ -168,6 +170,7 @@ function TwoPages({
       controllerRef: { current: null },
       active: active === key,
       readOnly,
+      onHistory: (step) => onHistory?.(key, step),
     };
     return (
       <div data-testid={`page-${key}`}>
@@ -259,6 +262,33 @@ describe('embedded canvas (spec sheet page) clipboard', () => {
     fireEvent.keyDown(window, { key: 'd', ctrlKey: true });
     pasteEvent({ types: { 'text/plain': 'hello' } });
     expect(state.a ?? [shape('a1')]).toHaveLength(1);
+  });
+
+  it('Cmd+Z / Shift+Cmd+Z / Ctrl+Y go to the host undo, from the active page only', () => {
+    const state: Record<string, TagLayer[]> = {};
+    const onHistory = vi.fn();
+    render(<TwoPages state={state} active="b" onHistory={onHistory} />);
+    fireEvent.keyDown(window, { key: 'z', metaKey: true });
+    fireEvent.keyDown(window, { key: 'z', metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    expect(onHistory.mock.calls).toEqual([
+      ['b', -1],
+      ['b', 1],
+      ['b', 1],
+    ]);
+  });
+
+  it('Ctrl+A and Ctrl+G do nothing on a page (the host holds one selected layer)', () => {
+    const state: Record<string, TagLayer[]> = {};
+    render(<TwoPages state={state} active="a" />);
+    fireEvent.click(screen.getByTestId('layer-a1'));
+    const selectAll = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(selectAll);
+    });
+    expect(selectAll.defaultPrevented).toBe(false);
+    fireEvent.keyDown(window, { key: 'g', ctrlKey: true });
+    expect(state.a.some((l) => l.props.kind === 'group')).toBe(false);
   });
 
   it('Delete removes the selected layer on the active page', () => {

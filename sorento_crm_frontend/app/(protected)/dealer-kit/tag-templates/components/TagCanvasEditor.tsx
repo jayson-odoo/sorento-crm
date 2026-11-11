@@ -3777,6 +3777,8 @@ export function TagCanvasEditor({
         e.preventDefault();
         duplicateSelectedLayers();
       }
+      // Embedded: the host holds ONE selected layer, so select-all and group have nothing to act on.
+      if (isEmbedded && modifier && /^[aAgG]$/.test(e.key)) return;
       if ((e.key === 'g' || e.key === 'G') && modifier) {
         e.preventDefault();
         if (e.shiftKey) ungroupSelectedLayers();
