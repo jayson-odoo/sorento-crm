@@ -3,9 +3,10 @@
 Use this when a sales order line in a Stock Debt snapshot is short and a purchase order already
 has stock you want to give it: you link the PO to the line, and AutoCount records it.
 
-This only appears once an admin has switched on **AutoCount links from Stock Debt** (see
-[Switching it on](#switching-it-on)). Until then the drill works as before, with **Request CS
-to reserve** only.
+This only appears once an admin has switched on **Link PO lines in AutoCount (Stock Debt, Order
+Inquiries)** (see [Switching it on](#switching-it-on)). Until then the drill works as before, with
+**Request CS to reserve** only. The same feature, popup and switch are also on Order Inquiries:
+see [Link a PO in AutoCount from Order Inquiries](./order-inquiry-link-to-po.md).
 
 ## Where
 
@@ -51,15 +52,17 @@ The **Now** column of the drill then shows the PO covering the line, e.g. **PO 2
 
 ## Switching it on
 
-**[User Management → Settings](/user-management/settings)**, **AutoCount links from Stock Debt**.
+**[User Management → Settings](/user-management/settings)**, **Link PO lines in AutoCount (Stock
+Debt, Order Inquiries)**. One switch covers both screens.
 It is off on a new installation. While it is off, **Decide** shows no PO actions at all and the
 CRM refuses any link request. Switch it on only after the link has been tested end to end with
 AutoCount.
 
 ## Who can use it
 
-* The **Link PO lines from Stock Debt** permission (admins hold it). Without it, **Decide** shows
-  no PO actions.
+* The **Link PO lines in AutoCount (Stock Debt, Order Inquiries)** permission (admins hold it).
+  Without it, **Decide** shows no PO actions.
+* Every AutoCount write records who pressed it.
 
 ## What gets created
 
@@ -70,5 +73,6 @@ AutoCount.
 
 ## See also
 
+* [Link a PO in AutoCount from Order Inquiries](./order-inquiry-link-to-po.md)
 * [When a PO line got its S/O](./purchase-order-link-history.md)
 * [Order inquiry reserve email](./order-inquiry-reserve-email.md)

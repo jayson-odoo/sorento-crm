@@ -265,14 +265,19 @@ inquiry:
   inquiry when nothing is ticked.
 * **Choose document** - needs exactly one line ticked; opens the same dialog the worklist uses to
   pick a PO or SPO by hand.
-* **Link selected** - auto-links the ticked lines that still have something left to link.
-* **Unlink selected** - takes the link off the ticked lines. This is a deferred action: the button
+* **Recheck in AutoCount** (it used to be called **Link selected**) - re-runs the AutoCount step
+  on the ticked lines that still have something left to link.
+* **Remove link in CRM** (it used to be called **Unlink selected**) - takes the link off the
+  ticked lines in the CRM only. Nothing changes in AutoCount. This is a deferred action: the button
   turns into a countdown with **Cancel**, and the unlink only happens once the countdown runs out
   - there is no confirmation box. Cancelling leaves the ticked lines ticked; the selection only
   clears once the unlink actually commits. It never touches a reserve link - see [Reserve for
   purchasing](#reserve-for-purchasing-cs) above.
 * **Reject selected**, **Unconfirm**, **Export Excel** round out the menu, the same as on the
   worklist.
+
+The three AutoCount link items are described in [Link a PO in AutoCount from Order
+Inquiries](./order-inquiry-link-to-po.md).
 
 **Export Excel** queues a workbook of this order inquiry rather than downloading one straight
 away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and

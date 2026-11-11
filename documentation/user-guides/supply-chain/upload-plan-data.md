@@ -272,7 +272,7 @@ another sales order's row is already holding that document.
 AutoCount's linkage fills in a row's PO/SPO only where it still has need left. A row that is
 already linked for its whole quantity is left exactly as it is, even if the document it names is
 not the one AutoCount now states for that sales order line. To correct such a row, use
-**Unlink selected** (or **Unlink all...**) to take the link off; the next automatic pass links it
+**Remove link in CRM** (or **Unlink all...**) to take the link off; the next automatic pass links it
 to AutoCount's own document.
 
 ### Frequently asked
@@ -308,9 +308,12 @@ what the ticked rows can do; each item counts only the rows it applies to, for e
 * **Auto link all...** links every eligible row on the whole list, not only the ticked ones.
 * **Choose document (1)** needs exactly one ticked row; it opens **Link to a document** so you can
   pick the PO or SPO by hand.
-* **Link selected** auto-links the ticked rows that still have something left to link.
-* **Unlink selected** takes a link off the ticked rows, including a row that is already fully
-  linked.
+* **Recheck in AutoCount** (formerly **Link selected**) re-runs the AutoCount step on the ticked
+  rows that still have something left to link.
+* **Remove link in CRM** (formerly **Unlink selected**) takes a link off the ticked rows in the
+  CRM only, including a row that is already fully linked. Nothing changes in AutoCount.
+* **Link to PO...**, **Change PO...** and **Unlink from PO...** write the link in AutoCount - see
+  [Link a PO in AutoCount from Order Inquiries](./order-inquiry-link-to-po.md).
 * **Reject selected**, **Unconfirm**, **Unlink all...** and **Upload purchase orders** round out
   the menu. See "Unconfirming a row" below for what **Unconfirm** does.
 
@@ -324,7 +327,7 @@ page](order-inquiry-documents.md#fixing-a-link-without-leaving-the-page)), this 
 tied to one order inquiry, so there is no download history for it - only **My Downloads**. Needs
 the **Order Inquiries** view permission and a signed-in user.
 
-Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
+Use **Auto link all...**, **Choose document (1)**, **Recheck in AutoCount** and **Remove link in CRM** to
 review and fix a row's PO/SPO link before you confirm it - AutoCount's own linkage and the
 cascade already linked what they could when the row was raised, so most of what is left is a
 wrong pick to correct by hand. Once you have placed or linked the documents directly in
