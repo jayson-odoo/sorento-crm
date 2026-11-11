@@ -76,3 +76,5 @@ mutagen>=1.47
 # Converts the raw RTF AutoCount pushes for a sales order's internal_note into
 # plain text at ingest (app/utils/rtf.py). Pure Python.
 striprtf>=0.0.33
+# B5: the spec sheet PowerPoint export (app/services/spec_sheet_pptx.py).
+python-pptx==1.0.2

@@ -881,6 +881,59 @@ class GroupBindingDoc(_StrictProps):
     product_set_id: Optional[str] = None
 
 
+TABLE_MAX_LINES = 50
+TABLE_CELL_TEXT_MAX = 5000
+
+
+class TableBorderSideDoc(_StrictProps):
+    color: str = Field(max_length=40)
+    width_mm: float = Field(ge=0, le=20)
+
+
+class TableBorderDoc(_StrictProps):
+    top: Optional[TableBorderSideDoc] = None
+    right: Optional[TableBorderSideDoc] = None
+    bottom: Optional[TableBorderSideDoc] = None
+    left: Optional[TableBorderSideDoc] = None
+
+
+class TableCellDoc(_StrictProps):
+    text: str = Field(default="", max_length=TABLE_CELL_TEXT_MAX)
+    padding_mm: Optional[float] = Field(default=None, ge=0, le=50)
+    fill: Optional[str] = Field(default=None, max_length=40)
+    border: Optional[TableBorderDoc] = None
+    colSpan: Optional[int] = Field(default=None, ge=1, le=TABLE_MAX_LINES)
+    rowSpan: Optional[int] = Field(default=None, ge=1, le=TABLE_MAX_LINES)
+
+
+class TableColumnDoc(_StrictProps):
+    width_mm: float = Field(gt=0, le=2000)
+
+
+class TableRowDoc(_StrictProps):
+    height_mm: float = Field(ge=0, le=2000)
+
+
+class TableLayerPropsDoc(_StrictProps):
+    """B4: a grid of text cells. Bounded so a page edit cannot carry a huge table."""
+
+    kind: Literal["table"]
+    columns: list[TableColumnDoc] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    rows: list[TableRowDoc] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    cells: list[list[TableCellDoc]] = Field(min_length=1, max_length=TABLE_MAX_LINES)
+    fontFamily: Optional[str] = Field(default=None, max_length=100)
+    fontSize: Optional[float] = Field(default=None, gt=0, le=500)
+    color: Optional[str] = Field(default=None, max_length=40)
+    align: Optional[Literal["left", "center", "right"]] = None
+    verticalAlign: Optional[Literal["top", "middle", "bottom"]] = None
+
+    @model_validator(mode="after")
+    def _grid_matches(self) -> "TableLayerPropsDoc":
+        if len(self.cells) != len(self.rows) or any(len(r) != len(self.columns) for r in self.cells):
+            raise ValueError("table cells must be rows x columns")
+        return self
+
+
 class GroupLayerPropsDoc(_StrictProps):
     kind: Literal["group"]
     children: list[str]
@@ -897,6 +950,7 @@ TagLayerPropsDoc = Annotated[
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
         FeatureIconsLayerPropsDoc,
+        TableLayerPropsDoc,
     ],
     Field(discriminator="kind"),
 ]
@@ -908,7 +962,7 @@ class TagLayerDoc(BaseModel):
     id: str
     type: Literal[
         "image", "text", "shape", "product_slot", "price_badge",
-        "badge", "group", "feature_icons",
+        "badge", "group", "feature_icons", "table",
     ]
     x_mm: float
     y_mm: float
@@ -978,6 +1032,17 @@ class TagTemplateCreate(BaseModel):
     #: Hand-picked LP / SP / LP & SP; None = unset (offered on both kinds of line).
     price_type: Optional[Literal["list", "selling", "both"]] = None
 
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
+
 
 #: A template setting that is trimmed and must not be blank (item 4).
 _SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -992,6 +1057,17 @@ class TagTemplateUpdate(BaseModel):
     print_size: Optional[dict] = None
     #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
     price_type: Optional[Literal["list", "selling", "both"]] = None
+
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
 
 
 class TemplateNeeds(BaseModel):
@@ -1081,6 +1157,17 @@ class TagTemplateFromTagCreate(BaseModel):
     doc: dict = Field(default_factory=dict)
     print_size: dict = Field(default_factory=dict)
 
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: a table layer is bounded and uses plain colours, wherever a template doc is saved."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        problem = doc_table_problem(doc)
+        if problem:
+            raise ValueError(problem)
+        return doc
+
 
 # ---------------------------------------------------------------------------
 # Tag size presets (S4, PLAN D2)
@@ -1136,6 +1223,22 @@ class TagSheetDocPayload(BaseModel):
     """Payload for saving a tag sheet design version."""
     doc: dict
     commit_message: Optional[str] = None
+
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: the request designer is the same canvas, so its saved tags get the same table check
+        as a template doc (bounded grid, plain colours). Layers sit at ``sheets[].tags[].layers``."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        sheets = doc.get("sheets") if isinstance(doc, dict) else None
+        for sheet in sheets if isinstance(sheets, list) else []:
+            tags = sheet.get("tags") if isinstance(sheet, dict) else None
+            for tag in tags if isinstance(tags, list) else []:
+                problem = doc_table_problem(tag) if isinstance(tag, dict) else None
+                if problem:
+                    raise ValueError(problem)
+        return doc
 
 
 class TagFont(BaseModel):
@@ -1488,6 +1591,11 @@ class TagAccessory(BaseModel):
     sell_price: Optional[float] = None
     spec_lines: Optional[list[str]] = None
     price_tag_description: Optional[str] = None
+    #: SPEC-SHEET-DESIGNER-PARITY B2, a catalogue product only: the card fields of the same names.
+    brand: Optional[str] = None
+    description: Optional[str] = None
+    spec_sheet_description: Optional[str] = None
+    dimensions: Optional[str] = None
 
 
 class TagComboOption(BaseModel):
@@ -1566,6 +1674,10 @@ class ProductTagData(BaseModel):
     # spec_lines/description. Declared here or `response_model` drops it
     # without a word - see `ResolvedLineData.data_changes`'s own note.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
@@ -1706,6 +1818,10 @@ class TagPartData(BaseModel):
     #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
     #: subjectPart layer reads THIS, never the host's.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
     accessories: list[TagAccessory] = []
     accessory_box_style: Optional[TagAccessoryBoxStyle] = None
@@ -1792,6 +1908,10 @@ class ResolvedLineData(BaseModel):
     # below - measured, `test_dealer_kit_tag_data_routes.py::
     # test_resolve_prices_carries_price_tag_description_on_the_line_and_its_parts`.
     price_tag_description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY: `products.description`, read by {{product.description}}.
+    description: Optional[str] = None
+    # SPEC-SHEET-DESIGNER-PARITY B1: `products.spec_sheet_description`, else `description`.
+    spec_sheet_description: Optional[str] = None
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did

@@ -212,6 +212,7 @@ type FakeProps = {
     onSelect: (id: string | null) => void;
     layers?: Record<string, unknown>[];
     readOnly?: boolean;
+    active?: boolean;
     onEditField?: (layerId: string) => void;
     controllerRef: { current: unknown };
   };
@@ -267,7 +268,9 @@ vi.mock(
         <div
           data-testid={`live-canvas-${key}`}
           data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
+          data-active={props.embedded.active ? 'yes' : 'no'}
           data-layers={layers.map((l) => l.id).join(',')}
+          data-logo-x={JSON.stringify(layers.find((l) => l.id === 'logo')?.x_mm ?? null)}
         >
           <button type="button" onClick={() => props.embedded.onSelect('logo')}>
             {`select ${key}`}
@@ -289,6 +292,18 @@ vi.mock(
             onClick={() => props.embedded.onEditField?.('area')}
           >
             {`double-click area ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc')}
+          >
+            {`double-click description ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc0')}
+          >
+            {`double-click accessory description ${key}`}
           </button>
         </div>
       );
@@ -329,6 +344,21 @@ const AREA = {
   props: { ...LOGO.props, text: 'AREA : {{line.area}}' },
 };
 
+// B1: a text layer printing the spec sheet description, for the main item and for accessory 1.
+const DESC = {
+  ...LOGO,
+  id: 'desc',
+  y_mm: 60,
+  z_index: 3,
+  props: { ...LOGO.props, text: '{{product.spec_sheet_description}}' },
+};
+const DESC0 = {
+  ...DESC,
+  id: 'desc0',
+  y_mm: 80,
+  props: { ...DESC.props, subjectPart: 0 },
+};
+
 function detail() {
   return {
     id: 'sheet-1',
@@ -357,7 +387,23 @@ function detail() {
       marker: '',
       hidden: false,
       picked: [],
-      accessories: [],
+      accessories:
+        key === 'k2'
+          ? [
+              {
+                key: null,
+                source: 'set',
+                product_id: 'acc-1',
+                code: 'AV-1',
+                name: 'Angle valve',
+                brand: '',
+                spec_sheet_description: 'Valve default',
+              },
+            ]
+          : [],
+      description: key === 'k3' ? 'Typed before' : '',
+      accessory_descriptions: {},
+      spec_sheet_description_default: `Default of ${key}`,
       edited: false,
       template: key === 'cover' ? 'cover' : 'page',
     })),
@@ -389,7 +435,7 @@ function previewFor(keys: string[]) {
             y_mm: 0,
             width_mm: 338.7,
             height_mm: 190.5,
-            layers: [LOGO, AREA],
+            layers: [LOGO, AREA, DESC, DESC0],
           },
         ],
       })),
@@ -488,6 +534,101 @@ describe('selection and the inspector', () => {
       'data-page-key',
       'k5',
     );
+  });
+});
+
+describe('which page a paste or shortcut acts on (crew pass on #2331)', () => {
+  const activeOf = (key: string) =>
+    screen.getByTestId(`live-canvas-${key}`).getAttribute('data-active');
+
+  it('the page the user last pressed on, not the one scrolled into view or holding an old selection', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k5')).getByText('select k5'));
+    await screen.findByTestId('inspector');
+    expect(activeOf('k5')).toBe('yes');
+
+    // An empty spot on another page: that page is now the target, and k5's selection goes.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k6'));
+    await waitFor(() => expect(activeOf('k6')).toBe('yes'));
+    expect(activeOf('k5')).toBe('no');
+    expect(activeOf('k4')).toBe('no');
+    expect(screen.queryByTestId('inspector')).toBeNull();
+  });
+
+  it('a pressed page that shows a still picture becomes a live canvas and the target', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6', 'k7', 'k8']);
+    await screen.findByTestId('live-canvas-k6');
+    expect(screen.queryByTestId('live-canvas-k8')).toBeNull();
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k8'));
+    await screen.findByTestId('live-canvas-k8');
+    expect(activeOf('k8')).toBe('yes');
+  });
+
+  it('Undo follows the pressed page, not the page edited last somewhere else', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k5')).getByText('nudge k5'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).not.toBeDisabled(),
+    );
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k6'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled(),
+    );
+  });
+
+  it('a page that leaves the live canvases and comes back keeps its latest layers, and the next save carries both edits (crew pass: data loss)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2', 'k3', 'k4']);
+    await screen.findByTestId('live-canvas-k3');
+    const logoX = () =>
+      (JSON.parse(screen.getByTestId('live-canvas-k3').getAttribute('data-logo-x') ?? 'null') as number);
+
+    // Move a box on page 3.
+    fireEvent.click(within(screen.getByTestId('live-canvas-k3')).getByText('nudge k3'));
+    await waitFor(() => expect(logoX()).toBe(6));
+
+    // Page 4 takes a live slot: page 3 goes back to a picture.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k4'));
+    await waitFor(() => expect(screen.queryByTestId('live-canvas-k3')).toBeNull());
+
+    // Back to page 3: it shows the moved box, not the old one.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k3'));
+    await screen.findByTestId('live-canvas-k3');
+    expect(logoX()).toBe(6);
+
+    // Another edit there, then the save: both moves are in it.
+    fireEvent.click(within(screen.getByTestId('live-canvas-k3')).getByText('nudge k3'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalled());
+    const last = saveSpecSheetPageEdit.mock.calls.at(-1)!;
+    expect(last[3]).toBe('k3');
+    expect((last[4] as { id: string; x_mm: number }[]).find((l) => l.id === 'logo')?.x_mm).toBe(7);
+  });
+
+  it('a right-click makes its page the target too', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k4');
+
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k4'), { button: 2 });
+    await waitFor(() => expect(activeOf('k4')).toBe('yes'));
+    expect(activeOf('k5')).toBe('no');
   });
 });
 
@@ -798,6 +939,78 @@ describe('AREA, COMMENT and marker on a live page', () => {
     fireEvent.change(box, { target: { value: 'lobby' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+  });
+});
+
+describe('the spec sheet description override on a live page (B1)', () => {
+  async function openLive(key: string) {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report([key]);
+    await screen.findByTestId(`live-canvas-${key}`);
+    return screen.getByTestId(`live-canvas-${key}`);
+  }
+  const lastRows = () =>
+    (updateSpecSheet.mock.calls.at(-1)![3] as { rows: Record<string, unknown>[] })
+      .rows;
+
+  it('a double-click opens a multi-line box with the product text; Enter adds a line, Ctrl+Enter saves the override', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box.value).toBe('Default of k1');
+
+    fireEvent.change(box, { target: { value: 'Line one\nLine two' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k1')).toMatchObject({
+      description: 'Line one\nLine two',
+    });
+  });
+
+  it('Escape cancels without saving', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = await screen.findByRole('textbox', { name: 'Spec sheet description' });
+    fireEvent.change(box, { target: { value: 'Never saved' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Spec sheet description' })).toBeNull();
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+  });
+
+  it('shows the stored override, and "Reset to product text" clears it', async () => {
+    const canvas = await openLive('k3');
+    fireEvent.click(within(canvas).getByText('double-click description k3'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Typed before');
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Reset to product text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to product text' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k3')).toMatchObject({ description: '' });
+  });
+
+  it('a layer pointed at an accessory edits that accessory by product id', async () => {
+    const canvas = await openLive('k2');
+    fireEvent.click(
+      within(canvas).getByText('double-click accessory description k2'),
+    );
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Valve default');
+    fireEvent.change(box, { target: { value: 'Valve typed' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    const row = lastRows().find((r) => r.key === 'k2')!;
+    expect(row).toMatchObject({ accessory_descriptions: { 'acc-1': 'Valve typed' } });
+    expect(row.description).toBe('');
   });
 });
 
@@ -1273,7 +1486,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     await screen.findByTestId('spec-page-k29');
     report(['k1']);
     const before = await screen.findByTestId('live-canvas-k1');
-    expect(before).toHaveAttribute('data-layers', 'logo,area');
+    expect(before).toHaveAttribute('data-layers', 'logo,area,desc,desc0');
 
     // The server now draws every unedited page from the other template.
     const switched = {
@@ -1333,7 +1546,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['cover', 'k1']);
     expect(await screen.findByTestId('live-canvas-k1')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     await screen.findByTestId('live-canvas-cover');
 
@@ -1390,7 +1603,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
 
     await switchTo('Page');
     await waitFor(() =>
-      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area'),
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area,desc,desc0'),
     );
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1300));
@@ -1420,7 +1633,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['k13']);
     expect(await screen.findByTestId('live-canvas-k13')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');

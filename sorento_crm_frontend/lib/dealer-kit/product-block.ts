@@ -51,6 +51,8 @@ import { drawableFeatureIcons } from './accessory-card';
 import { priceWithUpgrade } from './upgrade-items';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
+import { resolveTableText } from './table-layout';
+import type { TableLayerProps } from './tag-template-types';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
 import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
 import { comboPartsHtml } from './combo-parts';
@@ -208,6 +210,8 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     barcode: line.barcode,
     currency: line.currency,
     price_tag_description: line.price_tag_description,
+    description: line.description ?? null,
+    spec_sheet_description: line.spec_sheet_description ?? null,
     brand: line.brand,
     drawing: line.drawing ?? null,
   };
@@ -231,6 +235,8 @@ function productFromPart(part: TagPartData): ProductTagData {
     barcode: part.barcode ?? null,
     currency: part.currency,
     price_tag_description: part.price_tag_description,
+    description: part.description ?? null,
+    spec_sheet_description: part.spec_sheet_description ?? null,
     brand: part.brand,
     drawing: part.drawing ?? null,
   };
@@ -1350,6 +1356,8 @@ export interface TagLayerDisplay {
   icons?: { id: string; url: string }[];
   /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
   accessories?: TagAccessory[];
+  /** B4: a table layer with its cell text resolved against the bound data. */
+  table?: TableLayerProps;
   /** PRICETAG-ACCESSORY-DESIGNER: the box's card is being edited; the cards after the first fade. */
   accessoryEditing?: boolean;
   /** PRICETAG-UPGRADE-VARIANTS S1: the rules a card's feature_icons element may draw (those with a
@@ -1393,6 +1401,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Feature icons';
     case 'accessories':
       return 'Accessories';
+    case 'table':
+      return 'Table';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -1446,6 +1456,9 @@ export function layerDisplay(
 
     case 'price_badge':
       return { price: priceBadgeInput(data, layer) };
+
+    case 'table':
+      return { table: resolveTableText(layer.props, (text) => renderMergeFields(text, data, 'editor', layer)) };
 
     case 'badge':
       return { imageUrl: assetUrls[layer.props.assetId] ?? null };

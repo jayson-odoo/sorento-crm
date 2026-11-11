@@ -605,7 +605,7 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     expect(screen.getByTestId('spec-sheet-page-of')).toBeInTheDocument();
   });
 
-  it('uses the system header: BackToList, then the gear before the primary Export PDF', async () => {
+  it('uses the system header: BackToList, then the gear before the primary Export', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
 
@@ -615,7 +615,7 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
       '/project-sales/p1/quotation-documents/d1/spec-sheet',
     );
     const gear = screen.getByRole('button', { name: 'Spec sheet actions' });
-    const exportPdf = screen.getByRole('button', { name: /export pdf/i });
+    const exportPdf = screen.getByRole('button', { name: /^export$/i });
     // The gear (and the pager) stand LEFT of the one primary button, never to its right.
     expect(
       gear.compareDocumentPosition(exportPdf) &

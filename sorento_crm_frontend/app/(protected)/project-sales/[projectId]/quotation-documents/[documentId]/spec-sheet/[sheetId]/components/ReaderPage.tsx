@@ -7,6 +7,7 @@ import { EyeOff, RotateCcw, Undo2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -21,6 +22,7 @@ import { normalizeLayers } from '@/lib/dealer-kit/tag-template-types';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { cn } from '@/lib/utils';
+import { codeWithName } from '@/lib/product-display';
 
 import {
   specSheetDetailKey,
@@ -32,17 +34,48 @@ import type { SpecSheetPage } from '../../../../../../_shared/services/specSheet
 export const COVER = 'cover';
 
 /** Which page field a text layer prints, if it is one a page may type over. */
-type EditableField = 'area' | 'comment' | 'marker';
+type EditableField = 'area' | 'comment' | 'marker' | 'description';
 const FIELD_TOKENS: Record<EditableField, RegExp> = {
   area: /\{\{\s*line\.area\s*\}\}/,
   comment: /\{\{\s*line\.comment\s*\}\}/,
   marker: /\{\{\s*line\.marker\s*\}\}/,
+  description: /\{\{\s*product\.spec_sheet_description\s*\}\}/,
 };
 const FIELD_LABELS: Record<EditableField, string> = {
   area: 'Area',
   comment: 'Comment',
   marker: 'Marker',
+  description: 'Spec sheet description',
 };
+
+/** Longest per-sheet description override the server keeps. */
+const DESCRIPTION_MAX = 20000;
+
+/** What a description layer edits: the page's own item, or the accessory it points at. */
+type DescriptionTarget =
+  | { kind: 'main'; current: string }
+  | { kind: 'accessory'; productId: string; current: string };
+
+function descriptionTarget(layer: TagLayer, page: SpecSheetPage): DescriptionTarget | null {
+  if (layer.props.kind !== 'text') return null;
+  const part = layer.props.subjectPart;
+  if (part === undefined || part === null) {
+    return {
+      kind: 'main',
+      current: page.description || page.spec_sheet_description_default || '',
+    };
+  }
+  const accessory = page.accessories[part];
+  if (!accessory?.product_id) return null;
+  return {
+    kind: 'accessory',
+    productId: accessory.product_id,
+    current:
+      page.accessory_descriptions?.[accessory.product_id] ||
+      accessory.spec_sheet_description ||
+      '',
+  };
+}
 
 function editableField(layer: TagLayer): EditableField | null {
   if (layer.props.kind !== 'text') return null;
@@ -52,6 +85,36 @@ function editableField(layer: TagLayer): EditableField | null {
       FIELD_TOKENS[f].test(text),
     ) ?? null
   );
+}
+
+/**
+ * The page's "Add accessory" choices: another page's item with no picks of its own, or one this
+ * page already picked. A catalogue product's name is often its code, so the label is the code
+ * once, with the name only when it says something more (`codeWithName`, the shared builder).
+ */
+export function accessoryOptionsFor(
+  page: Pick<SpecSheetPage, 'key' | 'accessories'>,
+  pages: ReadonlyArray<Pick<SpecSheetPage, 'key' | 'code' | 'name' | 'picked'>>,
+): SearchableSelectOption[] {
+  return [
+    ...pages
+      .filter(
+        (other) =>
+          other.key !== COVER &&
+          other.key !== page.key &&
+          other.picked.length === 0,
+      )
+      .map((other) => ({
+        value: other.key,
+        label: codeWithName(other.code, other.name, ' ').trim(),
+      })),
+    ...page.accessories
+      .filter((a) => a.source === 'picked' && a.key)
+      .map((a) => ({
+        value: a.key as string,
+        label: codeWithName(a.code, a.name, ' ').trim(),
+      })),
+  ];
 }
 
 export function ResetPageButton({
@@ -146,6 +209,8 @@ export interface ReaderPageProps {
   externalLayers: TagLayer[] | undefined;
   /** Whether this is the page being read: its actions show without hovering. */
   current: boolean;
+  /** The page the keyboard and clipboard act on (copy, cut, paste, duplicate, undo). */
+  active: boolean;
   /** Medium urls for the page being worked on (the strip keeps thumbnails). */
   sharp: {
     images: Record<string, string>;
@@ -160,6 +225,11 @@ export interface ReaderPageProps {
   onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
   onSelectLayer: (key: string, layerId: string | null) => void;
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
+  /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
+  onHistory: (key: string, step: -1 | 1) => void;
+  /** Any press on this page (left or right button, empty spot included): it becomes the page a
+   *  paste or shortcut acts on. Stable, like `onPatch`. */
+  onPressPage: (key: string) => void;
   controllerRefFor: (
     key: string,
   ) => React.MutableRefObject<EmbeddedController | null>;
@@ -216,6 +286,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   draftLayers,
   externalLayers,
   current,
+  active,
   sharp,
   canEdit,
   pages,
@@ -224,11 +295,14 @@ export const ReaderPage = React.memo(function ReaderPage({
   onPatch,
   onSelectLayer,
   onLayersReport,
+  onHistory,
+  onPressPage,
   controllerRefFor,
 }: ReaderPageProps) {
   const isCover = page.key === COVER;
   const [editing, setEditing] = React.useState<EditableField | null>(null);
   const [draft, setDraft] = React.useState('');
+  const [editingLayerId, setEditingLayerId] = React.useState<string | null>(null);
   const [hover, setHover] = React.useState(false);
   // Escape unmounts the input, which can fire its blur: the flag stops that blur from saving.
   const cancelled = React.useRef(false);
@@ -253,7 +327,9 @@ export const ReaderPage = React.memo(function ReaderPage({
           .map((layer) => ({ layer, field: editableField(layer) }))
           .filter(
             (s): s is { layer: TagLayer; field: EditableField } =>
-              s.field !== null,
+              s.field !== null &&
+              (s.field !== 'description' ||
+                descriptionTarget(s.layer, page) !== null),
           )
       : [];
   const px = (mm: number) => mm * PX_PER_MM * scale;
@@ -269,9 +345,13 @@ export const ReaderPage = React.memo(function ReaderPage({
             height_mm: pageMm.height_mm,
           }
         : null,
-    // The document is a starting point: only a new payload arriving or a restart replaces it.
+    // The document is a starting point: only a new payload arriving, a restart, or the page
+    // becoming a live canvas again replaces it. Only 3 pages are live at once; a page that went
+    // back to a picture and returns must start from its LATEST layers (the host's draft), not
+    // the ones it first mounted with, or its next edit would be saved over the newer ones
+    // (crew pass on #2331: data loss).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm],
+    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm, live],
   );
   const bound = React.useMemo<TagBindingData | null>(() => {
     const row = payload?.resolvedData?.[page.key] as unknown as
@@ -296,12 +376,17 @@ export const ReaderPage = React.memo(function ReaderPage({
       layers: externalLayers,
       controllerRef,
       readOnly: !canEdit,
+      active,
+      onHistory: (step: -1 | 1) => onHistory(page.key, step),
       // A double-click on AREA / COMMENT / marker opens its box; a single click selects it.
       onEditField: (layerId: string) => {
         const layer = layersRef.current?.find((l) => l.id === layerId);
         const field = layer ? editableField(layer) : null;
-        if (!field || isCover) return false;
-        startRef.current(field);
+        if (!field || !layer || isCover) return false;
+        if (field === 'description' && !descriptionTarget(layer, pageRef.current)) {
+          return false;
+        }
+        startRef.current(field, layerId);
         return true;
       },
     }),
@@ -313,6 +398,8 @@ export const ReaderPage = React.memo(function ReaderPage({
       externalLayers,
       controllerRef,
       canEdit,
+      active,
+      onHistory,
       isCover,
     ],
   );
@@ -323,42 +410,53 @@ export const ReaderPage = React.memo(function ReaderPage({
     [liveDoc, onLayersReport, page.key],
   );
 
-  const start = (field: EditableField) => {
+  const pageRef = React.useRef(page);
+  pageRef.current = page;
+  const start = (field: EditableField, layerId: string) => {
     cancelled.current = false;
-    setDraft(page[field]);
+    if (field === 'description') {
+      const layer = layersRef.current?.find((l) => l.id === layerId);
+      const target = layer ? descriptionTarget(layer, page) : null;
+      if (!target) return;
+      setDraft(target.current);
+      setEditingLayerId(layerId);
+    } else {
+      setDraft(page[field]);
+    }
     setEditing(field);
   };
   const startRef = React.useRef(start);
   startRef.current = start;
+  const patchDescription = (value: string) => {
+    const layer = layersRef.current?.find((l) => l.id === editingLayerId);
+    const target = layer ? descriptionTarget(layer, page) : null;
+    if (!target || value === target.current) return;
+    if (target.kind === 'main') {
+      onPatch(page.key, { description: value });
+      return;
+    }
+    const next = { ...(page.accessory_descriptions ?? {}) };
+    if (value) next[target.productId] = value;
+    else delete next[target.productId];
+    onPatch(page.key, { accessory_descriptions: next });
+  };
+  const resetDescription = () => {
+    cancelled.current = true;
+    patchDescription('');
+    setEditing(null);
+  };
   const finish = () => {
     if (cancelled.current) return;
-    if (editing && draft !== page[editing]) {
+    if (editing === 'description') {
+      patchDescription(draft.trim());
+    } else if (editing && draft !== page[editing]) {
       const value = editing === 'area' ? draft.trim().toUpperCase() : draft;
       onPatch(page.key, { [editing]: value } as Partial<SpecSheetPage>);
     }
     setEditing(null);
   };
 
-  // Another page's item with no picks of its own, or one this page already picked.
-  const accessoryOptions: SearchableSelectOption[] = [
-    ...pages
-      .filter(
-        (other) =>
-          other.key !== COVER &&
-          other.key !== page.key &&
-          other.picked.length === 0,
-      )
-      .map((other) => ({
-        value: other.key,
-        label: `${other.code} ${other.name}`.trim(),
-      })),
-    ...page.accessories
-      .filter((a) => a.source === 'picked' && a.key)
-      .map((a) => ({
-        value: a.key as string,
-        label: `${a.code} ${a.name}`.trim(),
-      })),
-  ];
+  const accessoryOptions = accessoryOptionsFor(page, pages);
 
   const title = isCover ? 'Cover' : page.code || page.name;
   const showActions = canEdit && (current || hover);
@@ -444,6 +542,8 @@ export const ReaderPage = React.memo(function ReaderPage({
         // The observed box: one fixed-size placeholder per page.
         data-testid={`spec-page-${page.key}`}
         data-page-key={page.key}
+        // Capture: before the canvas handles the press, so the paste / shortcut target is set first.
+        onPointerDownCapture={() => onPressPage(page.key)}
         className={`relative overflow-hidden rounded-sm border bg-white shadow-sm ${
           current ? 'border-primary' : 'border-border'
         }`}
@@ -497,7 +597,51 @@ export const ReaderPage = React.memo(function ReaderPage({
                 width: px(layer.width_mm),
                 height: Math.max(px(layer.height_mm), 20),
               };
-              return editing === field ? (
+              if (field === 'description' && editing === field && editingLayerId === layer.id) {
+                return (
+                  <div
+                    key={layer.id}
+                    style={{ ...style, height: undefined, minHeight: style.height }}
+                    className="z-10 flex flex-col gap-1"
+                  >
+                    <Textarea
+                      autoFocus
+                      aria-label={FIELD_LABELS.description}
+                      value={draft}
+                      maxLength={DESCRIPTION_MAX}
+                      rows={4}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onBlur={finish}
+                      onKeyDown={(e) => {
+                        // Enter adds a line; Cmd/Ctrl+Enter saves.
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          finish();
+                        }
+                        if (e.key === 'Escape') {
+                          // Handled here: full screen must not also take this Escape as "exit".
+                          e.preventDefault();
+                          cancelled.current = true;
+                          setEditing(null);
+                        }
+                      }}
+                      className="min-h-16 rounded-sm bg-background px-1 py-0.5 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="self-start"
+                      // Keep the box focused: a blur would save the draft before the reset runs.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={resetDescription}
+                    >
+                      Reset to product text
+                    </Button>
+                  </div>
+                );
+              }
+              return editing === field && field !== 'description' ? (
                 <Input
                   key={layer.id}
                   autoFocus
@@ -526,7 +670,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                   type="button"
                   aria-label={`Edit ${FIELD_LABELS[field]}`}
                   title={`Edit ${FIELD_LABELS[field]}`}
-                  onClick={() => start(field)}
+                  onClick={() => start(field, layer.id)}
                   style={style}
                   className={cn(
                     'rounded-sm outline-dashed outline-1 outline-transparent hover:bg-primary/5 hover:outline-primary focus-visible:outline-primary',

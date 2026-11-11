@@ -23,7 +23,8 @@ export type TagLayerType =
   | 'barcode'
   | 'group'
   | 'feature_icons'
-  | 'accessories';
+  | 'accessories'
+  | 'table';
 
 /** Named slots that bind a layer to a product data field at render time. */
 export type SlotBinding =
@@ -469,7 +470,12 @@ export type CardField =
   | 'colours'
   // PRICETAG-UPGRADE-VARIANTS S1: an upgrade's top-up, and the tag SP plus it.
   | 'topup'
-  | 'price_with_upgrade';
+  | 'price_with_upgrade'
+  // SPEC-SHEET-DESIGNER-PARITY B2: a catalogue product's own fields on a spec sheet page.
+  | 'brand'
+  | 'description'
+  | 'spec_sheet_description'
+  | 'dimensions';
 
 export interface CardElement {
   id: string;
@@ -538,6 +544,39 @@ export interface GroupLayerProps {
   binding?: GroupBinding;
 }
 
+// ---------------------------------------------------------------------------
+// Table (SPEC-SHEET-DESIGNER-PARITY B4)
+// ---------------------------------------------------------------------------
+
+export interface TableBorderSide {
+  color: string;
+  width_mm: number;
+}
+
+export interface TableCell {
+  /** Plain text with `{{variables}}`. */
+  text: string;
+  padding_mm?: number;
+  fill?: string;
+  border?: Partial<Record<'top' | 'right' | 'bottom' | 'left', TableBorderSide>>;
+  /** Merge: set on the top-left (anchor) cell only; the cells it covers are skipped. */
+  colSpan?: number;
+  rowSpan?: number;
+}
+
+export interface TableLayerProps {
+  kind: 'table';
+  columns: { width_mm: number }[];
+  /** The row height is a minimum: a row grows to fit its text. */
+  rows: { height_mm: number }[];
+  cells: TableCell[][];
+  fontFamily?: string;
+  fontSize?: number;
+  color?: string;
+  align?: 'left' | 'center' | 'right';
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+}
+
 export type TagLayerProps =
   | ImageLayerProps
   | TextLayerProps
@@ -548,7 +587,8 @@ export type TagLayerProps =
   | BarcodeLayerProps
   | GroupLayerProps
   | FeatureIconsLayerProps
-  | AccessoriesLayerProps;
+  | AccessoriesLayerProps
+  | TableLayerProps;
 
 // ---------------------------------------------------------------------------
 // Layer
@@ -842,6 +882,11 @@ export interface ProductTagData {
   /** Staff-authored tag copy (r10 S4). Absent/null renders nothing - no
    *  fallback to `spec_lines` or a description. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** `products.currency` (AC-A5). Optional so an older pinned/cached row
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
@@ -958,6 +1003,11 @@ export interface TagAccessory {
   sell_price?: number | null;
   spec_lines?: string[];
   price_tag_description?: string | null;
+  /** SPEC-SHEET-DESIGNER-PARITY B2, a catalogue product on a spec sheet page. */
+  brand?: string | null;
+  description?: string | null;
+  spec_sheet_description?: string | null;
+  dimensions?: string | null;
   /** An upgrade's top-up, and the tag's SP plus it (null when either is missing). */
   topup_amount?: number | null;
   price_with_upgrade?: number | null;
@@ -1032,6 +1082,11 @@ export interface TagPartData {
   chosen?: boolean;
   /** This part's OWN product's tag copy (r10 S4), not the host's. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
   brand?: string;
   drawing?: TagImage | null;
@@ -1052,6 +1107,12 @@ export interface SpecSheetDocFields {
   prepared_by: string;
   prepared_by_phone: string;
   date: string;
+  /** B3: older payloads lack these; they read as empty. */
+  subject_title?: string;
+  attn?: string;
+  recipient?: string;
+  project_code?: string;
+  page_count?: number | string;
 }
 
 /**
@@ -1114,6 +1175,11 @@ export interface LineTagData {
   /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
    *  description of its own, same rule as barcode above. */
   price_tag_description?: string | null;
+  /** `products.description`, the plain catalogue description ({{product.description}}).
+   *  Optional: a row frozen before it existed reads as empty. */
+  description?: string | null;
+  /** `products.spec_sheet_description`, else `description` ({{product.spec_sheet_description}}). */
+  spec_sheet_description?: string | null;
   /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
   combo?: TagCombo | null;
   /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
@@ -1126,6 +1192,13 @@ export interface LineTagData {
   area?: string;
   comment?: string;
   marker?: string;
+  /** B3: the quoted line's own text fields and this page's printed number (spec sheet rows only). */
+  line_description?: string;
+  uom?: string;
+  technical_spec?: string;
+  notes?: string;
+  item_label?: string;
+  page_no?: number | string | null;
   doc?: SpecSheetDocFields;
   /** A layer pointed at a part this line does not have reads as an empty product rather
    *  than falling back to the parent (which would print the main item twice). */
@@ -1299,7 +1372,7 @@ export function normalizeLayer(layer: TagLayer, index: number): TagLayer {
     visible: layer.visible !== false,
     locked: layer.locked === true,
     rotation_deg: rotation,
-    z_index: layer.z_index ?? index,
+    z_index: typeof layer.z_index === 'number' && Number.isFinite(layer.z_index) ? layer.z_index : index,
     slot_binding: layer.slot_binding ?? null,
     text_override: layer.text_override ?? null,
   };
