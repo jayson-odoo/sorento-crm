@@ -113,6 +113,9 @@ export interface SubmissionClient extends SubmissionApi {
   embedded?: boolean;
   /** Tabs a saved form shows after its own (a CRM complaint's fulfilment DOs). Absent: none. */
   extraTabs?: SubmissionExtraTab[];
+  /** `false`: the form offers no AI Extract (staff writing a project's sponsorship form, which
+   *  has no staff extract route). Absent: offered, as on the portal. */
+  aiExtract?: false;
   /** The services of the kinds with pages of their own. Absent: the portal's own modules. */
   sampleRequest?: SampleRequestService;
   newProductApplication?: NewProductApplicationService;
@@ -146,7 +149,7 @@ export function useSubmissionClient(): SubmissionClient {
 }
 
 /** An optional member, read with `in`: a mocked portal-client throws on a missing key. */
-function extra<K extends 'paths' | 'deletes' | 'embedded' | 'extraTabs' | KindServiceKey>(
+function extra<K extends 'paths' | 'deletes' | 'embedded' | 'extraTabs' | 'aiExtract' | KindServiceKey>(
   client: SubmissionClient,
   key: K,
 ): SubmissionClient[K] | undefined {
@@ -163,6 +166,10 @@ export function clientDeletes(client: SubmissionClient): SubmissionClient['delet
 
 export function clientEmbedded(client: SubmissionClient): boolean {
   return extra(client, 'embedded') === true;
+}
+
+export function clientAiExtract(client: SubmissionClient): boolean {
+  return extra(client, 'aiExtract') !== false;
 }
 
 export function clientExtraTabs(client: SubmissionClient): SubmissionExtraTab[] {

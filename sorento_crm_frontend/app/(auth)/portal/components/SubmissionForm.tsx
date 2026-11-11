@@ -79,6 +79,7 @@ import {
 } from '../lib/portal-client';
 import {
   clientDeletes,
+  clientAiExtract,
   clientEmbedded,
   clientExtraTabs,
   clientPaths,
@@ -528,6 +529,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   const paths = clientPaths(client);
   const deferredDeletes = clientDeletes(client);
   const embedded = clientEmbedded(client);
+  const aiExtractOffered = clientAiExtract(client);
   const homeHref = paths ? paths.home(kind) : portalHomePath({ type: kind });
   const detailHref = (id: string) =>
     paths ? paths.detail(kind, id) : portalDetailPath(kind, id, slug);
@@ -2415,7 +2417,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
         {/* flex-wrap: on a 375 px phone the Create button below takes its own row instead of
             pushing the "< 3/12 >" pager off-screen (crew 375 px pass, 8 Nov). */}
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-          {editing && (
+          {editing && aiExtractOffered && (
             <Button
               type="button"
               variant="outline"

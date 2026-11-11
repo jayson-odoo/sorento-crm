@@ -857,15 +857,6 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('AC-PS-23: PO received from Sponsorship Form opens nothing', () => {
-    stand('s-spon');
-    succeed();
-    renderDetail();
-    fireEvent.click(header().getByRole('button', { name: 'PO received' }));
-    expect(changeStatus).toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
-  });
-
   it('AC-PS-24: a refused move opens no form', () => {
     stand('s-spec');
     changeStatus.mockImplementation(

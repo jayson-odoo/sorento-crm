@@ -76,6 +76,10 @@ describe('staff sponsorship client', () => {
     expect(error.fields).toEqual(['line:0']);
   });
 
+  it('offers no AI Extract: there is no staff extract route for this form', () => {
+    expect(createStaffSponsorshipClient(project).aiExtract).toBe(false);
+  });
+
   it('Cancel and Submit go back to the project Sponsorship Form tab', () => {
     const paths = createStaffSponsorshipClient(project).paths!;
     expect(paths.home('sponsorship_form')).toBe('/project-sales/p1?tab=sponsorships');

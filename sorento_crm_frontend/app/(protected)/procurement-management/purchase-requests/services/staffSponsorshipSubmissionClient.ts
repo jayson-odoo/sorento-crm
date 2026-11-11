@@ -257,5 +257,6 @@ export function createStaffSponsorshipClient(project: StaffSponsorshipProject): 
     getPriceTagDesign: async () => null,
     paths: staffSponsorshipPaths(project.id),
     embedded: true,
+    aiExtract: false,
   } as SubmissionClient;
 }
