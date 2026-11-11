@@ -378,6 +378,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "path": "/master-data-management/product-sets",
             "title": "Product Sets",
           },
+          {
+            "path": "/master-data-management/costing",
+            "title": "Costing",
+          },
         ],
         "title": "Products",
       },

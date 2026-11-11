@@ -29,6 +29,7 @@ from app.api.v1.master_data import (
     product_compatibility,
     sales_agents,
     catalogue_photo_readings,
+    costing,
 )
 
 router = APIRouter()
@@ -76,6 +77,8 @@ router.include_router(
     tags=["catalogue-photo-readings"],
 )
 router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
+# PRODUCT-COSTING: the Costing page, settings, dated exchange rates and party profiles.
+router.include_router(costing.router, prefix="/costing", tags=["costing"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])
 router.include_router(

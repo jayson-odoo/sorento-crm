@@ -41,6 +41,12 @@ import {
   FocusShell,
   FocusToggle,
 } from '@/app/(protected)/dealer-kit/components/FocusMode';
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable';
+import { useMinWidth, useSidePanelWidths } from '@/lib/dealer-kit/useSidePanelWidths';
 import type {
   TagLayer,
   TagLayerProps,
@@ -147,6 +153,11 @@ export function SpecSheetReader({
   const exitFocus = React.useCallback(() => setFocus(false), []);
   const [railCollapsed, setRailCollapsed] = React.useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = React.useState(false);
+  // Pages / Inspector widths: dragged like the template designer's, and kept with its widths.
+  const panels = useSidePanelWidths();
+  // The Inspector shows from Tailwind's `lg` (1024px) up, as its old `hidden lg:block` did and as
+  // the template designer's Inspector does; below that the drawer on a phone, nothing between.
+  const wideEnough = useMinWidth(1024);
 
   const listHref = `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet`;
   const sheetHref = (id: string) => `${listHref}/${id}`;
@@ -178,6 +189,14 @@ export function SpecSheetReader({
     pageKey: string;
     layerId: string;
   } | null>(null);
+  // The page the user last pressed on (left or right button, empty spot included): a paste or
+  // shortcut goes there, not to the page scrolled into view nor to one still holding an old
+  // selection off-screen (crew pass on #2331). Pressing a page clears another page's selection.
+  const [pressedKey, setPressedKey] = React.useState<string | null>(null);
+  const onPressPage = React.useCallback((key: string) => {
+    setPressedKey(key);
+    setSelection((prev) => (prev && prev.pageKey !== key ? null : prev));
+  }, []);
   const [applyMode, setApplyMode] = React.useState<ApplyMode>('page');
   // Bumped when the server replaced other pages' layers (Apply to every page): live canvases restart.
   // Per page, so the page the apply started from keeps its canvas (its selection, undo and any
@@ -404,13 +423,14 @@ export function SpecSheetReader({
       drawn.set(page.key, picture);
     }
   }
-  // The first few of those are live designers (the page being worked on first); only an editor
-  // gets them, a reader keeps pictures.
+  // The first few of those are live designers (the page being worked on first, then the page last
+  // pressed on); only an editor gets them, a reader keeps pictures.
   const liveKeys = new Set<string>();
   if (detail?.can_edit) {
     const order = [...drawn.keys()];
     if (selection && drawn.has(selection.pageKey))
       liveKeys.add(selection.pageKey);
+    if (pressedKey && drawn.has(pressedKey)) liveKeys.add(pressedKey);
     for (const key of order) {
       if (liveKeys.size >= LIVE_MAX) break;
       liveKeys.add(key);
@@ -526,7 +546,26 @@ export function SpecSheetReader({
   const selectedLayer = selection
     ? (selectedLayers.find((l) => l.id === selection.layerId) ?? null)
     : null;
-  const targetKey = selection?.pageKey ?? editing.lastKey() ?? null;
+  // A pressed page counts while it is a live canvas; scrolled out of the drawn window, it no longer
+  // decides where a paste or an undo goes.
+  const pressedLive = pressedKey && liveKeys.has(pressedKey) ? pressedKey : null;
+  // Undo / Redo (buttons and keys) step the selected page, else the live page last pressed on,
+  // else the page edited last: the same page a paste goes to.
+  const targetKey = selection?.pageKey ?? pressedLive ?? editing.lastKey() ?? null;
+  // The page the clipboard and shortcuts act on: the pressed page while it is a live canvas,
+  // else (scrolled out of the drawn window) the selected page, else the page being read.
+  const inputKey = pressedLive ?? selection?.pageKey ?? activeKey;
+  // Keyboard undo from a page's canvas does exactly what the Undo / Redo buttons do: it steps
+  // `targetKey` (see above), whichever canvas heard the key.
+  // Stable for the memoised pages; it reads the latest `editing` and target through a ref.
+  const historyRef = React.useRef({ editing, targetKey });
+  historyRef.current = { editing, targetKey };
+  const onHistory = React.useCallback((_key: string, step: -1 | 1) => {
+    const { editing: now, targetKey: key } = historyRef.current;
+    if (!key) return;
+    if (step < 0) now.undo(key);
+    else now.redo(key);
+  }, []);
 
   // The page an apply started from while it runs: every OTHER page is read-only for that round
   // trip, since an edit made there now would be saved over the change the server is applying.
@@ -936,123 +975,185 @@ export function SpecSheetReader({
             />
           )}
           <div className="relative flex min-w-0 gap-3">
-            {!isMobile && (
+            {/* A folded panel is a button OUTSIDE the resizable group, as in the template designer. */}
+            {!isMobile && railCollapsed && (
               <CollapsiblePanel
                 title="Pages"
                 side="start"
-                collapsed={railCollapsed}
-                onToggle={(next) => {
-                  setRailCollapsed(next);
-                  // A folded rail has nothing in view: stop loading chunks for it.
-                  if (next) setRailVisible(new Set());
-                }}
+                collapsed
+                onToggle={(next) => setRailCollapsed(next)}
               >
-                <PageRail
-                  pages={pages}
-                  numbers={numbers}
-                  currentKey={activeKey}
-                  canEdit={canEdit}
-                  strip={false}
-                  pageMm={detail.page_size}
-                  pictureOf={railPictureOf}
-                  onSelect={scrollTo}
-                  onReorder={(items) =>
-                    commit([...pages.filter((p) => p.key === COVER), ...items])
-                  }
-                  onVisibleChange={setRailVisible}
-                  className={panelHeight}
-                />
+                {null}
               </CollapsiblePanel>
             )}
-            <div
-              ref={scroller}
-              onScroll={onScroll}
-              className={cn(
-                'relative min-h-[20rem] min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-muted',
-                stackHeight,
-              )}
-              data-testid="spec-sheet-stack"
-            >
-              <div
-                className="flex min-w-fit flex-col items-center gap-6 py-4"
-                style={{ paddingLeft: STACK_PAD, paddingRight: STACK_PAD }}
-              >
-                {pages.map((page) => (
-                  <ReaderPage
-                    key={page.key}
-                    page={page}
-                    number={numbers.get(page.key) ?? null}
-                    templateLabel={templateLabelOf(page)}
-                    boxWidth={boxWidth}
-                    boxHeight={boxHeight}
-                    scale={scale}
-                    pageMm={detail.page_size}
-                    payload={drawn.get(page.key)?.payload ?? null}
-                    sheetIndex={drawn.get(page.key)?.index}
-                    live={liveKeys.has(page.key)}
-                    epoch={restarts[page.key] ?? 0}
-                    templateSig={templateSig}
-                    selectedLayerId={
-                      selection?.pageKey === page.key ? selection.layerId : null
-                    }
-                    draftLayers={editing.draftOf(page.key)}
-                    externalLayers={editing.externalOf(page.key)}
-                    current={page.key === activeKey}
-                    sharp={page.key === settledKey ? sharpData : null}
-                    canEdit={
-                      canEdit &&
-                      (applyingFrom === false || applyingFrom === page.key)
-                    }
-                    pages={pages}
-                    documentId={documentId}
-                    sheetId={sheetId}
-                    onPatch={patch}
-                    onSelectLayer={onSelectLayer}
-                    onLayersReport={onLayersReport}
-                    controllerRefFor={controllerRefFor}
-                  />
-                ))}
-              </div>
-            </div>
-            {canEdit && !isMobile && (
-              <div className="hidden shrink-0 lg:block">
-                <CollapsiblePanel
-                  title="Inspector"
-                  side="end"
-                  collapsed={inspectorCollapsed}
-                  onToggle={setInspectorCollapsed}
-                >
-                  <aside
-                    className={cn(
-                      'flex min-h-[20rem] w-72 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background',
-                      panelHeight,
-                    )}
-                  >
-                    {selectedLayer ? (
-                      <ReaderInspector
-                        pageKey={selection?.pageKey ?? null}
-                        layer={selectedLayer}
-                        layers={selectedLayers}
-                        controller={
-                          selection
-                            ? controllerRefFor(selection.pageKey).current
-                            : null
-                        }
-                        mode={applyMode}
-                        onModeChange={setApplyMode}
-                        onApplyAll={sendToEveryPage}
-                      />
-                    ) : (
-                      <div
-                        className="p-4 text-sm text-muted-foreground"
-                        data-testid="reader-inspector-empty"
+            {/* The row is the template designer's own resizable group (TagCanvasEditor S1): the
+                Pages and Inspector widths drag, and are kept with the template designer's. */}
+            <div ref={panels.groupRef} className="flex min-w-0 flex-1">
+              <ResizablePanelGroup direction="horizontal" className="min-w-0 flex-1">
+                {!isMobile && !railCollapsed && (
+                  <>
+                    <ResizablePanel
+                      ref={panels.leftRef}
+                      id="spec-sheet-pages"
+                      order={1}
+                      {...panels.left}
+                      className="min-w-0 pe-3"
+                      data-testid="spec-sheet-pages-panel"
+                    >
+                      <CollapsiblePanel
+                        title="Pages"
+                        side="start"
+                        collapsed={false}
+                        onToggle={(next) => {
+                          setRailCollapsed(next);
+                          // A folded rail has nothing in view: stop loading chunks for it.
+                          if (next) setRailVisible(new Set());
+                        }}
                       >
-                        Nothing selected
-                      </div>
+                        <PageRail
+                          pages={pages}
+                          numbers={numbers}
+                          currentKey={activeKey}
+                          canEdit={canEdit}
+                          strip={false}
+                          pageMm={detail.page_size}
+                          pictureOf={railPictureOf}
+                          onSelect={scrollTo}
+                          onReorder={(items) =>
+                            commit([...pages.filter((p) => p.key === COVER), ...items])
+                          }
+                          onVisibleChange={setRailVisible}
+                          className={cn('w-full', panelHeight)}
+                        />
+                      </CollapsiblePanel>
+                    </ResizablePanel>
+                    <ResizableHandle
+                      withHandle
+                      onDragging={panels.onDragging}
+                      aria-label="Resize Pages panel"
+                    />
+                  </>
+                )}
+                <ResizablePanel id="spec-sheet-stack" order={2} className="flex min-w-0">
+                  <div
+                    ref={scroller}
+                    onScroll={onScroll}
+                    className={cn(
+                      'relative min-h-[20rem] min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-muted',
+                      stackHeight,
                     )}
-                  </aside>
-                </CollapsiblePanel>
-              </div>
+                    data-testid="spec-sheet-stack"
+                  >
+                    <div
+                      className="flex min-w-fit flex-col items-center gap-6 py-4"
+                      style={{ paddingLeft: STACK_PAD, paddingRight: STACK_PAD }}
+                    >
+                      {pages.map((page) => (
+                        <ReaderPage
+                          key={page.key}
+                          page={page}
+                          number={numbers.get(page.key) ?? null}
+                          templateLabel={templateLabelOf(page)}
+                          boxWidth={boxWidth}
+                          boxHeight={boxHeight}
+                          scale={scale}
+                          pageMm={detail.page_size}
+                          payload={drawn.get(page.key)?.payload ?? null}
+                          sheetIndex={drawn.get(page.key)?.index}
+                          live={liveKeys.has(page.key)}
+                          epoch={restarts[page.key] ?? 0}
+                          templateSig={templateSig}
+                          selectedLayerId={
+                            selection?.pageKey === page.key ? selection.layerId : null
+                          }
+                          draftLayers={editing.draftOf(page.key)}
+                          externalLayers={editing.externalOf(page.key)}
+                          current={page.key === activeKey}
+                          active={page.key === inputKey}
+                          sharp={page.key === settledKey ? sharpData : null}
+                          canEdit={
+                            canEdit &&
+                            (applyingFrom === false || applyingFrom === page.key)
+                          }
+                          pages={pages}
+                          documentId={documentId}
+                          sheetId={sheetId}
+                          onPatch={patch}
+                          onSelectLayer={onSelectLayer}
+                          onLayersReport={onLayersReport}
+                          onHistory={onHistory}
+                          onPressPage={onPressPage}
+                          controllerRefFor={controllerRefFor}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </ResizablePanel>
+                {canEdit && wideEnough && !inspectorCollapsed && (
+                  <>
+                    <ResizableHandle
+                      withHandle
+                      onDragging={panels.onDragging}
+                      aria-label="Resize Inspector panel"
+                    />
+                    <ResizablePanel
+                      ref={panels.rightRef}
+                      id="spec-sheet-inspector"
+                      order={3}
+                      {...panels.right}
+                      className="min-w-0 ps-3"
+                      data-testid="spec-sheet-inspector-panel"
+                    >
+                      <CollapsiblePanel
+                        title="Inspector"
+                        side="end"
+                        collapsed={false}
+                        onToggle={setInspectorCollapsed}
+                      >
+                        <aside
+                          className={cn(
+                            'flex min-h-[20rem] w-full flex-col overflow-hidden rounded-lg border border-border bg-background',
+                            panelHeight,
+                          )}
+                        >
+                          {selectedLayer ? (
+                            <ReaderInspector
+                              pageKey={selection?.pageKey ?? null}
+                              layer={selectedLayer}
+                              layers={selectedLayers}
+                              controller={
+                                selection
+                                  ? controllerRefFor(selection.pageKey).current
+                                  : null
+                              }
+                              mode={applyMode}
+                              onModeChange={setApplyMode}
+                              onApplyAll={sendToEveryPage}
+                            />
+                          ) : (
+                            <div
+                              className="p-4 text-sm text-muted-foreground"
+                              data-testid="reader-inspector-empty"
+                            >
+                              Nothing selected
+                            </div>
+                          )}
+                        </aside>
+                      </CollapsiblePanel>
+                    </ResizablePanel>
+                  </>
+                )}
+              </ResizablePanelGroup>
+            </div>
+            {canEdit && wideEnough && inspectorCollapsed && (
+              <CollapsiblePanel
+                title="Inspector"
+                side="end"
+                collapsed
+                onToggle={setInspectorCollapsed}
+              >
+                {null}
+              </CollapsiblePanel>
             )}
           </div>
           {canEdit && isMobile && (

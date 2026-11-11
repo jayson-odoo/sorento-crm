@@ -190,6 +190,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.dimensions', label: 'Dimensions', group: 'Product' },
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
+  { path: 'product.description', label: 'Description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -338,6 +339,15 @@ function resolvePath(
     if (data.kind !== 'line' || !data.line.doc) return null;
     const field = path.slice('line.'.length) as 'area' | 'comment' | 'marker';
     return data.line[field] ?? '';
+  }
+
+  // The product's plain catalogue description (`products.description`), for the subject this
+  // layer reads (a part or position its own, else the line's / product's). A set has none.
+  if (path === 'product.description') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') return subject.product.description ?? '';
+    if (subject?.kind === 'line') return subject.line.description ?? '';
+    return subject ? '' : null;
   }
 
   if (path === 'product.brand') {
