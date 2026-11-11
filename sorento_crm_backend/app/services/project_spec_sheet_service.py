@@ -83,6 +83,11 @@ DRAFT = "draft"
 #: HOUSE)"), so it is generous; a marker is the sample's ``*`` / ``**`` / ``***``.
 AREA_MAX = 200
 COMMENT_MAX = 500
+#: The per-sheet "Spec sheet description" override: same ceiling as the product field.
+DESCRIPTION_MAX = 20000
+#: Accessory overrides one page row may keep.
+ACCESSORY_DESCRIPTIONS_MAX = 200
+ACCESSORY_KEY_MAX = 120
 MARKER_MAX = 10
 
 #: One preview call serves one window of the reader; more than this is a client bug.
@@ -95,7 +100,7 @@ PAGE_EDITS_TOTAL_MAX = 4_000_000
 #: Layer types the designer produces (FE `TagLayerType`). The strict `TagLayerDoc` schema is not
 #: used: it lacks `barcode` and demands fields a layer may legitimately omit.
 LAYER_TYPES = frozenset(
-    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group"}
+    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group", "table"}
 )
 LAYER_DEPTH_MAX = 8
 LAYER_STRING_MAX = 5000
@@ -115,9 +120,23 @@ def _text(value: Any, limit: int) -> str:
     return str(value or "").strip()[:limit]
 
 
+def _accessory_descriptions(raw: Any) -> Dict[str, str]:
+    """{accessory product id: trimmed override}, empty values dropped, entries capped."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for key, value in raw.items():
+        text = _text(value, DESCRIPTION_MAX)
+        if key and len(str(key)) <= ACCESSORY_KEY_MAX and text:
+            out[str(key)] = text
+        if len(out) >= ACCESSORY_DESCRIPTIONS_MAX:
+            break
+    return out
+
+
 def _row(raw: dict) -> dict:
     accessories = raw.get("accessories") or []
-    return {
+    out = {
         "key": str(raw.get("key") or ""),
         "area": _text(raw.get("area"), AREA_MAX),
         "comment": _text(raw.get("comment"), COMMENT_MAX),
@@ -125,6 +144,12 @@ def _row(raw: dict) -> dict:
         "hidden": bool(raw.get("hidden")),
         "accessories": [str(a) for a in accessories if a],
     }
+    # B1: per-sheet "Spec sheet description" overrides, stored only when set (empty = none).
+    if description := _text(raw.get("description"), DESCRIPTION_MAX):
+        out["description"] = description
+    if overrides := _accessory_descriptions(raw.get("accessory_descriptions")):
+        out["accessory_descriptions"] = overrides
+    return out
 
 
 def _invalid_rows(message: str) -> AppException:
@@ -429,6 +454,13 @@ def snapshot_items(
             "drawing_attachment_id": line.drawing_attachment_id,
             "section": section,
             "unit_price": float(line.unit_price) if line.unit_price is not None else None,
+            # B3: the quoted line's own fields, frozen with the item (`line.*` variables).
+            "quantity": float(line.quantity) if line.quantity is not None else 1,
+            "uom": line.uom or "",
+            "line_description": line_text(line) or "",
+            "technical_spec": line.technical_spec or "",
+            "notes": line.notes or "",
+            "item_label": line.item_label or "",
             "set_parts": [
                 {
                     "product_id": p.get("product_id"),
@@ -548,7 +580,14 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
     from app.services.dealer_kit import tag_data_service as tags
 
     if product is None:
-        return {"dimensions": "", "spec_lines": [], "specs": [], "barcode": None, "description": None}
+        return {
+            "dimensions": "",
+            "spec_lines": [],
+            "specs": [],
+            "barcode": None,
+            "description": None,
+            "spec_sheet_description": None,
+        }
     if product.id not in spec_cache:
         rows = spec_cache.get(_ROWS) or {}
         spec_row = rows[str(product.id)] if str(product.id) in rows else tags._spec_row(db, product)
@@ -559,6 +598,8 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
             "barcode": product.barcode or None,
             # {{product.description}}: the product master's plain description.
             "description": product.description or None,
+            # B1: the spec sheet copy, else the plain description.
+            "spec_sheet_description": product.spec_sheet_description or product.description or None,
         }
     return spec_cache[product.id]
 
@@ -606,6 +647,13 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
         product = products.get(str(product_id)) if product_id else None
         return (product.product_name if product is not None else None) or fallback or ""
 
+    def default_text(product_id):
+        """The product's own spec sheet text (field, else description), what an override replaces."""
+        product = products.get(str(product_id)) if product_id else None
+        if product is None:
+            return ""
+        return product.spec_sheet_description or product.description or ""
+
     def brand_of(product_id):
         product = products.get(str(product_id)) if product_id else None
         return brands.get(str(product.brand_id), "") if product and product.brand_id else ""
@@ -614,10 +662,12 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
     for key in ordered:
         item = items[key]
         setting = by_key.get(key) or _row({"key": key})
+        overrides = setting.get("accessory_descriptions") or {}
         accessories = [
             {
                 "key": None,
                 "source": "set",
+                "spec_sheet_description": default_text(part.get("product_id")),
                 "product_id": part.get("product_id"),
                 "code": part.get("product_code") or "",
                 "name": name_of(part.get("product_id"), part.get("description")),
@@ -633,6 +683,7 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 {
                     "key": picked,
                     "source": "picked",
+                    "spec_sheet_description": default_text(other["product_id"]),
                     "product_id": other["product_id"],
                     "code": other["code"],
                     "name": name_of(other["product_id"], other["description"]),
@@ -660,8 +711,20 @@ def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
+                "description": setting.get("description") or "",
+                "accessory_descriptions": dict(overrides),
+                "spec_sheet_description_default": default_text(item["product_id"]),
                 "edited": key in edits,
                 "template": "page" if accessories else "single",
+                # Print-only: the frozen line fields; items taken before B3 read quantity 1 / ''.
+                "_line": {
+                    "quantity": item.get("quantity", 1),
+                    "uom": item.get("uom") or "",
+                    "line_description": item.get("line_description") or "",
+                    "technical_spec": item.get("technical_spec") or "",
+                    "notes": item.get("notes") or "",
+                    "item_label": item.get("item_label") or "",
+                },
                 # Print-only (underscore keys never leave the API): the quoted unit price.
                 "_price": _quoted_price(item["unit_price"]),
             }
@@ -710,6 +773,10 @@ def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict
         "prepared_by": ((preparer.name if preparer else "") or "").strip(),
         "prepared_by_phone": ((preparer.contact_number if preparer else "") or "").strip(),
         "date": fmt_date(issued, naive_is_utc=False) if issued else "",
+        "subject_title": (document.subject_title or "").strip(),
+        "attn": (document.attn_name or "").strip(),
+        "recipient": (document.recipient_name_snapshot or "").strip(),
+        "project_code": ((project.project_code if project is not None else "") or "").strip(),
     }
 
 
@@ -740,9 +807,17 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
         "show_promo_price": False,
         "included_accessories": "",
         "quantity": 1,
+        "uom": "",
+        "line_description": "",
+        "technical_spec": "",
+        "notes": "",
+        "item_label": "",
+        "page_no": None,
         "barcode": None,
         "price_tag_description": None,
         "description": None,
+        "spec_sheet_description": None,
+        "accessories": [],
         "drawing": None,
         "area": "",
         "comment": "",
@@ -1113,6 +1188,8 @@ def build_print_payload(
     visible = [p for p in every if not p["hidden"]]
     numbers = {COVER_KEY: 1}
     numbers.update({p["key"]: n for n, p in enumerate(visible, start=2)})
+    # B3: `{{doc.page_count}}`, the printed pages including the cover.
+    doc_fields["page_count"] = len(numbers)
 
     if keys is None:
         chosen, with_cover = visible, True
@@ -1143,15 +1220,35 @@ def build_print_payload(
     sheets: List[dict] = []
     if with_cover:
         resolved[COVER_KEY] = _blank_row(COVER_KEY, "Cover", doc_fields)
+        resolved[COVER_KEY]["page_no"] = 1
         sheets.append(_sheet(COVER_KEY, pinned["cover"], width, height, layers_of(COVER_KEY)))
     for page in chosen:
         product = products.get(str(page["product_id"])) if page["product_id"] else None
         fields = _product_fields(db, product, spec_cache)
         parts = []
+        cards = []
         for acc in page["accessories"]:
             part_product = products.get(str(acc["product_id"])) if acc.get("product_id") else None
             part_fields = _product_fields(db, part_product, spec_cache)
             photo = _image(acc["_photo"], urls)
+            sheet_text = (page["accessory_descriptions"].get(str(acc.get("product_id")))) or part_fields[
+                "spec_sheet_description"
+            ]
+            # B1/B2: the same item as a TagAccessory, for the shared Accessories box.
+            cards.append(
+                {
+                    "kind": "product",
+                    "id": acc.get("product_id") or acc["code"],
+                    "code": acc["code"],
+                    "name": acc["name"],
+                    "brand": acc["brand"],
+                    "description": part_fields["description"],
+                    "spec_sheet_description": sheet_text,
+                    "dimensions": part_fields["dimensions"],
+                    "image": photo,
+                    "spec_lines": part_fields["spec_lines"],
+                }
+            )
             parts.append(
                 {
                     "product_id": acc.get("product_id"),
@@ -1165,6 +1262,7 @@ def build_print_payload(
                     "drawing": _image(acc["_drawing"], urls),
                     "barcode": part_fields["barcode"],
                     "description": part_fields["description"],
+                    "spec_sheet_description": sheet_text,
                     # A set part has no price of its own (the set line carries it); a
                     # hand-picked accessory carries its own quoted line price.
                     "list_price": acc.get("_price"),
@@ -1187,6 +1285,10 @@ def build_print_payload(
                 "drawing": _image(page["_drawing"], urls),
                 "barcode": fields["barcode"],
                 "description": fields["description"],
+                "spec_sheet_description": page["description"] or fields["spec_sheet_description"],
+                **page["_line"],
+                "page_no": numbers.get(page["key"]),
+                "accessories": cards,
                 "parts": parts,
                 "own_parts": parts,
                 "area": page["area"].upper(),
@@ -1422,6 +1524,18 @@ def update_sheet(
         if any(not k for k in keys) or len(set(keys)) != len(keys):
             raise _invalid_rows("Each item can appear once on the spec sheet.")
         stored = [_row(r) for r in sheet.rows or [] if isinstance(r, dict)]
+        by_key = {r["key"]: r for r in stored}
+        # A row that does not name an override keeps the stored one (the reader sends the page
+        # fields it shows; an empty string is the explicit reset).
+        sent = [r for r in payload.get("rows") or [] if isinstance(r, dict)]
+        for row, raw in zip(rows, sent):
+            old = by_key.get(row["key"])
+            if old is None:
+                continue
+            if "description" not in raw and old.get("description"):
+                row["description"] = old["description"]
+            if "accessory_descriptions" not in raw and old.get("accessory_descriptions"):
+                row["accessory_descriptions"] = old["accessory_descriptions"]
         rows += [r for r in stored if r["key"] not in set(keys)]
         _check_rows(rows)
         sheet.rows = rows
@@ -1527,6 +1641,14 @@ def _check_layer(layer: Any) -> None:
     if props is not None:
         if not isinstance(props, dict):
             raise _invalid_layer("A layer's properties are malformed.")
+        # Either marker: a layer of another type can still carry table props (the pptx export reads
+        # props), so both are checked.
+        if layer.get("type") == "table" or props.get("kind") == "table":
+            from app.utils.table_layer_check import table_props_problem
+
+            problem = table_props_problem(props)
+            if problem:
+                raise _invalid_layer(problem)
         source = props.get("source")
         if source is not None and not isinstance(source, (dict, str)):
             raise _invalid_layer("A layer's artwork source is malformed.")
@@ -1925,6 +2047,9 @@ def detail_view(
             "hidden": False,
             "picked": [],
             "accessories": [],
+            "description": "",
+            "accessory_descriptions": {},
+            "spec_sheet_description_default": "",
             "edited": COVER_KEY in edits,
             "template": "cover",
         }
@@ -1980,17 +2105,23 @@ def detail_view(
 # ----------------------------------------------------------------------------- export
 
 
-def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str):
-    """Check it can print, then queue the render; the file lands in My Downloads."""
+EXPORT_FORMATS = ("pdf", "pptx")
+
+
+def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str, fmt: str = "pdf"):
+    """Check it can print, then queue the render; the file lands in My Downloads. ``fmt`` is the
+    PDF (default) or a PowerPoint deck; both ride the same download kind, the extension says which."""
     from app.services.download_service import DownloadService
     from app.services.queue_service import enqueue_job
-    from app.tasks.dealer_kit_export_tasks import generate_spec_sheet_pdf
+    from app.tasks.dealer_kit_export_tasks import generate_spec_sheet_pdf, generate_spec_sheet_pptx
 
+    if fmt not in EXPORT_FORMATS:
+        raise AppException(status_code=422, message="Unknown export format.", code="spec_sheet_export_format")
     document = _document_of(db, sheet)
     # Refuse NOW what would fail in the worker: a gone template, or templates of two sizes.
     _pinned(db, sheet)
     number = _doc_fields(db, document, sheet)["quotation_no"]
-    filename = f"spec-sheet-{number}-{label_of(sheet)}.pdf"
+    filename = f"spec-sheet-{number}-{label_of(sheet)}.{fmt}"
 
     downloads = DownloadService(db)
     download = downloads.create(
@@ -2004,7 +2135,7 @@ def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str):
     db.flush()
     try:
         enqueue_job(
-            generate_spec_sheet_pdf,
+            generate_spec_sheet_pptx if fmt == "pptx" else generate_spec_sheet_pdf,
             str(download.id),
             queue_name="catalogue_render",
             job_timeout=900,

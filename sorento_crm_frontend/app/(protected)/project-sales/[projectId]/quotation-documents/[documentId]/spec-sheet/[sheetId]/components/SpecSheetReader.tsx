@@ -15,6 +15,12 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -115,6 +121,8 @@ function rowOf(page: SpecSheetPage): SpecSheetRow {
     marker: page.marker,
     hidden: page.hidden,
     accessories: page.picked,
+    description: page.description ?? '',
+    accessory_descriptions: page.accessory_descriptions ?? {},
   };
 }
 
@@ -822,14 +830,26 @@ export function SpecSheetReader({
                 </Button>
               )
             ) : (
-              <Button
-                size="sm"
-                disabled={exportPdf.isPending}
-                onClick={() => exportPdf.mutate(sheetId)}
-              >
-                <FileDown className="size-4" aria-hidden />
-                Export PDF
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={exportPdf.isPending}>
+                    <FileDown className="size-4" aria-hidden />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() => exportPdf.mutate({ sheetId, format: 'pdf' })}
+                  >
+                    PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => exportPdf.mutate({ sheetId, format: 'pptx' })}
+                  >
+                    PowerPoint
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )
           }
         />

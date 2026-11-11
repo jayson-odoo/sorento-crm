@@ -250,7 +250,7 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
     price tag description unless the list row overrides it."""
     from app.services.dealer_kit.pricing import resolve_prices
     from app.services.dealer_kit.product_images import gallery_images
-    from app.services.dealer_kit.tag_data_service import spec_lines, staff_viewer
+    from app.services.dealer_kit.tag_data_service import dimensions_text, spec_lines, staff_viewer
 
     viewer = viewer or staff_viewer()
     prices = resolve_prices(db, [product], viewer, None).get(product.id)
@@ -276,7 +276,21 @@ def tag_product_entry(db: Session, product: Product, viewer=None, link=None) -> 
         "sell_price": prices.offer_price if prices and prices.offer_price is not None else None,
         "spec_lines": spec_lines(db, product),
         "price_tag_description": product.price_tag_description,
+        # SPEC-SHEET-DESIGNER-PARITY B2: what the new card fields read.
+        "brand": _brand_name(db, product),
+        "description": product.description or None,
+        "spec_sheet_description": product.spec_sheet_description or product.description or None,
+        "dimensions": dimensions_text(product) or None,
     }
+
+
+def _brand_name(db: Session, product: Product) -> Optional[str]:
+    if not product.brand_id:
+        return None
+    from app.models.product import Brand
+
+    brand = db.get(Brand, product.brand_id)
+    return (brand.brand_name or None) if brand is not None else None
 
 
 def _tag_entries(db: Session, links, viewer=None) -> List[Dict[str, Any]]:

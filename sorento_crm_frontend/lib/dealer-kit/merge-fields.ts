@@ -53,6 +53,7 @@ export type MergeFieldGroup =
   | 'Combo'
   | 'Combo positions'
   | 'Parts'
+  | 'Accessories'
   | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
@@ -191,6 +192,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.price_tag_description', label: 'Price tag description', group: 'Product' },
   { path: 'product.description', label: 'Description', group: 'Product' },
+  { path: 'product.spec_sheet_description', label: 'Spec sheet description', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
   { path: 'product.currency', label: 'Currency', group: 'Product' },
@@ -199,6 +201,12 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'set.name', label: 'Set name', group: 'Set' },
   { path: 'set.members', label: 'Members', group: 'Set' },
   { path: 'line.quantity', label: 'Quantity', group: 'Line' },
+  // B3: the quoted line's own fields, filled on a spec sheet page only.
+  { path: 'line.description', label: 'Description', group: 'Line' },
+  { path: 'line.uom', label: 'UOM', group: 'Line' },
+  { path: 'line.technical_spec', label: 'Technical spec', group: 'Line' },
+  { path: 'line.notes', label: 'Notes', group: 'Line' },
+  { path: 'line.item_label', label: 'Item label', group: 'Line' },
   // D23: the resolved parts on this line's tag, joined with ", " (codes and
   // names as two separate tokens, since a design might want either or both).
   { path: 'line.parts', label: 'Parts (codes)', group: 'Line' },
@@ -220,7 +228,24 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'doc.prepared_by', label: 'Prepared by', group: 'Spec sheet' },
   { path: 'doc.prepared_by_phone', label: 'Prepared by phone', group: 'Spec sheet' },
   { path: 'doc.date', label: 'Date', group: 'Spec sheet' },
+  { path: 'doc.subject_title', label: 'Subject title', group: 'Spec sheet' },
+  { path: 'doc.attn', label: 'Attn', group: 'Spec sheet' },
+  { path: 'doc.recipient', label: 'Recipient', group: 'Spec sheet' },
+  { path: 'doc.project_code', label: 'Project code', group: 'Spec sheet' },
+  { path: 'doc.page_no', label: 'Page number', group: 'Spec sheet' },
+  { path: 'doc.page_count', label: 'Page count', group: 'Spec sheet' },
 ];
+
+/** B3: the page's accessories, by 1-based position; the catalogue offers the first three. */
+const ACCESSORY_FIELDS = [
+  { field: 'code', label: 'code' },
+  { field: 'name', label: 'name' },
+  { field: 'brand', label: 'brand' },
+  { field: 'description', label: 'description' },
+  { field: 'spec_sheet_description', label: 'spec sheet description' },
+  { field: 'dimensions', label: 'dimensions' },
+] as const;
+const ACCESSORY_TOKEN = /^accessory\.(\d+)\.(code|name|brand|description|spec_sheet_description|dimensions)$/;
 
 /** PS-SPEC-SHEET: the document fields a spec sheet row carries (`LineTagData.doc`). */
 const DOC_FIELDS = new Set([
@@ -231,13 +256,29 @@ const DOC_FIELDS = new Set([
   'prepared_by',
   'prepared_by_phone',
   'date',
+  'subject_title',
+  'attn',
+  'recipient',
+  'project_code',
+  'page_count',
 ]);
+
+/** B3: `{{line.<key>}}` reads of the quoted line, and the row field each one is. */
+const LINE_TEXT_FIELDS: Record<string, 'line_description' | 'uom' | 'technical_spec' | 'notes' | 'item_label'> = {
+  'line.description': 'line_description',
+  'line.uom': 'uom',
+  'line.technical_spec': 'technical_spec',
+  'line.notes': 'notes',
+  'line.item_label': 'item_label',
+};
 
 /** Paths only a spec sheet page answers. In the editor, previewed against a plain product,
  *  they show as the token itself so the designer can see what will fill the spot. */
 function isSpecSheetPath(path: string): boolean {
   return (
     path.startsWith('doc.') ||
+    path.startsWith('accessory.') ||
+    path in LINE_TEXT_FIELDS ||
     path === 'line.area' ||
     path === 'line.comment' ||
     path === 'line.marker' ||
@@ -329,10 +370,27 @@ function resolvePath(
     return field === 'description' && isRich(value) ? richPlainText(value) : value;
   }
 
+  if (path === 'doc.page_no') {
+    return data.kind === 'line' && data.line.doc ? String(data.line.page_no ?? '') : null;
+  }
+
   if (path.startsWith('doc.')) {
     const field = path.slice('doc.'.length);
     if (!DOC_FIELDS.has(field) || data.kind !== 'line' || !data.line.doc) return null;
-    return data.line.doc[field as keyof typeof data.line.doc] ?? '';
+    return String(data.line.doc[field as keyof typeof data.line.doc] ?? '');
+  }
+
+  if (path in LINE_TEXT_FIELDS) {
+    return data.kind === 'line' ? (data.line[LINE_TEXT_FIELDS[path]] ?? '') : null;
+  }
+
+  // B3: the Nth (1-based) accessory of this page; empty, never the token, when it is not there.
+  const accessory = ACCESSORY_TOKEN.exec(path);
+  if (accessory) {
+    if (data.kind !== 'line') return '';
+    const item = data.line.accessories?.[Number(accessory[1]) - 1];
+    const value = item?.[accessory[2] as (typeof ACCESSORY_FIELDS)[number]['field']];
+    return value ?? '';
   }
 
   if (path === 'line.area' || path === 'line.comment' || path === 'line.marker') {
@@ -347,6 +405,17 @@ function resolvePath(
     const subject = subjectOf(data, layer);
     if (subject?.kind === 'product') return subject.product.description ?? '';
     if (subject?.kind === 'line') return subject.line.description ?? '';
+    return subject ? '' : null;
+  }
+
+  // The spec sheet text: the field, else the plain description (the backend already falls back;
+  // this covers a row frozen before it).
+  if (path === 'product.spec_sheet_description') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') {
+      return subject.product.spec_sheet_description ?? subject.product.description ?? '';
+    }
+    if (subject?.kind === 'line') return subject.line.spec_sheet_description ?? subject.line.description ?? '';
     return subject ? '' : null;
   }
 
@@ -568,7 +637,20 @@ export function mergeFieldCatalog(
     // PS-SPEC-SHEET: offered on spec sheet templates; a price tag editor passes `groups`
     // without it, so it never shows there.
     ...fixed.filter((field) => field.group === 'Spec sheet'),
+    ...[1, 2, 3].flatMap((n) =>
+      ACCESSORY_FIELDS.map(({ field, label }) => ({
+        path: `accessory.${n}.${field}`,
+        token: `{{accessory.${n}.${field}}}`,
+        label: `Accessory ${n} ${label}`,
+        group: 'Accessories' as const,
+      })),
+    ),
   ];
 
-  return groups ? all.filter((field) => groups.includes(field.group)) : all;
+  // The spec sheet's own Line fields print empty on a price tag: a caller that does not ask for the
+  // Spec sheet group (the price tag template) is not offered them.
+  const pricesTag = groups !== undefined && !groups.includes('Spec sheet');
+  return groups
+    ? all.filter((field) => groups.includes(field.group) && !(pricesTag && field.path in LINE_TEXT_FIELDS))
+    : all;
 }

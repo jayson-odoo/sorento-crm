@@ -293,6 +293,18 @@ vi.mock(
           >
             {`double-click area ${key}`}
           </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc')}
+          >
+            {`double-click description ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc0')}
+          >
+            {`double-click accessory description ${key}`}
+          </button>
         </div>
       );
     },
@@ -332,6 +344,21 @@ const AREA = {
   props: { ...LOGO.props, text: 'AREA : {{line.area}}' },
 };
 
+// B1: a text layer printing the spec sheet description, for the main item and for accessory 1.
+const DESC = {
+  ...LOGO,
+  id: 'desc',
+  y_mm: 60,
+  z_index: 3,
+  props: { ...LOGO.props, text: '{{product.spec_sheet_description}}' },
+};
+const DESC0 = {
+  ...DESC,
+  id: 'desc0',
+  y_mm: 80,
+  props: { ...DESC.props, subjectPart: 0 },
+};
+
 function detail() {
   return {
     id: 'sheet-1',
@@ -360,7 +387,23 @@ function detail() {
       marker: '',
       hidden: false,
       picked: [],
-      accessories: [],
+      accessories:
+        key === 'k2'
+          ? [
+              {
+                key: null,
+                source: 'set',
+                product_id: 'acc-1',
+                code: 'AV-1',
+                name: 'Angle valve',
+                brand: '',
+                spec_sheet_description: 'Valve default',
+              },
+            ]
+          : [],
+      description: key === 'k3' ? 'Typed before' : '',
+      accessory_descriptions: {},
+      spec_sheet_description_default: `Default of ${key}`,
       edited: false,
       template: key === 'cover' ? 'cover' : 'page',
     })),
@@ -392,7 +435,7 @@ function previewFor(keys: string[]) {
             y_mm: 0,
             width_mm: 338.7,
             height_mm: 190.5,
-            layers: [LOGO, AREA],
+            layers: [LOGO, AREA, DESC, DESC0],
           },
         ],
       })),
@@ -899,6 +942,78 @@ describe('AREA, COMMENT and marker on a live page', () => {
   });
 });
 
+describe('the spec sheet description override on a live page (B1)', () => {
+  async function openLive(key: string) {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report([key]);
+    await screen.findByTestId(`live-canvas-${key}`);
+    return screen.getByTestId(`live-canvas-${key}`);
+  }
+  const lastRows = () =>
+    (updateSpecSheet.mock.calls.at(-1)![3] as { rows: Record<string, unknown>[] })
+      .rows;
+
+  it('a double-click opens a multi-line box with the product text; Enter adds a line, Ctrl+Enter saves the override', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box.value).toBe('Default of k1');
+
+    fireEvent.change(box, { target: { value: 'Line one\nLine two' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k1')).toMatchObject({
+      description: 'Line one\nLine two',
+    });
+  });
+
+  it('Escape cancels without saving', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = await screen.findByRole('textbox', { name: 'Spec sheet description' });
+    fireEvent.change(box, { target: { value: 'Never saved' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Spec sheet description' })).toBeNull();
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+  });
+
+  it('shows the stored override, and "Reset to product text" clears it', async () => {
+    const canvas = await openLive('k3');
+    fireEvent.click(within(canvas).getByText('double-click description k3'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Typed before');
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Reset to product text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to product text' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k3')).toMatchObject({ description: '' });
+  });
+
+  it('a layer pointed at an accessory edits that accessory by product id', async () => {
+    const canvas = await openLive('k2');
+    fireEvent.click(
+      within(canvas).getByText('double-click accessory description k2'),
+    );
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Valve default');
+    fireEvent.change(box, { target: { value: 'Valve typed' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    const row = lastRows().find((r) => r.key === 'k2')!;
+    expect(row).toMatchObject({ accessory_descriptions: { 'acc-1': 'Valve typed' } });
+    expect(row.description).toBe('');
+  });
+});
+
 describe('the save state in the toolbar', () => {
   it('has a fixed width and never wraps, so "Saving..." vs "Saved" cannot reflow the toolbar', async () => {
     renderReader();
@@ -1371,7 +1486,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     await screen.findByTestId('spec-page-k29');
     report(['k1']);
     const before = await screen.findByTestId('live-canvas-k1');
-    expect(before).toHaveAttribute('data-layers', 'logo,area');
+    expect(before).toHaveAttribute('data-layers', 'logo,area,desc,desc0');
 
     // The server now draws every unedited page from the other template.
     const switched = {
@@ -1431,7 +1546,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['cover', 'k1']);
     expect(await screen.findByTestId('live-canvas-k1')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     await screen.findByTestId('live-canvas-cover');
 
@@ -1488,7 +1603,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
 
     await switchTo('Page');
     await waitFor(() =>
-      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area'),
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area,desc,desc0'),
     );
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1300));
@@ -1518,7 +1633,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['k13']);
     expect(await screen.findByTestId('live-canvas-k13')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');

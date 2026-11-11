@@ -63,6 +63,7 @@ def _print_url(download_id: str) -> str:
 def _tag_sheet_print_url(
     download_id: str,
     sheet_ids: list[str] | None = None,
+    layout: bool = False,
 ) -> str:
     """Build the print URL for a tag sheet page."""
     base = _print_base()
@@ -71,6 +72,9 @@ def _tag_sheet_print_url(
     if sheet_ids:
         for sid in sheet_ids:
             url += f"&sheet={sid}"
+    if layout:
+        # B5: only the PowerPoint reader asks the page to publish its layout.
+        url += "&layout=1"
     return url
 
 
@@ -125,6 +129,28 @@ def _render_pdf(
 
         with open(out_path, "rb") as handle:
             return handle.read()
+
+
+def _render_layout(url: str) -> dict:
+    """The print page's resolved layers (``window.__tagSheetLayout``), read in a spawned browser
+    process for the same reason ``_render_pdf`` is. Pictures come back as data URLs."""
+    import json
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as workdir:
+        out_path = os.path.join(workdir, "layout.json")
+        result = subprocess.run(
+            [sys.executable, "-m", "app.tasks.catalogue_render_cli", url, out_path, "--layout"],
+            capture_output=True,
+            text=True,
+            timeout=(READY_TIMEOUT_MS // 1000) + 120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or "").strip() or "layout reader exited non-zero")
+        with open(out_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
 
 
 def generate_catalogue_pdf(download_id: str) -> dict:
@@ -328,6 +354,63 @@ def generate_spec_sheet_pdf(download_id: str) -> dict:
         except Exception:
             logger.exception(
                 "generate_spec_sheet_pdf: could not mark download %s failed", download_id
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(exc)}
+    finally:
+        db.close()
+
+
+def generate_spec_sheet_pptx(download_id: str) -> dict:
+    """The spec sheet behind ``download_id`` as a PowerPoint deck (B5).
+
+    Opens the SAME print page the PDF renders (one resolver: merge fields resolve only in the
+    frontend), reads its resolved layers, draws them with python-pptx and stores the file next to
+    where the PDF would go. Any failure marks the download failed.
+    """
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+    from app.services.spec_sheet_pptx import build_pptx
+
+    db = SessionLocal()
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        # user_downloads is not company scoped: a plain read.
+        download = db.query(UserDownload).filter(UserDownload.id == download_id).first()
+        if download is None:
+            raise RuntimeError("download row not found")
+        size_mm = spec.page_size_for_download(db, download)
+        try:
+            spec.prepare_export_images(db, download)
+        except Exception:  # noqa: BLE001
+            logger.warning("spec sheet %s: image cap skipped", download_id, exc_info=True)
+        db.close()
+
+        layout = _render_layout(_tag_sheet_print_url(download_id, layout=True))
+        page_mm = layout.get("page_mm") or list(size_mm)
+        deck = build_pptx(layout.get("pages") or [], page_mm)
+        filename = (download.filename or f"spec-sheet-{download_id}.pptx").replace("/", "-")
+        provider = default_provider()
+        backend = get_backend(provider)
+        stored_key, _signed = backend.upload_file(
+            file_content=deck,
+            file_path=f"exports/quotation-spec-sheet/{download_id}/{filename}",
+            content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(deck)}
+    except Exception as exc:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_spec_sheet_pptx failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(exc))
+        except Exception:
+            logger.exception(
+                "generate_spec_sheet_pptx: could not mark download %s failed", download_id
             )
         return {"download_id": download_id, "status": "failed", "error": str(exc)}
     finally:

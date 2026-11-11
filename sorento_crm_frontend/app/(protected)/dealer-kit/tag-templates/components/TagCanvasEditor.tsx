@@ -116,6 +116,7 @@ import {
   topmostChildAt,
   transformGroup,
   ungroupLayers,
+  nextLayerZ,
   zoomAt,
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
@@ -272,9 +273,22 @@ import {
   cardBoxLayout,
   cardDropped,
   cardFromLegacy,
+  defaultAccessoriesPropsFor,
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
+import {
+  cellAt,
+  defaultTableProps,
+  deleteColumn,
+  deleteRow,
+  insertColumn,
+  insertRow,
+  mergeCells,
+  tableLayout,
+  tableMeasure,
+  unmergeCell,
+} from '@/lib/dealer-kit/table-layout';
 import { AccessoryEditOverlay } from './AccessoryEditOverlay';
 import { HeaderDragOverlay } from './HeaderDragOverlay';
 import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
@@ -1087,7 +1101,7 @@ export function TagCanvasEditor({
     const minY = Math.min(...children.map((l) => l.y_mm));
     const maxX = Math.max(...children.map((l) => l.x_mm + l.width_mm));
     const maxY = Math.max(...children.map((l) => l.y_mm + l.height_mm));
-    const maxZ = Math.max(...layers.map((l) => l.z_index)) + 1;
+    const maxZ = nextLayerZ(layers);
 
     const groupId = newLayerId();
     const groupLayer: TagLayer = {
@@ -1145,7 +1159,7 @@ export function TagCanvasEditor({
   const centerX = doc.width_mm / 2;
   const centerY = doc.height_mm / 2;
   const maxZ = useMemo(
-    () => (layers.length > 0 ? Math.max(...layers.map((l) => l.z_index)) + 1 : 1),
+    () => nextLayerZ(layers),
     [layers],
   );
 
@@ -1271,6 +1285,14 @@ export function TagCanvasEditor({
     });
   }, [addLayer, makeBaseLayer]);
 
+  // B4: a 3 x 2 table, in price tag and spec sheet templates alike.
+  const handleAddTable = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('table', 80, 30),
+      props: defaultTableProps(3, 2, 80),
+    });
+  }, [addLayer, makeBaseLayer]);
+
   const handleAddFeatureIcons = useCallback(() => {
     addLayer({
       ...makeBaseLayer('feature_icons', 40, 10),
@@ -1286,9 +1308,9 @@ export function TagCanvasEditor({
         ACCESSORY_DEFAULT_BOX_MM.width_mm,
         ACCESSORY_DEFAULT_BOX_MM.height_mm,
       ),
-      props: defaultAccessoriesProps(),
+      props: defaultAccessoriesPropsFor(specSheet),
     });
-  }, [addLayer, makeBaseLayer]);
+  }, [addLayer, makeBaseLayer, specSheet]);
 
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
@@ -1581,9 +1603,25 @@ export function TagCanvasEditor({
     });
   }, []);
 
+  /** B4: the table cell last clicked, right-clicked (or picked in the Inspector): the menu and the cell
+   *  section of the Inspector act on it. */
+  const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
+  // The pointer reads the stage, which is declared below the click handler.
+  const pointerMmRef = useRef<() => { x_mm: number; y_mm: number } | null>(() => null);
   const handleCanvasSelect = useCallback(
     (rawId: string, additive: boolean) => {
       const id = resolveTarget(rawId);
+      // B4: a click on a table cell makes that cell the Inspector's current one.
+      const clicked = layers.find((l) => l.id === id);
+      const point = clicked && clicked.props.kind === 'table' ? pointerMmRef.current() : null;
+      if (clicked && clicked.props.kind === 'table' && point) {
+        const found = cellAt(
+          tableLayout(clicked.props, clicked.width_mm, tableMeasure(clicked.props)),
+          point.x_mm - clicked.x_mm,
+          point.y_mm - clicked.y_mm,
+        );
+        if (found) setTableCell({ layerId: id, row: found.row, col: found.col });
+      }
       setSelectedGuideId(null);
       // A press on the box (not on its header handle, which stops the event) selects the box again.
       setHeaderSelId(null);
@@ -1600,13 +1638,14 @@ export function TagCanvasEditor({
         return new Set([id]);
       });
     },
-    [resolveTarget],
+    [resolveTarget, layers],
   );
 
   const pointerMm = useCallback(() => {
     const point = stageRef.current?.getPointerPosition();
     return point ? stageToMm(view, point.x, point.y) : null;
   }, [view]);
+  pointerMmRef.current = pointerMm;
 
   /**
    * A layer's own hover state (S6, D10) - not yet resolved to a BLOCK, which
@@ -2003,7 +2042,7 @@ export function TagCanvasEditor({
         return;
       }
       // An accessories box steps into its card (card rule V1).
-      if (target.props.kind === 'accessories' && !specSheet && !embedded?.readOnly) {
+      if (target.props.kind === 'accessories' && !embedded?.readOnly) {
         enterAccessoryEdit(target.id, 'card');
         return;
       }
@@ -2039,7 +2078,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit, specSheet],
+    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -3407,9 +3446,37 @@ export function TagCanvasEditor({
       setMenuOnEmpty(!drawnHit && hits.length === 0);
       const next = selectionForContextMenu(selectedIds, hits, drawnHit);
       if (next) setSelectedIds(next);
+      // A table: which cell is under the pointer (the layout the canvas and print both use).
+      const ofKind = (id: string | null | undefined) => {
+        const hit = id ? layers.find((l) => l.id === id) : undefined;
+        return hit && hit.props.kind === 'table' ? hit : undefined;
+      };
+      const tableHit = ofKind(drawnHit) ?? hits.map(ofKind).find(Boolean);
+      if (tableHit && tableHit.props.kind === 'table' && point) {
+        const found = cellAt(
+          tableLayout(tableHit.props, tableHit.width_mm, tableMeasure(tableHit.props)),
+          point.x_mm - tableHit.x_mm,
+          point.y_mm - tableHit.y_mm,
+        );
+        setTableCell({ layerId: tableHit.id, row: found?.row ?? 0, col: found?.col ?? 0 });
+      }
     },
     [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
+
+  // B4: a table's height follows its laid-out rows (a row grows to fit its text). Not a history
+  // entry: undo restores the older layers and this puts the height right again.
+  useEffect(() => {
+    if (embedded?.readOnly) return;
+    const fixes = new Map<string, number>();
+    for (const layer of layers) {
+      if (layer.props.kind !== 'table') continue;
+      const height = tableLayout(layer.props, layer.width_mm, tableMeasure(layer.props)).height_mm;
+      if (Math.abs(height - layer.height_mm) > 0.05) fixes.set(layer.id, height);
+    }
+    if (fixes.size === 0) return;
+    setLayers((prev) => prev.map((l) => (fixes.has(l.id) ? { ...l, height_mm: fixes.get(l.id) as number } : l)));
+  }, [layers, embedded?.readOnly]);
 
   // -- Undo / Redo -----------------------------------------------------------
 
@@ -3733,7 +3800,7 @@ export function TagCanvasEditor({
       // in, if select mode is showing the Transformer's anchors; back out,
       // if the vertex/edge handles are already up.
       // Enter on a selected accessories box steps into its card.
-      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && !specSheet && selectedIds.size === 1) {
+      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && selectedIds.size === 1) {
         const only = layers.find((l) => selectedIds.has(l.id));
         if (only && only.props.kind === 'accessories') {
           e.preventDefault();
@@ -3892,7 +3959,6 @@ export function TagCanvasEditor({
     deleteAccessoryElement,
     nudgeAccessoryElement,
     enterAccessoryEdit,
-    specSheet,
     layers,
     activeHeaderSel,
   ]);
@@ -3935,7 +4001,7 @@ export function TagCanvasEditor({
             delete props.cropRect;
             next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
           } else {
-            const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const z = nextLayerZ(prev);
             const fitted = fitPastedImage(natural, canvas);
             // A menu Paste: the picture's corner at the click point, pulled back to stay on the canvas.
             if (at) {
@@ -4142,6 +4208,24 @@ export function TagCanvasEditor({
     return null;
   }, [selectedIds, layers]);
 
+  // The table menu acts on the right-clicked cell of the single selected table.
+  const tableMenu = useMemo(() => {
+    if (!selectedLayer || selectedLayer.props.kind !== 'table') return null;
+    const props = selectedLayer.props;
+    const at = tableCell?.layerId === selectedLayer.id ? tableCell : { row: 0, col: 0 };
+    const cell = props.cells[at.row]?.[at.col];
+    return {
+      layerId: selectedLayer.id,
+      props,
+      row: at.row,
+      col: at.col,
+      rowSpan: Math.max(1, cell?.rowSpan ?? 1),
+      colSpan: Math.max(1, cell?.colSpan ?? 1),
+      merged: Boolean(cell && ((cell.rowSpan ?? 1) > 1 || (cell.colSpan ?? 1) > 1)),
+    };
+  }, [selectedLayer, tableCell]);
+
+
   const selectionIsGroup = selectedLayer?.props.kind === 'group';
   /** The context menu's "Crop image" (S8): an image layer only, entered ONLY
    * from this menu (double-click on an image stays a no-op, captain call 4). */
@@ -4253,9 +4337,12 @@ export function TagCanvasEditor({
           (layer.props.kind === 'text' ? layer.props.text : '')
         );
       }
+      if (layer.props.kind === 'table' && tableCell?.layerId === layer.id) {
+        return layer.props.cells[tableCell.row]?.[tableCell.col]?.text ?? '';
+      }
       return layer.props.kind === 'text' ? layer.props.text : '';
     },
-    [dataOf],
+    [dataOf, tableCell],
   );
 
   /**
@@ -4273,9 +4360,16 @@ export function TagCanvasEditor({
         updateLayer(layer.id, { text_override: content });
       } else if (layer.props.kind === 'text') {
         updateLayerProps(layer.id, { ...layer.props, text: content });
+      } else if (layer.props.kind === 'table' && tableCell?.layerId === layer.id) {
+        // Insert field on a table writes into the picked cell.
+        const { row, col } = tableCell;
+        const cells = layer.props.cells.map((cellRow, r) =>
+          cellRow.map((cell, c) => (r === row && c === col ? { ...cell, text: content } : cell)),
+        );
+        updateLayerProps(layer.id, { cells });
       }
     },
-    [layers, updateLayer, updateLayerProps],
+    [layers, updateLayer, updateLayerProps, tableCell],
   );
 
   /** The Inspector's rich Content box, so Insert field lands at its caret. */
@@ -5306,6 +5400,85 @@ export function TagCanvasEditor({
           <ContextMenuContent className="w-56">
             {hasSelection && !menuOnEmpty ? (
               <>
+                {tableMenu && (
+                  <>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, insertRow(tableMenu.props, tableMenu.row + tableMenu.rowSpan))
+                      }
+                    >
+                      Insert row below
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          insertColumn(tableMenu.props, tableMenu.col + tableMenu.colSpan),
+                        )
+                      }
+                    >
+                      Insert column right
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() => updateLayerProps(tableMenu.layerId, deleteRow(tableMenu.props, tableMenu.row))}
+                      disabled={tableMenu.props.rows.length <= 1}
+                    >
+                      Delete row
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, deleteColumn(tableMenu.props, tableMenu.col))
+                      }
+                      disabled={tableMenu.props.columns.length <= 1}
+                    >
+                      Delete column
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan - 1,
+                            tableMenu.col + tableMenu.colSpan,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.col + tableMenu.colSpan >= tableMenu.props.columns.length}
+                    >
+                      Merge cells
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan,
+                            tableMenu.col + tableMenu.colSpan - 1,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.row + tableMenu.rowSpan >= tableMenu.props.rows.length}
+                    >
+                      Merge down
+                    </ContextMenuItem>
+                    {tableMenu.merged && (
+                      <ContextMenuItem
+                        onSelect={() =>
+                          updateLayerProps(tableMenu.layerId, unmergeCell(tableMenu.props, tableMenu.row, tableMenu.col))
+                        }
+                      >
+                        Unmerge cells
+                      </ContextMenuItem>
+                    )}
+                    <ContextMenuSeparator />
+                  </>
+                )}
                 <ContextMenuItem
                   onSelect={() => {
                     handleCut();
@@ -5460,14 +5633,13 @@ export function TagCanvasEditor({
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
         onAddFeatureIcons={specSheet ? undefined : handleAddFeatureIcons}
+        onAddTable={handleAddTable}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessories={specSheet ? undefined : handleAddAccessories}
+        onAddAccessories={handleAddAccessories}
         accessoryTemplates={accessoryTemplates}
-        onInsertAccessoryTemplate={
-          specSheet || !hasQueryClient ? undefined : handleInsertAccessoryTemplate
-        }
+        onInsertAccessoryTemplate={!hasQueryClient ? undefined : handleInsertAccessoryTemplate}
         accessoryEdit={
           accessoryEdit
             ? {
@@ -5713,6 +5885,8 @@ export function TagCanvasEditor({
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
               onInsertField={() => setInsertFieldOpen(true)}
+              tableCell={tableCell && selectedLayer && tableCell.layerId === selectedLayer.id ? tableCell : null}
+              onTableCellChange={(row, col) => selectedLayer && setTableCell({ layerId: selectedLayer.id, row, col })}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
               }}
@@ -5739,10 +5913,10 @@ export function TagCanvasEditor({
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
               accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
-              onEditAccessoryCard={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'card')}
-              onEditAccessoryFooter={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'footer')}
+              onEditAccessoryCard={(id) => enterAccessoryEdit(id, 'card')}
+              onEditAccessoryFooter={(id) => enterAccessoryEdit(id, 'footer')}
               onSaveAccessoryTemplate={
-                specSheet || !hasQueryClient
+                !hasQueryClient
                   ? undefined
                   : (id) => {
                       const target = layers.find((l) => l.id === id);

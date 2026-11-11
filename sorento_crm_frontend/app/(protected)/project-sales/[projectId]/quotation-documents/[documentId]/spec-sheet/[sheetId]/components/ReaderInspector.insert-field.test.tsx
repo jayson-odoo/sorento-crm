@@ -156,4 +156,11 @@ describe('Insert field on the spec sheet page Inspector', () => {
       rich.editor = null;
     }
   });
+
+  it('offers the slice B document fields too (Subject title)', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    fireEvent.change(screen.getByPlaceholderText('Search fields...'), { target: { value: 'doc.subject' } });
+    expect(screen.getByText('Subject title')).toBeInTheDocument();
+  });
 });

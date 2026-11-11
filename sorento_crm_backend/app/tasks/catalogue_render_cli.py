@@ -2,6 +2,11 @@
 
     python -m app.tasks.catalogue_render_cli <url> <out.pdf> [--landscape] [--paper A4]
         [--width-mm W --height-mm H]
+    python -m app.tasks.catalogue_render_cli <url> <out.json> --layout
+
+``--layout`` writes the print page's resolved layers (``window.__tagSheetLayout``, for the spec
+sheet PowerPoint export) instead of a PDF. Pictures are fetched with the browser context's request
+client (no CORS) from the URLs the page itself loaded, and returned as ``data:`` URLs.
 
 RQ forks a work-horse per job, and driving Playwright's sync API inside that
 fork segfaults on macOS (signal 11) - the browser launch does not survive a
@@ -82,10 +87,108 @@ def render(
     return len(pdf_bytes)
 
 
+IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGES_TOTAL_MAX_BYTES = 100 * 1024 * 1024
+
+
+def inline_images(
+    urls,
+    fetch,
+    *,
+    per_image_max: int = IMAGE_MAX_BYTES,
+    total_max: int = IMAGES_TOTAL_MAX_BYTES,
+) -> dict:
+    """``{url: data URL}`` for the pictures worth embedding.
+
+    ``fetch(url)`` returns ``(content_type, body_bytes)`` or ``None`` (it is the browser context's
+    request client in production, which CORS does not apply to). Only ``image/*`` is kept, a picture
+    over ``per_image_max`` is skipped, and nothing is added once ``total_max`` would be passed. The
+    caller supplies only URLs the print page itself loaded, never anything from the layout.
+    """
+    import base64
+
+    out: dict = {}
+    total = 0
+    for url in dict.fromkeys(urls):
+        if url in out:
+            continue
+        try:
+            got = fetch(url)
+        except Exception:  # noqa: BLE001 - one dead picture must not lose the deck
+            continue
+        if not got:
+            continue
+        content_type, body = got
+        mime = (content_type or "").split(";")[0].strip().lower()
+        if not mime.startswith("image/") or not body or len(body) > per_image_max:
+            continue
+        if total + len(body) > total_max:
+            continue
+        total += len(body)
+        out[url] = f"data:{mime};base64,{base64.b64encode(body).decode('ascii')}"
+    return out
+
+
+_LOADED_IMAGE_SRCS_JS = """
+() => Array.from(document.querySelectorAll('img'))
+  .map((img) => img.currentSrc || img.src)
+  .filter((src) => typeof src === 'string' && /^https?:/i.test(src))
+"""
+
+
+def fetch_image_with_cap(request, url: str, per_image_max: int = IMAGE_MAX_BYTES):
+    """``(content_type, body)`` through the browser context's request client, or None. The body is
+    not read when the response already declares itself over the cap."""
+    response = request.get(url, timeout=60_000)
+    if not response.ok:
+        return None
+    try:
+        declared = int(response.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > per_image_max:
+        return None
+    return response.headers.get("content-type"), response.body()
+
+
+def render_layout(url: str, out_path: str) -> int:
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=READY_TIMEOUT_MS)
+            page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)
+            layout = page.evaluate("window.__tagSheetLayout")
+            if not layout:
+                raise RuntimeError("the print page did not expose its layout")
+            loaded = page.evaluate(_LOADED_IMAGE_SRCS_JS)
+
+            def fetch(src: str):
+                return fetch_image_with_cap(page.context.request, src)
+
+            inlined = inline_images(loaded, fetch)
+            for entry in layout.get("pages") or []:
+                for layer in entry.get("layers") or []:
+                    if layer.get("kind") == "image":
+                        url = layer.get("url")
+                        if not (isinstance(url, str) and url.startswith("data:")):
+                            layer["url"] = inlined.get(url)
+        finally:
+            browser.close()
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(layout, handle)
+    return len(layout.get("pages") or [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render a print page to PDF")
     parser.add_argument("url")
     parser.add_argument("out")
+    parser.add_argument("--layout", action="store_true", help="write the page layout JSON instead of a PDF")
     parser.add_argument("--landscape", action="store_true")
     parser.add_argument("--paper", default="A4")
     # Both or neither: an explicit page size in millimetres, in place of the paper name.
@@ -97,6 +200,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.width_mm is not None and args.height_mm is not None
         else None
     )
+
+    if args.layout:
+        try:
+            print(render_layout(args.url, args.out))
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"render failed: {exc}", file=sys.stderr)
+            return 1
 
     try:
         written = render(

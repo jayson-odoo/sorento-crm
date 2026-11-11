@@ -330,6 +330,8 @@ class Product(Base, CompanyScopedMixin):
         nullable=True,
     )
     price_tag_description = Column(Text, nullable=True)
+    # SPEC-SHEET-DESIGNER-PARITY B1: staff copy for the project spec sheet; falls back to `description`.
+    spec_sheet_description = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
     invoice_price = Column(Numeric(12, 2), nullable=True)

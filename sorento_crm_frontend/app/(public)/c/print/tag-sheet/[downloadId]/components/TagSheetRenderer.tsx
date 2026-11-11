@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type {
   ImpositionConfig,
@@ -89,7 +89,14 @@ import {
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
-import { isRich, parseRichText, safeColour } from '@/lib/dealer-kit/rich-text';
+import { isRich, parseRichText, richPlainText, safeColour } from '@/lib/dealer-kit/rich-text';
+import { renderMergeFields } from '@/lib/dealer-kit/merge-fields';
+import {
+  resolveTableText,
+  tableFontMm,
+  tableLayout,
+  tableMeasure,
+} from '@/lib/dealer-kit/table-layout';
 import { layerFeatureIcons } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
@@ -1070,6 +1077,7 @@ function TagRenderer({
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
           {layer.type === 'feature_icons' && renderFeatureIconsLayer(layer, media, binding)}
           {layer.type === 'accessories' && renderAccessoriesLayer(layer, media, binding)}
+          {layer.type === 'table' && <TableLayerView layer={layer} binding={binding} />}
         </div>
       ))}
     </div>
@@ -1233,6 +1241,293 @@ function SheetRenderer({
 // Main renderer
 // ---------------------------------------------------------------------------
 
+/**
+ * B5: an Accessories box as the plain layers a deck knows (shapes, pictures, text), laid out by the
+ * SAME functions the print renderer draws it with, so the slide matches the print.
+ */
+function flattenAccessories(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+  baseX: number,
+  baseY: number,
+): Record<string, unknown>[] {
+  const props = layer.props;
+  if (props.kind !== 'accessories') return [];
+  const items = accessoriesOf(binding, layer);
+  const out: Record<string, unknown>[] = [];
+  const at = (x: number, y: number, w: number, h: number) => ({
+    x_mm: baseX + x,
+    y_mm: baseY + y,
+    width_mm: w,
+    height_mm: h,
+    rotation_deg: 0,
+  });
+  const rect = (r: { x_mm: number; y_mm: number; width_mm: number; height_mm: number }, fill: string, stroke = '', strokeWidth = 0, radius = 0) =>
+    out.push({
+      kind: 'shape',
+      shape: radius > 0 ? 'rounded_rect' : 'rect',
+      ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm),
+      fill,
+      stroke,
+      strokeWidth,
+      cornerRadius: radius,
+    });
+  const text = (
+    r: { x_mm: number; y_mm: number; width_mm: number; height_mm: number },
+    value: string,
+    style: { fontFamily?: string | null; fontSize: number; bold: boolean; italic?: boolean; underline?: boolean; color: string; align: string },
+  ) => {
+    if (!value) return;
+    out.push({
+      kind: 'text',
+      ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm),
+      text: value,
+      fontFamily: style.fontFamily || props.fontFamily || '',
+      fontSize: style.fontSize,
+      bold: style.bold,
+      italic: Boolean(style.italic),
+      underline: Boolean(style.underline),
+      color: style.color,
+      align: style.align,
+    });
+  };
+  const imageUrl = (item: TagAccessory) =>
+    item.image ? (media.images?.[item.image.attachment_id] ?? item.image.url) : null;
+  const headerStyle = accessoryHeaderStyle(props);
+
+  if (props.card) {
+    const box = cardBoxLayout(items.length, props, layer.width_mm, layer.height_mm);
+    if (box.shown === 0) return [];
+    const cardIcons = drawableFeatureIcons(media.featureIcons, media.assets);
+    if (box.frame) rect(box.frame, safeColour(props.fill), safeColour(props.stroke), props.strokeWidth_mm, props.cornerRadius_mm);
+    if (box.header) {
+      text(box.header, props.headerText, {
+        fontFamily: headerStyle.fontFamily,
+        fontSize: box.header.fontSize_pt,
+        bold: headerStyle.bold,
+        italic: headerStyle.italic,
+        underline: headerStyle.underline,
+        color: safeColour(headerStyle.color),
+        align: box.header.onBorder ? 'center' : headerStyle.align,
+      });
+    }
+    box.cards.forEach((card, i) => {
+      const item = items[i];
+      rect(card, safeColour(props.cardFill), '', 0, Math.min(props.cornerRadius_mm, 1.5));
+      for (const element of cardElementsFor(item, props.card!, cardIcons)) {
+        const r = {
+          x_mm: card.x_mm + element.x_mm * box.scale,
+          y_mm: card.y_mm + element.y_mm * box.scale,
+          width_mm: element.width_mm * box.scale,
+          height_mm: element.height_mm * box.scale,
+        };
+        if (element.kind === 'picture') {
+          const url = item.image ? imageUrl(item) : element.src;
+          if (url) out.push({ kind: 'image', ...at(r.x_mm, r.y_mm, r.width_mm, r.height_mm), url, fit: element.fit ?? 'contain' });
+        } else if (element.kind === 'text') {
+          const value = isRich(element.text ?? '') ? richPlainText(element.text ?? '') : (element.text ?? '');
+          const boxed = cardTextBox(element, box.scale);
+          const fitted = fitCardTextProps(cardTextProps(element, box.scale, props.fontFamily), value, boxed.text.width_mm, boxed.text.height_mm);
+          text(r, value, {
+            fontFamily: fitted.fontFamily,
+            fontSize: fitted.fontSize,
+            bold: (fitted.fontWeight ?? 400) >= 600,
+            italic: fitted.italic,
+            underline: fitted.underline,
+            color: safeColour(fitted.color, '#111827'),
+            align: fitted.align,
+          });
+        } else if (element.kind === 'shape') {
+          rect(r, element.fill ? safeColour(element.fill) : 'transparent', element.stroke ? safeColour(element.stroke) : '', element.strokeWidth_mm ?? 0, element.cornerRadius_mm ?? 0);
+        }
+      }
+    });
+    return out;
+  }
+
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(items.length, props, layer.width_mm, layer.height_mm, lineCount);
+  if (box.shown === 0) return [];
+  if (box.frame) rect(box.frame, safeColour(props.fill), safeColour(props.stroke), props.strokeWidth_mm, props.cornerRadius_mm);
+  if (box.header) {
+    text(box.header, props.headerText, {
+      fontFamily: headerStyle.fontFamily,
+      fontSize: box.header.fontSize_pt,
+      bold: headerStyle.bold,
+      italic: headerStyle.italic,
+      underline: headerStyle.underline,
+      color: safeColour(headerStyle.color),
+      align: box.header.onBorder ? 'center' : headerStyle.align,
+    });
+  }
+  box.cards.forEach((card, i) => {
+    const item = items[i];
+    const url = imageUrl(item);
+    const inner = accessoryCardInner(card, props, Boolean(url), lineCount);
+    const texts = accessoryCardLines(item);
+    rect(card, safeColour(props.cardFill), '', 0, Math.min(props.cornerRadius_mm, 1.5));
+    if (inner.image && url) {
+      out.push({
+        kind: 'image',
+        ...at(card.x_mm + inner.image.x_mm, card.y_mm + inner.image.y_mm, inner.image.width_mm, inner.image.height_mm),
+        url,
+        fit: 'contain',
+      });
+    }
+    inner.lines.forEach((line, n) => {
+      if (!texts[n]) return;
+      const style = accessoryLineStyle(props, n);
+      const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+      text(
+        { x_mm: card.x_mm + line.x_mm, y_mm: card.y_mm + line.y_mm, width_mm: line.width_mm, height_mm: line.height_mm },
+        texts[n],
+        {
+          fontFamily: style.fontFamily,
+          fontSize: fitLinePt(texts[n], line.width_mm, basePt, style.bold),
+          bold: style.bold,
+          italic: style.italic,
+          underline: style.underline,
+          color: safeColour(style.color),
+          align: style.align,
+        },
+      );
+    });
+  });
+  return out;
+}
+
+/** B5: a price badge as a filled box (when boxed) with its resolved words over it. */
+function flattenPriceBadge(
+  layer: TagLayer,
+  binding: TagBindingData | null,
+  box: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const props = layer.props;
+  if (props.kind !== 'price_badge') return [];
+  const parts = priceBadgeParts(props, priceBadgeInput(binding, layer));
+  const typo = priceBadgeTypography(props);
+  const out: Record<string, unknown>[] = [];
+  if (parts.boxed || props.showBox) {
+    out.push({ kind: 'shape', shape: 'rounded_rect', ...box, fill: safeColour(props.fill), stroke: '', strokeWidth: 0, cornerRadius: props.cornerRadius ?? 0 });
+  }
+  const lines = [parts.struckText, parts.plainText].filter(Boolean).join('\n');
+  if (lines) {
+    out.push({
+      kind: 'text',
+      ...box,
+      text: lines,
+      fontFamily: typo.fontFamily || 'DM Sans',
+      fontSize: typo.fontSize ?? Math.max(6, Math.min(24, Number(layer.height_mm) * 1.4)),
+      bold: (typo.fontWeight ?? 700) >= 600,
+      italic: typo.italic,
+      underline: typo.underline,
+      color: parts.boxed ? '#ffffff' : safeColour(props.textColor, '#000000'),
+      align: typo.align,
+    });
+  }
+  return out;
+}
+
+/**
+ * B5: the resolved layers of every page, for the PowerPoint worker (`window.__tagSheetLayout`).
+ * Text has its merge fields applied; a table carries its laid-out cells and border edges; a
+ * picture carries the URL this page already loaded (the worker's browser turns it into bytes).
+ * Kinds a deck cannot express yet are left out.
+ */
+function buildLayoutExport(
+  doc: TagSheetDoc,
+  resolvedData: Record<string, ResolvedLineData>,
+  media: TagSheetMedia,
+) {
+  const pages = doc.sheets.map((sheet) => {
+    const layers: Record<string, unknown>[] = [];
+    for (const tag of sheet.tags) {
+      const resolved = resolvedData[tag.request_tag_id] ?? null;
+      const binding = bindingOf(resolved);
+      const sorted = [...tag.layers]
+        .filter((l) => l.visible !== false)
+        .filter((l) => layerShownFor(l, binding))
+        .sort((a, b) => a.z_index - b.z_index);
+      for (const layer of sorted) {
+        const props = layer.props;
+        const box = {
+          x_mm: tag.x_mm + layer.x_mm,
+          y_mm: tag.y_mm + layer.y_mm,
+          width_mm: layer.width_mm,
+          height_mm: layer.height_mm,
+          rotation_deg: layer.rotation_deg || 0,
+        };
+        if (props.kind === 'text') {
+          layers.push({
+            kind: 'text',
+            ...box,
+            text: layerText(layer, binding, 'print'),
+            fontFamily: props.fontFamily,
+            fontSize: props.fontSize,
+            bold: (props.fontWeight ?? 400) >= 600,
+            italic: Boolean(props.italic),
+            underline: Boolean(props.underline),
+            color: props.color,
+            align: props.align,
+          });
+        } else if (props.kind === 'image' || (props.kind === 'product_slot' && props.fieldKey === 'product_image')) {
+          const url = imageUrlFor(layer, media, resolved);
+          if (url) layers.push({ kind: 'image', ...box, url, fit: props.kind === 'image' ? props.fit : 'contain' });
+        } else if (props.kind === 'shape') {
+          layers.push({
+            kind: 'shape',
+            ...box,
+            shape: props.shape,
+            fill: props.fill,
+            stroke: props.stroke,
+            strokeWidth: props.strokeWidth,
+            cornerRadius: props.cornerRadius,
+          });
+        } else if (props.kind === 'accessories') {
+          layers.push(...flattenAccessories(layer, media, binding, box.x_mm, box.y_mm));
+        } else if (props.kind === 'price_badge') {
+          layers.push(...flattenPriceBadge(layer, binding, box));
+        } else if (props.kind === 'table') {
+          const laid = resolveTableText(props, (text) => renderMergeFields(text, binding, 'print', layer));
+          const layout = tableLayout(laid, layer.width_mm, tableMeasure(laid));
+          layers.push({
+            kind: 'table',
+            ...box,
+            height_mm: layout.height_mm,
+            columns_mm: layout.columnWidths_mm,
+            rows_mm: layout.rowHeights_mm,
+            fontFamily: laid.fontFamily,
+            fontSize: laid.fontSize,
+            color: laid.color,
+            align: laid.align,
+            verticalAlign: laid.verticalAlign,
+            cells: layout.cells.map((c) => ({
+              row: c.row,
+              col: c.col,
+              rowSpan: Math.max(1, c.cell.rowSpan ?? 1),
+              colSpan: Math.max(1, c.cell.colSpan ?? 1),
+              text: c.text,
+              fill: c.cell.fill ?? null,
+              padding_mm: c.cell.padding_mm ?? 1,
+            })),
+            edges: layout.edges.map((e) => ({
+              x1_mm: e.x1_mm,
+              y1_mm: e.y1_mm,
+              x2_mm: e.x2_mm,
+              y2_mm: e.y2_mm,
+              color: e.color,
+              width_mm: e.width_mm,
+            })),
+          });
+        }
+      }
+    }
+    return { layers };
+  });
+  return { page_mm: [doc.imposition.page_width_mm, doc.imposition.page_height_mm], pages };
+}
+
 export default function TagSheetRenderer({
   doc,
   resolvedData,
@@ -1244,6 +1539,22 @@ export default function TagSheetRenderer({
 }: TagSheetRendererProps) {
   const imposition = doc.imposition;
   const media: TagSheetMedia = { assets, images, featureIcons };
+
+  // B5: the PowerPoint worker reads this once the page is up; a thumbnail preview does not set it.
+  useEffect(() => {
+    if (preview || typeof window === 'undefined') return;
+    // Only the PowerPoint worker asks (?layout=1): a price tag print never pays for it.
+    if (new URLSearchParams(window.location.search).get('layout') !== '1') return;
+    try {
+      (window as unknown as { __tagSheetLayout?: unknown }).__tagSheetLayout = buildLayoutExport(
+        doc,
+        resolvedData,
+        { assets, images, featureIcons },
+      );
+    } catch {
+      // The layout is a side product; a layer it cannot read must never break the print.
+    }
+  }, [doc, resolvedData, assets, images, featureIcons, preview]);
 
   if (preview) {
     return (
@@ -1297,6 +1608,88 @@ export default function TagSheetRenderer({
 // ---------------------------------------------------------------------------
 // Feature icons (PRICETAG-DESIGNER-GAPS item 3)
 // ---------------------------------------------------------------------------
+
+/**
+ * A table layer: one absolutely positioned div per laid-out cell, laid out by the SAME module the
+ * designer canvas uses (`table-layout.ts`), with merge fields resolved against the page's data
+ * before the rows are measured. A merged-away cell is not emitted.
+ */
+function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindingData | null }) {
+  const props = layer.props;
+  const laid = useMemo(() => {
+    if (props.kind !== 'table') return null;
+    const resolved = resolveTableText(props, (text) => renderMergeFields(text, binding, 'print', layer));
+    return { resolved, layout: tableLayout(resolved, layer.width_mm, tableMeasure(resolved)) };
+  }, [props, binding, layer]);
+  if (props.kind !== 'table' || !laid) return null;
+  const { resolved, layout } = laid;
+  const align = resolved.verticalAlign ?? 'middle';
+  return (
+    <div
+      data-testid="table-layer"
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${layer.width_mm}mm`,
+        height: `${layout.height_mm}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        fontFamily: resolved.fontFamily,
+        fontSize: `${tableFontMm(resolved)}mm`,
+        color: safeColour(resolved.color, '#000000'),
+        textAlign: resolved.align,
+      }}
+    >
+      {layout.cells.map((c) => {
+        return (
+          <div
+            key={`${c.row}-${c.col}`}
+            data-testid={`table-cell-${c.row}-${c.col}`}
+            style={{
+              position: 'absolute',
+              left: `${c.x_mm}mm`,
+              top: `${c.y_mm}mm`,
+              width: `${c.width_mm}mm`,
+              height: `${c.height_mm}mm`,
+              boxSizing: 'border-box',
+              padding: `${c.cell.padding_mm ?? 1}mm`,
+              backgroundColor: c.cell.fill ? safeColour(c.cell.fill) : undefined,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: align === 'top' ? 'flex-start' : align === 'bottom' ? 'flex-end' : 'center',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
+              lineHeight: 1.2,
+            }}
+          >
+            {c.text}
+          </div>
+        );
+      })}
+      {layout.edges.map((e) => {
+        // A shared border is one line; it straddles the grid line, and each end reaches half a
+        // width past it so the corners close.
+        const half = e.width_mm / 2;
+        const horizontal = e.orientation === 'h';
+        return (
+          <div
+            key={`${e.orientation}-${e.line}-${e.index}`}
+            data-testid={`table-edge-${e.orientation}-${e.line}-${e.index}`}
+            style={{
+              position: 'absolute',
+              left: `${horizontal ? e.x1_mm - half : e.x1_mm - half}mm`,
+              top: `${horizontal ? e.y1_mm - half : e.y1_mm - half}mm`,
+              width: `${horizontal ? e.x2_mm - e.x1_mm + e.width_mm : e.width_mm}mm`,
+              height: `${horizontal ? e.width_mm : e.y2_mm - e.y1_mm + e.width_mm}mm`,
+              backgroundColor: safeColour(e.color, '#000000'),
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * The subject's matched icons as `<img alt=name>`, packed by `featureIconRow` - the SAME two
