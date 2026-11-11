@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -43,6 +44,7 @@ from app.services.chatbot.agent.tools import (
     REGISTRY,
     RESOLVE,
     PORTED_READS,
+    QUOTATION_LINES,
     TOOL_LABELS,
     ToolResult,
     panel_closed,
@@ -94,6 +96,10 @@ REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
 #: Kept beside the registry tools after a round that only named a sales agent: the report takes agent ids.
 AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
 
+#: What a round carries after the quotation lines answered (AGENT-PANEL-FIXES C): the tool is "alone enough to
+#: compare them" (its description), and the other ~50 schemas were 94k characters resent on every round.
+AFTER_QUOTATION_LINES = frozenset({QUOTATION_LINES, "answer", "plan"})
+
 
 def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict], *, plan_parts: int = 0) -> list[dict]:
     """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
@@ -110,6 +116,11 @@ def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict],
     # `plan` and `answer` are not in `done` (run.tool_calls): line up with this round's other calls only.
     ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
     answered = done[-ran:] if ran else []
+    if QUOTATION_LINES in names and names <= {QUOTATION_LINES, "plan"}:
+        # Only a lookup that found every ref it was given: a ref in not_found may be another project's (find it).
+        if plan_parts > 1 or not any(c.get("name") == QUOTATION_LINES and c.get("complete") for c in answered):
+            return schemas
+        return [s for s in schemas if s.get("function", {}).get("name") in AFTER_QUOTATION_LINES]
     if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
         if plan_parts > 1:
             # A question in several parts may need another tool after the agent's figure (review round 9).
@@ -1040,29 +1051,50 @@ def enforce_agent_rate_limit(operator_user_id: str) -> None:
         )
 
 
+#: How long a turn's busy lock lives if its release never runs (a killed process): the longest turn
+#: the settings allow (`chatbot_agent_max_seconds` <= 300, api/v1/user_management/settings.py) plus a margin.
+BUSY_LOCK_TTL_SECONDS = 360
+BUSY_LOCK_PREFIX = "agent:busy:"
+# Compare-and-delete: only the turn that took the lock frees it, never a later turn's lock after a TTL lapse.
+_RELEASE_IF_OURS = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+
+def _busy_redis():
+    """The app's Redis client (a function so a test can hand each call its own connection)."""
+    from app.services.queue_service import redis_conn
+
+    return redis_conn
+
+
 @contextmanager
-def single_flight(contact_respond_id: str):
-    """One agent turn at a time per contact: a Postgres advisory lock held on a connection of
-    its own (the session's connection goes back to the pool between commits)."""
-    from sqlalchemy import text as sql_text
+def single_flight(contact_respond_id: str, *, ttl_seconds: float = BUSY_LOCK_TTL_SECONDS):
+    """One agent turn at a time per contact: a Redis key set NX with a TTL, freed by compare-and-delete.
 
-    from app.database import engine
-
-    key = {"k": f"agent:{contact_respond_id}"}
-    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    It was a Postgres session advisory lock. The app's database goes through pgbouncer in transaction mode
+    (api/v1/external/chat.py), so the lock and its unlock could land on different server connections: the
+    unlock silently failed and the chat answered "still working on your earlier message" until pgbouncer
+    recycled the connection (owner, 11 Nov). A Redis key is not tied to a connection and cannot outlive
+    its TTL. Redis down: the turn runs unlocked (the rate limiter's fail-open rule), with a warning."""
+    key = f"{BUSY_LOCK_PREFIX}{contact_respond_id}"
+    token = uuid.uuid4().hex
     try:
-        if not conn.execute(sql_text("SELECT pg_try_advisory_lock(hashtext(:k))"), key).scalar():
+        taken = _busy_redis().set(key, token, nx=True, px=max(1, int(ttl_seconds * 1000)))
+    except Exception:  # noqa: BLE001 - infra: the turn still runs
+        logger.warning("agent: busy lock unavailable for %s, running unlocked", contact_respond_id, exc_info=True)
+        held = False
+    else:
+        if not taken:
             raise AgentBusy()
-        try:
-            yield
-        finally:
-            try:
-                conn.execute(sql_text("SELECT pg_advisory_unlock(hashtext(:k))"), key)
-            except Exception:  # noqa: BLE001 - a dead connection drops its locks with it
-                logger.warning("agent: advisory unlock failed", exc_info=True)
-                conn.invalidate()
+        held = True
+    try:
+        yield
     finally:
-        conn.close()
+        if held:
+            try:
+                if not _busy_redis().eval(_RELEASE_IF_OURS, 1, key, token):
+                    logger.warning("agent: busy lock for %s was already gone at release (TTL lapsed)", contact_respond_id)
+            except Exception:  # noqa: BLE001 - the TTL frees it
+                logger.warning("agent: busy lock release failed for %s", contact_respond_id, exc_info=True)
 
 
 _CATALOG_CACHE: dict[str, tuple[float, dict]] = {}
@@ -1153,6 +1185,52 @@ DEALER_REQUESTS_PROTOCOL = (
     "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a complaint, a "
     "change to their details) is not something you can do here: say so and suggest their salesman."
 )
+
+
+#: The most of the page / chat notes one trace keeps (AGENT-PANEL-FIXES D). The panel's page note is capped at
+#: 6,000 characters of screen text plus its header and record facts.
+CONTEXT_NOTE_TRACE_CHARS = 12_000
+
+
+def _context_record(db, *, system: str, context_before: str, context_after: str, history: list[dict],
+                    schemas: list[dict], file_text: str, images: Any) -> dict:
+    """What the turn sent the model besides the user's message, for the trace drawer's "Context sent to the AI"
+    (admins only, AGENT-PANEL-FIXES D/F). The system prompt by its name and version, never its text (it is pinned
+    and edited in the prompt registry); the notes as sent, capped; sizes in characters."""
+    from app.services import ai_prompt_registry
+
+    try:
+        version = ai_prompt_registry.get_prompt(db, PROMPT_KEY).version
+    except Exception:  # noqa: BLE001 - a trace field never fails a turn
+        version = None
+    tool_names = [str(s.get("function", {}).get("name") or "") for s in schemas]
+    summary = bool(history and str(history[0].get("content") or "").startswith(memory.SUMMARY_PREFIX))
+    return {
+        "prompt_key": PROMPT_KEY,
+        "prompt_version": version,
+        "system_chars": len(system),
+        "context_before": context_before[:CONTEXT_NOTE_TRACE_CHARS],
+        "context_before_chars": len(context_before),
+        "context_after": context_after[:CONTEXT_NOTE_TRACE_CHARS],
+        "context_after_chars": len(context_after),
+        "history_messages": len(history) - (1 if summary else 0),
+        "history_summary": summary,
+        "history_chars": sum(len(str(m.get("content") or "")) for m in history),
+        "file_text_chars": len(file_text or ""),
+        "images": len(images or []),
+        "tools": tool_names,
+        "tool_schema_chars": len(json.dumps(schemas, default=str)),
+    }
+
+
+def _row_count(data: Any) -> int | None:
+    """Rows a tool returned: a list's length, or the longest list in a dict (rows, items, documents); None for none."""
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        sizes = [len(v) for v in data.values() if isinstance(v, list)]
+        return max(sizes) if sizes else None
+    return None
 
 
 def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
@@ -1637,6 +1715,9 @@ def _run(
     def remaining() -> float:
         return budgets.max_seconds - (clock() - t0)
 
+    # One key per agent label and principal: the system prompt holds the user's name and the date, the tools are theirs.
+    cache_key = f"{PROMPT_KEY}:" + hashlib.sha256(str(ctx.user_id or contact_respond_id).encode()).hexdigest()[:16]
+
     def chat(messages: list[dict], tools: list[dict] | None, *, kind: str, cap: float = ROUND_CALL_CAP,
              grace: float = 0.0, tool_choice: str | None = None, json_schema: dict | None = None) -> Any:
         """One model call inside the turn's single deadline. `grace` is the least time the
@@ -1655,6 +1736,11 @@ def _run(
                 extra["tool_choice"] = tool_choice
             if json_schema is not None:
                 extra.update(json_schema=json_schema, json_schema_name=kind)
+            if not side and tool_choice is None and json_schema is None and provider_name != "gemini":
+                # A routing hint for the provider's automatic prompt cache (AGENT-PANEL-FIXES C). Not on Gemini: there
+                # the key creates an explicit cache (`GeminiProvider._generate`), a blocking create per user, day and
+                # tool list that is not measured yet (review round 1).
+                extra["prompt_cache_key"] = cache_key
             result = send(
                 messages, tools=tools, model=model, timeout=timeout, **extra,
                 # A side call (the summary of older turns, the dealer-access check) neither thinks nor shows thoughts.
@@ -1673,6 +1759,7 @@ def _run(
         run.prompt_tokens += int(result.prompt_tokens or 0)
         run.completion_tokens += int(result.completion_tokens or 0)
         run.cached_tokens += int(result.cached_tokens or 0)
+        called = [str(c.get("name") or "") for c in (result.tool_calls or [])]
         trace.add(
             "agent_round",
             {
@@ -1683,7 +1770,12 @@ def _run(
                 "cached_tokens": result.cached_tokens,
                 "reasoning_tokens": result.reasoning_tokens,
                 "ms": ms,
-                "tool_calls": len(result.tool_calls or []),
+                "tool_calls": len(called),
+                "called": called,
+                "stop": "answer" if ANSWER in called else "tool_calls" if called else "text",
+                "tools_offered": len(tools or []),
+                "tool_schema_chars": len(json.dumps(tools, default=str)) if tools else 0,
+                "message_chars": sum(len(str(m.get("content") or "")) for m in messages),
             },
         )
         thought = "" if side else reasoning_for_steps(
@@ -1777,7 +1869,8 @@ def _run(
         messages: list[dict] = [{"role": "system", "content": system}]
         if context_before and waiting is None:
             messages.append({"role": "user", "content": context_before})
-        messages.extend(memory.history_messages(db, conv))
+        history = memory.history_messages(db, conv)
+        messages.extend(history)
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
@@ -1799,6 +1892,11 @@ def _run(
                 # What the files say is not the user's yes: only their own message or the card's button confirms.
                 schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
+        trace.add("agent_context", _context_record(
+            db, system=system, context_before=context_before if waiting is None else "",
+            context_after=context_after if waiting is None else "", history=history, schemas=schemas,
+            file_text=file_text, images=images,
+        ))
         action_id = str(uuid.uuid4())
         id_names: dict[str, str] = {}
         plan_parts: list[str] = []
@@ -2068,7 +2166,14 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, **({"agents_only": True} if agents else {})})
+                complete = (
+                    name == QUOTATION_LINES and out.status == "ok" and isinstance(out.data, dict)
+                    and bool(out.data.get("documents")) and not out.data.get("not_found")
+                )
+                run.tool_calls.append({
+                    "name": name, "status": out.status, "ms": ms,
+                    **({"agents_only": True} if agents else {}), **({"complete": True} if complete else {}),
+                })
                 if basis and out.status == "ok" and not turn_basis:
                     turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
@@ -2080,6 +2185,7 @@ def _run(
                         "status": out.status,
                         "ms": ms,
                         "result_chars": len(payload),
+                        "rows": _row_count(out.data),
                         "more": out.more,
                         "detail": detail,
                     },

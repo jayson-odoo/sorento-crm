@@ -9,6 +9,12 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { IndexMatchSection } from './IndexMatchSection';
 import { SpanPassSection } from './SpanPassSection';
+import {
+  AgentContextSection,
+  AgentRoundsSection,
+  AgentThinkingSection,
+  AgentToolsSection,
+} from './AgentTraceSections';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { factText, shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -78,6 +84,31 @@ export function TurnDetailDrawer({
 }
 
 function Sections({ detail }: { detail: TurnDetail }) {
+  if (detail.agent) {
+    // The agent writes none of the bot pipeline's records, so those sections would only say "Not recorded".
+    const agent = detail.agent;
+    return (
+      <>
+        <Section title="Agent rounds" testId="section-agent-rounds" defaultOpen>
+          <AgentRoundsSection agent={agent} />
+        </Section>
+        <Section title="Thinking" testId="section-agent-thinking" defaultOpen>
+          <AgentThinkingSection agent={agent} />
+        </Section>
+        <Section title="Tool calls" testId="section-agent-tools" defaultOpen>
+          <AgentToolsSection agent={agent} />
+        </Section>
+        <Section title="Context sent to the AI" testId="section-agent-context" defaultOpen>
+          <AgentContextSection context={agent.context} />
+        </Section>
+        {detail.stages.length > 0 && (
+          <Section title="Stages" testId="section-stages">
+            <StagesSection stages={detail.stages} />
+          </Section>
+        )}
+      </>
+    );
+  }
   return (
     <>
       <Section title="Order" testId="section-order" defaultOpen>
