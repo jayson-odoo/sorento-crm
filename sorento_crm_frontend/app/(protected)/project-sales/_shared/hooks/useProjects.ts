@@ -1112,6 +1112,34 @@ export function useQuotationLines(versionId: string | undefined) {
 }
 
 /**
+ * The first scope, in order, whose lines hold one that `matches` (PROJECT-QUOTE-LINE-TOOLS: a
+ * banner count opens the first area tab with a line it counts). Reads each version's lines under
+ * the key `useQuotationLines` uses, so a scope already opened costs nothing. Null when none does.
+ */
+export function useFindScopeWithLine() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    async (
+      scopes: { scopeId: string; versionId: string | null }[],
+      matches: (line: QuotationLine) => boolean,
+    ): Promise<string | null> => {
+      for (const scope of scopes) {
+        if (!scope.versionId) continue;
+        const versionId = scope.versionId;
+        const lines = await queryClient.fetchQuery({
+          queryKey: linesKey(versionId),
+          queryFn: () => listQuotationLines(versionId),
+          staleTime: 30_000,
+        });
+        if (lines.some(matches)) return scope.scopeId;
+      }
+      return null;
+    },
+    [queryClient],
+  );
+}
+
+/**
  * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
  * version already open costs nothing. One array per version that has loaded.
  */
@@ -1580,6 +1608,24 @@ export function useImportJobStatus(jobId: string | null) {
  * Verdicts are judged by the server (the same `is_in_series` / `resolve_floor` the save
  * runs); this hook only decides WHEN to ask.
  */
+/**
+ * The cache key of one draft's verdict. Exported so the lines filter reads the SAME cached answer
+ * the row's pills show (PROJECT-QUOTE-LINE-TOOLS): one question, one answer, two readers.
+ */
+export function lineVerdictKey(
+  target: { quotationId: string | null; seriesId?: string | null },
+  draft: { product_id?: string; product_set_id?: string; unit_price?: string },
+) {
+  return [
+    'quotation-line-verdict',
+    target.quotationId ?? '',
+    target.seriesId ?? '',
+    draft.product_id ?? '',
+    draft.product_set_id ?? '',
+    draft.unit_price ?? '',
+  ] as const;
+}
+
 export function useLineVerdict(
   target: { quotationId: string | null; seriesId?: string | null },
   draft: { product_id?: string; product_set_id?: string; unit_price?: string },
@@ -1605,14 +1651,7 @@ export function useLineVerdict(
 
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [
-      'quotation-line-verdict',
-      target.quotationId ?? '',
-      target.seriesId ?? '',
-      settled.product_id ?? '',
-      settled.product_set_id ?? '',
-      settled.unit_price ?? '',
-    ],
+    queryKey: lineVerdictKey(target, settled),
     queryFn: () =>
       judgeQuotationLine(target, {
         product_id: settled.product_id,

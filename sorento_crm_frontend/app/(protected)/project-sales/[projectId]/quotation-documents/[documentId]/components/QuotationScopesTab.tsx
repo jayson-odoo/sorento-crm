@@ -42,6 +42,8 @@ export function QuotationScopesTab() {
     versionNo,
     recheckResults,
     dismissRecheck,
+    lineFlags,
+    setLineFlags,
   } = useQuotationDocumentScreen();
   const quotations = useQuotations(projectId);
 
@@ -111,6 +113,7 @@ export function QuotationScopesTab() {
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
               feedback={openFeedback}
+              flagFilter={{ value: lineFlags, onChange: setLineFlags }}
               headerVersion={{
                 versionNo,
                 // Keyed by the version id each recheck ran on; the editor shows the one for the

@@ -130,7 +130,25 @@ interface GridRow {
   staged: StagedQuotationLine;
 }
 
-type MenuAction = 'below' | 'section' | 'remove';
+type MenuAction = 'below' | 'section' | 'remove' | 'duplicate';
+
+/**
+ * The product picker on a row takes the caret (Duplicate line). Found by its label, whose text is
+ * "Product on ...", so it does not depend on the column order a user has saved.
+ */
+function focusProductPicker(key: string) {
+  const row = document.querySelector<HTMLElement>(`tr[data-line-key="${key}"]`);
+  const label = Array.from(row?.querySelectorAll<HTMLLabelElement>('label') ?? []).find((node) =>
+    (node.textContent ?? '').startsWith('Product on '),
+  );
+  const target = label?.htmlFor ? document.getElementById(label.htmlFor) : null;
+  target?.focus();
+}
+
+/** Runs once the menu has closed: the copy's product picker takes the caret. */
+function focusDuplicated(key: string | null): (() => void) | null {
+  return key ? () => focusProductPicker(key) : null;
+}
 
 /** Keys are line ids or `new:<id>:<n>`, so a quoted attribute value needs no escaping. */
 function focusHeadingInput(key: string) {
@@ -185,7 +203,10 @@ interface GridContextValue {
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
   toggleRemoved: (key: string) => void;
-  /** Returns the key of a heading the action added, for the menu to focus once it has closed. */
+  /**
+   * Returns the key of the row the action added (a heading, or a duplicated line), for the menu
+   * to focus once it has closed.
+   */
   act: (key: string, action: MenuAction) => string | null;
   /** Drops a heading row left without a name (blurred empty). */
   closeEmptyBand: (key: string) => void;
@@ -899,8 +920,10 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   }
 
   const run = (action: MenuAction) => {
-    keepFocus.current = action === 'section' || action === 'below';
-    focusAfterClose.current = focusAddedHeading(grid.act(row.key, action));
+    keepFocus.current = action === 'section' || action === 'below' || action === 'duplicate';
+    const added = grid.act(row.key, action);
+    focusAfterClose.current =
+      action === 'duplicate' ? focusDuplicated(added) : focusAddedHeading(added);
   };
 
   return (
@@ -928,6 +951,9 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
         >
           <DropdownMenuItem onSelect={() => run('below')}>
             Insert a line below
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => run('duplicate')}>
+            Duplicate line
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => run('section')}>
             Insert a section above
@@ -1315,6 +1341,8 @@ export interface QuotationLinesGridProps {
   seriesId?: string | null;
   /** Live search: rows that fail it are hidden, never renumbered or left out of the total. */
   rowFilter?: (line: StagedQuotationLine) => boolean;
+  /** Told the key of a line Duplicate line just added, so a filter can keep it on screen. */
+  onDuplicated?: (key: string) => void;
   emptyHint: string;
   filterEmptyHint: string;
   fetchProducts: GridContextValue['fetchProducts'];
@@ -1357,6 +1385,7 @@ export function QuotationLinesGrid({
   quotationId,
   seriesId,
   rowFilter,
+  onDuplicated,
   emptyHint,
   filterEmptyHint,
   fetchProducts,
@@ -1400,6 +1429,12 @@ export function QuotationLinesGrid({
   );
   const instanceKey = React.useId();
   const nextNewId = React.useRef(0);
+  /**
+   * Copies whose product has not been changed yet (Duplicate line): their first pick behaves
+   * exactly like a pick on a new line, so the rate is the new product's series price or blank,
+   * never the source product's rate carried over.
+   */
+  const freshCopies = React.useRef(new Set<string>());
 
   /**
    * The newest set, ahead of the next render: a product pick is two writes in one event (the
@@ -1437,10 +1472,17 @@ export function QuotationLinesGrid({
       const heldValue = held.draft.product_set_id
         ? `${SET_OPTION_PREFIX}${held.draft.product_set_id}`
         : (held.draft.product_id ?? '');
-      const clearPicks: LineDraft =
-        (option?.value ?? '') !== heldValue
-          ? { image_attachment_id: '', drawing_attachment_id: '' }
-          : {};
+      const changed = (option?.value ?? '') !== heldValue;
+      const clearPicks: LineDraft = changed
+        ? {
+            image_attachment_id: '',
+            drawing_attachment_id: '',
+            // A copy's first new product starts from a new line's blank rate (the fill below
+            // puts the series price on it where the series names one).
+            ...(freshCopies.current.has(key) ? { unit_price: '' } : {}),
+          }
+        : {};
+      if (changed) freshCopies.current.delete(key);
       if (!option) {
         update(key, {
           product_id: '',
@@ -1573,9 +1615,32 @@ export function QuotationLinesGrid({
         case 'remove':
           onToggleRemoved?.(key);
           return null;
+        case 'duplicate': {
+          const source = current[index];
+          if (source.removed || isSectionDraft(source.draft)) return null;
+          nextNewId.current += 1;
+          const copy: StagedQuotationLine = {
+            id: null,
+            key: `new:${instanceKey}:${nextNewId.current}`,
+            line: null,
+            draft: {
+              ...source.draft,
+              // A carried heading belongs to the source; the copy sits inside the same section.
+              band_label: '',
+              // The copy has no stored row to name it, so it carries the code it was copied with.
+              [PICKED_CODE_KEY]:
+                source.draft[PICKED_CODE_KEY] || (source.line?.product_code ?? ''),
+            },
+            removed: false,
+          };
+          freshCopies.current.add(copy.key);
+          commit([...current.slice(0, index + 1), copy, ...current.slice(index + 1)]);
+          onDuplicated?.(copy.key);
+          return copy.key;
+        }
       }
     },
-    [commit, newHeading, newLine, onToggleRemoved],
+    [commit, instanceKey, newHeading, newLine, onDuplicated, onToggleRemoved],
   );
 
   const handleRowDragEnd = React.useCallback(
@@ -2276,6 +2341,15 @@ export function QuotationLinesGrid({
                     }}
                   >
                     Insert a line below
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={Boolean(menuLine?.removed)}
+                    onSelect={() => {
+                      keepFocusAfterMenu.current = true;
+                      focusAfterMenu.current = focusDuplicated(act(menuTarget.key, 'duplicate'));
+                    }}
+                  >
+                    Duplicate line
                   </ContextMenuItem>
                   <ContextMenuItem
                     disabled={Boolean(menuLine?.removed)}
