@@ -239,11 +239,32 @@ def _get(w, rid, user=None):
     return res.json()
 
 
+def _link_consignment(w, rid, on="2026-03-01"):
+    """Delivered comes ONLY from linking the AutoCount consignment (owner ruling 11 Nov ~19:55):
+    a live CG of the company, dated `on`, linked by the sample team."""
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from app.models.order import SalesOrder
+
+    cg = SalesOrder(
+        id=str(_uuid.uuid4()),
+        company_id=w.company_id,
+        so_number=f"CG-ZZT-{_uuid.uuid4().hex[:8].upper()}",
+        doc_type="consignment",
+        status="closed",
+        order_date=_date.fromisoformat(on),
+        debtor_name="ZZT consignee",
+    )
+    w.db.add(cg)
+    w.db.flush()
+    return w.api.as_(w.coord).put(f"{SR}/{rid}/consignment", json={"consignment_order_id": cg.id})
+
+
 def _delivered(w, **over):
     rid = _submitted(w, **over)
     assert _move(w, rid, "processing").status_code == 200
-    assert _move(w, rid, "customer_confirmed", date="2026-02-20").status_code == 200
-    res = _move(w, rid, "delivered", date="2026-03-01")
+    res = _link_consignment(w, rid)
     assert res.status_code == 200, res.text
     return rid
 
@@ -629,9 +650,7 @@ LEGAL = [
     ("draft", "cancelled"),
     ("submitted", "cancelled"),
     ("submitted", "processing"),
-    ("processing", "customer_confirmed"),
     ("processing", "cancelled"),
-    ("customer_confirmed", "delivered"),
 ]
 
 
@@ -645,10 +664,7 @@ def _reach(w, status):
     assert _move(w, rid, "processing").status_code == 200
     if status == "processing":
         return rid
-    assert _move(w, rid, "customer_confirmed", date="2026-02-20").status_code == 200
-    if status == "customer_confirmed":
-        return rid
-    assert _move(w, rid, "delivered", date="2026-03-01").status_code == 200
+    assert _link_consignment(w, rid).status_code == 200
     if status == "delivered":
         return rid
     raise AssertionError(status)
@@ -665,8 +681,6 @@ def test_ac_sr_30_legal_moves(world, frm, to):
     """AC-SR-30: every legal edge works for an allowed actor and reads back."""
     rid = _reach(world, frm)
     extra = {}
-    if to in ("customer_confirmed", "delivered"):
-        extra["date"] = "2026-03-02"
     if frm == "processing" and to == "cancelled":
         extra["reason"] = "customer changed mind"
     res = _move(world, rid, to, user=world.coord, **extra)
@@ -674,11 +688,13 @@ def test_ac_sr_30_legal_moves(world, frm, to):
     assert _get(world, rid)["status"] == to
 
 
-ALL_STATES = ["draft", "submitted", "processing", "customer_confirmed", "delivered", "cancelled"]
+# Owner ruling 11 Nov ~19:55: Customer confirmed is gone (a move to it is illegal from anywhere),
+# and Delivered is never a hand move (refused with its own code, below).
+ALL_STATES = ["draft", "submitted", "processing", "delivered", "cancelled"]
 ILLEGAL = [
     (frm, to)
     for frm in ALL_STATES
-    for to in ALL_STATES
+    for to in ALL_STATES + ["customer_confirmed"]
     if frm != "draft" or to != "submitted"  # draft->submitted is /submit, not /move
     if (frm, to) not in LEGAL
 ]
@@ -686,11 +702,14 @@ ILLEGAL = [
 
 @pytest.mark.parametrize("frm, to", ILLEGAL)
 def test_ac_sr_30_illegal_moves_are_409(world, frm, to):
-    """AC-SR-30: every other edge is refused 409 SAMPLE_REQUEST_ILLEGAL_MOVE."""
+    """AC-SR-30: every other edge is refused 409; a hand move to Delivered names the consignment."""
     rid = _cancelled(world) if frm == "cancelled" else _reach(world, frm)
     res = _move(world, rid, to, user=world.admin, date="2026-03-02", reason="x")
     assert res.status_code == 409, (frm, to, res.text)
-    assert res.json().get("code") == "SAMPLE_REQUEST_ILLEGAL_MOVE"
+    expected = (
+        "SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT" if to == "delivered" else "SAMPLE_REQUEST_ILLEGAL_MOVE"
+    )
+    assert res.json().get("code") == expected
     assert _get(world, rid)["status"] == frm
 
 
@@ -701,10 +720,9 @@ def test_ac_sr_30_status_label_comes_from_the_graph(world):
     assert got["status_label"]
 
 
-def test_ac_sr_30_confirmed_and_delivered_need_a_date(world):
-    """Contract: customer_confirmed and delivered need `date`; cancel of processing needs `reason`."""
+def test_ac_sr_30_cancelling_processing_needs_a_reason(world):
+    """Contract: cancel of processing needs `reason` (the dated hand moves are gone, 11 Nov)."""
     rid = _reach(world, "processing")
-    assert _move(world, rid, "customer_confirmed").status_code == 422
     assert _move(world, rid, "cancelled").status_code == 422
     assert _move(world, rid, "cancelled", reason="out of stock").status_code == 200
 
@@ -716,8 +734,7 @@ def test_ac_sr_30_confirmed_and_delivered_need_a_date(world):
     "start, to, extra",
     [
         ("submitted", "processing", {}),
-        ("processing", "customer_confirmed", {"date": "2026-03-02"}),
-        ("customer_confirmed", "delivered", {"date": "2026-03-02"}),
+        ("processing", "cancelled", {"reason": "x"}),
     ],
 )
 def test_ac_sr_31_edit_only_user_cannot_make_process_moves(world, start, to, extra):
@@ -830,8 +847,7 @@ def test_delivered_no_longer_touches_project_samples(world):
         rid = res.json()["id"]
         assert _submit(world, rid).status_code in (200, 201)
         assert _move(world, rid, "processing").status_code == 200
-        assert _move(world, rid, "customer_confirmed", date="2026-02-20").status_code == 200
-        assert _move(world, rid, "delivered", date="2026-03-01").status_code == 200
+        assert _link_consignment(world, rid).status_code == 200
     assert _sample_count(world) == before
 
 
@@ -850,7 +866,7 @@ def test_ac_sr_34_each_move_writes_a_project_activity_row(world):
     assert count() == start + 1
     assert _move(world, d["id"], "processing").status_code == 200
     assert count() == start + 2
-    assert _move(world, d["id"], "customer_confirmed", date="2026-02-20").status_code == 200
+    assert _move(world, d["id"], "cancelled", reason="customer changed mind").status_code == 200
     assert count() == start + 3
 
 

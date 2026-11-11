@@ -53,7 +53,6 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'processing', label: 'Processing' },
-  { value: 'customer_confirmed', label: 'Customer confirmed' },
   { value: 'delivered', label: 'Delivered' },
   { value: 'cancelled', label: 'Cancelled' },
 ];

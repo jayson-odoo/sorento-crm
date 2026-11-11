@@ -83,7 +83,12 @@ interface Move {
   tone: 'emerald' | 'primary' | 'destructive';
 }
 
-/** The moves the card allows from each status (rule 10); the server is the authority. */
+/**
+ * The moves the card allows from each status (rule 10); the server is the authority. Owner ruling
+ * 11 Nov ~19:55: Submitted -> Processing -> Delivered, and Delivered comes ONLY from linking the
+ * AutoCount consignment (the Consignment card below), so there is no Customer confirmed and no
+ * "Mark delivered" button.
+ */
 const MOVES: Record<SampleRequestStatus, Move[]> = {
   draft: [{ to: 'cancelled', label: 'Cancel request', needs: 'either', tone: 'destructive' }],
   submitted: [
@@ -98,13 +103,6 @@ const MOVES: Record<SampleRequestStatus, Move[]> = {
   ],
   processing: [
     {
-      to: 'customer_confirmed',
-      label: 'Customer confirmed',
-      needs: 'process',
-      ask: 'date',
-      tone: 'primary',
-    },
-    {
       to: 'cancelled',
       label: 'Cancel request',
       needs: 'process',
@@ -112,9 +110,8 @@ const MOVES: Record<SampleRequestStatus, Move[]> = {
       tone: 'destructive',
     },
   ],
-  customer_confirmed: [
-    { to: 'delivered', label: 'Mark delivered', needs: 'process', ask: 'date', tone: 'primary' },
-  ],
+  // Retired (migration srv2_0002 moved every such row to Processing); kept for the type only.
+  customer_confirmed: [],
   delivered: [],
   cancelled: [],
 };
@@ -613,10 +610,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const ownerActs = isOwner && canCreate;
   const busy = move.isPending || submit.isPending;
   const allowed = (m: Move) => canProcess || (m.needs === 'either' && ownerActs);
-  // Stage 2: a linked consignment is the delivery, so there is no Mark delivered by hand.
-  const moves = MOVES[r.status].filter(
-    (m) => allowed(m) && !(m.to === 'delivered' && r.consignment),
-  );
+  const moves = MOVES[r.status].filter(allowed);
 
   const run = async (m: Move, value?: string, answer?: DateAnswerValue) => {
     try {
@@ -637,10 +631,8 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
 
   const stamp = r.submitted_at ?? r.created_at;
   const answerText = dateAnswerText(r, formatDateInMalaysia);
-  const canLink =
-    canProcess && ['processing', 'customer_confirmed', 'delivered'].includes(r.status);
-  const canAnswer =
-    canProcess && (r.status === 'processing' || r.status === 'customer_confirmed');
+  const canLink = canProcess && ['processing', 'delivered'].includes(r.status);
+  const canAnswer = canProcess && r.status === 'processing';
   const project = r.project_id
     ? [r.project_code, r.project_name].filter(Boolean).join(' - ')
     : r.project_name;

@@ -116,3 +116,24 @@ def full_payload(*, product_id: str, **over) -> dict:
     }
     body.update(over)
     return body
+
+
+def make_consignment(db, company_id: str, on: str = "2026-11-20"):
+    """A live AutoCount consignment (CG) of the company, dated `on`: since the owner's 11 Nov
+    ruling, linking one is the ONLY way a sample request becomes Delivered."""
+    from datetime import date as _date
+
+    from app.models.order import SalesOrder
+
+    row = SalesOrder(
+        id=uid(),
+        company_id=company_id,
+        so_number=f"CG-ZZT-{uuid.uuid4().hex[:8].upper()}",
+        doc_type="consignment",
+        status="closed",
+        order_date=_date.fromisoformat(on),
+        debtor_name=f"{MARKER} consignee",
+    )
+    db.add(row)
+    db.flush()
+    return row

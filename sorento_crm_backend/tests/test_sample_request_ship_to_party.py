@@ -174,7 +174,7 @@ def test_several_contacts_print_a_and_b_with_the_first_ones_phone(world):
     w = world
     # The phone is party data: it is copied only for a caller who may read it (security S1).
     w.perms[w.sales].add("projects.parties.view")
-    party = _party(w.db, "Bintang Trading", address="Klang", phone="0331112222")
+    party = _party(w.db, "Bintang Trading", address="Klang", phone="+60 11-111 1111")
     _link(w.db, w.project, party)
     mei = _contact(w.db, party, "Mei Ling Tan", phone="0123456789")
     ravi = _contact(w.db, party, "Ravi Kumar")

@@ -156,7 +156,7 @@ beforeEach(() => {
   state.perms = new Set([PROCESS]);
   state.userId = 'u-coord';
   state.data = detail({
-    status: 'customer_confirmed',
+    status: 'processing',
     status_label: 'Customer confirmed',
     delivery_date: '2026-12-01',
     date_feasible: true,
@@ -168,9 +168,11 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SampleRequestDetail consignment', () => {
-  it('offers Mark delivered and Link consignment with no consignment linked', () => {
+  it('offers Link consignment, and no Mark delivered or Customer confirmed, with none linked', () => {
+    // Owner ruling 11 Nov ~19:55: Delivered comes only from linking the consignment.
     render(<Page />);
-    expect(screen.getByRole('button', { name: 'Mark delivered' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Mark delivered' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Customer confirmed' })).toBeNull();
     expect(screen.getByText('Link consignment')).toBeInTheDocument();
     expect(screen.getByText('Not linked')).toBeInTheDocument();
   });
