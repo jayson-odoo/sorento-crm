@@ -63,3 +63,11 @@ idempotency-keyed `_send_intent`.
 - The board grid's month cells, Total and totals stay as frozen (`row_data`, header `totals`).
   They are the debt reading at save time; recomputing them live would make the snapshot the
   live board. Trigger: the owner asks for the grid cells to move with cover.
+
+## Assistant coverage (DoD lines 6 to 8)
+
+- Line 6: n/a, no new list screen.
+- Line 7: no `ActionDef` for Change PO, on purpose: it is an AutoCount write behind the admin
+  switch (OFF by default) and the human Decide flow, the same as Link / Unlink / Move, which have
+  none. Trigger to revisit: the owner wants the assistant to write to AutoCount.
+- Line 8: n/a for the same reason; the drill's figures are not a new assistant answer.
