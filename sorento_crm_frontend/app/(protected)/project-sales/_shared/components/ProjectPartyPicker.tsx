@@ -55,8 +55,9 @@ export function ProjectPartyPicker({
   /** The name to show for a saved pick before the lists load. */
   fallbackName?: string | null;
   error?: string;
-  /** `role` is the role it plays on the project, or the one it would most likely be added in. */
-  onPick: (party: KnownParty | null, role: string | null) => void;
+  /** `role` is the role it plays on the project, or the one it would most likely be added in;
+   * `onProject` says whether it is on the project already (else the role must be picked). */
+  onPick: (party: KnownParty | null, role: string | null, onProject: boolean) => void;
   onRoleChange: (role: string | null) => void;
 }) {
   const onProject = usePartiesOnProject(projectId || null);
@@ -141,11 +142,11 @@ export function ProjectPartyPicker({
     .map((r) => ({ value: r.value, label: r.label }));
 
   function pick(party: KnownParty | null) {
-    if (!party) return onPick(null, null);
+    if (!party) return onPick(null, null, false);
+    const playing = roleOnProject.get(party.id);
     const next =
-      roleOnProject.get(party.id) ??
-      (roleOptions.some((r) => r.value === party.partyType) ? party.partyType : null);
-    onPick(party, next);
+      playing ?? (roleOptions.some((r) => r.value === party.partyType) ? party.partyType : null);
+    onPick(party, next, Boolean(playing));
   }
 
   return (

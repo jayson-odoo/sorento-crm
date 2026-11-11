@@ -46,6 +46,11 @@ export interface SampleRequestWrite {
   scope_note?: string | null;
   delivery_date?: string | null;
   delivery_mode?: SampleRequestDeliveryMode | null;
+  /** SAMPLE-REQUEST-V2: the party the samples go to (staff form); its role on the project when
+   * it is not on it yet; the party's people picked as the contact person. */
+  ship_to_party_id?: string | null;
+  ship_to_role?: string | null;
+  ship_to_contact_ids?: string[];
   ship_to_name?: string | null;
   ship_to_address?: string | null;
   site_contact_name?: string | null;

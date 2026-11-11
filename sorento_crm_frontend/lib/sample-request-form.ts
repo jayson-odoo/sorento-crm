@@ -13,6 +13,7 @@ import {
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
 import { codeWithName } from '@/lib/product-display';
+import { formatPhone } from '@/app/(protected)/project-sales/_shared/lib/phoneDisplay';
 import { numberFieldError } from '@/lib/number-field';
 
 /** The one rule for a line quantity and the loan period. */
@@ -47,6 +48,15 @@ export interface FormState {
   board_label: string;
   delivery_date: string;
   delivery_mode: SampleRequestDeliveryMode | '';
+  /** SAMPLE-REQUEST-V2 (staff form): the ship-to party, the role it is added in when it is not on
+   * the project yet, and the people picked at it. '' / [] when none. */
+  ship_to_party_id: string;
+  ship_to_role: string;
+  /** The picked party is not on the project yet, so its role must be picked. */
+  ship_to_needs_role: boolean;
+  ship_to_contact_ids: string[];
+  /** An old request's typed Ship To with no party behind it (card example E), shown as a hint. */
+  ship_to_typed_before: string;
   ship_to_name: string;
   ship_to_address: string;
   site_contact_name: string;
@@ -76,6 +86,11 @@ export const EMPTY_FORM: FormState = {
   board_label: '',
   delivery_date: '',
   delivery_mode: '',
+  ship_to_party_id: '',
+  ship_to_role: '',
+  ship_to_needs_role: false,
+  ship_to_contact_ids: [],
+  ship_to_typed_before: '',
   ship_to_name: '',
   ship_to_address: '',
   site_contact_name: '',
@@ -128,6 +143,11 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
     board_label: d.board_label ?? '',
     delivery_date: d.delivery_date ?? '',
     delivery_mode: d.delivery_mode ?? '',
+    ship_to_party_id: d.ship_to_party_id ?? '',
+    ship_to_role: d.ship_to_role ?? '',
+    ship_to_needs_role: false,
+    ship_to_contact_ids: [],
+    ship_to_typed_before: d.ship_to_party_id ? '' : (d.ship_to_name ?? ''),
     ship_to_name: d.ship_to_name ?? '',
     ship_to_address: d.ship_to_address ?? '',
     site_contact_name: d.site_contact_name ?? '',
@@ -287,4 +307,121 @@ export function productSearchQuery(q: string, source?: SampleRequestProductSourc
     if (source.quotation_issue_id) usp.set('quotation_issue_id', source.quotation_issue_id);
   }
   return usp.toString();
+}
+
+// ------------------------------------------------------------------ SAMPLE-REQUEST-V2 staff form
+
+/** A party picked as Ship to (null clears it). */
+export interface ShipToPick {
+  id: string;
+  name: string;
+  address?: string | null;
+  /** The role it plays on the project, or the role it would be added in. */
+  role: string | null;
+  /** The project's site address: the fallback for a party with none (card rule 2). */
+  siteAddress?: string | null;
+  /** Not on the project yet: the role must be picked before submit. */
+  needsRole?: boolean;
+}
+
+/** Ship to = a party: its name, its address or else the project site address; the old contact
+ * person belonged to the old party, so it goes. */
+export function withShipToParty(s: FormState, party: ShipToPick | null): FormState {
+  const cleared = {
+    ...s,
+    ship_to_contact_ids: [],
+    site_contact_name: '',
+    site_contact_phone: '',
+  };
+  if (!party) {
+    return {
+      ...cleared,
+      ship_to_party_id: '',
+      ship_to_role: '',
+      ship_to_needs_role: false,
+      ship_to_name: '',
+      ship_to_address: '',
+    };
+  }
+  return {
+    ...cleared,
+    ship_to_party_id: party.id,
+    ship_to_role: party.role ?? '',
+    ship_to_needs_role: Boolean(party.needsRole),
+    ship_to_name: party.name,
+    ship_to_address: (party.address ?? '').trim() || (party.siteAddress ?? '').trim(),
+    ship_to_typed_before: '',
+  };
+}
+
+/** The contact person = the party's people picked in the registration popup: "A & B", the first
+ * one's phone (owner Q3 a, the proposal Attn rule). */
+export function withShipToContacts(
+  s: FormState,
+  contacts: { id: string; name: string; phone?: string | null }[],
+): FormState {
+  const first = contacts[0];
+  return {
+    ...s,
+    ship_to_contact_ids: contacts.map((c) => c.id),
+    site_contact_name: contacts.map((c) => c.name).join(' & '),
+    site_contact_phone: first?.phone ? formatPhone(first.phone) || first.phone : '',
+  };
+}
+
+/** The staff submit refusals, the server's own (card rules 1-2), checked before the round trip. */
+export function validateStaff(
+  s: FormState,
+  opts: { requireProject?: boolean } = {},
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!s.customer_id) errors.customer_id = 'Pick the customer';
+  if (opts.requireProject) {
+    if (!s.project_id) errors.project_id = 'Pick a registered project';
+  } else if (!s.project_id && !s.project_title.trim()) {
+    errors.project_id = 'Pick the project, or type its title';
+  }
+  if (!s.ship_to_party_id) errors.ship_to_party_id = 'Pick who the samples go to';
+  else if (s.ship_to_needs_role && !s.ship_to_role) errors.ship_to_role = 'Pick the role it plays';
+  if (s.ship_to_party_id && !s.ship_to_address.trim()) {
+    errors.ship_to_address = 'Enter the shipping address';
+  }
+  if (!s.delivery_date) errors.delivery_date = 'Enter the Request Delivery Date';
+  if (!s.delivery_mode) errors.delivery_mode = 'Choose a delivery mode';
+  if (pickedLines(s).length === 0 && !s.board_mounting) errors.lines = 'Add at least one item';
+  if (s.board_mounting && !s.board_label.trim()) errors.board_label = 'Enter the board label';
+  return { ...errors, ...numberErrors(s) };
+}
+
+/**
+ * The staff form's write. The party, its role and the picked people go up; the server prints the
+ * name and the contact person from them (so they are not sent), an empty address is left to the
+ * server (the party's, else the site address), and "For" / the contact note / a typed customer are
+ * never written: an old row keeps whatever it had (card rules 1, 3, 4).
+ */
+export function staffPayloadFromState(s: FormState): SampleRequestWrite {
+  const {
+    customer_name: _typedCustomer,
+    scope_note: _scope,
+    site_contact_note: _note,
+    ship_to_name: shipToName,
+    ship_to_address: address,
+    site_contact_name: contactName,
+    site_contact_phone: contactPhone,
+    ...rest
+  } = payloadFromState(s);
+  const body: SampleRequestWrite = { ...rest, customer_name: null };
+  if (s.ship_to_party_id) {
+    body.ship_to_party_id = s.ship_to_party_id;
+    if (s.ship_to_role) body.ship_to_role = s.ship_to_role;
+    body.ship_to_contact_ids = s.ship_to_contact_ids;
+    if (address) body.ship_to_address = address;
+  } else {
+    // A draft still on its typed Ship To keeps it (example E) until a party is picked.
+    body.ship_to_name = shipToName;
+    body.ship_to_address = address;
+    body.site_contact_name = contactName;
+    body.site_contact_phone = contactPhone;
+  }
+  return body;
 }
