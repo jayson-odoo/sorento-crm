@@ -1,6 +1,6 @@
 # PLAN: Certification tab follow-ups (CERT-TAB-FOLLOWUPS)
 
-Status: Build. Track: small fix track (size S; frontend only, no migration, no auth/RBAC change, no new ingest).
+Status: Hand test (PR #2353): red/kill proofs, reviewer READY, sandbox browser pass PASS at 1280 and 375. Track: small fix track (size S; frontend only, no migration, no auth/RBAC change, no new ingest).
 UAC: `cert-tab-followups-11nov-acceptance-criteria.md`.
 
 Lane: CERT-TAB-FOLLOWUPS. Owner go 11 Nov 2026 ("Cert-tab follow-ups go"): the three items crew's browser
@@ -16,7 +16,7 @@ pass found on the quotation Certification tab during #2333 (all pre-dated #2333)
 2. Opening a certificate (first time, second time, after switching certificates) lands on its first box.
    Reproduce first, then fix at the cause in `CertificateReader.tsx` (the landing jump vs the PDF viewer's own
    "land on page 1" layout pass).
-3. Leaving the box editor with unsaved boxes warns: Back to certification, the breadcrumbs, any in-app link,
+3. (Crew ruling: option b, one shared hook `hooks/useUnsavedChangesGuard.tsx`, used only here.) Leaving the box editor with unsaved boxes warns: Back to certification, the breadcrumbs, any in-app link,
    switching certificate, browser back, refresh / close. "Save boxes" stays the one main button; no Remove
    button in the editor.
 
