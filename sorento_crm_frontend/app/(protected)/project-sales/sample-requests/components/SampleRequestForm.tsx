@@ -73,6 +73,7 @@ import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { useProject, usePartyContacts, usePartyRoleLabel } from '../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
+import { projectFromOrigin } from './SampleRequestPageHeader';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { ProjectPartyPicker } from '../../_shared/components/ProjectPartyPicker';
 import { PartyContactsDialog } from '../../_shared/components/PartyContactsDialog';
@@ -440,7 +441,11 @@ function StaffSampleRequestForm({
 
   const record = existing.data;
   const requireProject = Boolean(switches?.requireProject);
-  const projectFixed = Boolean(projectId) && !requestId && Boolean(state.project_id);
+  // The project is fixed text when the form was opened from that project (its tab's Create, or
+  // Edit of a request opened from its tab): Edit matches Create (standing rule, crew pass 11 Nov).
+  const projectFixed =
+    Boolean(state.project_id) &&
+    ((Boolean(projectId) && !requestId) || projectFromOrigin(origin) === state.project_id);
   const projectText = state.project_id ? state.project_label : state.project_title;
   const customerText = state.customer_id ? state.customer_label : '';
   const roleText = state.ship_to_role ? roleLabel(state.ship_to_role) : '';

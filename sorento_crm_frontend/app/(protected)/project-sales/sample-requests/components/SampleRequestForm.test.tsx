@@ -377,6 +377,25 @@ describe('Preview, then Submit in the popup', () => {
   });
 });
 
+describe('crew pass 11 Nov: Edit matches Create', () => {
+  it('Edit opened from the project tab shows the project as fixed text, like Create', async () => {
+    const pid = '11111111-2222-3333-4444-555555555555';
+    nav.search = `from=${encodeURIComponent(`/project-sales/${pid}?tab=sample-requests`)}`;
+    mut.existing = { ...READY_DRAFT, project_id: pid, project_code: 'PPF2611001', project_name: 'Seri Murni' };
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    expect(screen.getByText('PPF2611001 - Seri Murni')).toBeTruthy();
+    expect(document.getElementById('sr-project')).toBeNull();
+  });
+
+  it('Edit opened from the list keeps the project picker', async () => {
+    mut.existing = { ...READY_DRAFT, project_id: '11111111-2222-3333-4444-555555555555', project_code: 'PPF2611001', project_name: 'Seri Murni' };
+    renderForm({ requestId: 'sr-1' });
+    await screen.findByText('Customer & project');
+    expect(document.getElementById('sr-project')).not.toBeNull();
+  });
+});
+
 describe('owner 16:30: every exit returns to where the person started', () => {
   it('Submit from a project tab goes back to that tab', async () => {
     nav.search = `from=${encodeURIComponent('/project-sales/pr-1?tab=sample-requests')}`;

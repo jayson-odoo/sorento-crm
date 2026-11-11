@@ -111,3 +111,12 @@ def test_ac_sr_03_request_delivery_date_prints_dd_mm_yyyy():
     assert "05/11/2026" in html
     assert "2026-11-05" not in html
     assert "Immediate" not in html
+
+
+def test_sample_request_v2_the_for_row_prints_only_when_an_old_request_has_it():
+    """SAMPLE-REQUEST-V2 rule 3 (crew pass 11 Nov): "For" is gone from the form; the PDF, like the
+    screen, prints it only for an old request that had it, never as an empty row."""
+    old = build_html(DETAIL)
+    assert "<th>For</th>" in old
+    new = build_html({**DETAIL, "scope_note": None})
+    assert "<th>For</th>" not in new

@@ -71,7 +71,8 @@ def build_html(d: Dict[str, Any]) -> str:
             f"<tr><th>Date</th><td>{_date(d.get('request_date'))}</td></tr>",
             f"<tr><th>Customer Name</th><td>{customer}</td></tr>",
             _row("Project", d.get("project_name")),
-            _row("For", d.get("scope_note")),
+            # "For" left the form (SAMPLE-REQUEST-V2 rule 3): printed only for an old request that had it.
+            _row("For", d.get("scope_note")) if d.get("scope_note") else "",
             _row("Request Delivery Date", delivery),
             _row("Shipping Address", ship_to),
             _row("Contact Person", site),
