@@ -3,7 +3,9 @@
 The chatbot has no screen to click, so browser verification cannot cover it. Its equivalent is
 `sorento_crm_backend/scripts/chatbot_console_check.py`: a YAML file of real turns, run against a
 real backend, graded line by line. Every chatbot PR runs the case file against a LANE backend
-before the PR is opened, and once against PRODUCTION after the deploy; the output of both goes in
+before the PR is opened, and once against the DEV COPY (the local backend on the copy of prod data,
+never production itself, migrated to the released head first so it carries the same migrations)
+after the deploy; the output of both goes in
 the PR (or the deploy note). A case that fails is a finding to fix or to explain - never one to
 soften.
 
@@ -51,7 +53,8 @@ the two agree. The lane switches (`system_settings.chatbot_business_lane_enabled
 delegated turn comes back silent - so the script reads them, prints them, turns every lane on for
 the run and restores the exact values in a `finally`. On a production checkout it refuses to
 write them at all (Settings > Chatbot is the only sanctioned way there) and runs against whatever
-is already set, once `--production` acknowledges where it is pointed.
+is already set, once `--production` acknowledges where it is pointed. Lanes and crew never use
+`--production`: the after-deploy run is on the dev copy.
 
 **What is graded is what the customer would be TOLD** - the reply text plus every `send_message`
 action, because the escalation lane's assignment arm composes no reply and sends its sentences as
@@ -70,7 +73,8 @@ Two limits worth knowing before reading a red line as a defect:
 
 - **The MCP tool search needs `OPENAI_API_KEY`**, which is empty in every local `.env`. Without it
   any turn that has to pick a tool fails with "no embedding provider is configured" and the case
-  cannot be graded locally. Those cases are graded on the production run.
+  cannot be graded without it. For the post-deploy dev-copy run, set the key in that checkout's
+  `.env` for the run; a case still ungraded is reported as not graded, never as a pass.
 - **Access is decided before routing.** A turn whose agent the contact has no grant for (or whose
   `access_agents` row does not exist at all) comes back `access_denied` whatever the lane does.
   That is a data prerequisite, and the check naming it is the check working.

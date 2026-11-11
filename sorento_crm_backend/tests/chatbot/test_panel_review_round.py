@@ -89,7 +89,6 @@ from tests.chatbot.test_panel_principal import (  # noqa: F401
 )
 from tests.chatbot.test_panel_screen_reads import (  # noqa: F401
     LONG_AGO,
-    SETTINGS_VIEW,
     fake_chat_turn,
     message_of,
     post_chat,
@@ -617,8 +616,11 @@ def test_pending_action_carries_no_turn_id_for_a_reader_without_the_slug(
     assert "turn_id" not in pending and turn_id not in json.dumps(pending)
 
 
-def test_a_holder_still_reads_the_turn_id_in_pending_action(session_factory, staff, grants, http, enabled):
-    grants.update({NOTE_SLUG, SETTINGS_VIEW})
+def test_a_holder_still_reads_the_turn_id_in_pending_action(session_factory, staff, grants, http, enabled, monkeypatch):
+    from app.services.chatbot import panel_service
+
+    grants.add(NOTE_SLUG)
+    monkeypatch.setattr(panel_service, "sees_trace", lambda db, user_id: True)  # an admin (AGENT-PANEL-FIXES F)
     _a, turn_id, message_id = seed_proposing_message(session_factory, staff)
 
     pending = message_of(read_thread(http, staff.conv_id), message_id)["metadata_json"]["agent"]["pending_action"]

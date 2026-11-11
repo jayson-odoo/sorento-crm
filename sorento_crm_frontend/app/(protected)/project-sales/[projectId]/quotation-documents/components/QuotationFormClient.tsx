@@ -11,7 +11,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { FormSection } from '@/components/common/FormSection';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
@@ -56,7 +55,7 @@ import type {
   QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
-import { formatMyrExact, isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 
 import { NonCancellableOverrideDialog } from '../../../_shared/components/NonCancellableOverrideDialog';
@@ -88,8 +87,11 @@ import { serverToDraft } from '../../components/quotationLineDraft';
 import { hasColumns } from '../../../_shared/lib/quotationMatrix';
 import {
   QuotationDocumentHeader,
+  headerSummary,
+  linesSummary,
   useQuotationHeaderDetails,
 } from '../[documentId]/components/QuotationDocumentHeader';
+import { projectDisplayName } from '../../../_shared/lib/projectName';
 import {
   QuotationCoverLetterPanel,
   QuotationTermsPanel,
@@ -1041,7 +1043,9 @@ export function QuotationFormClient({
               )}
             </>
           }
-          subtitle={header?.subject_title ?? saved.data.subject_title}
+          // The short name (QUOTE-HEADER-TIDY, PROJECT-NAME): the full title is the Header's
+          // own "Project title" field just below.
+          subtitle={project.data ? projectDisplayName(project.data) : null}
         />
       )}
 
@@ -1289,23 +1293,6 @@ function savedTermsPicks(document: QuotationDocument | undefined): QuoteTermsPat
     validity_value: document?.validity_value ?? null,
     validity_unit: document?.validity_unit ?? null,
   };
-}
-
-/** The folded Header's one line: To, Subject, Date, Total; blanks are left out. */
-function headerSummary(document: QuotationDocument, total: string | null): string {
-  return [
-    document.recipient_name_snapshot,
-    document.subject_title,
-    document.doc_date ? formatDateInMalaysia(document.doc_date) : null,
-    formatMyrExact(total),
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
-/** The folded Lines' one line: how many scopes, and their total. */
-function linesSummary(count: number, total: string | null): string {
-  return `${count} ${count === 1 ? 'scope' : 'scopes'} · ${formatMyrExact(total)}`;
 }
 
 /**

@@ -101,6 +101,15 @@ Dev servers this session started, and their mode:
 - Backend :8000 <running/not>, Worker <running/not>, FE :3000 <dev | prod build | not>, MCP :8765 <running/not>
 Note anything non-default (env vars set, seeded rows, a scratch DB).
 
+## Helper agents in flight
+Every subagent or background check still running when this was written, and what it
+was checking (reviewer pass, test chunk, browser walk). Its result dies on `/clear`:
+mark each one "result posted at <link>" or "no result yet".
+
+## Crew lane (only when this is a crew lane)
+- PR: <number>, head <sha>
+- Test copy head: <sha the crew test copy runs, or "none"> (say if it differs from the PR head)
+
 ## Suggested skills
 Which skills the next session should reach for (`/feature` step N, `/code-review`,
 `/tdd`, ...) and why.
@@ -113,8 +122,9 @@ CLAUDE.md "Lessons learned" in the same pass - the handoff dies, CLAUDE.md does 
 ## Procedure
 
 1. Run `git status --short`, `git log --oneline -1`, `git rev-parse --abbrev-ref HEAD`
-   and `lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN` so the state section is observed,
-   not remembered.
+   and `lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN` (the lane's own ports, where it has
+   them) so the state section is observed, not remembered. List every helper agent still
+   in flight; on a crew lane also record the PR head and the test copy head.
 2. Fill the template. Sort every claim into "verified" or "assumed" as you write it.
 3. Write the file. `mkdir -p .claude/handoffs` first - the directory is committed via
    its README, but a fresh worktree may not have it yet.
