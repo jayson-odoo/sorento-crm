@@ -539,7 +539,7 @@ describe('QuotationDocumentClient header dedupe', () => {
 });
 
 describe('QuotationDocumentClient signing gate', () => {
-  it('E4: offers Sign, not Send to Customer, until the quotation is signed', async () => {
+  it('E4: offers Sign, not the Send CTA, until the quotation is signed', async () => {
     // Replaces "a disabled Send to Customer with a Sign it first title": the one primary button
     // is now the NEXT action, so an unsigned quotation leads with Sign.
     getQuotationDocument.mockResolvedValue(quotationDocument());
@@ -575,7 +575,7 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(await screen.findByRole('button', { name: 'Send rev C to Nadi Cergas Sdn Bhd' })).toBeEnabled();
   });
 
-  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
+  it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never the Send CTA', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
         signatory_signature: signature(),
@@ -604,7 +604,7 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(await screen.findByRole('button', { name: 'Send R1 to Nadi Cergas Sdn Bhd' })).toBeEnabled();
   });
 
-  it('E4: an issued document that carries no signature leads with Sign, not Send to Customer', async () => {
+  it('E4: an issued document that carries no signature leads with Sign, not the Send CTA', async () => {
     // "It is issued, so it must have been signed" is wrong on every document issued before the
     // signature gate existed. Signed-ness is read off the signature and nothing else.
     getQuotationDocument.mockResolvedValue(
@@ -1208,8 +1208,8 @@ describe('QuotationDocumentClient scope series', () => {
 /**
  * Fix round 2 (#1341, owner addenda 2 to 4 and the 11:33Z alignment notes).
  */
-describe('QuotationDocumentClient Send to Customer (AC-QF057)', () => {
-  it('names the primary CTA Send to Customer, with the revision it will send', async () => {
+describe('QuotationDocumentClient the Send CTA (AC-QF057)', () => {
+  it('names the primary CTA the Send CTA, with the revision it will send', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ signatory_signature: signature() }),
     );
@@ -1221,7 +1221,7 @@ describe('QuotationDocumentClient Send to Customer (AC-QF057)', () => {
 
   // QUOTE-HEADER-TIDY (owner, 11 Nov 2026 ~16:30): "Send to Customer A" read as a customer
   // called A. The CTA names the revision and the document's To party instead.
-  it('names the revision and the To party on the CTA and its menu, never "Send to Customer"', async () => {
+  it('names the revision and the To party on the CTA and its menu, never "the Send CTA"', async () => {
     const user = userEvent.setup();
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
@@ -1551,7 +1551,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     ['no rung', null, false],
     ['draft', 'draft', false],
     ['issued', 'issued', true],
-  ])('E1: below floor on %s leads with Send for approval and renders no Send to Customer', async (_name, rung, issued) => {
+  ])('E1: below floor on %s leads with Send for approval and renders no the Send CTA', async (_name, rung, issued) => {
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(
       belowFloor(rung, {
@@ -1714,7 +1714,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
   it.each([
     ['nothing below the floor', () => quotationDocument()],
     ['approved', () => belowFloor('approved')],
-  ])('E4: %s and unsigned leads with Sign and renders no Send to Customer', async (_name, make) => {
+  ])('E4: %s and unsigned leads with Sign and renders no the Send CTA', async (_name, make) => {
     getQuotationDocument.mockResolvedValue(make());
     renderScreen();
 
@@ -2074,7 +2074,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
 // QUOTE-SEND-WHATSAPP (UAC section E): Send to Customer offers Email or WhatsApp.
 // ---------------------------------------------------------------------------------------------
 
-describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHATSAPP)', () => {
+describe('QuotationDocumentClient the Send CTA channel menu (QUOTE-SEND-WHATSAPP)', () => {
   const sentIssue = {
     id: 'i1',
     document_id: 'd1',
