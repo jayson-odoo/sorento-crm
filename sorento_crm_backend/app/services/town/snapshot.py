@@ -28,15 +28,24 @@ from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.finance import CREDIT_NOTE, BillingDocument
 from app.models.inventory import Stock, Warehouse
-from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.order import Customer, Order, SalesOrder, SalesOrderLine
 from app.models.procurement import InboundShipment, InboundShipmentLine, PurchaseRequestHeader, Supplier
 from app.models.product import Product
-from app.models.projects import ProjectQuotationDocument
+from app.models.projects import (
+    OUTCOME_DORMANT,
+    OUTCOME_OPEN,
+    Project,
+    ProjectParty,
+    ProjectPartyLink,
+    ProjectQuotationDocument,
+    ProjectSalesProfile,
+)
 from app.models.scm import ReorderLevel
 from app.models.status import Status
 from app.models.town import TownDay
 from app.scheduler.task_scheduler import scheduler_session
 from app.services.sales import invoiced_sales as inv
+from app.services.town.my_postcodes import canonical_state, last_postcode, state_for_postcode
 from app.utils.date_format import fmt_day_label
 
 logger = logging.getLogger(__name__)
@@ -82,6 +91,15 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
     today = BillingDocument.doc_date == day
     last = BillingDocument.doc_date == week_ago
     not_credit = BillingDocument.document_type != CREDIT_NOTE
+    # The split: Dealer, Project, and every other sales type (a NULL type is "other" too), so the
+    # three add up to today's total. Filtered aggregates in the same pass, no new scan.
+    is_dealer = sales_type.c.value == inv.DEALER
+    is_project = sales_type.c.value == inv.PROJECT
+    is_other = sa.or_(sales_type.c.value.is_(None), sales_type.c.value.notin_([inv.DEALER, inv.PROJECT]))
+    split_cols = []
+    for kind in (is_dealer, is_project, is_other):
+        split_cols.append(sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(today, kind), 0))
+        split_cols.append(sa.func.count().filter(today, not_credit, kind))
     row = db.execute(
         sa.select(
             sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(today), 0),
@@ -91,6 +109,7 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
             sa.func.count(sa.distinct(BillingDocument.customer_id)).filter(today, sales_type.c.value == inv.DEALER),
             sa.func.coalesce(sa.func.sum(inv.signed_amount()).filter(last), 0),
             sa.func.count().filter(last, not_credit),
+            *split_cols,
         )
         .select_from(BillingDocument)
         .join(sales_type, sa.true(), isouter=True)
@@ -105,6 +124,10 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
         "credit_note_count": int(row[2]),
         "customer_count": int(row[3]),
         "dealer_customer_count": int(row[4]),
+        "split": {
+            name: {"amount": _money(row[7 + 2 * i]), "invoice_count": int(row[8 + 2 * i])}
+            for i, name in enumerate(("dealer", "project", "other"))
+        },
     }
     compare = {
         "label": fmt_day_label(week_ago),
@@ -115,12 +138,15 @@ def _today_and_compare(db: Session, company_id: str, day: date) -> tuple:
 
 
 LORRY_CUSTOMERS = 6
+PROJECT_STATES = 3
 
 
 def _deliveries(db: Session, company_id: str, day: date) -> dict:
     """Sales orders still owing goods that are due today or overdue: the count, and the customers of
     up to 6 of them, earliest due first (TOWN-V2 Q6: lorries drive to real customers). Keys here are
-    raw customer ids; `build_snapshot` keeps a key only when the customer has a shop in the town."""
+    raw customer ids; `build_snapshot` keeps a key only when the customer has a shop in the town.
+    `project_orders` are those with `demand_class = 'project'`; `project_states` holds up to 3 of
+    their customers, earliest due first, as raw customer ids that `build_snapshot` turns into states."""
     due = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.requested_delivery_date)
     owing = (
         SalesOrder.company_id == company_id,
@@ -128,12 +154,25 @@ def _deliveries(db: Session, company_id: str, day: date) -> dict:
         SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered > 0,
         due <= day,
     )
-    count = db.execute(
-        sa.select(sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)))
+    is_project = SalesOrder.demand_class == "project"
+    count, project_count = db.execute(
+        sa.select(
+            sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)),
+            sa.func.count(sa.distinct(SalesOrderLine.sales_order_id)).filter(is_project),
+        )
         .select_from(SalesOrderLine)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
         .where(*owing)
-    ).scalar_one()
+    ).one()
+    project_customers = db.execute(
+        sa.select(SalesOrder.customer_id, sa.func.count(sa.distinct(SalesOrder.id)))
+        .select_from(SalesOrderLine)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .where(*owing, is_project)
+        .group_by(SalesOrder.customer_id)
+        .order_by(sa.func.min(due), SalesOrder.customer_id)
+        .limit(PROJECT_STATES)
+    ).all()
     first_due = sa.func.min(due)
     customers = db.execute(
         sa.select(
@@ -152,6 +191,11 @@ def _deliveries(db: Session, company_id: str, day: date) -> dict:
     return {
         "to_deliver": int(count),
         "customers": [{"key": str(c), "name": name, "orders": int(orders)} for c, name, orders in customers],
+        "project_orders": int(project_count),
+        # Customer ids here are private to the build: `build_snapshot` swaps each for its state.
+        "project_states": [
+            {"state": str(c) if c else None, "orders": int(orders)} for c, orders in project_customers
+        ],
     }
 
 
@@ -405,6 +449,156 @@ def _incoming(db: Session, company_id: str, day: date) -> dict:
     }
 
 
+# ------------------------------------------------------------- states, projects, trading houses
+
+SITE_LIMIT = 30
+HOUSE_LIMIT = 12
+STATE_ORDERS = 20
+_LIVE_PROJECT = sa.or_(Project.approval_state.is_(None), Project.approval_state == "approved")
+
+
+def _states(db: Session, company_id: str, customer_ids: set) -> dict:
+    """Customer id -> `my_state` value or None, for every id in ONE pair of queries per tick.
+    `customers.region` wins when it is a `my_state` value (trimmed, case-insensitive). Otherwise the
+    customer's last 20 live delivery orders (not deleted, not cancelled, newest first by order date
+    then creation) give a postcode each (the LAST 5-digit group of `deliver_address`); the most
+    frequent postcode that maps to a state wins, a tie going to the most recent. The address and the
+    postcode stay in this function."""
+    if not customer_ids:
+        return {}
+    ids = sorted(customer_ids)
+    regions = dict(
+        db.execute(
+            sa.select(Customer.id, Customer.region).where(Customer.company_id == company_id, Customer.id.in_(ids))
+        ).all()
+    )
+    out = {cid: canonical_state(regions.get(cid)) for cid in ids}
+    need = [cid for cid in ids if out[cid] is None]
+    if not need:
+        return out
+    rank = sa.func.row_number().over(
+        partition_by=Order.customer_id,
+        order_by=(Order.order_date.desc().nulls_last(), Order.created_at.desc()),
+    )
+    recent = (
+        sa.select(Order.customer_id.label("cid"), Order.deliver_address.label("addr"), rank.label("rn"))
+        .where(
+            Order.company_id == company_id, Order.customer_id.in_(need),
+            Order.deleted_at.is_(None), Order.is_cancelled.is_(False),
+        )
+        .subquery()
+    )
+    rows = db.execute(
+        sa.select(recent.c.cid, recent.c.addr).where(recent.c.rn <= STATE_ORDERS).order_by(recent.c.cid, recent.c.rn)
+    ).all()
+    seen: dict = {}
+    for cid, address in rows:
+        state = state_for_postcode(last_postcode(address) or "")
+        if state is not None:
+            seen.setdefault(cid, []).append(state)
+    for cid, states in seen.items():
+        counts = {s: states.count(s) for s in states}
+        # `states` is newest first, so the first of the best count is the most recent on a tie.
+        out[cid] = max(dict.fromkeys(states), key=lambda s: counts[s])
+    return out
+
+
+def _projects(db: Session, company_id: str) -> dict:
+    """Open sites (up to 30, estimated value desc with NULL last, then code, then id), the open count
+    and the dormant count, over approved or staff projects only. Lost and won never appear. The state
+    is the sales profile's, matched to a `my_state` value or None."""
+    where = (Project.company_id == company_id, _LIVE_PROJECT)
+    open_count, dormant = db.execute(
+        sa.select(
+            sa.func.count().filter(Project.outcome == OUTCOME_OPEN),
+            sa.func.count().filter(Project.outcome == OUTCOME_DORMANT),
+        ).where(*where)
+    ).one()
+    rows = db.execute(
+        sa.select(
+            Project.id, Project.name, Project.title, Project.project_code, Status.key, Project.is_critical,
+            ProjectSalesProfile.state, ProjectSalesProfile.launch_date,
+            ProjectSalesProfile.expected_delivery_from, ProjectSalesProfile.expected_delivery_to,
+            ProjectSalesProfile.estimated_sales_value,
+        )
+        .select_from(Project)
+        .join(ProjectSalesProfile, ProjectSalesProfile.project_id == Project.id, isouter=True)
+        .join(Status, Status.id == Project.status_id, isouter=True)
+        .where(*where, Project.outcome == OUTCOME_OPEN)
+        .order_by(
+            ProjectSalesProfile.estimated_sales_value.desc().nulls_last(),
+            Project.project_code.asc().nulls_last(), Project.id,
+        )
+        .limit(SITE_LIMIT)
+    ).all()
+    sites = []
+    for pid, name, title, code, stage, critical, state, launch, from_, to, value in rows:
+        delivery = from_ or to
+        sites.append({
+            "key": str(pid), "name": name or title, "code": code, "stage": stage,
+            "final_negotiation": bool(critical), "state": canonical_state(state),
+            "launch_date": launch.isoformat() if launch else None,
+            "delivery_date": delivery.isoformat() if delivery else None,
+            "estimated_value": _money(value) if value is not None else None,
+        })
+    return {"open_count": int(open_count), "more": int(open_count) - len(sites), "dormant": int(dormant), "sites": sites}
+
+
+def _trading_houses(db: Session, company_id: str, day: date) -> tuple:
+    """Customers behind a party linked as `trading_house` to at least one open, approved or staff
+    project: up to 12 by open projects desc then customer code, the rest counted in `more`, each
+    row lit by today's posted Project-type invoices. Returns `(section, customer ids)`; the rows'
+    `state` is filled by `build_snapshot` from the one `_states` pass."""
+    open_projects = sa.func.count(sa.distinct(Project.id))
+    base = (
+        sa.select(ProjectParty.customer_id.label("cid"), open_projects.label("n"))
+        .select_from(ProjectPartyLink)
+        .join(ProjectParty, ProjectParty.id == ProjectPartyLink.party_id)
+        .join(Project, Project.id == ProjectPartyLink.project_id)
+        .where(
+            ProjectPartyLink.role == "trading_house", ProjectParty.customer_id.is_not(None),
+            ProjectParty.company_id == company_id, Project.company_id == company_id,
+            Project.outcome == OUTCOME_OPEN, _LIVE_PROJECT,
+        )
+        .group_by(ProjectParty.customer_id)
+        .subquery()
+    )
+    total = db.execute(sa.select(sa.func.count()).select_from(base)).scalar_one()
+    rows = db.execute(
+        sa.select(Customer.id, Customer.customer_name, base.c.n)
+        .select_from(base)
+        .join(Customer, Customer.id == base.c.cid)
+        .where(Customer.company_id == company_id)
+        .order_by(base.c.n.desc(), Customer.customer_code, Customer.id)
+        .limit(HOUSE_LIMIT)
+    ).all()
+    ids = [str(r[0]) for r in rows]
+    lit: dict = {}
+    if ids:
+        sales_type = inv.document_sales_type()
+        lit = dict(
+            db.execute(
+                sa.select(BillingDocument.customer_id, sa.func.count())
+                .select_from(BillingDocument)
+                .join(sales_type, sa.true(), isouter=True)
+                .where(
+                    inv.posted(), BillingDocument.company_id == company_id, BillingDocument.doc_date == day,
+                    BillingDocument.document_type != CREDIT_NOTE, BillingDocument.customer_id.in_(ids),
+                    sales_type.c.value == inv.PROJECT,
+                )
+                .group_by(BillingDocument.customer_id)
+            ).all()
+        )
+    section = {
+        "more": int(total) - len(rows),
+        "rows": [
+            {"key": str(cid), "name": name, "state": None, "open_projects": int(n), "today_docs": int(lit.get(cid, 0))}
+            for cid, name, n in rows
+        ],
+    }
+    return section, set(ids)
+
+
 def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) -> dict:
     """The FULL variant (schema 1) for one company and one MYT day."""
     now_myt = now.astimezone(MYT)
@@ -424,6 +618,17 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         else {"key": None, "name": c["name"], "orders": c["orders"]}
         for c in deliveries["customers"]
     ]
+    houses, house_ids = _trading_houses(db, company_id, day)
+    project_customers = [c["state"] for c in deliveries["project_states"] if c["state"]]
+    # One state lookup for every customer the map draws (shops, stalls, trading houses, project
+    # lorries); the raw ids are replaced here and never reach the snapshot.
+    states = _states(db, company_id, shop_keys | house_ids | set(project_customers))
+    for shop in shops:
+        shop["state"] = states.get(shop["key"])
+    for row in houses["rows"]:
+        row["state"] = states.get(row["key"])
+    for entry in deliveries["project_states"]:
+        entry["state"] = states.get(entry["state"]) if entry["state"] else None
     return {
         "schema": SCHEMA_VERSION,
         "company_id": company_id,
@@ -439,6 +644,8 @@ def build_snapshot(db: Session, company_id: str, day: date, *, now: datetime) ->
         "approvals": _approvals(db, company_id),
         "deliveries": deliveries,
         "incoming": _incoming(db, company_id, day),
+        "projects": _projects(db, company_id),
+        "trading_houses": houses,
     }
 
 
@@ -500,6 +707,23 @@ def _opaque_keys(out: dict) -> None:
         customer.pop("name", None)  # names stay on the personal full view
 
 
+def _project_sections(out: dict, *, reorder: bool) -> None:
+    """Sites and trading houses for a viewer who may not see names: no name, code or value, opaque
+    keys. `reorder` (the personal redacted variant) also puts the sites in key-hash order, not
+    value order, so the order does not leak the ranking; the wallboard keeps the order it was given."""
+    projects = out.get("projects")
+    if projects:
+        if reorder:
+            projects["sites"].sort(key=lambda s: hashlib.sha1(str(s["key"]).encode()).hexdigest())
+        for site in projects["sites"]:
+            for key in ("name", "code", "estimated_value"):
+                site.pop(key, None)
+            site["key"] = opaque_key(out, site["key"])
+    for row in (out.get("trading_houses") or {}).get("rows", []):
+        row.pop("name", None)
+        row["key"] = opaque_key(out, row["key"])
+
+
 def _drop_suppliers(out: dict) -> None:
     """Supplier names follow dealer names: personal full view only (owner, 10 Nov)."""
     for row in (out.get("incoming") or {}).get("shipments", []):
@@ -512,6 +736,8 @@ def redact(snapshot: dict) -> dict:
     out = copy.deepcopy(snapshot)
     out.get("today", {}).pop("amount", None)
     out.get("compare", {}).pop("last_week_amount", None)
+    for part in (out.get("today", {}).get("split") or {}).values():
+        part.pop("amount", None)
     # Not in revenue order: by kind, then today's documents, then a hash of the key. The hash is
     # the same for the same counts, so the buildings are stable between refreshes, and it is not the ranking.
     out["shops"] = sorted(
@@ -522,6 +748,7 @@ def redact(snapshot: dict) -> dict:
         for key in ("today_amount", "ninety_day_amount", "name", "code", "rank"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _project_sections(out, reorder=True)
     _drop_suppliers(out)
     return out
 
@@ -534,6 +761,7 @@ def strip_names(snapshot: dict) -> dict:
         for key in ("name", "code", "today_amount", "ninety_day_amount"):
             shop.pop(key, None)
     _opaque_keys(out)
+    _project_sections(out, reorder=False)
     _drop_suppliers(out)
     return out
 
