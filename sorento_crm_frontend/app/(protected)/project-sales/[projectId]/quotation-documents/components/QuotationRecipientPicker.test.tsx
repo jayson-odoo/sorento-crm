@@ -258,8 +258,9 @@ describe('Attn from the contacts popup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Attn at PGB CONTOH SDN BHD')).toBeInTheDocument();
-    fireEvent.click(await within(dialog).findByLabelText(/MS\. ANNE CONTOH/));
-    fireEvent.click(within(dialog).getByLabelText(/MS IIYANA CONTOH/));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    fireEvent.click(await screen.findByRole('option', { name: /MS\. ANNE CONTOH/ }));
+    fireEvent.click(screen.getByRole('option', { name: /MS IIYANA CONTOH/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith({
@@ -286,7 +287,8 @@ describe('Attn from the contacts popup', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Choose contacts' }));
     const dialog = await screen.findByRole('dialog');
-    fireEvent.click(await within(dialog).findByLabelText(/MS IIYANA CONTOH/));
+    fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Contacts' }));
+    fireEvent.click(await screen.findByRole('option', { name: /MS IIYANA CONTOH/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     await waitFor(() =>
       expect(onChange).toHaveBeenCalledWith(
