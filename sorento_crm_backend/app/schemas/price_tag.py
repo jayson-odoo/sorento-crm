@@ -1224,6 +1224,22 @@ class TagSheetDocPayload(BaseModel):
     doc: dict
     commit_message: Optional[str] = None
 
+    @field_validator("doc")
+    @classmethod
+    def _tables_are_sound(cls, doc):
+        """B4: the request designer is the same canvas, so its saved tags get the same table check
+        as a template doc (bounded grid, plain colours). Layers sit at ``sheets[].tags[].layers``."""
+        from app.utils.table_layer_check import doc_table_problem
+
+        sheets = doc.get("sheets") if isinstance(doc, dict) else None
+        for sheet in sheets if isinstance(sheets, list) else []:
+            tags = sheet.get("tags") if isinstance(sheet, dict) else None
+            for tag in tags if isinstance(tags, list) else []:
+                problem = doc_table_problem(tag) if isinstance(tag, dict) else None
+                if problem:
+                    raise ValueError(problem)
+        return doc
+
 
 class TagFont(BaseModel):
     """A brand font the editor and the print page load through ``@font-face``."""

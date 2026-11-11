@@ -225,3 +225,46 @@ def test_table_props_on_a_layer_of_another_type_are_checked_too():
         },
     }
     assert doc_table_problem({"layers": [layer]}) is not None
+
+
+def _grid_table(rows: int, cols: int, fill: str = "#ffffff") -> dict:
+    return {
+        "id": "t",
+        "type": "table",
+        "props": {
+            "kind": "table",
+            "columns": [{"width_mm": 5} for _ in range(cols)],
+            "rows": [{"height_mm": 5} for _ in range(rows)],
+            "cells": [[{"text": "", "fill": fill} for _ in range(cols)] for _ in range(rows)],
+        },
+    }
+
+
+def test_a_table_over_50_rows_or_columns_is_refused_on_every_save_path():
+    """Reviewer re-check: the 1-50 cap had no test. Page edits, template saves and the request
+    designer's tag sheet save all refuse it."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.price_tag import TagSheetDocPayload, TagTemplateCreate
+    from app.utils.table_layer_check import doc_table_problem
+
+    assert doc_table_problem({"layers": [_grid_table(50, 50)]}) is None
+    assert doc_table_problem({"layers": [_grid_table(51, 1)]}) is not None
+    assert doc_table_problem({"layers": [_grid_table(1, 51)]}) is not None
+    with pytest.raises(ValidationError):
+        TagTemplateCreate(name="ZZT", family="price_tag", doc={"layers": [_grid_table(51, 1)]})
+
+
+def test_the_request_designers_tag_sheet_save_runs_the_table_check():
+    """Reviewer re-check: `TagSheetDocPayload` (the price tag request designer's save) skipped it."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.price_tag import TagSheetDocPayload
+
+    ok = {"sheets": [{"tags": [{"layers": [_grid_table(2, 2)]}]}]}
+    assert TagSheetDocPayload(doc=ok).doc == ok
+    for bad in (_grid_table(51, 1), _grid_table(1, 1, fill="url(//10.0.0.5/x)")):
+        with pytest.raises(ValidationError):
+            TagSheetDocPayload(doc={"sheets": [{"tags": [{"layers": [bad]}]}]})
