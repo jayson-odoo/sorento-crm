@@ -2472,7 +2472,7 @@ _PREVIEW_FIELDS = (
 
 
 def preview_cover(
-    db: Session, *, project: Project, payload: Dict[str, Any]
+    db: Session, *, project: Project, payload: Dict[str, Any], viewer_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """The cover as it would print now, from the form's unsaved values.
 
@@ -2508,7 +2508,8 @@ def preview_cover(
             doc_date=date.today(),
             document_no="NEW",
             subject_title=project.title,
-            created_by=None,
+            # Whoever saves it becomes its creator, so the unsaved cover names them as Prepared By.
+            created_by=viewer_id,
             company_id=project.company_id,
             kind=KIND_PROPOSAL,
         )

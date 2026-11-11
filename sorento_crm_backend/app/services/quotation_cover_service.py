@@ -523,6 +523,25 @@ def source_values(
     return values
 
 
+#: A salesperson field a design saved before the 11 Nov ruling uses for Prepared By -> the
+#: creator field it prints instead.
+_PREPARED_BY_INSTEAD = {"salesperson_name": "prepared_by_name", "salesperson_mobile": "prepared_by_phone"}
+
+
+def _says_prepared_by(text: Any) -> bool:
+    return "prepared by" in " ".join(str(text or "").lower().replace(":", " ").replace(",", " ").split())
+
+
+def _printed_source(source: str, row_label: Any, section_label: Any) -> str:
+    """The field a row prints. Prepared By is the document's creator (owner ruling 11 Nov 2026,
+    compliance), so a salesperson row a saved design labels "Prepared By", or keeps in a
+    "Prepared by" section, prints the creator; the design itself is not rewritten. A row labelled
+    anything else (e.g. "Sales") is the salesperson and keeps the owner."""
+    if source in _PREPARED_BY_INSTEAD and (_says_prepared_by(row_label) or _says_prepared_by(section_label)):
+        return _PREPARED_BY_INSTEAD[source]
+    return source
+
+
 def sections_for_design(
     values: Dict[str, str], design: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
@@ -534,7 +553,7 @@ def sections_for_design(
         columns = int(section.get("columns") or 1)
         cells: List[List[Dict[str, Any]]] = [[] for _ in range(columns)]
         for item in section.get("rows") or []:
-            source = item["source"]
+            source = _printed_source(item["source"], item.get("label"), section.get("label"))
             value = values.get(source) or ""
             if not item.get("shown", True) or not value:
                 continue

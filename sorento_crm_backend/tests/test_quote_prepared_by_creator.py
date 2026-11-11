@@ -86,3 +86,61 @@ def test_spec_sheet_prepared_by_is_the_creator():
         fields = spec._doc_fields(db, document, sheet)
         assert fields["prepared_by"] == creator.name
         assert fields["prepared_by_phone"] == "012-000 0777"
+
+
+# ------------------------------------------------- crew pass 11 Nov: covers saved before the ruling
+
+
+def _saved_design():
+    """A cover design as sent before the ruling: "Prepared By" pointed at the salesperson field.
+    A "Sales" row on the same design is the salesperson and stays the owner."""
+    def row(source, label):
+        return {"source": source, "label": label, "shown": True, "column": 0}
+
+    return {
+        "show_letterhead": True,
+        "title": "QUOTATION",
+        "closing_html": "",
+        "sections": [
+            {"style": "fields", "label": "", "columns": 1,
+             "rows": [row("salesperson_name", "Prepared By"), row("salesperson_name", "Sales")]},
+            {"style": "signature", "label": "Prepared by,", "columns": 1,
+             "rows": [row("salesperson_name", "Name"), row("salesperson_mobile", "Phone No")]},
+        ],
+    }
+
+
+def test_a_saved_design_prepared_by_on_the_salesperson_field_prints_the_creator():
+    from app.models.user import User
+    from app.services.quotation_cover_service import cover_sections
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _full_document(db, env)
+        record = _issue(db, document, env["owner"])
+        creator = _creator(db, env, document)
+        owner = db.query(User).filter(User.id == env["owner"]).first()
+
+        fields, signature = cover_sections(db, document, record, design=_saved_design())
+        prepared, sales = fields["cells"][0]
+        assert (prepared["label"], prepared["text"]) == ("Prepared By", creator.name)
+        assert (sales["label"], sales["text"]) == ("Sales", owner.name)
+        name, phone = signature["cells"][0]
+        assert name["text"] == creator.name
+        assert phone["text"] == "012-000 0777"
+
+
+def test_an_unsaved_proposal_preview_prints_the_viewer_as_prepared_by():
+    from app.services.project_quotation_document_service import preview_cover
+
+    with blank_session() as db:
+        env = _setup(db)
+        viewer_id = _user(db, f"{MARKER} Viewer Creator")
+        out = preview_cover(db, project=env["project"], payload={}, viewer_id=viewer_id)
+        texts = {
+            c["source"]: c.get("text")
+            for s in out["cover_sections"]
+            for col in s["cells"]
+            for c in col
+        }
+        assert texts.get("prepared_by_name") == f"{MARKER} Viewer Creator"
