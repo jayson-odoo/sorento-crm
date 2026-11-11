@@ -9,7 +9,7 @@
  *              state in words ("2 rows, found").
  *   Toolbar    "Download certificates PDF" (Actions menu); "Add certificate" only when `can_add`.
  *   Empty      heading "No certificates" and the hint "None of the quoted products has a certificate on file."
- *   Remove     the row menu deferred action `quotation_certificate.remove` (entity type `quotation_certificate`,
+ *   Remove     the row's right-click menu deferred action `quotation_certificate.remove` (entity type `quotation_certificate`,
  *              entity id = the document id, payload `{ certificate_id }`): no confirm dialog.
  */
 import React from 'react';
@@ -252,10 +252,7 @@ describe('QuotationCertificatesList', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     ok([row()]);
     renderList();
-    await screen.findByText('ZZT-0119');
-    const trigger = screen.getByRole('button', { name: 'PPS ZZT-0119 actions' });
-    trigger.focus();
-    fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
+    fireEvent.contextMenu(await screen.findByText('ZZT-0119'));
     fireEvent.click(await screen.findByRole('menuitem', { name: /remove/i }));
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
@@ -404,5 +401,57 @@ describe('Rows marked filter buckets (owner, 11 Nov 2026)', () => {
     expect(markedFilterOf('no_text')).toBe('no_text');
     expect(markedFilterOf('no_file')).toBe('no_file');
     expect(markedFilterOf('none')).toBeNull();
+  });
+
+  // ---------------------------------------------------------- CERT-TAB-FOLLOWUPS
+
+  describe('right-click row menu (owner: right-click over icons)', () => {
+    it('has no Actions column and no "..." button on a row', async () => {
+      ok([row()]);
+      renderList();
+      await screen.findByText('ZZT-0119');
+      expect(screen.queryByRole('button', { name: /ZZT-0119 actions/i })).toBeNull();
+      expect(screen.queryByRole('columnheader', { name: /^actions$/i })).toBeNull();
+    });
+
+    it('right-clicking a row offers Open, Download and Remove to an editor', async () => {
+      ok([row()]);
+      renderList();
+      fireEvent.contextMenu(await screen.findByText('SRTWB1515, SRTWC8355'));
+      const items = (await screen.findAllByRole('menuitem')).map((i) => i.textContent?.trim());
+      expect(items).toEqual(['Open', 'Download', 'Remove']);
+    });
+
+    it('offers no Remove to a viewer without the edit right', async () => {
+      ok([row()], false);
+      renderList();
+      fireEvent.contextMenu(await screen.findByText('ZZT-0119'));
+      const items = (await screen.findAllByRole('menuitem')).map((i) => i.textContent?.trim());
+      expect(items).toEqual(['Open', 'Download']);
+    });
+
+    it('Open goes to the certificate the row was right-clicked on', async () => {
+      ok([row(), row({ certificate_id: 'cert-2', certificate_number: 'ZZT-0200' })]);
+      renderList();
+      fireEvent.contextMenu(await screen.findByText('ZZT-0200'));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Open' }));
+      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/certification/cert-2');
+    });
+
+    it('Download is disabled when the certificate has no file', async () => {
+      ok([row({ has_file: false })]);
+      renderList();
+      fireEvent.contextMenu(await screen.findByText('ZZT-0119'));
+      const download = await screen.findByRole('menuitem', { name: 'Download' });
+      expect(download).toHaveAttribute('data-disabled');
+    });
+
+    it('right-clicking outside a row leaves the browser menu alone', async () => {
+      ok([row()]);
+      renderList();
+      await screen.findByText('ZZT-0119');
+      fireEvent.contextMenu(screen.getByRole('columnheader', { name: /certificate/i }));
+      expect(screen.queryByRole('menuitem', { name: 'Open' })).toBeNull();
+    });
   });
 });

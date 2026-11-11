@@ -35,13 +35,23 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
 }));
-vi.mock('@/components/common/PdfViewer', () => ({
-  PdfViewer: ({ renderPageOverlay }: { renderPageOverlay?: (page: number) => React.ReactNode }) => (
+/** Set per test: the stub draws its pages (and their boxes) only after this many ms, the way the
+ *  real viewer draws them once the file has loaded. 0 draws them at once. */
+const pdf = { loadMs: 0 };
+function PdfViewerStub({ renderPageOverlay }: { renderPageOverlay?: (page: number) => React.ReactNode }) {
+  const [ready, setReady] = React.useState(pdf.loadMs === 0);
+  React.useEffect(() => {
+    if (ready) return;
+    const timer = window.setTimeout(() => setReady(true), pdf.loadMs);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
+  return (
     <div data-testid="pdf-viewer" className="relative">
-      {renderPageOverlay?.(1)}
+      {ready && renderPageOverlay?.(1)}
     </div>
-  ),
-}));
+  );
+}
+vi.mock('@/components/common/PdfViewer', () => ({ PdfViewer: PdfViewerStub }));
 vi.mock('@/app/(protected)/master-data-management/certificates/components/CoverageCodeEditor', () => ({
   CoverageCodeEditor: ({ code }: { code: string | null }) => <span>{code}</span>,
 }));
@@ -143,6 +153,7 @@ const boxesOnPage = () => document.querySelectorAll('[data-box-index]');
 beforeEach(() => {
   saveBoxes.mutate.mockReset();
   detailQuery.mockReset();
+  pdf.loadMs = 0;
 });
 
 describe('CertificateReader (CERT-TAB-UX)', () => {
@@ -251,6 +262,66 @@ describe('CertificateReader (CERT-TAB-UX)', () => {
     renderReader();
     expect(screen.getByRole('button', { name: /go to the box of SRTWB1515/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /go to the box of SRTHOSE/i })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------- CERT-TAB-FOLLOWUPS
+
+describe('every open lands on the first box', () => {
+  /** The dev server runs React StrictMode (next.config.mjs reactStrictMode), and a certificate
+   *  opened before is already cached, so its data is there on the first render. */
+  function openStrict(certificateId: string, data: ReturnType<typeof detail>, client = new QueryClient()) {
+    detailQuery.mockReturnValue({ data, isLoading: false, error: null });
+    const tree = (id: string) => (
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <CertificateReader projectId="p1" documentId="d1" certificateId={id} />
+        </QueryClientProvider>
+      </React.StrictMode>
+    );
+    const view = render(tree(certificateId));
+    return { ...view, switchTo: (id: string) => view.rerender(tree(id)) };
+  }
+  const flashedIndex = () => document.querySelector('[data-flashed]')?.getAttribute('data-box-index');
+
+  it('lands on the first box when the data is cached and the file is still loading', async () => {
+    pdf.loadMs = 30;
+    openStrict('cert-1', detail());
+    await waitFor(() => expect(flashedIndex()).toBe('1'));
+  });
+
+  it('lands again on a second open of the same certificate', async () => {
+    pdf.loadMs = 30;
+    const client = new QueryClient();
+    const first = openStrict('cert-1', detail(), client);
+    await waitFor(() => expect(flashedIndex()).toBe('1'));
+    first.unmount();
+    openStrict('cert-1', detail(), client);
+    await waitFor(() => expect(flashedIndex()).toBe('1'));
+  });
+
+  it('lands on the new certificate first box after switching certificates', async () => {
+    pdf.loadMs = 30;
+    const view = openStrict('cert-1', detail());
+    await waitFor(() => expect(flashedIndex()).toBe('1'));
+    detailQuery.mockReturnValue({
+      data: detail({
+        certificate_id: 'cert-2',
+        revision_id: 'rev-2',
+        boxes: [box({ y: 0.7 }), box({ y: 0.5 }), box({ y: 0.1, product_id: 'prod-2' })],
+      }),
+      isLoading: false,
+      error: null,
+    });
+    view.switchTo('cert-2');
+    await waitFor(() => expect(flashedIndex()).toBe('2'));
+  });
+
+  it('a certificate with no boxes opens with nothing outlined and nothing waiting', async () => {
+    pdf.loadMs = 30;
+    openStrict('cert-1', detail({ boxes: [] }));
+    await new Promise((r) => setTimeout(r, 80));
+    expect(document.querySelector('[data-flashed]')).toBeNull();
   });
 });
 
