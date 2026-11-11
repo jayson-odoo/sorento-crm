@@ -649,7 +649,14 @@ def test_every_company_id_table_is_registered():
     # + 1 (SORENTO-TOWN): `town_days`, one company's frozen day snapshot and event log = 182.
     # + 1 (QUOTE-TERMS-SELECT, #2305): `payment_terms`, AutoCount Terms reference data, owned per
     #   company exactly as `item_classes` = 183.
-    expected_owned = 183
+    # + 5 (PRODUCT-COSTING, #2321): `costing_settings` (one company's SST factor and default
+    #   cost method, one row per company), `costing_category_rules` and
+    #   `costing_product_overrides` (one company's transport rule per category / per product),
+    #   `customer_costing_profiles` and `customer_costing_products` (one company's mark-up
+    #   profile and costing list per party). Every read is an ORM query by category, product
+    #   or customer id, so the mixin's filter is what hides another company's costing;
+    #   `exchange_rates` has no company: a rate is the same for every company = 188.
+    expected_owned = 188
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
