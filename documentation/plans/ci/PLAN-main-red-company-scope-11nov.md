@@ -1,6 +1,6 @@
 # PLAN: MAIN-RED-COMPANY-SCOPE (11 Nov 2026)
 
-Status: in progress. Small fix track (one test file, no migration, no auth/RBAC change, no behaviour change).
+Status: PR #2352 open, review clean, Merge-ready. Small fix track (one test file, no migration, no auth/RBAC change, no behaviour change).
 
 ## Problem
 
@@ -29,7 +29,7 @@ route or schema change unless the check above finds a table that is not properly
 - Red: the unchanged test on bcab68352c (`assert 188 == 183`).
 - Green: whole `tests/test_company_scope.py` + census/guard neighbours (`test_raw_sql_company_scope.py`,
   `test_list_api_perms.py`, `test_schema_uuid_id_principle.py`, costing access tests).
-- Kill: drop `CompanyScopedMixin` from one costing model, the census fails on its offenders assert; restore.
+- Kill: drop `CompanyScopedMixin` from one costing model, the census fails on its count assert (the mixin declares `company_id`, so no offender appears); restore.
 
 ## Also report (no fix unless one line)
 
