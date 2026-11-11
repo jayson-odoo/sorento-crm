@@ -4,6 +4,7 @@ import * as React from 'react';
 
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
+import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import type {
@@ -40,6 +41,19 @@ export function ReaderInspector({
   onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
 }) {
   const library = useKitLibrary();
+  // Insert field (owner hand test #2331): the template designer's own dialog and registry, so a
+  // page offers every field a template can (product, line, doc).
+  const [insertOpen, setInsertOpen] = React.useState(false);
+  const textLayer = layer && layer.props.kind === 'text' ? layer : null;
+  // A layer bound to a slot, or already showing an override, draws `text_override`: the field
+  // goes there, as in the template designer, or it would land where it is never drawn.
+  const writesOverride = Boolean(
+    textLayer && (textLayer.slot_binding || textLayer.text_override != null),
+  );
+  const textValue =
+    textLayer && textLayer.props.kind === 'text'
+      ? (textLayer.text_override ?? textLayer.props.text ?? '')
+      : '';
 
   const onUpdate = React.useCallback(
     (id: string, changes: Partial<TagLayer>) => {
@@ -61,6 +75,13 @@ export function ReaderInspector({
     },
     [controller, mode, onApplyAll],
   );
+
+  const insert = (text: string) => {
+    setInsertOpen(false);
+    if (!textLayer) return;
+    if (writesOverride) onUpdate(textLayer.id, { text_override: text });
+    else onUpdateProps(textLayer.id, { text } as Partial<TagLayerProps>);
+  };
 
   return (
     <div
@@ -98,8 +119,17 @@ export function ReaderInspector({
           fontOptions={library.fontOptions}
           specSheet
           specKeys={library.specKeys}
+          onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
         />
       </div>
+      <InsertFieldDialog
+        open={insertOpen && textLayer !== null}
+        value={textValue}
+        data={null}
+        specKeys={library.specKeys}
+        onCancel={() => setInsertOpen(false)}
+        onDone={insert}
+      />
     </div>
   );
 }
