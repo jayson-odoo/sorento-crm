@@ -175,7 +175,7 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     await screen.findByText('PT-202609-0002');
     expect(await screen.findByText('Sales Order')).toBeInTheDocument();
     expect(
-      screen.getByText('No sales order files attached.'),
+      screen.getByText('No files attached.'),
     ).toBeInTheDocument();
   });
 });

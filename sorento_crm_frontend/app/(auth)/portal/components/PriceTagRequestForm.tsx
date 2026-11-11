@@ -46,7 +46,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -124,7 +123,7 @@ import {
 import type { AIExtractedProductLine } from '../lib/portal-client';
 import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
 import { distinctName } from '@/lib/product-display';
-import { formatDate, formatDateInMalaysia, formatLocalDateToYyyyMmDd } from '@/lib/helpers';
+import { formatDate, formatDateInMalaysia } from '@/lib/helpers';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -227,15 +226,6 @@ function scrollToFirstProblem(): void {
     const node = document.querySelector('[data-error-anchor]');
     node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
   }, 50);
-}
-
-// ---------------------------------------------------------------------------
-// Need by: a date the salesperson picks must be after today, the same rule the Escalate dialog
-// keeps (`PriceTagSelfApproval.tsx`). The field starts EMPTY: since D48a a draft may have none.
-// ---------------------------------------------------------------------------
-
-function afterToday(date: string): boolean {
-  return date > formatLocalDateToYyyyMmDd(new Date());
 }
 
 // ---------------------------------------------------------------------------
@@ -359,10 +349,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [previewLineKey, setPreviewLineKey] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [neededByDate, setNeededByDate] = useState('');
-  /** A Need by changed to today or earlier (a date already saved is left alone). */
-  const [savedNeededBy, setSavedNeededBy] = useState('');
-  const neededByTooEarly =
-    neededByDate !== '' && neededByDate !== savedNeededBy && !afterToday(neededByDate);
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   /** The latest committed lines, for a callback that resumes after an await. */
@@ -450,7 +436,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // below sends.
   const printBy = 'self' as const;
   const [reviseMode, setReviseMode] = useState(false);
-  const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
   const isProofReady = request?.status === 'proof_ready';
   // PRICETAG-SELF-APPROVAL: his own proof (nobody in marketing drew it). He sees
@@ -458,6 +443,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // review below.
   const isOwnProof = !!request?.self_review;
   const [escalateOpen, setEscalateOpen] = useState(false);
+  /** The request page's design popup (owner hand test 11 Nov: a button, not an inline design). */
+  const [designOpen, setDesignOpen] = useState(false);
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
   // at what they approved, but Approve/Request Changes only make sense while
@@ -484,15 +471,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // header line uses - review round 3 folds the price tag header into the
   // SAME one muted truncating line, rather than its own separate blocked-
   // reason sentence under a bold doc-number + colored pill.
-  const revisionStatusText = revisionPolicy
-    ? revisionPolicy.allowed
-      ? // Price tags have no cap (max 0, PRICETAG-SELF-APPROVAL): nothing to count.
-        revisionPolicy.max
-        ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
-        : null
-      : (revisionPolicy.blocked_reason ?? null)
+  // Owner hand test 11 Nov: editing your own request is not a revision, so no budget line is
+  // shown (price tags have no cap anyway); a reason Edit is unavailable still is.
+  const revisionStatusText = revisionPolicy && !revisionPolicy.allowed
+    ? (revisionPolicy.blocked_reason ?? null)
     : null;
-  const { revise, submitting: revising } = useReviseSubmission(
+  const { revise } = useReviseSubmission(
     'price_tag_request',
     effectiveId,
   );
@@ -603,7 +587,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceMode(data.price_mode ?? 'list');
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
-    setSavedNeededBy(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
     setLines(data.lines.map((l) => lineToDraft(l, data.price_mode ?? 'list')));
     setAttachments(data.attachments ?? []);
@@ -1315,64 +1298,35 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // inside the revise transaction (apply_lines), so a client-side pre-check
   // here only saves a round trip on the one case that is free to check
   // (zero lines) - the rest surfaces as the server's own sentence. ----
-  const handleSubmitRevision = useCallback(async () => {
-    if (!effectiveId) return;
-    if (!reviseReason.trim()) {
-      toast.error('Tell us what changed and why.');
-      return;
-    }
-    if (neededByTooEarly) {
-      toggleSection('need_by', true);
-      return;
-    }
-    if (numbersInvalid()) return;
-    try {
-      const revisedLines = payloadLines();
-      await revise({
-        reason: reviseReason.trim(),
-        expectedRevisionNo: request?.revision_no ?? 0,
-        fields: {
-          ...customerFields(customers),
-          needed_by_date: neededByDate || null,
-          notes: notes || null,
-          price_mode: priceMode,
-          // Live finding, PT-202609-0013: Save Draft and Submit both carry the
-          // print choice and this payload did not, so revising a request
-          // silently dropped who prints it.
-          print_by: printBy,
-        },
-        products: revisedLines,
-      });
-      // Review round 3: a file added while composing the revision sat in
-      // `pendingFiles` with nowhere to flush to (the request already exists,
-      // so it never goes through `handleSaveDraft`'s create-then-flush path) -
-      // same call Save Draft / Submit already make, before the request the
-      // policy will re-check moves on to its post-revision status.
-      await flushPendingFiles(effectiveId);
-      const fresh = await service().getRequest(effectiveId);
-      if (fresh) {
-        setRequest(fresh);
-        applyRequestFieldsFrom(fresh);
-        const dropped = droppedPromotionNote(revisedLines, fresh.lines);
-        if (dropped) toast.info(dropped);
-      }
-      // Review round 3: the lineage and the policy the header/gear read both
-      // changed under this revision - reload the one GET that changed
-      // (revisions), and `fresh.revision` (just re-fetched above) already IS
-      // the refreshed policy, so nothing else needs asking again.
-      revisionHistory.reload();
-      setReviseMode(false);
-      setReviseReason('');
-      toast.success('Revision sent');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to send revision');
-    }
+  /**
+   * Owner hand test 11 Nov: Edit of a sent request is the create path, so its popup's Approve
+   * first saves the edit. It goes through the same endpoint the old Submit revision used, which
+   * records what changed in the request's History and hands the tag back for this approval; no
+   * reason is asked (an edit of your own request is not a revision).
+   */
+  const saveEdit = useCallback(async (): Promise<string> => {
+    if (!effectiveId) throw new Error('This request has not been saved yet.');
+    await revise({
+      reason: '',
+      expectedRevisionNo: request?.revision_no ?? 0,
+      fields: {
+        ...customerFields(customers),
+        needed_by_date: neededByDate || null,
+        notes: notes || null,
+        price_mode: priceMode,
+        // Live finding, PT-202609-0013: every save carries who prints.
+        print_by: printBy,
+      },
+      products: payloadLines(),
+    });
+    // A file added while editing has nowhere else to go: the request already exists.
+    await flushPendingFiles(effectiveId);
+    return effectiveId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, neededByTooEarly, toggleSection, effectiveId, reviseReason, revise, customers, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory, client]);
+  }, [effectiveId, revise, request, customers, neededByDate, notes, priceMode, lines, flushPendingFiles]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
-    setReviseReason('');
     setPendingFiles([]);
     if (!effectiveId) return;
     try {
@@ -1496,6 +1450,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setFieldErrors({});
     setLines((prev) => prev.map((l) => ({ ...l, guard_error: null })));
     try {
+      if (reviseMode && action.kind === 'approve') {
+        const id = await saveEdit();
+        const saved = await service().getRequest(id);
+        if (!saved) throw new Error('Request not found');
+        const preview = await service().lookupTagPreviewForRequest(id);
+        const missing = linesWithoutTemplate(saved.lines, preview);
+        if (missing.length > 0) {
+          throw new Error(`No tag template yet for ${missing.join(', ')}.`);
+        }
+        const built = buildSelfProof(saved.lines, preview);
+        if (!built) throw new Error('The tag could not be drawn.');
+        await service().approveRequest(id, built.doc);
+        revisionHistory.reload();
+        toast.success('Tag approved');
+        router.push(homePath);
+        return;
+      }
       const payload = {
         ...customerFields(customers),
         // Review round 2: an empty date input is '', not omitted - sent as
@@ -1562,7 +1533,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readyToFinish, applyFieldErrors, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
+  }, [readyToFinish, applyFieldErrors, effectiveId, customers, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client, reviseMode, saveEdit, revisionHistory]);
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
@@ -1603,9 +1574,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   );
 
   const startEdit = useCallback(() => {
+    setDesignOpen(false);
     setReviseMode(true);
-    setReviseReason('');
-  }, []);
+    // The edit form opens where the create form ends up: the items in view.
+    toggleSection('price', true);
+  }, [toggleSection]);
 
   // ---- Mark collected (r9 D8): the salesperson has the tags ----
   const handleCollect = useCallback(async () => {
@@ -1847,6 +1820,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onApprove={handleApprove}
             onEdit={startEdit}
             onEscalate={handleEscalate}
+            popup={{ open: designOpen, onOpenChange: setDesignOpen }}
           />
         )}
 
@@ -1863,6 +1837,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             }}
             loadDesign={designCalls.loadDesign}
             loadReviewComments={designCalls.loadReviewComments}
+            popup={{ open: designOpen, onOpenChange: setDesignOpen }}
           />
         )}
 
@@ -1908,9 +1883,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {/* Sales Order - D-P5: the same dropzone the form uses, in
               `readOnly` mode - same tiles, same ordering, same preview
               modal, but no drop area, no paste, no remove, no per-tile
-              Extract; its own empty state when no file was attached. */}
+              Extract; its own empty state when no file was attached. No heading
+              (owner hand test 11 Nov). */}
           <div className="space-y-1.5">
-            <Label>Sales Order</Label>
             <AttachmentDropzone
               kind="price_tag_request"
               submissionId={request.id}
@@ -1922,7 +1897,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
           {/* Lines: same table the edit form uses, cells read-only. */}
           <div className="space-y-1.5">
-            <Label>Lines ({request.lines.length})</Label>
             {request.lines.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">
                 No lines.
@@ -1984,6 +1958,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
     const revisionHistoryCard = (
       <RevisionHistory
+        title="History"
         entries={revisionHistory.entries}
         loading={revisionHistory.loading}
         error={revisionHistory.error}
@@ -2035,6 +2010,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 Controlled open state so the menu closes itself once the
                 download settles, instead of sitting open with a stale item
                 until an outside click. */}
+            {/* Owner hand test 11 Nov: the design opens from a button (no inline design bloating
+                the page) and Edit is the page's main button. */}
+            {(isOwnProof || showDesignPreview) && (
+              <Button variant="outline" size="sm" onClick={() => setDesignOpen(true)}>
+                <Eye className="size-4 mr-1" />
+                Preview
+              </Button>
+            )}
+            {revisionPolicy?.allowed && (
+              <Button size="sm" onClick={startEdit}>
+                <PencilLine className="size-4 mr-1" />
+                Edit
+              </Button>
+            )}
             <DetailActionsMenu
               ariaLabel="Price tag request actions"
               open={gearOpen}
@@ -2078,18 +2067,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 <Copy className="size-4" />
                 Duplicate
               </DropdownMenuItem>
-              {revisionPolicy?.allowed && (
-                <DropdownMenuItem
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    setGearOpen(false);
-                    startEdit();
-                  }}
-                >
-                  <PencilLine className="size-4" />
-                  Edit
-                </DropdownMenuItem>
-              )}
               {request.can_escalate && !isOwnProof && (
                 <DropdownMenuItem
                   onSelect={(event) => {
@@ -2119,7 +2096,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               </TabsTrigger>
               <TabsTrigger value="revisions">
                 <History />
-                <span>Revisions</span>
+                <span>History</span>
               </TabsTrigger>
             </TabsList>
             <TabsContent value="details" className="m-0 space-y-4">
@@ -2142,71 +2119,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Edit / create form ----
   return (
     <div className="w-full max-w-5xl mx-auto px-3 pt-4 pb-8 space-y-4">
-      {reviseMode && request ? (
-        // R3-1: revise mode is the SAME header as the read view - the one
-        // muted truncating line (review round 3) - with Cancel / Submit
-        // revision where the gear's Revise item was, not a bare heading and
-        // a second action row at the bottom of the page.
-        <>
-          <div className={`flex items-center gap-2 ${embedded ? 'justify-end' : 'justify-between'}`}>
-            {!embedded && (
-              <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
-                <ArrowLeft className="size-4 mr-1" /> Back
-              </Button>
-            )}
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={handleCancelRevise} disabled={revising}>
-                Cancel
-              </Button>
-              <Button onClick={handleSubmitRevision} disabled={revising}>
-                {revising && <Loader2 className="size-4 mr-1 animate-spin" />}
-                Submit revision
-              </Button>
-            </div>
-          </div>
-          {(request.doc_number || neighbours) && (
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {request.doc_number}
-              {neighbours && (
-                <>
-                  {request.doc_number && <span aria-hidden> · </span>}
-                  <span className="text-xs text-muted-foreground/70">
-                    {neighbours.position} / {neighbours.total}
-                  </span>
-                </>
-              )}
-            </span>
-          )}
-          {/* Review round 3: the reason field in a card matching the
-              FormSection rhythm (same border/padding), not a bare label +
-              textarea floating between the header and the sections. */}
-          <Card className="space-y-1.5 px-4 py-4">
-            <Label htmlFor="revision_reason">Reason</Label>
-            <Textarea
-              id="revision_reason"
-              value={reviseReason}
-              onChange={(e) => setReviseReason(e.target.value)}
-              placeholder="What changed, and why?"
-              rows={3}
-            />
-          </Card>
-        </>
-      ) : (
-        <>
-          {!embedded && (
-            <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
-              <ArrowLeft className="size-4 mr-1" /> Back
-            </Button>
-          )}
+      {/* Owner hand test 11 Nov: Edit is the create form - same header, no Reason, no
+          Submit revision. */}
+      {!embedded && (
+        <Button variant="ghost" size="sm" onClick={() => router.push(homePath)}>
+          <ArrowLeft className="size-4 mr-1" /> Back
+        </Button>
+      )}
 
-          {/* A CRM page's own header already says "New Price Tag Request"; an edit keeps its
-              doc number here. */}
-          {!(embedded && isNew) && (
-            <h1 className="text-lg font-semibold">
-              {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
-            </h1>
-          )}
-        </>
+      {/* A CRM page's own header already says "New Price Tag Request"; an edit keeps its
+          doc number here. */}
+      {!(embedded && isNew) && (
+        <h1 className="text-lg font-semibold">
+          {isNew ? 'New Price Tag Request' : `Edit ${request?.doc_number ?? ''}`}
+        </h1>
       )}
 
       {/* Customers - open by default; picking one opens Price tags (AC-P3). Several customers on
@@ -2308,8 +2234,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </div>
         ) : entryPath === 'upload' ? (
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <Label>Sales Order</Label>
+            {/* No heading (owner hand test 11 Nov): the switch link alone, at the right. */}
+            <div className="flex items-center justify-end gap-2">
               <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setEntryPath('manual')}>
                 Type the items instead
               </Button>
@@ -2334,8 +2260,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             />
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2">
-            <Label>Lines</Label>
+          <div className="flex items-center justify-end gap-2">
             <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setEntryPath('upload')}>
               Upload a file instead
             </Button>
@@ -2415,36 +2340,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       </FormSection>
 
       {/* Additional information - Notes (optional, D-P2b), folded: the secondary section
-          (owner, mock v1). Need by moved to the Escalate dialog (owner hand test 5 Nov, #2138);
-          a revision has no Escalate, so it keeps the field here. */}
+          (owner, mock v1). Need by lives in the Escalate dialog (owner hand test 5 Nov, #2138); an
+          edit is the create form (owner hand test 11 Nov), so it has no field here either. */}
       <FormSection
         title="Additional information"
         summary={sectionSummaries.need_by}
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
-        {reviseMode && (
-        <div
-          className="space-y-1.5"
-          {...(fieldErrors.neededBy
-            ? { 'data-error-anchor': 'needed_by' }
-            : {})}
-        >
-          <Label htmlFor="needed_by_date">Need by</Label>
-          <DatePicker
-            id="needed_by_date"
-            value={neededByDate ? parseDateInput(neededByDate) : undefined}
-            onChange={(next) => setNeededByDate(next ? formatLocalDateToYyyyMmDd(next) : '')}
-          />
-          {neededByTooEarly && (
-            <p className="text-xs text-destructive">Pick a date after today.</p>
-          )}
-          {fieldErrors.neededBy && (
-            <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
-          )}
-        </div>
-        )}
-
         <div className="space-y-1.5">
           <Label htmlFor="notes">Notes</Label>
           <Textarea
@@ -2511,7 +2414,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           a second action row down here, and never Delete. Everything else
           (a draft or a brand new form) keeps Save Draft, then Escalate to marketing
           and Approve (owner ruling 3 Nov: no plain Submit). */}
-      {!reviseMode && (
+      {reviseMode ? (
+        // Owner hand test 11 Nov: editing a sent request is the create path - Cancel, then
+        // Preview, whose popup's Approve saves the edit and approves it.
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={() => void handleCancelRevise()} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => {
+              if (readyToFinish('approve')) setPreviewOpen(true);
+            }}
+            disabled={submitting}
+          >
+            <Eye className="size-4 mr-1" />
+            Preview
+          </Button>
+        </div>
+      ) : (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           {/* Delete sits apart from Save and Submit, and asks first; on a CRM page it is parked
               on the server instead (D7), a countdown with a Cancel. */}
