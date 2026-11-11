@@ -704,6 +704,55 @@ class ProjectAutocountWriteService:
             "lines": wire,
         }
 
+    def _quotation_document_of(self, quotation_line_id: str) -> Optional[ProjectQuotationDocument]:
+        """The quotation document a quotation line was issued on, if one is in AutoCount."""
+        line = self.db.query(ProjectQuotationLine).filter(ProjectQuotationLine.id == quotation_line_id).first()
+        if line is None:
+            return None
+        return (
+            self.db.query(ProjectQuotationDocument)
+            .join(ProjectQuotationIssue, ProjectQuotationIssue.document_id == ProjectQuotationDocument.id)
+            .join(ProjectQuotationIssueScope, ProjectQuotationIssueScope.issue_id == ProjectQuotationIssue.id)
+            .filter(
+                ProjectQuotationIssueScope.version_id == line.version_id,
+                ProjectQuotationDocument.autocount_doc_key.isnot(None),
+                ProjectQuotationDocument.autocount_cancelled_at.is_(None),
+            )
+            .first()
+        )
+
+    def _add_quotation_links(self, order: ProjectSalesOrder, body: Dict[str, Any], book: str) -> None:
+        """Crew finding (11 Nov): each SO line made from a quotation line carries
+        `fromQuotation {docNo, dtlKey}`, so AutoCount shows the transfer and the quotation's
+        outstanding qty drops. AutoCount links per ROW: the DtlKey is that quotation's row for the
+        item, read from AutoCount now (the matching the quotation update uses). Only a quotation
+        in the same book (R8); a failed read or no matching row leaves the line unlinked."""
+        company = body["companyCode"]
+        rows_of: Dict[str, List[dict]] = {}
+        used: set = set()
+        for line, wire in zip(self._order_lines(order), body["lines"]):
+            if not line.quotation_line_id:
+                continue
+            document = self._quotation_document_of(line.quotation_line_id)
+            if document is None or (document.autocount_book or "") != book:
+                continue
+            key = _safe_key(document.autocount_doc_key)
+            if key not in rows_of:
+                try:
+                    held = self._gateway().read_document("quotations", key, company)
+                except FoundryxPullError:
+                    logger.warning("autocount SO %s: quotation %s could not be read; no link", order.id, key)
+                    held = {}
+                rows_of[key] = list(((held.get("document") or held).get("Details")) or [])
+            same_item = [r for r in rows_of[key] if (r.get("ItemCode") or "") == wire["itemCode"]]
+            row = next((r for r in same_item if (key, r.get("DtlKey")) not in used), None) or (
+                same_item[0] if same_item else None
+            )
+            if row is None or row.get("DtlKey") is None:
+                continue
+            used.add((key, row.get("DtlKey")))
+            wire["fromQuotation"] = {"docNo": document.autocount_doc_no, "dtlKey": row.get("DtlKey")}
+
     def create_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
         if order.autocount_doc_no or self._draft.autocount_doc_key(order):
@@ -730,6 +779,7 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(order.company_id)[1]
         if not book:
             return self._no_book_answer(order.company_id)
+        self._add_quotation_links(order, body, book)
         answer, sent = self._create(order, f"crm-pso-{order.id}-create", "documents/sales-orders", body)
         result = self._interpret(answer, verb="created", debtor=sent["header"]["debtorCode"])
         if self._is_done(answer):

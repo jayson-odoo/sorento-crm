@@ -276,3 +276,29 @@ extra guards; SS has no ROW_LAST_LINE).
   cancel records the cancel ("Already cancelled in AutoCount.").
 - Plain words: DOC_HAS_TRANSFERS, DOC_CANCELLED, CANCEL_IGNORED, LINE_NOT_DELETED, ROW_HAS_TRANSFERS (naming the row on a
   removal). LOCATION_NOT_MOVED / ROW_VALUES_NOT_KEPT come only from link / relink (Stock Debt), never from a QT / SO write.
+
+## Owner ruling 11 Nov ~21:35: every write is retryable after an error (supersedes B5's attempt counter here)
+
+"Why when AutoCount block the salesperson cannot retry? We want to make things retryable in an error situation for
+recovery." SS stores an answer per Idempotency-Key; the CRM chooses the key, so this is CRM-only (no SS PR).
+- Only a confirmed success uses up a key. Every write but a create takes a fresh key each press (`{base}-{8 hex}`):
+  edits carry absolute values under `expectedLastModified`, QT adds / removals are matched against the document read that
+  press, and a removal / cancel already done answers ROW_NOT_FOUND / DOC_CANCELLED, so none needs its old key back.
+- A create (QT, SO) writes its key and exact body to `autocount_pending_create` (JSON, in `acqs_0001`) and commits BEFORE
+  the call. A refusal (refused, VENDOR_REFUSED, a 4xx) releases it. An unknown outcome (timeout, lost reply, 5xx, 202,
+  VENDOR_ERROR, mismatch) keeps it, and the next press first re-sends that exact key and body, so SS answers with what it
+  stored for our reference: done links it (no duplicate); a refusal releases it and the current body goes under a fresh
+  key in the same press. A 202 with no DocKey keeps answering 202 (SS has no QT/SO resume, gap 4): the CRM never creates
+  again, and the next sync adopts the document by Remark1.
+- A second press after a success answers 200 done, "<DocNo> is already in AutoCount." The result dialog shows the plain
+  reason and **Try again** whenever the answer is not done or waiting (all five dialogs).
+- The Redis attempt counter and the `-r` line (B14 round) are retired for this service; #2223's helper stays for Stock
+  Debt (VENDOR_REFUSED now counts as a definite refusal there too).
+
+## Crew finding 11 Nov: SO lines say which quotation row they came from
+
+AutoCount links per ROW (FromDocType QT, FromDocNo, FromDocDtlKey; never on the SO header). SO create now adds
+`fromQuotation {docNo, dtlKey}` to each line whose `quotation_line_id` leads (issue scope -> issue) to a quotation
+document in AutoCount, not cancelled, in the same book (R8). The DtlKey is that AutoCount quotation's row for the item,
+read with one GET per quotation at create time (item-code matching, an unused row first). A failed read or no matching
+row leaves the line unlinked; a partial transfer carries the link with the SO line's own qty.

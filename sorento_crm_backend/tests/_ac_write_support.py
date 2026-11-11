@@ -446,7 +446,9 @@ def build_qt_world(
     """
     from app.models.product_set import ProductSet
 
-    db.add(Warehouse(id=_uid(), warehouse_code="BRW-BB", warehouse_name="BRW-BB", is_active=True))
+    if db.query(Warehouse).filter(Warehouse.warehouse_code == "BRW-BB").first() is None:
+        # An SO world in the same test already made it (AC-QTSO-CRM-2, SO from a quotation).
+        db.add(Warehouse(id=_uid(), warehouse_code="BRW-BB", warehouse_name="BRW-BB", is_active=True))
     agent = SalesAgent(id=_uid(), sales_agent=f"ZZT QAGENT {_uid()[:4]}".upper(), location_group="BB")
     db.add(agent)
     db.flush()
