@@ -1,6 +1,6 @@
 # PLAN: sample request v2 (lane SAMPLE-REQUEST-V2)
 
-Status: Build, slice 1 (owner approved card v1 + mock 11 Nov ~18:40). Track: full (size L, one migration).
+Status: Review, slice 1 (built; reviewer + security round 1 fixed, round 2 running; cloud browser pass done). Track: full (size L, one migration). UAC: `sample-request-v2-11nov-acceptance-criteria.md`. Slice 2 (limited salesperson's form) and the 19:55 status ruling follow on new branches.
 
 Owner feedback 11 Nov 2026 ~16:20 MYT (prod Project Sales > Sample Requests > New): ship to is a project
 party (not free text), customer stays mandatory from the AutoCount debtor, many sample requests per project,
