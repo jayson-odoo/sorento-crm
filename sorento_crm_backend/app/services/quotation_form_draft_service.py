@@ -51,6 +51,8 @@ MAX_DRAFT_BYTES = 2_000_000
 KIND_SAVED = "saved"
 KIND_BEFORE_RESTORE = "before_restore"
 KIND_CONFLICT = "conflict"
+#: QUOTE-DUPLICATE-PARTY: a History line with a note and nothing to restore ("Copied from ...").
+KIND_EVENT = "event"
 
 
 def _now() -> datetime:
@@ -323,6 +325,23 @@ def record_save(
     return entry
 
 
+def record_event(
+    db: Session, *, document: ProjectQuotationDocument, note: str, user_id: Optional[str]
+) -> QuotationDocumentSnapshot:
+    """A History line that records something done TO the document rather than a Save of it
+    (QUOTE-DUPLICATE-PARTY): listed with who and when, never viewed or restored."""
+    entry = QuotationDocumentSnapshot(
+        document_id=document.id,
+        kind=KIND_EVENT,
+        note=note,
+        doc={},
+        created_by=str(user_id) if user_id else None,
+    )
+    db.add(entry)
+    db.flush()
+    return entry
+
+
 def adopt_new_draft(
     db: Session,
     *,
@@ -414,6 +433,12 @@ def restore_entry(
     becomes the draft. No confirm: nothing is destroyed. The record changes only on the next Save.
     """
     entry, version, rows = _entry_or_404(db, document, entry_id)
+    if entry.kind == KIND_EVENT:
+        raise AppException(
+            status_code=422,
+            message="This History line records an event; there is nothing to restore.",
+            code="quotation_history_not_restorable",
+        )
     row = document_draft(db, document, create=True, lock=True)
     _assert_writable(db, row)
     assert_holder(db, row, token, user_id)
