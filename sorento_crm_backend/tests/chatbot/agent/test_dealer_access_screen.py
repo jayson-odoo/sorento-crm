@@ -1199,7 +1199,7 @@ def test_S7_the_unlink_action_commits_through_the_agents_contact_execute(db, api
 
 
 def test_S7_the_route_module_writes_nothing_itself():
-    path = Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "sales" / "dealer_access.py"
+    path = Path(__file__).resolve().parents[3] / "app" / "api" / "v1" / "sales" / "dealer_access.py"
     source = path.read_text()
 
     for forbidden in (
