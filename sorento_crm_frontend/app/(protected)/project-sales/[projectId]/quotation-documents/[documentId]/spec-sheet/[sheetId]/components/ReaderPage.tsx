@@ -345,9 +345,13 @@ export const ReaderPage = React.memo(function ReaderPage({
             height_mm: pageMm.height_mm,
           }
         : null,
-    // The document is a starting point: only a new payload arriving or a restart replaces it.
+    // The document is a starting point: only a new payload arriving, a restart, or the page
+    // becoming a live canvas again replaces it. Only 3 pages are live at once; a page that went
+    // back to a picture and returns must start from its LATEST layers (the host's draft), not
+    // the ones it first mounted with, or its next edit would be saved over the newer ones
+    // (crew pass on #2331: data loss).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm],
+    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm, live],
   );
   const bound = React.useMemo<TagBindingData | null>(() => {
     const row = payload?.resolvedData?.[page.key] as unknown as

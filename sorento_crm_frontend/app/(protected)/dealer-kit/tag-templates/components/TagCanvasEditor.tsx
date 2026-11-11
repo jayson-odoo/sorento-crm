@@ -4136,7 +4136,12 @@ export function TagCanvasEditor({
     if (intent.kind === 'layers') handlePaste(at);
     else if (intent.kind === 'image') await handlePasteImage(intent.file, at);
     else if (intent.kind === 'text') handlePasteText(intent.text, at);
-  }, [handlePaste, handlePasteImage, handlePasteText]);
+    // Never a silent no-op (crew pass on #2331): a menu cannot read the clipboard where the
+    // browser blocks it (a plain http address, or permission refused), but the keyboard paste
+    // can, because the browser hands that one its clipboard itself.
+    else if (data === null) toast.info(`Press ${shortcutLabel('V', mac)} to paste here`);
+    else toast.info('Nothing to paste');
+  }, [handlePaste, handlePasteImage, handlePasteText, mac]);
   const menuPasteDisabled = Boolean(embedded?.readOnly);
 
   // A window that loses focus while Space is down would otherwise stay in hand.

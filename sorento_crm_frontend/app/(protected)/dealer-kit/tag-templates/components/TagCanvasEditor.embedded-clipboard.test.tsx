@@ -87,14 +87,15 @@ vi.mock('../../services/tagDataService', () => ({
   }),
 }));
 
+const toastCalls = vi.hoisted(() => ({ info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.mock('@/lib/toast', () => ({
   toast: Object.assign(vi.fn(), {
-    error: vi.fn(),
+    error: toastCalls.error,
     success: vi.fn(),
     loading: vi.fn(() => 'toast-id'),
     dismiss: vi.fn(),
-    info: vi.fn(),
-    warning: vi.fn(),
+    info: toastCalls.info,
+    warning: toastCalls.warning,
   }),
 }));
 
@@ -319,6 +320,42 @@ describe('context menu Paste reads the system clipboard (both designers)', () =>
 
   afterEach(() => {
     delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+  });
+
+  it('where the browser blocks reading the clipboard (plain http), menu Paste says how to paste, never nothing', async () => {
+    // A non-secure origin has no navigator.clipboard at all.
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+    toastCalls.info.mockClear();
+    toastCalls.warning.mockClear();
+    toastCalls.error.mockClear();
+    const { container } = render(<TagCanvasEditor doc={docWith(shape('l1'))} onChange={vi.fn()} />);
+    rightClickEmpty(container);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Paste/ }));
+    await waitFor(() =>
+      expect(
+        [...toastCalls.info.mock.calls, ...toastCalls.warning.mock.calls, ...toastCalls.error.mock.calls]
+          .map((c) => String(c[0]))
+          .join(' '),
+      ).toMatch(/Ctrl\+V|Cmd\+V|\u2318V/),
+    );
+  });
+
+  it('with layers copied in the editor, a blocked clipboard still pastes those layers', async () => {
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+    setTagClipboard({ layers: [shape('l1')], roots: ['l1'], sourceDocId: null });
+    const state: { latest: TagLayer[] } = { latest: [] };
+    const { container } = render(
+      <TagCanvasEditor
+        doc={docWith(shape('l1'))}
+        onChange={vi.fn()}
+        onLayersChange={(layers) => {
+          state.latest = layers;
+        }}
+      />,
+    );
+    rightClickEmpty(container);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Paste/ }));
+    await waitFor(() => expect(state.latest).toHaveLength(2));
   });
 
   it('Paste is offered with nothing copied in the editor, and a screenshot there is pasted', async () => {

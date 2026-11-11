@@ -270,6 +270,7 @@ vi.mock(
           data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
           data-active={props.embedded.active ? 'yes' : 'no'}
           data-layers={layers.map((l) => l.id).join(',')}
+          data-logo-x={JSON.stringify(layers.find((l) => l.id === 'logo')?.x_mm ?? null)}
         >
           <button type="button" onClick={() => props.embedded.onSelect('logo')}>
             {`select ${key}`}
@@ -584,6 +585,39 @@ describe('which page a paste or shortcut acts on (crew pass on #2331)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled(),
     );
+  });
+
+  it('a page that leaves the live canvases and comes back keeps its latest layers, and the next save carries both edits (crew pass: data loss)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2', 'k3', 'k4']);
+    await screen.findByTestId('live-canvas-k3');
+    const logoX = () =>
+      (JSON.parse(screen.getByTestId('live-canvas-k3').getAttribute('data-logo-x') ?? 'null') as number);
+
+    // Move a box on page 3.
+    fireEvent.click(within(screen.getByTestId('live-canvas-k3')).getByText('nudge k3'));
+    await waitFor(() => expect(logoX()).toBe(6));
+
+    // Page 4 takes a live slot: page 3 goes back to a picture.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k4'));
+    await waitFor(() => expect(screen.queryByTestId('live-canvas-k3')).toBeNull());
+
+    // Back to page 3: it shows the moved box, not the old one.
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k3'));
+    await screen.findByTestId('live-canvas-k3');
+    expect(logoX()).toBe(6);
+
+    // Another edit there, then the save: both moves are in it.
+    fireEvent.click(within(screen.getByTestId('live-canvas-k3')).getByText('nudge k3'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalled());
+    const last = saveSpecSheetPageEdit.mock.calls.at(-1)!;
+    expect(last[3]).toBe('k3');
+    expect((last[4] as { id: string; x_mm: number }[]).find((l) => l.id === 'logo')?.x_mm).toBe(7);
   });
 
   it('a right-click makes its page the target too', async () => {
