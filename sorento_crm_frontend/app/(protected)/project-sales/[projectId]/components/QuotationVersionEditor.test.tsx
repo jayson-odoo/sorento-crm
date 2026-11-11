@@ -1538,12 +1538,14 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expectNothingWritten();
   });
 
-  it('lists exactly the three row actions, with no Line details, Move up or Move down', async () => {
+  it('lists exactly the four row actions, with no Line details, Move up or Move down', async () => {
     await renderEditing();
     openTrigger('Line actions on SRT-WC-01');
     await screen.findByRole('menuitem', { name: 'Remove line' });
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent?.trim())).toEqual([
       'Insert a line below',
+      // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): Duplicate line joins the line menus.
+      'Duplicate line',
       'Insert a section above',
       'Remove line',
     ]);
@@ -2134,13 +2136,15 @@ describe('QuotationVersionEditor fix round 2 part B (QUOTATION-UX)', () => {
 describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
   const rightClick = (el: Element) => fireEvent.contextMenu(el);
 
-  it('row context menu: right-clicking a line row opens the same three items', async () => {
+  it('row context menu: right-clicking a line row opens the same four items', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
     rightClick(rowOf('A-1').querySelector('td') as HTMLElement);
     expect(await screen.findByRole('menuitem', { name: 'Insert a line below' })).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent?.trim())).toEqual([
       'Insert a line below',
+      // PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov): Duplicate line joins the line menus.
+      'Duplicate line',
       'Insert a section above',
       'Remove line',
     ]);
@@ -2302,12 +2306,12 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
       expect(screen.queryByRole('menuitem')).toBeNull();
     });
 
-    it('a non-input part of the same row still opens the 3-item line menu, prevented', async () => {
+    it('a non-input part of the same row still opens the 4-item line menu, prevented', async () => {
       listQuotationLines.mockResolvedValue(TWO_LINES);
       await renderEditing();
       expect(fireEvent.contextMenu(rowOf('A-1').querySelector('td') as HTMLElement)).toBe(false);
       await screen.findByRole('menuitem', { name: 'Insert a line below' });
-      expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+      expect(screen.getAllByRole('menuitem')).toHaveLength(4);
     });
 
     it('the row-actions column header carries the screen-reader text Row actions', async () => {
@@ -3085,5 +3089,205 @@ describe('QuotationVersionEditor INSERT-SECTION-FIX: a new heading survives the 
     fireEvent.blur(heading);
     await waitFor(() => expect(stagedOrder()).toEqual(['l1', 'l2']));
     expect(screen.queryByRole('textbox', { name: 'Section heading above A-2' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026): Duplicate line, the Below default price pill and
+// the lines Flags filter. UAC: documentation/plans/project-sales/project-quote-line-tools-acceptance-criteria.md
+
+/** The Flags filter's trigger (it shows chips once chosen, so it is found by its slot). */
+function flagsTrigger(): HTMLElement {
+  return document.querySelector('[data-slot="searchable-multi-select-trigger"]') as HTMLElement;
+}
+
+async function chooseFlag(label: string) {
+  fireEvent.click(flagsTrigger());
+  fireEvent.click(await screen.findByRole('option', { name: new RegExp(label) }));
+}
+
+const FLAGGED_LINES = [
+  line({ id: 'l1', product_code: 'A-1', description: 'Discounted', sort_order: 0, is_discounted: true }),
+  line({ id: 'l2', product_code: 'A-2', description: 'Off series', sort_order: 10, is_non_standard: true }),
+  line({
+    id: 'l3',
+    product_code: 'A-3',
+    description: 'Under the floor',
+    sort_order: 20,
+    is_discounted: true,
+    is_below_floor: true,
+  }),
+  line({ id: 'l4', product_code: 'A-4', description: 'Clean', sort_order: 30 }),
+];
+
+/** The product codes of the line rows on screen, in order (view mode prints the code). */
+function shownCodes(): string[] {
+  return Array.from(screen.getByRole('table').querySelectorAll('tbody tr'))
+    .filter((tr) => !tr.querySelector('td[colspan]'))
+    .map((tr) => (tr.textContent ?? '').match(/A-\d/)?.[0] ?? '');
+}
+
+describe('PROJECT-QUOTE-LINE-TOOLS', () => {
+  it('AC-5: a saved line below its default price shows the pill under the product code, in view mode', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true })]);
+    renderEditor();
+    const pill = await screen.findByText('Below default price');
+    expect(pill.closest('td')).toBe(screen.getByText('SRT-WC-01').closest('td'));
+  });
+
+  it('AC-5: a line below the minimum price shows no second pill (the banner counts it once, there)', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_below_floor: true })]);
+    renderEditor();
+    await screen.findByText('SRT-WC-01');
+    expect(screen.queryByText('Below default price')).toBeNull();
+  });
+
+  it('AC-5: Non-standard and Below default price sit side by side when both are true', async () => {
+    listQuotationLines.mockResolvedValue([line({ is_discounted: true, is_non_standard: true })]);
+    renderEditor();
+    expect(await screen.findByText('Below default price')).toBeInTheDocument();
+    expect(screen.getByText('Non-standard')).toBeInTheDocument();
+  });
+
+  it('AC-6: a rate typed below the default price shows the pill live, before any save', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: false,
+      is_discounted: true,
+      floor_value: null,
+      floor_level: null,
+    });
+    await renderEditing();
+    expect(screen.queryByText('Below default price')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '850.00' },
+    });
+    expect(await screen.findByText('Below default price', {}, { timeout: 5000 })).toBeInTheDocument();
+    expectNothingWritten();
+  });
+
+  it('AC-1: Duplicate line is in the row menu and the right-click menu, and not in view mode', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    renderEditor();
+    await screen.findByText('A-1');
+    expect(screen.queryByRole('button', { name: /^Line actions on / })).toBeNull();
+    expect(screen.queryByText('Duplicate line')).toBeNull();
+  });
+
+  it('AC-2: Duplicate line puts a copy right below with the same product, rate, quantity and text', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'First', unit_price: '900.00', quantity: '3.00', notes: 'Kitchen side', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', product_id: 'p-2', description: 'Second', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+
+    const body = stagedBody();
+    expect(body).toHaveLength(3);
+    // Source unchanged, copy second (new: no id), the other line still last.
+    expect(body[0]).toMatchObject({ id: 'l1' });
+    expect(body[1]).not.toHaveProperty('id');
+    expect(body[1]).toMatchObject({
+      product_id: 'p-wc',
+      unit_price: '900.00',
+      quantity: '3.00',
+      description_snapshot: 'First',
+      notes: 'Kitchen side',
+    });
+    expect(body[2]).toMatchObject({ id: 'l2' });
+    expect(itemNumbers()).toEqual(['1', '2', '3']);
+    expectNothingWritten();
+  });
+
+  it('AC-3: after Duplicate line the copy\'s product picker has the caret', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+    await waitFor(() => {
+      const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+      expect(pickers).toHaveLength(3);
+      expect(document.activeElement).toBe(pickers[1]);
+    });
+  });
+
+  it('AC-1/2: the right-click Duplicate line copies the line it was opened on', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    fireEvent.contextMenu(rowOf('A-2').querySelector('td') as HTMLElement);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Duplicate line' }));
+    const body = stagedBody();
+    expect(body.map((row) => ('id' in row ? row.id : 'new'))).toEqual(['l1', 'l2', 'new']);
+    expect(body[2].description).toBe(body[1].description);
+  });
+
+  it('AC-2: a grid scope\'s copy carries every area quantity', async () => {
+    const cells = { k1: '2', k2: '5' };
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', quantity: '7.00', qty_cells: cells, sort_order: 0 }),
+    ]);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Duplicate line');
+    const staged = session?.scopes[QUOTATION.id]?.lines ?? [];
+    expect(staged).toHaveLength(2);
+    const { picked_code: _pickedCode, band_label: _band, ...copy } = staged[1].draft;
+    const { picked_code: _pc, band_label: _b, ...source } = staged[0].draft;
+    expect(copy).toEqual(source);
+  });
+
+  it('AC-4: the copy\'s first new product fills like a new line: its own text and a blank rate', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    await chooseMenuItem('SRT-WC-01', 'Duplicate line');
+    const pickers = screen.getAllByRole('combobox', { name: /^Product on / });
+    fireEvent.click(pickers[1]);
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[1]).toMatchObject({ product_id: 'p9' }));
+    // No series names SRT-BASIN-02 here, so a new line would open with no rate: so does the copy.
+    expect(drafts()[1].unit_price ?? '').toBe('');
+    expect(drafts()[1].description).toBe('Vitreous china counter basin');
+    // The source keeps its rate.
+    expect(drafts()[0].unit_price).toBe('900.00');
+  });
+
+  it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    fireEvent.click(flagsTrigger());
+    // One line each: A-1 below default, A-2 off series, A-3 below minimum.
+    for (const name of ['Non-standard', 'Below default price', 'Below minimum price']) {
+      expect(await screen.findByRole('option', { name: new RegExp(`${name}.*1`) })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole('option', { name: /Below default price/ }));
+    await waitFor(() => expect(shownCodes()).toEqual(['A-1']));
+    expect(itemNumbers()).toEqual(['1']);
+
+    fireEvent.click(screen.getByRole('option', { name: /Non-standard/ }));
+    await waitFor(() => expect(shownCodes()).toEqual(['A-1', 'A-2']));
+    expect(itemNumbers()).toEqual(['1', '2']);
+  });
+
+  it('AC-8: Below minimum price finds the lines under the floor', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    await chooseFlag('Below minimum price');
+    await waitFor(() => expect(shownCodes()).toEqual(['A-3']));
+    expect(itemNumbers()).toEqual(['3']);
+  });
+
+  it('AC-8: the filter and the search narrow together', async () => {
+    listQuotationLines.mockResolvedValue(FLAGGED_LINES);
+    renderEditor();
+    await screen.findByText('A-4');
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'Search lines by product or description' }),
+      { target: { value: 'off series' } },
+    );
+    await chooseFlag('Non-standard');
+    await chooseFlag('Below default price');
+    await waitFor(() => expect(shownCodes()).toEqual(['A-2']));
   });
 });

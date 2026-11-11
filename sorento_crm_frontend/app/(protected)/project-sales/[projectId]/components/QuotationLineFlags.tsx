@@ -129,27 +129,32 @@ export function useLinesFacts(
   target: { quotationId: string | null; seriesId?: string | null },
   lines: { key: string; line: QuotationLine | null; draft: LineDraft }[],
 ): Map<string, LineFacts> {
+  // One observer per DISTINCT draft: a duplicated line asks exactly what its source asks.
+  const keys = lines.map((row) => lineVerdictKey(target, verdictDraft(row.draft)));
+  const distinct = Array.from(new Map(keys.map((key) => [JSON.stringify(key), key])).values());
   const verdicts = useQueries({
-    queries: lines.map((row) => ({
-      queryKey: lineVerdictKey(target, verdictDraft(row.draft)),
+    queries: distinct.map((queryKey) => ({
+      queryKey,
       queryFn: (): Promise<QuotationLineVerdict | null> => Promise.resolve(null),
       enabled: false,
     })),
   });
-  return React.useMemo(
-    () =>
-      new Map(
-        lines.map((row, index) => [
-          row.key,
-          isSectionDraft(row.draft)
-            ? { nonStandard: false, belowFloor: false, belowDefault: false }
-            : lineFacts(row.line, row.draft, verdicts[index]?.data ?? null),
-        ]),
-      ),
+  const answers = verdicts.map((query) => query.data);
+  return React.useMemo(() => {
+    const byKey = new Map(
+      distinct.map((key, index) => [JSON.stringify(key), answers[index] ?? null]),
+    );
+    return new Map(
+      lines.map((row, index) => [
+        row.key,
+        isSectionDraft(row.draft)
+          ? { nonStandard: false, belowFloor: false, belowDefault: false }
+          : lineFacts(row.line, row.draft, byKey.get(JSON.stringify(keys[index])) ?? null),
+      ]),
+    );
     // `verdicts` is a fresh array every render; its answers are what matter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lines, ...verdicts.map((query) => query.data)],
-  );
+  }, [lines, target.quotationId, target.seriesId, ...answers]);
 }
 
 /** The Product cell's flags: Non-standard and Below default price, each once. */
