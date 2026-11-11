@@ -788,7 +788,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             </Field>
             {r.quotation_ref && <Field label="Quotation">{r.quotation_ref}</Field>}
             {/* Removed from the form (SAMPLE-REQUEST-V2 rule 3): only an old request that had it shows it. */}
-              {r.scope_note && <Field label="For (scope)">{r.scope_note}</Field>}
+            {r.scope_note && <Field label="For (scope)">{r.scope_note}</Field>}
             <Field label="Request Delivery Date">
               {day(r.delivery_date)}
             </Field>
