@@ -66,7 +66,7 @@ def test_b1_rate_on_and_the_rate_book_are_one_lookup(costing_env):
 
     e, w = _setup(costing_env)
     for day in (date(2026, 8, 31), date(2026, 9, 1), date(2026, 10, 31), date(2026, 11, 1), date(2026, 12, 1)):
-        a, b = rate_on(e.db, "RMB", day), load_rate_book(e.db).on("RMB", day)
+        a, b = rate_on(e.db, "CNY", day), load_rate_book(e.db).on("CNY", day)
         assert (a.id if a else None) == (b.id if b else None), day
 
 
@@ -160,7 +160,7 @@ def test_l3_settings_rule_party_and_rate_bounds(costing_env):
     assert e.put(f"/category-rules/{w.cat_taps.id}", {"mode": "add", "value": 1e8}).status_code == 422
     assert e.put(f"/parties/{w.customer.id}", {"markup_pct": 10000, "cost_method": None, "is_active": True}).status_code == 422
     e.as_user(e.user("scm.config.manage", COST_VIEW))
-    base = {"currency": "GBP", "effective_from": "2026-12-01"}
+    base = {"currency": "USD", "effective_from": "2026-12-01"}
     assert e.post("/exchange-rates", {**base, "rate_to_base": 1e12}).status_code == 422
     assert e.post("/exchange-rates", {**base, "units_per_base": 1e12}).status_code == 422
     # inside the bound but so large that its inverse rounds to zero: refused, not a CHECK 500
@@ -181,15 +181,17 @@ def test_l4_a_malformed_filter_id_is_422(costing_env, param):
 
 
 def test_n1_created_by_is_the_real_user_under_impersonation(costing_env):
+    from datetime import date
+
     from app.models.costing import ExchangeRate
 
     e, w = _setup(costing_env)
     real = e.user("scm.config.manage", COST_VIEW, name="Real")
     effective = e.user("scm.config.manage", COST_VIEW, name="Effective")
     e.as_impersonated(real, effective)
-    r = e.post("/exchange-rates", {"currency": "GBP", "effective_from": "2026-12-01", "rate_to_base": 5.5})
+    r = e.post("/exchange-rates", {"currency": "USD", "effective_from": "2026-12-01", "rate_to_base": 5.5})
     assert r.status_code in (200, 201), r.text
-    row = e.db.query(ExchangeRate).filter(ExchangeRate.currency == "GBP").one()
+    row = e.db.query(ExchangeRate).filter(ExchangeRate.currency == "USD", ExchangeRate.effective_from == date(2026, 12, 1)).one()
     assert row.created_by == real["id"]
 
 
@@ -230,3 +232,44 @@ def test_r3_history_changed_at_is_timezone_aware(costing_env):
         stamp = entry["changed_at"]
         assert stamp.endswith("Z") or stamp.endswith("+00:00"), stamp
         assert datetime.fromisoformat(stamp.replace("Z", "+00:00")).tzinfo is not None
+
+
+# ------------------------------------------------------------------ round 3: currency pick-list
+
+
+def test_r3_currencies_are_the_known_set_sorted_without_myr(costing_env):
+    e, w = _setup(costing_env)
+    e.cost_link(w.tap, w.sup_b, cost="5", currency="gbp", primary=False)
+    e.cost_link(w.sink, w.sup_b, cost="5", currency="MYR", primary=False)
+    e.db.commit()
+    got = e.get("/currencies").json()["data"]
+    assert got == sorted(got)
+    assert {"CNY", "USD", "EUR", "GBP"} <= set(got)  # the upload's three, and one a cost row uses
+    assert "MYR" not in got and "gbp" not in got
+
+
+def test_r3_a_currency_on_no_cost_row_is_refused_and_a_known_one_accepted(costing_env):
+    e, w = _setup(costing_env)
+    e.as_user(e.user("scm.config.manage", COST_VIEW))
+    body = {"effective_from": "2026-12-01", "rate_to_base": 0.6}
+    r = e.post("/exchange-rates", {"currency": "RMB", **body})
+    assert r.status_code == 422 and "Unknown currency RMB" in r.text
+    assert e.post("/exchange-rates", {"currency": "cny", **body}).status_code == 201
+    e.cost_link(w.tap, w.sup_b, cost="5", currency="GBP")
+    e.db.commit()
+    assert e.post("/exchange-rates", {"currency": "GBP", **body}).status_code == 201
+
+
+def test_r3_the_scm_route_refuses_an_unknown_currency_too(costing_env):
+    e, w = _setup(costing_env)
+    e.as_user(e.user("scm.config.manage"))
+    url = "/api/v1/scm/config/currency-rates"
+    r = e.client.put(f"{url}/RMB", json={"rate_to_base": 0.6, "as_of": "2026-12-01"})
+    assert r.status_code == 422 and "Unknown currency RMB" in r.text
+    assert e.client.put(f"{url}/USD", json={"rate_to_base": 4.4, "as_of": "2026-12-01"}).status_code == 200
+
+
+def test_r3_currencies_need_cost_view(costing_env):
+    e, w = _setup(costing_env)
+    e.as_user(e.user())
+    assert e.get("/currencies").status_code == 403

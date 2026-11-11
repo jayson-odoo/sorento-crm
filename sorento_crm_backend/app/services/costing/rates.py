@@ -37,6 +37,31 @@ def clean_currency(currency: Optional[str]) -> str:
     return code
 
 
+#: The currencies the cost-price upload offers, besides the ringgit. The pick-list always has these;
+#: any other code on a supplier cost row joins them.
+BASE_CURRENCIES = ("CNY", "USD", "EUR")
+
+
+def known_currencies(db: Session) -> list:
+    """The currencies a rate may be set for: those the cost lists and supplier links already use,
+    and the upload's own three. Upper-cased, sorted, never the ringgit."""
+    from app.models.cost_price import ProductSupplierCost
+    from app.models.procurement import ProductSupplier
+
+    codes = set(BASE_CURRENCIES)
+    for column in (ProductSupplierCost.currency, ProductSupplier.currency):
+        for (value,) in db.query(column).filter(column.isnot(None)).distinct():
+            code = normalize_currency(value)
+            if code and code != BASE_CURRENCY:
+                codes.add(code)
+    return sorted(codes)
+
+
+def check_known_currency(db: Session, code: str) -> None:
+    if code not in known_currencies(db):
+        raise AppException(status_code=422, message=f"Unknown currency {code}.", code="UNKNOWN_CURRENCY")
+
+
 def rate_from_units(units_per_base: object) -> Decimal:
     """MYR per unit from "units per MYR 1" (1.6 -> 0.625000)."""
     units = to_decimal(units_per_base)  # type: ignore[arg-type]
@@ -152,6 +177,7 @@ def create_rate(
     today: date,
 ) -> dict:
     code = clean_currency(currency)
+    check_known_currency(db, code)
     if (rate_to_base is None) == (units_per_base_in is None):
         raise AppException(status_code=422, message="Give the rate either as MYR per unit or as units per MYR 1.")
     rate = _positive_rate(rate_to_base) if rate_to_base is not None else rate_from_units(units_per_base_in)

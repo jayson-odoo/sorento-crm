@@ -43,7 +43,7 @@ def _specs(w):
         ("rules-put", "PUT", f"/category-rules/{w.cat_taps.id}", {"mode": "multiply", "value": 1.07}),
         ("rates-get", "GET", "/exchange-rates", None),
         ("rates-post", "POST", "/exchange-rates",
-         {"currency": "RMB", "effective_from": "2026-12-01", "rate_to_base": 0.6}),
+         {"currency": "CNY", "effective_from": "2026-12-01", "rate_to_base": 0.6}),
         ("rates-put", "PUT", f"/exchange-rates/{w.rmb_new.id}", {"rate_to_base": 0.63}),
         ("party-get", "GET", f"/parties/{cid}", None),
         ("party-product-ids", "GET", f"/parties/{cid}/product-ids", None),

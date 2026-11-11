@@ -38,7 +38,7 @@ def _formula():
 @pytest.mark.parametrize(
     "unit_cost,rate,mode,value,expected",
     [
-        # workbook row: RMB 34.50 x 0.625 x 1.1 + 8
+        # workbook row: CNY 34.50 x 0.625 x 1.1 + 8
         ("34.50", "0.625", "add", "8", "31.71875"),
         ("120", "0.625", "multiply", "1.07", "88.275"),
         ("260", "0.625", "multiply", "1.1", "196.625"),
@@ -138,10 +138,10 @@ def test_ac_st_03_no_rule_adds_zero_and_flags_it(costing_env):
     e = costing_env
     from app.services.costing.basis import cost_basis
 
-    e.rate("RMB", "0.625", AS_OF.replace(month=11, day=1))
+    e.rate("CNY", "0.625", AS_OF.replace(month=11, day=1))
     cat = e.category("NoRuleCat")  # no transport rule
     p = e.item("ZZ-NORULE", category=cat, list_price="100")
-    e.cost_link(p, e.source("SUP-NR"), cost="34.50", currency="RMB", primary=True)
+    e.cost_link(p, e.source("SUP-NR"), cost="34.50", currency="CNY", primary=True)
     e.db.commit()
 
     got = cost_basis(e.db, p.id, as_of=AS_OF)
@@ -175,14 +175,14 @@ def test_ac_st_02_only_the_products_own_category_is_read_no_parent_walk(costing_
     from app.models.product import ProductCategory
     from app.services.costing.basis import cost_basis
 
-    e.rate("RMB", "0.625", AS_OF.replace(month=11, day=1))
+    e.rate("CNY", "0.625", AS_OF.replace(month=11, day=1))
     parent = e.category("ParentCat", rule=("add", 8))
     child = ProductCategory(id=str(__import__("uuid").uuid4()), category_code="ZZPC-CHILD",
                             category_name="Child", parent_category_id=parent.id)
     e.db.add(child)
     e.db.flush()
     p = e.item("ZZ-CHILD", category=child, list_price="100")
-    e.cost_link(p, e.source("SUP-CH"), cost="34.50", currency="RMB", primary=True)
+    e.cost_link(p, e.source("SUP-CH"), cost="34.50", currency="CNY", primary=True)
     e.db.commit()
 
     got = cost_basis(e.db, p.id, as_of=AS_OF)

@@ -12,19 +12,19 @@ model raises inside the specific test that needed it.
 
 The workbook world (`workbook()`) mirrors PLAN-product-costing-10nov.md section 10:
 
-    rates      RMB 0.617284 from 2026-09-01, RMB 0.625 from 2026-11-01, USD 4.40 from 2026-01-01
+    rates      CNY 0.617284 from 2026-09-01, CNY 0.625 from 2026-11-01, USD 4.40 from 2026-01-01
                (no EUR rate at all). SST is the default 1.10 (no settings row is written).
     rules      Ceramics ADD 8, Jacuzzi ADD 8, Taps x1.07, Showers x1.07, Accessories x1.07,
                Kitchen sinks x1.10
-    WB 245     CGB9032B, list 79.00, Ceramics. Links: A (SUP-A01, primary, RMB 34.50),
-               B (SUP-B07, RMB 38.00), L (SUP-L05, MYR 42.00), D (SUP-D03, EUR 7.50).
-    Jacuzzi    JAC-5001, list 3998.93, RMB 2450 at SUP-A01 -> landing 1692.375 on 2026-11-11.
-    Tap        T-1001, list 150.00, RMB 120.00 at SUP-A01 -> 88.275
-    Sink       K-2001, list 400.00, RMB 260.00 at SUP-A01 -> 196.625
+    WB 245     CGB9032B, list 79.00, Ceramics. Links: A (SUP-A01, primary, CNY 34.50),
+               B (SUP-B07, CNY 38.00), L (SUP-L05, MYR 42.00), D (SUP-D03, EUR 7.50).
+    Jacuzzi    JAC-5001, list 3998.93, CNY 2450 at SUP-A01 -> landing 1692.375 on 2026-11-11.
+    Tap        T-1001, list 150.00, CNY 120.00 at SUP-A01 -> 88.275
+    Sink       K-2001, list 400.00, CNY 260.00 at SUP-A01 -> 196.625
     Shower     S-3001, list 250.00, USD 20.00 at SUP-D03 (primary) -> 103.576
     Accessory  A-4001, list 30.00, a primary link with NO cost row -> "no_cost"
     Bare       N-9001, list 10.00, no links at all -> "no_primary"
-    Inactive   Z-0001, list 12.00, is_active False, RMB 10 at SUP-A01
+    Inactive   Z-0001, list 12.00, is_active False, CNY 10 at SUP-A01
     party      304-R017 "RELATED - BATHPLUS SDN BHD", profile 8%; products WB 245 (no row
                mark-up) and the Jacuzzi (row mark-up 10)
 
@@ -35,7 +35,7 @@ CostingProductOverride(product_id, transport_mode, transport_value, cost_method,
 cost_method_supplier_id), CustomerCostingProfile(customer_id, markup_pct, cost_method, is_active),
 CustomerCostingProduct(id, customer_id, product_id, markup_pct). Column names are the contract's.
 
-`AS_OF` is 2026-11-11 (RMB 0.625). `AS_OF_OLD` is 2026-10-31 (RMB 0.617284, 1.62 per MYR).
+`AS_OF` is 2026-11-11 (CNY 0.625). `AS_OF_OLD` is 2026-10-31 (CNY 0.617284, 1.62 per MYR).
 Every date is explicit: no test freezes the clock.
 """
 from __future__ import annotations
@@ -275,8 +275,8 @@ class CostingEnv(CostPriceEnv):
     def workbook(self) -> SimpleNamespace:
         """Seed the plan's section 10 fixtures. Returns a namespace of everything created."""
         w = SimpleNamespace()
-        w.rmb_old = self.rate("RMB", "0.617284", date(2026, 9, 1))
-        w.rmb_new = self.rate("RMB", "0.625", date(2026, 11, 1))
+        w.rmb_old = self.rate("CNY", "0.617284", date(2026, 9, 1))
+        w.rmb_new = self.rate("CNY", "0.625", date(2026, 11, 1))
         w.usd = self.rate("USD", "4.40", date(2026, 1, 1))
 
         w.brand = self.brand("Sorento")
@@ -294,20 +294,20 @@ class CostingEnv(CostPriceEnv):
 
         w.wb = self.item("CGB9032B", category=w.cat_ceramics, list_price="79.00",
                          brand=w.brand, name="WB 245 basin")
-        w.link_a = self.cost_link(w.wb, w.sup_a, cost="34.50", currency="RMB", primary=True)
-        w.link_b = self.cost_link(w.wb, w.sup_b, cost="38.00", currency="RMB")
+        w.link_a = self.cost_link(w.wb, w.sup_a, cost="34.50", currency="CNY", primary=True)
+        w.link_b = self.cost_link(w.wb, w.sup_b, cost="38.00", currency="CNY")
         w.link_l = self.cost_link(w.wb, w.sup_l, cost="42.00", currency="MYR")
         w.link_d = self.cost_link(w.wb, w.sup_d, cost="7.50", currency="EUR")
 
         w.jac = self.item("JAC-5001", category=w.cat_jacuzzi, list_price="3998.93",
                           brand=w.brand, name="Jacuzzi 5001")
-        w.jac_link = self.cost_link(w.jac, w.sup_a, cost="2450.00", currency="RMB", primary=True)
+        w.jac_link = self.cost_link(w.jac, w.sup_a, cost="2450.00", currency="CNY", primary=True)
 
         w.tap = self.item("T-1001", category=w.cat_taps, list_price="150.00", brand=w.brand)
-        w.tap_link = self.cost_link(w.tap, w.sup_a, cost="120.00", currency="RMB", primary=True)
+        w.tap_link = self.cost_link(w.tap, w.sup_a, cost="120.00", currency="CNY", primary=True)
 
         w.sink = self.item("K-2001", category=w.cat_sinks, list_price="400.00", brand=w.brand)
-        w.sink_link = self.cost_link(w.sink, w.sup_a, cost="260.00", currency="RMB", primary=True)
+        w.sink_link = self.cost_link(w.sink, w.sup_a, cost="260.00", currency="CNY", primary=True)
 
         w.shower = self.item("S-3001", category=w.cat_showers, list_price="250.00")
         w.shower_link = self.cost_link(w.shower, w.sup_d, cost="20.00", currency="USD", primary=True)
@@ -318,7 +318,7 @@ class CostingEnv(CostPriceEnv):
         w.bare = self.item("N-9001", category=w.cat_accessories, list_price="10.00")
 
         w.inactive = self.item("Z-0001", category=w.cat_ceramics, list_price="12.00", active=False)
-        w.inactive_link = self.cost_link(w.inactive, w.sup_a, cost="10.00", currency="RMB", primary=True)
+        w.inactive_link = self.cost_link(w.inactive, w.sup_a, cost="10.00", currency="CNY", primary=True)
 
         w.customer = self.customer()
         w.profile = self.profile(w.customer, markup_pct=8)

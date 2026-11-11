@@ -103,6 +103,9 @@ def upsert_rate(db: Session, currency: str, rate_to_base: float, *,
             message=(f"{BASE_CURRENCY} is the base currency, so its rate is 1 and is not "
                      "stored. Add a rate for the currency you are converting FROM."),
         )
+    from app.services.costing.rates import check_known_currency
+
+    check_known_currency(db, code)
     try:
         value = float(rate_to_base)
     except (TypeError, ValueError):

@@ -86,7 +86,7 @@ def test_ac_cg_09_standard_workbook_row_cells(costing_env):
     assert _v(cells, "Category") == "Ceramics"
     assert _v(cells, "Name") == "WB 245 basin"
     assert _v(cells, "Supplier") == "SUP-A01"
-    assert _v(cells, "Currency") == "RMB"
+    assert _v(cells, "Currency") == "CNY"
     assert _v(cells, "Cost") == A(34.5)
     assert _v(cells, "Rate (per MYR)") == A(1.6, abs=1e-4)
     assert _v(cells, "SST") == A(1.1)

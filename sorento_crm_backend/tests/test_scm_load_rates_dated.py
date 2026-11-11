@@ -38,13 +38,13 @@ def test_ac_er_04_load_rates_returns_the_row_in_force_today_with_its_effective_d
     from app.services.scm.money import load_rates
 
     with blank_session() as db:
-        _rate(db, "RMB", "0.60", TODAY - timedelta(days=60))
-        _rate(db, "RMB", "0.625", TODAY - timedelta(days=10))
+        _rate(db, "CNY", "0.60", TODAY - timedelta(days=60))
+        _rate(db, "CNY", "0.625", TODAY - timedelta(days=10))
         _rate(db, "USD", "4.40", TODAY - timedelta(days=100))
         rates = load_rates(db)
 
-        assert f(rates["RMB"].rate_to_base) == pytest.approx(0.625)
-        assert rates["RMB"].as_of == TODAY - timedelta(days=10)
+        assert f(rates["CNY"].rate_to_base) == pytest.approx(0.625)
+        assert rates["CNY"].as_of == TODAY - timedelta(days=10)
         assert f(rates["USD"].rate_to_base) == pytest.approx(4.40)
         assert rates["USD"].as_of == TODAY - timedelta(days=100)
         assert "MYR" not in rates
@@ -54,13 +54,13 @@ def test_ac_er_04_a_future_dated_row_does_not_apply_before_its_day():
     from app.services.scm.money import load_rates
 
     with blank_session() as db:
-        _rate(db, "RMB", "0.625", TODAY - timedelta(days=10))
-        _rate(db, "RMB", "0.70", TODAY + timedelta(days=10))  # scheduled
+        _rate(db, "CNY", "0.625", TODAY - timedelta(days=10))
+        _rate(db, "CNY", "0.70", TODAY + timedelta(days=10))  # scheduled
         _rate(db, "EUR", "5.00", TODAY + timedelta(days=10))  # scheduled, nothing in force
         rates = load_rates(db)
 
-        assert f(rates["RMB"].rate_to_base) == pytest.approx(0.625)
-        assert rates["RMB"].as_of == TODAY - timedelta(days=10)
+        assert f(rates["CNY"].rate_to_base) == pytest.approx(0.625)
+        assert rates["CNY"].as_of == TODAY - timedelta(days=10)
         # a currency whose only row is in the future has no rate today (never a stand-in 1)
         assert "EUR" not in rates
 
@@ -73,9 +73,9 @@ def test_ac_er_04_a_row_effective_today_is_in_force():
 
     my_today = today_malaysia()
     with blank_session() as db:
-        _rate(db, "RMB", "0.60", my_today - timedelta(days=60))
-        _rate(db, "RMB", "0.65", my_today)
-        assert f(load_rates(db)["RMB"].rate_to_base) == pytest.approx(0.65)
+        _rate(db, "CNY", "0.60", my_today - timedelta(days=60))
+        _rate(db, "CNY", "0.65", my_today)
+        assert f(load_rates(db)["CNY"].rate_to_base) == pytest.approx(0.65)
 
 
 def test_ac_er_04_the_legacy_scm_table_is_no_longer_read():
@@ -83,9 +83,9 @@ def test_ac_er_04_the_legacy_scm_table_is_no_longer_read():
     from app.services.scm.money import load_rates
 
     with blank_session() as db:
-        db.add(CurrencyRate(currency="RMB", rate_to_base=9.99, as_of=TODAY))
+        db.add(CurrencyRate(currency="CNY", rate_to_base=9.99, as_of=TODAY))
         db.flush()
-        assert "RMB" not in load_rates(db)  # only the dated table counts
+        assert "CNY" not in load_rates(db)  # only the dated table counts
 
 
 def test_ac_er_04_a_planner_conversion_gives_the_same_number_as_before():
@@ -142,11 +142,11 @@ def test_ac_er_04_list_rates_returns_the_in_force_rows_in_the_old_shape():
     from app.services.scm import currency_rate_service as svc
 
     with blank_session() as db:
-        _rate(db, "RMB", "0.60", TODAY - timedelta(days=60))
-        _rate(db, "RMB", "0.625", TODAY - timedelta(days=10))
-        _rate(db, "RMB", "0.70", TODAY + timedelta(days=10))
+        _rate(db, "CNY", "0.60", TODAY - timedelta(days=60))
+        _rate(db, "CNY", "0.625", TODAY - timedelta(days=10))
+        _rate(db, "CNY", "0.70", TODAY + timedelta(days=10))
         out = svc.list_rates(db)
-        rmb = [r for r in out["rates"] if r["currency"] == "RMB"]
+        rmb = [r for r in out["rates"] if r["currency"] == "CNY"]
         assert len(rmb) == 1
         assert rmb[0]["rate_to_base"] == pytest.approx(0.625)
         assert rmb[0]["as_of"] == (TODAY - timedelta(days=10)).isoformat()
@@ -158,9 +158,9 @@ def test_ac_er_04_delete_rate_removes_the_in_force_row_only():
     from app.services.scm import currency_rate_service as svc
 
     with blank_session() as db:
-        _rate(db, "RMB", "0.60", TODAY - timedelta(days=60))
-        _rate(db, "RMB", "0.625", TODAY - timedelta(days=10))
-        _rate(db, "RMB", "0.70", TODAY + timedelta(days=10))
-        svc.delete_rate(db, "RMB")
-        left = sorted(r.effective_from for r in db.query(ExchangeRate).filter(ExchangeRate.currency == "RMB"))
+        _rate(db, "CNY", "0.60", TODAY - timedelta(days=60))
+        _rate(db, "CNY", "0.625", TODAY - timedelta(days=10))
+        _rate(db, "CNY", "0.70", TODAY + timedelta(days=10))
+        svc.delete_rate(db, "CNY")
+        left = sorted(r.effective_from for r in db.query(ExchangeRate).filter(ExchangeRate.currency == "CNY"))
         assert left == [TODAY - timedelta(days=60), TODAY + timedelta(days=10)]

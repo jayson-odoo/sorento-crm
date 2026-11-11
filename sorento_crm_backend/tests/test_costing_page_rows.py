@@ -64,7 +64,7 @@ def test_ac_cg_03_workbook_row_company_standard_every_field(costing_env):
     assert row["brand_id"] == w.brand.id and row["brand_name"] == "Sorento"
     assert row["list_price"] == A(79.0)
     assert row["supplier_id"] == w.sup_a.id and row["supplier_code"] == "SUP-A01"
-    assert row["currency"] == "RMB"
+    assert row["currency"] == "CNY"
     assert row["unit_cost"] == A(34.5)
     assert row["rate_to_base"] == A(0.625, abs=1e-9)
     assert row["units_per_base"] == A(1.6, abs=1e-4)
@@ -145,7 +145,7 @@ def test_ac_st_03_no_transport_rule_is_flagged_and_adds_zero(costing_env):
     e, w = _setup(costing_env)
     cat = e.category("Unruled")
     p = e.item("NR-1", category=cat, list_price="100")
-    e.cost_link(p, w.sup_a, cost="34.50", currency="RMB", primary=True)
+    e.cost_link(p, w.sup_a, cost="34.50", currency="CNY", primary=True)
     e.db.commit()
     row = e.row_of(e.rows(as_of="2026-11-11"), "NR-1")
     assert row["transport_source"] is None
@@ -173,7 +173,7 @@ def test_a_row_always_reports_its_category_rule_even_under_a_product_override(co
     e.override(w.wb, transport_mode="multiply", transport_value="1.5")
     cat = e.category("Unruled2")
     bare = e.item("NR-2", category=cat, list_price="100")
-    e.cost_link(bare, w.sup_a, cost="34.50", currency="RMB", primary=True)
+    e.cost_link(bare, w.sup_a, cost="34.50", currency="CNY", primary=True)
     e.db.commit()
     r = e.rows(as_of="2026-11-11")
     overridden = e.row_of(r, "CGB9032B")
@@ -395,7 +395,7 @@ def test_ac_cg_06_party_expand_shows_margin_if_bought_from_each_supplier(costing
     a = s["SUP-A01"]
     assert a["supplier_id"] == w.sup_a.id and a["supplier_name"] == "SUP-A01 Ltd"
     assert a["is_primary"] is True and a["lead_time_days"] == 30
-    assert a["currency"] == "RMB" and a["unit_cost"] == A(34.5)
+    assert a["currency"] == "CNY" and a["unit_cost"] == A(34.5)
     assert a["landing"] == A(31.71875, abs=1e-6)
     assert a["markup_pct"] == A(8.0)
     assert a["final"] == A(34.25625, abs=1e-6)

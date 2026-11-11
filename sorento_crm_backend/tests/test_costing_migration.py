@@ -170,7 +170,7 @@ def test_exchange_rates_constraints_unique_pair_and_positive_rate():
     with blank_session() as db:
         _drop_lane_tables(db)
         _run(db, _module(), "upgrade")
-        base = dict(id=str(uuid.uuid4()), currency="RMB", rate_to_base=0.625,
+        base = dict(id=str(uuid.uuid4()), currency="CNY", rate_to_base=0.625,
                     effective_from=date(2026, 11, 1), created_at=NOW, updated_at=NOW)
         _insert(db, "exchange_rates", **base)
         _refuses(db, "exchange_rates", **{**base, "id": str(uuid.uuid4())})  # same (currency, date)

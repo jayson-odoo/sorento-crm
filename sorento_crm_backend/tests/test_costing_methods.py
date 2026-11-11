@@ -14,7 +14,7 @@ ASSUMED SIGNATURE (module `app/services/costing/basis.py`):
         `skipped` is [{"supplier_code": ..., "reason": ...}].
         Unknown numbers are None, never 0. There is no fallback between methods.
 
-Rate: the 6-dp stored rate is used (RMB 0.617284, not 1/1.62), so the Last-PO figure is
+Rate: the 6-dp stored rate is used (CNY 0.617284, not 1/1.62), so the Last-PO figure is
 31.4259278 here; the plan's 31.425926 is the same number computed from the unrounded 1/1.62.
 """
 from __future__ import annotations
@@ -42,12 +42,12 @@ def _codes(got):
 
 def test_ac_lc_02_cost_in_force_changes_with_the_date(costing_env):
     e = costing_env
-    e.rate("RMB", "0.625", date(2026, 1, 1))
+    e.rate("CNY", "0.625", date(2026, 1, 1))
     cat = e.category("C1", rule=("add", 8))
     p = e.item("ZZ-DATED", category=cat, list_price="100")
     link = e.cost_link(p, e.source("SUP-DT"), primary=True)
-    e.cost_row(link, "34.50", "RMB", start_date=date(2026, 1, 1), end_date=date(2026, 10, 31))
-    e.cost_row(link, "40.00", "RMB", start_date=date(2026, 11, 1))
+    e.cost_row(link, "34.50", "CNY", start_date=date(2026, 1, 1), end_date=date(2026, 10, 31))
+    e.cost_row(link, "40.00", "CNY", start_date=date(2026, 11, 1))
     e.db.commit()
 
     assert f(_basis(e, p, as_of=date(2026, 10, 31))["unit_cost"]) == pytest.approx(34.5)
@@ -60,23 +60,23 @@ def test_ac_lc_02_cost_in_force_changes_with_the_date(costing_env):
 
 def test_ac_lc_02_standard_packaging_row_wins_over_a_cheaper_packaging(costing_env):
     e = costing_env
-    e.rate("RMB", "0.625", date(2026, 1, 1))
+    e.rate("CNY", "0.625", date(2026, 1, 1))
     cat = e.category("C2", rule=("add", 8))
     p = e.item("ZZ-PKG", category=cat, list_price="100")
     link = e.cost_link(p, e.source("SUP-PK"), primary=True)
-    e.cost_row(link, "30.00", "RMB", packaging="OPP")
-    e.cost_row(link, "34.50", "RMB", packaging="standard")
+    e.cost_row(link, "30.00", "CNY", packaging="OPP")
+    e.cost_row(link, "34.50", "CNY", packaging="standard")
     e.db.commit()
     assert f(_basis(e, p)["unit_cost"]) == pytest.approx(34.5)
 
 
 def test_ac_lc_02_the_only_packaging_is_used_when_there_is_no_standard_row(costing_env):
     e = costing_env
-    e.rate("RMB", "0.625", date(2026, 1, 1))
+    e.rate("CNY", "0.625", date(2026, 1, 1))
     cat = e.category("C3", rule=("add", 8))
     p = e.item("ZZ-PKG1", category=cat, list_price="100")
     link = e.cost_link(p, e.source("SUP-PK1"), primary=True)
-    e.cost_row(link, "36.00", "RMB", packaging="OPP")
+    e.cost_row(link, "36.00", "CNY", packaging="OPP")
     e.db.commit()
     assert f(_basis(e, p)["unit_cost"]) == pytest.approx(36.0)
 
@@ -84,12 +84,12 @@ def test_ac_lc_02_the_only_packaging_is_used_when_there_is_no_standard_row(costi
 def test_ac_lc_02_several_packagings_and_no_standard_row_is_no_cost(costing_env):
     """`current_cost` returns None here; the contract wins over the plan's older 'cheapest' note."""
     e = costing_env
-    e.rate("RMB", "0.625", date(2026, 1, 1))
+    e.rate("CNY", "0.625", date(2026, 1, 1))
     cat = e.category("C4", rule=("add", 8))
     p = e.item("ZZ-PKG2", category=cat, list_price="100")
     link = e.cost_link(p, e.source("SUP-PK2"), primary=True)
-    e.cost_row(link, "30.00", "RMB", packaging="OPP")
-    e.cost_row(link, "33.00", "RMB", packaging="BOX")
+    e.cost_row(link, "30.00", "CNY", packaging="OPP")
+    e.cost_row(link, "33.00", "CNY", packaging="BOX")
     e.db.commit()
     got = _basis(e, p)
     assert got["landing"] is None
@@ -98,14 +98,14 @@ def test_ac_lc_02_several_packagings_and_no_standard_row_is_no_cost(costing_env)
 
 def test_ac_lc_02_a_link_with_no_cost_rows_uses_its_own_unit_cost_and_currency(costing_env):
     e = costing_env
-    e.rate("RMB", "0.625", date(2026, 1, 1))
+    e.rate("CNY", "0.625", date(2026, 1, 1))
     cat = e.category("C5", rule=("add", 8))
     p = e.item("ZZ-LINKCOST", category=cat, list_price="100")
-    e.cost_link(p, e.source("SUP-LC"), cost="34.50", currency="RMB", primary=True, mirror_unit_cost=True)
+    e.cost_link(p, e.source("SUP-LC"), cost="34.50", currency="CNY", primary=True, mirror_unit_cost=True)
     e.db.commit()
     got = _basis(e, p)
     assert f(got["unit_cost"]) == pytest.approx(34.5)
-    assert got["currency"] == "RMB"
+    assert got["currency"] == "CNY"
     assert f(got["landing"]) == pytest.approx(31.71875, abs=1e-6)
 
 
@@ -136,11 +136,11 @@ def test_ac_er_02_the_rate_follows_the_as_of_date(costing_env):
 def test_ac_er_03_no_rate_blanks_the_landing_and_names_currency_and_date(costing_env):
     e = costing_env
     w = e.workbook()
-    # RMB has no row on or before 15 Aug
+    # CNY has no row on or before 15 Aug
     got = _basis(e, w.wb, as_of=date(2026, 8, 15))
     assert got["landing"] is None
     nr = [r for r in got["reasons"] if r["code"] == "no_rate"]
-    assert len(nr) == 1 and nr[0]["currency"] == "RMB" and str(nr[0]["date"]) == "2026-08-15"
+    assert len(nr) == 1 and nr[0]["currency"] == "CNY" and str(nr[0]["date"]) == "2026-08-15"
 
 
 def test_ac_er_03_myr_is_rate_one_with_sst_still_applied(costing_env):
@@ -175,7 +175,7 @@ def test_ac_lc_03_primary_uses_the_primary_links_cost(costing_env):
     assert got["cost_method_source"] == "company"
     assert got["supplier_code"] == "SUP-A01"
     assert f(got["unit_cost"]) == pytest.approx(34.5)
-    assert got["currency"] == "RMB"
+    assert got["currency"] == "CNY"
     assert f(got["landing"]) == pytest.approx(31.71875, abs=1e-6)
     assert got["skipped"] == []
     assert got["reasons"] == []
@@ -313,11 +313,11 @@ def _last_po(e, w, **kw):
 
 
 def test_ac_lc_03_last_po_is_converted_at_the_rate_on_the_po_date_not_today(costing_env):
-    """RMB 34.50 on 14 Oct 2026: rate then 0.617284 -> 31.4259278. KILL TEST: today's rate
+    """CNY 34.50 on 14 Oct 2026: rate then 0.617284 -> 31.4259278. KILL TEST: today's rate
     (0.625) would give 31.71875."""
     e = costing_env
     w = e.workbook()
-    _last_po(e, w, po_number="PO-OCT14", issue_date=date(2026, 10, 14), unit_cost="34.50", currency="RMB")
+    _last_po(e, w, po_number="PO-OCT14", issue_date=date(2026, 10, 14), unit_cost="34.50", currency="CNY")
     e.db.commit()
     got = _basis(e, w.wb)
     assert got["cost_method"] == "last_po"
@@ -332,9 +332,9 @@ def test_ac_lc_03_last_po_is_converted_at_the_rate_on_the_po_date_not_today(cost
 def test_ac_lc_03_last_po_picks_the_latest_issue_date_on_or_before_as_of(costing_env):
     e = costing_env
     w = e.workbook()
-    _last_po(e, w, po_number="PO-SEP", issue_date=date(2026, 9, 10), unit_cost="30.00", currency="RMB")
-    e.po_line(w.wb, w.sup_a, po_number="PO-OCT", issue_date=date(2026, 10, 14), unit_cost="34.50", currency="RMB")
-    e.po_line(w.wb, w.sup_a, po_number="PO-NOV20", issue_date=date(2026, 11, 20), unit_cost="99.00", currency="RMB")
+    _last_po(e, w, po_number="PO-SEP", issue_date=date(2026, 9, 10), unit_cost="30.00", currency="CNY")
+    e.po_line(w.wb, w.sup_a, po_number="PO-OCT", issue_date=date(2026, 10, 14), unit_cost="34.50", currency="CNY")
+    e.po_line(w.wb, w.sup_a, po_number="PO-NOV20", issue_date=date(2026, 11, 20), unit_cost="99.00", currency="CNY")
     e.db.commit()
     assert _basis(e, w.wb, as_of=date(2026, 11, 11))["po_number"] == "PO-OCT"
     # the <= boundary: a PO issued on the as_of day counts
@@ -346,11 +346,11 @@ def test_ac_lc_03_last_po_picks_the_latest_issue_date_on_or_before_as_of(costing
 def test_ac_lc_03_last_po_ignores_removed_and_unpriced_lines(costing_env):
     e = costing_env
     w = e.workbook()
-    _last_po(e, w, po_number="PO-GOOD", issue_date=date(2026, 10, 1), unit_cost="34.50", currency="RMB")
+    _last_po(e, w, po_number="PO-GOOD", issue_date=date(2026, 10, 1), unit_cost="34.50", currency="CNY")
     e.po_line(w.wb, w.sup_a, po_number="PO-REMOVED", issue_date=date(2026, 10, 20),
-              unit_cost="50.00", currency="RMB", removed=True)
+              unit_cost="50.00", currency="CNY", removed=True)
     e.po_line(w.wb, w.sup_a, po_number="PO-NOPRICE", issue_date=date(2026, 10, 25),
-              unit_cost=None, currency="RMB")
+              unit_cost=None, currency="CNY")
     e.db.commit()
     assert _basis(e, w.wb)["po_number"] == "PO-GOOD"
 
@@ -361,9 +361,9 @@ def test_ac_lc_03_last_po_ties_on_issue_date_go_to_the_newest_created_line(costi
     e = costing_env
     w = e.workbook()
     _last_po(e, w, po_number="PO-FIRST", issue_date=date(2026, 10, 14), unit_cost="30.00",
-             currency="RMB", created_at=datetime(2026, 10, 14, 9, 0))
+             currency="CNY", created_at=datetime(2026, 10, 14, 9, 0))
     e.po_line(w.wb, w.sup_a, po_number="PO-SECOND", issue_date=date(2026, 10, 14), unit_cost="34.50",
-              currency="RMB", created_at=datetime(2026, 10, 14, 15, 0))
+              currency="CNY", created_at=datetime(2026, 10, 14, 15, 0))
     e.db.commit()
     got = _basis(e, w.wb)
     assert got["po_number"] == "PO-SECOND"
@@ -373,11 +373,11 @@ def test_ac_lc_03_last_po_ties_on_issue_date_go_to_the_newest_created_line(costi
 def test_ac_lc_03_last_po_currency_is_the_line_currency_else_the_po_header(costing_env):
     e = costing_env
     w = e.workbook()
-    # header says USD, the line says RMB: the line wins
+    # header says USD, the line says CNY: the line wins
     _last_po(e, w, po_number="PO-MIX", issue_date=date(2026, 10, 14), unit_cost="34.50",
-             currency="RMB", po_currency="USD")
+             currency="CNY", po_currency="USD")
     e.db.commit()
-    assert _basis(e, w.wb)["currency"] == "RMB"
+    assert _basis(e, w.wb)["currency"] == "CNY"
 
     # line currency empty: the header's
     w2 = e.item("ZZ-POHDR", category=w.cat_ceramics, list_price="50")
@@ -393,12 +393,12 @@ def test_ac_lc_03_last_po_currency_is_the_line_currency_else_the_po_header(costi
 def test_ac_lc_03_last_po_with_no_rate_on_the_po_date_is_no_rate(costing_env):
     e = costing_env
     w = e.workbook()
-    _last_po(e, w, po_number="PO-OLD", issue_date=date(2026, 8, 1), unit_cost="34.50", currency="RMB")
+    _last_po(e, w, po_number="PO-OLD", issue_date=date(2026, 8, 1), unit_cost="34.50", currency="CNY")
     e.db.commit()
-    got = _basis(e, w.wb)  # RMB has no row on 1 Aug 2026
+    got = _basis(e, w.wb)  # CNY has no row on 1 Aug 2026
     assert got["landing"] is None
     nr = [r for r in got["reasons"] if r["code"] == "no_rate"]
-    assert nr and nr[0]["currency"] == "RMB" and str(nr[0]["date"]) == "2026-08-01"
+    assert nr and nr[0]["currency"] == "CNY" and str(nr[0]["date"]) == "2026-08-01"
 
 
 def test_ac_lc_05_last_po_with_no_po_is_no_po_price_and_does_not_use_supplier_costs(costing_env):

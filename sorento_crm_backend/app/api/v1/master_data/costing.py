@@ -304,6 +304,12 @@ class RateUpdate(BaseModel):
         return self
 
 
+@router.get("/currencies")
+def get_currencies(_user: dict = _view, db: Session = Depends(get_db)):
+    """The currencies a rate may be set for (the Settings pick-list)."""
+    return {"data": rate_service.known_currencies(db)}
+
+
 @router.get("/exchange-rates")
 def get_exchange_rates(
     currency: Optional[str] = Query(None), _user: dict = _view, db: Session = Depends(get_db)
