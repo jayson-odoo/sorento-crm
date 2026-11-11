@@ -576,7 +576,7 @@ describe('QuotationVersionEditor', () => {
 
     // Owner meeting 29 Oct: the flag sits UNDER the price, in the Rate cell, and names the
     // minimum price; the product cell no longer carries it.
-    const pill = await screen.findByText('Minimum price RM 700.00');
+    const pill = await screen.findByText('Below minimum price RM 700.00');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
     // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
@@ -681,7 +681,7 @@ describe('QuotationVersionEditor', () => {
 
     // The minimum price is NAMED, so the refusal can be argued with rather than merely obeyed,
     // and it shows under the price being typed.
-    const pill = await screen.findByText('Minimum price RM 94.00', {}, { timeout: 5000 });
+    const pill = await screen.findByText('Below minimum price RM 94.00', {}, { timeout: 5000 });
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
@@ -1138,24 +1138,23 @@ describe('QuotationVersionEditor', () => {
     expect(footerText()).toContain('RM 2,700.00');
   });
 
-  it('strikes a removed line through instead of asking, and puts it back on request', async () => {
-    // Removing inside an edit session destroys nothing, so it asks nothing. The row stays where
-    // it is, struck through, because a removal that is invisible cannot be taken back.
+  it('removes a line at once, without asking, and Undo puts it back (owner, 11 Nov)', async () => {
+    // PROJECT-QUOTE-LINE-TOOLS owner hand test: "when remove line then is remove already, dont
+    // need to stage it cause now we always save, just need to have an undo / redo function".
     await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove SRT-WC-01' }));
 
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(await screen.findByText('Removed on save')).toBeInTheDocument();
-    expect(screen.getByText('Wall-hung WC')).toBeInTheDocument();
-    // Out of the money the moment it is marked: the footer states what will actually be charged.
+    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).toBeNull());
+    expect(screen.queryByText('Removed on save')).toBeNull();
     expect(footerText()).toContain('RM 0.00');
-    // And out of the body the write would carry.
     await waitFor(() => expect(stagedBody()).toEqual([]));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restore SRT-WC-01' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
 
     await waitFor(() => expect(stagedBody()).toHaveLength(1));
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(footerText()).toContain('RM 9,000.00');
     expectNothingWritten();
   });
@@ -1534,7 +1533,7 @@ describe('QuotationVersionEditor lines grid (QUOTATION-UX)', () => {
     expect(await screen.findByRole('textbox', { name: 'Section heading above A-2' })).toBeInTheDocument();
 
     await chooseMenuItem('A-1', 'Remove line');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual([undefined, 'l2']));
     expectNothingWritten();
   });
 
@@ -2150,17 +2149,18 @@ describe('QuotationVersionEditor owner hand-test round (QUOTATION-UX)', () => {
     ]);
   });
 
-  it('Remove line, from the row menu or the right-click menu, strikes through and restores as today', async () => {
+  it('Remove line, from the row menu or the right-click menu, removes at once; Undo restores in place', async () => {
     listQuotationLines.mockResolvedValue(TWO_LINES);
     await renderEditing();
     await chooseMenuItem('A-1', 'Remove line');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-1' })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Restore A-1' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore A-1' })).toBeNull());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1', 'l2']));
 
     rightClick(rowOf('A-2').querySelector('td') as HTMLElement);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove line' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore A-2' })).toBeInTheDocument());
+    await waitFor(() => expect(stagedBody().map((l) => l.id)).toEqual(['l1']));
+    expect(screen.queryByRole('button', { name: /^Restore / })).toBeNull();
   });
 
   it('F7: clicking a row opens no Line details region, however it is clicked', async () => {
@@ -3309,19 +3309,6 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     }
   });
 
-  it('AC-1: Duplicate line is disabled on a line staged for removal', async () => {
-    listQuotationLines.mockResolvedValue(TWO_LINES);
-    await renderEditing();
-    // A removed row has no inputs left, so it is found by its stable row key.
-    await chooseMenuItem('A-1', 'Remove line');
-    const removed = document.querySelector('tr[data-line-key="l1"]') as HTMLElement;
-    fireEvent.contextMenu(removed.querySelector('td') as HTMLElement);
-    expect(await screen.findByRole('menuitem', { name: 'Duplicate line' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
-  });
-
   it('AC-1: a section heading\'s right-click menu offers no Duplicate line', async () => {
     listQuotationLines.mockResolvedValue([
       line({ id: 'l1', product_code: 'A-1', description: 'First', band_label: 'BILL NO 1' }),
@@ -3355,7 +3342,7 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on A-1' }), {
       target: { value: '850.00' },
     });
-    expect(await screen.findByText('Minimum price RM 800.00', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('Below minimum price RM 800.00', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
     // Changing the filter lets it go: it no longer matches.
     await chooseFlag('Non-standard');
@@ -3449,5 +3436,96 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     await chooseFlag('Non-standard');
     await chooseFlag('Below default price');
     await waitFor(() => expect(shownCodes()).toEqual(['A-2']));
+  });
+});
+
+// PROJECT-QUOTE-LINE-TOOLS owner hand test (11 Nov): Undo / Redo on the lines editor, from the
+// price tag designer's shared history (hooks/useUndoHistory.ts).
+describe('QuotationVersionEditor Undo / Redo', () => {
+  const ids = () => stagedBody().map((l) => l.id ?? 'new');
+
+  it('offers no Undo or Redo in view mode', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    renderEditor();
+    await screen.findByText('A-1');
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Redo' })).toBeNull();
+  });
+
+  it('undoes and redoes Duplicate, Insert, Remove, in order', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled();
+
+    await chooseMenuItem('A-1', 'Duplicate line');
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    await chooseMenuItem('A-2', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new']));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new', 'l2']));
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await waitFor(() => expect(ids()).toEqual(['l1', 'new']));
+    expect(screen.getByRole('button', { name: 'Redo' })).toBeDisabled();
+    expectNothingWritten();
+  });
+
+  it('Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z work on the grid outside a text field', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    const grid = screen.getByRole('table');
+    fireEvent.keyDown(grid, { key: 'z', ctrlKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+    fireEvent.keyDown(grid, { key: 'z', metaKey: true, shiftKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    fireEvent.keyDown(grid, { key: 'Z', metaKey: true });
+    await waitFor(() => expect(ids()).toEqual(['l1', 'l2']));
+  });
+
+  it('inside a text field Cmd/Ctrl+Z is left to the field (its own text undo)', async () => {
+    listQuotationLines.mockResolvedValue(TWO_LINES);
+    await renderEditing();
+    await chooseMenuItem('A-1', 'Remove line');
+    await waitFor(() => expect(ids()).toEqual(['l2']));
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Unit price on A-2' }), {
+      key: 'z',
+      ctrlKey: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ids()).toEqual(['l2']);
+  });
+
+  it('typing one field is one Undo step, not one per keystroke', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    const rate = screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' });
+    for (const value of ['8', '85', '850']) fireEvent.change(rate, { target: { value } });
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '850' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ unit_price: '900.00' }));
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+  });
+
+  it('a product pick is its own step after typing', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    await renderEditing();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '850' },
+    });
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    const drafts = () => (session?.scopes[QUOTATION.id]?.lines ?? []).map((row) => row.draft);
+    await waitFor(() => expect(drafts()[0]).toMatchObject({ product_id: 'p9' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(drafts()[0]).toMatchObject({ product_id: 'p-wc', unit_price: '850' }));
   });
 });
