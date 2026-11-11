@@ -30,6 +30,12 @@ from app.services.error_handler import AppException
 router = APIRouter()
 
 COST_VIEW = "products.cost.view"
+
+SortKey = Literal[
+    "product_code", "product_name", "category_name", "list_price", "supplier_name", "unit_cost",
+    "units_per_base", "sst_factor", "transport", "landing", "cost_method", "markup_pct", "final",
+    "margin_pct",
+]
 MANAGE = "products.party_costing.manage"
 RATE_WRITE = "scm.config.manage"
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -64,8 +70,20 @@ def _ids(value: Optional[str], name: str) -> list:
     return out
 
 
+def _cost_filter(cost: Optional[str], has_cost: Optional[bool]) -> frozenset:
+    """`cost=has,none` (either, both or neither); the older `has_cost=true` still means `has`."""
+    values = set(_split(cost))
+    bad = values - {"has", "none"}
+    if bad:
+        raise AppException(status_code=422, message="Cost is Has cost or No cost.")
+    if has_cost:
+        values.add("has")
+    # Both is no narrowing.
+    return frozenset(values) if len(values) == 1 else frozenset()
+
+
 def _rows_query(
-    party_id, q, category_id, brand_id, cost_method, has_cost, as_of, page_no, limit, sort, direction
+    party_id, q, category_id, brand_id, cost_method, has_cost, cost, as_of, page_no, limit, sort, direction
 ) -> page.RowsQuery:
     methods = _split(cost_method)
     bad = [m for m in methods if m not in basis.METHODS]
@@ -74,7 +92,7 @@ def _rows_query(
     return page.RowsQuery(
         party_id=_ids(party_id, 'party_id')[0] if party_id else None, q=q,
         category_ids=_ids(category_id, 'category_id'), brand_ids=_ids(brand_id, 'brand_id'),
-        methods=methods, has_cost=bool(has_cost), as_of=as_of, page=page_no, limit=limit,
+        methods=methods, cost=_cost_filter(cost, has_cost), as_of=as_of, page=page_no, limit=limit,
         sort=sort, direction=direction,
     )
 
@@ -89,17 +107,18 @@ def get_rows(
     brand_id: Optional[str] = Query(None),
     cost_method: Optional[str] = Query(None),
     has_cost: Optional[bool] = Query(None),
+    cost: Optional[str] = Query(None, description="has, none or has,none."),
     as_of: Optional[date] = Query(None),
     page_no: int = Query(1, ge=1, alias="page"),
     limit: int = Query(50, ge=1, le=500),
-    sort: Literal["product_code", "category_name", "landing", "final", "markup_pct", "margin_pct"] = Query(
+    sort: SortKey = Query(
         "product_code"
     ),
     direction: Literal["asc", "desc"] = Query("asc", alias="dir"),
     _user: dict = _view,
     db: Session = Depends(get_db),
 ):
-    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, as_of, page_no, limit, sort, direction)
+    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, cost, as_of, page_no, limit, sort, direction)
     result = page.list_rows(db, rq, _today())
     return {
         "data": [page.serialize_row(r) for r in result["rows"]],
@@ -200,15 +219,16 @@ def export_rows(
     brand_id: Optional[str] = Query(None),
     cost_method: Optional[str] = Query(None),
     has_cost: Optional[bool] = Query(None),
+    cost: Optional[str] = Query(None, description="has, none or has,none."),
     as_of: Optional[date] = Query(None),
-    sort: Literal["product_code", "category_name", "landing", "final", "markup_pct", "margin_pct"] = Query(
+    sort: SortKey = Query(
         "product_code"
     ),
     direction: Literal["asc", "desc"] = Query("asc", alias="dir"),
     _user: dict = _view,
     db: Session = Depends(get_db),
 ):
-    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, as_of, 1, None, sort, direction)
+    rq = _rows_query(party_id, query or q, category_id, brand_id, cost_method, has_cost, cost, as_of, 1, None, sort, direction)
     content = export_service.build_workbook(page.list_rows(db, rq, _today()))
     stamp = (as_of or _today()).isoformat()
     return Response(

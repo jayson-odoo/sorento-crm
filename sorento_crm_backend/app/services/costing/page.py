@@ -15,7 +15,7 @@ from datetime import date, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
-from sqlalchemy import String, and_, cast, func, literal, or_
+from sqlalchemy import String, and_, case, cast, func, literal, or_
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
@@ -26,8 +26,15 @@ from app.models.user import User
 from app.services.costing import basis, formula, party as party_service
 from app.services.costing.rates import units_per_base
 
-SORTS = ("product_code", "category_name", "landing", "final", "markup_pct", "margin_pct")
-COMPUTED_SORTS = frozenset({"landing", "final", "markup_pct", "margin_pct"})
+#: Every data column sorts on the server. The first four are plain SQL on the product; the rest
+#: depend on the costing and are ordered after the page's set is costed (unknowns always last).
+SORTS = (
+    "product_code", "product_name", "category_name", "list_price",
+    "supplier_name", "unit_cost", "units_per_base", "sst_factor", "transport", "landing",
+    "cost_method", "markup_pct", "final", "margin_pct",
+)
+SQL_SORTS = frozenset({"product_code", "product_name", "category_name", "list_price"})
+COMPUTED_SORTS = frozenset(SORTS) - SQL_SORTS
 _SIX = Decimal("0.000001")
 
 
@@ -38,7 +45,8 @@ class RowsQuery:
     category_ids: list = field(default_factory=list)
     brand_ids: list = field(default_factory=list)
     methods: list = field(default_factory=list)
-    has_cost: bool = False
+    #: "has" keeps rows with a landing, "none" rows without; both or neither is no narrowing.
+    cost: frozenset = frozenset()
     as_of: Optional[date] = None
     page: int = 1
     limit: Optional[int] = 50  # None = no paging (the export)
@@ -127,8 +135,12 @@ def _assemble(base, basis_row: dict, profile) -> dict:
     """One internal Row from the product columns and its cost basis."""
     (pid, code, name, cat_id, cat_name, brand_id, brand_name, list_price, *party_cols) = base
     pid = str(pid)
-    list_price = Decimal(list_price) if list_price is not None else None
+    # No selling price: null or 0 (AutoCount holds 0 for "not set"). Never a -100% mark-up.
+    list_price = Decimal(list_price) if list_price is not None and Decimal(list_price) > 0 else None
     landing = basis_row["landing"]
+    reasons = list(basis_row["reasons"])
+    if landing is not None and list_price is None:
+        reasons.append({"code": "no_list_price"})
     rate = basis_row["rate_to_base"]
 
     if party_cols:
@@ -159,6 +171,7 @@ def _assemble(base, basis_row: dict, profile) -> dict:
         "brand_id": str(brand_id) if brand_id else None, "brand_name": brand_name,
         "list_price": list_price,
         "supplier_id": basis_row["supplier_id"], "supplier_code": basis_row["supplier_code"],
+        "supplier_name": basis_row["supplier_name"],
         "currency": basis_row["currency"], "unit_cost": basis_row["unit_cost"],
         "rate_to_base": rate, "units_per_base": units_per_base(rate) if rate is not None else None,
         "rate_effective_from": basis_row["rate_effective_from"],
@@ -172,7 +185,7 @@ def _assemble(base, basis_row: dict, profile) -> dict:
         "cost_method_supplier_id": basis_row["cost_method_supplier_id"],
         "markup_pct": markup, "markup_source": source, "final": final, "margin_pct": margin,
         "po_number": basis_row["po_number"], "po_date": basis_row["po_date"],
-        "reasons": basis_row["reasons"], "skipped": basis_row["skipped"],
+        "reasons": reasons, "skipped": basis_row["skipped"],
         "party_product_id": party_product_id,
     }
 
@@ -183,11 +196,22 @@ def _cost_rows(db: Session, bases: list, rq: RowsQuery, as_of: date, profile) ->
     return [_assemble(b, basis.compute(ctx, str(b[0])), profile) for b in bases]
 
 
+def _sort_value(row: dict, key: str):
+    """What a row sorts on; None means unknown (sorts last either way)."""
+    if key == "transport":
+        return None if row["transport_mode"] is None else (row["transport_mode"], row["transport_value"] or 0)
+    if key == "cost_method":
+        return basis.METHOD_LABELS[row["cost_method"]].lower()
+    value = row[key]
+    return value.lower() if isinstance(value, str) else value
+
+
 def _sorted(rows: list, key: str, direction: str) -> list:
-    known = [r for r in rows if r[key] is not None]
-    unknown = [r for r in rows if r[key] is None]
-    known.sort(key=lambda r: r[key], reverse=direction == "desc")
-    return known + unknown
+    keyed = [(r, _sort_value(r, key)) for r in rows]
+    known = [kv for kv in keyed if kv[1] is not None]
+    unknown = [kv[0] for kv in keyed if kv[1] is None]
+    known.sort(key=lambda kv: kv[1], reverse=direction == "desc")
+    return [kv[0] for kv in known] + unknown
 
 
 def list_rows(db: Session, rq: RowsQuery, today: date) -> dict:
@@ -206,11 +230,14 @@ def list_rows(db: Session, rq: RowsQuery, today: date) -> dict:
     profile = basis.load_profile(db, rq.party_id)
     query = _sql_query(db, rq, profile, default_method)
 
-    if rq.has_cost or rq.sort in COMPUTED_SORTS:
+    narrow = next(iter(rq.cost)) if len(rq.cost) == 1 else None
+    if narrow or rq.sort in COMPUTED_SORTS:
         bases = query.order_by(Product.product_code, Product.id).all()
         rows = _cost_rows(db, bases, rq, as_of, profile)
-        if rq.has_cost:
+        if narrow == "has":
             rows = [r for r in rows if r["landing"] is not None]
+        elif narrow == "none":
+            rows = [r for r in rows if r["landing"] is None]
         if rq.sort in COMPUTED_SORTS:
             rows = _sorted(rows, rq.sort, rq.direction)
         total = len(rows)
@@ -221,11 +248,17 @@ def list_rows(db: Session, rq: RowsQuery, today: date) -> dict:
 
     total = query.order_by(None).count()
     desc = rq.direction == "desc"
-    if rq.sort == "category_name":
-        order = [ProductCategory.category_name.desc().nulls_last() if desc
-                 else ProductCategory.category_name.asc().nulls_last()]
-    else:
-        order = []
+    column = {
+        "category_name": ProductCategory.category_name,
+        "product_name": Product.product_name,
+        "list_price": Product.list_price,
+    }.get(rq.sort)
+    order = []
+    if column is not None:
+        if rq.sort == "list_price":
+            # 0 is "no selling price" like null: unknown, last in both directions.
+            order.append(case((and_(Product.list_price.isnot(None), Product.list_price > 0), 0), else_=1))
+        order.append(column.desc().nulls_last() if desc else column.asc().nulls_last())
     order += [Product.product_code.desc() if desc else Product.product_code.asc(), Product.id]
     query = query.order_by(*order)
     if rq.limit is not None:

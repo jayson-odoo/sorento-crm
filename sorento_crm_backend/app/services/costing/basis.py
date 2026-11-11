@@ -69,6 +69,7 @@ class PoLine:
     po_date: date
     supplier_id: Optional[str]
     supplier_code: Optional[str]
+    supplier_name: Optional[str] = None
 
 
 @dataclass
@@ -186,7 +187,7 @@ def _load_last_pos(db: Session, product_ids: list, as_of: date) -> dict:
             db.query(
                 PurchaseOrderLine.product_id, PurchaseOrderLine.unit_cost, PurchaseOrderLine.currency,
                 PurchaseOrder.currency, PurchaseOrder.po_number, PurchaseOrder.issue_date,
-                PurchaseOrder.supplier_id, Supplier.supplier_code,
+                PurchaseOrder.supplier_id, Supplier.supplier_code, Supplier.supplier_name,
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
@@ -206,11 +207,11 @@ def _load_last_pos(db: Session, product_ids: list, as_of: date) -> dict:
             )
             .all()
         )
-        for pid, cost, line_cur, po_cur, po_number, issue, sup_id, sup_code in rows:
+        for pid, cost, line_cur, po_cur, po_number, issue, sup_id, sup_code, sup_name in rows:
             out[pid] = PoLine(
                 unit_cost=Decimal(cost), currency=normalize_currency(line_cur or po_cur),
                 po_number=po_number, po_date=issue,
-                supplier_id=str(sup_id) if sup_id else None, supplier_code=sup_code,
+                supplier_id=str(sup_id) if sup_id else None, supplier_code=sup_code, supplier_name=sup_name,
             )
     return out
 
@@ -291,7 +292,7 @@ def compute(ctx: CostContext, product_id: str) -> dict:
         "product_id": product_id,
         "landing": None, "cost_method": method, "cost_method_source": method_source,
         "cost_method_supplier_id": ov.cost_method_supplier_id if ov is not None and method == "selected" else None,
-        "supplier_id": None, "supplier_code": None,
+        "supplier_id": None, "supplier_code": None, "supplier_name": None,
         "unit_cost": None, "currency": None, "rate_to_base": None, "rate_effective_from": None,
         "sst_factor": ctx.sst,
         "transport_mode": mode, "transport_value": value, "transport_source": tsource,
@@ -303,7 +304,7 @@ def compute(ctx: CostContext, product_id: str) -> dict:
     def take(link: Link) -> None:
         ev = evaluate_link(ctx, link, mode, value)
         out.update(
-            supplier_id=link.supplier_id, supplier_code=link.supplier_code,
+            supplier_id=link.supplier_id, supplier_code=link.supplier_code, supplier_name=link.supplier_name,
             unit_cost=ev["unit_cost"], currency=ev["currency"] if ev["unit_cost"] is not None else None,
             rate_to_base=ev["rate"], rate_effective_from=ev["rate_from"], landing=ev["landing"],
         )
@@ -341,7 +342,7 @@ def compute(ctx: CostContext, product_id: str) -> dict:
         else:
             rate, rate_from, landing, reason = evaluate(ctx, po.unit_cost, po.currency, po.po_date, mode, value)
             out.update(
-                supplier_id=po.supplier_id, supplier_code=po.supplier_code,
+                supplier_id=po.supplier_id, supplier_code=po.supplier_code, supplier_name=po.supplier_name,
                 unit_cost=po.unit_cost, currency=po.currency, rate_to_base=rate,
                 rate_effective_from=rate_from, landing=landing,
                 po_number=po.po_number, po_date=po.po_date,
@@ -370,6 +371,7 @@ REASON_TEXT = {
     "selected_not_linked": "Selected supplier no longer linked",
     "no_po_price": "No PO price",
     "no_transport_rule": "No transport rule",
+    "no_list_price": "No list price",
 }
 
 

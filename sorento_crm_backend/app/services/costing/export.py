@@ -16,7 +16,7 @@ from openpyxl.styles import Font
 from app.services.costing import basis
 
 HEADERS = [
-    "Category", "Code", "Name", "Supplier", "Currency", "Cost", "Rate (per MYR)", "SST",
+    "Category", "Code", "Name", "Supplier", "Supplier name", "Currency", "Cost", "Rate (per MYR)", "SST",
     "Transport mode", "Transport value", "Landing (RM)", "Cost method", "Mark-up %", "Final (RM)",
     "List price (AutoCount)", "Margin %", "Note",
 ]
@@ -50,6 +50,7 @@ def build_workbook(result: dict) -> bytes:
             (row["product_code"], None),
             (row["product_name"], None),
             (row["supplier_code"], None),
+            (row["supplier_name"], None),
             (row["currency"], None),
             (_num(row["unit_cost"]), _MONEY),
             (_num(row["units_per_base"]), _RATE),
@@ -77,7 +78,7 @@ def build_workbook(result: dict) -> bytes:
                 cell.data_type = "s"
                 cell.quotePrefix = True
 
-    widths = [18, 16, 32, 12, 9, 12, 14, 8, 14, 14, 14, 24, 11, 14, 20, 10, 42]
+    widths = [18, 16, 32, 12, 28, 9, 12, 14, 8, 14, 14, 14, 24, 11, 14, 20, 10, 42]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=2, column=i).column_letter].width = w
     ws.freeze_panes = "A3"

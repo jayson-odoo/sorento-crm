@@ -25,7 +25,7 @@ from tests.support.costing_env import costing_env  # noqa: F401
 A = pytest.approx
 
 HEADERS = [
-    "Category", "Code", "Name", "Supplier", "Currency", "Cost", "Rate (per MYR)", "SST",
+    "Category", "Code", "Name", "Supplier", "Supplier name", "Currency", "Cost", "Rate (per MYR)", "SST",
     "Transport mode", "Transport value", "Landing (RM)", "Cost method", "Mark-up %", "Final (RM)",
     "List price (AutoCount)", "Margin %", "Note",
 ]

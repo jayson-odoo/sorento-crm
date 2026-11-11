@@ -55,8 +55,8 @@ def test_b1_rate_effective_on_its_own_day_in_the_supplier_expand(costing_env):
 def test_b1_rate_effective_on_its_own_day_in_the_export(costing_env):
     e, w = _setup(costing_env)
     cells = _sheet_rows(e.get("/export", as_of="2026-11-01"))["CGB9032B"]
-    assert cells[6].value == A(1.6, abs=1e-4)  # Rate (per MYR)
-    assert cells[10].value == A(31.71875, abs=1e-6)  # Landing
+    assert cells[7].value == A(1.6, abs=1e-4)  # Rate (per MYR)
+    assert cells[11].value == A(31.71875, abs=1e-6)  # Landing
 
 
 def test_b1_rate_on_and_the_rate_book_are_one_lookup(costing_env):
@@ -351,3 +351,128 @@ def test_r4_another_companys_supplier_cost_currency_is_offered(costing_env):
         set_company_scope(e.db, e.scope)
     e.as_user(e.viewer())  # a company A user
     assert "CHF" in e.get("/currencies").json()["data"]
+
+
+# ------------------------------------------------------------------ round 5: every column sorts
+
+
+def _sort_key_of(key: str):
+    """What a row sorts on, as the page shows it (None = unknown, sorts last)."""
+    labels = {"primary": "Primary supplier", "selected": "Selected supplier",
+              "average": "Average of supplier prices", "last_po": "Last PO price"}
+    pick = {
+        "product_code": lambda r: r["product_code"].lower(),
+        "product_name": lambda r: r["product_name"].lower(),
+        "category_name": lambda r: (r["category_name"] or "").lower() or None,
+        "supplier_name": lambda r: (r["supplier_name"] or "").lower() or None,
+        "unit_cost": lambda r: r["unit_cost"],
+        "units_per_base": lambda r: r["units_per_base"],
+        "sst_factor": lambda r: r["sst_factor"],
+        "transport": lambda r: None if r["transport_mode"] is None else (r["transport_mode"], r["transport_value"]),
+        "landing": lambda r: r["landing"],
+        "cost_method": lambda r: labels[r["cost_method"]].lower(),
+        "markup_pct": lambda r: r["markup_pct"],
+        "final": lambda r: r["final"],
+        "list_price": lambda r: r["list_price"],
+        "margin_pct": lambda r: r["margin_pct"],
+    }
+    return pick[key]
+
+
+SORT_KEYS = ["product_code", "product_name", "category_name", "supplier_name", "unit_cost", "units_per_base",
+             "sst_factor", "transport", "landing", "cost_method", "markup_pct", "final", "list_price", "margin_pct"]
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+@pytest.mark.parametrize("key", SORT_KEYS)
+def test_r5_every_column_sorts_on_the_server_with_unknowns_last(costing_env, key, direction):
+    e, w = _setup(costing_env)
+    e.override(w.tap, cost_method="average")
+    e.override(w.sink, transport_mode="add", transport_value="3")
+    e.party_product(w.customer, w.acc)  # a costless row in the party view
+    e.db.commit()
+    party = key == "margin_pct"
+    r = e.rows(as_of="2026-11-11", sort=key, dir=direction, limit=100, **({"party_id": w.customer.id} if party else {}))
+    assert r.status_code == 200, r.text
+    values = [_sort_key_of(key)(row) for row in r.json()["data"]]
+    known = [v for v in values if v is not None]
+    assert values == known + [None] * (len(values) - len(known)), (key, direction, values)  # unknowns last
+    assert known == sorted(known, reverse=direction == "desc"), (key, direction, known)
+
+
+def test_r5_the_export_takes_the_same_sort_keys(costing_env):
+    e, w = _setup(costing_env)
+    for key in SORT_KEYS:
+        assert e.get("/export", as_of="2026-11-11", sort=key, dir="desc").status_code == 200, key
+    assert e.rows(as_of="2026-11-11", sort="bogus").status_code == 422
+
+
+# ------------------------------------------------------------------ round 5: the Cost filter
+
+
+def test_r5_cost_filter_is_a_multi_value(costing_env):
+    e, w = _setup(costing_env)
+    codes = lambda **p: {r["product_code"] for r in e.rows(as_of="2026-11-11", limit=100, **p).json()["data"]}
+    costless = {"A-4001", "N-9001"}
+    everything = codes()
+    assert costless < everything
+    assert codes(cost="none") == costless
+    assert codes(cost="has") == everything - costless
+    assert codes(cost="has,none") == everything
+    assert codes(has_cost="true") == everything - costless  # still works
+    assert codes(cost="none", has_cost="false") == costless
+    assert e.rows(as_of="2026-11-11", cost="bogus").status_code == 422
+
+
+# ------------------------------------------------------------------ round 5: supplier name
+
+
+def test_r5_a_row_carries_the_supplier_name_and_the_export_a_column_for_it(costing_env):
+    e, w = _setup(costing_env)
+    row = e.row_of(e.rows(as_of="2026-11-11"), "CGB9032B")
+    assert row["supplier_code"] == "SUP-A01" and row["supplier_name"] == "SUP-A01 Ltd"
+    assert e.row_of(e.rows(as_of="2026-11-11"), "N-9001")["supplier_name"] is None
+    ws = load_workbook(BytesIO(e.get("/export", as_of="2026-11-11").content)).active
+    headers = [c.value for c in ws[2]]
+    assert headers[headers.index("Supplier") + 1] == "Supplier name"
+    cells = _sheet_rows(e.get("/export", as_of="2026-11-11"))["CGB9032B"]
+    assert cells[headers.index("Supplier name")].value == "SUP-A01 Ltd"
+
+
+# ------------------------------------------------------------------ round 5: no selling price, no -100%
+
+
+@pytest.mark.parametrize("price", ["0"])  # products.list_price is NOT NULL: 0 is "not set"
+def test_r5_a_row_with_no_list_price_has_no_markup_final_or_margin(costing_env, price):
+    e, w = _setup(costing_env)
+    p = e.item("NOPRICE-1", category=w.cat_taps, list_price=price)
+    e.cost_link(p, w.sup_a, cost="120.00", currency="CNY", primary=True)
+    e.party_product(w.customer, p)
+    e.db.commit()
+    std = e.row_of(e.rows(as_of="2026-11-11"), "NOPRICE-1")
+    assert std["landing"] == A(88.275, abs=1e-6)
+    assert std["markup_pct"] is None and std["final"] is None and std["margin_pct"] is None
+    assert "no_list_price" in [x["code"] for x in std["reasons"]]
+    party = e.row_of(e.rows(as_of="2026-11-11", party_id=w.customer.id), "NOPRICE-1")
+    assert party["margin_pct"] is None and party["final"] == A(88.275 * 1.08, abs=1e-6)
+    assert "no_list_price" in [x["code"] for x in party["reasons"]]
+    ws = _sheet_rows(e.get("/export", as_of="2026-11-11"))["NOPRICE-1"]
+    assert ws[-1].value is not None and "No list price" in ws[-1].value
+
+
+def test_r5_a_priced_row_keeps_its_markup_and_has_no_such_reason(costing_env):
+    e, w = _setup(costing_env)
+    row = e.row_of(e.rows(as_of="2026-11-11"), "CGB9032B")
+    assert row["markup_pct"] == A(149.0640394, abs=1e-6)
+    assert "no_list_price" not in [x["code"] for x in row["reasons"]]
+
+
+# ------------------------------------------------------------------ round 5: the party picker's search
+
+
+@pytest.mark.parametrize("query", ["bath", "BATHPLUS", "304-R017"])
+def test_r5_the_customer_select_finds_a_party_by_name_or_code(costing_env, query):
+    e, w = _setup(costing_env)
+    r = e.client.get("/api/v1/order-management/customers/select", params={"query": query, "limit": 50})
+    assert r.status_code == 200, r.text
+    assert "304-R017" in [c["customer_code"] for c in r.json()["data"]]
