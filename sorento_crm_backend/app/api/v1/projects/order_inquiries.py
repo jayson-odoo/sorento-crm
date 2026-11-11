@@ -31,6 +31,9 @@ from app.schemas.stock_debt_snapshot import (
     OiPoLinkLinkIn,
     OiPoLinkOptions,
     OiPoLinkRowsIn,
+    OiPoRelocateIn,
+    OiPoResumeIn,
+    PoLinkResult,
     OiPoUnlinkIn,
     PoLinkResults,
 )
@@ -1811,32 +1814,45 @@ def place_order_inquiry_row_on_po(
 LINK_PO = "projects.stock_debt.link_po"
 
 
+def _uuid_or_422(value: str, what: str) -> str:
+    """A malformed id in a request body is a 422, never a 500 from the database."""
+    try:
+        return validate_uuid_path(value, resource=what)
+    except AppException:
+        raise AppException(status_code=422, message=f"{what} is not valid.")
+
+
 def _oi_link_scope(db: Session, row_ids: list[str]):
     from app.services.scm.po_link_service import scope_for_oi_rows
 
     for row_id in row_ids:
-        validate_uuid_path(row_id, resource="Order inquiry row")
+        _uuid_or_422(row_id, "Order inquiry row")
     return scope_for_oi_rows(db, row_ids)
 
 
-def _oi_rebook(db: Session, row_ids: list[str], out: dict, current_user: dict) -> None:
-    """After any `done` write: the AutoCount book step for exactly the ticked rows, so the PO
-    column shows the link now (the same call `auto-place` makes with `row_ids`)."""
+def _oi_rebook(db: Session, scope, outcomes: list, current_user: dict) -> None:
+    """After a write that changed AutoCount: the book step for exactly the ticked rows that
+    resolved into the scope, so the PO column shows the link now (the same call `auto-place`
+    makes with `row_ids`). Only for a user who may run `auto-place` (its own permission); anyone
+    else sees the link at the next sync."""
     db.commit()  # AutoCount already changed: keep the read-back whatever the re-run does
-    if any(r.get("outcome") == "done" for r in out.get("results", [])):
-        try:
-            ProjectOrderInquiryService(db).auto_place_for_products(
-                None,
-                actor_user_id=current_user["id"],
-                trigger="worklist",
-                row_ids=row_ids,
-                redeal_drafts=True,
-                include_awaiting=True,
-            )
-            db.commit()
-        except Exception:  # noqa: BLE001
-            logger.exception("oi po link: the book step re-run failed")
-            db.rollback()
+    if not any(o in ("done", "recovered") for o in outcomes) or not scope.row_ids:
+        return
+    if not UserPermissionService(db).check_user_has_permission(current_user["id"], ACTION):
+        return
+    try:
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None,
+            actor_user_id=current_user["id"],
+            trigger="worklist",
+            row_ids=list(scope.row_ids),
+            redeal_drafts=True,
+            include_awaiting=True,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("oi po link: the book step re-run failed")
+        db.rollback()
 
 
 @router.post("/order-inquiries/po-link/options", response_model=OiPoLinkOptions)
@@ -1857,19 +1873,25 @@ def oi_po_link_options(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-def _oi_po_link_write(db: Session, current_user: dict, row_ids: list[str], call):
+def _oi_po_link_write(db: Session, current_user: dict, row_ids: list[str], call, ids=()):
+    """`ids`: (label, value) pairs from the body, checked before anything is read or sent."""
     from app.api.v1.projects.stock_debt_snapshots import _require_switch
     from app.services.scm.po_link_service import PoLinkService, actor_of
 
     _require_switch(db)
     try:
+        for what, value in ids:
+            _uuid_or_422(value, what)
         scope = _oi_link_scope(db, row_ids)
         out = call(PoLinkService(db, scope, actor_of(db, current_user)))
-        _oi_rebook(db, row_ids, out, current_user)
+        results = out["results"] if "results" in out else [out]
+        _oi_rebook(db, scope, [r.get("outcome") for r in results], current_user)
         return out
     except Exception as exc:
+        if hasattr(exc, "status_code"):
+            raise  # a refusal before anything was sent: nothing to undo
         db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise handle_internal_error(str(exc))
 
 
 @router.post("/order-inquiries/po-link/link", response_model=PoLinkResults)
@@ -1878,8 +1900,11 @@ def oi_po_link_link(
     current_user: dict = Depends(require_permission(LINK_PO)),
     db: Session = Depends(get_db),
 ):
+    ids = [("Sales order line", l.sales_order_line_id) for l in payload.lines] + [
+        ("PO line", l.po_line_id) for l in payload.lines
+    ]
     return _oi_po_link_write(
-        db, current_user, payload.row_ids, lambda s: s.link([l.model_dump() for l in payload.lines])
+        db, current_user, payload.row_ids, lambda s: s.link([l.model_dump() for l in payload.lines]), ids
     )
 
 
@@ -1889,7 +1914,10 @@ def oi_po_link_unlink(
     current_user: dict = Depends(require_permission(LINK_PO)),
     db: Session = Depends(get_db),
 ):
-    return _oi_po_link_write(db, current_user, payload.row_ids, lambda s: s.unlink(payload.po_line_ids))
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.unlink(payload.po_line_ids),
+        [("PO line", i) for i in payload.po_line_ids],
+    )
 
 
 @router.post("/order-inquiries/po-link/change", response_model=PoLinkResults)
@@ -1898,8 +1926,39 @@ def oi_po_link_change(
     current_user: dict = Depends(require_permission(LINK_PO)),
     db: Session = Depends(get_db),
 ):
+    ids = [("Sales order line", c.sales_order_line_id) for c in payload.changes] + [
+        ("PO line", c.po_line_id) for c in payload.changes
+    ]
     return _oi_po_link_write(
-        db, current_user, payload.row_ids, lambda s: s.change([c.model_dump() for c in payload.changes])
+        db, current_user, payload.row_ids, lambda s: s.change([c.model_dump() for c in payload.changes]), ids
+    )
+
+
+@router.post("/order-inquiries/po-link/relocate", response_model=PoLinkResult)
+def oi_po_link_relocate(
+    payload: OiPoRelocateIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.relocate(payload.po_line_id),
+        [("PO line", payload.po_line_id)],
+    )
+
+
+@router.post("/order-inquiries/po-link/operations/{operation_id}/resume", response_model=PoLinkResult)
+def oi_po_link_resume(
+    operation_id: str,
+    payload: OiPoResumeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    ids = [("PO line", payload.po_line_id)]
+    if payload.sales_order_line_id:
+        ids.append(("Sales order line", payload.sales_order_line_id))
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids,
+        lambda s: s.resume(operation_id, payload.po_line_id, payload.sales_order_line_id), ids,
     )
 
 

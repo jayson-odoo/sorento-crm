@@ -91,8 +91,9 @@ def record_changes(
 
 def record_crm_write(
     db: Session,
-    po_line: Any,
+    po_line_id: str,
     purchase_order_id: str,
+    company_id: Optional[str],
     *,
     actor: Optional[dict],
     request_id: str,
@@ -108,7 +109,7 @@ def record_crm_write(
         audit_service.log_audit(
             db,
             _ENTITY,
-            str(po_line.id),
+            str(po_line_id),
             "EVENT",
             event=EVENT_CRM_WRITE,
             user_id=(actor or {}).get("id"),
@@ -121,13 +122,13 @@ def record_crm_write(
                 "so_line_no": so_line_no,
                 "qty": qty,
             },
-            company_id=str(po_line.company_id) if po_line.company_id else None,
+            company_id=str(company_id) if company_id else None,
             root_entity_type=_ROOT,
             root_entity_id=str(purchase_order_id),
             skip_flush=True,
         )
     except Exception:  # noqa: BLE001
-        log.warning("po link: could not record the write event for %s", getattr(po_line, "id", None))
+        log.warning("po link: could not record the write event for %s", po_line_id)
 
 
 def latest_by_line(db: Session, line_ids: Iterable[str]) -> dict[str, dict]:

@@ -198,7 +198,9 @@ POST /order-inquiries/handover-resend/send
 POST /order-inquiries/link-now
 POST /order-inquiries/po-link/change
 POST /order-inquiries/po-link/link
+POST /order-inquiries/po-link/operations/{operation_id}/resume
 POST /order-inquiries/po-link/options
+POST /order-inquiries/po-link/relocate
 POST /order-inquiries/po-link/unlink
 POST /order-inquiries/reject
 POST /order-inquiries/reserve-notices/parked/preview

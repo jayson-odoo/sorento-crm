@@ -178,6 +178,8 @@ class PoLinkScope:
     outside_message: str = "That sales order line is not in this snapshot row."
     #: OI only: ticked rows left out because they have no AutoCount SO line.
     skipped: List[Dict[str, Any]] = field(default_factory=list)
+    #: OI only: the ticked rows that resolved to an AutoCount SO line in this scope.
+    row_ids: List[str] = field(default_factory=list)
 
 
 def _scope_company_code(db: Session, so_line_ids: set) -> str:
@@ -222,6 +224,7 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
     ids: set = set()
     products: set = set()
     skipped: List[Dict[str, Any]] = []
+    in_scope: List[str] = []
     for row, inquiry_no, core_id in rows:
         line = lines.get(str(core_id)) if core_id else None
         if line is None or _keys(line.source_ref) is None:
@@ -229,6 +232,7 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
             continue
         ids.add(str(line.id))
         products.add(str(line.product_id))
+        in_scope.append(str(row.id))
     if len(products) > 1:
         raise AppException(status_code=422, message="Tick rows of one product.")
     if not ids:
@@ -239,6 +243,7 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
         company_code=_scope_company_code(db, ids),
         outside_message="That sales order line is not among the ticked rows.",
         skipped=skipped,
+        row_ids=in_scope,
     )
 
 
@@ -250,6 +255,7 @@ class PoLinkService:
         self.actor = actor
         # One per press (the service is built per request): every SS write of it carries this.
         self.request_id = uuid.uuid4().hex
+        self._events: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------ reads
 
@@ -461,7 +467,7 @@ class PoLinkService:
         a new intent. An unlink also carries the link it removes (STOCKDEBT-LIVE-ACTIONS
         review): its body names no sales order, so unlinking the same row again after it was
         linked elsewhere would otherwise repeat the key and replay the first answer."""
-        parts = [path, *(f"{k}={body[k]}" for k in sorted(body)), f"rowQty={format(Decimal(str(po_line.qty_ordered or 0)).normalize(), 'f')}"]
+        parts = [path, *(f"{k}={body[k]}" for k in sorted(body)), f"rowQty={Decimal(str(po_line.qty_ordered or 0)).quantize(Decimal('0.0001'))}"]
         if path == "po-links/unlink":
             parts.append(f"fromSo={(po_line.from_so_line_ref or '').strip()}")
         raw = "|".join(parts)
@@ -492,13 +498,17 @@ class PoLinkService:
 
     def _log_write(self, action: str, answer: Dict[str, Any], po_line, so_line=None, so=None, qty=None) -> None:
         """One audit EVENT per write sent (done or not), on the PO line, naming the pressing user."""
-        po_link_history.record_crm_write(
-            self.db, po_line, po_line.purchase_order_id, actor=self.actor, request_id=self.request_id,
+        event = dict(
+            po_line_id=str(po_line.id), purchase_order_id=str(po_line.purchase_order_id),
+            company_id=str(po_line.company_id) if po_line.company_id else None,
+            actor=self.actor, request_id=self.request_id,
             action=action, outcome=answer.get("outcome"), operation_id=answer.get("operationId"),
             so_number=so.so_number if so is not None else None,
             so_line_no=so_line.line_no if so_line is not None else None,
             qty=float(qty) if qty is not None else None,
         )
+        self._events.append(event)
+        po_link_history.record_crm_write(self.db, **event)
 
     def _apply_safely(self, answer, po_line, so_ref):
         """`_apply`, never failing the request: AutoCount already changed, so the answer must
@@ -508,8 +518,11 @@ class PoLinkService:
         except Exception:  # noqa: BLE001
             logger.exception("po link: applying the AutoCount read-back failed")
             # A failed flush leaves the session unusable; what was applied is dropped and the
-            # next sync brings AutoCount's state in.
+            # next sync brings AutoCount's state in. The audit events of the writes already
+            # sent are not AutoCount's copy but the CRM's own trace: put them back.
             self.db.rollback()
+            for event in self._events:
+                po_link_history.record_crm_write(self.db, **event)
             return None
 
     def _rekey(self, by_ref: Dict[str, List[PurchaseOrderLine]], old_ref: str, new_ref: str) -> None:

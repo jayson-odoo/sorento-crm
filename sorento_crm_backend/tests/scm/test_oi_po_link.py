@@ -646,3 +646,77 @@ def test_the_rebook_gets_only_the_rows_that_resolved_into_scope(scm_app, fake_ss
     assert resp.status_code == 200, resp.text
     assert resp.json()["results"][0]["outcome"] == "done"
     assert len(seen) == 1 and sorted(seen[0]) == [w["rows"]["a"].id]
+
+
+# --------------------------------------------------------------------------- key bytes, audit, resume
+
+
+def test_the_intent_key_bytes_are_the_pre_lane_ones_for_a_stored_quantity():
+    """Pinned: sha256 of `path|k=v...|rowQty=<stored 4-decimal string>` as before this lane."""
+    from types import SimpleNamespace
+
+    from app.services.scm.po_link_service import PoLinkService
+
+    body = {"companyCode": "X", "poDocKey": 12008, "poDtlKey": 12009, "soDocKey": 1, "soDtlKey": 2, "qty": 5}
+    expected = "0d18e2595856b93a38bd0086e121ce554d7d42342dd6a0a8509945d141d587be"
+    stored = SimpleNamespace(qty_ordered=Decimal("10.0000"), from_so_line_ref=None)
+    in_memory = SimpleNamespace(qty_ordered=Decimal("10"), from_so_line_ref=None)
+    assert PoLinkService._intent_key("po-links", body, stored) == expected
+    assert PoLinkService._intent_key("po-links", body, in_memory) == expected
+
+
+def test_a_failing_audit_write_never_fails_a_done_write_and_keeps_the_earlier_event(scm_app, fake_ss, monkeypatch):
+    from app.models.audit import AuditLog
+    from app.services import audit_service
+    from app.services.scm import po_link_history
+
+    w = _oi_world(scm_app)
+    real = audit_service.log_audit
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        if kwargs.get("event") == po_link_history.EVENT_CRM_WRITE:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("audit down")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(po_link_history.audit_service, "log_audit", flaky)
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert [r["so_line_no"] for r in resp.json()["results"]] == [140, 10]  # request order
+    w["db"].flush()
+    events = (
+        w["db"].query(AuditLog)
+        .filter(AuditLog.event == po_link_history.EVENT_CRM_WRITE, AuditLog.entity_id == w["po_line"].id)
+        .all()
+    )
+    assert len(events) == 1
+
+
+def test_a_resume_that_recovers_reruns_the_book_step_for_the_in_scope_rows(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers["/api/v1/autocount/write-operations/op-1/resume"] = (200, {
+        "operationId": "op-1", "outcome": "recovered", "errorCode": None, "message": "", "warnings": [],
+        "document": None,
+    })
+    resp = w["c"].post(f"{OI}/po-link/operations/op-1/resume", json={
+        "row_ids": [w["rows"]["a"].id, w["rows"]["none"].id],
+        "po_line_id": w["po_line"].id, "sales_order_line_id": w["so_line"].id,
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["outcome"] == "recovered"
+    assert len(seen) == 1 and seen[0] == [w["rows"]["a"].id]
+
+
+def test_a_malformed_id_in_a_body_is_a_422_and_nothing_is_sent(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/link", json={
+        "row_ids": _ids(w, "a"), "lines": [{"sales_order_line_id": "nope", "po_line_id": w["po_line"].id, "qty": 1}]})
+    assert resp.status_code == 422
+    resp = w["c"].post(f"{OI}/po-link/unlink", json={"row_ids": _ids(w, "a"), "po_line_ids": ["x"]})
+    assert resp.status_code == 422
+    assert fake_ss.calls == []

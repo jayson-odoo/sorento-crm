@@ -262,6 +262,14 @@ class OiPoChangeIn(OiPoLinkRowsIn, PoChangeIn):
     pass
 
 
+class OiPoRelocateIn(OiPoLinkRowsIn, PoRelocateIn):
+    pass
+
+
+class OiPoResumeIn(OiPoLinkRowsIn, PoResumeIn):
+    pass
+
+
 class OiPoLinkLine(BaseModel):
     """One distinct SO line of the ticked rows, as the dialog draws it."""
     sales_order_line_id: str
