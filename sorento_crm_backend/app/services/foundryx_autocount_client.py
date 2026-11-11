@@ -88,6 +88,7 @@ class FoundryxAutocountClient:
     """
 
     def __init__(self, db: Session) -> None:
+        self.trace_headers = {}  # per instance; set by trace_writes
         row = db.query(Integration).filter(Integration.name == _INTEGRATION_NAME).first()
         self._resolve(db, row)
 

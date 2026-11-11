@@ -261,7 +261,7 @@ def build_quotation_lines(
     a set), so the set's money is counted once. Pure: lines in, payload out.
     """
     out = QuotationLinesPayload()
-    for line in sorted(lines, key=lambda l: (l.sort_order or 0)):
+    for line in sorted(lines, key=lambda l: (l.sort_order or 0, str(getattr(l, "id", "") or ""))):
         if getattr(line, "is_rate_only", False):
             out.skipped.append(
                 {"code": line.product_code_snapshot, "description": line_text(line)}
@@ -360,21 +360,27 @@ class ProjectAutocountWriteService:
         """Store the write call with the person who pressed (owner, 12 Nov), and log one line when
         it did not land."""
         document = answer.get("document") or {}
-        audit_service.log_audit(
-            self.db,
-            "autocount_write",
-            self.request_id,
-            "EVENT",
-            event="autocount_write",
-            user_id=(self._actor or {}).get("id"),
-            new_values={
-                "request_id": self.request_id,
-                "idempotency_key": key,
-                "outcome": str(answer.get("outcome"))[:40],
-                "error_code": str(answer.get("errorCode"))[:64] if answer.get("errorCode") else None,
-                "doc_no": answer.get("docNo") or document.get("DocNo"),
-            },
-        )
+        try:
+            # Best-effort (review, 12 Nov): a failing audit row never turns a write AutoCount
+            # accepted into an error; the savepoint keeps the request's own changes.
+            with self.db.begin_nested():
+                audit_service.log_audit(
+                    self.db,
+                    "autocount_write",
+                    self.request_id,
+                    "EVENT",
+                    event="autocount_write",
+                    user_id=(self._actor or {}).get("id"),
+                    new_values={
+                        "request_id": self.request_id,
+                        "idempotency_key": key,
+                        "outcome": str(answer.get("outcome"))[:40],
+                        "error_code": str(answer.get("errorCode"))[:64] if answer.get("errorCode") else None,
+                        "doc_no": answer.get("docNo") or document.get("DocNo"),
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("autocount write %s: audit row not stored", key, exc_info=True)
         if answer.get("outcome") not in _DONE:
             # One line per write that did not land, so a refusal on a live stack can be read back.
             logger.warning(
@@ -797,7 +803,7 @@ class ProjectAutocountWriteService:
                 .filter(ProjectQuotationLine.version_id == scope.version_id)
                 .all()
             )
-            for line in sorted(lines, key=lambda l: (l.sort_order or 0)):
+            for line in sorted(lines, key=lambda l: (l.sort_order or 0, str(getattr(l, "id", "") or ""))):
                 if line.id == quoted.id:
                     return None if getattr(line, "is_rate_only", False) else before
                 sent = build_quotation_lines([line], location="-").lines

@@ -149,3 +149,22 @@ def test_the_name_is_percent_encoded_and_capped_at_128_characters():
     name = headers["X-Acting-User-Name"]
     assert name.isascii() and " " not in name and "/" not in name
     assert unquote(name).startswith("Siti Nur'aini binti Ahmad / Ops") and len(unquote(name)) == 128
+
+
+def test_a_failing_audit_row_never_fails_a_write_that_landed(qt_api, fake_ss, monkeypatch):
+    """Review (12 Nov): the audit row is best-effort; a write AutoCount accepted is still recorded."""
+    from app.services import audit_service
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("audit store down")
+
+    monkeypatch.setattr(audit_service, "log_audit", broken)
+    client, db, world = qt_api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, _created(world))
+
+    response = client.post(f"{BASE}/quotation-documents/{world.document.id}/autocount")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "done"
+    db.refresh(world.document)
+    assert world.document.autocount_doc_no == "QT000777"
