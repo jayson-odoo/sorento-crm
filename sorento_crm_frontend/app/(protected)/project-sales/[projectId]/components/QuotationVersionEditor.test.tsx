@@ -3334,6 +3334,28 @@ describe('PROJECT-QUOTE-LINE-TOOLS', () => {
     expect(screen.getByRole('textbox', { name: 'Unit price on A-1' })).toBeInTheDocument();
   });
 
+  it('AC-8: a row whose product is cleared no longer counts as Non-standard', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', description: 'Off series', is_non_standard: true }),
+      line({ id: 'l2', product_code: 'A-2', description: 'Clean', sort_order: 10 }),
+    ]);
+    await renderEditing();
+    await chooseFlag('Non-standard');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Qty on A-2' })).toBeNull());
+    act(() => {
+      const held = session?.scopes[QUOTATION.id]?.lines ?? [];
+      session?.stageScope(
+        QUOTATION.id,
+        held.map((row) =>
+          row.key === 'l1' ? { ...row, draft: { ...row.draft, product_id: '' } } : row,
+        ),
+      );
+    });
+    // No product: never judged, so nothing to wait for; the stale stored flag no longer counts.
+    await waitFor(() => expect(screen.getByText('No line matches these flags.')).toBeInTheDocument());
+  });
+
   it('AC-8: the Flags filter narrows the lines, keeps their numbers, and counts each option', async () => {
     listQuotationLines.mockResolvedValue(FLAGGED_LINES);
     renderEditor();

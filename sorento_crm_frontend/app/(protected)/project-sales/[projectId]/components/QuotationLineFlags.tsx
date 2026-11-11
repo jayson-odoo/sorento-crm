@@ -143,7 +143,12 @@ export function useLinesFacts(
         return;
       }
       const verdict = verdicts[index];
-      const waiting = verdict === undefined && !isPristine(row.line, row.draft);
+      const asked = verdictDraft(row.draft);
+      // A row naming no product or set is never judged, so it is not waiting on anything.
+      const waiting =
+        verdict === undefined &&
+        Boolean(asked.product_id || asked.product_set_id) &&
+        !isPristine(row.line, row.draft);
       const known = lastKnown.current.get(row.key);
       const fact = waiting && known ? known : lineFacts(row.line, row.draft, verdict ?? null);
       lastKnown.current.set(row.key, fact);
