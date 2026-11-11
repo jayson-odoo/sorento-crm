@@ -80,11 +80,14 @@ EXPECT_KEYS = frozenset({
     # {word -> null | "*" | text}: the `said_as_text` of every entity whose raw holds the word. null: no typed word (null or
     # blank); "*": any non-blank text; otherwise the text, case aside.
     "entity_said_as_text",
-    # PARSER-SUPPLIER-RESTORE: true means a supplier entity bound by a Supplier candidates line id (a non-blank
-    # canonical_code: without the id nothing binds a supplier); false means none. And the parse's party_side
+    # PARSER-SUPPLIER-RESTORE: true means a supplier entity bound by a Supplier candidates line id (a uuid
+    # canonical_code, `_ROW_ID`: without the id nothing binds a supplier); false means none. And the parse's party_side
     # ("customer" | "supplier" | "unclear"; null means null or absent).
     "supplier", "party_side",
 })
+#: PARSER-SUPPLIER-RESTORE: a supplier binds by its Supplier candidates line's row id (a uuid), never by a name the
+#: parser wrote in canonical_code (gate run 1, 11 Nov: arm A wrote the name on 2 rows).
+_ROW_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
                 "document", "sales_basis")
@@ -339,7 +342,8 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
     if "supplier" in expect:
-        has = any(e.get("hint") == "supplier" and str(e.get("canonical_code") or "").strip() for e in entities)
+        has = any(e.get("hint") == "supplier" and _ROW_ID.fullmatch(str(e.get("canonical_code") or "").strip())
+                  for e in entities)
         if has != expect["supplier"]:
             reasons.append("id-bound supplier entity " + ("missing" if expect["supplier"] else "present"))
     if "party_side" in expect and verdict.get("party_side") != expect["party_side"]:
