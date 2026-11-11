@@ -551,34 +551,48 @@ class StockDebtPoLinkService:
                     message=f"PO {po.po_number}: link between 1 and {free.normalize():f} in total.",
                 )
             plan.append((so_line, so, po_line, po, qty))
-        results = []
-        for so_line, so, po_line, po, qty in plan:
-            company_code = self._company_code(po_line.company_id)
-            _db, po_doc, po_dtl = _keys(po_line.source_ref)
-            _db2, so_doc, so_dtl = _keys(so_line.source_ref)
-            body = {
-                "companyCode": company_code,
-                "poDocKey": po_doc,
-                "poDtlKey": po_dtl,
-                "soDocKey": so_doc,
-                "soDtlKey": so_dtl,
-                "qty": float(qty) if qty != qty.to_integral() else int(qty),
-            }
-            if so.order_date:
-                body["soDocDate"] = so.order_date.isoformat()
-            if po.issue_date:
-                body["docDate"] = po.issue_date.isoformat()
-            row_qty = Decimal(str(po_line.qty_ordered or 0))
-            if qty >= row_qty:  # whole row: the row itself moves onto the SO line
-                po_replace_hint.remember(po_line.source_ref, qty=row_qty, from_so_ref=so_line.source_ref)
-            else:  # split: the row keeps the rest and its own link
-                po_replace_hint.remember(po_line.source_ref, qty=row_qty - qty,
-                                         from_so_ref=po_line.from_so_line_ref)
-            answer = self._send_intent("po-links", body, po_line)
-            linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
-            results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                                        qty=_num(qty), company_code=company_code, linked_line=linked))
-        return {"results": results}
+        return {"results": [self._send_link(*step) for step in plan]}
+
+    def _send_link(self, so_line, so, po_line, po, qty: Decimal) -> Dict[str, Any]:
+        """One link write (whole row or split, AutoCount decides by the qty) and its read-back."""
+        company_code = self._company_code(po_line.company_id)
+        _db, po_doc, po_dtl = _keys(po_line.source_ref)
+        _db2, so_doc, so_dtl = _keys(so_line.source_ref)
+        body = {
+            "companyCode": company_code,
+            "poDocKey": po_doc,
+            "poDtlKey": po_dtl,
+            "soDocKey": so_doc,
+            "soDtlKey": so_dtl,
+            "qty": float(qty) if qty != qty.to_integral() else int(qty),
+        }
+        if so.order_date:
+            body["soDocDate"] = so.order_date.isoformat()
+        if po.issue_date:
+            body["docDate"] = po.issue_date.isoformat()
+        row_qty = Decimal(str(po_line.qty_ordered or 0))
+        if qty >= row_qty:  # whole row: the row itself moves onto the SO line
+            po_replace_hint.remember(po_line.source_ref, qty=row_qty, from_so_ref=so_line.source_ref)
+        else:  # split: the row keeps the rest and its own link
+            po_replace_hint.remember(po_line.source_ref, qty=row_qty - qty,
+                                     from_so_ref=po_line.from_so_line_ref)
+        answer = self._send_intent("po-links", body, po_line)
+        linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
+        return self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
+                            qty=_num(qty), company_code=company_code, linked_line=linked)
+
+    def _send_unlink(self, po_line, po, so_line=None, so=None) -> Dict[str, Any]:
+        """One unlink write: the PO row keeps its qty and stays open, with no sales order."""
+        keys = _keys(po_line.source_ref)
+        company_code = self._company_code(po_line.company_id)
+        body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
+        if po.issue_date:
+            body["docDate"] = po.issue_date.isoformat()
+        po_replace_hint.remember(po_line.source_ref, qty=po_line.qty_ordered, from_so_ref=None)
+        answer = self._send_intent("po-links/unlink", body, po_line)
+        self._apply_safely(answer, po_line, None)
+        return self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
+                            qty=_num(po_line.qty_ordered), company_code=company_code)
 
     def _so_line_by_ref(self, ref: str):
         return (
@@ -596,19 +610,67 @@ class StockDebtPoLinkService:
         greyed "Waiting for AutoCount" and this route answers AutoCount's refusal."""
         row = self._row(snapshot_id, row_id)
         plan = [self._linked_po_line(row, po_line_id) for po_line_id in po_line_ids]
+        return {
+            "results": [
+                self._send_unlink(po_line, po, *self._so_line_by_ref(current))
+                for po_line, po, current in plan
+            ]
+        }
+
+    def change(self, snapshot_id: str, row_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """STOCKDEBT-LIVE-ACTIONS "Change PO..." (owner, 11 Nov, card answers 1a/2a/3a): swap the
+        ONE PO line covering an SO line for another PO line, for the same qty.
+
+        Refused, with nothing sent, unless the line is covered by exactly one PO line and the
+        new PO line has that qty free. The new link goes first; the old PO line is unlinked
+        only once AutoCount answered the link done, so a refused link leaves the line as it
+        was. The old PO line keeps its qty and stays open as free supply."""
+        row = self._row(snapshot_id, row_id)
+        plan = []
+        asked: Dict[str, Decimal] = {}
+        for item in changes:
+            so_line, so = self._so_line(row, item["sales_order_line_id"])
+            so_label = f"{so.so_number} line {so_line.line_no}" if so_line.line_no is not None else so.so_number
+            current = [
+                pair for pair in (
+                    self.db.query(PurchaseOrderLine, PurchaseOrder)
+                    .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                    .filter(
+                        func.btrim(PurchaseOrderLine.from_so_line_ref) == so_line.source_ref.strip(),
+                        PurchaseOrderLine.line_status == "open",
+                    )
+                    .all()
+                )
+            ]
+            if len(current) != 1:
+                raise AppException(
+                    status_code=422, message=f"{so_label} is not covered by exactly one PO line."
+                )
+            old_line, old_po = current[0]
+            new_line, new_po = self._po_line(row, item["po_line_id"])
+            if str(new_line.id) == str(old_line.id):
+                raise AppException(status_code=422, message=f"{so_label} is already covered by that PO line.")
+            if new_line.from_so_line_ref or new_line.from_so_external:
+                raise AppException(status_code=422, message=f"PO {new_po.po_number} line is already linked.")
+            if _keys(new_line.source_ref)[0] != _keys(so_line.source_ref)[0]:
+                raise AppException(
+                    status_code=422,
+                    message=f"PO {new_po.po_number} is in a different AutoCount book from {so.so_number}.",
+                )
+            qty = Decimal(str(old_line.qty_ordered or 0)) - Decimal(str(old_line.qty_cancelled or 0))
+            asked[str(new_line.id)] = asked.get(str(new_line.id), Decimal("0")) + qty
+            free = self._free(new_line)
+            if qty <= 0 or asked[str(new_line.id)] > free:
+                raise AppException(
+                    status_code=422, message=f"PO {new_po.po_number} has only {free.normalize():f} free."
+                )
+            plan.append((so_line, so, old_line, old_po, new_line, new_po, qty))
         results = []
-        for po_line, po, current in plan:
-            so_line, so = self._so_line_by_ref(current)
-            keys = _keys(po_line.source_ref)
-            company_code = self._company_code(po_line.company_id)
-            body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
-            if po.issue_date:
-                body["docDate"] = po.issue_date.isoformat()
-            po_replace_hint.remember(po_line.source_ref, qty=po_line.qty_ordered, from_so_ref=None)
-            answer = self._send_intent("po-links/unlink", body, po_line)
-            self._apply_safely(answer, po_line, None)
-            results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                                        qty=_num(po_line.qty_ordered), company_code=company_code))
+        for so_line, so, old_line, old_po, new_line, new_po, qty in plan:
+            linked = self._send_link(so_line, so, new_line, new_po, qty)
+            results.append({**linked, "action": "link"})
+            if linked["outcome"] == "done":
+                results.append({**self._send_unlink(old_line, old_po, so_line, so), "action": "unlink"})
         return {"results": results}
 
     def relink(self, snapshot_id: str, row_id: str, moves: List[Dict[str, Any]]) -> Dict[str, Any]:

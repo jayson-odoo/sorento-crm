@@ -224,6 +224,16 @@ class PoRelinkIn(BaseModel):
     moves: List[PoRelinkMoveIn] = Field(min_length=1, max_length=50)
 
 
+class PoChangeLineIn(BaseModel):
+    """Change PO: the SO line, and the PO line to cover it instead of the one covering it now."""
+    sales_order_line_id: str
+    po_line_id: str
+
+
+class PoChangeIn(BaseModel):
+    changes: List[PoChangeLineIn] = Field(min_length=1, max_length=50)
+
+
 class PoRelocateIn(BaseModel):
     po_line_id: str
 
@@ -246,6 +256,8 @@ class PoLinkResult(BaseModel):
     operation_id: Optional[str] = None
     company_code: Optional[str] = None
     po_line_id: Optional[str] = None
+    #: Change PO only: which half of the change this answer is ("link" or "unlink").
+    action: Optional[str] = None
 
 
 class PoLinkResults(BaseModel):
